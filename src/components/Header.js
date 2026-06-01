@@ -44,6 +44,7 @@ export default function Header() {
           <a href="/browse?category=Rentals" className="hover:text-blue-200">Rentals</a>
           <a href="/browse?category=Services" className="hover:text-blue-200">Services</a>
           <a href="/community" className="hover:text-blue-200">Community</a>
+          <a href="/businesses" className="hover:text-blue-200">Businesses</a>
           <a href="/my-listings" className="hover:text-blue-200">My Listings</a>
 
           <a
@@ -84,6 +85,7 @@ export default function Header() {
           <a href="/browse?category=Rentals" className="block hover:text-blue-200">Rentals</a>
           <a href="/browse?category=Services" className="block hover:text-blue-200">Services</a>
           <a href="/community" className="block hover:text-blue-200">Community</a>
+          <a href="/businesses" className="block hover:text-blue-200">Businesses</a>
           <a href="/my-listings" className="block hover:text-blue-200">My Listings</a>
           <a href="/import" className="block bg-white text-blue-900 px-4 py-3 rounded-xl font-bold">Import</a>
           <a href="/post" className="block bg-red-600 text-white px-4 py-3 rounded-xl font-bold">Post Free</a>
