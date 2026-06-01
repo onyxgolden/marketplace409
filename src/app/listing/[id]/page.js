@@ -107,9 +107,27 @@ export default async function ListingDetailPage({ params }) {
                 Messaging is coming soon. For now, use the seller contact details above.
               </p>
 
-              <button className="w-full bg-red-600 text-white py-4 rounded-2xl text-xl font-bold hover:bg-red-500">
-                Request Seller Contact
-              </button>
+              {listing.seller_phone ? (
+  <div className="grid grid-cols-1 gap-4">
+    <a
+      href={`tel:${listing.seller_phone}`}
+      className="block text-center w-full bg-green-700 text-white py-4 rounded-2xl text-xl font-bold hover:bg-green-600"
+    >
+      Call Seller
+    </a>
+
+    <a
+      href={`sms:${listing.seller_phone}`}
+      className="block text-center w-full bg-blue-900 text-white py-4 rounded-2xl text-xl font-bold hover:bg-blue-800"
+    >
+      Text Seller
+    </a>
+  </div>
+) : (
+  <p className="text-gray-600">
+    Seller phone not provided.
+  </p>
+)}
             </div>
             <FavoriteButton listingId={listing.id} />
             <a
