@@ -10,8 +10,8 @@ export default function PostPage() {
   const [price, setPrice] = useState("");
   const [category, setCategory] = useState("");
   const [city, setCity] = useState("");
-  const [image, setImage] = useState(null);
-  const [imagePreview, setImagePreview] = useState("");
+  const [images, setImages] = useState([]);
+  const [imagePreviews, setImagePreviews] = useState([]);
   const [sellerName, setSellerName] = useState("");
   const [sellerEmail, setSellerEmail] = useState("");
   const [sellerPhone, setSellerPhone] = useState("");
@@ -33,30 +33,34 @@ if (!user) {
 
 let imageUrl = "";
 
-    if (image) {
-      const fileExt = image.name.split(".").pop();
-      const fileName = `${Date.now()}.${fileExt}`;
+    let imageUrls = [];
 
-      const { error: uploadError } = await supabase.storage
-        .from("listing-images")
-        .upload(fileName, image, {
-          contentType: image.type,
-          upsert: false,
-        });
+if (images.length > 0) {
+  for (const image of images) {
+    const fileExt = image.name.split(".").pop();
+    const fileName = `${Date.now()}-${Math.random()}.${fileExt}`;
 
-      if (uploadError) {
-  alert("Error uploading image");
-  console.log(uploadError);
-  setIsPosting(false);
-  return;
-}
+    const { error: uploadError } = await supabase.storage
+      .from("listing-images")
+      .upload(fileName, image, {
+        contentType: image.type,
+        upsert: false,
+      });
 
-      const { data } = supabase.storage
-        .from("listing-images")
-        .getPublicUrl(fileName);
-
-      imageUrl = data.publicUrl;
+    if (uploadError) {
+      alert("Error uploading one of the images");
+      console.log(uploadError);
+      setIsPosting(false);
+      return;
     }
+
+    const { data } = supabase.storage
+      .from("listing-images")
+      .getPublicUrl(fileName);
+
+    imageUrls.push(data.publicUrl);
+  }
+}
 
     const { data: newListing, error } = await supabase
       .from("listings")
@@ -67,7 +71,8 @@ let imageUrl = "";
           price,
           category,
           city,
-          image_url: imageUrl,
+          image_url: imageUrls[0] || "",
+          image_urls: imageUrls,
           seller_name: sellerName,
           seller_email: sellerEmail,
           seller_phone: sellerPhone,
@@ -174,27 +179,27 @@ let imageUrl = "";
               <input
                 type="file"
                 accept="image/*"
+                multiple
                 onChange={(e) => {
-                  const file = e.target.files[0];
+                  const files = Array.from(e.target.files);
 
-                  if (file) {
-                    setImage(file);
-                    setImagePreview(URL.createObjectURL(file));
-                  }
-                }}
-              />
+                  setImages(files);
+                  setImagePreviews(files.map((file) => URL.createObjectURL(file)));
+              }}
+            />
 
-              {imagePreview && (
-                <div className="mt-6">
-                  <p className="font-bold mb-3">Image Preview</p>
-
-                  <img
-                    src={imagePreview}
-                    alt="Preview"
-                    className="w-full max-h-80 object-cover rounded-2xl shadow"
-                  />
-                </div>
-              )}
+              {imagePreviews.length > 0 && (
+                <div className="mt-6 grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {imagePreviews.map((preview, index) => (
+                    <img
+                      key={index}
+                      src={preview}
+                      alt={`Preview ${index + 1}`}
+                      className="h-32 w-full object-cover rounded-2xl shadow"
+                    />
+            ))}
+          </div>
+        )}
             </div>
 
             <button
