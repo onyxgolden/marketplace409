@@ -25,7 +25,7 @@ const {
 } = await supabase.auth.getUser();
 
 if (!user) {
-  alert("Please sign in before posting a listing.");
+  alert("You can browse listings as a guest, but you need a free account to post.");
   setIsPosting(false);
   window.location.href = "/auth";
   return;
