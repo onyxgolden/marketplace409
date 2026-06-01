@@ -153,48 +153,20 @@ export default function Home() {
       </button>
     </div>
   </div>
-</section>
-      {/* Area Code Selector Preview */}
 <section className="max-w-6xl mx-auto py-10 px-6">
   <div className="bg-white rounded-3xl shadow-md p-8">
-    <div className="flex flex-col md:flex-row justify-between gap-6 items-center">
-      <div>
-        <p className="text-sm uppercase tracking-wide text-gray-500 mb-2">
-          Starting Local. Built to Expand.
-        </p>
+    <label className="block text-xl font-bold mb-3">
+      Select Your Local Marketplace
+    </label>
 
-        <h3 className="text-3xl font-bold mb-3">
-          Choose Your Local Marketplace
-        </h3>
-
-        <p className="text-gray-600 text-lg">
-          Launching first in 409, then expanding across Texas and the U.S.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 text-center">
-        <button className="bg-blue-900 text-white px-6 py-4 rounded-2xl font-bold shadow">
-          409
-          <span className="block text-sm font-normal">Southeast TX</span>
-        </button>
-
-        <button className="bg-gray-200 text-gray-500 px-6 py-4 rounded-2xl font-bold">
-          713
-          <span className="block text-sm font-normal">Coming Soon</span>
-        </button>
-
-        <button className="bg-gray-200 text-gray-500 px-6 py-4 rounded-2xl font-bold">
-          214
-          <span className="block text-sm font-normal">Coming Soon</span>
-        </button>
-
-        <button className="bg-gray-200 text-gray-500 px-6 py-4 rounded-2xl font-bold">
-          512
-          <span className="block text-sm font-normal">Coming Soon</span>
-        </button>
-      </div>
-    </div>
+    <select
+      className="w-full md:w-96 border rounded-xl px-4 py-4 text-lg"
+      defaultValue="409"
+    >
+      <option value="409">409 Marketplace — Southeast Texas</option>
+    </select>
   </div>
+</section>
 </section>
 {/* Cross Posting Feature */}
 <section className="max-w-6xl mx-auto py-10 px-6">
