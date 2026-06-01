@@ -9,17 +9,18 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
 
   async function signUp() {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
+  const { error } = await supabase.auth.signUp({
+    email,
+    password,
+  });
 
-    if (error) {
-      alert(error.message);
-    } else {
-      alert("Account created. Check your email if confirmation is required.");
-    }
+  if (error) {
+    alert(error.message);
+  } else {
+    alert("Account created. You can now post your listing.");
+    window.location.href = "/post";
   }
+}
 
   async function signIn() {
     const { error } = await supabase.auth.signInWithPassword({
@@ -31,7 +32,7 @@ export default function AuthPage() {
       alert(error.message);
     } else {
       alert("Signed in!");
-      window.location.href = "/";
+      window.location.href = "/post";
     }
   }
 
