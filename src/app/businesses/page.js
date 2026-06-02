@@ -1,5 +1,5 @@
+import BusinessAdminControls from "@/components/BusinessAdminControls";
 import ShareButton from "@/components/ShareButton";
-import DeleteBusinessButton from "@/components/DeleteBusinessButton";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 
@@ -104,19 +104,14 @@ export default async function BusinessesPage() {
     Facebook
   </a>
 )}
-<a
-  href={`/businesses/edit/${business.id}`}
-  className="block mt-3 bg-yellow-500 text-gray-900 text-center py-3 rounded-xl font-bold hover:bg-yellow-400"
->
-  Edit Business
-</a>
+
 
 <ShareButton
   title={business.name}
   url={`https://409marketplace.online/businesses`}
 />
 
-<DeleteBusinessButton businessId={business.id} />
+<BusinessAdminControls businessId={business.id} />
 
 
                 </div>
