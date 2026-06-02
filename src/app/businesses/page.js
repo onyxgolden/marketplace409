@@ -1,3 +1,4 @@
+import ShareButton from "@/components/ShareButton";
 import DeleteBusinessButton from "@/components/DeleteBusinessButton";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
@@ -71,7 +72,7 @@ export default async function BusinessesPage() {
                     {business.category}
                   </p>
 
-                  <p className="mt-3 text-gray-600">
+                  <p className="mt-3 text-gray-600 line-clamp-4">
                     {business.description}
                   </p>
 
@@ -109,6 +110,11 @@ export default async function BusinessesPage() {
 >
   Edit Business
 </a>
+
+<ShareButton
+  title={business.name}
+  url={`https://409marketplace.online/businesses`}
+/>
 
 <DeleteBusinessButton businessId={business.id} />
 
