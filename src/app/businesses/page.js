@@ -72,9 +72,9 @@ export default async function BusinessesPage() {
                     {business.category}
                   </p>
 
-                  <p className="mt-3 text-gray-600 line-clamp-4">
+                  <div className="mt-3 text-gray-600 max-h-32 overflow-y-auto pr-2">
                     {business.description}
-                  </p>
+                  </div>
 
                   {business.phone && (
                     <a
