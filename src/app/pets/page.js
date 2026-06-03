@@ -1,8 +1,8 @@
 import DeletePetButton from "@/components/DeletePetButton";
 import Header from "@/components/Header";
 import ShareButton from "@/components/ShareButton";
-import { supabase } from "@/lib/supabase";
 import VotePetButton from "@/components/VotePetButton";
+import { supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
@@ -12,11 +12,12 @@ export default async function PetsPage() {
     .select("*")
     .order("created_at", { ascending: false });
 
-  const eligiblePets = pets?.filter((pet) => pet.pet_of_week_eligible === true) || [];
+  const eligiblePets =
+    pets?.filter((pet) => pet.pet_of_week_eligible === true) || [];
 
-const petOfTheWeek = eligiblePets.length
-  ? [...eligiblePets].sort((a, b) => (b.votes || 0) - (a.votes || 0))[0]
-  : null;
+  const petOfTheWeek = eligiblePets.length
+    ? [...eligiblePets].sort((a, b) => (b.votes || 0) - (a.votes || 0))[0]
+    : null;
 
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
@@ -54,10 +55,37 @@ const petOfTheWeek = eligiblePets.length
               )}
 
               <div>
-                <h3 className="text-3xl font-bold">{petOfTheWeek.pet_name}</h3>
-                <p className="text-gray-600 mt-2">{petOfTheWeek.city}</p>
-                <p className="mt-4 text-gray-700">{petOfTheWeek.description}</p>
-                <p className="mt-4 font-bold">Votes: {petOfTheWeek.votes || 0}</p>
+                <h3 className="text-3xl font-bold">
+                  {petOfTheWeek.pet_name}
+                </h3>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {petOfTheWeek.post_type === "Adoptable Pet" && (
+                    <span className="bg-blue-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                      ADOPTABLE
+                    </span>
+                  )}
+
+                  {petOfTheWeek.post_type === "Personal Pet" && (
+                    <span className="bg-purple-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                      PERSONAL PET
+                    </span>
+                  )}
+
+                  <span className="bg-yellow-500 text-black px-3 py-1 rounded-full text-sm font-bold">
+                    PET OF THE WEEK ENTRY
+                  </span>
+                </div>
+
+                <p className="text-gray-600 mt-4">{petOfTheWeek.city}</p>
+
+                <p className="mt-4 text-gray-700">
+                  {petOfTheWeek.description}
+                </p>
+
+                <p className="mt-4 font-bold">
+                  Votes: {petOfTheWeek.votes || 0}
+                </p>
               </div>
             </div>
           </div>
@@ -72,6 +100,7 @@ const petOfTheWeek = eligiblePets.length
         {!pets || pets.length === 0 ? (
           <div className="bg-white rounded-2xl shadow-md p-8 text-center">
             <h2 className="text-2xl font-bold mb-2">No pet posts yet</h2>
+
             <p className="text-gray-600">
               Be the first to add an adoptable, lost, found, or favorite pet.
             </p>
@@ -97,33 +126,43 @@ const petOfTheWeek = eligiblePets.length
 
                 <div className="p-5">
                   <p className="text-sm text-gray-500">{pet.post_type}</p>
+
                   <h2 className="text-xl font-bold">{pet.pet_name}</h2>
-                  <div className="mt-2">
-  {pet.post_type === "Lost Pet" && (
-    <span className="bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold">
-      LOST
-    </span>
-  )}
 
-  {pet.post_type === "Found Pet" && (
-    <span className="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-bold">
-      FOUND
-    </span>
-  )}
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {pet.post_type === "Lost Pet" && (
+                      <span className="bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                        LOST
+                      </span>
+                    )}
 
-  {pet.post_type === "Adoptable Pet" && (
-    <span className="bg-blue-600 text-white px-3 py-1 rounded-full text-sm font-bold">
-      ADOPTABLE
-    </span>
-  )}
+                    {pet.post_type === "Found Pet" && (
+                      <span className="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                        FOUND
+                      </span>
+                    )}
 
-  {pet.pet_of_week_eligible && (
-    <span className="ml-2 bg-yellow-500 text-black px-3 py-1 rounded-full text-sm font-bold">
-      PET OF THE WEEK ENTRY
-    </span>
-  )}
-</div>
-                  <p className="text-sm text-gray-500 mt-1">{pet.pet_type}</p>
+                    {pet.post_type === "Adoptable Pet" && (
+                      <span className="bg-blue-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                        ADOPTABLE
+                      </span>
+                    )}
+
+                    {pet.post_type === "Personal Pet" && (
+                      <span className="bg-purple-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                        PERSONAL PET
+                      </span>
+                    )}
+
+                    {pet.pet_of_week_eligible === true && (
+                      <span className="bg-yellow-500 text-black px-3 py-1 rounded-full text-sm font-bold">
+                        PET OF THE WEEK ENTRY
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-sm text-gray-500 mt-3">{pet.pet_type}</p>
+
                   <p className="text-sm text-gray-500 mt-1">{pet.city}</p>
 
                   <div className="mt-3 text-gray-600 max-h-40 overflow-y-auto pr-2">
@@ -131,9 +170,10 @@ const petOfTheWeek = eligiblePets.length
                   </div>
 
                   <p className="mt-3 font-bold">Votes: {pet.votes || 0}</p>
+
                   <VotePetButton
-                   petId={pet.id}
-                   currentVotes={pet.votes || 0}
+                    petId={pet.id}
+                    currentVotes={pet.votes || 0}
                   />
 
                   {pet.contact_phone && (
@@ -156,8 +196,9 @@ const petOfTheWeek = eligiblePets.length
 
                   <ShareButton
                     title={pet.pet_name}
-                    url={`https://409marketplace.online/pets`}
+                    url="https://409marketplace.online/pets"
                   />
+
                   <DeletePetButton petId={pet.id} />
                 </div>
               </div>
