@@ -254,10 +254,13 @@ export default function Home() {
             <h4 className="text-xl font-bold mt-3">Services</h4>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl shadow-md text-center">
-            🐶
-            <h4 className="text-xl font-bold mt-3">Pet of the Week</h4>
-          </div>
+          <a
+  href="/pets"
+  className="bg-white p-6 rounded-2xl shadow-md text-center block hover:shadow-xl"
+>
+  🐶
+  <h4 className="text-xl font-bold mt-3">Pets & Shelters</h4>
+</a>
 
         </div>
       </section>
@@ -421,9 +424,7 @@ export default function Home() {
               2-Year-Old Lab Mix looking for her forever home in Beaumont, Texas.
             </p>
 
-            <button className="bg-blue-900 text-white px-5 py-3 rounded-xl hover:bg-blue-800">
-              Learn More
-            </button>
+            <button className="bg-blue-900 text-white px-5 py-3 rounded-xl hover:bg-blue-800"></button>
           </div>
 
         </div>
@@ -579,7 +580,12 @@ export default function Home() {
       <p className="text-gray-600 mb-4">
         Help reconnect local families with missing pets and support nearby shelters.
       </p>
-      <button className="text-blue-900 font-bold">Report Pet →</button>
+      <a
+  href="/pets"
+  className="text-blue-900 font-bold"
+>
+  View Pets →
+</a>
     </div>
   </div>
 </section>
@@ -704,10 +710,13 @@ export default function Home() {
       <span className="text-xs">Post</span>
     </button>
 
-    <button className="flex flex-col items-center text-gray-600">
-      <span className="text-2xl">🐶</span>
-      <span className="text-xs">Pets</span>
-    </button>
+    <a
+  href="/pets"
+  className="flex flex-col items-center text-gray-600"
+>
+  <span className="text-2xl">🐶</span>
+  <span className="text-xs">Pets</span>
+</a>
 
     <button className="flex flex-col items-center text-gray-600">
       <span className="text-2xl">👤</span>
