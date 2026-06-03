@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import ShareButton from "@/components/ShareButton";
 import FavoriteButton from "@/components/FavoriteButton";
 import MarkSoldButton from "@/components/MarkSoldButton";
 import DeleteListingButton from "@/components/DeleteListingButton";
@@ -169,9 +170,10 @@ export default async function ListingDetailPage({ params }) {
               Edit Listing
             </a>
 
-            <button className="w-full bg-gray-800 text-white py-4 rounded-2xl text-xl font-bold hover:bg-gray-700">
-              Share Listing
-            </button>
+            <ShareButton
+              title={listing.title}
+              url={`https://409marketplace.online/listing/${listing.id}`}
+            />
 
             <DeleteListingButton listingId={listing.id} ownerId={listing.user_id} />
           </div>
