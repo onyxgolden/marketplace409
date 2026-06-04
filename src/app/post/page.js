@@ -140,6 +140,12 @@ if (images.length > 0) {
                 <option>Services</option>
                 <option>Farm & Ranch</option>
                 <option>Pets</option>
+                <option value="Electronics">Electronics</option>
+                <option value="Music & Instruments">Music & Instruments</option>
+                <option value="Boats & Marine">Boats & Marine</option>
+                <option value="Hunting & Fishing">Hunting & Fishing</option>
+                <option value="Tools & Equipment">Tools & Equipment</option>
+                <option value="Miscellaneous">Miscellaneous</option>
               </select>
             </div>
 

@@ -73,6 +73,13 @@ export default function Home() {
       <option>Services</option>
       <option>Farm & Ranch</option>
       <option>Pets</option>
+      <option>Electronics</option>
+      <option>Music & Instruments</option>
+      <option>Boats & Marine</option>
+      <option>Hunting & Fishing</option>
+      <option value="Tools & Equipment">Tools & Equipment</option>
+      <option>Miscellaneous</option>
+
     </select>
 
     <button className="bg-red-600 text-white rounded-xl font-bold hover:bg-red-500">
@@ -102,7 +109,7 @@ export default function Home() {
       </section>
       {/* Marketplace Stats */}
 <section className="max-w-6xl mx-auto py-10 px-6">
-  <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+  <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
 
     <div className="bg-white rounded-2xl shadow-md p-6 text-center">
       <h3 className="text-4xl font-extrabold text-blue-900">1K+</h3>
@@ -249,18 +256,21 @@ export default function Home() {
             <h4 className="text-xl font-bold mt-3">Rentals</h4>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl shadow-md text-center">
-            🛠
-            <h4 className="text-xl font-bold mt-3">Services</h4>
-          </div>
+          <a
+            href="/jobs"
+            className="bg-white p-6 rounded-2xl shadow-md text-center block hover:shadow-xl"
+          >
+            💼
+            <h4 className="text-xl font-bold mt-3">Jobs</h4>
+          </a>
 
           <a
-  href="/pets"
-  className="bg-white p-6 rounded-2xl shadow-md text-center block hover:shadow-xl"
->
-  🐶
-  <h4 className="text-xl font-bold mt-3">Pets & Shelters</h4>
-</a>
+            href="/pets"
+            className="bg-white p-6 rounded-2xl shadow-md text-center block hover:shadow-xl"
+          >
+            🐶
+          <h4 className="text-xl font-bold mt-3">Pets & Shelters</h4>
+          </a>
 
         </div>
       </section>
