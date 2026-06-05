@@ -246,22 +246,28 @@ export default function Home() {
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
 
-          <div className="bg-white p-6 rounded-2xl shadow-md text-center">
+          <a
+           href="/browse?category=Vehicles"
+           className="bg-white p-6 rounded-2xl shadow-md text-center block hover:shadow-xl"
+          >
             🚗
-            <h4 className="text-xl font-bold mt-3">Vehicles</h4>
-          </div>
+          <h4 className="text-xl font-bold mt-3">Vehicles</h4>
+        </a>
 
-          <div className="bg-white p-6 rounded-2xl shadow-md text-center">
+          <a
+           href="/browse?category=Rentals"
+           className="bg-white p-6 rounded-2xl shadow-md text-center block hover:shadow-xl"
+          >
             🏠
-            <h4 className="text-xl font-bold mt-3">Rentals</h4>
-          </div>
+          <h4 className="text-xl font-bold mt-3">Rentals</h4>
+          </a>
 
           <a
             href="/jobs"
             className="bg-white p-6 rounded-2xl shadow-md text-center block hover:shadow-xl"
           >
             💼
-            <h4 className="text-xl font-bold mt-3">Jobs</h4>
+            <h4 className="text-xl font-bold mt-3">409 Jobs</h4>
           </a>
 
           <a
