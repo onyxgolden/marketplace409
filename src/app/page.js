@@ -1,5 +1,23 @@
 import Header from "@/components/Header";
-export default function Home() {
+import { supabase } from "@/lib/supabase";
+
+export const dynamic = "force-dynamic";
+export default async function Home() {
+  const { count: listingsCount } = await supabase
+    .from("listings")
+    .select("*", { count: "exact", head: true });
+
+  const { count: businessesCount } = await supabase
+    .from("businesses")
+    .select("*", { count: "exact", head: true });
+
+  const { count: petsCount } = await supabase
+    .from("pets")
+    .select("*", { count: "exact", head: true });
+
+  const { count: jobsCount } = await supabase
+    .from("jobs")
+    .select("*", { count: "exact", head: true });
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       
@@ -112,23 +130,23 @@ export default function Home() {
   <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
 
     <div className="bg-white rounded-2xl shadow-md p-6 text-center">
-      <h3 className="text-4xl font-extrabold text-blue-900">1K+</h3>
-      <p className="text-gray-600 mt-2">Projected Listings</p>
+      <h3 className="text-4xl font-extrabold text-blue-900">{listingsCount || 0}</h3>
+      <p className="text-gray-600 mt-2">Live Listings</p>
     </div>
 
     <div className="bg-white rounded-2xl shadow-md p-6 text-center">
-      <h3 className="text-4xl font-extrabold text-red-600">500+</h3>
+      <h3 className="text-4xl font-extrabold text-red-600">{businessesCount || 0}</h3>
       <p className="text-gray-600 mt-2">Local Businesses</p>
     </div>
 
     <div className="bg-white rounded-2xl shadow-md p-6 text-center">
-      <h3 className="text-4xl font-extrabold text-green-700">50+</h3>
-      <p className="text-gray-600 mt-2">Community Partners</p>
+      <h3 className="text-4xl font-extrabold text-green-700">{petsCount || 0}</h3>
+      <p className="text-gray-600 mt-2">Pet Posts</p>
     </div>
 
     <div className="bg-white rounded-2xl shadow-md p-6 text-center">
-      <h3 className="text-4xl font-extrabold text-purple-700">409</h3>
-      <p className="text-gray-600 mt-2">Built for Southeast Texas</p>
+      <h3 className="text-4xl font-extrabold text-purple-700">{jobsCount || 0}</h3>
+      <p className="text-gray-600 mt-2">Local Jobs</p>
     </div>
 
   </div>
