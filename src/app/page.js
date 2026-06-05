@@ -24,6 +24,12 @@ export default async function Home() {
   .select("*")
   .order("created_at", { ascending: false })
   .limit(3); 
+
+  const { data: featuredBusinesses } = await supabase
+  .from("businesses")
+  .select("*")
+  .order("created_at", { ascending: false })
+  .limit(3);
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       
@@ -304,6 +310,7 @@ export default async function Home() {
 
         </div>
       </section>
+      
       {/* Local Business Spotlight */}
 <section className="max-w-6xl mx-auto py-12 px-6">
   <div className="bg-white rounded-3xl shadow-md p-8">
@@ -318,50 +325,61 @@ export default async function Home() {
         </h3>
 
         <p className="text-gray-600 text-lg">
-          Featuring Southeast Texas businesses, contractors, makers, farms,
+          Featuring real Southeast Texas businesses, contractors, makers, farms,
           shelters, and service providers.
         </p>
       </div>
 
-      <button className="bg-blue-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-800">
-        Nominate a Business
-      </button>
+      <a
+        href="/businesses"
+        className="bg-blue-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-800"
+      >
+        View Businesses
+      </a>
     </div>
 
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
-      <div className="border rounded-2xl p-5">
-        <div className="text-4xl mb-3">🔨</div>
-        <h4 className="text-xl font-bold">409 Custom Woodworks</h4>
-        <p className="text-gray-600 mt-2">
-          Handmade tables, cabinets, and home projects.
-        </p>
-        <p className="mt-3 text-sm font-bold text-blue-900">
-          Texas Made • Family Owned
+    {!featuredBusinesses || featuredBusinesses.length === 0 ? (
+      <div className="mt-8 bg-gray-100 rounded-2xl p-6 text-center">
+        <h4 className="text-2xl font-bold mb-2">No businesses yet</h4>
+        <p className="text-gray-600">
+          Add a local business to appear in the spotlight.
         </p>
       </div>
+    ) : (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
+        {featuredBusinesses.map((business) => (
+          <a
+            key={business.id}
+            href="/businesses"
+            className="border rounded-2xl p-5 block hover:shadow-xl"
+          >
+            {business.image_url ? (
+              <img
+                src={business.image_url}
+                alt={business.name}
+                className="h-36 w-full object-cover rounded-xl mb-4"
+              />
+            ) : (
+              <div className="text-4xl mb-3">🏪</div>
+            )}
 
-      <div className="border rounded-2xl p-5">
-        <div className="text-4xl mb-3">🐕</div>
-        <h4 className="text-xl font-bold">Beaumont Pet Rescue</h4>
-        <p className="text-gray-600 mt-2">
-          Helping local pets find safe and loving homes.
-        </p>
-        <p className="mt-3 text-sm font-bold text-blue-900">
-          Shelter Partner • Community Pets
-        </p>
-      </div>
+            <h4 className="text-xl font-bold">{business.name}</h4>
 
-      <div className="border rounded-2xl p-5">
-        <div className="text-4xl mb-3">🌽</div>
-        <h4 className="text-xl font-bold">Southeast TX Farm Stand</h4>
-        <p className="text-gray-600 mt-2">
-          Local produce, eggs, honey, and handmade goods.
-        </p>
-        <p className="mt-3 text-sm font-bold text-blue-900">
-          Local Farms • Farm Fresh
-        </p>
+            <p className="text-sm text-gray-500 mt-1">
+              {business.city}
+            </p>
+
+            <p className="text-gray-600 mt-2 line-clamp-3">
+              {business.description}
+            </p>
+
+            <p className="mt-3 text-sm font-bold text-blue-900">
+              {business.category}
+            </p>
+          </a>
+        ))}
       </div>
-    </div>
+    )}
   </div>
 </section>
 {/* Recent Local Activity */}
