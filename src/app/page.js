@@ -30,6 +30,14 @@ export default async function Home() {
   .select("*")
   .order("created_at", { ascending: false })
   .limit(3);
+
+  const { data: petOfTheWeek } = await supabase
+  .from("pets")
+  .select("*")
+  .eq("pet_of_week_eligible", true)
+  .order("votes", { ascending: false })
+  .limit(1)
+  .maybeSingle();
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       
@@ -310,7 +318,7 @@ export default async function Home() {
 
         </div>
       </section>
-      
+
       {/* Local Business Spotlight */}
 <section className="max-w-6xl mx-auto py-12 px-6">
   <div className="bg-white rounded-3xl shadow-md p-8">
@@ -471,26 +479,68 @@ export default async function Home() {
   )}
 </section>
 
+      
       {/* Pet of the Week */}
-      <section className="bg-white py-14 px-6">
-        <div className="max-w-5xl mx-auto rounded-3xl shadow-lg overflow-hidden">
-          
-          <div className="bg-orange-500 text-white p-6">
-            <h3 className="text-3xl font-bold">🐾 Pet of the Week</h3>
+<section className="bg-white py-14 px-6">
+  <div className="max-w-5xl mx-auto rounded-3xl shadow-lg overflow-hidden">
+    <div className="bg-orange-500 text-white p-6">
+      <h3 className="text-3xl font-bold">🐾 Pet of the Week</h3>
+    </div>
+
+    {petOfTheWeek ? (
+      <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+        {petOfTheWeek.image_url ? (
+          <img
+            src={petOfTheWeek.image_url}
+            alt={petOfTheWeek.pet_name}
+            className="h-72 w-full object-cover rounded-2xl"
+          />
+        ) : (
+          <div className="h-72 bg-gray-300 flex items-center justify-center text-7xl rounded-2xl">
+            🐾
           </div>
+        )}
 
-          <div className="p-8">
-            <h4 className="text-2xl font-bold mb-2">Meet Daisy</h4>
+        <div>
+          <h4 className="text-2xl font-bold mb-2">
+            Meet {petOfTheWeek.pet_name}
+          </h4>
 
-            <p className="text-lg text-gray-700 mb-4">
-              2-Year-Old Lab Mix looking for her forever home in Beaumont, Texas.
-            </p>
+          <p className="text-lg text-gray-700 mb-4">
+            {petOfTheWeek.description}
+          </p>
 
-            <button className="bg-blue-900 text-white px-5 py-3 rounded-xl hover:bg-blue-800"></button>
-          </div>
+          <p className="font-bold mb-4">
+            Votes: {petOfTheWeek.votes || 0}
+          </p>
 
+          <a
+            href="/pets"
+            className="inline-block bg-blue-900 text-white px-5 py-3 rounded-xl hover:bg-blue-800"
+          >
+            Vote for Pet of the Week
+          </a>
         </div>
-      </section>
+      </div>
+    ) : (
+      <div className="p-8">
+        <h4 className="text-2xl font-bold mb-2">No pets entered yet</h4>
+
+        <p className="text-lg text-gray-700 mb-4">
+          Add a pet and enter them for Pet of the Week.
+        </p>
+
+        <a
+          href="/pets/add"
+          className="inline-block bg-blue-900 text-white px-5 py-3 rounded-xl hover:bg-blue-800"
+        >
+          Add Pet Entry
+        </a>
+      </div>
+    )}
+  </div>
+</section>
+            
       {/* Real Estate & Investment Hub */}
 <section className="max-w-6xl mx-auto py-12 px-6">
   <div className="bg-gradient-to-r from-green-900 to-green-700 text-white rounded-3xl shadow-xl p-8">
@@ -531,9 +581,22 @@ export default async function Home() {
       </div>
 
       <div className="bg-white text-gray-900 rounded-2xl p-6 shadow-lg w-full md:w-96">
-        <h4 className="text-2xl font-bold mb-4">
-          Join Property Network
-        </h4>
+        <div className="bg-white text-gray-900 rounded-2xl p-6 shadow-lg w-full md:w-96">
+  <h4 className="text-2xl font-bold mb-4">
+    Real Estate Marketplace
+  </h4>
+
+  <p className="mb-4 text-gray-600">
+    Browse rentals, contractors, services, and local investment opportunities.
+  </p>
+
+  <a
+    href="/browse?category=Rentals"
+    className="block text-center bg-green-700 text-white py-3 rounded-xl font-bold hover:bg-green-600"
+  >
+    Browse Rentals
+  </a>
+</div>
 
         <input
           className="w-full border rounded-xl px-4 py-3 mb-4"
@@ -548,107 +611,48 @@ export default async function Home() {
     </div>
   </div>
 </section>
-{/* Community Support */}
-<section className="max-w-6xl mx-auto py-12 px-6">
-  <div className="bg-white rounded-3xl shadow-xl p-8">
 
-    <div className="flex flex-col md:flex-row justify-between gap-8 items-center">
 
-      <div className="max-w-3xl">
-        <p className="uppercase tracking-wide text-gray-500 mb-2">
-          Community Assistance Network
-        </p>
-
-        <h3 className="text-4xl font-bold mb-4">
-          Helping Local Families & Community Causes
-        </h3>
-
-        <p className="text-lg text-gray-600 mb-6">
-          Support verified local fundraisers, medical hardships,
-          disaster recovery efforts, shelter drives, school programs,
-          and emergency community assistance initiatives.
-        </p>
-
-        <div className="flex flex-wrap gap-3">
-          <span className="bg-red-100 text-red-700 px-4 py-2 rounded-full font-semibold">
-            ❤️ Medical Support
-          </span>
-
-          <span className="bg-blue-100 text-blue-900 px-4 py-2 rounded-full font-semibold">
-            🌀 Disaster Recovery
-          </span>
-
-          <span className="bg-green-100 text-green-700 px-4 py-2 rounded-full font-semibold">
-            🐶 Shelter Drives
-          </span>
-
-          <span className="bg-yellow-100 text-yellow-800 px-4 py-2 rounded-full font-semibold">
-            🎓 School Programs
-          </span>
-        </div>
-      </div>
-
-      <div className="bg-gray-100 rounded-2xl p-6 w-full md:w-96">
-        <h4 className="text-2xl font-bold mb-4">
-          Featured Community Drive
-        </h4>
-
-        <p className="text-gray-700 mb-4">
-          Southeast Texas Storm Recovery Supply Fund
-        </p>
-
-        <div className="w-full bg-gray-300 rounded-full h-4 mb-3">
-          <div className="bg-green-600 h-4 rounded-full w-2/3"></div>
-        </div>
-
-        <p className="text-sm text-gray-600 mb-5">
-          $13,400 raised of $20,000 goal
-        </p>
-
-        <button className="w-full bg-red-600 text-white py-3 rounded-xl font-bold hover:bg-red-500">
-          Support Local Cause
-        </button>
-      </div>
-
-    </div>
-  </div>
-</section>
 {/* Community Hub */}
 <section className="max-w-6xl mx-auto py-12 px-6">
   <h3 className="text-3xl font-bold mb-8">Community Hub</h3>
 
   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-    <div className="bg-white rounded-2xl shadow-md p-6">
-      <div className="text-5xl mb-4">🌽</div>
-      <h4 className="text-xl font-bold mb-2">Farmers Markets</h4>
+    <a
+      href="/jobs"
+      className="bg-white rounded-2xl shadow-md p-6 block hover:shadow-xl"
+    >
+      <div className="text-5xl mb-4">💼</div>
+      <h4 className="text-xl font-bold mb-2">409 Jobs</h4>
       <p className="text-gray-600 mb-4">
-        Find local produce, ranch goods, crafts, and vendors near you.
+        Find local jobs, side work, hiring opportunities, and Southeast Texas employers.
       </p>
-      <button className="text-blue-900 font-bold">View Markets →</button>
-    </div>
+      <span className="text-blue-900 font-bold">View Jobs →</span>
+    </a>
 
-    <div className="bg-white rounded-2xl shadow-md p-6">
-      <div className="text-5xl mb-4">🎓</div>
-      <h4 className="text-xl font-bold mb-2">Skill Center</h4>
+    <a
+      href="/businesses"
+      className="bg-white rounded-2xl shadow-md p-6 block hover:shadow-xl"
+    >
+      <div className="text-5xl mb-4">🏪</div>
+      <h4 className="text-xl font-bold mb-2">Local Businesses</h4>
       <p className="text-gray-600 mb-4">
-        Free community learning for trades, job training, small business, and homeschooling.
+        Discover contractors, shops, vendors, service providers, and local professionals.
       </p>
-      <button className="text-blue-900 font-bold">Start Learning →</button>
-    </div>
+      <span className="text-blue-900 font-bold">View Businesses →</span>
+    </a>
 
-    <div className="bg-white rounded-2xl shadow-md p-6">
+    <a
+      href="/pets"
+      className="bg-white rounded-2xl shadow-md p-6 block hover:shadow-xl"
+    >
       <div className="text-5xl mb-4">🐾</div>
-      <h4 className="text-xl font-bold mb-2">Lost & Found Pets</h4>
+      <h4 className="text-xl font-bold mb-2">Pets & Shelters</h4>
       <p className="text-gray-600 mb-4">
-        Help reconnect local families with missing pets and support nearby shelters.
+        Post lost pets, found pets, adoptable animals, and vote for Pet of the Week.
       </p>
-      <a
-  href="/pets"
-  className="text-blue-900 font-bold"
->
-  View Pets →
-</a>
-    </div>
+      <span className="text-blue-900 font-bold">View Pets →</span>
+    </a>
   </div>
 </section>
 {/* Why Local Matters */}
@@ -735,16 +739,16 @@ export default async function Home() {
 
     <div>
       <h5 className="font-bold mb-3">Community</h5>
-      <p className="text-blue-100">Pet of the Week</p>
-      <p className="text-blue-100">Farmers Markets</p>
-      <p className="text-blue-100">Skill Center</p>
+      <p className="text-blue-100">Pet & Shelters</p>
+      <p className="text-blue-100">409 Jobs</p>
+      <p className="text-blue-100">Local Businesses</p>
     </div>
 
     <div>
       <h5 className="font-bold mb-3">Local Business</h5>
-      <p className="text-blue-100">Business Spotlight</p>
-      <p className="text-blue-100">Sponsor a Section</p>
-      <p className="text-blue-100">Partner With Us</p>
+      <p className="text-blue-100">Business Directory</p>
+      <p className="text-blue-100">Add Business</p>
+      <p className="text-blue-100">Post a Job</p>
     </div>
   </div>
 
