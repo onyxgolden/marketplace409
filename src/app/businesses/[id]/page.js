@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 
 export default async function BusinessDetailPage({ params }) {
-  const id = params.id;
+  const { id } = await params;
 
   const { data: business, error } = await supabase
     .from("businesses")

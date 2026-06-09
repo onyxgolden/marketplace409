@@ -67,7 +67,14 @@ export default async function BusinessesPage() {
                 <div className="p-5">
                   <p className="text-sm text-gray-500">{business.city}</p>
 
-                  <h2 className="text-xl font-bold">{business.name}</h2>
+                  <a
+                    href={`/businesses/${business.id}`}
+                    className="block"
+                  >
+                  <h2 className="text-xl font-bold hover:text-red-600">
+                   {business.name}
+                  </h2>
+                 </a>
 
                   <p className="text-sm text-gray-500 mt-2">
                     {business.category}
