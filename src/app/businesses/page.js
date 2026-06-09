@@ -21,7 +21,8 @@ export default async function BusinessesPage() {
         </h1>
 
         <p className="text-xl text-gray-600 mb-8">
-          Discover Southeast Texas businesses, services, shops, vendors, and local professionals.
+          Discover Southeast Texas businesses, services, shops, vendors, and
+          local professionals.
         </p>
 
         <a
@@ -96,24 +97,21 @@ export default async function BusinessesPage() {
                   )}
 
                   {business.facebook_url && (
-  <a
-    href={business.facebook_url}
-    target="_blank"
-    className="block mt-3 bg-blue-600 text-white text-center py-3 rounded-xl font-bold"
-  >
-    Facebook
-  </a>
-)}
+                    <a
+                      href={business.facebook_url}
+                      target="_blank"
+                      className="block mt-3 bg-blue-600 text-white text-center py-3 rounded-xl font-bold"
+                    >
+                      Facebook
+                    </a>
+                  )}
 
+                  <ShareButton
+                    title={business.name}
+                    url={`https://409marketplace.online/businesses`}
+                  />
 
-<ShareButton
-  title={business.name}
-  url={`https://409marketplace.online/businesses`}
-/>
-
-<BusinessAdminControls businessId={business.id} />
-
-
+                  <BusinessAdminControls businessId={business.id} />
                 </div>
               </div>
             ))}

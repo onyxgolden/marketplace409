@@ -8,10 +8,7 @@ export default function DeletePetButton({ petId }) {
 
     if (!confirmed) return;
 
-    const { error } = await supabase
-      .from("pets")
-      .delete()
-      .eq("id", petId);
+    const { error } = await supabase.from("pets").delete().eq("id", petId);
 
     if (error) {
       alert("Error deleting pet post");

@@ -4,9 +4,7 @@ import { supabase } from "@/lib/supabase";
 
 export default function DeleteBusinessButton({ businessId }) {
   async function handleDelete() {
-    const confirmed = confirm(
-      "Are you sure you want to delete this business?"
-    );
+    const confirmed = confirm("Are you sure you want to delete this business?");
 
     if (!confirmed) return;
 

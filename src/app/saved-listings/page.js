@@ -69,7 +69,7 @@ export default function SavedListingsPage() {
                   className="bg-white rounded-2xl shadow-md overflow-hidden hover:shadow-xl transition block"
                 >
                   {listing.image_url ? (
-                    <img 
+                    <img
                       src={listing.image_url}
                       alt={listing.title}
                       className="h-44 w-full object-cover"
@@ -89,20 +89,19 @@ export default function SavedListingsPage() {
                     <p className="text-sm text-gray-500 mt-2">
                       {listing.category}
                     </p>
-                    
                   </div>
                 </a>
               );
             })}
             <button
-  onClick={(e) => {
-    e.preventDefault();
-    removeFavorite(favorite.id);
-  }}
-  className="mt-4 w-full bg-gray-800 text-white py-3 rounded-xl font-bold hover:bg-gray-700"
->
-  Remove Saved Listing
-</button>
+              onClick={(e) => {
+                e.preventDefault();
+                removeFavorite(favorite.id);
+              }}
+              className="mt-4 w-full bg-gray-800 text-white py-3 rounded-xl font-bold hover:bg-gray-700"
+            >
+              Remove Saved Listing
+            </button>
           </div>
         )}
       </section>

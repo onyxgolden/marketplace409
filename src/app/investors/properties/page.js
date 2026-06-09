@@ -20,7 +20,8 @@ export default async function InvestorPropertiesPage() {
           </h1>
 
           <p className="text-xl text-green-100">
-            Rentals, rehab opportunities, wholesale deals, and investment properties.
+            Rentals, rehab opportunities, wholesale deals, and investment
+            properties.
           </p>
         </div>
       </section>
@@ -59,9 +60,7 @@ export default async function InvestorPropertiesPage() {
                 )}
 
                 <div className="p-6">
-                  <h3 className="text-xl font-bold mb-2">
-                    {property.address}
-                  </h3>
+                  <h3 className="text-xl font-bold mb-2">{property.address}</h3>
 
                   <p className="text-gray-500 mb-3">
                     {property.city}, {property.county}

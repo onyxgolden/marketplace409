@@ -55,9 +55,7 @@ export default async function PetsPage() {
               )}
 
               <div>
-                <h3 className="text-3xl font-bold">
-                  {petOfTheWeek.pet_name}
-                </h3>
+                <h3 className="text-3xl font-bold">{petOfTheWeek.pet_name}</h3>
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   {petOfTheWeek.post_type === "Adoptable Pet" && (
@@ -79,9 +77,7 @@ export default async function PetsPage() {
 
                 <p className="text-gray-600 mt-4">{petOfTheWeek.city}</p>
 
-                <p className="mt-4 text-gray-700">
-                  {petOfTheWeek.description}
-                </p>
+                <p className="mt-4 text-gray-700">{petOfTheWeek.description}</p>
 
                 <p className="mt-4 font-bold">
                   Votes: {petOfTheWeek.votes || 0}
@@ -171,10 +167,7 @@ export default async function PetsPage() {
 
                   <p className="mt-3 font-bold">Votes: {pet.votes || 0}</p>
 
-                  <VotePetButton
-                    petId={pet.id}
-                    currentVotes={pet.votes || 0}
-                  />
+                  <VotePetButton petId={pet.id} currentVotes={pet.votes || 0} />
 
                   {pet.contact_phone && (
                     <a

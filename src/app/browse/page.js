@@ -17,12 +17,12 @@ export default async function BrowsePage({ searchParams }) {
     query = query.eq("category", category);
   }
   if (!showSold) {
-  query = query.eq("is_sold", false);
-}
+    query = query.eq("is_sold", false);
+  }
 
   if (search) {
     query = query.or(
-      `title.ilike.%${search}%,description.ilike.%${search}%,city.ilike.%${search}%`
+      `title.ilike.%${search}%,description.ilike.%${search}%,city.ilike.%${search}%`,
     );
   }
 
@@ -36,11 +36,14 @@ export default async function BrowsePage({ searchParams }) {
         <h1 className="text-5xl font-extrabold mb-4">Browse Listings</h1>
 
         <p className="text-xl text-gray-600 mb-8">
-          Search local items, services, rentals, farm goods, pets, and businesses
-          across Southeast Texas.
+          Search local items, services, rentals, farm goods, pets, and
+          businesses across Southeast Texas.
         </p>
 
-        <form action="/browse" className="bg-white rounded-2xl shadow-md p-4 mb-6">
+        <form
+          action="/browse"
+          className="bg-white rounded-2xl shadow-md p-4 mb-6"
+        >
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <input
               name="search"
@@ -120,78 +123,78 @@ export default async function BrowsePage({ searchParams }) {
             Pets
           </a>
           <a
-  href="/browse?category=Electronics"
-  className={`px-5 py-3 rounded-full font-semibold shadow ${
-    category === "Electronics"
-      ? "bg-blue-900 text-white"
-      : "bg-white text-gray-900"
-  }`}
->
-  Electronics
-</a>
+            href="/browse?category=Electronics"
+            className={`px-5 py-3 rounded-full font-semibold shadow ${
+              category === "Electronics"
+                ? "bg-blue-900 text-white"
+                : "bg-white text-gray-900"
+            }`}
+          >
+            Electronics
+          </a>
 
-<a
-  href="/browse?category=Music%20%26%20Instruments"
-  className={`px-5 py-3 rounded-full font-semibold shadow ${
-    category === "Music & Instruments"
-      ? "bg-blue-900 text-white"
-      : "bg-white text-gray-900"
-  }`}
->
-  Music & Instruments
-</a>
-
-<a
-  href="/browse?category=Boats%20%26%20Marine"
-  className={`px-5 py-3 rounded-full font-semibold shadow ${
-    category === "Boats & Marine"
-      ? "bg-blue-900 text-white"
-      : "bg-white text-gray-900"
-  }`}
->
-  Boats & Marine
-</a>
-
-<a
-  href="/browse?category=Hunting%20%26%20Fishing"
-  className={`px-5 py-3 rounded-full font-semibold shadow ${
-    category === "Hunting & Fishing"
-      ? "bg-blue-900 text-white"
-      : "bg-white text-gray-900"
-  }`}
->
-  Hunting & Fishing
-</a>
-
-<a
-  href="/browse?category=Tools%20%26%20Equipment"
-  className={`px-5 py-3 rounded-full font-semibold shadow ${
-    category === "Tools & Equipment"
-      ? "bg-blue-900 text-white"
-      : "bg-white text-gray-900"
-  }`}
->
-  Tools & Equipment
-</a>
-
-<a
-  href="/browse?category=Miscellaneous"
-  className={`px-5 py-3 rounded-full font-semibold shadow ${
-    category === "Miscellaneous"
-      ? "bg-blue-900 text-white"
-      : "bg-white text-gray-900"
-  }`}
->
-  Miscellaneous
-</a>
           <a
-  href="/browse?sold=true"
-  className={`px-5 py-3 rounded-full font-semibold shadow ${
-    showSold ? "bg-red-600 text-white" : "bg-white text-gray-900"
-  }`}
->
-  Show Sold
-</a>
+            href="/browse?category=Music%20%26%20Instruments"
+            className={`px-5 py-3 rounded-full font-semibold shadow ${
+              category === "Music & Instruments"
+                ? "bg-blue-900 text-white"
+                : "bg-white text-gray-900"
+            }`}
+          >
+            Music & Instruments
+          </a>
+
+          <a
+            href="/browse?category=Boats%20%26%20Marine"
+            className={`px-5 py-3 rounded-full font-semibold shadow ${
+              category === "Boats & Marine"
+                ? "bg-blue-900 text-white"
+                : "bg-white text-gray-900"
+            }`}
+          >
+            Boats & Marine
+          </a>
+
+          <a
+            href="/browse?category=Hunting%20%26%20Fishing"
+            className={`px-5 py-3 rounded-full font-semibold shadow ${
+              category === "Hunting & Fishing"
+                ? "bg-blue-900 text-white"
+                : "bg-white text-gray-900"
+            }`}
+          >
+            Hunting & Fishing
+          </a>
+
+          <a
+            href="/browse?category=Tools%20%26%20Equipment"
+            className={`px-5 py-3 rounded-full font-semibold shadow ${
+              category === "Tools & Equipment"
+                ? "bg-blue-900 text-white"
+                : "bg-white text-gray-900"
+            }`}
+          >
+            Tools & Equipment
+          </a>
+
+          <a
+            href="/browse?category=Miscellaneous"
+            className={`px-5 py-3 rounded-full font-semibold shadow ${
+              category === "Miscellaneous"
+                ? "bg-blue-900 text-white"
+                : "bg-white text-gray-900"
+            }`}
+          >
+            Miscellaneous
+          </a>
+          <a
+            href="/browse?sold=true"
+            className={`px-5 py-3 rounded-full font-semibold shadow ${
+              showSold ? "bg-red-600 text-white" : "bg-white text-gray-900"
+            }`}
+          >
+            Show Sold
+          </a>
         </div>
 
         {error && (
@@ -218,31 +221,29 @@ export default async function BrowsePage({ searchParams }) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {listings.map((listing) => (
               <a
-  key={listing.id}
-  href={`/listing/${listing.id}`}
-  className="bg-white rounded-2xl shadow-md overflow-hidden hover:shadow-xl transition block"
->
-  <div className="relative">
+                key={listing.id}
+                href={`/listing/${listing.id}`}
+                className="bg-white rounded-2xl shadow-md overflow-hidden hover:shadow-xl transition block"
+              >
+                <div className="relative">
+                  {listing.image_url ? (
+                    <img
+                      src={listing.image_url}
+                      alt={listing.title}
+                      className="h-44 w-full object-cover"
+                    />
+                  ) : (
+                    <div className="h-44 bg-gray-300 flex items-center justify-center text-6xl">
+                      📦
+                    </div>
+                  )}
 
-    {listing.image_url ? (
-      <img
-        src={listing.image_url}
-        alt={listing.title}
-        className="h-44 w-full object-cover"
-      />
-    ) : (
-      <div className="h-44 bg-gray-300 flex items-center justify-center text-6xl">
-        📦
-      </div>
-    )}
-
-    {listing.is_sold && (
-      <div className="absolute top-3 left-3 bg-red-600 text-white px-4 py-2 rounded-full font-bold shadow">
-        SOLD
-      </div>
-    )}
-
-  </div>
+                  {listing.is_sold && (
+                    <div className="absolute top-3 left-3 bg-red-600 text-white px-4 py-2 rounded-full font-bold shadow">
+                      SOLD
+                    </div>
+                  )}
+                </div>
                 <div className="p-5">
                   <p className="text-sm text-gray-500">{listing.city}</p>
 

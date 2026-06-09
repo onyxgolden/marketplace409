@@ -18,7 +18,8 @@ export default async function JobsPage() {
         <h1 className="text-5xl font-extrabold mb-4">409 Jobs</h1>
 
         <p className="text-xl text-gray-600 mb-8">
-          Local hiring board for Southeast Texas jobs, side work, trades, and small businesses.
+          Local hiring board for Southeast Texas jobs, side work, trades, and
+          small businesses.
         </p>
 
         <a
@@ -111,7 +112,7 @@ export default async function JobsPage() {
                   {job.contact_email && (
                     <a
                       href={`mailto:${job.contact_email}?subject=${encodeURIComponent(
-                        `Job Interest: ${job.job_title}`
+                        `Job Interest: ${job.job_title}`,
                       )}`}
                       className="block mt-3 bg-gray-800 text-white text-center py-3 rounded-xl font-bold"
                     >

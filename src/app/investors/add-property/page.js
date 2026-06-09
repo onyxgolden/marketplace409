@@ -30,7 +30,9 @@ export default function AddInvestorPropertyPage() {
     } = await supabase.auth.getUser();
 
     if (!user) {
-      alert("Please create a free account before posting an investment property.");
+      alert(
+        "Please create a free account before posting an investment property.",
+      );
       window.location.href = "/auth";
       return;
     }
@@ -104,7 +106,8 @@ export default function AddInvestorPropertyPage() {
           </h1>
 
           <p className="text-gray-600 mb-8">
-            Post a rental, rehab project, wholesale opportunity, or investor deal.
+            Post a rental, rehab project, wholesale opportunity, or investor
+            deal.
           </p>
 
           <div className="space-y-6">

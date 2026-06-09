@@ -103,12 +103,15 @@ export default function AddPetPage() {
             <select
               value={postType}
               onChange={(e) => {
-  setPostType(e.target.value);
+                setPostType(e.target.value);
 
-  if (e.target.value === "Lost Pet" || e.target.value === "Found Pet") {
-    setPetOfWeekEligible(false);
-  }
-}}
+                if (
+                  e.target.value === "Lost Pet" ||
+                  e.target.value === "Found Pet"
+                ) {
+                  setPetOfWeekEligible(false);
+                }
+              }}
               className="w-full p-4 rounded-2xl border border-gray-300"
             >
               <option value="">Select Post Type</option>
@@ -118,17 +121,19 @@ export default function AddPetPage() {
               <option value="Personal Pet">Personal Pet</option>
             </select>
 
-            {postType !== "Lost Pet" && postType !== "Found Pet" && postType !== "" && (
-  <label className="flex items-center gap-3 text-lg font-bold">
-    <input
-      type="checkbox"
-      checked={petOfWeekEligible}
-      onChange={(e) => setPetOfWeekEligible(e.target.checked)}
-      className="w-5 h-5"
-    />
-    Enter this pet for Pet of the Week
-  </label>
-)}
+            {postType !== "Lost Pet" &&
+              postType !== "Found Pet" &&
+              postType !== "" && (
+                <label className="flex items-center gap-3 text-lg font-bold">
+                  <input
+                    type="checkbox"
+                    checked={petOfWeekEligible}
+                    onChange={(e) => setPetOfWeekEligible(e.target.checked)}
+                    className="w-5 h-5"
+                  />
+                  Enter this pet for Pet of the Week
+                </label>
+              )}
 
             <select
               value={petType}

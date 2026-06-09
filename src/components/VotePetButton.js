@@ -13,14 +13,12 @@ export default function VotePetButton({ petId, currentVotes = 0 }) {
       return;
     }
 
-    const { error: voteError } = await supabase
-      .from("pet_votes")
-      .insert([
-        {
-          pet_id: petId,
-          user_id: user.id,
-        },
-      ]);
+    const { error: voteError } = await supabase.from("pet_votes").insert([
+      {
+        pet_id: petId,
+        user_id: user.id,
+      },
+    ]);
 
     if (voteError) {
       alert("You have already voted for this pet.");

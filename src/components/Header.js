@@ -39,13 +39,27 @@ export default function Header() {
         </button>
 
         <nav className="hidden md:flex gap-6 text-lg items-center">
-          <a href="/" className="hover:text-blue-200">Home</a>
-          <a href="/browse" className="hover:text-blue-200">Buy & Sell</a>
-          <a href="/browse?category=Rentals" className="hover:text-blue-200">Rentals</a>
-          <a href="/browse?category=Services" className="hover:text-blue-200">Services</a>
-          <a href="/community" className="hover:text-blue-200">Community</a>
-          <a href="/businesses" className="hover:text-blue-200">Businesses</a>
-          <a href="/my-listings" className="hover:text-blue-200">My Listings</a>
+          <a href="/" className="hover:text-blue-200">
+            Home
+          </a>
+          <a href="/browse" className="hover:text-blue-200">
+            Buy & Sell
+          </a>
+          <a href="/browse?category=Rentals" className="hover:text-blue-200">
+            Rentals
+          </a>
+          <a href="/browse?category=Services" className="hover:text-blue-200">
+            Services
+          </a>
+          <a href="/community" className="hover:text-blue-200">
+            Community
+          </a>
+          <a href="/businesses" className="hover:text-blue-200">
+            Businesses
+          </a>
+          <a href="/my-listings" className="hover:text-blue-200">
+            My Listings
+          </a>
 
           <a
             href="/import"
@@ -73,22 +87,54 @@ export default function Header() {
               </button>
             </>
           ) : (
-            <a href="/auth" className="hover:text-blue-200">Sign In</a>
+            <a href="/auth" className="hover:text-blue-200">
+              Sign In
+            </a>
           )}
         </nav>
       </div>
 
       {menuOpen && (
         <nav className="md:hidden mt-4 bg-blue-950 rounded-2xl p-4 space-y-3">
-          <a href="/" className="block hover:text-blue-200">Home</a>
-          <a href="/browse" className="block hover:text-blue-200">Buy & Sell</a>
-          <a href="/browse?category=Rentals" className="block hover:text-blue-200">Rentals</a>
-          <a href="/browse?category=Services" className="block hover:text-blue-200">Services</a>
-          <a href="/community" className="block hover:text-blue-200">Community</a>
-          <a href="/businesses" className="block hover:text-blue-200">Businesses</a>
-          <a href="/my-listings" className="block hover:text-blue-200">My Listings</a>
-          <a href="/import" className="block bg-white text-blue-900 px-4 py-3 rounded-xl font-bold">Import</a>
-          <a href="/post" className="block bg-red-600 text-white px-4 py-3 rounded-xl font-bold">Post Free</a>
+          <a href="/" className="block hover:text-blue-200">
+            Home
+          </a>
+          <a href="/browse" className="block hover:text-blue-200">
+            Buy & Sell
+          </a>
+          <a
+            href="/browse?category=Rentals"
+            className="block hover:text-blue-200"
+          >
+            Rentals
+          </a>
+          <a
+            href="/browse?category=Services"
+            className="block hover:text-blue-200"
+          >
+            Services
+          </a>
+          <a href="/community" className="block hover:text-blue-200">
+            Community
+          </a>
+          <a href="/businesses" className="block hover:text-blue-200">
+            Businesses
+          </a>
+          <a href="/my-listings" className="block hover:text-blue-200">
+            My Listings
+          </a>
+          <a
+            href="/import"
+            className="block bg-white text-blue-900 px-4 py-3 rounded-xl font-bold"
+          >
+            Import
+          </a>
+          <a
+            href="/post"
+            className="block bg-red-600 text-white px-4 py-3 rounded-xl font-bold"
+          >
+            Post Free
+          </a>
 
           {user ? (
             <>
@@ -102,7 +148,9 @@ export default function Header() {
               </button>
             </>
           ) : (
-            <a href="/auth" className="block hover:text-blue-200">Sign In</a>
+            <a href="/auth" className="block hover:text-blue-200">
+              Sign In
+            </a>
           )}
         </nav>
       )}

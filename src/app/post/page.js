@@ -18,49 +18,51 @@ export default function PostPage() {
   const [isPosting, setIsPosting] = useState(false);
 
   async function handleSubmit() {
-setIsPosting(true);
+    setIsPosting(true);
 
-const {
-  data: { user },
-} = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-if (!user) {
-  alert("You can browse listings as a guest, but you need a free account to post.");
-  setIsPosting(false);
-  window.location.href = "/auth";
-  return;
-}
-
-let imageUrl = "";
-
-    let imageUrls = [];
-
-if (images.length > 0) {
-  for (const image of images) {
-    const fileExt = image.name.split(".").pop();
-    const fileName = `${Date.now()}-${Math.random()}.${fileExt}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from("listing-images")
-      .upload(fileName, image, {
-        contentType: image.type,
-        upsert: false,
-      });
-
-    if (uploadError) {
-      alert("Error uploading one of the images");
-      console.log(uploadError);
+    if (!user) {
+      alert(
+        "You can browse listings as a guest, but you need a free account to post.",
+      );
       setIsPosting(false);
+      window.location.href = "/auth";
       return;
     }
 
-    const { data } = supabase.storage
-      .from("listing-images")
-      .getPublicUrl(fileName);
+    let imageUrl = "";
 
-    imageUrls.push(data.publicUrl);
-  }
-}
+    let imageUrls = [];
+
+    if (images.length > 0) {
+      for (const image of images) {
+        const fileExt = image.name.split(".").pop();
+        const fileName = `${Date.now()}-${Math.random()}.${fileExt}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("listing-images")
+          .upload(fileName, image, {
+            contentType: image.type,
+            upsert: false,
+          });
+
+        if (uploadError) {
+          alert("Error uploading one of the images");
+          console.log(uploadError);
+          setIsPosting(false);
+          return;
+        }
+
+        const { data } = supabase.storage
+          .from("listing-images")
+          .getPublicUrl(fileName);
+
+        imageUrls.push(data.publicUrl);
+      }
+    }
 
     const { data: newListing, error } = await supabase
       .from("listings")
@@ -83,12 +85,10 @@ if (images.length > 0) {
       .single();
 
     if (error) {
-  alert("Error posting listing");
-  console.log(error);
-  setIsPosting(false);
-}
-    
-      else {
+      alert("Error posting listing");
+      console.log(error);
+      setIsPosting(false);
+    } else {
       alert("Listing posted successfully!");
       window.location.href = `/listing/${newListing.id}`;
     }
@@ -190,9 +190,11 @@ if (images.length > 0) {
                   const files = Array.from(e.target.files);
 
                   setImages(files);
-                  setImagePreviews(files.map((file) => URL.createObjectURL(file)));
-              }}
-            />
+                  setImagePreviews(
+                    files.map((file) => URL.createObjectURL(file)),
+                  );
+                }}
+              />
 
               {imagePreviews.length > 0 && (
                 <div className="mt-6 grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -203,18 +205,18 @@ if (images.length > 0) {
                       alt={`Preview ${index + 1}`}
                       className="h-32 w-full object-cover rounded-2xl shadow"
                     />
-            ))}
-          </div>
-        )}
+                  ))}
+                </div>
+              )}
             </div>
 
             <button
-  onClick={handleSubmit}
-  disabled={isPosting}
-  className="bg-red-600 text-white py-4 rounded-2xl text-xl font-bold hover:bg-red-500 disabled:bg-gray-400"
->
-  {isPosting ? "Posting..." : "Post Listing"}
-</button>
+              onClick={handleSubmit}
+              disabled={isPosting}
+              className="bg-red-600 text-white py-4 rounded-2xl text-xl font-bold hover:bg-red-500 disabled:bg-gray-400"
+            >
+              {isPosting ? "Posting..." : "Post Listing"}
+            </button>
           </div>
         </div>
       </section>

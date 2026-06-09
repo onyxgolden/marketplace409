@@ -9,18 +9,18 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
 
   async function signUp() {
-  const { error } = await supabase.auth.signUp({
-    email,
-    password,
-  });
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+    });
 
-  if (error) {
-    alert(error.message);
-  } else {
-    alert("Account created. You can now post your listing.");
-    window.location.href = "/post";
+    if (error) {
+      alert(error.message);
+    } else {
+      alert("Account created. You can now post your listing.");
+      window.location.href = "/post";
+    }
   }
-}
 
   async function signIn() {
     const { error } = await supabase.auth.signInWithPassword({

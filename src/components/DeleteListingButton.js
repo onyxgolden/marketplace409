@@ -19,7 +19,9 @@ export default function DeleteListingButton({ listingId, ownerId }) {
       return;
     }
 
-    const confirmDelete = confirm("Are you sure you want to delete this listing?");
+    const confirmDelete = confirm(
+      "Are you sure you want to delete this listing?",
+    );
 
     if (!confirmDelete) {
       return;

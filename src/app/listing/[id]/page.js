@@ -49,55 +49,49 @@ export default async function ListingDetailPage({ params }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
           <div className="bg-white rounded-3xl shadow-md overflow-hidden">
             {listing.image_urls && listing.image_urls.length > 0 ? (
-  <div>
-    <img
-      src={listing.image_urls[0]}
-      alt={listing.title}
-      className="w-full h-[450px] object-cover"
-    />
+              <div>
+                <img
+                  src={listing.image_urls[0]}
+                  alt={listing.title}
+                  className="w-full h-[450px] object-cover"
+                />
 
-    <div className="grid grid-cols-4 gap-2 p-3 bg-white">
-      {listing.image_urls.slice(1).map((url, index) => (
-        <img
-          key={index}
-          src={url}
-          alt={`${listing.title} ${index + 2}`}
-          className="h-24 w-full object-cover rounded-xl"
-        />
-      ))}
-    </div>
-  </div>
-) : listing.image_url ? (
-  <img
-    src={listing.image_url}
-    alt={listing.title}
-    className="w-full h-[450px] object-cover"
-  />
-) : (
-  <div className="h-[450px] bg-gray-300 flex items-center justify-center text-7xl">
-    📦
-  </div>
-)}
+                <div className="grid grid-cols-4 gap-2 p-3 bg-white">
+                  {listing.image_urls.slice(1).map((url, index) => (
+                    <img
+                      key={index}
+                      src={url}
+                      alt={`${listing.title} ${index + 2}`}
+                      className="h-24 w-full object-cover rounded-xl"
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : listing.image_url ? (
+              <img
+                src={listing.image_url}
+                alt={listing.title}
+                className="w-full h-[450px] object-cover"
+              />
+            ) : (
+              <div className="h-[450px] bg-gray-300 flex items-center justify-center text-7xl">
+                📦
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-3xl shadow-md p-8">
             <p className="text-sm text-gray-500 mb-2">{listing.city}</p>
 
-            <h1 className="text-4xl font-extrabold mb-4">
-              {listing.title}
-            </h1>
+            <h1 className="text-4xl font-extrabold mb-4">{listing.title}</h1>
 
             <p className="text-4xl font-extrabold text-green-700 mb-4">
               {listing.price}
             </p>
 
-            <p className="text-sm text-gray-500 mb-6">
-              {listing.category}
-            </p>
+            <p className="text-sm text-gray-500 mb-6">{listing.category}</p>
 
-            <p className="text-lg text-gray-700 mb-8">
-              {listing.description}
-            </p>
+            <p className="text-lg text-gray-700 mb-8">{listing.description}</p>
 
             <div className="bg-gray-100 rounded-2xl p-5 mb-8">
               <h3 className="text-2xl font-bold mb-4">Seller Information</h3>
@@ -124,30 +118,29 @@ export default async function ListingDetailPage({ params }) {
               <h3 className="text-xl font-bold mb-3">Contact Seller</h3>
 
               <p className="text-gray-600 mb-4">
-                Messaging is coming soon. For now, use the seller contact details above.
+                Messaging is coming soon. For now, use the seller contact
+                details above.
               </p>
 
               {listing.seller_phone ? (
-  <div className="grid grid-cols-1 gap-4">
-    <a
-      href={`tel:${listing.seller_phone}`}
-      className="block text-center w-full bg-green-700 text-white py-4 rounded-2xl text-xl font-bold hover:bg-green-600"
-    >
-      Call Seller
-    </a>
+                <div className="grid grid-cols-1 gap-4">
+                  <a
+                    href={`tel:${listing.seller_phone}`}
+                    className="block text-center w-full bg-green-700 text-white py-4 rounded-2xl text-xl font-bold hover:bg-green-600"
+                  >
+                    Call Seller
+                  </a>
 
-    <a
-      href={`sms:${listing.seller_phone}`}
-      className="block text-center w-full bg-blue-900 text-white py-4 rounded-2xl text-xl font-bold hover:bg-blue-800"
-    >
-      Text Seller
-    </a>
-  </div>
-) : (
-  <p className="text-gray-600">
-    Seller phone not provided.
-  </p>
-)}
+                  <a
+                    href={`sms:${listing.seller_phone}`}
+                    className="block text-center w-full bg-blue-900 text-white py-4 rounded-2xl text-xl font-bold hover:bg-blue-800"
+                  >
+                    Text Seller
+                  </a>
+                </div>
+              ) : (
+                <p className="text-gray-600">Seller phone not provided.</p>
+              )}
             </div>
             <FavoriteButton listingId={listing.id} />
             <a
@@ -157,11 +150,11 @@ export default async function ListingDetailPage({ params }) {
               Back to Browse
             </a>
 
-<MarkSoldButton
-  listingId={listing.id}
-  ownerId={listing.user_id}
-  isSold={listing.is_sold}
-/>
+            <MarkSoldButton
+              listingId={listing.id}
+              ownerId={listing.user_id}
+              isSold={listing.is_sold}
+            />
 
             <a
               href={`/edit/${listing.id}`}
@@ -175,7 +168,10 @@ export default async function ListingDetailPage({ params }) {
               url={`https://409marketplace.online/listing/${listing.id}`}
             />
 
-            <DeleteListingButton listingId={listing.id} ownerId={listing.user_id} />
+            <DeleteListingButton
+              listingId={listing.id}
+              ownerId={listing.user_id}
+            />
           </div>
         </div>
       </section>
