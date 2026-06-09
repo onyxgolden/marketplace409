@@ -13,6 +13,15 @@ export default function AddBusinessPage() {
   const [facebookUrl, setFacebookUrl] = useState("");
   const [description, setDescription] = useState("");
   const [image, setImage] = useState(null);
+  const [trustTags, setTrustTags] = useState([]);
+  function toggleTag(tag) {
+  if (trustTags.includes(tag)) {
+    setTrustTags(trustTags.filter((t) => t !== tag));
+  } else {
+    setTrustTags([...trustTags, tag]);
+  }
+}
+
 
   async function handleSubmit() {
     let imageUrl = "";
@@ -50,6 +59,7 @@ export default function AddBusinessPage() {
         facebook_url: facebookUrl,
         description,
         image_url: imageUrl,
+        trust_tags: trustTags,
       },
     ]);
 
@@ -111,6 +121,37 @@ export default function AddBusinessPage() {
                 Community Organizations
               </option>
             </select>
+            <div>
+  <label className="block font-bold mb-3">
+    Trust Tags
+  </label>
+
+  <div className="grid grid-cols-2 gap-3">
+
+    {[
+      "Made in USA",
+      "Texas Made",
+      "Veteran Owned",
+      "Family Owned",
+      "Local Farm",
+      "Licensed Contractor",
+      "Shelter Partner",
+    ].map((tag) => (
+      <label
+        key={tag}
+        className="flex items-center gap-2 bg-gray-100 p-3 rounded-xl"
+      >
+        <input
+          type="checkbox"
+          checked={trustTags.includes(tag)}
+          onChange={() => toggleTag(tag)}
+        />
+
+        {tag}
+      </label>
+    ))}
+  </div>
+</div>
 
             <input
               type="text"

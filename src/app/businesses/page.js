@@ -79,6 +79,18 @@ export default async function BusinessesPage() {
                   <p className="text-sm text-gray-500 mt-2">
                     {business.category}
                   </p>
+                  {business.trust_tags && business.trust_tags.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                       {business.trust_tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="bg-blue-100 text-blue-900 px-3 py-1 rounded-full text-xs font-bold"
+                        >
+                          {tag}
+                         </span>
+                    ))}
+                  </div>
+                )}
 
                   <div className="mt-3 text-gray-600 max-h-44 overflow-y-auto pr-2">
                     {business.description}

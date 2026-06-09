@@ -15,6 +15,15 @@ export default function EditBusinessPage({ params }) {
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [facebookUrl, setFacebookUrl] = useState("");
   const [description, setDescription] = useState("");
+  const [trustTags, setTrustTags] = useState([]);
+
+  function toggleTag(tag) {
+  if (trustTags.includes(tag)) {
+    setTrustTags(trustTags.filter((t) => t !== tag));
+  } else {
+    setTrustTags([...trustTags, tag]);
+  }
+}
 
   useEffect(() => {
     async function start() {
@@ -46,6 +55,7 @@ export default function EditBusinessPage({ params }) {
     setWebsiteUrl(data.website_url || "");
     setFacebookUrl(data.facebook_url || "");
     setDescription(data.description || "");
+    setTrustTags(data.trust_tags || []);
     setLoading(false);
   }
 
@@ -60,6 +70,7 @@ export default function EditBusinessPage({ params }) {
         website_url: websiteUrl,
         facebook_url: facebookUrl,
         description,
+        trust_tags: trustTags,
       })
       .eq("id", businessId);
 
@@ -109,6 +120,37 @@ export default function EditBusinessPage({ params }) {
               onChange={(e) => setCategory(e.target.value)}
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
+
+            <div>
+  <label className="block font-bold mb-3">
+    Trust Tags
+  </label>
+
+  <div className="grid grid-cols-2 gap-3">
+    {[
+      "Made in USA",
+      "Texas Made",
+      "Veteran Owned",
+      "Family Owned",
+      "Local Farm",
+      "Licensed Contractor",
+      "Shelter Partner",
+    ].map((tag) => (
+      <label
+        key={tag}
+        className="flex items-center gap-2 bg-gray-100 p-3 rounded-xl"
+      >
+        <input
+          type="checkbox"
+          checked={trustTags.includes(tag)}
+          onChange={() => toggleTag(tag)}
+        />
+
+        {tag}
+      </label>
+    ))}
+  </div>
+</div>
 
             <input
               type="text"

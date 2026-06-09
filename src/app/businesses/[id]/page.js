@@ -77,6 +77,18 @@ export default async function BusinessDetailPage({ params }) {
             <h1 className="text-5xl font-extrabold mb-6">
               {business.name}
             </h1>
+            {business.trust_tags && business.trust_tags.length > 0 && (
+              <div className="mb-6 flex flex-wrap gap-2">
+                {business.trust_tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="bg-blue-100 text-blue-900 px-3 py-1 rounded-full text-sm font-bold"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
 
             {business.description && (
               <div className="text-lg text-gray-700 whitespace-pre-wrap mb-8">

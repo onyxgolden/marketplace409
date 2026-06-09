@@ -172,48 +172,7 @@ export default async function Home() {
           </div>
         </div>
       </section>
-      {/* Launch Signup */}
-      <section className="max-w-5xl mx-auto py-10 px-6">
-        <div className="bg-red-600 text-white rounded-3xl shadow-lg p-8 text-center">
-          <p className="uppercase tracking-wide text-red-100 mb-2">
-            Coming Soon to Southeast Texas
-          </p>
-
-          <h3 className="text-3xl font-bold mb-4">
-            Be First to Post on 409 Marketplace
-          </h3>
-
-          <p className="text-lg text-red-100 mb-6">
-            Join the early list for local sellers, contractors, businesses, pet
-            shelters, farmers, and buyers.
-          </p>
-
-          <div className="flex flex-col md:flex-row gap-4 max-w-2xl mx-auto">
-            <input
-              className="flex-1 rounded-xl px-4 py-3 text-gray-900"
-              placeholder="Enter your email..."
-            />
-
-            <button className="bg-blue-900 px-6 py-3 rounded-xl font-bold hover:bg-blue-800">
-              Join Early List
-            </button>
-          </div>
-        </div>
-        <section className="max-w-6xl mx-auto py-10 px-6">
-          <div className="bg-white rounded-3xl shadow-md p-8">
-            <label className="block text-xl font-bold mb-3">
-              Select Your Local Marketplace
-            </label>
-
-            <select
-              className="w-full md:w-96 border rounded-xl px-4 py-4 text-lg"
-              defaultValue="409"
-            >
-              <option value="409">409 Marketplace — Southeast Texas</option>
-            </select>
-          </div>
-        </section>
-      </section>
+      
       {/* Cross Posting Feature */}
       <section className="max-w-6xl mx-auto py-10 px-6">
         <div className="bg-blue-900 text-white rounded-3xl p-8 shadow-lg">
@@ -244,40 +203,7 @@ export default async function Home() {
           </div>
         </div>
       </section>
-      {/* Local Trust Tags */}
-      <section className="max-w-6xl mx-auto py-8 px-6">
-        <h3 className="text-2xl font-bold mb-5">Shop by Local Trust Tags</h3>
-
-        <div className="flex flex-wrap gap-3">
-          <button className="bg-white shadow px-5 py-3 rounded-full font-semibold hover:bg-blue-50">
-            🇺🇸 Made in USA
-          </button>
-
-          <button className="bg-white shadow px-5 py-3 rounded-full font-semibold hover:bg-blue-50">
-            Texas Made
-          </button>
-
-          <button className="bg-white shadow px-5 py-3 rounded-full font-semibold hover:bg-blue-50">
-            Veteran Owned
-          </button>
-
-          <button className="bg-white shadow px-5 py-3 rounded-full font-semibold hover:bg-blue-50">
-            Family Owned
-          </button>
-
-          <button className="bg-white shadow px-5 py-3 rounded-full font-semibold hover:bg-blue-50">
-            Local Farm
-          </button>
-
-          <button className="bg-white shadow px-5 py-3 rounded-full font-semibold hover:bg-blue-50">
-            Licensed Contractor
-          </button>
-
-          <button className="bg-white shadow px-5 py-3 rounded-full font-semibold hover:bg-blue-50">
-            Shelter Partner
-          </button>
-        </div>
-      </section>
+      
       {/* Categories */}
       <section className="max-w-6xl mx-auto py-12 px-6">
         <h3 className="text-3xl font-bold mb-8">Popular Categories</h3>
@@ -393,39 +319,7 @@ export default async function Home() {
           )}
         </div>
       </section>
-      {/* Recent Local Activity */}
-      <section className="max-w-6xl mx-auto py-8 px-6">
-        <div className="bg-white rounded-3xl shadow-md p-6">
-          <h3 className="text-2xl font-bold mb-5">Recent Local Activity</h3>
-
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="border rounded-2xl p-4">
-              <p className="text-sm text-gray-500">Just Posted</p>
-              <p className="font-bold">Utility Trailer</p>
-              <p className="text-sm text-gray-600">Orange, TX</p>
-            </div>
-
-            <div className="border rounded-2xl p-4">
-              <p className="text-sm text-gray-500">New Business</p>
-              <p className="font-bold">409 Custom Woodworks</p>
-              <p className="text-sm text-gray-600">Beaumont, TX</p>
-            </div>
-
-            <div className="border rounded-2xl p-4">
-              <p className="text-sm text-gray-500">Pet Spotlight</p>
-              <p className="font-bold">Daisy needs a home</p>
-              <p className="text-sm text-gray-600">Beaumont, TX</p>
-            </div>
-
-            <div className="border rounded-2xl p-4">
-              <p className="text-sm text-gray-500">Local Service</p>
-              <p className="font-bold">Roofing Quotes Available</p>
-              <p className="text-sm text-gray-600">Port Arthur, TX</p>
-            </div>
-          </div>
-        </div>
-      </section>
-      {/* Featured Listings */}
+      
       {/* Featured Listings */}
       <section className="max-w-6xl mx-auto py-12 px-6">
         <div className="flex justify-between items-center mb-8">
@@ -543,86 +437,7 @@ export default async function Home() {
         </div>
       </section>
 
-      {/* Real Estate & Investment Hub */}
-      <section className="max-w-6xl mx-auto py-12 px-6">
-        <div className="bg-gradient-to-r from-green-900 to-green-700 text-white rounded-3xl shadow-xl p-8">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-8">
-            <div className="max-w-2xl">
-              <p className="uppercase tracking-wide text-green-200 mb-2">
-                Real Estate & Investment Network
-              </p>
-
-              <h3 className="text-4xl font-bold mb-4">
-                Local Deals. Rentals. Contractors. Investors.
-              </h3>
-
-              <p className="text-lg text-green-100 mb-6">
-                Connecting Southeast Texas property owners, contractors,
-                investors, landlords, wholesalers, and service professionals.
-              </p>
-
-              <div className="flex flex-wrap gap-3">
-                <a
-                  href="/browse?category=Rentals"
-                  className="bg-white/20 px-4 py-2 rounded-full"
-                >
-                  🏠 Rentals
-                </a>
-
-                <a
-                  href="/businesses"
-                  className="bg-white/20 px-4 py-2 rounded-full"
-                >
-                  🔨 Contractors
-                </a>
-
-                <a
-                  href="/browse"
-                  className="bg-white/20 px-4 py-2 rounded-full"
-                >
-                  💰 Investment Deals
-                </a>
-
-                <a
-                  href="/businesses"
-                  className="bg-white/20 px-4 py-2 rounded-full"
-                >
-                  🧰 Local Services
-                </a>
-              </div>
-            </div>
-
-            <div className="bg-white text-gray-900 rounded-2xl p-6 shadow-lg w-full md:w-96">
-              <div className="bg-white text-gray-900 rounded-2xl p-6 shadow-lg w-full md:w-96">
-                <h4 className="text-2xl font-bold mb-4">
-                  Real Estate Marketplace
-                </h4>
-
-                <p className="mb-4 text-gray-600">
-                  Browse rentals, contractors, services, and local investment
-                  opportunities.
-                </p>
-
-                <a
-                  href="/browse?category=Rentals"
-                  className="block text-center bg-green-700 text-white py-3 rounded-xl font-bold hover:bg-green-600"
-                >
-                  Browse Rentals
-                </a>
-              </div>
-
-              <input
-                className="w-full border rounded-xl px-4 py-3 mb-4"
-                placeholder="Email Address"
-              />
-
-              <button className="w-full bg-green-700 text-white py-3 rounded-xl font-bold hover:bg-green-600">
-                Request Early Access
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
+      
 
       {/* Community Hub */}
       <section className="max-w-6xl mx-auto py-12 px-6">
