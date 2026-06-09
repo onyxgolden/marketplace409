@@ -21,7 +21,7 @@ export default function InvestorsPage() {
       </section>
 
       <section className="max-w-6xl mx-auto py-12 px-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
           <a
             href="/investors/properties"
             className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl"
@@ -67,6 +67,20 @@ export default function InvestorsPage() {
 
             <p className="text-gray-600">
               Find local contractors and rehab professionals.
+            </p>
+          </a>
+          <a
+            href="/investors/documents"
+            className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl"
+          >
+            <div className="text-5xl mb-4">📄</div>
+
+            <h3 className="text-xl font-bold mb-2">
+             Free Documents
+            </h3>
+
+            <p className="text-gray-600">
+             Investor worksheets, checklists, and deal analysis tools.
             </p>
           </a>
         </div>

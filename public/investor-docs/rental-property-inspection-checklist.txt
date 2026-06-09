@@ -1,0 +1,51 @@
+409 Marketplace - Rental Property Inspection Checklist
+
+Property Address:
+Tenant Name:
+Inspection Date:
+Move-In / Move-Out / Periodic Inspection:
+
+EXTERIOR
+[ ] Yard condition
+[ ] Roof visible condition
+[ ] Siding
+[ ] Windows
+[ ] Doors
+[ ] Fence
+[ ] Driveway
+[ ] Trash / debris
+
+INTERIOR
+[ ] Flooring
+[ ] Walls
+[ ] Ceilings
+[ ] Doors
+[ ] Trim
+[ ] Cabinets
+[ ] Countertops
+[ ] Appliances
+[ ] Smoke detectors
+
+PLUMBING
+[ ] Kitchen sink
+[ ] Bathroom sink
+[ ] Toilet
+[ ] Tub / shower
+[ ] Water heater
+[ ] Visible leaks
+
+ELECTRICAL / HVAC
+[ ] Lights
+[ ] Outlets
+[ ] Breaker panel
+[ ] HVAC working
+[ ] Thermostat
+
+DAMAGES / NOTES:
+
+PHOTOS TAKEN:
+[ ] Yes
+[ ] No
+
+Inspector Signature:
+Date:

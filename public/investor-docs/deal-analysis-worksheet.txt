@@ -1,0 +1,47 @@
+409 Marketplace - Deal Analysis Worksheet
+
+Property Address:
+City:
+County:
+
+Purchase Price: $
+Estimated Rehab: $
+Closing Costs: $
+Holding Costs: $
+Total Project Cost: $
+
+ARV - After Repair Value: $
+Estimated Rent: $
+
+70% Rule Calculation:
+ARV x 70% = $
+Minus Repairs = $
+Maximum Allowable Offer = $
+
+Rental Analysis:
+Monthly Rent: $
+Taxes: $
+Insurance: $
+Maintenance Reserve: $
+Vacancy Reserve: $
+Property Management: $
+Mortgage Payment: $
+
+Estimated Monthly Cash Flow: $
+
+1% Rule:
+Monthly Rent / Purchase Price = %
+
+Exit Strategy:
+[ ] Rental
+[ ] Flip
+[ ] Wholesale
+[ ] Owner Finance
+[ ] Other
+
+Deal Notes:
+
+Decision:
+[ ] Pass
+[ ] Follow Up
+[ ] Make Offer

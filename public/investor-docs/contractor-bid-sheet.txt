@@ -1,0 +1,24 @@
+409 Marketplace - Contractor Bid Sheet
+
+Property Address:
+Contractor Name:
+Phone:
+Email:
+
+Scope of Work:
+
+Labor Cost: $
+Material Cost: $
+Total Bid: $
+
+Start Date:
+Estimated Completion Date:
+
+Payment Schedule:
+
+Warranty / Guarantee:
+
+Notes:
+
+Investor Approval:
+Date:
