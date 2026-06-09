@@ -562,21 +562,21 @@ export default async function Home() {
         </p>
 
         <div className="flex flex-wrap gap-3">
-          <span className="bg-white/20 px-4 py-2 rounded-full">
+          <a href="/browse?category=Rentals" className="bg-white/20 px-4 py-2 rounded-full">
             🏠 Rentals
-          </span>
+          </a>
 
-          <span className="bg-white/20 px-4 py-2 rounded-full">
+          <a href="/businesses" className="bg-white/20 px-4 py-2 rounded-full">
             🔨 Contractors
-          </span>
+          </a>
 
-          <span className="bg-white/20 px-4 py-2 rounded-full">
+          <a href="/browse" className="bg-white/20 px-4 py-2 rounded-full">
             💰 Investment Deals
-          </span>
+          </a>
 
-          <span className="bg-white/20 px-4 py-2 rounded-full">
+          <a href="/businesses" className="bg-white/20 px-4 py-2 rounded-full">
             🧰 Local Services
-          </span>
+          </a>
         </div>
       </div>
 
