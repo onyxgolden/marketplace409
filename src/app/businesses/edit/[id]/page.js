@@ -18,12 +18,12 @@ export default function EditBusinessPage({ params }) {
   const [trustTags, setTrustTags] = useState([]);
 
   function toggleTag(tag) {
-  if (trustTags.includes(tag)) {
-    setTrustTags(trustTags.filter((t) => t !== tag));
-  } else {
-    setTrustTags([...trustTags, tag]);
+    if (trustTags.includes(tag)) {
+      setTrustTags(trustTags.filter((t) => t !== tag));
+    } else {
+      setTrustTags([...trustTags, tag]);
+    }
   }
-}
 
   useEffect(() => {
     async function start() {
@@ -122,35 +122,33 @@ export default function EditBusinessPage({ params }) {
             />
 
             <div>
-  <label className="block font-bold mb-3">
-    Trust Tags
-  </label>
+              <label className="block font-bold mb-3">Trust Tags</label>
 
-  <div className="grid grid-cols-2 gap-3">
-    {[
-      "Made in USA",
-      "Texas Made",
-      "Veteran Owned",
-      "Family Owned",
-      "Local Farm",
-      "Licensed Contractor",
-      "Shelter Partner",
-    ].map((tag) => (
-      <label
-        key={tag}
-        className="flex items-center gap-2 bg-gray-100 p-3 rounded-xl"
-      >
-        <input
-          type="checkbox"
-          checked={trustTags.includes(tag)}
-          onChange={() => toggleTag(tag)}
-        />
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  "Made in USA",
+                  "Texas Made",
+                  "Veteran Owned",
+                  "Family Owned",
+                  "Local Farm",
+                  "Licensed Contractor",
+                  "Shelter Partner",
+                ].map((tag) => (
+                  <label
+                    key={tag}
+                    className="flex items-center gap-2 bg-gray-100 p-3 rounded-xl"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={trustTags.includes(tag)}
+                      onChange={() => toggleTag(tag)}
+                    />
 
-        {tag}
-      </label>
-    ))}
-  </div>
-</div>
+                    {tag}
+                  </label>
+                ))}
+              </div>
+            </div>
 
             <input
               type="text"

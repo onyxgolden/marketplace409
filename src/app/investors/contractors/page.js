@@ -49,7 +49,7 @@ export default async function InvestorContractorsPage() {
         (word) =>
           category.includes(word) ||
           description.includes(word) ||
-          name.includes(word)
+          name.includes(word),
       );
     }) || [];
 
@@ -64,7 +64,8 @@ export default async function InvestorContractorsPage() {
           </h1>
 
           <p className="text-xl text-green-100">
-            Local contractors, trades, and rehab professionals for Southeast Texas investors.
+            Local contractors, trades, and rehab professionals for Southeast
+            Texas investors.
           </p>
         </div>
       </section>
@@ -99,7 +100,8 @@ export default async function InvestorContractorsPage() {
             </h3>
 
             <p className="text-gray-600 mb-6">
-              Add contractor businesses to start building the 409 investor contractor list.
+              Add contractor businesses to start building the 409 investor
+              contractor list.
             </p>
 
             <a
@@ -134,9 +136,7 @@ export default async function InvestorContractorsPage() {
                   <div className="p-6">
                     <p className="text-sm text-gray-500">{business.city}</p>
 
-                    <h3 className="text-xl font-bold mt-1">
-                      {business.name}
-                    </h3>
+                    <h3 className="text-xl font-bold mt-1">{business.name}</h3>
 
                     {business.category && (
                       <p className="text-sm font-bold text-green-800 mt-2">
@@ -175,10 +175,7 @@ export default async function InvestorContractorsPage() {
                       View Business
                     </a>
 
-                    <ShareButton
-                      title={business.name}
-                      url={businessUrl}
-                    />
+                    <ShareButton title={business.name} url={businessUrl} />
                   </div>
                 </div>
               );

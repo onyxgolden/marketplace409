@@ -28,7 +28,7 @@ export default function Header() {
     <header className="bg-blue-900 text-white p-4 shadow-lg">
       <div className="max-w-7xl mx-auto flex justify-between items-center">
         <a href="/" className="text-3xl font-bold">
-          409 Marketplace
+          409Marketplace
         </a>
 
         <button
@@ -38,41 +38,41 @@ export default function Header() {
           Menu
         </button>
 
-        <nav className="hidden md:flex gap-6 text-lg items-center">
+        <nav className="hidden md:flex gap-6 text-lg items-center ml-12">
           <a href="/" className="hover:text-blue-200">
-            Home
+            🏠 Home
           </a>
           <a href="/browse" className="hover:text-blue-200">
-            Buy & Sell
+            🛒 Buy/Sell
           </a>
           <a href="/browse?category=Rentals" className="hover:text-blue-200">
-            Rentals
+            🏘️ Rentals
           </a>
-          <a href="/browse?category=Services" className="hover:text-blue-200">
-            Services
+          <a href="/investors" className="hover:text-blue-200">
+            🏗️ Investors
           </a>
           <a href="/community" className="hover:text-blue-200">
-            Community
+            🤝 Community
           </a>
           <a href="/businesses" className="hover:text-blue-200">
-            Businesses
+            🏪 Businesses
           </a>
           <a href="/my-listings" className="hover:text-blue-200">
-            My Listings
+            👷 My Listings
           </a>
 
           <a
             href="/import"
             className="bg-white text-blue-900 px-4 py-2 rounded-xl font-bold hover:bg-blue-100"
           >
-            Import
+            📥 Import
           </a>
 
           <a
             href="/post"
             className="bg-red-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-red-500"
           >
-            Post Free
+            ➕ Post Free
           </a>
 
           {user ? (
@@ -100,7 +100,7 @@ export default function Header() {
             Home
           </a>
           <a href="/browse" className="block hover:text-blue-200">
-            Buy & Sell
+            Buy/Sell
           </a>
           <a
             href="/browse?category=Rentals"
@@ -108,11 +108,9 @@ export default function Header() {
           >
             Rentals
           </a>
-          <a
-            href="/browse?category=Services"
-            className="block hover:text-blue-200"
-          >
-            Services
+
+          <a href="/investors" className="block hover:text-blue-200">
+            Investors
           </a>
           <a href="/community" className="block hover:text-blue-200">
             Community

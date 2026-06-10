@@ -21,9 +21,7 @@ export default async function BusinessDetailPage({ params }) {
 
         <section className="max-w-4xl mx-auto py-12 px-6">
           <div className="bg-white rounded-3xl shadow-md p-8 text-center">
-            <h1 className="text-4xl font-extrabold mb-4">
-              Business Not Found
-            </h1>
+            <h1 className="text-4xl font-extrabold mb-4">Business Not Found</h1>
 
             <p className="text-gray-600 mb-6">
               This business listing may have been removed.
@@ -74,9 +72,7 @@ export default async function BusinessDetailPage({ params }) {
               {business.category ? ` • ${business.category}` : ""}
             </p>
 
-            <h1 className="text-5xl font-extrabold mb-6">
-              {business.name}
-            </h1>
+            <h1 className="text-5xl font-extrabold mb-6">{business.name}</h1>
             {business.trust_tags && business.trust_tags.length > 0 && (
               <div className="mb-6 flex flex-wrap gap-2">
                 {business.trust_tags.map((tag) => (
@@ -129,10 +125,7 @@ export default async function BusinessDetailPage({ params }) {
               )}
             </div>
 
-            <ShareButton
-              title={business.name}
-              url={businessUrl}
-            />
+            <ShareButton title={business.name} url={businessUrl} />
 
             <div className="mt-6">
               <BusinessAdminControls businessId={business.id} />

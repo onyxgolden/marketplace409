@@ -75,12 +75,10 @@ export default function InvestorsPage() {
           >
             <div className="text-5xl mb-4">📄</div>
 
-            <h3 className="text-xl font-bold mb-2">
-             Free Documents
-            </h3>
+            <h3 className="text-xl font-bold mb-2">Free Documents</h3>
 
             <p className="text-gray-600">
-             Investor worksheets, checklists, and deal analysis tools.
+              Investor worksheets, checklists, and deal analysis tools.
             </p>
           </a>
         </div>

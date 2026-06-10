@@ -8,31 +8,31 @@ export default function InvestorDocumentsPage() {
       title: "Property Walkthrough Checklist",
       description:
         "Inspect structure, roof, foundation, plumbing, electrical, HVAC, and overall condition before purchasing.",
-        file: "/investor-docs/property-walkthrough-checklist.txt",
+      file: "/investor-docs/property-walkthrough-checklist.txt",
     },
     {
       title: "Rehab Budget Worksheet",
       description:
         "Estimate repair costs by category including roofing, electrical, plumbing, flooring, paint, HVAC, and more.",
-        file: "/investor-docs/rehab-budget-worksheet.txt",
+      file: "/investor-docs/rehab-budget-worksheet.txt",
     },
     {
       title: "Contractor Bid Sheet",
       description:
         "Compare multiple contractor bids side-by-side to identify the best value.",
-        file: "/investor-docs/contractor-bid-sheet.txt",
+      file: "/investor-docs/contractor-bid-sheet.txt",
     },
     {
       title: "Rental Property Inspection Checklist",
       description:
         "Document move-in, move-out, and periodic rental inspections.",
-        file: "/investor-docs/rental-property-inspection-checklist.txt",
+      file: "/investor-docs/rental-property-inspection-checklist.txt",
     },
     {
       title: "Deal Analysis Worksheet",
       description:
         "Evaluate purchase price, ARV, rehab cost, rent, cash flow, and potential profit.",
-        file: "/investor-docs/deal-analysis-worksheet.txt",
+      file: "/investor-docs/deal-analysis-worksheet.txt",
     },
   ];
 
@@ -47,28 +47,20 @@ export default function InvestorDocumentsPage() {
           </h1>
 
           <p className="text-xl text-green-100">
-            Free resources for landlords, flippers, wholesalers, and real estate investors.
+            Free resources for landlords, flippers, wholesalers, and real estate
+            investors.
           </p>
         </div>
       </section>
 
       <section className="max-w-6xl mx-auto py-12 px-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
           {docs.map((doc) => (
-            <div
-              key={doc.title}
-              className="bg-white rounded-3xl shadow-md p-6"
-            >
-              <h2 className="text-2xl font-bold mb-3">
-                {doc.title}
-              </h2>
+            <div key={doc.title} className="bg-white rounded-3xl shadow-md p-6">
+              <h2 className="text-2xl font-bold mb-3">{doc.title}</h2>
 
-              <p className="text-gray-600 mb-6">
-                {doc.description}
-              </p>
+              <p className="text-gray-600 mb-6">{doc.description}</p>
 
-              
               <a
                 href={doc.file}
                 download
@@ -78,7 +70,6 @@ export default function InvestorDocumentsPage() {
               </a>
             </div>
           ))}
-
         </div>
       </section>
     </main>

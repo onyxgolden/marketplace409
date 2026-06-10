@@ -67,30 +67,27 @@ export default async function BusinessesPage() {
                 <div className="p-5">
                   <p className="text-sm text-gray-500">{business.city}</p>
 
-                  <a
-                    href={`/businesses/${business.id}`}
-                    className="block"
-                  >
-                  <h2 className="text-xl font-bold hover:text-red-600">
-                   {business.name}
-                  </h2>
-                 </a>
+                  <a href={`/businesses/${business.id}`} className="block">
+                    <h2 className="text-xl font-bold hover:text-red-600">
+                      {business.name}
+                    </h2>
+                  </a>
 
                   <p className="text-sm text-gray-500 mt-2">
                     {business.category}
                   </p>
                   {business.trust_tags && business.trust_tags.length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-2">
-                       {business.trust_tags.map((tag) => (
+                      {business.trust_tags.map((tag) => (
                         <span
                           key={tag}
                           className="bg-blue-100 text-blue-900 px-3 py-1 rounded-full text-xs font-bold"
                         >
                           {tag}
-                         </span>
-                    ))}
-                  </div>
-                )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="mt-3 text-gray-600 max-h-44 overflow-y-auto pr-2">
                     {business.description}
