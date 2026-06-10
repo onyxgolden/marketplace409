@@ -126,13 +126,14 @@ export default function AddBusinessPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  "Made in USA",
+                  "Community Listing",
                   "Texas Made",
                   "Veteran Owned",
                   "Family Owned",
                   "Local Farm",
                   "Licensed Contractor",
                   "Shelter Partner",
+                  "Non Profit",
                 ].map((tag) => (
                   <label
                     key={tag}
