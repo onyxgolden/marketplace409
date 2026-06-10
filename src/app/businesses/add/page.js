@@ -115,6 +115,7 @@ export default function AddBusinessPage() {
                 Professional Services
               </option>
               <option value="Pets & Livestock">Pets & Livestock</option>
+              <option value="Animal Shelter & Rescue">Animal Shelter & Rescue</option>
               <option value="Entertainment">Entertainment</option>
               <option value="Community Organizations">
                 Community Organizations

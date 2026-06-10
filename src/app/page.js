@@ -42,8 +42,7 @@ export default async function Home() {
     <main className="min-h-screen bg-gray-100 text-gray-900">
       {/* Launch Banner */}
       <div className="bg-red-600 text-white text-center px-4 py-3 font-semibold">
-        🚀 409 Marketplace is in early build mode — Southeast Texas sellers,
-        businesses, shelters, and contractors can request early access soon.
+        🚀 409 Marketplace is live — post free local listings, jobs, businesses, pets, and investor deals across Southeast Texas.
       </div>
 
       <Header />
@@ -140,69 +139,11 @@ export default async function Home() {
           </div>
         </div>
       </section>
-      {/* Marketplace Stats */}
-      <section className="max-w-6xl mx-auto py-10 px-6">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
-          <div className="bg-white rounded-2xl shadow-md p-6 text-center">
-            <h3 className="text-4xl font-extrabold text-blue-900">
-              {listingsCount || 0}
-            </h3>
-            <p className="text-gray-600 mt-2">Live Listings</p>
-          </div>
 
-          <div className="bg-white rounded-2xl shadow-md p-6 text-center">
-            <h3 className="text-4xl font-extrabold text-red-600">
-              {businessesCount || 0}
-            </h3>
-            <p className="text-gray-600 mt-2">Local Businesses</p>
-          </div>
 
-          <div className="bg-white rounded-2xl shadow-md p-6 text-center">
-            <h3 className="text-4xl font-extrabold text-green-700">
-              {petsCount || 0}
-            </h3>
-            <p className="text-gray-600 mt-2">Pet Posts</p>
-          </div>
+      
 
-          <div className="bg-white rounded-2xl shadow-md p-6 text-center">
-            <h3 className="text-4xl font-extrabold text-purple-700">
-              {jobsCount || 0}
-            </h3>
-            <p className="text-gray-600 mt-2">Local Jobs</p>
-          </div>
-        </div>
-      </section>
-
-      {/* Cross Posting Feature */}
-      <section className="max-w-6xl mx-auto py-10 px-6">
-        <div className="bg-blue-900 text-white rounded-3xl p-4 shadow-lg">
-          <p className="text-sm uppercase tracking-wide text-blue-200 mb-2">
-            Seller Tool
-          </p>
-
-          <h3 className="text-xl font-bold mb-2">Easy Cross Posting</h3>
-
-          <p className="text-sm text-blue-100 mb-6">
-            Already posted on Facebook, Craigslist, or OfferUp? Paste your
-            listing, upload screenshots, and let 409 Marketplace help clean it
-            up for local buyers.
-          </p>
-
-          <div className="flex flex-col md:flex-row gap-4">
-            <input
-              className="flex-1 rounded-xl px-4 py-3 text-gray-900"
-              placeholder="Paste listing text or link here..."
-            />
-
-            <a
-              href="/import"
-              className="bg-red-600 px-6 py-3 rounded-xl font-bold hover:bg-red-500"
-            >
-              Import Listing
-            </a>
-          </div>
-        </div>
-      </section>
+      
 
       {/* Categories */}
       <section className="max-w-6xl mx-auto py-12 px-6">
@@ -247,6 +188,69 @@ export default async function Home() {
             🏘
             <h4 className="text-xl font-bold mt-3">Real Estate Investors</h4>
           </a>
+        </div>
+      </section>
+
+      {/* Pet of the Week */}
+      <section className="bg-white py-14 px-6">
+        <div className="max-w-5xl mx-auto rounded-3xl shadow-lg overflow-hidden">
+          <div className="bg-orange-500 text-white p-6">
+            <h3 className="text-3xl font-bold">🐾 Pet of the Week</h3>
+          </div>
+
+          {petOfTheWeek ? (
+            <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+              {petOfTheWeek.image_url ? (
+                <img
+                  src={petOfTheWeek.image_url}
+                  alt={petOfTheWeek.pet_name}
+                  className="h-72 w-full object-cover rounded-2xl"
+                />
+              ) : (
+                <div className="h-72 bg-gray-300 flex items-center justify-center text-7xl rounded-2xl">
+                  🐾
+                </div>
+              )}
+
+              <div>
+                <h4 className="text-2xl font-bold mb-2">
+                  Meet {petOfTheWeek.pet_name}
+                </h4>
+
+                <p className="text-lg text-gray-700 mb-4">
+                  {petOfTheWeek.description}
+                </p>
+
+                <p className="font-bold mb-4">
+                  Votes: {petOfTheWeek.votes || 0}
+                </p>
+
+                <a
+                  href="/pets"
+                  className="inline-block bg-blue-900 text-white px-5 py-3 rounded-xl hover:bg-blue-800"
+                >
+                  Vote for Pet of the Week
+            🐾 Browse Shelters & Rescues
+                </a>
+              </div>
+
+            </div>
+          ) : (
+            <div className="p-8">
+              <h4 className="text-2xl font-bold mb-2">No pets entered yet</h4>
+
+              <p className="text-lg text-gray-700 mb-4">
+                Add a pet and enter them for Pet of the Week.
+              </p>
+
+              <a
+                href="/pets/add"
+                className="inline-block bg-blue-900 text-white px-5 py-3 rounded-xl hover:bg-blue-800"
+              >
+                Add Pet Entry
+              </a>
+            </div>
+          )}
         </div>
       </section>
 
@@ -306,66 +310,7 @@ export default async function Home() {
         )}
       </section>
 
-      {/* Pet of the Week */}
-      <section className="bg-white py-14 px-6">
-        <div className="max-w-5xl mx-auto rounded-3xl shadow-lg overflow-hidden">
-          <div className="bg-orange-500 text-white p-6">
-            <h3 className="text-3xl font-bold">🐾 Pet of the Week</h3>
-          </div>
-
-          {petOfTheWeek ? (
-            <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-              {petOfTheWeek.image_url ? (
-                <img
-                  src={petOfTheWeek.image_url}
-                  alt={petOfTheWeek.pet_name}
-                  className="h-72 w-full object-cover rounded-2xl"
-                />
-              ) : (
-                <div className="h-72 bg-gray-300 flex items-center justify-center text-7xl rounded-2xl">
-                  🐾
-                </div>
-              )}
-
-              <div>
-                <h4 className="text-2xl font-bold mb-2">
-                  Meet {petOfTheWeek.pet_name}
-                </h4>
-
-                <p className="text-lg text-gray-700 mb-4">
-                  {petOfTheWeek.description}
-                </p>
-
-                <p className="font-bold mb-4">
-                  Votes: {petOfTheWeek.votes || 0}
-                </p>
-
-                <a
-                  href="/pets"
-                  className="inline-block bg-blue-900 text-white px-5 py-3 rounded-xl hover:bg-blue-800"
-                >
-                  Vote for Pet of the Week
-                </a>
-              </div>
-            </div>
-          ) : (
-            <div className="p-8">
-              <h4 className="text-2xl font-bold mb-2">No pets entered yet</h4>
-
-              <p className="text-lg text-gray-700 mb-4">
-                Add a pet and enter them for Pet of the Week.
-              </p>
-
-              <a
-                href="/pets/add"
-                className="inline-block bg-blue-900 text-white px-5 py-3 rounded-xl hover:bg-blue-800"
-              >
-                Add Pet Entry
-              </a>
-            </div>
-          )}
-        </div>
-      </section>
+      
 
       {/* Local Business Spotlight */}
       <section className="max-w-6xl mx-auto py-12 px-6">
@@ -437,6 +382,8 @@ export default async function Home() {
         </div>
       </section>
 
+      
+
       {/* Community Hub */}
       <section className="max-w-6xl mx-auto py-12 px-6">
         <h3 className="text-3xl font-bold mb-8">Community Hub</h3>
@@ -475,13 +422,77 @@ export default async function Home() {
             <div className="text-5xl mb-4">🐾</div>
             <h4 className="text-xl font-bold mb-2">Pets & Shelters</h4>
             <p className="text-gray-600 mb-4">
-              Post lost pets, found pets, adoptable animals, and vote for Pet of
-              the Week.
+              Post lost pets, found pets, adoptable animals, browse local shelters and rescues, and vote for Pet of the Week.
             </p>
             <span className="text-blue-900 font-bold">View Pets →</span>
           </a>
         </div>
       </section>
+
+{/* Cross Posting Feature */}
+      <section className="max-w-6xl mx-auto py-10 px-6">
+        <div className="bg-blue-900 text-white rounded-3xl p-4 shadow-lg">
+          <p className="text-sm uppercase tracking-wide text-blue-200 mb-2">
+            Seller Tool
+          </p>
+
+          <h3 className="text-xl font-bold mb-2">Easy Cross Posting</h3>
+
+          <p className="text-sm text-blue-100 mb-6">
+            Already posted on Facebook, Craigslist, or OfferUp? Paste your
+            listing, upload screenshots, and let 409 Marketplace help clean it
+            up for local buyers.
+          </p>
+
+          <div className="flex flex-col md:flex-row gap-4">
+            <input
+              className="flex-1 rounded-xl px-4 py-3 text-gray-900"
+              placeholder="Paste listing text or link here..."
+            />
+
+            <a
+              href="/import"
+              className="bg-red-600 px-6 py-3 rounded-xl font-bold hover:bg-red-500"
+            >
+              Import Listing
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* Marketplace Stats */}
+      <section className="max-w-6xl mx-auto py-10 px-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
+          <div className="bg-white rounded-2xl shadow-md p-6 text-center">
+            <h3 className="text-4xl font-extrabold text-blue-900">
+              {listingsCount || 0}
+            </h3>
+            <p className="text-gray-600 mt-2">Live Listings</p>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-md p-6 text-center">
+            <h3 className="text-4xl font-extrabold text-red-600">
+              {businessesCount || 0}
+            </h3>
+            <p className="text-gray-600 mt-2">Local Businesses</p>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-md p-6 text-center">
+            <h3 className="text-4xl font-extrabold text-green-700">
+              {petsCount || 0}
+            </h3>
+            <p className="text-gray-600 mt-2">Pet Posts</p>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-md p-6 text-center">
+            <h3 className="text-4xl font-extrabold text-purple-700">
+              {jobsCount || 0}
+            </h3>
+            <p className="text-gray-600 mt-2">Local Jobs</p>
+          </div>
+        </div>
+      </section>
+
       {/* Why Local Matters */}
       <section className="bg-blue-950 text-white py-16 px-6 mt-14">
         <div className="max-w-6xl mx-auto">
@@ -535,15 +546,14 @@ export default async function Home() {
           </div>
         </div>
       </section>
+      
       {/* Footer */}
       <footer className="bg-blue-900 text-white py-10 mt-10">
         <div className="max-w-6xl mx-auto px-6 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div>
             <h4 className="text-2xl font-bold mb-3">409 Marketplace</h4>
             <p className="text-blue-200">
-              Support local fundraisers, emergency family needs, medical
-              hardships, shelter drives, disaster recovery efforts, and
-              community assistance programs.
+              409 Marketplace connects Southeast Texas listings, businesses, jobs, pets, shelters, and real estate investor resources.
             </p>
           </div>
 

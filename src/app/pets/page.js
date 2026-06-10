@@ -30,12 +30,21 @@ export default async function PetsPage() {
           Adoptable pets, lost and found animals, and local Pet of the Week.
         </p>
 
-        <a
-          href="/pets/add"
-          className="inline-block bg-red-600 text-white px-6 py-3 rounded-xl font-bold mb-8 hover:bg-red-500"
-        >
-          Add Pet Post
-        </a>
+       <div className="flex flex-wrap gap-4 mb-8">
+  <a
+    href="/pets/add"
+    className="inline-block bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-500"
+  >
+    Add Pet Post
+  </a>
+
+  <a
+    href="/pets/shelters"
+    className="inline-block bg-orange-500 text-white px-6 py-3 rounded-xl font-bold hover:bg-orange-400"
+  >
+    🐾 Shelters & Rescues
+  </a>
+</div>
 
         {petOfTheWeek && (
           <div className="bg-yellow-100 rounded-3xl shadow-md p-6 mb-10">
