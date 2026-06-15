@@ -66,6 +66,12 @@ export default async function JobsPage() {
                       </span>
                     )}
 
+                    {job.community_job_posting && (
+                      <span className="bg-orange-100 text-orange-900 px-3 py-1 rounded-full text-sm font-bold">
+                        📋 Community Job Posting
+                      </span>
+                    )}
+
                     {job.employment_type && (
                       <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-bold">
                         {job.employment_type}
