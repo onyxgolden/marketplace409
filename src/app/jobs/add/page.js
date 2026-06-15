@@ -18,6 +18,7 @@ export default function AddJobPage() {
   const [contactEmail, setContactEmail] = useState("");
   const [applyUrl, setApplyUrl] = useState("");
   const [isPosting, setIsPosting] = useState(false);
+  const [communityJobPosting, setCommunityJobPosting] = useState(false);
 
   async function handleSubmit() {
     setIsPosting(true);
@@ -126,6 +127,16 @@ export default function AddJobPage() {
               <option value="Seasonal">Seasonal</option>
               <option value="Side Job">Side Job</option>
             </select>
+
+            <label className="flex items-center gap-3 bg-gray-100 p-4 rounded-2xl">
+              <input
+                type="checkbox"
+                checked={communityJobPosting}
+                onChange={(e) => setCommunityJobPosting(e.target.checked)}
+              />
+
+              <span className="font-bold">Community Job Posting</span>
+            </label>
 
             <input
               type="text"
