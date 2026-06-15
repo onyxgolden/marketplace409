@@ -21,18 +21,16 @@ export default async function SheltersPage() {
           </h1>
 
           <p className="text-xl text-orange-100">
-            Discover local shelters, rescues, adoption partners, and animal welfare organizations throughout Southeast Texas.
+            Discover local shelters, rescues, adoption partners, and animal
+            welfare organizations throughout Southeast Texas.
           </p>
         </div>
       </section>
 
       <section className="max-w-6xl mx-auto py-12 px-6">
-
         <div className="flex justify-between items-center mb-8">
           <div>
-            <h2 className="text-3xl font-bold">
-              Local Shelter Partners
-            </h2>
+            <h2 className="text-3xl font-bold">Local Shelter Partners</h2>
 
             <p className="text-gray-600 mt-2">
               Find shelters and rescue groups helping pets find loving homes.
@@ -57,12 +55,11 @@ export default async function SheltersPage() {
           <div className="bg-white rounded-3xl shadow-md p-10 text-center">
             <div className="text-6xl mb-4">🐶</div>
 
-            <h3 className="text-2xl font-bold mb-3">
-              No shelters listed yet
-            </h3>
+            <h3 className="text-2xl font-bold mb-3">No shelters listed yet</h3>
 
             <p className="text-gray-600 mb-6">
-              Be the first shelter or rescue organization to join 409 Marketplace.
+              Be the first shelter or rescue organization to join 409
+              Marketplace.
             </p>
 
             <a
@@ -74,7 +71,6 @@ export default async function SheltersPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-
             {shelters.map((shelter) => (
               <div
                 key={shelter.id}
@@ -93,13 +89,9 @@ export default async function SheltersPage() {
                 )}
 
                 <div className="p-6">
-                  <p className="text-sm text-gray-500">
-                    {shelter.city}
-                  </p>
+                  <p className="text-sm text-gray-500">{shelter.city}</p>
 
-                  <h3 className="text-2xl font-bold mt-1">
-                    {shelter.name}
-                  </h3>
+                  <h3 className="text-2xl font-bold mt-1">{shelter.name}</h3>
 
                   <div className="mt-3 text-gray-600">
                     {shelter.description}
@@ -114,7 +106,6 @@ export default async function SheltersPage() {
                 </div>
               </div>
             ))}
-
           </div>
         )}
       </section>

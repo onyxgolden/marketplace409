@@ -42,7 +42,8 @@ export default async function Home() {
     <main className="min-h-screen bg-gray-100 text-gray-900">
       {/* Launch Banner */}
       <div className="bg-red-600 text-white text-center px-4 py-3 font-semibold">
-        🚀 409 Marketplace is live — post free local listings, jobs, businesses, pets, and investor deals across Southeast Texas.
+        🚀 409 Marketplace is live — post free local listings, jobs, businesses,
+        pets, and investor deals across Southeast Texas.
       </div>
 
       <Header />
@@ -140,11 +141,6 @@ export default async function Home() {
         </div>
       </section>
 
-
-      
-
-      
-
       {/* Categories */}
       <section className="max-w-6xl mx-auto py-12 px-6">
         <h3 className="text-3xl font-bold mb-8">Popular Categories</h3>
@@ -229,11 +225,9 @@ export default async function Home() {
                   href="/pets"
                   className="inline-block bg-blue-900 text-white px-5 py-3 rounded-xl hover:bg-blue-800"
                 >
-                  Vote for Pet of the Week
-            🐾 Browse Shelters & Rescues
+                  Vote for Pet of the Week 🐾 Browse Shelters & Rescues
                 </a>
               </div>
-
             </div>
           ) : (
             <div className="p-8">
@@ -310,8 +304,6 @@ export default async function Home() {
         )}
       </section>
 
-      
-
       {/* Local Business Spotlight */}
       <section className="max-w-6xl mx-auto py-12 px-6">
         <div className="bg-white rounded-3xl shadow-md p-8">
@@ -382,8 +374,6 @@ export default async function Home() {
         </div>
       </section>
 
-      
-
       {/* Community Hub */}
       <section className="max-w-6xl mx-auto py-12 px-6">
         <h3 className="text-3xl font-bold mb-8">Community Hub</h3>
@@ -422,14 +412,15 @@ export default async function Home() {
             <div className="text-5xl mb-4">🐾</div>
             <h4 className="text-xl font-bold mb-2">Pets & Shelters</h4>
             <p className="text-gray-600 mb-4">
-              Post lost pets, found pets, adoptable animals, browse local shelters and rescues, and vote for Pet of the Week.
+              Post lost pets, found pets, adoptable animals, browse local
+              shelters and rescues, and vote for Pet of the Week.
             </p>
             <span className="text-blue-900 font-bold">View Pets →</span>
           </a>
         </div>
       </section>
 
-{/* Cross Posting Feature */}
+      {/* Cross Posting Feature */}
       <section className="max-w-6xl mx-auto py-10 px-6">
         <div className="bg-blue-900 text-white rounded-3xl p-4 shadow-lg">
           <p className="text-sm uppercase tracking-wide text-blue-200 mb-2">
@@ -546,14 +537,15 @@ export default async function Home() {
           </div>
         </div>
       </section>
-      
+
       {/* Footer */}
       <footer className="bg-blue-900 text-white py-10 mt-10">
         <div className="max-w-6xl mx-auto px-6 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div>
             <h4 className="text-2xl font-bold mb-3">409 Marketplace</h4>
             <p className="text-blue-200">
-              409 Marketplace connects Southeast Texas listings, businesses, jobs, pets, shelters, and real estate investor resources.
+              409 Marketplace connects Southeast Texas listings, businesses,
+              jobs, pets, shelters, and real estate investor resources.
             </p>
           </div>
 

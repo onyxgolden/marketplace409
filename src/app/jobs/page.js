@@ -1,3 +1,4 @@
+import DeleteJobButton from "@/components/DeleteJobButton";
 import Header from "@/components/Header";
 import ShareButton from "@/components/ShareButton";
 import { supabase } from "@/lib/supabase";
@@ -130,6 +131,14 @@ export default async function JobsPage() {
                     </a>
                   )}
 
+                  <a
+                    href={`/jobs/edit/${job.id}`}
+                    className="block mt-4 bg-blue-700 text-white text-center py-3 rounded-xl font-bold hover:bg-blue-600"
+                  >
+                    Edit Job
+                  </a>
+
+                  <DeleteJobButton jobId={job.id} />
                   <ShareButton
                     title={`${job.job_title} at ${job.company_name}`}
                     url="https://409marketplace.online/jobs"
