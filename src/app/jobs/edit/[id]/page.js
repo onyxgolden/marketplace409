@@ -19,6 +19,7 @@ export default function EditJobPage({ params }) {
   const [contactPhone, setContactPhone] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [applyUrl, setApplyUrl] = useState("");
+  const [communityJobPosting, setCommunityJobPosting] = useState(false);
 
   useEffect(() => {
     async function start() {
@@ -54,6 +55,7 @@ export default function EditJobPage({ params }) {
     setContactPhone(data.contact_phone || "");
     setContactEmail(data.contact_email || "");
     setApplyUrl(data.apply_url || "");
+    setCommunityJobPosting(data.community_job_posting || false);
 
     setLoading(false);
   }
@@ -73,6 +75,7 @@ export default function EditJobPage({ params }) {
         contact_phone: contactPhone,
         contact_email: contactEmail,
         apply_url: applyUrl,
+        community_job_posting: communityJobPosting,
       })
       .eq("id", jobId);
 
@@ -143,6 +146,15 @@ export default function EditJobPage({ params }) {
               placeholder="Pay Range"
               className="w-full p-4 border rounded-xl"
             />
+            <label className="flex items-center gap-3 bg-gray-100 p-4 rounded-2xl">
+              <input
+                type="checkbox"
+                checked={communityJobPosting}
+                onChange={(e) => setCommunityJobPosting(e.target.checked)}
+              />
+
+              <span className="font-bold">Community Job Posting</span>
+            </label>
 
             <textarea
               value={description}
