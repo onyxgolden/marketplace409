@@ -81,6 +81,19 @@ export default function InvestorsPage() {
               Investor worksheets, checklists, and deal analysis tools.
             </p>
           </a>
+
+          <a
+            href="/investors/wholesalers"
+            className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl"
+          >
+            <div className="text-5xl mb-4">🤝</div>
+
+            <h3 className="text-xl font-bold mb-2">Wholesalers</h3>
+
+            <p className="text-gray-600">
+              Local wholesalers, deal finders, bird dogs, and investor contacts.
+            </p>
+          </a>
         </div>
       </section>
 
