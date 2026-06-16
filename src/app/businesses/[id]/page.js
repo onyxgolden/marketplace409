@@ -72,7 +72,25 @@ export default async function BusinessDetailPage({ params }) {
               {business.category ? ` • ${business.category}` : ""}
             </p>
 
-            <h1 className="text-5xl font-extrabold mb-6">{business.name}</h1>
+            <h1 className="text-5xl font-extrabold mb-4">{business.name}</h1>
+
+            {business.claimed && (
+  <div className="mb-4 inline-block rounded-full bg-green-100 px-4 py-2 text-sm font-bold text-green-800">
+    ✓ Claimed Business
+  </div>
+)}
+
+            <div className="mb-6">
+              <a
+                href={`/businesses/${business.id}/claim?name=${encodeURIComponent(
+                  business.name
+                )}`}
+                className="inline-block rounded-xl border-2 border-blue-700 px-5 py-3 font-bold text-blue-700 hover:bg-blue-50"
+              >
+                Claim This Business
+              </a>
+            </div>
+
             {business.trust_tags && business.trust_tags.length > 0 && (
               <div className="mb-6 flex flex-wrap gap-2">
                 {business.trust_tags.map((tag) => (
