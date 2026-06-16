@@ -101,13 +101,13 @@ export default async function InvestorPropertiesPage() {
                     </p>
 
                     <div className="mt-5 flex flex-wrap gap-3">
-  <a
-    href={`/investors/properties/edit/${property.id}`}
-    className="bg-blue-700 text-white px-4 py-2 rounded-xl font-bold hover:bg-blue-600"
-  >
-    Edit
-  </a>
-</div>
+                      <a
+                        href={`/investors/properties/edit/${property.id}`}
+                        className="bg-blue-700 text-white px-4 py-2 rounded-xl font-bold hover:bg-blue-600"
+                      >
+                        Edit
+                      </a>
+                    </div>
                   </div>
                 </div>
               </div>

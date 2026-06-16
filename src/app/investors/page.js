@@ -8,49 +8,56 @@ export default function InvestorsPage() {
       href: "/investors/properties",
       icon: "🏠",
       title: "Investment Properties",
-      description: "Browse rentals, rehab projects, wholesale deals, and investment opportunities.",
+      description:
+        "Browse rentals, rehab projects, wholesale deals, and investment opportunities.",
       badge: "Deals",
     },
     {
       href: "/investors/cash-buyers",
       icon: "💵",
       title: "Cash Buyer Directory",
-      description: "Find local buyers looking for flips, rentals, land, and off-market deals.",
+      description:
+        "Find local buyers looking for flips, rentals, land, and off-market deals.",
       badge: "New",
     },
     {
       href: "/investors/wholesalers",
       icon: "🤝",
       title: "Wholesaler Directory",
-      description: "Local wholesalers, bird dogs, deal finders, and investor contacts.",
+      description:
+        "Local wholesalers, bird dogs, deal finders, and investor contacts.",
       badge: "Filtered",
     },
     {
       href: "/investors/documents",
       icon: "📄",
       title: "Free Investor Documents",
-      description: "Download contracts, worksheets, checklists, and deal analysis templates.",
+      description:
+        "Download contracts, worksheets, checklists, and deal analysis templates.",
       badge: "Free",
     },
     {
       href: "/investors/rehab-estimator",
       icon: "🧮",
       title: "Rehab Estimator",
-      description: "Estimate repair costs before buying your next investment property.",
+      description:
+        "Estimate repair costs before buying your next investment property.",
       badge: "Tool",
     },
     {
       href: "/investors/contractors",
       icon: "🔨",
       title: "409 Contractors",
-      description: "Find local contractors and rehab professionals for investor projects.",
+      description:
+        "Find local contractors and rehab professionals for investor projects.",
       badge: "Local",
     },
     {
       href: "/investors/add-property",
       icon: "➕",
       title: "Add Property",
-      description: "Post a rental, wholesale deal, rehab project, or investment opportunity.",
+      description:
+        "Post a rental, wholesale deal, rehab project, or investment opportunity.",
       badge: "Post",
     },
   ];
@@ -99,12 +106,11 @@ export default function InvestorsPage() {
               <h3 className="text-2xl font-bold mb-2">{tool.title}</h3>
 
               <p className="text-gray-600">{tool.description}</p>
-<div className="mt-5">
-  <span className="inline-block rounded-xl bg-green-700 px-4 py-2 font-bold text-white">
-    Open {tool.title}
-  </span>
-</div>
-
+              <div className="mt-5">
+                <span className="inline-block rounded-xl bg-green-700 px-4 py-2 font-bold text-white">
+                  Open {tool.title}
+                </span>
+              </div>
             </a>
           ))}
         </div>
@@ -153,7 +159,9 @@ export default function InvestorsPage() {
       </section>
 
       <section className="max-w-6xl mx-auto pb-16 px-6">
-        <h2 className="text-3xl font-bold mb-6">🏛 County Property Resources</h2>
+        <h2 className="text-3xl font-bold mb-6">
+          🏛 County Property Resources
+        </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <a

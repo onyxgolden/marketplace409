@@ -2,6 +2,7 @@
 
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { uploadImage } from "@/lib/uploadImage";
 import { useEffect, useState } from "react";
 
 export default function EditListingPage({ params }) {
@@ -17,6 +18,8 @@ export default function EditListingPage({ params }) {
   const [sellerName, setSellerName] = useState("");
   const [sellerEmail, setSellerEmail] = useState("");
   const [sellerPhone, setSellerPhone] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [newImageFile, setNewImageFile] = useState(null);
 
   useEffect(() => {
     async function start() {
@@ -49,11 +52,20 @@ export default function EditListingPage({ params }) {
     setSellerName(data.seller_name || "");
     setSellerEmail(data.seller_email || "");
     setSellerPhone(data.seller_phone || "");
+    setImageUrl(data.image_url || "");
     setLoading(false);
   }
 
   async function handleSave() {
     setIsSaving(true);
+
+    const finalImageUrl = await uploadImage({
+      file: newImageFile,
+      currentImageUrl: imageUrl,
+      folder: "listings",
+      prefix: "listing",
+      recordId: listingId,
+    });
 
     const { error } = await supabase
       .from("listings")
@@ -66,6 +78,7 @@ export default function EditListingPage({ params }) {
         seller_name: sellerName,
         seller_email: sellerEmail,
         seller_phone: sellerPhone,
+        image_url: finalImageUrl,
       })
       .eq("id", listingId);
 
@@ -102,6 +115,30 @@ export default function EditListingPage({ params }) {
           <h1 className="text-4xl font-extrabold mb-8">Edit Listing</h1>
 
           <div className="space-y-6">
+            {imageUrl && (
+              <div>
+                <label className="block font-bold mb-3">Current Image</label>
+                <img
+                  src={imageUrl}
+                  alt={title}
+                  className="w-full max-h-80 object-cover rounded-2xl border"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block font-bold mb-3">Replace Image</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setNewImageFile(e.target.files[0])}
+                className="w-full p-4 rounded-2xl border border-gray-300"
+              />
+              <p className="text-sm text-gray-500 mt-2">
+                Leave this blank to keep the current image.
+              </p>
+            </div>
+
             <input
               type="text"
               placeholder="Listing Title"

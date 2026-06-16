@@ -38,7 +38,9 @@ export default function ClaimBusinessPage() {
     setError("");
 
     if (!form.certified) {
-      setError("You must certify that you are authorized to represent this business.");
+      setError(
+        "You must certify that you are authorized to represent this business.",
+      );
       return;
     }
 
@@ -74,7 +76,8 @@ export default function ClaimBusinessPage() {
           Thanks. Your claim request has been submitted for review.
         </p>
         <p className="mt-2 text-gray-700">
-          We may contact you or call the publicly listed business phone number to confirm ownership.
+          We may contact you or call the publicly listed business phone number
+          to confirm ownership.
         </p>
       </main>
     );
@@ -84,9 +87,7 @@ export default function ClaimBusinessPage() {
     <main className="mx-auto max-w-2xl px-4 py-10">
       <h1 className="text-3xl font-bold">Claim This Business</h1>
 
-      <p className="mt-2 text-gray-600">
-        Request ownership access for:
-      </p>
+      <p className="mt-2 text-gray-600">Request ownership access for:</p>
 
       <p className="mt-1 text-xl font-semibold">
         {businessName || "This business"}

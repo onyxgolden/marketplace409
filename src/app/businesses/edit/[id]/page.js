@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { uploadImage } from "@/lib/uploadImage";
+import { useEffect, useState } from "react";
 
 export default function EditBusinessPage({ params }) {
   const [businessId, setBusinessId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
@@ -16,6 +18,8 @@ export default function EditBusinessPage({ params }) {
   const [facebookUrl, setFacebookUrl] = useState("");
   const [description, setDescription] = useState("");
   const [trustTags, setTrustTags] = useState([]);
+  const [imageUrl, setImageUrl] = useState("");
+  const [newImageFile, setNewImageFile] = useState(null);
 
   function toggleTag(tag) {
     if (trustTags.includes(tag)) {
@@ -56,10 +60,21 @@ export default function EditBusinessPage({ params }) {
     setFacebookUrl(data.facebook_url || "");
     setDescription(data.description || "");
     setTrustTags(data.trust_tags || []);
+    setImageUrl(data.image_url || "");
     setLoading(false);
   }
 
   async function handleUpdate() {
+    setSaving(true);
+
+    const finalImageUrl = await uploadImage({
+      file: newImageFile,
+      currentImageUrl: imageUrl,
+      folder: "businesses",
+      prefix: "business",
+      recordId: businessId,
+    });
+
     const { error } = await supabase
       .from("businesses")
       .update({
@@ -71,8 +86,11 @@ export default function EditBusinessPage({ params }) {
         facebook_url: facebookUrl,
         description,
         trust_tags: trustTags,
+        image_url: finalImageUrl,
       })
       .eq("id", businessId);
+
+    setSaving(false);
 
     if (error) {
       alert("Error updating business");
@@ -105,6 +123,30 @@ export default function EditBusinessPage({ params }) {
           <h1 className="text-4xl font-extrabold mb-8">Edit Business</h1>
 
           <div className="space-y-6">
+            {imageUrl && (
+              <div>
+                <label className="block font-bold mb-3">Current Image</label>
+                <img
+                  src={imageUrl}
+                  alt={name}
+                  className="w-full max-h-80 object-cover rounded-2xl border"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block font-bold mb-3">Replace Image</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setNewImageFile(e.target.files[0])}
+                className="w-full p-4 rounded-2xl border border-gray-300"
+              />
+              <p className="text-sm text-gray-500 mt-2">
+                Leave this blank to keep the current image.
+              </p>
+            </div>
+
             <input
               type="text"
               placeholder="Business Name"
@@ -192,9 +234,10 @@ export default function EditBusinessPage({ params }) {
 
             <button
               onClick={handleUpdate}
-              className="w-full bg-blue-900 text-white py-4 rounded-2xl text-xl font-bold hover:bg-blue-800"
+              disabled={saving}
+              className="w-full bg-blue-900 text-white py-4 rounded-2xl text-xl font-bold hover:bg-blue-800 disabled:bg-gray-400"
             >
-              Save Business Changes
+              {saving ? "Saving..." : "Save Business Changes"}
             </button>
           </div>
         </div>

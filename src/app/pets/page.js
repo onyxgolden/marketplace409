@@ -200,6 +200,12 @@ export default async function PetsPage() {
                     title={pet.pet_name}
                     url="https://409marketplace.online/pets"
                   />
+                  <a
+                    href={`/pets/edit/${pet.id}`}
+                    className="block mt-3 bg-gray-800 text-white text-center py-3 rounded-xl font-bold"
+                  >
+                    Edit Pet Post
+                  </a>
 
                   <DeletePetButton petId={pet.id} />
                 </div>

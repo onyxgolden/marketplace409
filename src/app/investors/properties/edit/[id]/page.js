@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { uploadImage } from "@/lib/uploadImage";
 
 export default function EditInvestorPropertyPage() {
   const params = useParams();
@@ -28,6 +29,7 @@ export default function EditInvestorPropertyPage() {
     image_url: "",
   });
 
+  const [newImage, setNewImage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -78,33 +80,46 @@ export default function EditInvestorPropertyPage() {
     setSaving(true);
     setError("");
 
-    const { error } = await supabase
-      .from("investor_properties")
-      .update({
-  ...form,
-  asking_price: form.asking_price || null,
-  arv: form.arv || null,
-  rehab_cost: form.rehab_cost || null,
-  estimated_rent: form.estimated_rent || null,
-  bedrooms: form.bedrooms || null,
-  bathrooms: form.bathrooms || null,
-  sqft: form.sqft || null,
-})
-      .eq("id", propertyId);
+    try {
+      const imageUrl = await uploadImage({
+        file: newImage,
+        currentImageUrl: form.image_url,
+        folder: "investor-properties",
+        prefix: "investor-property",
+        recordId: propertyId,
+      });
 
-    setSaving(false);
+      const { error } = await supabase
+        .from("investor_properties")
+        .update({
+          ...form,
+          image_url: imageUrl,
+          asking_price: form.asking_price || null,
+          arv: form.arv || null,
+          rehab_cost: form.rehab_cost || null,
+          estimated_rent: form.estimated_rent || null,
+          bedrooms: form.bedrooms || null,
+          bathrooms: form.bathrooms || null,
+          sqft: form.sqft || null,
+        })
+        .eq("id", propertyId);
 
-    if (error) {
-      setError(error.message);
-      return;
+      if (error) {
+        setError(error.message);
+        setSaving(false);
+        return;
+      }
+
+      router.push("/investors/properties");
+    } catch (err) {
+      setError(err.message || "Image upload failed.");
+      setSaving(false);
     }
-
-    router.push("/investors/properties");
   }
 
   async function removeProperty() {
     const confirmed = window.confirm(
-      "Remove this investment property from the public list?"
+      "Remove this investment property from the public list?",
     );
 
     if (!confirmed) return;
@@ -162,6 +177,30 @@ export default function EditInvestorPropertyPage() {
           )}
 
           <form onSubmit={saveProperty} className="space-y-5">
+            {form.image_url && (
+              <div>
+                <p className="font-bold mb-2">Current Image</p>
+                <img
+                  src={form.image_url}
+                  alt={form.address}
+                  className="h-52 w-full rounded-2xl object-cover border"
+                />
+              </div>
+            )}
+
+            <div>
+              <p className="font-bold mb-2">Replace Image</p>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setNewImage(e.target.files?.[0] || null)}
+                className="w-full p-4 rounded-2xl border border-gray-300"
+              />
+              <p className="text-sm text-gray-500 mt-2">
+                Leave blank to keep the current image.
+              </p>
+            </div>
+
             {[
               ["address", "Property Address"],
               ["city", "City"],

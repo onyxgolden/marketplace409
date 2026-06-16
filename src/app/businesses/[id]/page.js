@@ -75,15 +75,15 @@ export default async function BusinessDetailPage({ params }) {
             <h1 className="text-5xl font-extrabold mb-4">{business.name}</h1>
 
             {business.claimed && (
-  <div className="mb-4 inline-block rounded-full bg-green-100 px-4 py-2 text-sm font-bold text-green-800">
-    ✓ Claimed Business
-  </div>
-)}
+              <div className="mb-4 inline-block rounded-full bg-green-100 px-4 py-2 text-sm font-bold text-green-800">
+                ✓ Claimed Business
+              </div>
+            )}
 
             <div className="mb-6">
               <a
                 href={`/businesses/${business.id}/claim?name=${encodeURIComponent(
-                  business.name
+                  business.name,
                 )}`}
                 className="inline-block rounded-xl border-2 border-blue-700 px-5 py-3 font-bold text-blue-700 hover:bg-blue-50"
               >

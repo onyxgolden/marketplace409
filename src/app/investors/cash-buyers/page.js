@@ -17,7 +17,9 @@ export default async function CashBuyersPage() {
       <section className="max-w-7xl mx-auto py-10 px-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-4xl font-extrabold">409 Cash Buyer Directory</h1>
+            <h1 className="text-4xl font-extrabold">
+              409 Cash Buyer Directory
+            </h1>
             <p className="text-gray-600 mt-2">
               Local real estate buyers looking for investment properties.
             </p>
@@ -103,7 +105,7 @@ export default async function CashBuyersPage() {
                     Email
                   </a>
 
-                   <a
+                  <a
                     href={`/investors/cash-buyers/edit/${buyer.id}`}
                     className="bg-blue-700 text-white px-4 py-2 rounded-xl font-bold hover:bg-blue-600"
                   >

@@ -51,9 +51,7 @@ export default function AddCashBuyerPage() {
 
         <section className="max-w-3xl mx-auto py-12 px-6">
           <div className="bg-white rounded-3xl shadow p-8 text-center">
-            <h1 className="text-3xl font-extrabold mb-4">
-              Cash Buyer Added
-            </h1>
+            <h1 className="text-3xl font-extrabold mb-4">Cash Buyer Added</h1>
 
             <p className="text-gray-600 mb-6">
               Your buyer profile has been added to the 409 Cash Buyer Directory.

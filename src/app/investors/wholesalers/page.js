@@ -17,7 +17,7 @@ export default async function WholesalersPage({ searchParams }) {
 
   if (q) {
     query = query.or(
-      `name.ilike.%${q}%,company_name.ilike.%${q}%,notes.ilike.%${q}%,deal_types.ilike.%${q}%,buyer_types.ilike.%${q}%`
+      `name.ilike.%${q}%,company_name.ilike.%${q}%,notes.ilike.%${q}%,deal_types.ilike.%${q}%,buyer_types.ilike.%${q}%`,
     );
   }
 
@@ -27,7 +27,7 @@ export default async function WholesalersPage({ searchParams }) {
 
   if (area) {
     query = query.or(
-      `city.ilike.%${area}%,counties_served.ilike.%${area}%,service_area.ilike.%${area}%`
+      `city.ilike.%${area}%,counties_served.ilike.%${area}%,service_area.ilike.%${area}%`,
     );
   }
 

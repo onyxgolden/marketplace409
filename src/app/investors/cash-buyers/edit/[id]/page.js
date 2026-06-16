@@ -83,7 +83,7 @@ export default function EditCashBuyerPage() {
 
   async function deleteBuyer() {
     const confirmed = window.confirm(
-      "Remove this cash buyer from the public directory?"
+      "Remove this cash buyer from the public directory?",
     );
 
     if (!confirmed) return;

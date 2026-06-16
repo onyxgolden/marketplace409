@@ -98,7 +98,8 @@ export default function InvestorDocumentsPage() {
 
           <p className="mt-4 text-sm text-green-100 max-w-3xl">
             Educational templates only. Real estate laws vary by state. Have an
-            attorney review contracts before using them in an actual transaction.
+            attorney review contracts before using them in an actual
+            transaction.
           </p>
         </div>
       </section>
