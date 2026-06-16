@@ -99,6 +99,15 @@ export default async function InvestorPropertiesPage() {
                       <strong>Rent:</strong> $
                       {Number(property.estimated_rent || 0).toLocaleString()}
                     </p>
+
+                    <div className="mt-5 flex flex-wrap gap-3">
+  <a
+    href={`/investors/properties/edit/${property.id}`}
+    className="bg-blue-700 text-white px-4 py-2 rounded-xl font-bold hover:bg-blue-600"
+  >
+    Edit
+  </a>
+</div>
                   </div>
                 </div>
               </div>

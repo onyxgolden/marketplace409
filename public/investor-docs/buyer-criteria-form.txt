@@ -1,0 +1,110 @@
+BUYER CRITERIA FORM
+
+Investor Name:
+
+---
+
+Company:
+
+---
+
+Phone:
+
+---
+
+Email:
+
+---
+
+Preferred Contact Method:
+
+☐ Phone
+☐ Text
+☐ Email
+
+Buying Areas
+
+Cities:
+
+---
+
+---
+
+Counties:
+
+---
+
+---
+
+Property Types
+
+☐ Single Family
+☐ Multifamily
+☐ Duplex
+☐ Triplex
+☐ Fourplex
+☐ Mobile Home
+☐ Land
+☐ Commercial
+☐ Storage
+☐ RV Park
+☐ Other
+
+Price Range
+
+Minimum Purchase Price:
+$_____________________
+
+Maximum Purchase Price:
+$_____________________
+
+Deal Types
+
+☐ Wholesale
+☐ Fix & Flip
+☐ Rental
+☐ BRRRR
+☐ Subject-To
+☐ Owner Finance
+☐ Creative Finance
+☐ New Construction
+
+Property Condition
+
+☐ Turnkey
+☐ Light Rehab
+☐ Moderate Rehab
+☐ Heavy Rehab
+☐ Fire Damage
+☐ Foundation Issues
+☐ Any Condition
+
+Funding
+
+☐ Cash
+☐ Hard Money
+☐ Private Money
+☐ Conventional Financing
+☐ Other
+
+Minimum Equity Desired:
+
+---
+
+Target Monthly Cash Flow:
+
+---
+
+Additional Notes
+
+---
+
+---
+
+---
+
+---
+
+Last Updated:
+
+---

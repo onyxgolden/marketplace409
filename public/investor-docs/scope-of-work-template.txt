@@ -1,0 +1,200 @@
+SCOPE OF WORK TEMPLATE
+
+Project Name:
+
+---
+
+Property Address:
+
+---
+
+Prepared By:
+
+---
+
+Date:
+
+---
+
+=================================================
+DEMOLITION
+==========
+
+☐ Remove flooring
+☐ Remove cabinets
+☐ Remove fixtures
+☐ Remove drywall
+☐ Other
+
+Notes:
+
+---
+
+=================================================
+ROOFING
+=======
+
+☐ Repair roof
+☐ Replace roof
+
+Estimated Cost:
+$_____________________
+
+Notes:
+
+---
+
+=================================================
+PLUMBING
+========
+
+☐ Repair leaks
+☐ Replace fixtures
+☐ Replace water heater
+☐ Re-pipe
+
+Estimated Cost:
+$_____________________
+
+Notes:
+
+---
+
+=================================================
+ELECTRICAL
+==========
+
+☐ Replace panel
+☐ Add outlets
+☐ Replace fixtures
+☐ Rewire
+
+Estimated Cost:
+$_____________________
+
+Notes:
+
+---
+
+=================================================
+HVAC
+====
+
+☐ Service system
+☐ Replace condenser
+☐ Replace furnace
+☐ New complete system
+
+Estimated Cost:
+$_____________________
+
+Notes:
+
+---
+
+=================================================
+INTERIOR
+========
+
+☐ Drywall
+☐ Texture
+☐ Paint
+☐ Doors
+☐ Trim
+
+Estimated Cost:
+$_____________________
+
+Notes:
+
+---
+
+=================================================
+FLOORING
+========
+
+☐ Carpet
+☐ LVP
+☐ Tile
+☐ Hardwood
+
+Estimated Cost:
+$_____________________
+
+Notes:
+
+---
+
+=================================================
+KITCHEN
+=======
+
+☐ Cabinets
+☐ Countertops
+☐ Appliances
+☐ Backsplash
+
+Estimated Cost:
+$_____________________
+
+Notes:
+
+---
+
+=================================================
+BATHROOMS
+=========
+
+☐ Vanity
+☐ Shower
+☐ Tub
+☐ Toilet
+☐ Flooring
+
+Estimated Cost:
+$_____________________
+
+Notes:
+
+---
+
+=================================================
+EXTERIOR
+========
+
+☐ Siding
+☐ Paint
+☐ Landscaping
+☐ Driveway
+☐ Fence
+
+Estimated Cost:
+$_____________________
+
+Notes:
+
+---
+
+=================================================
+PROJECT SUMMARY
+===============
+
+Purchase Price:
+$_____________________
+
+Estimated Rehab:
+$_____________________
+
+ARV:
+$_____________________
+
+Expected Profit:
+$_____________________
+
+General Notes:
+
+---
+
+---
+
+---
