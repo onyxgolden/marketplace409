@@ -10,6 +10,9 @@ export default function EditWholesalerPage({ params }) {
 
   const [name, setName] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [contactType, setContactType] = useState("");
+  const [countiesServed, setCountiesServed] = useState("");
+
   const [city, setCity] = useState("");
   const [serviceArea, setServiceArea] = useState("");
   const [phone, setPhone] = useState("");
@@ -46,6 +49,8 @@ export default function EditWholesalerPage({ params }) {
 
     setName(data.name || "");
     setCompanyName(data.company_name || "");
+    setContactType(data.contact_type || "");
+    setCountiesServed(data.counties_served || "");
     setCity(data.city || "");
     setServiceArea(data.service_area || "");
     setPhone(data.phone || "");
@@ -65,6 +70,8 @@ export default function EditWholesalerPage({ params }) {
       .update({
         name,
         company_name: companyName,
+        contact_type: contactType,
+        counties_served: countiesServed,
         city,
         service_area: serviceArea,
         phone,
@@ -123,6 +130,19 @@ export default function EditWholesalerPage({ params }) {
               value={companyName}
               onChange={(e) => setCompanyName(e.target.value)}
               placeholder="Company Name"
+              className="w-full p-4 border rounded-xl"
+            />
+            <input
+              value={contactType}
+              onChange={(e) => setContactType(e.target.value)}
+              placeholder="Contact Type: Cash Buyer, Wholesaler, Bird Dog, Land Buyer"
+              className="w-full p-4 border rounded-xl"
+            />
+
+            <input
+              value={countiesServed}
+              onChange={(e) => setCountiesServed(e.target.value)}
+              placeholder="Counties Served: Orange, Jefferson, Hardin"
               className="w-full p-4 border rounded-xl"
             />
 

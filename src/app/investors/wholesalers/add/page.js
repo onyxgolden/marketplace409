@@ -7,6 +7,8 @@ import { supabase } from "@/lib/supabase";
 export default function AddWholesalerPage() {
   const [name, setName] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [contactType, setContactType] = useState("");
+  const [countiesServed, setCountiesServed] = useState("");
   const [city, setCity] = useState("");
   const [serviceArea, setServiceArea] = useState("");
   const [phone, setPhone] = useState("");
@@ -23,6 +25,8 @@ export default function AddWholesalerPage() {
       {
         name,
         company_name: companyName,
+        contact_type: contactType,
+        counties_served: countiesServed,
         city,
         service_area: serviceArea,
         phone,
@@ -38,7 +42,7 @@ export default function AddWholesalerPage() {
 
     if (error) {
       alert("Error adding wholesaler contact: " + error.message);
-console.log(error);
+      console.log(error);
     }
 
     alert("Wholesaler contact added");
@@ -66,6 +70,19 @@ console.log(error);
               value={companyName}
               onChange={(e) => setCompanyName(e.target.value)}
               placeholder="Company Name"
+              className="w-full p-4 border rounded-xl"
+            />
+            <input
+              value={contactType}
+              onChange={(e) => setContactType(e.target.value)}
+              placeholder="Contact Type: Cash Buyer, Wholesaler, Bird Dog, Land Buyer"
+              className="w-full p-4 border rounded-xl"
+            />
+
+            <input
+              value={countiesServed}
+              onChange={(e) => setCountiesServed(e.target.value)}
+              placeholder="Counties Served: Orange, Jefferson, Hardin"
               className="w-full p-4 border rounded-xl"
             />
             <input

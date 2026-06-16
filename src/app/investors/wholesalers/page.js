@@ -61,6 +61,18 @@ export default async function WholesalersPage() {
                   <p className="text-gray-500 mt-2">{contact.city}</p>
                 )}
 
+                {contact.contact_type && (
+                  <p className="mt-3">
+                    <strong>Contact Type:</strong> {contact.contact_type}
+                  </p>
+                )}
+
+                {contact.counties_served && (
+                  <p className="mt-2">
+                    <strong>Counties Served:</strong> {contact.counties_served}
+                  </p>
+                )}
+
                 {contact.community_contact && (
                   <span className="inline-block mt-3 bg-orange-100 text-orange-900 px-3 py-1 rounded-full text-sm font-bold">
                     🤝 Community Contact

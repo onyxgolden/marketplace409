@@ -17,7 +17,7 @@ export default function DeleteWholesalerButton({ wholesalerId }) {
 
     if (error) {
       alert("Error deleting wholesaler contact: " + error.message);
-console.log(error);
+      console.log(error);
       return;
     }
 
