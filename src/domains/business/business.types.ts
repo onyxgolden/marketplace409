@@ -1,7 +1,6 @@
-export type Business = {
-  id: string;
-  created_at?: string;
+import type { Entity } from "@/types/entity";
 
+export type Business = Entity & {
   name: string;
   category?: string | null;
   description?: string | null;
