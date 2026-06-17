@@ -1,23 +1,11 @@
-import type { Entity } from "@/types/entity";
+import type { Institution } from "./institution.types";
 
-export type InstitutionType =
-  | "bank"
-  | "brokerage"
-  | "retirement"
-  | "crypto"
-  | "credit_card"
-  | "lender"
-  | "manual"
-  | "other";
+export class InstitutionService {
+  static canSync(institution: Institution): boolean {
+    return institution.supports_sync === true;
+  }
 
-export type Institution = Entity & {
-  name: string;
-  type: InstitutionType;
-
-  supports_sync: boolean;
-
-  sync_provider?: string | null;
-
-  website?: string | null;
-  logo_url?: string | null;
-};
+  static isManual(institution: Institution): boolean {
+    return institution.type === "manual";
+  }
+}
