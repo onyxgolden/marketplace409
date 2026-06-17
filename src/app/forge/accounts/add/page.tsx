@@ -53,6 +53,18 @@ const filteredInstitutions = institutions.filter((institution) =>
           ))}
         </div>
 
+        {selected && (
+  <Card className="mt-8">
+    <h2 className="text-xl font-bold mb-2">Selected Institution</h2>
+
+    <p className="text-lg">{selected}</p>
+
+    <Button className="mt-6">
+      Continue to Account Details →
+    </Button>
+  </Card>
+)}
+
         <Button className={!selected ? "opacity-50 cursor-not-allowed" : ""}>
   Continue
 </Button>
