@@ -1,15 +1,19 @@
 import BusinessAdminControls from "@/components/BusinessAdminControls";
 import ShareButton from "@/components/ShareButton";
 import Header from "@/components/Header";
-import { supabase } from "@/lib/supabase";
+import { BusinessRepository } from "@/domains/business";
 
 export const dynamic = "force-dynamic";
 
 export default async function BusinessesPage() {
-  const { data: businesses, error } = await supabase
-    .from("businesses")
-    .select("*")
-    .order("created_at", { ascending: false });
+  let businesses = [];
+let error = null;
+
+try {
+  businesses = await BusinessRepository.getAll();
+} catch (err) {
+  error = err;
+}
 
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
