@@ -1,13 +1,16 @@
 import Header from "@/components/Header";
-import { supabase } from "@/lib/supabase";
+import { PropertyRepository } from "@/domains/property";
 
 export const dynamic = "force-dynamic";
 
 export default async function InvestorPropertiesPage() {
-  const { data: properties } = await supabase
-    .from("investor_properties")
-    .select("*")
-    .order("created_at", { ascending: false });
+  let properties = [];
+
+try {
+  properties = await PropertyRepository.getAll();
+} catch (error) {
+  console.error("Could not load properties:", error);
+}
 
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
