@@ -1,18 +1,16 @@
-import { supabase } from "@/lib/supabase";
-import type { Business } from "./business.types";
+import { BaseRepository } from "@/repositories";
 import { mapBusinessRowToBusiness } from "./business.mapper";
+import type { Business } from "./business.types";
 
-export class BusinessRepository {
-  static async getAll(): Promise<Business[]> {
-    const { data, error } = await supabase
-      .from("businesses")
-      .select("*")
-      .order("created_at", { ascending: false });
+class BusinessRepositoryImpl extends BaseRepository<any> {
+  constructor() {
+    super("businesses");
+  }
 
-    if (error) {
-      throw error;
-    }
-
-    return (data ?? []).map(mapBusinessRowToBusiness);
+  async getAll(): Promise<Business[]> {
+    const rows = await super.getAll();
+    return rows.map(mapBusinessRowToBusiness);
   }
 }
+
+export const BusinessRepository = new BusinessRepositoryImpl();
