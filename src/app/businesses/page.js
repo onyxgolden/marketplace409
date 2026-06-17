@@ -69,7 +69,7 @@ try {
                 )}
 
                 <div className="p-5">
-                  <p className="text-sm text-gray-500">{business.city}</p>
+                  <p className="text-sm text-gray-500">{business.address?.city}</p>
 
                   <a href={`/businesses/${business.id}`} className="block">
                     <h2 className="text-xl font-bold hover:text-red-600">
@@ -97,18 +97,18 @@ try {
                     {business.description}
                   </div>
 
-                  {business.phone && (
+                  {business.contact?.phone && (
                     <a
-                      href={`tel:${business.phone}`}
+                      href={`tel:${business.contact.phone}`}
                       className="block mt-4 bg-green-700 text-white text-center py-3 rounded-xl font-bold"
                     >
                       Call
                     </a>
                   )}
 
-                  {business.website_url && (
+                  {business.contact?.website_url && (
                     <a
-                      href={business.website_url}
+                      href={business.contact.website_url}
                       target="_blank"
                       className="block mt-3 bg-blue-900 text-white text-center py-3 rounded-xl font-bold"
                     >

@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import type { Business } from "./business.types";
+import { mapBusinessRowToBusiness } from "./business.mapper";
 
 export class BusinessRepository {
   static async getAll(): Promise<Business[]> {
@@ -12,6 +13,6 @@ export class BusinessRepository {
       throw error;
     }
 
-    return (data ?? []) as Business[];
+    return (data ?? []).map(mapBusinessRowToBusiness);
   }
 }
