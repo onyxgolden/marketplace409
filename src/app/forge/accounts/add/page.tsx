@@ -8,6 +8,11 @@ import { InstitutionService } from "@/domains/institution";
 export default function AddAccountPage() {
   const institutions = InstitutionService.getDefaults();
 const [selected, setSelected] = useState<string | null>(null);
+const [search, setSearch] = useState("");
+
+const filteredInstitutions = institutions.filter((institution) =>
+  institution.name.toLowerCase().includes(search.toLowerCase())
+);
 
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
@@ -21,9 +26,16 @@ const [selected, setSelected] = useState<string | null>(null);
         <p className="text-gray-600 text-lg mb-8">
           Choose where this account is held.
         </p>
+<input
+  value={search}
+  onChange={(event) => setSearch(event.target.value)}
+  placeholder="Search institutions..."
+  className="w-full rounded-xl border border-gray-300 px-4 py-3 mb-6 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+/>
+
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          {institutions.map((institution) => (
+          {filteredInstitutions.map((institution) => (
             <Card
   key={institution.name}
   onClick={() => setSelected(institution.name)}
