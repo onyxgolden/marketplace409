@@ -1,3 +1,5 @@
+import { LedgerFilter } from "../filters";
+
 /**
  * LedgerQuery
  *
@@ -16,19 +18,27 @@ export class LedgerQuery {
     Object.freeze(this);
   }
 
+  find(filter = LedgerFilter.all()) {
+    if (!(filter instanceof LedgerFilter)) {
+      throw new Error("LedgerQuery.find requires a LedgerFilter");
+    }
+
+    return this.repository.getEntries().filter((entry) => filter.matches(entry));
+  }
+
   getEntries() {
-    return this.repository.getEntries();
+    return this.find(LedgerFilter.all());
   }
 
   getEntriesByAccountId(accountId) {
-    return this.repository.getEntriesByAccountId(accountId);
+    return this.find(LedgerFilter.byAccountId(accountId));
   }
 
-  count() {
-    return this.repository.count();
+  count(filter = LedgerFilter.all()) {
+    return this.find(filter).length;
   }
 
-  isEmpty() {
-    return this.repository.isEmpty();
+  isEmpty(filter = LedgerFilter.all()) {
+    return this.count(filter) === 0;
   }
 }
