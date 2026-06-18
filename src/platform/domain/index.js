@@ -1,0 +1,1 @@
+export { DomainRegistry, domainRegistry } from "./DomainRegistry";
