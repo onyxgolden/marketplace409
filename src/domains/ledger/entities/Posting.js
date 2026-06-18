@@ -27,6 +27,7 @@ export class Posting {
     this.direction = direction;
     this.description = description;
     this.metadata = metadata;
+    Object.freeze(this);
   }
 
   isDebit() {
