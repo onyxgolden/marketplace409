@@ -1,15 +1,16 @@
+import { LedgerRepository } from "./LedgerRepository";
+
 /**
  * InMemoryLedgerRepository
  *
- * Repository abstraction for reading ledger history.
- * This keeps balance calculations independent from storage technology.
- *
+ * In-memory implementation of the LedgerRepository contract.
  * Production storage may later become Supabase/PostgreSQL.
- * The Balance Engine should depend on this interface shape, not direct tables.
  */
 
-export class InMemoryLedgerRepository {
+export class InMemoryLedgerRepository extends LedgerRepository {
   constructor(generalLedger) {
+    super();
+
     if (!generalLedger) {
       throw new Error("GeneralLedger is required");
     }
