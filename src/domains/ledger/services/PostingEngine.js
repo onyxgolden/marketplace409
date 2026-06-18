@@ -1,5 +1,6 @@
 import { LedgerEntry } from "../entities/LedgerEntry";
 import { JournalEntry } from "../entities/JournalEntry";
+import { PostingResult } from "../results/PostingResult";
 
 export class PostingEngine {
   post(journalEntry) {
@@ -9,7 +10,7 @@ export class PostingEngine {
 
     journalEntry.validateBalanced();
 
-    return journalEntry.postings.map((posting, index) => {
+    const ledgerEntries = journalEntry.postings.map((posting, index) => {
       return new LedgerEntry({
         id: `${journalEntry.id}:ledger-entry:${index + 1}`,
         accountId: posting.accountId,
@@ -25,6 +26,14 @@ export class PostingEngine {
         },
         createdAt: new Date(),
       });
+    });
+
+    return new PostingResult({
+      journalEntryId: journalEntry.id,
+      ledgerEntries,
+      metadata: {
+        source: "PostingEngine",
+      },
     });
   }
 }
