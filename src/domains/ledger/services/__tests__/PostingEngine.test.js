@@ -120,4 +120,12 @@ describe("PostingEngine", () => {
 
     expect(validatedEntry).toBe(journalEntry);
   });
+
+    test("throws when posting anything other than a JournalEntry", () => {
+    const engine = new PostingEngine();
+
+    expect(() => engine.post({})).toThrow(
+      "PostingEngine requires a JournalEntry"
+    );
+  });
 });
