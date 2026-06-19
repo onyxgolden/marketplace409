@@ -31,24 +31,19 @@ export class JournalEntry {
     this.createdAt = createdAt;
 
     this.validateBalanced();
+    Object.freeze(this);
   }
 
   getDebitTotal() {
     return this.postings
       .filter((posting) => posting.isDebit())
-      .reduce(
-        (total, posting) => total.add(posting.amount),
-        new Money({ amount: 0 })
-      );
+      .reduce((total, posting) => total.add(posting.amount), new Money(0));
   }
 
   getCreditTotal() {
     return this.postings
       .filter((posting) => posting.isCredit())
-      .reduce(
-        (total, posting) => total.add(posting.amount),
-        new Money({ amount: 0 })
-      );
+      .reduce((total, posting) => total.add(posting.amount), new Money(0));
   }
 
   validateBalanced() {
