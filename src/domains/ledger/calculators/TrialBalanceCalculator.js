@@ -1,11 +1,4 @@
-import { TrialBalance } from "../reports";
-
-/**
- * TrialBalanceCalculator
- *
- * Creates a TrialBalance report from calculated account balances.
- * It does not read or mutate ledger entries directly.
- */
+import { Money } from "@/platform/value-objects";
 
 export class TrialBalanceCalculator {
   constructor(balanceCalculator) {
@@ -14,13 +7,51 @@ export class TrialBalanceCalculator {
     }
 
     this.balanceCalculator = balanceCalculator;
-
     Object.freeze(this);
   }
 
-  calculate() {
-    const accountBalances = this.balanceCalculator.calculateAll();
+  calculate(accountIds = []) {
+    const trialBalance = accountIds.map((accountId) =>
+      Object.freeze({
+        accountId,
+        balance: this.balanceCalculator.calculate(accountId),
+      })
+    );
 
-    return new TrialBalance(accountBalances);
+    return Object.freeze(trialBalance);
+  }
+
+  calculateTotals(accountIds = []) {
+    const trialBalance = this.calculate(accountIds);
+
+    const totals = trialBalance.reduce(
+      (runningTotals, line) => {
+        if (line.balance.amount >= 0) {
+          return {
+            debits: new Money(runningTotals.debits.amount + line.balance.amount),
+            credits: runningTotals.credits,
+          };
+        }
+
+        return {
+          debits: runningTotals.debits,
+          credits: new Money(
+            runningTotals.credits.amount + Math.abs(line.balance.amount)
+          ),
+        };
+      },
+      {
+        debits: new Money(0),
+        credits: new Money(0),
+      }
+    );
+
+    return Object.freeze(totals);
+  }
+
+  isBalanced(accountIds = []) {
+    const totals = this.calculateTotals(accountIds);
+
+    return totals.debits.amount === totals.credits.amount;
   }
 }
