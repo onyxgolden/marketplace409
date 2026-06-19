@@ -29,6 +29,10 @@ export class LedgerEntry {
     this.description = description;
     this.metadata = metadata;
     this.createdAt = createdAt;
+    this.metadata = Object.freeze({ ...metadata });
+    this.createdAt = createdAt;
+    
+    Object.freeze(this);
   }
 
   isDebit() {
