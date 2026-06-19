@@ -29,6 +29,7 @@ describe("Posting", () => {
       });
     }).toThrow("Posting requires an id");
   });
+
   test("requires an accountId", () => {
     expect(() => {
       new Posting({
@@ -38,7 +39,8 @@ describe("Posting", () => {
       });
     }).toThrow("Posting requires an accountId");
   });
-    test("requires a Money object", () => {
+
+  test("requires a Money object", () => {
     expect(() => {
       new Posting({
         id: "P1",
@@ -48,7 +50,8 @@ describe("Posting", () => {
       });
     }).toThrow("Posting amount must be a Money object");
   });
-    test("requires a valid ledger direction", () => {
+
+  test("requires a valid ledger direction", () => {
     expect(() => {
       new Posting({
         id: "P1",
@@ -58,7 +61,8 @@ describe("Posting", () => {
       });
     }).toThrow("Posting direction must be DEBIT or CREDIT");
   });
-    test("is immutable", () => {
+
+  test("is immutable", () => {
     const posting = new Posting({
       id: "P1",
       accountId: "Cash",
@@ -68,7 +72,8 @@ describe("Posting", () => {
 
     expect(Object.isFrozen(posting)).toBe(true);
   });
-    test("serializes to JSON", () => {
+
+  test("serializes to JSON", () => {
     const posting = new Posting({
       id: "P1",
       accountId: "Cash",
@@ -86,5 +91,27 @@ describe("Posting", () => {
       description: "Opening balance",
       metadata: { source: "test" },
     });
+  });
+
+  test("identifies debit and credit postings", () => {
+    const debit = new Posting({
+      id: "D1",
+      accountId: "Cash",
+      amount: new Money(100),
+      direction: LedgerDirection.DEBIT,
+    });
+
+    const credit = new Posting({
+      id: "C1",
+      accountId: "Revenue",
+      amount: new Money(100),
+      direction: LedgerDirection.CREDIT,
+    });
+
+    expect(debit.isDebit()).toBe(true);
+    expect(debit.isCredit()).toBe(false);
+
+    expect(credit.isDebit()).toBe(false);
+    expect(credit.isCredit()).toBe(true);
   });
 });
