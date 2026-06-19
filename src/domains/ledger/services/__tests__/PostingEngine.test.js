@@ -69,4 +69,26 @@ describe("PostingEngine", () => {
     expect(result.ledgerEntries[1].direction).toBe(LedgerDirection.CREDIT);
     expect(result.ledgerEntries[1].description).toBe("Owner contribution");
   });
+    test("adds journal entry metadata to each ledger entry", () => {
+    const engine = new PostingEngine();
+    const journalEntry = createBalancedJournalEntry();
+
+    const result = engine.post(journalEntry);
+
+    expect(result.ledgerEntries[0].metadata).toEqual({
+      sourceLine: 1,
+      journalEntryId: "journal-1",
+      postingId: "posting-1",
+      journalEntryDate: "2026-06-18",
+      journalEntryDescription: "Owner contribution",
+    });
+
+    expect(result.ledgerEntries[1].metadata).toEqual({
+      sourceLine: 2,
+      journalEntryId: "journal-1",
+      postingId: "posting-2",
+      journalEntryDate: "2026-06-18",
+      journalEntryDescription: "Owner contribution",
+    });
+  });
 });
