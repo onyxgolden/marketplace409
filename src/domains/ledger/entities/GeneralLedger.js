@@ -30,15 +30,11 @@ export class GeneralLedger {
       throw new Error("Posting result is required");
     }
 
-    if (!postingResult.success) {
-      throw new Error("Cannot record failed posting result");
-    }
-
-    if (!Array.isArray(postingResult.entries)) {
+    if (!Array.isArray(postingResult.ledgerEntries)) {
       throw new Error("Posting result must contain ledger entries");
     }
 
-    return new GeneralLedger([...this.entries, ...postingResult.entries]);
+    return new GeneralLedger([...this.entries, ...postingResult.ledgerEntries]);
   }
 
   getEntries() {
