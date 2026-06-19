@@ -128,4 +128,15 @@ describe("PostingEngine", () => {
       "PostingEngine requires a JournalEntry"
     );
   });
+
+    test("returns immutable posting metadata", () => {
+    const engine = new PostingEngine();
+    const journalEntry = createBalancedJournalEntry();
+
+    const result = engine.post(journalEntry);
+
+    expect(Object.isFrozen(result.metadata)).toBe(true);
+    expect(result.metadata.source).toBe("PostingEngine");
+    expect(result.metadata.validator).toBe("PostingValidator");
+  });
 });
