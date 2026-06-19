@@ -139,4 +139,14 @@ describe("PostingEngine", () => {
     expect(result.metadata.source).toBe("PostingEngine");
     expect(result.metadata.validator).toBe("PostingValidator");
   });
+
+    test("returns an immutable PostingResult", () => {
+    const engine = new PostingEngine();
+    const journalEntry = createBalancedJournalEntry();
+
+    const result = engine.post(journalEntry);
+
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.ledgerEntries)).toBe(true);
+  });
 });
