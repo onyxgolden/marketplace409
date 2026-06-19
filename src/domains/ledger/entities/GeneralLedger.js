@@ -9,7 +9,7 @@
 
 export class GeneralLedger {
   constructor(entries = []) {
-    this.entries = Object.freeze([...entries]);
+    this._entries = Object.freeze([...entries]);
     Object.freeze(this);
   }
 
@@ -25,6 +25,10 @@ export class GeneralLedger {
     return new GeneralLedger(entries);
   }
 
+  get entries() {
+    return Object.freeze([...this._entries]);
+  }
+
   record(postingResult) {
     if (!postingResult) {
       throw new Error("Posting result is required");
@@ -34,18 +38,18 @@ export class GeneralLedger {
       throw new Error("Posting result must contain ledger entries");
     }
 
-    return new GeneralLedger([...this.entries, ...postingResult.ledgerEntries]);
+    return new GeneralLedger([...this._entries, ...postingResult.ledgerEntries]);
   }
 
   getEntries() {
-    return [...this.entries];
+    return this.entries;
   }
 
   count() {
-    return this.entries.length;
+    return this._entries.length;
   }
 
   isEmpty() {
-    return this.entries.length === 0;
+    return this._entries.length === 0;
   }
 }
