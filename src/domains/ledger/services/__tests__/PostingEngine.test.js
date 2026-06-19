@@ -102,4 +102,22 @@ describe("PostingEngine", () => {
     expect(result.ledgerEntries[0].createdAt).toBe(result.postedAt);
     expect(result.ledgerEntries[1].createdAt).toBe(result.postedAt);
   });
+
+  test("uses the injected validator when posting", () => {
+    let validatedEntry = null;
+
+    const validator = {
+      validate(entry) {
+        validatedEntry = entry;
+        return true;
+      },
+    };
+
+    const engine = new PostingEngine({ validator });
+    const journalEntry = createBalancedJournalEntry();
+
+    engine.post(journalEntry);
+
+    expect(validatedEntry).toBe(journalEntry);
+  });
 });
