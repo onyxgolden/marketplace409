@@ -7,35 +7,38 @@ import { LedgerDirection } from "../../value-objects";
 import { PostingEngine } from "../../services/PostingEngine";
 import { BalanceCalculator } from "../BalanceCalculator";
 
-describe("BalanceCalculator", () => {
-  test("derives an account balance from posted immutable ledger entries", () => {
+describe("BalanceCalculator Money", () => {
+  test("returns a Money value object", () => {
     const postingEngine = new PostingEngine();
 
     const journalEntry = new JournalEntry({
-      id: "entry-1",
+      id: "entry-money-1",
       date: new Date("2026-01-01"),
-      description: "Owner contribution",
+      description: "Initial funding",
       postings: [
         new Posting({
-          id: "posting-1",
+          id: "posting-money-1",
           accountId: "cash",
-          amount: new Money(100),
+          amount: new Money(500),
           direction: LedgerDirection.DEBIT,
         }),
         new Posting({
-          id: "posting-2",
+          id: "posting-money-2",
           accountId: "equity",
-          amount: new Money(100),
+          amount: new Money(500),
           direction: LedgerDirection.CREDIT,
         }),
       ],
     });
 
-    const postingResult = postingEngine.post(journalEntry);
-    const ledger = GeneralLedger.create().record(postingResult);
+    const ledger = GeneralLedger.create().record(
+      postingEngine.post(journalEntry),
+    );
 
     const calculator = new BalanceCalculator(ledger);
+    const balance = calculator.getBalanceByAccount("cash");
 
-    expect(calculator.getBalanceByAccount("cash").amount).toBe(100);
+    expect(balance).toBeInstanceOf(Money);
+    expect(balance.amount).toBe(500);
   });
 });

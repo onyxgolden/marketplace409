@@ -1,3 +1,4 @@
+import { Money } from "@/platform";
 import { LedgerDirection } from "../value-objects";
 
 /**
@@ -23,7 +24,7 @@ export class BalanceCalculator {
 
     const entries = this.generalLedger.findByAccount(accountId);
 
-    return entries.reduce((balance, entry) => {
+    const amount = entries.reduce((balance, entry) => {
       if (entry.direction === LedgerDirection.DEBIT) {
         return balance + entry.amount.amount;
       }
@@ -34,6 +35,8 @@ export class BalanceCalculator {
 
       return balance;
     }, 0);
+
+    return new Money(amount);
   }
 }
 
