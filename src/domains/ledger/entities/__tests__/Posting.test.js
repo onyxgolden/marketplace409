@@ -58,4 +58,33 @@ describe("Posting", () => {
       });
     }).toThrow("Posting direction must be DEBIT or CREDIT");
   });
+    test("is immutable", () => {
+    const posting = new Posting({
+      id: "P1",
+      accountId: "Cash",
+      amount: new Money(100),
+      direction: LedgerDirection.DEBIT,
+    });
+
+    expect(Object.isFrozen(posting)).toBe(true);
+  });
+    test("serializes to JSON", () => {
+    const posting = new Posting({
+      id: "P1",
+      accountId: "Cash",
+      amount: new Money(100),
+      direction: LedgerDirection.DEBIT,
+      description: "Opening balance",
+      metadata: { source: "test" },
+    });
+
+    expect(posting.toJSON()).toEqual({
+      id: "P1",
+      accountId: "Cash",
+      amount: { amount: 100 },
+      direction: LedgerDirection.DEBIT,
+      description: "Opening balance",
+      metadata: { source: "test" },
+    });
+  });
 });
