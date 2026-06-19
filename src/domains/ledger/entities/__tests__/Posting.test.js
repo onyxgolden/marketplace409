@@ -19,4 +19,23 @@ describe("Posting", () => {
     expect(posting.isDebit()).toBe(true);
     expect(posting.isCredit()).toBe(false);
   });
+
+  test("requires an id", () => {
+    expect(() => {
+      new Posting({
+        accountId: "Cash",
+        amount: new Money(100),
+        direction: LedgerDirection.DEBIT,
+      });
+    }).toThrow("Posting requires an id");
+  });
+  test("requires an accountId", () => {
+    expect(() => {
+      new Posting({
+        id: "P1",
+        amount: new Money(100),
+        direction: LedgerDirection.DEBIT,
+      });
+    }).toThrow("Posting requires an accountId");
+  });
 });
