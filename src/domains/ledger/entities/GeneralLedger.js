@@ -45,6 +45,12 @@ export class GeneralLedger {
     return this.entries;
   }
 
+  findByAccount(accountId) {
+    return Object.freeze(
+      this._entries.filter((entry) => entry.accountId === accountId),
+    );
+  }
+
   count() {
     return this._entries.length;
   }
