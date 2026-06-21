@@ -1,4 +1,5 @@
 import { AccountBalanceCollection } from "./AccountBalanceCollection";
+import { ReportLine } from "./ReportLine";
 
 /**
  * TrialBalance
@@ -25,6 +26,16 @@ export class TrialBalance {
 
   accounts() {
     return this.accountBalances.all();
+  }
+
+  lines() {
+    return this.accounts().map(
+      (accountBalance) =>
+        new ReportLine({
+          label: accountBalance.accountId,
+          amount: accountBalance.balance,
+        })
+    );
   }
 
   totalBalance() {
