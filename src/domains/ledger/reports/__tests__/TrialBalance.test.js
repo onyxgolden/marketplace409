@@ -4,6 +4,7 @@ import { FinancialReport } from "../FinancialReport";
 import { AccountBalance } from "../AccountBalance";
 import { AccountBalanceCollection } from "../AccountBalanceCollection";
 import { ReportLine } from "../ReportLine";
+import { ReportSection } from "../sections/ReportSection";
 
 describe("TrialBalance", () => {
   test("is a financial report", () => {
@@ -13,6 +14,26 @@ describe("TrialBalance", () => {
 
     expect(trialBalance).toBeInstanceOf(FinancialReport);
     expect(trialBalance.name).toBe("Trial Balance");
+  });
+
+
+  test("composes report lines inside a report section", () => {
+    const accountBalances = new AccountBalanceCollection([
+      new AccountBalance({ accountId: "cash", balance: 100 }),
+      new AccountBalance({ accountId: "revenue", balance: -100 }),
+    ]);
+
+    const trialBalance = new TrialBalance(accountBalances);
+
+    expect(trialBalance.sections()).toEqual([
+      new ReportSection({
+        name: "Accounts",
+        lines: [
+          new ReportLine({ label: "cash", amount: 100 }),
+          new ReportLine({ label: "revenue", amount: -100 }),
+        ],
+      }),
+    ]);
   });
 
   test("returns report lines without changing account balance public API", () => {
