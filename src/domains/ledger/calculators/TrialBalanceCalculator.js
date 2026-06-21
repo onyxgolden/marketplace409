@@ -14,8 +14,8 @@ export class TrialBalanceCalculator {
     const trialBalance = accountIds.map((accountId) =>
       Object.freeze({
         accountId,
-        balance: this.balanceCalculator.calculate(accountId),
-      })
+        balance: this.balanceCalculator.getBalanceByAccount(accountId),
+      }),
     );
 
     return Object.freeze(trialBalance);
@@ -36,14 +36,14 @@ export class TrialBalanceCalculator {
         return {
           debits: runningTotals.debits,
           credits: new Money(
-            runningTotals.credits.amount + Math.abs(line.balance.amount)
+            runningTotals.credits.amount + Math.abs(line.balance.amount),
           ),
         };
       },
       {
         debits: new Money(0),
         credits: new Money(0),
-      }
+      },
     );
 
     return Object.freeze(totals);
