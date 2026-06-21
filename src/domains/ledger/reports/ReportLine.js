@@ -8,8 +8,12 @@
 
 export class ReportLine {
   constructor({ label, amount = 0 }) {
-    if (!label) {
+    if (!label || label.trim() === "") {
       throw new Error("ReportLine requires a label");
+    }
+
+    if (typeof amount !== "number" || !Number.isFinite(amount)) {
+      throw new Error("ReportLine amount must be a finite number");
     }
 
     this.label = label;
