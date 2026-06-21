@@ -98,4 +98,15 @@ export class ChartOfAccounts {
 
     return childIds.map((childId) => this.getById(childId));
   }
+
+  getDescendants(parentId) {
+    const descendants = [];
+
+    for (const child of this.getChildren(parentId)) {
+      descendants.push(child);
+      descendants.push(...this.getDescendants(child.id));
+    }
+
+    return descendants;
+  }
 }

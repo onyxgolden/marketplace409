@@ -3,21 +3,21 @@ import { Account } from "../Account";
 import { AccountType } from "../AccountType";
 import { ChartOfAccounts } from "../ChartOfAccounts";
 
+function account(id, name = id) {
+  return new Account({
+    id,
+    name,
+    type: AccountType.ASSET,
+  });
+}
+
 describe("ChartOfAccounts hierarchy", () => {
   test("sets a parent relationship immutably", () => {
-    const parent = new Account({
-      id: "1000",
-      name: "Assets",
-      type: AccountType.ASSET,
-    });
+    const originalChart = new ChartOfAccounts([
+      account("1000", "Assets"),
+      account("1010", "Cash"),
+    ]);
 
-    const child = new Account({
-      id: "1010",
-      name: "Cash",
-      type: AccountType.ASSET,
-    });
-
-    const originalChart = new ChartOfAccounts([parent, child]);
     const updatedChart = originalChart.setParent("1010", "1000");
 
     expect(originalChart.parentMap.has("1010")).toBe(false);
@@ -27,30 +27,42 @@ describe("ChartOfAccounts hierarchy", () => {
   });
 
   test("gets children derived from parentMap only", () => {
-    const parent = new Account({
-      id: "1000",
-      name: "Assets",
-      type: AccountType.ASSET,
-    });
-
-    const cash = new Account({
-      id: "1010",
-      name: "Cash",
-      type: AccountType.ASSET,
-    });
-
-    const bank = new Account({
-      id: "1020",
-      name: "Bank",
-      type: AccountType.ASSET,
-    });
-
-    const chart = new ChartOfAccounts([parent, cash, bank])
+    const chart = new ChartOfAccounts([
+      account("1000", "Assets"),
+      account("1010", "Cash"),
+      account("1020", "Bank"),
+    ])
       .setParent("1010", "1000")
       .setParent("1020", "1000");
 
     const children = chart.getChildren("1000");
 
     expect(children.map((account) => account.id)).toEqual(["1010", "1020"]);
+  });
+
+  test("gets descendants recursively from parentMap only", () => {
+    const chart = new ChartOfAccounts([
+      account("1000", "Assets"),
+      account("1100", "Current Assets"),
+      account("1110", "Cash"),
+      account("1120", "Bank"),
+      account("1200", "Fixed Assets"),
+      account("1210", "Equipment"),
+    ])
+      .setParent("1100", "1000")
+      .setParent("1110", "1100")
+      .setParent("1120", "1100")
+      .setParent("1200", "1000")
+      .setParent("1210", "1200");
+
+    const descendants = chart.getDescendants("1000");
+
+    expect(descendants.map((account) => account.id)).toEqual([
+      "1100",
+      "1110",
+      "1120",
+      "1200",
+      "1210",
+    ]);
   });
 });
