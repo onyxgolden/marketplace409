@@ -82,4 +82,8 @@ export class ChartOfAccounts {
 
     return new ChartOfAccounts(this.accounts, nextParentMap);
   }
+
+  getParent(childId) {
+    return this.parentMap.get(childId) ?? null;
+  }
 }

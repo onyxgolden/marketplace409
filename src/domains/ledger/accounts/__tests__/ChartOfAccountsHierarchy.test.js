@@ -21,6 +21,8 @@ describe("ChartOfAccounts hierarchy", () => {
     const updatedChart = originalChart.setParent("1010", "1000");
 
     expect(originalChart.parentMap.has("1010")).toBe(false);
+    expect(originalChart.getParent("1010")).toBe(null);
     expect(updatedChart.parentMap.get("1010")).toBe("1000");
+    expect(updatedChart.getParent("1010")).toBe("1000");
   });
 });
