@@ -19,7 +19,7 @@ describe("AccountRollupService", () => {
     ]);
 
     const balanceCalculator = {
-      getBalance(accountId) {
+      getBalanceByAccount(accountId) {
         return balances.get(accountId);
       },
     };
@@ -29,6 +29,6 @@ describe("AccountRollupService", () => {
       balanceCalculator,
     });
 
-    expect(service.getBalance("1000")).toEqual(new Money(75));
+    expect(service.getBalanceByAccount("1000")).toEqual(new Money(75));
   });
 });

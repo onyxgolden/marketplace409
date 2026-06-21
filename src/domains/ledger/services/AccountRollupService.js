@@ -16,7 +16,7 @@ export class AccountRollupService {
     Object.freeze(this);
   }
 
-  getBalance(accountId) {
+  getBalanceByAccount(accountId) {
     const accountIds = [
       accountId,
       ...this.chartOfAccounts
@@ -25,7 +25,9 @@ export class AccountRollupService {
     ];
 
     return accountIds.reduce((total, currentAccountId) => {
-      return total.add(this.balanceCalculator.getBalance(currentAccountId));
+      return total.add(
+        this.balanceCalculator.getBalanceByAccount(currentAccountId),
+      );
     }, new Money(0));
   }
 }
