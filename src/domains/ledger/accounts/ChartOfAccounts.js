@@ -86,4 +86,16 @@ export class ChartOfAccounts {
   getParent(childId) {
     return this.parentMap.get(childId) ?? null;
   }
+
+  getChildren(parentId) {
+    const childIds = [];
+
+    for (const [childId, currentParentId] of this.parentMap.entries()) {
+      if (currentParentId === parentId) {
+        childIds.push(childId);
+      }
+    }
+
+    return childIds.map((childId) => this.getById(childId));
+  }
 }
