@@ -1,3 +1,4 @@
+export { ReportLine } from "./ReportLine";
 export { FinancialReport } from "./FinancialReport";
 export { AccountBalance } from "./AccountBalance";
 export { AccountBalanceCollection } from "./AccountBalanceCollection";
