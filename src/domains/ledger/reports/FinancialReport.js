@@ -23,7 +23,9 @@ export class FinancialReport {
     this.name = name;
     this._lines = Object.freeze([...lines]);
 
-    Object.freeze(this);
+    if (this.constructor === FinancialReport) {
+      Object.freeze(this);
+    }
   }
 
   lines() {

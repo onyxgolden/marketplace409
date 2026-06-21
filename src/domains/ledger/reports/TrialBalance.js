@@ -1,4 +1,5 @@
 import { AccountBalanceCollection } from "./AccountBalanceCollection";
+import { FinancialReport } from "./FinancialReport";
 import { ReportLine } from "./ReportLine";
 
 /**
@@ -7,17 +8,28 @@ import { ReportLine } from "./ReportLine";
  * Represents a trial balance generated from
  * immutable ledger history.
  *
- * A TrialBalance is simply a reporting wrapper
+ * A TrialBalance is a financial report wrapper
  * around a collection of AccountBalance objects.
  */
 
-export class TrialBalance {
+export class TrialBalance extends FinancialReport {
   constructor(accountBalances) {
     if (!(accountBalances instanceof AccountBalanceCollection)) {
       throw new Error(
         "TrialBalance requires an AccountBalanceCollection"
       );
     }
+
+    super({
+      name: "Trial Balance",
+      lines: accountBalances.all().map(
+        (accountBalance) =>
+          new ReportLine({
+            label: accountBalance.accountId,
+            amount: accountBalance.balance,
+          })
+      ),
+    });
 
     this.accountBalances = accountBalances;
 
@@ -26,16 +38,6 @@ export class TrialBalance {
 
   accounts() {
     return this.accountBalances.all();
-  }
-
-  lines() {
-    return this.accounts().map(
-      (accountBalance) =>
-        new ReportLine({
-          label: accountBalance.accountId,
-          amount: accountBalance.balance,
-        })
-    );
   }
 
   totalBalance() {
