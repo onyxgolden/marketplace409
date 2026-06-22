@@ -6,38 +6,46 @@ import { ReportSection } from "./sections/ReportSection";
 /**
  * TrialBalance
  *
- * Represents a trial balance generated from
- * immutable ledger history.
+ * Immutable representation of a trial balance.
  *
- * A TrialBalance is a financial report wrapper
- * around a collection of AccountBalance objects.
+ * TrialBalance may receive already-built report lines and sections
+ * from a builder. It keeps backward-compatible construction from
+ * AccountBalanceCollection during the builder migration.
+ *
+ * Reports represent results. Builders construct report presentation.
  */
 
 export class TrialBalance extends FinancialReport {
-  constructor(accountBalances) {
+  constructor(accountBalances, { lines = null, sections = null } = {}) {
     if (!(accountBalances instanceof AccountBalanceCollection)) {
       throw new Error(
         "TrialBalance requires an AccountBalanceCollection"
       );
     }
 
-    const lines = accountBalances.all().map(
-      (accountBalance) =>
-        new ReportLine({
-          label: accountBalance.accountId,
-          amount: accountBalance.balance,
-        })
-    );
+    const reportLines =
+      lines ||
+      accountBalances.all().map(
+        (accountBalance) =>
+          new ReportLine({
+            label: accountBalance.accountId,
+            amount: accountBalance.balance,
+          })
+      );
+
+    const reportSections =
+      sections ||
+      [
+        new ReportSection({
+          name: "Accounts",
+          lines: reportLines,
+        }),
+      ];
 
     super({
       name: "Trial Balance",
-      lines,
-      sections: [
-        new ReportSection({
-          name: "Accounts",
-          lines,
-        }),
-      ],
+      lines: reportLines,
+      sections: reportSections,
     });
 
     this.accountBalances = accountBalances;
