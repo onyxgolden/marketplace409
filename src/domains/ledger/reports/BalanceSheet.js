@@ -1,6 +1,7 @@
 import { AccountBalanceCollection } from "./AccountBalanceCollection";
 import { FinancialReport } from "./FinancialReport";
 import { ReportLine } from "./ReportLine";
+import { ReportSection } from "./sections/ReportSection";
 
 /**
  * BalanceSheet
@@ -20,15 +21,23 @@ export class BalanceSheet extends FinancialReport {
       );
     }
 
+    const lines = accountBalances.all().map(
+      (accountBalance) =>
+        new ReportLine({
+          label: accountBalance.accountId,
+          amount: accountBalance.balance,
+        })
+    );
+
     super({
       name: "Balance Sheet",
-      lines: accountBalances.all().map(
-        (accountBalance) =>
-          new ReportLine({
-            label: accountBalance.accountId,
-            amount: accountBalance.balance,
-          })
-      ),
+      lines,
+      sections: [
+        new ReportSection({
+          name: "Balance Sheet",
+          lines,
+        }),
+      ],
     });
 
     this.accountBalances = accountBalances;
