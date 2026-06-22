@@ -1,7 +1,7 @@
-import { AccountBalanceCollection } from "./AccountBalanceCollection";
-import { FinancialReport } from "./FinancialReport";
-import { ReportLine } from "./ReportLine";
-import { ReportSection } from "./sections/ReportSection";
+import { AccountBalanceCollection } from "./AccountBalanceCollection.js";
+import { FinancialReport } from "./FinancialReport.js";
+import { ReportLine } from "./ReportLine.js";
+import { ReportSection } from "./sections/ReportSection.js";
 
 /**
  * BalanceSheet

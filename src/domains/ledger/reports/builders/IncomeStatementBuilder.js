@@ -1,7 +1,7 @@
-import { AccountBalanceCollection } from "../AccountBalanceCollection";
-import { IncomeStatement } from "../IncomeStatement";
-import { AccountBalanceReportLineBuilder } from "./AccountBalanceReportLineBuilder";
-import { ReportSectionBuilder } from "./ReportSectionBuilder";
+import { AccountBalanceCollection } from "../AccountBalanceCollection.js";
+import { IncomeStatement } from "../IncomeStatement.js";
+import { AccountBalanceReportLineBuilder } from "./AccountBalanceReportLineBuilder.js";
+import { ReportSectionBuilder } from "./ReportSectionBuilder.js";
 
 /**
  * IncomeStatementBuilder

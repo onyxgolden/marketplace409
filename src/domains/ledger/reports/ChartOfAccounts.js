@@ -1,4 +1,4 @@
-import { AccountBalanceCollection } from "./AccountBalanceCollection";
+import { AccountBalanceCollection } from "./AccountBalanceCollection.js";
 
 /**
  * ChartOfAccounts

@@ -1,5 +1,5 @@
-import { ReportLine } from "../ReportLine";
-import { ReportSection } from "../sections/ReportSection";
+import { ReportLine } from "../ReportLine.js";
+import { ReportSection } from "../sections/ReportSection.js";
 
 /**
  * ReportSectionBuilder

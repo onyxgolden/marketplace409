@@ -1,5 +1,5 @@
-import { AccountBalanceCollection } from "../AccountBalanceCollection";
-import { ReportLine } from "../ReportLine";
+import { AccountBalanceCollection } from "../AccountBalanceCollection.js";
+import { ReportLine } from "../ReportLine.js";
 
 /**
  * AccountBalanceReportLineBuilder

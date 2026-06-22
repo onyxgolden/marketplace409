@@ -1,4 +1,4 @@
-import { FinancialReport } from "./FinancialReport";
+import { FinancialReport } from "./FinancialReport.js";
 
 /**
  * StatementOfOwnersEquity

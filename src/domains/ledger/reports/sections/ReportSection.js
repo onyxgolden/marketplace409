@@ -1,4 +1,4 @@
-import { ReportLine } from "../ReportLine";
+import { ReportLine } from "../ReportLine.js";
 
 /**
  * ReportSection
