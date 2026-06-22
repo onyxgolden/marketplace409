@@ -4,6 +4,7 @@ export { FinancialReport } from "./FinancialReport";
 export { AccountBalance } from "./AccountBalance";
 export { AccountBalanceCollection } from "./AccountBalanceCollection";
 export { TrialBalance } from "./TrialBalance";
+export { AccountBalanceReportLineBuilder } from "./builders/AccountBalanceReportLineBuilder";
 export { TrialBalanceBuilder } from "./builders/TrialBalanceBuilder";
 export { ChartOfAccounts } from "./ChartOfAccounts";
 export { IncomeStatement } from "./IncomeStatement";

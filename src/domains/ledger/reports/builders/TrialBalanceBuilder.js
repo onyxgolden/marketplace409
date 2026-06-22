@@ -1,7 +1,7 @@
 import { AccountBalanceCollection } from "../AccountBalanceCollection";
-import { ReportLine } from "../ReportLine";
 import { ReportSection } from "../sections/ReportSection";
 import { TrialBalance } from "../TrialBalance";
+import { AccountBalanceReportLineBuilder } from "./AccountBalanceReportLineBuilder";
 
 /**
  * TrialBalanceBuilder
@@ -12,6 +12,14 @@ import { TrialBalance } from "../TrialBalance";
  */
 
 export class TrialBalanceBuilder {
+  constructor({
+    reportLineBuilder = new AccountBalanceReportLineBuilder(),
+  } = {}) {
+    this.reportLineBuilder = reportLineBuilder;
+
+    Object.freeze(this);
+  }
+
   build(accountBalances) {
     if (!(accountBalances instanceof AccountBalanceCollection)) {
       throw new Error(
@@ -19,13 +27,7 @@ export class TrialBalanceBuilder {
       );
     }
 
-    const lines = accountBalances.all().map(
-      (accountBalance) =>
-        new ReportLine({
-          label: accountBalance.accountId,
-          amount: accountBalance.balance,
-        })
-    );
+    const lines = this.reportLineBuilder.build(accountBalances);
 
     const sections = [
       new ReportSection({
