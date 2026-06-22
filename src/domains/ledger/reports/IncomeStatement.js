@@ -7,37 +7,45 @@ import { ReportSection } from "./sections/ReportSection";
  * IncomeStatement
  *
  * Immutable representation of an income statement.
- * Values originate exclusively from calculated ledger balances.
  *
- * An IncomeStatement is a financial report wrapper
- * around a collection of AccountBalance objects.
+ * IncomeStatement may receive already-built report lines and sections
+ * from a builder. It keeps backward-compatible construction from
+ * AccountBalanceCollection during the builder migration.
+ *
+ * Reports represent results. Builders construct report presentation.
  */
 
 export class IncomeStatement extends FinancialReport {
-  constructor(accountBalances) {
+  constructor(accountBalances, { lines = null, sections = null } = {}) {
     if (!(accountBalances instanceof AccountBalanceCollection)) {
       throw new Error(
         "IncomeStatement requires an AccountBalanceCollection"
       );
     }
 
-    const lines = accountBalances.all().map(
-      (accountBalance) =>
-        new ReportLine({
-          label: accountBalance.accountId,
-          amount: accountBalance.balance,
-        })
-    );
+    const reportLines =
+      lines ||
+      accountBalances.all().map(
+        (accountBalance) =>
+          new ReportLine({
+            label: accountBalance.accountId,
+            amount: accountBalance.balance,
+          })
+      );
+
+    const reportSections =
+      sections ||
+      [
+        new ReportSection({
+          name: "Income Statement",
+          lines: reportLines,
+        }),
+      ];
 
     super({
       name: "Income Statement",
-      lines,
-      sections: [
-        new ReportSection({
-          name: "Income Statement",
-          lines,
-        }),
-      ],
+      lines: reportLines,
+      sections: reportSections,
     });
 
     this.accountBalances = accountBalances;

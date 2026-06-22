@@ -8,6 +8,7 @@ export { AccountBalanceReportLineBuilder } from "./builders/AccountBalanceReport
 export { ReportSectionBuilder } from "./builders/ReportSectionBuilder";
 export { TrialBalanceBuilder } from "./builders/TrialBalanceBuilder";
 export { BalanceSheetBuilder } from "./builders/BalanceSheetBuilder";
+export { IncomeStatementBuilder } from "./builders/IncomeStatementBuilder";
 export { ChartOfAccounts } from "./ChartOfAccounts";
 export { IncomeStatement } from "./IncomeStatement";
 export { BalanceSheet } from "./BalanceSheet";
