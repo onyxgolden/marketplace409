@@ -1,7 +1,8 @@
 # Forge Constitution
 
-**Version:** 1.0
+**Version:** 1.1
 **Status:** Active
+**Project:** USMarketplace / marketplace409 / Financial Forge
 
 ---
 
@@ -65,6 +66,8 @@ The AI proposes.
 
 The human approves.
 
+The human executes unless a separate approved Forge Agent exists.
+
 ---
 
 # Architectural Principles
@@ -82,6 +85,44 @@ Financial Forge must remain:
 * Optimized for long-term maintainability
 
 Short-term convenience must never compromise long-term architecture.
+
+---
+
+# Ledger Truth Principle
+
+The ledger is the source of truth.
+
+Performance layers may read from truth.
+
+Performance layers may cache computation.
+
+Performance layers may create snapshots.
+
+Performance layers must never mutate truth.
+
+Cache computation.
+
+Never mutate truth.
+
+---
+
+# Layering Principle
+
+Each layer has a single responsibility.
+
+Ledger core records truth.
+
+Calculators compute balances.
+
+Rollup services aggregate hierarchy.
+
+Snapshot builders create read models.
+
+Reports present results.
+
+UI displays reports.
+
+No layer should secretly perform another layer's job.
 
 ---
 
@@ -104,6 +145,61 @@ Never redesign multiple architectural layers simultaneously.
 
 ---
 
+# Commit Discipline
+
+One commit must represent one architectural objective.
+
+Never commit mixed architectural changes.
+
+Never commit unrelated cleanup inside a feature commit.
+
+Never commit because tests are green.
+
+Commit only when:
+
+1. The architecture is coherent.
+2. The change scope is understood.
+3. The diff matches the stated objective.
+4. Tests are green.
+5. The working tree has been inspected.
+
+---
+
+# Inspection Discipline
+
+Inspect before modifying.
+
+Inspect before staging.
+
+Inspect before committing.
+
+Inspect before pushing.
+
+Verified terminal output overrides assumptions.
+
+The AI must not assume file contents, test results, git state, or repository structure.
+
+The repository is the source of truth.
+
+---
+
+# Editing Discipline
+
+Preferred workflow:
+
+1. Inspect the file.
+2. Understand the current structure.
+3. Explain the architectural reason for change.
+4. Open the file in Nano.
+5. Replace the entire file when implementation changes.
+6. Verify the file after editing.
+
+Tiny surgical edits may be allowed only when explicitly justified.
+
+Large heredoc edits are avoided because they have previously caused terminal corruption.
+
+---
+
 # Test Philosophy
 
 Every architectural object deserves dedicated tests.
@@ -120,7 +216,9 @@ Green
 
 Refactor
 
-Targeted tests always run before the full suite.
+Targeted tests should run before the full suite when practical.
+
+The full test suite must run before commit.
 
 ---
 
@@ -130,36 +228,18 @@ No work advances while quality gates are failing.
 
 Required sequence:
 
-1. Verify modified files.
-2. Targeted tests.
-3. Full test suite.
-4. Production build.
-5. Git status.
-6. Commit.
-7. Push.
-8. Verify synchronized repository.
+1. Inspect modified files.
+2. Run targeted tests when applicable.
+3. Run the full test suite.
+4. Run production build when applicable.
+5. Inspect git status.
+6. Inspect git diff.
+7. Perform architectural review.
+8. Commit.
+9. Push.
+10. Verify synchronized repository.
 
----
-
-# File Verification
-
-Every created or modified file should be inspected before testing.
-
-Small files:
-
-Use:
-
-cat
-
-Medium or large files:
-
-Use:
-
-nano
-
-Never assume generated code is correct.
-
-Always inspect it.
+No gate may be skipped without explicit reason.
 
 ---
 
@@ -197,6 +277,8 @@ Engineering methodology belongs in version control.
 
 The repository should become self-describing.
 
+Lessons learned should be preserved when they create future engineering value.
+
 ---
 
 # Forge Agent Principle
@@ -222,11 +304,13 @@ The AI must never receive uncontrolled direct execution authority.
 
 ---
 
-# Lessons from Forge #20
+# Permanent Lessons
 
-Forge #20 permanently changed the engineering philosophy.
+Forge #20 proved that large ambitious refactors create unnecessary architectural risk.
 
-The rollback demonstrated that large, ambitious refactors create unnecessary architectural risk.
+Phase 4 proved that green tests are not enough.
+
+A clean commit requires coherent architecture, not merely passing tests.
 
 The preferred approach is now:
 
@@ -238,12 +322,6 @@ Constant validation.
 
 Continuous architectural progress.
 
----
+Inspect before every edit.
 
-# Success Metric
-
-Success is not measured by the number of completed features.
-
-Success is measured by whether today's work makes the next ten years of development easier.
-
-That is the purpose of the Forge.
+Inspect before every commit.
