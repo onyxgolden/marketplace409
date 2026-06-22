@@ -8,43 +8,56 @@ import { ReportSection } from "./sections/ReportSection.js";
  *
  * Immutable representation of a balance sheet.
  *
- * BalanceSheet may receive already-built report lines and sections
- * from a builder. It keeps backward-compatible construction from
- * AccountBalanceCollection during the builder migration.
- *
- * Reports represent results. Builders construct report presentation.
+ * Supports:
+ * 1. AccountBalanceCollection (legacy)
+ * 2. Snapshot (rollup-optimized)
  */
 
 export class BalanceSheet extends FinancialReport {
-  constructor(accountBalances, { lines = null, sections = null } = {}) {
+  constructor(
+    accountBalances,
+    { lines = null, sections = null, snapshot = null } = {}
+  ) {
     if (!(accountBalances instanceof AccountBalanceCollection)) {
       throw new Error(
         "BalanceSheet requires an AccountBalanceCollection"
       );
     }
 
-    const reportLines =
-      lines ||
-      accountBalances.all().map(
+    let reportLines;
+
+    if (snapshot) {
+      const entries = snapshot.entries();
+
+      reportLines = entries.map(([accountId, money]) => {
+        return new ReportLine({
+          label: accountId,
+          amount: money.amount,
+        });
+      });
+    } else {
+      reportLines = accountBalances.all().map(
         (accountBalance) =>
           new ReportLine({
             label: accountBalance.accountId,
             amount: accountBalance.balance,
           })
       );
+    }
+
+    const finalLines = lines || reportLines;
 
     const reportSections =
-      sections ||
-      [
+      sections || [
         new ReportSection({
           name: "Balance Sheet",
-          lines: reportLines,
+          lines: finalLines,
         }),
       ];
 
     super({
       name: "Balance Sheet",
-      lines: reportLines,
+      lines: finalLines,
       sections: reportSections,
     });
 
