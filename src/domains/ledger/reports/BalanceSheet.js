@@ -7,37 +7,45 @@ import { ReportSection } from "./sections/ReportSection";
  * BalanceSheet
  *
  * Immutable representation of a balance sheet.
- * Values originate exclusively from calculated ledger balances.
  *
- * A BalanceSheet is a financial report wrapper
- * around a collection of AccountBalance objects.
+ * BalanceSheet may receive already-built report lines and sections
+ * from a builder. It keeps backward-compatible construction from
+ * AccountBalanceCollection during the builder migration.
+ *
+ * Reports represent results. Builders construct report presentation.
  */
 
 export class BalanceSheet extends FinancialReport {
-  constructor(accountBalances) {
+  constructor(accountBalances, { lines = null, sections = null } = {}) {
     if (!(accountBalances instanceof AccountBalanceCollection)) {
       throw new Error(
         "BalanceSheet requires an AccountBalanceCollection"
       );
     }
 
-    const lines = accountBalances.all().map(
-      (accountBalance) =>
-        new ReportLine({
-          label: accountBalance.accountId,
-          amount: accountBalance.balance,
-        })
-    );
+    const reportLines =
+      lines ||
+      accountBalances.all().map(
+        (accountBalance) =>
+          new ReportLine({
+            label: accountBalance.accountId,
+            amount: accountBalance.balance,
+          })
+      );
+
+    const reportSections =
+      sections ||
+      [
+        new ReportSection({
+          name: "Balance Sheet",
+          lines: reportLines,
+        }),
+      ];
 
     super({
       name: "Balance Sheet",
-      lines,
-      sections: [
-        new ReportSection({
-          name: "Balance Sheet",
-          lines,
-        }),
-      ],
+      lines: reportLines,
+      sections: reportSections,
     });
 
     this.accountBalances = accountBalances;
