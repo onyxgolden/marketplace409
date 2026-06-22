@@ -1,7 +1,7 @@
 import { AccountBalanceCollection } from "../AccountBalanceCollection";
-import { ReportSection } from "../sections/ReportSection";
 import { TrialBalance } from "../TrialBalance";
 import { AccountBalanceReportLineBuilder } from "./AccountBalanceReportLineBuilder";
+import { ReportSectionBuilder } from "./ReportSectionBuilder";
 
 /**
  * TrialBalanceBuilder
@@ -14,8 +14,10 @@ import { AccountBalanceReportLineBuilder } from "./AccountBalanceReportLineBuild
 export class TrialBalanceBuilder {
   constructor({
     reportLineBuilder = new AccountBalanceReportLineBuilder(),
+    reportSectionBuilder = new ReportSectionBuilder(),
   } = {}) {
     this.reportLineBuilder = reportLineBuilder;
+    this.reportSectionBuilder = reportSectionBuilder;
 
     Object.freeze(this);
   }
@@ -30,7 +32,7 @@ export class TrialBalanceBuilder {
     const lines = this.reportLineBuilder.build(accountBalances);
 
     const sections = [
-      new ReportSection({
+      this.reportSectionBuilder.build({
         name: "Accounts",
         lines,
       }),
