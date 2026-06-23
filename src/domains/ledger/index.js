@@ -1,3 +1,5 @@
+export * from "./accounts";
+export * from "./value-objects";
 export * from "./constants";
 export * from "./entities";
 export * from "./services";
