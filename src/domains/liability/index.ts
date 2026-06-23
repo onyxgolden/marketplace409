@@ -1,2 +1,5 @@
 export type { Liability, LiabilityCategory } from "./liability.types";
-export { LiabilityService } from "./liability.service";
+
+export * from "./liability.mapper";
+export * from "./liability.repository";
+export * from "./liability.service";
