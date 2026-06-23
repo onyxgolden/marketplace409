@@ -30,6 +30,16 @@ function ledgerEntry({ accountId, direction, dollars }) {
   };
 }
 
+function reportSections(report) {
+  return report.sections().map((section) => ({
+    name: section.name,
+    lines: section.lines().map((line) => ({
+      label: line.label,
+      amount: line.amount,
+    })),
+  }));
+}
+
 function createSnapshot({ cash, receivables, debt, revenue, expenses }) {
   const chartOfAccounts = new ChartOfAccounts([
     new Account({
@@ -92,7 +102,7 @@ function createSnapshot({ cash, receivables, debt, revenue, expenses }) {
     chartOfAccounts,
   });
 
-  engine.buildReports();
+  const reports = engine.buildReports();
 
   const cashCents = dollarsToCents(cash);
   const receivablesCents = dollarsToCents(receivables);
@@ -114,6 +124,8 @@ function createSnapshot({ cash, receivables, debt, revenue, expenses }) {
     expenses: expensesCents,
     profit,
     margin,
+    balanceSheet: reportSections(reports.balanceSheet),
+    incomeStatement: reportSections(reports.incomeStatement),
   };
 }
 
@@ -167,8 +179,8 @@ export default function FinancialSnapshotTool() {
     <main className="min-h-screen bg-gray-100 text-gray-900">
       <section className="bg-gradient-to-r from-blue-950 via-blue-900 to-red-700 text-white px-6 py-16">
         <div className="max-w-5xl mx-auto">
-          <a href="/" className="text-blue-100 hover:text-white">
-            ← Back to 409 Marketplace
+          <a href="/investors" className="text-blue-100 hover:text-white">
+            ← Back to Investor Hub
           </a>
 
           <h1 className="text-5xl font-extrabold mt-8 mb-4">
@@ -252,6 +264,14 @@ export default function FinancialSnapshotTool() {
           </div>
         </div>
       </section>
+
+      <section className="max-w-6xl mx-auto px-6 pb-16 grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <ReportCard title="Balance Sheet" sections={snapshot.balanceSheet} />
+        <ReportCard
+          title="Income Statement"
+          sections={snapshot.incomeStatement}
+        />
+      </section>
     </main>
   );
 }
@@ -261,6 +281,36 @@ function Metric({ label, value }) {
     <div className="rounded-2xl border bg-gray-50 p-5">
       <p className="text-sm text-gray-500">{label}</p>
       <p className="text-2xl font-extrabold mt-1">{value}</p>
+    </div>
+  );
+}
+
+function ReportCard({ title, sections }) {
+  return (
+    <div className="bg-white rounded-3xl shadow-lg p-8">
+      <h2 className="text-2xl font-bold mb-6">{title}</h2>
+
+      <div className="space-y-6">
+        {sections.map((section) => (
+          <div key={section.name}>
+            <h3 className="font-bold text-gray-700 mb-3">{section.name}</h3>
+
+            <div className="divide-y rounded-2xl border">
+              {section.lines.map((line) => (
+                <div
+                  key={`${section.name}-${line.label}`}
+                  className="flex items-center justify-between gap-4 px-4 py-3"
+                >
+                  <span className="font-medium">{line.label}</span>
+                  <span className="font-bold">
+                    {formatCurrency(line.amount)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
