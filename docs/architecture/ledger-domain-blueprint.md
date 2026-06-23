@@ -4,200 +4,317 @@
 
 The Ledger Domain is the financial heart of Financial Forge.
 
-It records, organizes, validates, and reports financial movement across:
+It is the reference implementation for domain architecture across the platform.
 
-- Personal finances
-- Businesses
+Every future domain should follow the architectural patterns established here unless an Architectural Decision Record (ADR) explicitly documents a justified exception.
+
+---
+
+# Mission
+
+The Ledger Domain records, validates, aggregates, and reports financial truth.
+
+It supports:
+
+- Personal finance
+- Business accounting
 - Rental properties
 - Investments
-- Taxes
 - Banking
-- Marketplace activity
-- Future AI CFO and advisor systems
+- Marketplace operations
+- AI financial systems
+- Future enterprise capabilities
 
-## Core Principle
+The Ledger Domain owns financial truth.
+
+Everything else consumes that truth.
+
+---
+
+# Architectural Philosophy
+
+The Ledger Domain is built in layers.
+
+Each layer has a single responsibility.
+
+Each layer depends only on lower layers.
+
+No layer may bypass another.
+
+```
+Application
+        │
+        ▼
+FinancialEngine
+        │
+        ▼
+ProductionReportService
+        │
+        ▼
+SnapshotReportFactory
+        │
+        ▼
+Snapshot Adapter
+        │
+        ▼
+Report Builders
+        │
+        ▼
+Reports
+──────────────────────────────
+        │
+AccountRollupSnapshotBuilder
+        │
+AccountRollupCachedService
+        │
+AccountRollupService
+        │
+BalanceCalculator
+        │
+PostingEngine
+        │
+GeneralLedger
+        │
+JournalEntry
+        │
+Money / Value Objects
+```
+
+This dependency direction must never be violated.
+
+---
+
+# Layer Responsibilities
+
+## Value Objects
+
+Represent immutable concepts.
+
+Examples:
+
+- Money
+- LedgerDirection
+- Currency (future)
+
+Never depend on higher layers.
+
+---
+
+## Entities
+
+Represent immutable business truth.
+
+Examples:
+
+- JournalEntry
+- GeneralLedger
+- Posting
+
+Entities never calculate reports.
+
+Entities never perform orchestration.
+
+---
+
+## Domain Services
+
+Implement business operations.
+
+Examples:
+
+- PostingEngine
+- PostingValidator
+- AccountRollupService
+
+Services coordinate entities.
+
+They do not own application workflows.
+
+---
+
+## Calculators
+
+Derive information from immutable truth.
+
+Examples:
+
+- BalanceCalculator
+- TrialBalanceCalculator
+
+Calculators never persist state.
+
+Balances are always derived.
+
+---
+
+## Read Models
+
+Provide optimized immutable views.
+
+Examples:
+
+- RollupSnapshot
+- AccountBalanceCollection
+
+Read models never become the source of truth.
+
+---
+
+## Reporting Layer
+
+Transforms read models into immutable financial reports.
+
+Components include:
+
+- Report Builders
+- SnapshotReportFactory
+- Financial Reports
+
+Reports never modify accounting state.
+
+---
+
+## Application Services
+
+Coordinate complete business workflows.
+
+Example:
+
+- ProductionReportService
+
+Application services compose lower layers into useful capabilities.
+
+---
+
+## Engines
+
+Engines are the public entry point for a domain.
+
+Current example:
+
+- FinancialEngine
+
+Applications should depend on engines instead of internal services.
+
+---
+
+# Public API Rule
+
+External consumers should interact with the Ledger Domain through its public API.
+
+Preferred entry point:
+
+```
+FinancialEngine
+```
+
+Internal implementation details remain encapsulated.
+
+Examples:
+
+- Snapshot adapters
+- Rollup caches
+- Builders
+- Internal orchestration
+
+These exist to support the engine—not to be consumed directly.
+
+---
+
+# Core Accounting Principles
 
 Every financial event must be explainable as movement of money between accounts.
 
-## Core Objects
+The ledger is the source of truth.
 
-### Ledger
+Balances are derived.
 
-A Ledger is the container for financial records.
+Reports are derived.
 
-Examples:
+Snapshots are derived.
 
-- Personal ledger
-- Business ledger
-- Rental property ledger
-- Family office ledger
-- Marketplace ledger
+Nothing may overwrite ledger history.
 
-Responsibilities:
+---
 
-- Own accounts
-- Own transactions
-- Enforce accounting rules
-- Produce balances
-- Support reporting
+# Ledger Invariants
 
-### Account
+These rules must never be broken.
 
-An Account represents a financial bucket.
+1. Transactions must balance.
+2. Debits equal credits.
+3. Ledger history is immutable.
+4. Balances are derived.
+5. Reports are derived.
+6. Money never uses floating point arithmetic.
+7. Posted entries are immutable.
+8. Reversals create new history.
+9. Every financial change remains auditable.
+10. UI never contains accounting logic.
 
-Examples:
+---
 
-- Checking account
-- Credit card
-- Rental income
-- Mortgage liability
-- Repairs expense
-- Owner equity
-- Accounts receivable
-- Accounts payable
+# Domain Template
 
-Responsibilities:
+The Ledger Domain serves as the template for future Financial Forge domains.
 
-- Hold entries
-- Belong to a ledger
-- Have a type
-- Support balance calculation
+Typical domain structure:
 
-### Transaction
+```
+domain/
+├── entities/
+├── value-objects/
+├── services/
+├── reports/
+├── engines/
+├── repositories/
+├── queries/
+├── events/
+└── index.js
+```
 
-A Transaction represents one financial event.
+Not every domain requires every folder immediately.
 
-Examples:
+Folders should appear when justified by the domain.
 
-- Rent collected
-- Mortgage paid
-- Contractor invoice paid
-- Marketplace fee received
-- Insurance premium paid
-- Property purchased
-- Loan payment made
+---
 
-Responsibilities:
+# Future Domains
 
-- Group entries
-- Store date, description, source, and metadata
-- Enforce that entries balance
-- Support auditability
+Future domains are expected to follow the same architectural principles.
 
-### Entry
+Examples include:
 
-An Entry is one side of a transaction.
+- Inventory
+- Property
+- Payroll
+- Projects
+- Assets
+- Tax
+- Manufacturing
+- CRM
+- Marketplace
 
-Responsibilities:
+Each domain should expose a single public engine while keeping implementation details internal.
 
-- Point to one account
-- Hold debit or credit amount
-- Belong to one transaction
-- Never exist alone
+---
 
-### Balance
+# Engineering Principle
 
-A Balance is a calculated result, not the source of truth.
+Architecture emerges through disciplined implementation.
 
-Responsibilities:
+The development cycle is:
 
-- Summarize account state
-- Support point-in-time calculation
-- Support reporting
+```
+Inspect
+Understand enough
+Design the public API
+Implement one coherent vertical slice
+Run targeted tests
+Run full regression tests
+Review Git changes
+Commit one architectural objective
+Verify a clean repository
+```
 
-### Money
-
-Money represents an amount and currency.
-
-Responsibilities:
-
-- Prevent floating point math errors
-- Store amount in smallest currency unit
-- Support formatting
-- Support arithmetic
-
-### Currency
-
-Currency represents the unit of money.
-
-Examples:
-
-- USD
-- EUR
-- BTC in future
-- Stablecoins in future
-
-## Ledger Invariants
-
-These rules must never be broken:
-
-1. A transaction must have at least two entries.
-2. Total debits must equal total credits.
-3. An entry must belong to exactly one transaction.
-4. An entry must point to exactly one account.
-5. A transaction cannot be partially saved.
-6. Money calculations must never use floating point values.
-7. Balances are derived, not manually trusted.
-8. Posted transactions should be immutable except through reversal or adjustment.
-9. Every financial change should be auditable.
-10. Ledger logic must not live in pages or UI components.
-
-## Account Types
-
-Initial account types:
-
-- Asset
-- Liability
-- Equity
-- Income
-- Expense
-
-Future account types may include:
-
-- Contra asset
-- Contra liability
-- Gain
-- Loss
-- Clearing
-- Escrow
-- Tax payable
-- Tax receivable
-
-## Transaction Status
-
-Initial statuses:
-
-- Draft
-- Posted
-- Reversed
-- Voided
-
-Rules:
-
-- Draft transactions may be edited.
-- Posted transactions should not be edited directly.
-- Reversed transactions should point to reversing transactions.
-- Voided transactions should remain auditable.
-
-## Future Engines Depending on Ledger
-
-The Ledger Domain will support:
-
-- Banking Engine
-- Accounting Engine
-- Property Engine
-- Tax Engine
-- Investment Engine
-- Marketplace Engine
-- AI CFO Engine
-- Reporting Engine
-- Budget Engine
-- Cash Flow Engine
-
-## Architectural Decision
-
-The Ledger Domain will be built as domain logic first.
-
-Pages, forms, Supabase tables, and UI screens come later.
-
-The first implementation should define stable domain objects and rules before persistence.
+This workflow is the standard for Financial Forge development.
