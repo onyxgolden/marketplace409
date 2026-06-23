@@ -1,2 +1,5 @@
 export type { Institution, InstitutionType } from "./institution.types";
-export { InstitutionService } from "./institution.service";
+
+export * from "./institution.mapper";
+export * from "./institution.repository";
+export * from "./institution.service";
