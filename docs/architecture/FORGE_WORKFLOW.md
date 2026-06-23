@@ -49,17 +49,31 @@ Always verify files after editing.
 Every architectural change follows this sequence:
 
 1. Explain architectural reasoning.
-2. Provide exactly one terminal command.
-3. Edit using Nano.
-4. Verify using `cat`.
-5. Run targeted tests.
-6. Run full test suite.
-7. Run production build.
-8. Commit.
-9. Push.
-10. Verify clean working tree.
+2. Inspect all related files before making changes.
+3. Provide exactly one terminal command.
+4. Edit using Nano (one file at a time).
+5. After all edits are complete, verify all modified files together in a single terminal command whenever practical.
+6. Run targeted tests (when applicable).
+7. Run the full test suite.
+8. Run the production build.
+9. Inspect git status and git diff.
+10. Commit.
+11. Push.
+12. Verify a clean working tree.
 
 No gate may be skipped.
+
+## Batch Inspection Rule
+
+When implementing a feature that spans multiple related files:
+
+- Inspect the complete set of related files before editing.
+- Edit one file at a time.
+- Verify the complete set together after all edits are finished.
+- Perform one validation cycle for the completed feature.
+- Commit only after the entire feature passes validation.
+
+This minimizes context switching while preserving Forge's verification discipline.
 
 ## ChatGPT Role
 
