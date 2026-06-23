@@ -52,7 +52,7 @@ The ADRs explain why those rules were applied.
 
 ---
 
-## 3. ROADMAP.md
+## 3. FORGE_ROADMAP.md
 
 Describes the current architectural direction.
 
