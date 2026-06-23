@@ -1,6 +1,6 @@
 # Forge Workflow
 
-The Forge is governed by architecture-first development.
+The Forge is governed by architecture-first development validated by real production use.
 
 ## Core Rule
 
@@ -13,6 +13,43 @@ Every change must preserve:
 - passing production build
 - clean git history
 - repository documentation as source of truth
+
+## Forge V2 Validation Loop
+
+Architecture leads.
+
+Reality validates.
+
+Documentation preserves the lesson.
+
+Every major architectural milestone must be validated by at least one thin vertical production feature before the Forge continues deeper into architecture.
+
+The standard loop is:
+
+1. Design
+2. Implement
+3. Build one real feature
+4. Stress the architecture
+5. Improve the architecture
+6. Capture lessons
+7. Repeat
+
+We do not build architecture endlessly in isolation.
+
+Production code must expose architectural weaknesses before new abstractions are added.
+
+## Documentation Standard
+
+Documentation is not created for documentation's sake.
+
+Documentation exists only to preserve architectural context so future Forge sessions immediately know:
+
+- where we are
+- why we built it
+- where we are going
+- how to safely continue
+
+If documentation does not improve engineering decisions, avoid it.
 
 ## Editing Standard
 
@@ -48,16 +85,18 @@ Always verify files after editing.
 
 Every architectural change follows this sequence:
 
-1. Explain architectural reasoning.
-2. Provide exactly one terminal command.
-3. Edit using Nano.
-4. Verify using `cat`.
-5. Run targeted tests.
-6. Run full test suite.
-7. Run production build.
-8. Commit.
-9. Push.
-10. Verify clean working tree.
+1. Inspect existing files first.
+2. Explain architectural reasoning.
+3. Provide exactly one terminal command.
+4. Edit using Nano.
+5. Verify using `cat`.
+6. Run targeted tests when applicable.
+7. Run full test suite.
+8. Run production build.
+9. Inspect results.
+10. Commit only after green verification.
+11. Push only after verification.
+12. Verify clean working tree.
 
 No gate may be skipped.
 
@@ -84,3 +123,4 @@ The human authorizes and executes changes.
 The AI reasons.  
 The Forge Agent executes.  
 The human authorizes.
+

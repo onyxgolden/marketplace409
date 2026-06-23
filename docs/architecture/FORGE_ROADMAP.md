@@ -1,331 +1,263 @@
 # Forge Roadmap
 
-**Version:** 1.0
+**Version:** 2.0
 **Status:** Active
 
 ---
 
 # Purpose
 
-The Forge Roadmap defines the architectural phases of Financial Forge.
+The Forge Roadmap defines the long-term architectural evolution of Financial Forge.
 
 It is not a task list.
 
 It explains:
 
-- Why each phase exists
-- What architectural problem it solves
-- What each phase introduces
-- What must remain protected
-- What exit criteria define completion
+- why each phase exists
+- what architectural problem it solves
+- what must remain protected
+- how success is measured
+- what validates completion
+
+Architecture is not considered complete until it has been validated through real production use when appropriate.
 
 ---
 
 # Current Architectural Position
 
-Financial Forge currently has:
+Financial Forge now contains:
 
 - Ledger Core
 - Account Hierarchy
 - Rollup Engine
-- Reporting Layer
+- Financial Reporting Layer
 - Snapshot Performance Layer
+- Financial Engine
+- Production Report Service
+- Snapshot Report Factory
+- Public Ledger API
+- Business Financial Snapshot
 - Forge Operating System
 
-The ledger is the truth layer.
+Current baseline:
 
-Reports are presentation.
+- 123 tests passing
+- Production build passing
+- First production Financial Forge application deployed inside the project
 
-Snapshots are read models.
+---
 
-Caching improves computation but never mutates truth.
+# Forge V2 Principle
+
+Architecture leads.
+
+Reality validates.
+
+Documentation preserves the lessons.
+
+Every major architectural milestone should be validated by at least one thin vertical production feature before significant additional architectural expansion.
 
 ---
 
 # Phase 1 — Ledger Foundation
 
-## Purpose
+## Status
+
+Complete
+
+Purpose:
 
 Create the immutable accounting truth layer.
 
-## Introduced
+Protected Rule:
 
-- Money
-- Posting
-- JournalEntry
-- GeneralLedger
-- PostingEngine
-- PostingValidator
-
-## Protected Rule
-
-Ledger truth must never be mutated by presentation or performance layers.
-
-## Status
-
-Complete.
+Ledger truth is never mutated.
 
 ---
 
 # Phase 2 — Account Structure and Calculation
 
-## Purpose
+## Status
 
-Create account classification, hierarchy, and balance calculation.
+Complete
 
-## Introduced
+Purpose:
 
-- Account
-- AccountType
-- AccountCategory
-- ChartOfAccounts
-- BalanceCalculator
-- TrialBalanceCalculator
+Provide hierarchical account structure and deterministic balance calculation.
 
-## Protected Rule
-
-Chart structure defines relationships.
-
-Ledger entries define truth.
+Protected Rule:
 
 Calculators compute from truth.
 
-## Status
-
-Complete.
+They never become truth.
 
 ---
 
-# Phase 3 — Unified Financial Reporting Layer
-
-## Purpose
-
-Unify financial reports under a consistent report architecture.
-
-## Introduced
-
-- FinancialReport
-- ReportLine
-- ReportSection
-- BalanceSheet
-- IncomeStatement
-- TrialBalance
-- CashFlowStatement
-- StatementOfOwnersEquity
-- FinancialReportValidator
-- Report builders
-
-## Protected Rule
-
-Reports represent results.
-
-Builders construct report presentation.
-
-Reports do not mutate accounting truth.
+# Phase 3 — Unified Financial Reporting
 
 ## Status
 
-Complete.
+Complete
+
+Purpose:
+
+Create a unified reporting architecture independent of presentation.
+
+Protected Rule:
+
+Reports present financial information.
+
+They never modify accounting data.
 
 ---
 
 # Phase 4 — Snapshot Performance Layer
 
-## Purpose
-
-Introduce read-model performance infrastructure for rollup-driven reports.
-
-## Introduced
-
-- AccountRollupService
-- AccountRollupCachedService
-- AccountRollupSnapshotBuilder
-- AccountRollupSnapshotCache
-- Snapshot-aware reports
-
-## Protected Rule
-
-Cache computation.
-
-Never mutate truth.
-
-Performance layers may optimize reads only.
-
 ## Status
 
-Complete.
+Complete
+
+Purpose:
+
+Provide scalable read models and snapshot infrastructure.
+
+Protected Rule:
+
+Performance layers optimize reads.
+
+They never mutate truth.
 
 ---
 
-# Phase 5 — Snapshot Pipeline Integration
-
-## Purpose
-
-Make snapshot generation the standard reporting pipeline where appropriate.
-
-## Objective
-
-Connect ledger, balance calculation, rollup, caching, snapshot generation, and report construction through one coherent pipeline.
-
-## Expected Introductions
-
-- Snapshot report factory
-- Pipeline integration tests
-- Builder-level snapshot consumption
-- Cleaner report construction entry point
-
-## Protected Rule
-
-Legacy AccountBalanceCollection paths remain valid until replacement is proven.
-
-## Exit Criteria
-
-- Full pipeline test exists:
-  Ledger → Calculator → Rollup → Cache → Snapshot → Report
-- Reports can be built from snapshots without manual wiring
-- Legacy report tests remain green
-- No ledger core modifications
+# Phase 5 — Production Financial Pipeline
 
 ## Status
 
-Next recommended phase.
+Complete
+
+Purpose:
+
+Create one coherent production reporting pipeline from ledger to UI.
+
+Delivered:
+
+- FinancialEngine
+- ProductionReportService
+- SnapshotReportFactory
+- Public Ledger API
+- Business Financial Snapshot
+- Investor Hub integration
+
+Validation:
+
+Architecture successfully powers a real production feature.
 
 ---
 
-# Phase 6 — Multi-Period Financial Engine
+# Phase 6 — Production Application Refinement
 
-## Purpose
+## Status
 
-Support month, quarter, year, and custom period reporting.
+Current Phase
 
-## Expected Introductions
+Purpose:
 
-- AccountingPeriod
-- PeriodRange
-- PeriodBalanceCalculator
-- Comparative financial reports
-- Period snapshots
+Strengthen the production application while validating and improving the underlying architecture.
 
-## Protected Rule
+Initial objectives include:
+
+- Financial ratios
+- Financial health indicators
+- Plain-English CFO observations
+- Professional PDF export
+- UX refinement
+
+Protected Rule:
+
+Every production enhancement should strengthen reusable architecture.
+
+---
+
+# Phase 7 — Multi-Period Financial Engine
+
+Purpose:
+
+Support comparative reporting across months, quarters, years, and custom periods.
+
+Protected Rule:
 
 Periods filter truth.
 
-They do not rewrite truth.
-
-## Status
-
-Future.
+They never rewrite truth.
 
 ---
 
-# Phase 7 — Audit and Traceability Layer
+# Phase 8 — Audit and Traceability
 
-## Purpose
+Purpose:
 
-Make every financial number traceable back to source postings.
+Allow every reported financial value to be traced back to originating ledger entries.
 
-## Expected Introductions
-
-- AuditTrail
-- ReportTrace
-- AccountBalanceTrace
-- Posting attribution
-- Drill-down support
-
-## Protected Rule
+Protected Rule:
 
 Every reported number should eventually be explainable.
 
-## Status
+---
 
-Future.
+# Phase 9 — Dashboard Read Models
+
+Purpose:
+
+Provide optimized read models for dashboards and business intelligence.
+
+Protected Rule:
+
+Dashboards consume prepared models.
+
+They do not calculate accounting truth.
 
 ---
 
-# Phase 8 — Dashboard and UI Read Models
+# Phase 10 — Financial Intelligence Layer
 
-## Purpose
+Purpose:
 
-Prepare financial data for user-facing dashboards.
+Provide AI-assisted explanations and recommendations while preserving deterministic accounting.
 
-## Expected Introductions
+Protected Rule:
 
-- Dashboard summary models
-- KPI cards
-- Cash flow views
-- Owner/investor views
-- Business financial views
+AI may explain financial truth.
 
-## Protected Rule
-
-UI reads from prepared models.
-
-UI does not compute accounting truth.
-
-## Status
-
-Future.
-
----
-
-# Phase 9 — Financial AI Layer
-
-## Purpose
-
-Enable AI-assisted financial insight while preserving deterministic accounting truth.
-
-## Expected Introductions
-
-- AI explanation layer
-- Financial anomaly detection
-- Suggested insights
-- Natural-language report interpretation
-
-## Protected Rule
-
-AI may explain, suggest, and summarize.
-
-AI may not become the source of financial truth.
-
-## Status
-
-Future.
+AI never becomes financial truth.
 
 ---
 
 # Forge Operating System
 
-## Purpose
+Purpose:
 
-Govern how Financial Forge is developed.
+Version the engineering process alongside the software.
 
-## Introduced
+Current documents:
 
 - Forge Constitution
 - Forge Workflow
+- Forge Session
 - Forge Startup Checklist
 - Forge Guard System
 - Forge Roadmap
 
-## Protected Rule
-
-The process is versioned with the product.
-
-## Status
-
-Active.
+The engineering process evolves with the platform.
 
 ---
 
-# Roadmap Rule
-
-A phase is not complete because code exists.
+# Roadmap Completion Rule
 
 A phase is complete only when:
 
-- The architectural problem is solved
-- Tests validate the new behavior
-- Git history is clean
-- Documentation reflects the decision
-- The next phase can build on it safely
-
+- The architectural objective has been achieved.
+- Appropriate tests pass.
+- The production build passes.
+- The architecture has been validated through production use when applicable.
+- Documentation reflects the architectural decision.
+- The next phase can safely build upon the completed work.
