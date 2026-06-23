@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "smoke-test-001",
+  "description": "Verify FORGE Patch Engine format",
+  "operations": [
+    {
+      "type": "replace_file",
+      "path": "tools/forge-os/test-output.txt",
+      "mode": "overwrite",
+      "verify": true,
+      "content": "FORGE OS Patch Engine Smoke Test\nRepository: marketplace409\nStatus: SUCCESS\n"
+    }
+  ]
+}

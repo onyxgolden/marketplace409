@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "phase": "FORGE OS Phase 1",
+  "objective": "Validate autonomous execution pipeline",
+  "repository": "marketplace409",
+  "steps": [
+    {
+      "action": "inspect",
+      "description": "Verify repository status",
+      "command": "git status"
+    },
+    {
+      "action": "inspect",
+      "description": "Inspect Forge OS structure",
+      "command": "find tools/forge-os -maxdepth 2 | sort"
+    },
+    {
+      "action": "inspect",
+      "description": "Verify Node installation",
+      "command": "node --version"
+    }
+  ]
+}
