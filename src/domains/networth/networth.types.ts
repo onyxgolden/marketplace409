@@ -16,4 +16,11 @@ export type NetWorthSummary = {
   totalAssets: number;
   totalLiabilities: number;
   netWorth: number;
+
+  /**
+   * Total liabilities divided by total assets.
+   * Returns a value from 0–1 when assets are greater than zero.
+   * Returns 0 when there are no assets.
+   */
+  debtToAssetRatio: number;
 };
