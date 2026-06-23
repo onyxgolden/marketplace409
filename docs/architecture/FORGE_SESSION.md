@@ -1,6 +1,6 @@
 # Forge Session
 
-**Version:** 2.0
+**Version:** 1.0
 **Status:** Active
 
 ---
@@ -9,11 +9,9 @@
 
 This document defines the standard sequence for every Forge development session.
 
-Its purpose is to ensure that every session strengthens both Financial Forge and the engineering process used to build it.
+The goal is consistency.
 
-Consistency is a feature.
-
-Every session should improve the platform, validate the architecture, and leave the repository easier to understand than it was before.
+Every session should begin, execute, and end using the same disciplined process.
 
 ---
 
@@ -21,43 +19,14 @@ Every session should improve the platform, validate the architecture, and leave 
 
 Before implementation begins:
 
-- Review `FORGE_STARTUP_CHECKLIST.md`
-- Review governing Forge documents when required
-- Confirm the current development phase
-- Confirm today's architectural objective
-- Verify repository state with `git status`
-- Review recent commits if additional context is needed
-- Identify the file to inspect
+* Review `FORGE_STARTUP_CHECKLIST.md`
+* Confirm current development phase
+* Confirm today's architectural objective
+* Verify repository state with `git status`
+* Review recent commits if context is needed
+* Identify the file to inspect
 
 No implementation begins until boot is complete.
-
----
-
-# Forge V2 Validation Philosophy
-
-Financial Forge follows an architecture-first approach validated through real production use.
-
-Architecture leads.
-
-Reality validates.
-
-Documentation preserves the lessons.
-
-Every major architectural milestone should be validated by at least one thin vertical production feature before significant additional architectural expansion.
-
-The standard validation loop is:
-
-1. Design
-2. Implement
-3. Build one real feature
-4. Stress the architecture
-5. Improve the architecture
-6. Capture lessons learned
-7. Repeat
-
-Production features exist to validate architecture.
-
-Architecture evolves because of production experience.
 
 ---
 
@@ -65,63 +34,64 @@ Architecture evolves because of production experience.
 
 Every implementation follows this sequence:
 
-1. Inspect the target file.
-2. Review the current implementation.
-3. Explain the architectural reasoning.
-4. Open the file in Nano.
-5. Replace the entire file unless a surgical edit is clearly justified.
+1. Inspect the target file from the terminal.
+2. Paste the current file into ChatGPT.
+3. Review architecture before proposing changes.
+4. Open the file with Nano.
+5. Replace the entire file unless a small surgical edit is explicitly justified.
 6. Verify the saved file from the terminal.
 7. Run targeted tests when appropriate.
 8. Run the full test suite.
 9. Run a production build when applicable.
-10. Review Git status.
-11. Review Git diff.
-12. Perform an architectural review.
-13. Commit one architectural objective.
-14. Push.
-15. Verify a clean working tree.
-
-No quality gate may be skipped without explicit justification.
+10. Review Git status and diffs.
+11. Commit one architectural objective.
+12. Push.
+13. Verify a clean working tree.
 
 ---
-
 # Execution Cadence
 
-The AI and the human execute work using a disciplined cadence.
+The AI and the human execute work in a fixed cadence.
 
-The cadence is designed to eliminate assumptions.
+The cadence must not be skipped or reordered.
 
-For implementation work:
+For implementation work the sequence is:
 
 1. AI identifies the file to inspect.
-2. AI provides one inspection command.
-3. Human shares repository output.
-4. AI reviews the actual implementation.
-5. AI proposes the architectural change.
-6. AI provides one Nano command.
-7. Human edits the file.
-8. AI requests verification.
-9. Human verifies from the terminal.
-10. AI requests testing.
-11. Human runs the requested tests.
-12. AI reviews results.
+2. AI provides one terminal inspection command.
+3. Human pastes the file contents from the terminal.
+4. AI reviews the actual implementation before proposing changes.
+5. AI provides one Nano command.
+6. Human opens the file.
+7. AI provides a complete replacement when appropriate.
+8. Human saves the file.
+9. AI requests verification from the terminal.
+10. Human runs verification and shares the results.
+11. AI requests the appropriate tests.
+12. Human runs the tests and shares the results.
 13. AI performs Git review before staging or committing.
 
-Verified repository output always overrides assumptions.
+The AI must never assume a file's contents.
 
+The AI must never prepare edits before inspecting the current implementation.
+
+Repository output always overrides assumptions.
+
+The human controls execution.
+
+The AI controls architecture and review.
+
+Both follow the same cadence every session.
 ---
-
 # Session Rules
 
-- Never assume file contents.
-- Never guess imports or paths.
-- Never skip inspection.
-- Never skip verification.
-- Never combine unrelated objectives into one commit.
-- Green tests are necessary but not sufficient.
-- Architecture always takes priority over speed.
-- Production experience should influence future architecture.
-- Documentation should improve future engineering decisions.
+* Never assume file contents.
+* Never guess imports or paths.
+* Never skip inspection.
+* Never mix unrelated objectives into one commit.
+* Repository output is the source of truth.
+* Green tests are required but not sufficient.
+* Architecture always takes priority over speed.
 
 ---
 
@@ -129,16 +99,12 @@ Verified repository output always overrides assumptions.
 
 Before ending a session:
 
-- Confirm the current roadmap phase.
-- Record the completed architectural objective.
-- Record any architectural lessons learned.
-- Verify test status.
-- Verify build status.
-- Verify Git synchronization.
-- Identify the next recommended objective.
-- Prepare a continuation paste when moving to a new chat.
-
-Every session should leave the next session with immediate context.
+* Confirm current phase.
+* Record completed objective.
+* Verify test status.
+* Verify Git synchronization.
+* Identify the next recommended objective.
+* Prepare a continuation paste when moving to a new chat.
 
 ---
 
@@ -146,15 +112,11 @@ Every session should leave the next session with immediate context.
 
 A successful Forge session ends with:
 
-- Clean architecture
-- Production validation when appropriate
-- Passing tests
-- Passing production build
-- Clean Git history
-- Updated documentation when appropriate
-- A synchronized repository
-- A clearly identified next objective
+* Clean architecture
+* Passing tests
+* Clean Git history
+* Updated documentation when required
+* A synchronized repository
+* A clear next objective
 
-Every completed production feature should strengthen the architecture beneath it.
-
-Every architectural improvement should make future production features easier to build.
+Every session should leave the repository easier to understand than it was at the beginning.
