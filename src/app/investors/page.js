@@ -45,6 +45,14 @@ export default function InvestorsPage() {
       badge: "Tool",
     },
     {
+      href: "/financial-snapshot",
+      icon: "📊",
+      title: "Business Financial Snapshot",
+      description:
+        "Analyze cash, debt, revenue, expenses, profit, and equity using the Financial Forge engine.",
+      badge: "Forge",
+    },
+    {
       href: "/investors/contractors",
       icon: "🔨",
       title: "409 Contractors",
