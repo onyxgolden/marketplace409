@@ -1,0 +1,100 @@
+const fs = require("fs");
+const path = require("path");
+
+class ForgeMemory {
+  constructor(repoRoot) {
+    this.repoRoot = repoRoot;
+    this.memoryFile = path.join(
+      repoRoot,
+      "tools/forge-os/memory/forge-memory.json"
+    );
+
+    this.state = this.load();
+  }
+
+  /**
+   * LOAD MEMORY FROM DISK
+   */
+  load() {
+    if (!fs.existsSync(this.memoryFile)) {
+      return {
+        runs: [],
+        failures: {},
+        successes: {},
+      };
+    }
+
+    try {
+      return JSON.parse(fs.readFileSync(this.memoryFile, "utf8"));
+    } catch (e) {
+      return {
+        runs: [],
+        failures: {},
+        successes: {},
+      };
+    }
+  }
+
+  /**
+   * SAVE MEMORY
+   */
+  save() {
+    fs.mkdirSync(path.dirname(this.memoryFile), { recursive: true });
+
+    fs.writeFileSync(
+      this.memoryFile,
+      JSON.stringify(this.state, null, 2),
+      "utf8"
+    );
+  }
+
+  /**
+   * LOG FULL RUN
+   */
+  logRun(intent, plan) {
+    this.state.runs.push({
+      intent,
+      plan,
+      timestamp: new Date().toISOString(),
+    });
+
+    this.save();
+  }
+
+  /**
+   * LOG FAILURE PATTERN
+   */
+  logFailure(step, error) {
+    const key = step.action || "unknown";
+
+    this.state.failures[key] =
+      (this.state.failures[key] || 0) + 1;
+
+    this.save();
+  }
+
+  /**
+   * LOG SUCCESS PATTERN
+   */
+  logSuccess(step) {
+    const key = step.action || "unknown";
+
+    this.state.successes[key] =
+      (this.state.successes[key] || 0) + 1;
+
+    this.save();
+  }
+
+  /**
+   * GET STRATEGY INSIGHTS
+   */
+  getInsights() {
+    return {
+      mostFailingActions: this.state.failures,
+      mostSuccessfulActions: this.state.successes,
+      totalRuns: this.state.runs.length,
+    };
+  }
+}
+
+module.exports = ForgeMemory;

@@ -1,0 +1,65 @@
+{
+  "version": 5,
+  "phase": "MEMORY-AWARE PLANNING",
+  "objective": "marketplace growth strategy",
+  "context": {
+    "files": [
+      ".env.local",
+      ".git",
+      ".gitignore",
+      ".next",
+      "FORGE_CONSTITUTION.json",
+      "FORGE_CONSTITUTION.md",
+      "README.md",
+      "ROADMAP.md",
+      "docs",
+      "eslint.config.mjs",
+      "jsconfig.json",
+      "marketplace409@0.1.0",
+      "next",
+      "next-env.d.ts",
+      "next.config.mjs",
+      "node_modules",
+      "package-lock.json",
+      "package.json",
+      "postcss.config.mjs",
+      "public",
+      "redeploy.txt",
+      "src",
+      "tools",
+      "tsconfig.json",
+      "vitest.config.js"
+    ]
+  },
+  "memory": {
+    "mostFailingActions": {},
+    "mostSuccessfulActions": {
+      "inspect": 2
+    },
+    "totalRuns": 5,
+    "signals": {
+      "biasInspect": 1,
+      "biasTest": 1,
+      "biasBuild": 1
+    }
+  },
+  "signals": {
+    "biasInspect": 1.5,
+    "biasTest": 1,
+    "biasBuild": 1
+  },
+  "steps": [
+    {
+      "action": "inspect",
+      "description": "Repo status",
+      "command": "git status",
+      "weight": 1.5
+    },
+    {
+      "action": "inspect",
+      "description": "Repo structure",
+      "command": "find . -maxdepth 2 | head -n 50",
+      "weight": 1.5
+    }
+  ]
+}

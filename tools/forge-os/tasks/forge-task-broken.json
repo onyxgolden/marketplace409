@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "phase": "FORGE OS VIOLATION TEST",
+  "objective": "This task should FAIL validation",
+  "repository": "marketplace409",
+  "steps": [
+    {
+      "action": "edit",
+      "description": "Edit without inspect (SHOULD FAIL)",
+      "command": "echo 'bad step'"
+    },
+    {
+      "action": "apply_patch",
+      "description": "Patch without verify (SHOULD FAIL)",
+      "patch": "tools/forge-os/patches/smoke-test.patch.json"
+    },
+    {
+      "action": "test",
+      "description": "Test step"
+    }
+  ]
+}

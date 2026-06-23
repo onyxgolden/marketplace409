@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "type": "require_inspect_before_edit"
+    },
+    {
+      "type": "require_test_after_edit"
+    },
+    {
+      "type": "no_unverified_patches"
+    }
+  ]
+}
