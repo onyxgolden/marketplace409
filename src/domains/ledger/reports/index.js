@@ -20,3 +20,7 @@ export { CashFlowStatement } from "./CashFlowStatement.js";
 export { StatementOfOwnersEquity } from "./StatementOfOwnersEquity.js";
 
 export { FinancialReportValidator } from "./validation/FinancialReportValidator.js";
+
+export { SnapshotReportFactory } from "./SnapshotReportFactory.js";
+
+export { ProductionReportService } from "./ProductionReportService.js";
