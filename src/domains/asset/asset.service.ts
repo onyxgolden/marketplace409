@@ -1,7 +1,14 @@
+import { AssetRepository } from "./asset.repository";
 import type { Asset } from "./asset.types";
 
-export class AssetService {
-  static getTotalValue(assets: Asset[]): number {
+class AssetServiceImpl {
+  async getAll(): Promise<Asset[]> {
+    return AssetRepository.getAll();
+  }
+
+  getTotalValue(assets: Asset[]): number {
     return assets.reduce((sum, asset) => sum + asset.current_value, 0);
   }
 }
+
+export const AssetService = new AssetServiceImpl();
