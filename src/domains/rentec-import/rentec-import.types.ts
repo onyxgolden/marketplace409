@@ -5,7 +5,7 @@ export type RentecImportRecord = {
 
   description: string;
 
-  type: "income" | "expense";
+  type: "income" | "expense" | "asset_purchase";
 
   amount: number;
 
