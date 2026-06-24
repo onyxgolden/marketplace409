@@ -1,4 +1,4 @@
-import { importPipeline } from "../import-pipeline";
+import { ImportResult, importPipeline } from "../import-pipeline";
 import { RentecImportParser } from "./rentec-import.parser";
 import { RentecImportService } from "./rentec-import.service";
 
@@ -31,11 +31,11 @@ class RentecProductionImportServiceImpl {
       chartOfAccounts,
     });
 
-    return {
+    return new ImportResult({
       records,
       summary,
       reports,
-    };
+    });
   }
 }
 
