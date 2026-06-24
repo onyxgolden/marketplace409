@@ -22,7 +22,7 @@ function buildChartOfAccounts() {
 }
 
 describe("RentecProductionImportService", () => {
-  test("imports Rentec CSV into records, summary, and reports", () => {
+  test("imports Rentec CSV into records, summary, reports, and warnings", () => {
     const csv = [
       "DATE,PROPERTY,DESCRIPTION,INCOME,EXPENSE",
       "01/01/2026,170 John,Rental Income,1500.00,",
@@ -36,6 +36,7 @@ describe("RentecProductionImportService", () => {
     });
 
     expect(result.records).toHaveLength(2);
+
     expect(result.summary).toMatchObject({
       totalRows: 2,
       importedRows: 2,
@@ -48,5 +49,8 @@ describe("RentecProductionImportService", () => {
     expect(result.reports.balanceSheet).toBeDefined();
     expect(result.reports.incomeStatement).toBeDefined();
     expect(result.reports.trialBalance).toBeDefined();
+
+    expect(result.warnings).toEqual([]);
+    expect(result.warningCount).toBe(0);
   });
 });

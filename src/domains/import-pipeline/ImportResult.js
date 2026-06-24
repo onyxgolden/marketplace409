@@ -1,3 +1,5 @@
+import { ImportWarning } from "./ImportWarning";
+
 export class ImportResult {
   constructor({
     records = [],
@@ -19,6 +21,12 @@ export class ImportResult {
 
     if (!Array.isArray(warnings)) {
       throw new Error("ImportResult warnings must be an array");
+    }
+
+    if (!warnings.every((warning) => warning instanceof ImportWarning)) {
+      throw new Error(
+        "ImportResult warnings must contain only ImportWarning instances"
+      );
     }
 
     this.records = Object.freeze([...records]);
