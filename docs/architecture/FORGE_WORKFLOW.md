@@ -1,112 +1,281 @@
 # Forge Workflow
 
+The Forge Workflow defines how engineering work is performed.
+
+Its purpose is to produce high-quality software through consistent, repeatable engineering discipline.
+
+Architecture is preserved through process.
+
+---
+
+# Core Principles
+
 The Forge is governed by architecture-first development.
-
-## Core Rule
-
-Architecture always wins over speed.
 
 Every change must preserve:
 
-- clean architecture
-- passing tests
-- passing production build
-- clean git history
-- repository documentation as source of truth
+* Architectural boundaries
+* Domain integrity
+* Passing production build
+* Passing tests
+* Clean Git history
+* Accurate documentation
 
-## Editing Standard
+Architecture always wins over speed.
 
-Use the best tool for the task.
+---
 
-### VS Code
+# Engineering Philosophy
+
+Small, verified steps produce stable systems.
+
+Every action should reduce uncertainty.
+
+Verification is required before progression.
+
+The repository—not memory—is the engineering source of truth.
+
+---
+
+# Development Tools
+
+## VS Code
 
 Use VS Code for:
 
-- browsing files
-- searching the repository
-- comparing implementations
-- reading large files
-- copying verified source to ChatGPT
+* Repository exploration
+* Reading source
+* Searching the project
+* Comparing implementations
+* Architectural inspection
 
-### Nano
+VS Code is primarily an inspection tool.
+
+---
+
+## Nano
 
 Use Nano for:
 
-- editing source files
-- replacing entire files
-- making production changes
+* Editing production files
+* Full-file replacement
+* Documentation updates
+* Controlled source modifications
 
-Large heredoc edits are avoided because they have previously caused terminal corruption.
+Prefer full-file replacement unless a small localized edit is clearly safer.
 
-### Terminal
+---
+
+## Terminal
 
 The terminal is the source of truth.
 
-Always verify files after editing.
+Never assume an edit succeeded.
 
-## Required Change Workflow
+Always verify using terminal output.
 
-Every architectural change follows this sequence:
+---
 
-1. Explain architectural reasoning.
-2. Inspect all related files before making changes.
-3. Provide exactly one terminal command.
-4. Edit using Nano (one file at a time).
-5. After all edits are complete, verify all modified files together in a single terminal command whenever practical.
-6. Run targeted tests (when applicable).
-7. Run the full test suite.
-8. Run the production build.
-9. Inspect git status and git diff.
-10. Commit.
-11. Push.
-12. Verify a clean working tree.
+# Standard Engineering Workflow
 
-No gate may be skipped.
+Every implementation follows this sequence.
 
-## Batch Inspection Rule
+## 1. Inspect
 
-When implementing a feature that spans multiple related files:
+Inspect all affected files before planning changes.
 
-- Inspect the complete set of related files before editing.
-- Edit one file at a time.
-- Verify the complete set together after all edits are finished.
-- Perform one validation cycle for the completed feature.
-- Commit only after the entire feature passes validation.
+Understand the existing architecture before modifying it.
 
-This minimizes context switching while preserving Forge's verification discipline.
+---
 
-## ChatGPT Role
+## 2. Plan
 
-ChatGPT acts as:
+Explain:
 
-- CTO
-- Chief Architect
-- Guardian of Long-Term Architecture
+* Architectural reasoning
+* Scope
+* Risks
+* Expected outcome
 
-ChatGPT designs, reviews, and guides.
+---
 
-ChatGPT must not assume edits succeeded.
+## 3. Edit
 
-Verified terminal output overrides assumptions.
+Provide exactly one terminal command.
 
-## Human Role
+Edit one file at a time.
 
-The human authorizes and executes changes.
+---
 
-## Forge Agent Vision
+## 4. Verify Save
 
-The AI reasons.  
-The Forge Agent executes.  
+Immediately verify edited files.
+
+Never continue after an unverified edit.
+
+---
+
+## 5. Validate
+
+Preferred validation order:
+
+1. Production build
+2. Targeted tests
+3. Full test suite
+
+The build often detects structural problems before comprehensive testing.
+
+---
+
+## 6. Architecture Review
+
+Before committing:
+
+* Verify architectural boundaries
+* Verify layering
+* Verify domain ownership
+* Confirm no business logic leaked into the UI
+* Confirm immutable design remains intact
+
+---
+
+## 7. Repository Review
+
+Inspect:
+
+* Git status
+* Git diff
+* Documentation updates
+
+Review exactly what will be committed.
+
+---
+
+## 8. Commit
+
+Commits should represent complete, validated work.
+
+Whenever practical:
+
+* Separate production code commits from documentation commits.
+* Keep each commit focused on a single architectural objective.
+
+---
+
+## 9. Push
+
+Push immediately after successful validation.
+
+---
+
+## 10. Verify Synchronization
+
+Confirm:
+
+* Clean working tree
+* Local repository synchronized with remote
+
+Every session should end from a known-good state.
+
+---
+
+# Documentation Workflow
+
+Documentation follows the same engineering discipline.
+
+1. Inspect
+2. Plan
+3. Edit
+4. Verify save
+5. Review formatting
+6. Commit separately when practical
+
+Documentation is architecture.
+
+Documentation deserves the same care as production code.
+
+---
+
+# Multi-File Changes
+
+When work spans multiple files:
+
+* Inspect every related file before editing.
+* Edit one file at a time.
+* Verify each save.
+* Complete one validation cycle after all edits.
+* Commit only after the feature is fully validated.
+
+This minimizes context switching while preserving architectural integrity.
+
+---
+
+# ChatGPT Role
+
+ChatGPT serves as:
+
+* CTO
+* Chief Architect
+* Architecture reviewer
+* Engineering advisor
+
+ChatGPT proposes changes.
+
+Terminal output confirms reality.
+
+---
+
+# Human Role
+
+The human engineer:
+
+* Authorizes changes
+* Executes commands
+* Reviews results
+* Approves architecture
+* Owns the repository
+
+---
+
+# Forge Agent Vision
+
+The AI reasons.
+
+The Forge Agent executes.
+
 The human authorizes.
 
 ---
 
-## Process Stability Rule
+# Process Stability
 
-The Forge engineering process is architectural infrastructure.
+The Forge Workflow is architectural infrastructure.
 
-Significant workflow changes require evidence from at least three complete Forge sessions showing a recurring need.
+Changes to the workflow require evidence from multiple completed engineering sessions.
 
-Process changes must be incremental, measurable, and reversible.
+Workflow changes should be:
 
-The burden of proof is on changing the process, not on keeping the current process.
+* Incremental
+* Measurable
+* Reversible
+
+The burden of proof rests on changing the process—not preserving it.
+
+---
+
+# Session Closeout
+
+A Forge session is complete only when:
+
+* Production build passes.
+* Required tests pass.
+* Documentation reflects architectural changes.
+* Git history is coherent.
+* Repository is synchronized.
+* Lessons are captured.
+* The next engineering phase is identified.
+* A startup paste is prepared for the next session.
+
+The objective is not merely to finish work.
+
+The objective is to leave the repository in a better state than it was found.

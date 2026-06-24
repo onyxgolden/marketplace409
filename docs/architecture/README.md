@@ -2,43 +2,76 @@
 
 Welcome to the Financial Forge architecture documentation.
 
-This directory contains the engineering guidance, architectural decisions, and long-term vision that govern the development of Financial Forge.
+This directory defines how Financial Forge is engineered, how its architecture evolves, and how engineering decisions are preserved over time.
 
 The source code explains **how the system works**.
 
-These documents explain **how the system is designed, how it evolves, and why major decisions were made.**
+The architecture documentation explains **why it works this way**, **how it should evolve**, and **how engineering discipline is maintained**.
 
 ---
 
 # Reading Order
 
-When joining the project—or starting a new AI development session—read these documents in the following order.
+When starting a new development session or onboarding a new contributor, read these documents in the following order.
 
 ## 1. FORGE_CONSTITUTION.md
 
-Defines the engineering methodology.
+Defines the engineering principles that govern Financial Forge.
 
 Topics include:
 
-* Engineering principles
+* Engineering philosophy
+* Architectural principles
 * Quality gates
-* Development workflow
-* Testing philosophy
-* Incremental architecture
 * Cost discipline
-* Forge Agent principles
+* Domain boundaries
+* Engineering governance
 
 This document is normative.
 
-It defines how Financial Forge is engineered.
+It defines the engineering rules that all development follows.
 
 ---
 
-## 2. ARCHITECTURE_DECISIONS.md
+## 2. FORGE_WORKFLOW.md
 
-Records major architectural decisions.
+Defines the day-to-day development workflow.
 
-Each ADR explains:
+Topics include:
+
+* Repository inspection
+* Planning
+* Editing
+* Verification
+* Build and testing order
+* Commit discipline
+* Documentation practices
+
+This document explains **how work is performed**.
+
+---
+
+## 3. FORGE_SESSION.md
+
+Defines the lifecycle of an individual Forge development session.
+
+Topics include:
+
+* Session startup
+* Inspection
+* Execution loop
+* Validation
+* Session closeout
+
+This document ensures every engineering session follows a consistent process.
+
+---
+
+## 4. ARCHITECTURE_DECISIONS.md
+
+Records major architectural decisions (ADRs).
+
+Each decision documents:
 
 * Context
 * Decision
@@ -52,68 +85,86 @@ The ADRs explain why those rules were applied.
 
 ---
 
-## 3. FORGE_ROADMAP.md
+## 5. FORGE_ROADMAP.md
 
-Describes the current architectural direction.
+Tracks the long-term architectural evolution of Financial Forge.
 
-This document tracks:
+This roadmap changes infrequently and answers questions such as:
 
-* Completed phases
-* Active phase
-* Planned phases
-* Long-term platform vision
+* How does the architecture evolve?
+* Which architectural phases are complete?
+* What major architectural capabilities remain?
 
-Unlike the Constitution, the Roadmap is expected to evolve frequently.
+It is an architectural roadmap—not a feature backlog.
 
 ---
 
-## 4. Ledger Blueprint
+## 6. FORGE_PLATFORM_ROADMAP.md
+
+Tracks platform capabilities and planned functionality.
+
+This roadmap changes frequently as new business capabilities are developed.
+
+It answers questions such as:
+
+* What can Forge do today?
+* What production features are planned?
+* Which platform capabilities are currently under development?
+
+Unlike the architectural roadmap, this document is expected to evolve continuously.
+
+---
+
+## 7. Ledger Blueprint
 
 **ledger-domain-blueprint.md**
 
-Describes the accounting domain model and long-term ledger architecture.
+Documents the long-term accounting domain model and ledger architecture.
 
 ---
 
-## 5. Future Architecture Documents
+## 8. Future Architecture Documents
 
-As Financial Forge grows, additional subsystem documents will be added, including topics such as:
+As Financial Forge grows, additional architecture documents may describe individual subsystems, including:
 
 * Reporting Architecture
 * Analytics Engine
-* AI CFO
+* AI Decision Systems
 * Multi-company Consolidation
-* Export Engine
-* Forge Agent
+* Export Architecture
+* Knowledge Layer
+* Agent Architecture
 
-Each document should focus on one architectural area.
+Each document should focus on a single architectural area.
 
 ---
 
-# Documentation Principles
+# Documentation Philosophy
 
-The architecture documentation follows the same philosophy as the software:
+The architecture documentation follows the same principles as the software itself:
 
-* Small, incremental improvements
+* Incremental evolution
 * Clear ownership
+* Stable architectural boundaries
 * Long-term maintainability
-* Version-controlled evolution
+* Version-controlled decision making
 
-Documentation is considered part of the architecture.
+Documentation is considered part of the architecture rather than an afterthought.
 
 ---
 
 # Repository Philosophy
 
-Financial Forge is built in layers.
+Financial Forge is organized into complementary layers.
 
 1. Source code implements behavior.
-2. Tests validate behavior.
-3. Architecture documents explain structure.
-4. Architectural Decision Records preserve reasoning.
-5. The Forge Constitution governs engineering discipline.
+2. Tests validate correctness.
+3. Architecture documents explain design.
+4. Architectural Decision Records preserve engineering reasoning.
+5. Roadmaps describe long-term evolution.
+6. The Forge Constitution governs engineering discipline.
 
-Together, these layers allow the project to grow while preserving architectural integrity.
+Each layer serves a distinct purpose while reinforcing the others.
 
 ---
 
@@ -121,8 +172,10 @@ Together, these layers allow the project to grow while preserving architectural 
 
 Financial Forge is intended to become a long-lived financial operating system.
 
-Every change should improve the system's ability to evolve over the coming decade.
+Its architecture should support continuous growth without sacrificing clarity, maintainability, or correctness.
+
+Every architectural decision should improve the system's ability to evolve over years—not merely solve today's problem.
 
 The goal is not simply to build software.
 
-The goal is to build software that remains understandable, maintainable, and extensible for years to come.
+The goal is to build software that remains understandable, extensible, and trustworthy throughout its lifetime.

@@ -1,6 +1,6 @@
-# Forge Roadmap
+# Forge Architecture Roadmap
 
-**Version:** 2.0
+**Version:** 3.0
 **Status:** Active
 **Project:** Financial Forge
 
@@ -8,51 +8,63 @@
 
 # Purpose
 
-The Forge Roadmap defines the long-term architectural evolution of Financial Forge.
+The Forge Architecture Roadmap describes the long-term evolution of Financial Forge's architecture.
 
-It is not a feature list.
+It is **not** a feature roadmap.
 
-It explains:
+It documents:
 
+* The major architectural eras of the project.
 * Why each architectural phase exists.
-* What capability it introduces.
-* What principles it must preserve.
-* When the phase is considered complete.
+* The architectural capabilities introduced.
+* The engineering principles each phase protects.
+* The long-term direction of the system.
 
-The roadmap evolves with the repository.
+Feature planning belongs in **FORGE_PLATFORM_ROADMAP.md**.
 
-The repository—not memory—is the source of truth.
+Architecture should evolve deliberately and infrequently.
 
 ---
 
 # Current Architectural Position
 
-Financial Forge has completed its foundational architecture.
+Financial Forge has completed its foundational accounting architecture and now contains its first complete production accounting workflow.
 
-The repository now contains:
+```
+External Data
+      ↓
+Import Pipeline
+      ↓
+Financial Events
+      ↓
+Journal Entries
+      ↓
+Immutable Ledger
+      ↓
+Financial Engine
+      ↓
+Financial Reports
+      ↓
+Application UI
+```
 
-* Immutable Ledger Core
-* Account Hierarchy
-* Balance Calculation
-* Financial Reporting
-* Snapshot Performance Layer
-* Production Report Pipeline
-* Financial Engine
-* Business Financial Snapshot
-* Net Worth Domain
-* Forge Operating System
+The accounting truth remains entirely inside the domain.
 
-The project is transitioning from **building foundations** to **expanding platform capabilities**.
+Applications orchestrate.
+
+The Financial Engine computes.
+
+The Ledger remains the single accounting authority.
 
 ---
 
-# Foundation Phases
+# Completed Architectural Eras
 
 ## Phase 1 — Ledger Truth
 
 ### Purpose
 
-Create the immutable accounting truth layer.
+Establish an immutable accounting foundation.
 
 ### Delivered
 
@@ -65,40 +77,33 @@ Create the immutable accounting truth layer.
 
 ### Protected Rule
 
-The ledger is the only accounting truth.
+The Ledger is the only accounting truth.
 
-### Status
-
-Complete.
+**Status:** Complete
 
 ---
 
-## Phase 2 — Account Intelligence
+## Phase 2 — Financial Structure
 
 ### Purpose
 
-Define financial structure and balance computation.
+Model financial relationships and balances.
 
 ### Delivered
 
-* Account
-* AccountType
-* AccountCategory
-* ChartOfAccounts
+* Chart of Accounts
+* Account hierarchy
 * BalanceCalculator
 * TrialBalanceCalculator
-* Account hierarchy
 * Rollup infrastructure
 
 ### Protected Rule
 
 Structure defines relationships.
 
-Ledger defines truth.
+The Ledger defines truth.
 
-### Status
-
-Complete.
+**Status:** Complete
 
 ---
 
@@ -106,19 +111,19 @@ Complete.
 
 ### Purpose
 
-Provide immutable financial reporting.
+Present accounting truth without modifying it.
 
 ### Delivered
 
 * FinancialReport
-* ReportLine
 * ReportSection
+* ReportLine
 * Trial Balance
 * Balance Sheet
 * Income Statement
 * Cash Flow Statement
 * Statement of Owners' Equity
-* Report Builders
+* Report builders
 * FinancialReportValidator
 
 ### Protected Rule
@@ -127,9 +132,7 @@ Reports present truth.
 
 They never create truth.
 
-### Status
-
-Complete.
+**Status:** Complete
 
 ---
 
@@ -137,188 +140,203 @@ Complete.
 
 ### Purpose
 
-Improve report performance without changing accounting truth.
+Improve reporting performance while preserving accounting correctness.
 
 ### Delivered
 
-* AccountRollupService
-* AccountRollupCachedService
-* AccountRollupSnapshotBuilder
-* Snapshot pipeline
+* Rollup services
+* Cached rollups
+* Snapshot builder
+* Snapshot reporting pipeline
 
 ### Protected Rule
 
-Performance layers optimize reads only.
+Performance layers optimize access.
 
-Truth remains immutable.
+They never alter accounting truth.
 
-### Status
-
-Complete.
+**Status:** Complete
 
 ---
 
-## Phase 5 — Production Financial Engine
+## Phase 5 — Financial Engine
 
 ### Purpose
 
-Provide a stable application-facing financial API.
+Provide a stable application-facing accounting API.
 
 ### Delivered
 
 * SnapshotReportFactory
 * ProductionReportService
 * FinancialEngine
-* Production report pipeline
-* Business Financial Snapshot
+* Production reporting pipeline
 
 ### Protected Rule
 
-Applications communicate with FinancialEngine.
+Applications communicate through the Financial Engine.
 
-Applications should not orchestrate internal reporting components directly.
+Applications do not implement accounting logic.
 
-### Status
-
-Complete.
+**Status:** Complete
 
 ---
 
-# Current Expansion Phase
-
-## Phase 6 — Financial Operating System
+## Phase 6 — Financial Events
 
 ### Purpose
 
-Expand Financial Forge from a financial engine into a complete financial operating system.
+Represent real-world financial activity independently of accounting implementation.
 
-### Primary Objectives
+### Delivered
 
-* User financial identity
-* Financial accounts
-* Persistent financial data
-* Connected financial state
-* External data ingestion
-* Domain integration
-* Reusable application services
-
-### Design Philosophy
-
-New capabilities should build on the existing foundations rather than replacing them.
-
-The Financial Engine remains the core computation layer.
+* FinancialEvent
+* FinancialEventFactory
+* FinancialEventPostingAdapter
+* Financial knowledge layer
 
 ### Protected Rule
 
-Expand capabilities without weakening established architectural boundaries.
+Business events remain independent from ledger implementation.
 
-### Status
-
-Active.
+**Status:** Complete
 
 ---
 
-# Future Capability Phases
-
-## Phase 7 — Multi-Period Accounting
+## Phase 7 — Production Import Pipeline
 
 ### Purpose
 
-Support historical and comparative reporting.
+Connect external accounting data to the immutable financial engine.
+
+### Delivered
+
+* Rentec CSV parser
+* Production Import Service
+* Import pipeline
+* Production Import UI
+* End-to-end accounting workflow
+
+### Protected Rule
+
+External systems import data.
+
+Only the Financial Engine produces accounting results.
+
+**Status:** Complete
+
+---
+
+# Future Architectural Evolution
+
+## Phase 8 — Multi-Period Accounting
+
+### Purpose
+
+Support historical accounting across reporting periods.
 
 Expected capabilities include:
 
 * Accounting periods
-* Period filtering
-* Comparative reporting
-* Historical snapshots
+* Comparative reports
+* Historical balances
+* Time-based reporting
 
 ---
 
-## Phase 8 — Audit & Traceability
+## Phase 9 — Audit & Traceability
 
 ### Purpose
 
-Provide complete traceability from reports back to source postings.
+Provide complete financial explainability.
 
 Expected capabilities include:
 
 * Audit trails
-* Posting attribution
+* Source attribution
 * Drill-down navigation
-* Financial explainability
+* Posting lineage
 
 ---
 
-## Phase 9 — Read Models & Dashboards
+## Phase 10 — Read Models & Dashboards
 
 ### Purpose
 
-Prepare optimized models for user-facing experiences.
+Expose optimized read models without affecting accounting truth.
 
 Expected capabilities include:
 
-* Dashboard summaries
-* Investor dashboards
 * Business dashboards
-* Owner dashboards
+* Investor dashboards
 * KPI models
+* Executive summaries
 
 ---
 
-## Phase 10 — Financial Intelligence
+## Phase 11 — Financial Intelligence
 
 ### Purpose
 
-Provide deterministic AI-assisted financial analysis.
+Provide deterministic financial reasoning built on the Financial Engine.
 
 Expected capabilities include:
 
-* Financial explanations
 * Trend analysis
 * Scenario modeling
+* Forecasting
 * Recommendations
 * Planning assistance
 
-AI assists users.
+AI assists financial decision-making.
 
-AI never becomes the accounting truth.
-
----
-
-# Forge Operating System
-
-The Forge Operating System governs development.
-
-Core documents include:
-
-* FORGE_CONSTITUTION.md
-* FORGE_WORKFLOW.md
-* FORGE_SESSION.md
-* FORGE_GUARD_SYSTEM.md
-* FORGE_STARTUP_CHECKLIST.md
-* FORGE_ROADMAP.md
-
-These documents evolve alongside the software.
+AI never becomes the accounting authority.
 
 ---
 
-# Roadmap Rule
+## Phase 12 — Autonomous Financial Operating System
 
-A phase is complete only when:
+### Purpose
+
+Evolve Financial Forge into a complete financial operating system capable of supporting businesses throughout their financial lifecycle.
+
+The principles established in the earlier phases remain immutable.
+
+Future capabilities build upon the architecture—they never replace it.
+
+---
+
+# Relationship to the Platform Roadmap
+
+The Architecture Roadmap changes infrequently.
+
+It records major architectural evolution.
+
+The Platform Roadmap changes frequently.
+
+It records production capabilities built on top of the architecture.
+
+This separation allows the platform to evolve rapidly while the underlying architecture remains stable.
+
+---
+
+# Completion Criteria
+
+An architectural phase is complete only when:
 
 * The architectural problem has been solved.
-* Tests validate the solution.
+* Architectural boundaries remain intact.
+* Tests validate the implementation.
 * Documentation reflects reality.
-* Git history is coherent.
-* Future phases can safely build on the result.
+* Git history clearly records the evolution.
+* Future phases can safely build upon the result.
 
 ---
 
 # Guiding Principle
 
-Financial Forge is built by constructing durable architectural capabilities.
+Financial Forge is built by creating durable architectural capabilities.
 
-Features are important.
+Features demonstrate what the platform can do.
 
-Architecture determines whether those features remain maintainable over the next decade.
+Architecture determines how well the platform will continue to evolve over the next decade.
