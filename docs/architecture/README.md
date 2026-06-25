@@ -66,8 +66,14 @@ Topics include:
 This document ensures every engineering session follows a consistent process.
 
 ---
+## 4. FORGE_FILE_STANDARDS.md
 
-## 4. ARCHITECTURE_DECISIONS.md
+Defines approved file types, runtime import rules, backup-file restrictions, and Vite-safe repository standards.
+
+This document prevents unsupported files from entering the runtime module graph.
+
+---
+## 5. ARCHITECTURE_DECISIONS.md
 
 Records major architectural decisions (ADRs).
 
@@ -85,7 +91,7 @@ The ADRs explain why those rules were applied.
 
 ---
 
-## 5. FORGE_ROADMAP.md
+## 6. FORGE_ROADMAP.md
 
 Tracks the long-term architectural evolution of Financial Forge.
 
@@ -99,7 +105,7 @@ It is an architectural roadmap—not a feature backlog.
 
 ---
 
-## 6. FORGE_PLATFORM_ROADMAP.md
+## 7. FORGE_PLATFORM_ROADMAP.md
 
 Tracks platform capabilities and planned functionality.
 
@@ -115,7 +121,7 @@ Unlike the architectural roadmap, this document is expected to evolve continuous
 
 ---
 
-## 7. Ledger Blueprint
+## 8. Ledger Blueprint
 
 **ledger-domain-blueprint.md**
 
@@ -123,7 +129,7 @@ Documents the long-term accounting domain model and ledger architecture.
 
 ---
 
-## 8. Future Architecture Documents
+## 9. Future Architecture Documents
 
 As Financial Forge grows, additional architecture documents may describe individual subsystems, including:
 
