@@ -279,3 +279,73 @@ A Forge session is complete only when:
 The objective is not merely to finish work.
 
 The objective is to leave the repository in a better state than it was found.
+
+# FORGE STABILITY GUARD
+Version 2.0
+
+---
+
+# Purpose
+
+Protect repository integrity when development enters an unstable state.
+
+The objective is to restore a known-good system before attempting additional
+changes.
+
+Forge prioritizes:
+
+1. Stability
+2. Correctness
+3. Reproducibility
+4. Development speed
+
+No optimization or feature work may continue while repository integrity is in
+question.
+
+---
+
+# Instability Triggers
+
+The Stability Guard activates immediately when any of the following occur:
+
+• Failed to parse source for import analysis
+
+• Vite module resolution failures
+
+• Test runner reports zero collected test suites
+
+• Numerous unrelated tests begin failing after a small localized edit
+
+• Build failures appear unrelated to the change being implemented
+
+• Module graph corruption is suspected
+
+• AI confidence in repository state becomes low
+
+---
+
+# Immediate Response
+
+Upon activation:
+
+STOP ALL EDITING.
+
+Do not continue attempting fixes.
+
+Do not modify additional files.
+
+Do not begin speculative debugging.
+
+Do not alter project configuration.
+
+Do not modify imports unless the failing import has been positively identified
+as the root cause.
+
+---
+
+# Repository Verification
+
+Verify repository state.
+
+```bash
+git status
