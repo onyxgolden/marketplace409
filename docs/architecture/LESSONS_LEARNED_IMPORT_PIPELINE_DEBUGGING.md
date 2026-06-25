@@ -18,6 +18,43 @@ This resulted in repeated cycles of:
 
 ## Root Cause
 
+---
+
+## POST-INCIDENT SYSTEM BEHAVIOR RULES (ADDENDUM)
+
+After system recovery (git reset / cache clear / test stabilization):
+
+### DO NOT:
+- Immediately modify multiple files
+- Reintroduce fixes without confirming baseline stability
+- Assume last edit caused the issue
+- Stack changes while tests are unstable
+
+### DO:
+- Confirm full test suite passes first
+- Confirm git working tree is clean
+- Make ONE change at a time
+- Validate with full test run after each change
+
+---
+
+## IMPORT PIPELINE SAFETY RULE
+
+The import pipeline system depends on:
+- stable module resolution
+- consistent export strategy (index.js preferred)
+- no mixed import paths during active debugging
+
+During failure states:
+> Do not modify import structure until system is stable
+
+---
+
+## FINAL PRINCIPLE
+
+Stability > speed
+
+A slow correct system is better than a fast unstable one.
 The failure was NOT a code defect.
 
 It was caused by:
