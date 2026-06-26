@@ -257,3 +257,112 @@ Each new builder must pass:
 * Forge Constitution v1.0
 * ADR-0001 Transitional Report Composition
 * Ledger Domain Blueprint
+
+---
+
+# ADR-0003
+
+## Title
+
+Horizontal Domain Expansion
+
+---
+
+## Status
+
+Accepted
+
+---
+
+## Date
+
+2026-06-25
+
+---
+
+## Context
+
+The Financial Forge accounting foundation has matured into stable infrastructure.
+
+The ledger, chart of accounts, posting engine, rollup services, reporting pipeline, production report service, and financial engine now provide a reliable source of financial truth.
+
+Earlier phases focused on building the vertical accounting foundation.
+
+Future product growth now requires new business capabilities that should not destabilize the ledger or force unrelated responsibilities into the accounting domain.
+
+---
+
+## Decision
+
+Future Forge capabilities shall expand primarily through horizontal sibling domains.
+
+The financial engine remains stable infrastructure.
+
+New domains should consume the richest stable domain object available.
+
+Presentation objects are not architectural integration points.
+
+Domains should depend on stable public APIs and domain summaries rather than internal ledger structures or report presentation objects.
+
+When a new domain needs financial truth, it should consume a stable domain-level object that preserves the meaning required for that domain.
+
+Financial Insights demonstrates this pattern by consuming `FinancialMetricsSummary` instead of depending directly on ledger internals or financial reports.
+
+---
+
+## Rationale
+
+This decision protects the accounting foundation from becoming a catch-all product layer.
+
+Financial reports are presentation objects.
+
+They are useful outputs, but they discard some domain meaning and should not become the primary integration surface for unrelated domains.
+
+Horizontal expansion allows Forge to grow into business intelligence, insights, investor tooling, valuation, forecasting, and operational decision support without weakening the ledger.
+
+Each domain can own its own language, tests, and public API while still consuming trusted financial truth.
+
+---
+
+## Consequences
+
+### Positive
+
+* The ledger remains stable infrastructure.
+* New capabilities can be added without destabilizing accounting.
+* Domains remain independently testable.
+* Business concepts can evolve in their own bounded contexts.
+* Presentation layers remain outputs, not dependency roots.
+* Future AI and analytics workflows can consume richer domain objects.
+
+### Negative
+
+* New domains require intentional API design.
+* Some data may need adapter or summary objects before it can be safely consumed.
+* It may be slower than directly reusing report output.
+* Architectural discipline is required to prevent convenience coupling.
+
+---
+
+## Long-Term Constraint
+
+Every new domain should consume the richest stable domain object available, not the most convenient presentation object.
+
+Reports may be displayed, exported, or analyzed as outputs.
+
+Reports should not become the default integration boundary between domains.
+
+---
+
+## Related Commits
+
+* Document horizontal domain expansion in Forge roadmap
+
+---
+
+## References
+
+* Forge Constitution
+* Forge Roadmap v4.0
+* ADR-0001 Transitional Report Composition
+* ADR-0002 Report Builder Separation
