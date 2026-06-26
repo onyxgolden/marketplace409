@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Account } from "../Account";
+import { AccountClassification } from "../AccountClassification";
 import { AccountType } from "../AccountType";
 
 describe("Account", () => {
@@ -13,8 +14,24 @@ describe("Account", () => {
     expect(account.id).toBe("1000");
     expect(account.name).toBe("Cash");
     expect(account.type).toBe(AccountType.ASSET);
+    expect(account.classification).toBe(null);
     expect(Object.isFrozen(account)).toBe(true);
   });
+});
+
+test("creates an account with an optional classification", () => {
+  const account = new Account({
+    id: "1000",
+    name: "Cash",
+    type: AccountType.ASSET,
+    classification: AccountClassification.CASH,
+  });
+
+  expect(account.classification).toBe(AccountClassification.CASH);
+  expect(account.hasClassification(AccountClassification.CASH)).toBe(true);
+  expect(account.hasClassification(AccountClassification.CURRENT_ASSET)).toBe(
+    false,
+  );
 });
 
 test("requires an id", () => {
@@ -23,7 +40,7 @@ test("requires an id", () => {
       new Account({
         name: "Cash",
         type: AccountType.ASSET,
-      })
+      }),
   ).toThrow("Account id is required");
 });
 
@@ -33,7 +50,7 @@ test("requires a name", () => {
       new Account({
         id: "1000",
         type: AccountType.ASSET,
-      })
+      }),
   ).toThrow("Account name is required");
 });
 
@@ -44,8 +61,20 @@ test("requires a valid account type", () => {
         id: "1000",
         name: "Cash",
         type: "invalid",
-      })
+      }),
   ).toThrow("Account type is invalid");
+});
+
+test("requires a valid account classification when provided", () => {
+  expect(
+    () =>
+      new Account({
+        id: "1000",
+        name: "Cash",
+        type: AccountType.ASSET,
+        classification: "invalid",
+      }),
+  ).toThrow("Account classification is invalid");
 });
 
 test("identifies debit-normal accounts", () => {

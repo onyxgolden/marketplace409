@@ -1,7 +1,8 @@
+import { AccountClassification } from "./AccountClassification";
 import { AccountType } from "./AccountType";
 
 export class Account {
-  constructor({ id, name, type }) {
+  constructor({ id, name, type, classification = null }) {
     if (!id) {
       throw new Error("Account id is required");
     }
@@ -14,9 +15,17 @@ export class Account {
       throw new Error("Account type is invalid");
     }
 
+    if (
+      classification !== null &&
+      !Object.values(AccountClassification).includes(classification)
+    ) {
+      throw new Error("Account classification is invalid");
+    }
+
     this.id = id;
     this.name = name;
     this.type = type;
+    this.classification = classification;
 
     Object.freeze(this);
   }
@@ -31,5 +40,9 @@ export class Account {
       this.type === AccountType.EQUITY ||
       this.type === AccountType.REVENUE
     );
+  }
+
+  hasClassification(classification) {
+    return this.classification === classification;
   }
 }
