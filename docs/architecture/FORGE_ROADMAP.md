@@ -1,6 +1,6 @@
 # Forge Architecture Roadmap
 
-**Version:** 3.0
+**Version:** 4.0
 **Status:** Active
 **Project:** Financial Forge
 
@@ -24,29 +24,13 @@ Feature planning belongs in **FORGE_PLATFORM_ROADMAP.md**.
 
 Architecture should evolve deliberately and infrequently.
 
----
-
 # Current Architectural Position
 
-Financial Forge has completed its foundational accounting architecture and now contains its first complete production accounting workflow.
+Financial Forge has completed its foundational accounting architecture and has proven horizontal domain expansion.
 
-```
-External Data
-      ↓
-Import Pipeline
-      ↓
-Financial Events
-      ↓
-Journal Entries
-      ↓
-Immutable Ledger
-      ↓
-Financial Engine
-      ↓
-Financial Reports
-      ↓
-Application UI
-```
+The ledger is now stable infrastructure.
+
+Future growth should primarily occur through independent sibling domains that consume stable financial truth objects instead of reaching back into accounting internals or presentation reports.
 
 The accounting truth remains entirely inside the domain.
 
@@ -56,9 +40,15 @@ The Financial Engine computes.
 
 The Ledger remains the single accounting authority.
 
+Business intelligence domains interpret stable financial truth.
+
+They do not create accounting truth.
+
+They do not depend on presentation reports when richer stable domain objects are available.
+
 ---
 
-# Completed Architectural Eras
+# Completed Architectural Phases
 
 ## Phase 1 — Ledger Truth
 
