@@ -46,6 +46,7 @@ export class FinancialMetricsService {
     }
 
     const netIncome = revenue - expenses;
+    const workingCapital = totalAssets - totalLiabilities;
 
     return {
       totalAssets,
@@ -54,9 +55,14 @@ export class FinancialMetricsService {
       revenue,
       expenses,
       netIncome,
+      workingCapital,
       profitMargin: revenue > 0 ? netIncome / revenue : 0,
       debtToAssetRatio:
         totalAssets > 0 ? totalLiabilities / totalAssets : 0,
+      debtToEquityRatio:
+        totalEquity > 0 ? totalLiabilities / totalEquity : 0,
+      returnOnAssets: totalAssets > 0 ? netIncome / totalAssets : 0,
+      returnOnEquity: totalEquity > 0 ? netIncome / totalEquity : 0,
     };
   }
 }

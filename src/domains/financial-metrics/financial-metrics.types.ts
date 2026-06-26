@@ -7,6 +7,11 @@ export type FinancialMetricsSummary = {
   expenses: number;
   netIncome: number;
 
+  workingCapital: number;
+
   profitMargin: number;
   debtToAssetRatio: number;
+  debtToEquityRatio: number;
+  returnOnAssets: number;
+  returnOnEquity: number;
 };

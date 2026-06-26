@@ -7,7 +7,7 @@ import { AccountBalanceCollection } from "../../ledger/reports/AccountBalanceCol
 import { FinancialMetricsService } from "../financial-metrics.service";
 
 describe("FinancialMetricsService", () => {
-  test("calculates financial metrics from account balances and chart of accounts", () => {
+  test("calculates supported financial metrics from account balances and chart of accounts", () => {
     const chartOfAccounts = new ChartOfAccounts([
       new Account({ id: "cash", name: "Cash", type: AccountType.ASSET }),
       new Account({ id: "debt", name: "Debt", type: AccountType.LIABILITY }),
@@ -36,8 +36,44 @@ describe("FinancialMetricsService", () => {
       revenue: 12000,
       expenses: 9000,
       netIncome: 3000,
+      workingCapital: 60000,
       profitMargin: 0.25,
       debtToAssetRatio: 0.4,
+      debtToEquityRatio: 40000 / 60000,
+      returnOnAssets: 0.03,
+      returnOnEquity: 0.05,
+    });
+  });
+
+  test("returns zero ratios when denominators are zero", () => {
+    const chartOfAccounts = new ChartOfAccounts([
+      new Account({ id: "debt", name: "Debt", type: AccountType.LIABILITY }),
+      new Account({ id: "expense", name: "Expense", type: AccountType.EXPENSE }),
+    ]);
+
+    const accountBalances = new AccountBalanceCollection([
+      new AccountBalance({ accountId: "debt", balance: 40000 }),
+      new AccountBalance({ accountId: "expense", balance: 9000 }),
+    ]);
+
+    const summary = FinancialMetricsService.calculate({
+      accountBalances,
+      chartOfAccounts,
+    });
+
+    expect(summary).toEqual({
+      totalAssets: 0,
+      totalLiabilities: 40000,
+      totalEquity: 0,
+      revenue: 0,
+      expenses: 9000,
+      netIncome: -9000,
+      workingCapital: -40000,
+      profitMargin: 0,
+      debtToAssetRatio: 0,
+      debtToEquityRatio: 0,
+      returnOnAssets: 0,
+      returnOnEquity: 0,
     });
   });
 });
