@@ -3,15 +3,19 @@ import {
   ChartOfAccounts,
 } from "../ledger/accounts/index.js";
 import { AccountBalanceCollection } from "../ledger/reports/index.js";
+import { ClassificationTaxonomy } from "../ledger/services";
 import type { FinancialMetricsSummary } from "./financial-metrics.types";
+import { CurrentRatioMetric } from "./metrics";
 
 export class FinancialMetricsService {
   static calculate({
     accountBalances,
     chartOfAccounts,
+    classificationTaxonomy = new ClassificationTaxonomy(),
   }: {
     accountBalances: AccountBalanceCollection;
     chartOfAccounts: ChartOfAccounts;
+    classificationTaxonomy?: ClassificationTaxonomy;
   }): FinancialMetricsSummary {
     let totalAssets = 0;
     let totalLiabilities = 0;
@@ -47,6 +51,11 @@ export class FinancialMetricsService {
 
     const netIncome = revenue - expenses;
     const workingCapital = totalAssets - totalLiabilities;
+    const currentRatio = CurrentRatioMetric.calculate({
+      accountBalances,
+      chartOfAccounts,
+      classificationTaxonomy,
+    });
 
     return {
       totalAssets,
@@ -56,6 +65,7 @@ export class FinancialMetricsService {
       expenses,
       netIncome,
       workingCapital,
+      currentRatio,
       profitMargin: revenue > 0 ? netIncome / revenue : 0,
       debtToAssetRatio:
         totalAssets > 0 ? totalLiabilities / totalAssets : 0,

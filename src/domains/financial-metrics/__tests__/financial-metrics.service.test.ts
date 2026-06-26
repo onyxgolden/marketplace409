@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Account } from "../../ledger/accounts/Account.js";
+import { AccountClassification } from "../../ledger/accounts/AccountClassification.js";
 import { AccountType } from "../../ledger/accounts/AccountType.js";
 import { ChartOfAccounts } from "../../ledger/accounts/ChartOfAccounts.js";
 import { AccountBalance } from "../../ledger/reports/AccountBalance.js";
@@ -37,12 +38,63 @@ describe("FinancialMetricsService", () => {
       expenses: 9000,
       netIncome: 3000,
       workingCapital: 60000,
+      currentRatio: 0,
       profitMargin: 0.25,
       debtToAssetRatio: 0.4,
       debtToEquityRatio: 40000 / 60000,
       returnOnAssets: 0.03,
       returnOnEquity: 0.05,
     });
+  });
+
+  test("calculates current ratio from ledger semantic classification membership", () => {
+    const chartOfAccounts = new ChartOfAccounts([
+      new Account({
+        id: "cash",
+        name: "Operating Cash",
+        type: AccountType.ASSET,
+        classification: AccountClassification.CASH,
+      }),
+      new Account({
+        id: "inventory",
+        name: "Inventory",
+        type: AccountType.ASSET,
+        classification: AccountClassification.INVENTORY,
+      }),
+      new Account({
+        id: "equipment",
+        name: "Equipment",
+        type: AccountType.ASSET,
+      }),
+      new Account({
+        id: "accounts-payable",
+        name: "Accounts Payable",
+        type: AccountType.LIABILITY,
+        classification: AccountClassification.CURRENT_LIABILITY,
+      }),
+      new Account({
+        id: "long-term-debt",
+        name: "Long-Term Debt",
+        type: AccountType.LIABILITY,
+      }),
+    ]);
+
+    const accountBalances = new AccountBalanceCollection([
+      new AccountBalance({ accountId: "cash", balance: 50000 }),
+      new AccountBalance({ accountId: "inventory", balance: 25000 }),
+      new AccountBalance({ accountId: "equipment", balance: 125000 }),
+      new AccountBalance({ accountId: "accounts-payable", balance: 30000 }),
+      new AccountBalance({ accountId: "long-term-debt", balance: 90000 }),
+    ]);
+
+    const summary = FinancialMetricsService.calculate({
+      accountBalances,
+      chartOfAccounts,
+    });
+
+    expect(summary.currentRatio).toBe(75000 / 30000);
+    expect(summary.totalAssets).toBe(200000);
+    expect(summary.totalLiabilities).toBe(120000);
   });
 
   test("returns zero ratios when denominators are zero", () => {
@@ -69,6 +121,7 @@ describe("FinancialMetricsService", () => {
       expenses: 9000,
       netIncome: -9000,
       workingCapital: -40000,
+      currentRatio: 0,
       profitMargin: 0,
       debtToAssetRatio: 0,
       debtToEquityRatio: 0,

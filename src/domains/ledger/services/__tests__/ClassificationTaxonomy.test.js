@@ -1,12 +1,54 @@
 import { describe, expect, test } from "vitest";
 import { AccountClassification } from "../../accounts";
-import { ClassificationTaxonomy } from "../ClassificationTaxonomy";
+import {
+  ClassificationSemanticGroup,
+  ClassificationTaxonomy,
+} from "../index";
 
 describe("ClassificationTaxonomy", () => {
   test("creates an immutable taxonomy", () => {
     const taxonomy = new ClassificationTaxonomy();
 
     expect(Object.isFrozen(taxonomy)).toBe(true);
+  });
+
+  test("identifies semantic membership generically", () => {
+    const taxonomy = new ClassificationTaxonomy();
+
+    expect(
+      taxonomy.hasMembership(
+        AccountClassification.CASH,
+        ClassificationSemanticGroup.CURRENT_ASSET,
+      ),
+    ).toBe(true);
+
+    expect(
+      taxonomy.hasMembership(
+        AccountClassification.CASH,
+        ClassificationSemanticGroup.LIQUID_ASSET,
+      ),
+    ).toBe(true);
+
+    expect(
+      taxonomy.hasMembership(
+        AccountClassification.INVENTORY,
+        ClassificationSemanticGroup.LIQUID_ASSET,
+      ),
+    ).toBe(false);
+
+    expect(
+      taxonomy.hasMembership(
+        AccountClassification.CURRENT_LIABILITY,
+        ClassificationSemanticGroup.CURRENT_RATIO,
+      ),
+    ).toBe(true);
+
+    expect(
+      taxonomy.hasMembership(
+        AccountClassification.FIXED_ASSET,
+        ClassificationSemanticGroup.CURRENT_RATIO,
+      ),
+    ).toBe(false);
   });
 
   test("identifies current assets", () => {

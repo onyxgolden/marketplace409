@@ -1,4 +1,5 @@
 import { AccountClassification } from "../accounts";
+import { ClassificationSemanticGroup } from "./ClassificationSemanticGroup";
 
 /**
  * ClassificationTaxonomy
@@ -6,6 +7,7 @@ import { AccountClassification } from "../accounts";
  * Immutable ledger-level semantic taxonomy for account classifications.
  *
  * AccountClassification defines the vocabulary.
+ * ClassificationSemanticGroup defines semantic membership.
  * ClassificationTaxonomy defines accounting meaning.
  *
  * Future domains should consume this taxonomy rather than implementing
@@ -13,85 +15,140 @@ import { AccountClassification } from "../accounts";
  */
 export class ClassificationTaxonomy {
   constructor() {
-    this.currentAssets = new Set([
-      AccountClassification.CURRENT_ASSET,
-      AccountClassification.CASH,
-      AccountClassification.ACCOUNTS_RECEIVABLE,
-      AccountClassification.INVENTORY,
+    this.memberships = new Map([
+      [
+        AccountClassification.CURRENT_ASSET,
+        new Set([
+          ClassificationSemanticGroup.CURRENT_ASSET,
+          ClassificationSemanticGroup.CURRENT_RATIO,
+        ]),
+      ],
+      [
+        AccountClassification.CASH,
+        new Set([
+          ClassificationSemanticGroup.CURRENT_ASSET,
+          ClassificationSemanticGroup.LIQUID_ASSET,
+          ClassificationSemanticGroup.CURRENT_RATIO,
+          ClassificationSemanticGroup.QUICK_RATIO,
+        ]),
+      ],
+      [
+        AccountClassification.ACCOUNTS_RECEIVABLE,
+        new Set([
+          ClassificationSemanticGroup.CURRENT_ASSET,
+          ClassificationSemanticGroup.LIQUID_ASSET,
+          ClassificationSemanticGroup.CURRENT_RATIO,
+          ClassificationSemanticGroup.QUICK_RATIO,
+        ]),
+      ],
+      [
+        AccountClassification.INVENTORY,
+        new Set([
+          ClassificationSemanticGroup.CURRENT_ASSET,
+          ClassificationSemanticGroup.CURRENT_RATIO,
+        ]),
+      ],
+      [
+        AccountClassification.CURRENT_LIABILITY,
+        new Set([
+          ClassificationSemanticGroup.CURRENT_LIABILITY,
+          ClassificationSemanticGroup.CURRENT_RATIO,
+          ClassificationSemanticGroup.QUICK_RATIO,
+        ]),
+      ],
+      [
+        AccountClassification.OPERATING_REVENUE,
+        new Set([
+          ClassificationSemanticGroup.OPERATING_REVENUE,
+          ClassificationSemanticGroup.GROSS_PROFIT,
+        ]),
+      ],
+      [
+        AccountClassification.COST_OF_GOODS_SOLD,
+        new Set([
+          ClassificationSemanticGroup.COST_OF_GOODS_SOLD,
+          ClassificationSemanticGroup.GROSS_PROFIT,
+        ]),
+      ],
+      [
+        AccountClassification.OPERATING_EXPENSE,
+        new Set([
+          ClassificationSemanticGroup.OPERATING_EXPENSE,
+        ]),
+      ],
     ]);
 
-    this.liquidAssets = new Set([
-      AccountClassification.CASH,
-      AccountClassification.ACCOUNTS_RECEIVABLE,
-    ]);
-
-    this.currentLiabilities = new Set([
-      AccountClassification.CURRENT_LIABILITY,
-    ]);
-
-    this.operatingRevenue = new Set([
-      AccountClassification.OPERATING_REVENUE,
-    ]);
-
-    this.costOfGoodsSold = new Set([
-      AccountClassification.COST_OF_GOODS_SOLD,
-    ]);
-
-    this.operatingExpenses = new Set([
-      AccountClassification.OPERATING_EXPENSE,
-    ]);
-
-    this.currentRatioParticipants = new Set([
-      ...this.currentAssets,
-      ...this.currentLiabilities,
-    ]);
-
-    this.quickRatioParticipants = new Set([
-      ...this.liquidAssets,
-      ...this.currentLiabilities,
-    ]);
-
-    this.grossProfitParticipants = new Set([
-      ...this.operatingRevenue,
-      ...this.costOfGoodsSold,
-    ]);
+    for (const groups of this.memberships.values()) {
+      Object.freeze(groups);
+    }
 
     Object.freeze(this);
   }
 
+  hasMembership(classification, semanticGroup) {
+    return this.memberships.get(classification)?.has(semanticGroup) ?? false;
+  }
+
   isCurrentAsset(classification) {
-    return this.currentAssets.has(classification);
+    return this.hasMembership(
+      classification,
+      ClassificationSemanticGroup.CURRENT_ASSET,
+    );
   }
 
   isLiquidAsset(classification) {
-    return this.liquidAssets.has(classification);
+    return this.hasMembership(
+      classification,
+      ClassificationSemanticGroup.LIQUID_ASSET,
+    );
   }
 
   isCurrentLiability(classification) {
-    return this.currentLiabilities.has(classification);
+    return this.hasMembership(
+      classification,
+      ClassificationSemanticGroup.CURRENT_LIABILITY,
+    );
   }
 
   isOperatingRevenue(classification) {
-    return this.operatingRevenue.has(classification);
+    return this.hasMembership(
+      classification,
+      ClassificationSemanticGroup.OPERATING_REVENUE,
+    );
   }
 
   isCostOfGoodsSold(classification) {
-    return this.costOfGoodsSold.has(classification);
+    return this.hasMembership(
+      classification,
+      ClassificationSemanticGroup.COST_OF_GOODS_SOLD,
+    );
   }
 
   isOperatingExpense(classification) {
-    return this.operatingExpenses.has(classification);
+    return this.hasMembership(
+      classification,
+      ClassificationSemanticGroup.OPERATING_EXPENSE,
+    );
   }
 
   participatesInCurrentRatio(classification) {
-    return this.currentRatioParticipants.has(classification);
+    return this.hasMembership(
+      classification,
+      ClassificationSemanticGroup.CURRENT_RATIO,
+    );
   }
 
   participatesInQuickRatio(classification) {
-    return this.quickRatioParticipants.has(classification);
+    return this.hasMembership(
+      classification,
+      ClassificationSemanticGroup.QUICK_RATIO,
+    );
   }
 
   participatesInGrossProfit(classification) {
-    return this.grossProfitParticipants.has(classification);
+    return this.hasMembership(
+      classification,
+      ClassificationSemanticGroup.GROSS_PROFIT,
+    );
   }
 }

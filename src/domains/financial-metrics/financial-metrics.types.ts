@@ -9,6 +9,7 @@ export type FinancialMetricsSummary = {
 
   workingCapital: number;
 
+  currentRatio: number;
   profitMargin: number;
   debtToAssetRatio: number;
   debtToEquityRatio: number;
