@@ -123,7 +123,25 @@ Reports present results.
 UI displays reports.
 
 No layer should secretly perform another layer's job.
+---
 
+# Domain Independence Principle
+
+Financial Forge expands through independent sibling domains.
+
+Each domain owns its own language, services, tests, and public API.
+
+Domains shall consume the richest stable domain object available.
+
+Presentation objects are outputs, not architectural integration boundaries.
+
+Dependencies should flow toward stable infrastructure rather than presentation layers.
+
+When information must cross domain boundaries, it should do so through stable public APIs or dedicated domain summary objects.
+
+Convenience coupling is prohibited.
+
+Architectural independence takes precedence over short-term implementation convenience.
 ---
 
 # Incremental Architecture
