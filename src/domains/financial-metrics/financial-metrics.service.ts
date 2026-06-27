@@ -5,7 +5,12 @@ import {
 import { AccountBalanceCollection } from "../ledger/reports/index.js";
 import { ClassificationTaxonomy } from "../ledger/services";
 import type { FinancialMetricsSummary } from "./financial-metrics.types";
-import { CurrentRatioMetric, GrossProfitMetric, QuickRatioMetric } from "./metrics";
+import {
+  CurrentRatioMetric,
+  DebtToAssetMetric,
+  GrossProfitMetric,
+  QuickRatioMetric,
+} from "./metrics";
 
 export class FinancialMetricsService {
   static calculate({
@@ -66,6 +71,10 @@ export class FinancialMetricsService {
       chartOfAccounts,
       classificationTaxonomy,
     });
+    const debtToAssetRatio = DebtToAssetMetric.calculate({
+      accountBalances,
+      chartOfAccounts,
+    });
 
     return {
       totalAssets,
@@ -79,8 +88,7 @@ export class FinancialMetricsService {
       quickRatio,
       grossProfit,
       profitMargin: revenue > 0 ? netIncome / revenue : 0,
-      debtToAssetRatio:
-        totalAssets > 0 ? totalLiabilities / totalAssets : 0,
+      debtToAssetRatio,
       debtToEquityRatio:
         totalEquity > 0 ? totalLiabilities / totalEquity : 0,
       returnOnAssets: totalAssets > 0 ? netIncome / totalAssets : 0,
