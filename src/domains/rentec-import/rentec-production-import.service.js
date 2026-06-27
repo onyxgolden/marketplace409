@@ -1,12 +1,15 @@
-import { ImportResult, importPipeline } from "../import-pipeline";
+import { ImportPipeline, ImportResult } from "../import-pipeline";
 import { RentecImportParser } from "./rentec-import.parser";
 import { RentecImportService } from "./rentec-import.service";
+import { rentecSemanticResolver } from "./rentec-semantic-resolver";
 
 class RentecProductionImportServiceImpl {
   constructor({
     parser = new RentecImportParser(),
     importService = RentecImportService,
-    pipeline = importPipeline,
+    pipeline = new ImportPipeline({
+      semanticResolver: rentecSemanticResolver,
+    }),
   } = {}) {
     this.parser = parser;
     this.importService = importService;

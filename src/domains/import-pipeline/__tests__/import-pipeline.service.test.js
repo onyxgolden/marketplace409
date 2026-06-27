@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vitest";
 
 import { Account, AccountType, ChartOfAccounts } from "../../ledger/accounts";
-import { importPipeline } from "../ImportPipeline";
+import { ImportPipeline } from "../ImportPipeline";
+import { rentecSemanticResolver } from "../../rentec-import";
 
 function buildChartOfAccounts() {
   return new ChartOfAccounts([
@@ -96,7 +97,11 @@ describe("ImportPipeline", () => {
       },
     ];
 
-    const reports = importPipeline.buildReports({
+    const pipeline = new ImportPipeline({
+      semanticResolver: rentecSemanticResolver,
+    });
+
+    const reports = pipeline.buildReports({
       records,
       chartOfAccounts: buildChartOfAccounts(),
     });

@@ -1,15 +1,18 @@
 import { financialEventFactory } from "../financial-event/financial-event.factory";
 import { financialEventPostingAdapter } from "../financial-event/financial-event-posting.adapter";
-import { rentecSemanticResolver } from "../rentec-import";
 import { FinancialEngine } from "../ledger/engines/FinancialEngine";
 import { GeneralLedger } from "../ledger/entities/GeneralLedger";
 
 export class ImportPipeline {
   constructor({
-    semanticResolver = rentecSemanticResolver,
+    semanticResolver,
     eventFactory = financialEventFactory,
     postingAdapter = financialEventPostingAdapter,
   } = {}) {
+    if (!semanticResolver) {
+      throw new Error("Semantic resolver is required");
+    }
+
     this.semanticResolver = semanticResolver;
     this.eventFactory = eventFactory;
     this.postingAdapter = postingAdapter;
@@ -57,5 +60,3 @@ export class ImportPipeline {
     return journalEntries.flatMap((journalEntry) => journalEntry.postings);
   }
 }
-
-export const importPipeline = new ImportPipeline();
