@@ -206,12 +206,39 @@ Connect external accounting data to the immutable financial engine.
 * Import pipeline
 * Production Import UI
 * End-to-end accounting workflow
+* Property domain integration
+* Semantic resolution boundary
+* Canonical business identity resolution
 
 ### Protected Rule
 
 External systems import data.
 
 Only the Financial Engine produces accounting results.
+External Data
+↓
+
+Parser
+
+↓
+
+Raw Import Record
+
+↓
+
+Semantic Resolution
+
+↓
+
+Domain Objects
+
+↓
+
+Financial Events
+
+↓
+
+Financial Engine
 
 **Status:** Complete
 
