@@ -13,6 +13,7 @@ import {
   ProfitMarginMetric,
   QuickRatioMetric,
   ReturnOnAssetsMetric,
+  ReturnOnEquityMetric,
 } from "./metrics";
 
 export class FinancialMetricsService {
@@ -35,18 +36,24 @@ export class FinancialMetricsService {
       chartOfAccounts,
       classificationTaxonomy,
     });
+
     const quickRatio = QuickRatioMetric.calculate({
       accountBalances,
       chartOfAccounts,
       classificationTaxonomy,
     });
+
     const grossProfit = GrossProfitMetric.calculate({
       accountBalances,
       chartOfAccounts,
       classificationTaxonomy,
     });
+
     const debtToAssetRatio = DebtToAssetMetric.calculate(totals);
     const debtToEquityRatio = DebtToEquityMetric.calculate(totals);
+    const profitMargin = ProfitMarginMetric.calculate(totals);
+    const returnOnAssets = ReturnOnAssetsMetric.calculate(totals);
+    const returnOnEquity = ReturnOnEquityMetric.calculate(totals);
 
     return {
       totalAssets: totals.totalAssets,
@@ -59,12 +66,11 @@ export class FinancialMetricsService {
       currentRatio,
       quickRatio,
       grossProfit,
-      profitMargin: ProfitMarginMetric.calculate(totals),
+      profitMargin,
       debtToAssetRatio,
       debtToEquityRatio,
-      returnOnAssets: ReturnOnAssetsMetric.calculate(totals),
-      returnOnEquity:
-        totals.totalEquity > 0 ? totals.netIncome / totals.totalEquity : 0,
+      returnOnAssets,
+      returnOnEquity,
     };
   }
 }
