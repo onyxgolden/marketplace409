@@ -7,13 +7,25 @@ import type {
 
 export class RentecSemanticResolver {
   resolve(record: RentecImportRecord): ResolvedRentecImportRecord {
+    const resolvedProperty = PropertyResolverService.fromSourceName({
+      sourceName: record.property,
+      sourceSystem: "rentec",
+    });
+
     return {
-      ...record,
-      resolvedProperty: PropertyResolverService.fromSourceName({
-        sourceName: record.property,
-        sourceSystem: "rentec",
-      }),
+      date: record.date,
+      description: record.description,
+      amount: record.amount,
+      resolvedProperty,
       knowledge: categoryNormalizer.normalize(record.description),
+      sourceSystem: "rentec",
+      sourceRecordId: null,
+      metadata: {
+        property: record.property,
+        propertyName: resolvedProperty.name,
+        sourceCategory: record.sourceCategory,
+        rawRow: record.rawRow,
+      },
     };
   }
 

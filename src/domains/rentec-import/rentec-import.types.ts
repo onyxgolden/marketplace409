@@ -1,5 +1,4 @@
-import type { KnowledgeRecord } from "../knowledge";
-import type { Property } from "../property";
+import type { ResolvedFinancialEventInput } from "../financial-event";
 
 export type RentecImportRecord = {
   date: string;
@@ -17,10 +16,7 @@ export type RentecImportRecord = {
   rawRow: Record<string, unknown>;
 };
 
-export type ResolvedRentecImportRecord = RentecImportRecord & {
-  resolvedProperty: Property;
-  knowledge: KnowledgeRecord;
-};
+export type ResolvedRentecImportRecord = ResolvedFinancialEventInput;
 
 export type RentecImportSummary = {
   totalRows: number;

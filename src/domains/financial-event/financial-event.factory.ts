@@ -1,8 +1,10 @@
-import type { FinancialEvent } from "./financial-event.types";
-import type { ResolvedRentecImportRecord } from "../rentec-import";
+import type {
+  FinancialEvent,
+  ResolvedFinancialEventInput,
+} from "./financial-event.types";
 
 export class FinancialEventFactory {
-  fromRentec(record: ResolvedRentecImportRecord): FinancialEvent {
+  fromResolvedInput(record: ResolvedFinancialEventInput): FinancialEvent {
     return {
       id: "",
       created_at: new Date().toISOString(),
@@ -35,15 +37,10 @@ export class FinancialEventFactory {
       affects_noi: record.knowledge.affectsNOI,
       capitalized: record.knowledge.capitalized,
 
-      source_system: "rentec",
-      source_record_id: null,
+      source_system: record.sourceSystem,
+      source_record_id: record.sourceRecordId ?? null,
 
-      metadata: {
-        property: record.property,
-        propertyName: record.resolvedProperty.name,
-        sourceCategory: record.sourceCategory,
-        rawRow: record.rawRow,
-      },
+      metadata: record.metadata ?? null,
     };
   }
 }

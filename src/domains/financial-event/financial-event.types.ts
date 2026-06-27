@@ -2,7 +2,27 @@ import type { Entity } from "@/types/entity";
 import type {
   ForgeCategory,
   ForgeTransactionKind,
+  KnowledgeRecord,
 } from "../knowledge/knowledge.types";
+import type { Property } from "../property";
+
+export type ResolvedFinancialEventInput = {
+  date: string;
+
+  description: string;
+
+  amount: number;
+
+  resolvedProperty: Property;
+
+  knowledge: KnowledgeRecord;
+
+  sourceSystem: string;
+
+  sourceRecordId?: string | null;
+
+  metadata?: Record<string, unknown> | null;
+};
 
 export type FinancialEvent = Entity & {
   owner_id?: string | null;

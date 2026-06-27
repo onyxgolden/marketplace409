@@ -34,7 +34,9 @@ export class ImportPipeline {
   toFinancialEvents(records) {
     const resolvedRecords = this.semanticResolver.resolveMany(records);
 
-    return resolvedRecords.map((record) => this.eventFactory.fromRentec(record));
+    return resolvedRecords.map((record) =>
+      this.eventFactory.fromResolvedInput(record),
+    );
   }
 
   toJournalEntries(financialEvents) {
