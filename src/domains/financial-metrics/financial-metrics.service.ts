@@ -71,10 +71,7 @@ export class FinancialMetricsService {
       }),
       debtToAssetRatio,
       debtToEquityRatio,
-      returnOnAssets: ReturnOnAssetsMetric.calculate({
-        accountBalances,
-        chartOfAccounts,
-      }),
+      returnOnAssets: ReturnOnAssetsMetric.calculate(totals),
       returnOnEquity:
         totals.totalEquity > 0 ? totals.netIncome / totals.totalEquity : 0,
     };
