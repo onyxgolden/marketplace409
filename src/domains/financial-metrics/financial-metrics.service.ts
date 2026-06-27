@@ -59,10 +59,7 @@ export class FinancialMetricsService {
       currentRatio,
       quickRatio,
       grossProfit,
-      profitMargin: ProfitMarginMetric.calculate({
-        accountBalances,
-        chartOfAccounts,
-      }),
+      profitMargin: ProfitMarginMetric.calculate(totals),
       debtToAssetRatio,
       debtToEquityRatio,
       returnOnAssets: ReturnOnAssetsMetric.calculate(totals),
