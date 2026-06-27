@@ -8,6 +8,7 @@ import type { FinancialMetricsSummary } from "./financial-metrics.types";
 import {
   CurrentRatioMetric,
   DebtToAssetMetric,
+  DebtToEquityMetric,
   GrossProfitMetric,
   QuickRatioMetric,
 } from "./metrics";
@@ -75,6 +76,10 @@ export class FinancialMetricsService {
       accountBalances,
       chartOfAccounts,
     });
+    const debtToEquityRatio = DebtToEquityMetric.calculate({
+      accountBalances,
+      chartOfAccounts,
+    });
 
     return {
       totalAssets,
@@ -89,8 +94,7 @@ export class FinancialMetricsService {
       grossProfit,
       profitMargin: revenue > 0 ? netIncome / revenue : 0,
       debtToAssetRatio,
-      debtToEquityRatio:
-        totalEquity > 0 ? totalLiabilities / totalEquity : 0,
+      debtToEquityRatio,
       returnOnAssets: totalAssets > 0 ? netIncome / totalAssets : 0,
       returnOnEquity: totalEquity > 0 ? netIncome / totalEquity : 0,
     };
