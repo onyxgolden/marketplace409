@@ -74,7 +74,14 @@ export class QuickBooksImportParser {
       return 0;
     }
 
-    return Number(value.replace(/[$,]/g, "").trim()) || 0;
+    const trimmedValue = value.trim();
+    const isParenthesizedNegative =
+      trimmedValue.startsWith("(") && trimmedValue.endsWith(")");
+    const normalizedValue = trimmedValue.replace(/[()$,]/g, "");
+
+    const amount = Number(normalizedValue) || 0;
+
+    return isParenthesizedNegative ? -amount : amount;
   }
 
   private normalizeDate(value?: string): string {

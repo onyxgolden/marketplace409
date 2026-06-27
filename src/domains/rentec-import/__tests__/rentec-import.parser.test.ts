@@ -44,3 +44,24 @@ describe("RentecImportParser", () => {
     });
   });
 });
+
+test("parses parenthesized negative expense amounts as positive expenses", () => {
+  const parser = new RentecImportParser();
+
+  const records = parser.parse([
+    {
+      DATE: "01/04/2026",
+      PROPERTY: "170 John",
+      DESCRIPTION: "Repairs",
+      INCOME: "",
+      EXPENSE: "($250.00)",
+    },
+  ]);
+
+  expect(records).toHaveLength(1);
+
+  expect(records[0]).toMatchObject({
+    type: "expense",
+    amount: 250,
+  });
+});

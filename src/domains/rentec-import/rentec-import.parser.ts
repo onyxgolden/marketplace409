@@ -98,7 +98,9 @@ export class RentecImportParser {
       return 0;
     }
 
-    return Number(value.replace(/[$,]/g, "").trim()) || 0;
+    const normalizedValue = value.trim().replace(/[()$,]/g, "");
+
+    return Math.abs(Number(normalizedValue) || 0);
   }
 
   private normalizeDate(value?: string): string {
