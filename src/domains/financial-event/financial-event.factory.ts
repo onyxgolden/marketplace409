@@ -1,10 +1,14 @@
 import type { FinancialEvent } from "./financial-event.types";
 import type { RentecImportRecord } from "../rentec-import";
 import { categoryNormalizer } from "../knowledge";
-
+import { PropertyResolverService } from "../property/property-resolver.service";
 export class FinancialEventFactory {
   fromRentec(record: RentecImportRecord): FinancialEvent {
     const knowledge = categoryNormalizer.normalize(record.description);
+    const property = PropertyResolverService.fromSourceName({
+      sourceName: record.property,
+      sourceSystem: "rentec",
+    });
 
     return {
       id: "",
@@ -22,7 +26,7 @@ export class FinancialEventFactory {
       is_deleted: false,
       deleted_at: null,
 
-      property_id: null,
+      property_id: property.id,
       financial_account_id: null,
 
       event_date: record.date,
@@ -43,6 +47,7 @@ export class FinancialEventFactory {
 
       metadata: {
         property: record.property,
+        propertyName: property.name,
         sourceCategory: record.sourceCategory,
         rawRow: record.rawRow,
       },
@@ -51,4 +56,3 @@ export class FinancialEventFactory {
 }
 
 export const financialEventFactory = new FinancialEventFactory();
-
