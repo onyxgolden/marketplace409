@@ -3,3 +3,4 @@ export * from "./QuickRatioMetric";
 export * from "./GrossProfitMetric";
 export * from "./DebtToAssetMetric";
 export * from "./DebtToEquityMetric";
+export * from "./ReturnOnAssetsMetric";

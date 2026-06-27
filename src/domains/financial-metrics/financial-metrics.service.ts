@@ -11,6 +11,7 @@ import {
   DebtToEquityMetric,
   GrossProfitMetric,
   QuickRatioMetric,
+  ReturnOnAssetsMetric,
 } from "./metrics";
 
 export class FinancialMetricsService {
@@ -95,7 +96,10 @@ export class FinancialMetricsService {
       profitMargin: revenue > 0 ? netIncome / revenue : 0,
       debtToAssetRatio,
       debtToEquityRatio,
-      returnOnAssets: totalAssets > 0 ? netIncome / totalAssets : 0,
+      returnOnAssets: ReturnOnAssetsMetric.calculate({
+        accountBalances,
+        chartOfAccounts,
+      }),
       returnOnEquity: totalEquity > 0 ? netIncome / totalEquity : 0,
     };
   }
