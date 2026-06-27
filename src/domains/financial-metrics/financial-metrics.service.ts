@@ -45,10 +45,7 @@ export class FinancialMetricsService {
       chartOfAccounts,
       classificationTaxonomy,
     });
-    const debtToAssetRatio = DebtToAssetMetric.calculate({
-      accountBalances,
-      chartOfAccounts,
-    });
+    const debtToAssetRatio = DebtToAssetMetric.calculate(totals);
     const debtToEquityRatio = DebtToEquityMetric.calculate({
       accountBalances,
       chartOfAccounts,
