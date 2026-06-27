@@ -40,6 +40,7 @@ describe("FinancialMetricsService", () => {
       workingCapital: 60000,
       currentRatio: 0,
       quickRatio: 0,
+      grossProfit: 0,
       profitMargin: 0.25,
       debtToAssetRatio: 0.4,
       debtToEquityRatio: 40000 / 60000,
@@ -94,6 +95,7 @@ describe("FinancialMetricsService", () => {
     });
 
     expect(summary.currentRatio).toBe(75000 / 30000);
+    expect(summary.grossProfit).toBe(0);
     expect(summary.totalAssets).toBe(200000);
     expect(summary.totalLiabilities).toBe(120000);
   });
@@ -139,7 +141,54 @@ describe("FinancialMetricsService", () => {
     });
 
     expect(summary.quickRatio).toBe(60000 / 30000);
+    expect(summary.grossProfit).toBe(0);
     expect(summary.currentRatio).toBe(85000 / 30000);
+  });
+
+  test("calculates gross profit from ledger semantic classification membership", () => {
+    const chartOfAccounts = new ChartOfAccounts([
+      new Account({
+        id: "product-sales",
+        name: "Product Sales",
+        type: AccountType.REVENUE,
+        classification: AccountClassification.OPERATING_REVENUE,
+      }),
+      new Account({
+        id: "service-sales",
+        name: "Service Sales",
+        type: AccountType.REVENUE,
+        classification: AccountClassification.OPERATING_REVENUE,
+      }),
+      new Account({
+        id: "materials",
+        name: "Materials",
+        type: AccountType.EXPENSE,
+        classification: AccountClassification.COST_OF_GOODS_SOLD,
+      }),
+      new Account({
+        id: "rent",
+        name: "Rent",
+        type: AccountType.EXPENSE,
+        classification: AccountClassification.OPERATING_EXPENSE,
+      }),
+    ]);
+
+    const accountBalances = new AccountBalanceCollection([
+      new AccountBalance({ accountId: "product-sales", balance: 100000 }),
+      new AccountBalance({ accountId: "service-sales", balance: 25000 }),
+      new AccountBalance({ accountId: "materials", balance: 45000 }),
+      new AccountBalance({ accountId: "rent", balance: 10000 }),
+    ]);
+
+    const summary = FinancialMetricsService.calculate({
+      accountBalances,
+      chartOfAccounts,
+    });
+
+    expect(summary.grossProfit).toBe(80000);
+    expect(summary.revenue).toBe(125000);
+    expect(summary.expenses).toBe(55000);
+    expect(summary.netIncome).toBe(70000);
   });
 
   test("returns zero ratios when denominators are zero", () => {
@@ -168,6 +217,7 @@ describe("FinancialMetricsService", () => {
       workingCapital: -40000,
       currentRatio: 0,
       quickRatio: 0,
+      grossProfit: 0,
       profitMargin: 0,
       debtToAssetRatio: 0,
       debtToEquityRatio: 0,
