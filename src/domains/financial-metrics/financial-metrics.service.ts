@@ -1,9 +1,9 @@
 import {
-  AccountType,
   ChartOfAccounts,
 } from "../ledger/accounts/index.js";
 import { AccountBalanceCollection } from "../ledger/reports/index.js";
 import { ClassificationTaxonomy } from "../ledger/services";
+import { FinancialMetricTotals } from "./FinancialMetricTotals";
 import type { FinancialMetricsSummary } from "./financial-metrics.types";
 import {
   CurrentRatioMetric,
@@ -25,40 +25,11 @@ export class FinancialMetricsService {
     chartOfAccounts: ChartOfAccounts;
     classificationTaxonomy?: ClassificationTaxonomy;
   }): FinancialMetricsSummary {
-    let totalAssets = 0;
-    let totalLiabilities = 0;
-    let totalEquity = 0;
-    let revenue = 0;
-    let expenses = 0;
+    const totals = FinancialMetricTotals.fromAccountBalances({
+      accountBalances,
+      chartOfAccounts,
+    });
 
-    for (const balance of accountBalances.all()) {
-      const account = chartOfAccounts.getById(balance.accountId);
-
-      switch (account.type) {
-        case AccountType.ASSET:
-          totalAssets += balance.balance;
-          break;
-
-        case AccountType.LIABILITY:
-          totalLiabilities += balance.balance;
-          break;
-
-        case AccountType.EQUITY:
-          totalEquity += balance.balance;
-          break;
-
-        case AccountType.REVENUE:
-          revenue += balance.balance;
-          break;
-
-        case AccountType.EXPENSE:
-          expenses += balance.balance;
-          break;
-      }
-    }
-
-    const netIncome = revenue - expenses;
-    const workingCapital = totalAssets - totalLiabilities;
     const currentRatio = CurrentRatioMetric.calculate({
       accountBalances,
       chartOfAccounts,
@@ -84,13 +55,13 @@ export class FinancialMetricsService {
     });
 
     return {
-      totalAssets,
-      totalLiabilities,
-      totalEquity,
-      revenue,
-      expenses,
-      netIncome,
-      workingCapital,
+      totalAssets: totals.totalAssets,
+      totalLiabilities: totals.totalLiabilities,
+      totalEquity: totals.totalEquity,
+      revenue: totals.revenue,
+      expenses: totals.expenses,
+      netIncome: totals.netIncome,
+      workingCapital: totals.workingCapital,
       currentRatio,
       quickRatio,
       grossProfit,
@@ -104,7 +75,8 @@ export class FinancialMetricsService {
         accountBalances,
         chartOfAccounts,
       }),
-      returnOnEquity: totalEquity > 0 ? netIncome / totalEquity : 0,
+      returnOnEquity:
+        totals.totalEquity > 0 ? totals.netIncome / totals.totalEquity : 0,
     };
   }
 }
