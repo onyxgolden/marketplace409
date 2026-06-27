@@ -39,6 +39,7 @@ describe("FinancialMetricsService", () => {
       netIncome: 3000,
       workingCapital: 60000,
       currentRatio: 0,
+      quickRatio: 0,
       profitMargin: 0.25,
       debtToAssetRatio: 0.4,
       debtToEquityRatio: 40000 / 60000,
@@ -97,6 +98,50 @@ describe("FinancialMetricsService", () => {
     expect(summary.totalLiabilities).toBe(120000);
   });
 
+  test("calculates quick ratio from ledger semantic classification membership", () => {
+    const chartOfAccounts = new ChartOfAccounts([
+      new Account({
+        id: "cash",
+        name: "Operating Cash",
+        type: AccountType.ASSET,
+        classification: AccountClassification.CASH,
+      }),
+      new Account({
+        id: "accounts-receivable",
+        name: "Accounts Receivable",
+        type: AccountType.ASSET,
+        classification: AccountClassification.ACCOUNTS_RECEIVABLE,
+      }),
+      new Account({
+        id: "inventory",
+        name: "Inventory",
+        type: AccountType.ASSET,
+        classification: AccountClassification.INVENTORY,
+      }),
+      new Account({
+        id: "accounts-payable",
+        name: "Accounts Payable",
+        type: AccountType.LIABILITY,
+        classification: AccountClassification.CURRENT_LIABILITY,
+      }),
+    ]);
+
+    const accountBalances = new AccountBalanceCollection([
+      new AccountBalance({ accountId: "cash", balance: 50000 }),
+      new AccountBalance({ accountId: "accounts-receivable", balance: 10000 }),
+      new AccountBalance({ accountId: "inventory", balance: 25000 }),
+      new AccountBalance({ accountId: "accounts-payable", balance: 30000 }),
+    ]);
+
+    const summary = FinancialMetricsService.calculate({
+      accountBalances,
+      chartOfAccounts,
+    });
+
+    expect(summary.quickRatio).toBe(60000 / 30000);
+    expect(summary.currentRatio).toBe(85000 / 30000);
+  });
+
   test("returns zero ratios when denominators are zero", () => {
     const chartOfAccounts = new ChartOfAccounts([
       new Account({ id: "debt", name: "Debt", type: AccountType.LIABILITY }),
@@ -122,6 +167,7 @@ describe("FinancialMetricsService", () => {
       netIncome: -9000,
       workingCapital: -40000,
       currentRatio: 0,
+      quickRatio: 0,
       profitMargin: 0,
       debtToAssetRatio: 0,
       debtToEquityRatio: 0,
