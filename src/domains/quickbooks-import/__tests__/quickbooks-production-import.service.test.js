@@ -64,4 +64,48 @@ describe("QuickBooksProductionImportService", () => {
     expect(result.warnings).toEqual([]);
     expect(result.warningCount).toBe(0);
   });
+
+  test("imports QuickBooks CSV into records, summary, reports, and warnings", () => {
+    const csv = [
+      "Date,Description,Amount,Account,Category,Class,Transaction ID",
+      "01/01/2026,Rental Income,1500.00,Rental Income,Rental Income,170 John,qb-1",
+      "01/02/2026,Repairs,-250.00,Repairs Expense,Repairs,170 John,qb-2",
+    ].join("\n");
+
+    const result = QuickBooksProductionImportService.importCsv({
+      csv,
+      chartOfAccounts: buildChartOfAccounts(),
+    });
+
+    expect(result.records).toHaveLength(2);
+
+    expect(result.records[0]).toMatchObject({
+      date: "2026-01-01",
+      description: "Rental Income",
+      amount: 1500,
+      property: "170 John",
+      sourceRecordId: "qb-1",
+    });
+
+    expect(result.records[1]).toMatchObject({
+      date: "2026-01-02",
+      description: "Repairs",
+      amount: -250,
+      property: "170 John",
+      sourceRecordId: "qb-2",
+    });
+
+    expect(result.summary).toMatchObject({
+      totalRows: 2,
+      importedRows: 2,
+      skippedRows: 0,
+    });
+
+    expect(result.reports.balanceSheet).toBeDefined();
+    expect(result.reports.incomeStatement).toBeDefined();
+    expect(result.reports.trialBalance).toBeDefined();
+
+    expect(result.warnings).toEqual([]);
+    expect(result.warningCount).toBe(0);
+  });
 });
