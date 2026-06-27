@@ -4,3 +4,4 @@ export * from "./GrossProfitMetric";
 export * from "./DebtToAssetMetric";
 export * from "./DebtToEquityMetric";
 export * from "./ReturnOnAssetsMetric";
+export * from "./ProfitMarginMetric";
