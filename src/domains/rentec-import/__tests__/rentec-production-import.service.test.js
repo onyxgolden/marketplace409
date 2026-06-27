@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { Account, AccountType, ChartOfAccounts } from "../../ledger/accounts";
@@ -23,12 +25,10 @@ function buildChartOfAccounts() {
 
 describe("RentecProductionImportService", () => {
   test("imports Rentec CSV into records, summary, reports, and warnings", () => {
-    const csv = [
-      "DATE,PROPERTY,DESCRIPTION,INCOME,EXPENSE",
-      "01/01/2026,170 John,Rental Income,1500.00,",
-      "01/02/2026,170 John,Repairs,,250.00",
-      ",Totals,,1500.00,250.00",
-    ].join("\n");
+    const csv = fs.readFileSync(
+      path.join(__dirname, "fixtures", "rentec-export.csv"),
+      "utf8",
+    );
 
     const result = RentecProductionImportService.importCsv({
       csv,

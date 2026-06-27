@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { Account, AccountType, ChartOfAccounts } from "../../ledger/accounts";
@@ -66,11 +68,10 @@ describe("QuickBooksProductionImportService", () => {
   });
 
   test("imports QuickBooks CSV into records, summary, reports, and warnings", () => {
-    const csv = [
-      "Date,Description,Amount,Account,Category,Class,Transaction ID",
-      "01/01/2026,Rental Income,1500.00,Rental Income,Rental Income,170 John,qb-1",
-      "01/02/2026,Repairs,-250.00,Repairs Expense,Repairs,170 John,qb-2",
-    ].join("\n");
+    const csv = fs.readFileSync(
+      path.join(__dirname, "fixtures", "quickbooks-export.csv"),
+      "utf8",
+    );
 
     const result = QuickBooksProductionImportService.importCsv({
       csv,
