@@ -1,15 +1,8 @@
 import type { FinancialEvent } from "./financial-event.types";
-import type { RentecImportRecord } from "../rentec-import";
-import { categoryNormalizer } from "../knowledge";
-import { PropertyResolverService } from "../property/property-resolver.service";
-export class FinancialEventFactory {
-  fromRentec(record: RentecImportRecord): FinancialEvent {
-    const knowledge = categoryNormalizer.normalize(record.description);
-    const property = PropertyResolverService.fromSourceName({
-      sourceName: record.property,
-      sourceSystem: "rentec",
-    });
+import type { ResolvedRentecImportRecord } from "../rentec-import";
 
+export class FinancialEventFactory {
+  fromRentec(record: ResolvedRentecImportRecord): FinancialEvent {
     return {
       id: "",
       created_at: new Date().toISOString(),
@@ -26,7 +19,7 @@ export class FinancialEventFactory {
       is_deleted: false,
       deleted_at: null,
 
-      property_id: property.id,
+      property_id: record.resolvedProperty.id,
       financial_account_id: null,
 
       event_date: record.date,
@@ -35,19 +28,19 @@ export class FinancialEventFactory {
 
       amount: record.amount,
 
-      transaction_kind: knowledge.transactionKind,
-      normalized_category: knowledge.normalizedCategory,
+      transaction_kind: record.knowledge.transactionKind,
+      normalized_category: record.knowledge.normalizedCategory,
 
-      tax_deductible: knowledge.taxDeductible,
-      affects_noi: knowledge.affectsNOI,
-      capitalized: knowledge.capitalized,
+      tax_deductible: record.knowledge.taxDeductible,
+      affects_noi: record.knowledge.affectsNOI,
+      capitalized: record.knowledge.capitalized,
 
       source_system: "rentec",
       source_record_id: null,
 
       metadata: {
         property: record.property,
-        propertyName: property.name,
+        propertyName: record.resolvedProperty.name,
         sourceCategory: record.sourceCategory,
         rawRow: record.rawRow,
       },

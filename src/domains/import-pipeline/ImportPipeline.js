@@ -1,13 +1,16 @@
 import { financialEventFactory } from "../financial-event/financial-event.factory";
 import { financialEventPostingAdapter } from "../financial-event/financial-event-posting.adapter";
+import { rentecSemanticResolver } from "../rentec-import";
 import { FinancialEngine } from "../ledger/engines/FinancialEngine";
 import { GeneralLedger } from "../ledger/entities/GeneralLedger";
 
 export class ImportPipeline {
   constructor({
+    semanticResolver = rentecSemanticResolver,
     eventFactory = financialEventFactory,
     postingAdapter = financialEventPostingAdapter,
   } = {}) {
+    this.semanticResolver = semanticResolver;
     this.eventFactory = eventFactory;
     this.postingAdapter = postingAdapter;
 
@@ -29,11 +32,9 @@ export class ImportPipeline {
   }
 
   toFinancialEvents(records) {
-    if (!Array.isArray(records)) {
-      throw new Error("Import records must be an array");
-    }
+    const resolvedRecords = this.semanticResolver.resolveMany(records);
 
-    return records.map((record) => this.eventFactory.fromRentec(record));
+    return resolvedRecords.map((record) => this.eventFactory.fromRentec(record));
   }
 
   toJournalEntries(financialEvents) {

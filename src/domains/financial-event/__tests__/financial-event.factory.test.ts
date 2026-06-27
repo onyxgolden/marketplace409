@@ -1,10 +1,11 @@
 import { describe, expect, test } from "vitest";
 
 import { financialEventFactory } from "../financial-event.factory";
+import { rentecSemanticResolver } from "../../rentec-import";
 import type { RentecImportRecord } from "../../rentec-import";
 
 describe("FinancialEventFactory", () => {
-  test("creates a financial event from a Rentec rental income record", () => {
+  test("creates a financial event from a resolved Rentec rental income record", () => {
     const record: RentecImportRecord = {
       date: "2026-01-01",
       property: "170 John",
@@ -17,9 +18,12 @@ describe("FinancialEventFactory", () => {
       },
     };
 
-    const event = financialEventFactory.fromRentec(record);
+    const event = financialEventFactory.fromRentec(
+      rentecSemanticResolver.resolve(record),
+    );
 
     expect(event).toMatchObject({
+      property_id: "170-john",
       event_date: "2026-01-01",
       description: "Rental Income (Rentec EasyPay)",
       amount: 1500,
@@ -31,12 +35,13 @@ describe("FinancialEventFactory", () => {
       source_system: "rentec",
       metadata: {
         property: "170 John",
+        propertyName: "170 John",
         sourceCategory: "Rental Income (Rentec EasyPay)",
       },
     });
   });
 
-  test("creates a capitalized financial event from a Rentec purchase price record", () => {
+  test("creates a capitalized financial event from a resolved Rentec purchase price record", () => {
     const record: RentecImportRecord = {
       date: "2014-02-07",
       property: "335 BUTLER",
@@ -49,9 +54,12 @@ describe("FinancialEventFactory", () => {
       },
     };
 
-    const event = financialEventFactory.fromRentec(record);
+    const event = financialEventFactory.fromRentec(
+      rentecSemanticResolver.resolve(record),
+    );
 
     expect(event).toMatchObject({
+      property_id: "335-butler",
       event_date: "2014-02-07",
       description: "Commissions (Purchase Price)",
       amount: 25256.89,

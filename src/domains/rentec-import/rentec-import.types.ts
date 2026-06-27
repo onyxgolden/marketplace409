@@ -1,3 +1,6 @@
+import type { KnowledgeRecord } from "../knowledge";
+import type { Property } from "../property";
+
 export type RentecImportRecord = {
   date: string;
 
@@ -12,6 +15,11 @@ export type RentecImportRecord = {
   sourceCategory?: string | null;
 
   rawRow: Record<string, unknown>;
+};
+
+export type ResolvedRentecImportRecord = RentecImportRecord & {
+  resolvedProperty: Property;
+  knowledge: KnowledgeRecord;
 };
 
 export type RentecImportSummary = {
