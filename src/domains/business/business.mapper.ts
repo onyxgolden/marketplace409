@@ -1,5 +1,17 @@
 import type { Business } from "./business.types";
 
+function mapBusinessStatus(row: any): Business["status"] {
+  if (row.status) {
+    return row.status;
+  }
+
+  if (row.claimed === true) {
+    return "claimed";
+  }
+
+  return "unclaimed";
+}
+
 export function mapBusinessRowToBusiness(row: any): Business {
   return {
     id: row.id,
@@ -7,7 +19,7 @@ export function mapBusinessRowToBusiness(row: any): Business {
     updated_at: row.updated_at,
 
     name: row.name,
-    status: row.status ?? "unclaimed",
+    status: mapBusinessStatus(row),
     owner_user_id: row.owner_user_id ?? null,
 
     category: row.category,
