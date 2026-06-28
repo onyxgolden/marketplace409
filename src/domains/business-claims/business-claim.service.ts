@@ -3,8 +3,9 @@ import { BusinessClaimRepository } from "./business-claim.repository";
 export class BusinessClaimService {
   private repo: BusinessClaimRepository;
 
-  constructor() {
-    this.repo = new BusinessClaimRepository();
+  // STRICT dependency injection (no fallback instantiation)
+  constructor(repo: BusinessClaimRepository) {
+    this.repo = repo;
   }
 
   async submitClaim(payload: any) {
