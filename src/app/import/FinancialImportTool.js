@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { RentecProductionImportService } from "@/domains/rentec-import/rentec-production-import.service";
+import { FinancialImportService } from "@/domains/financial-import/financial-import.service";
 import { buildProductionChartOfAccounts } from "@/domains/production";
 import { Money } from "@/platform";
 
@@ -27,7 +27,8 @@ function reportSections(report) {
   }));
 }
 
-export default function RentecImportTool() {
+export default function FinancialImportTool() {
+  const [source, setSource] = useState("rentec");
   const [fileName, setFileName] = useState("");
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -48,7 +49,8 @@ export default function RentecImportTool() {
     try {
       const csv = await file.text();
 
-      const importResult = RentecProductionImportService.importCsv({
+      const importResult = FinancialImportService.importCsv({
+        source,
         csv,
         chartOfAccounts: buildProductionChartOfAccounts(),
       });
@@ -58,7 +60,7 @@ export default function RentecImportTool() {
       setError(
         caughtError instanceof Error
           ? caughtError.message
-          : "Unable to import Rentec CSV."
+          : "Unable to import financial CSV."
       );
     }
   }
@@ -67,16 +69,33 @@ export default function RentecImportTool() {
     <section className="max-w-6xl mx-auto px-6 py-12">
       <div className="bg-white rounded-3xl shadow-xl p-8 mb-8">
         <h1 className="text-5xl font-extrabold mb-4">
-          Rentec Financial Import
+          Financial Import
         </h1>
 
         <p className="text-xl text-gray-600 mb-8">
-          Upload a Rentec CSV and let Forge convert it into financial events,
+          Upload a Rentec or QuickBooks CSV and let Forge convert it into financial events,
           ledger postings, and accounting reports.
         </p>
 
+        <label className="block mb-6">
+          <span className="font-bold text-lg">Import Source</span>
+          <select
+            value={source}
+            onChange={(event) => {
+              setSource(event.target.value);
+              setFileName("");
+              setResult(null);
+              setError("");
+            }}
+            className="mt-3 block w-full rounded-xl border bg-gray-50 px-4 py-4"
+          >
+            <option value="rentec">Rentec</option>
+            <option value="quickbooks">QuickBooks</option>
+          </select>
+        </label>
+
         <label className="block">
-          <span className="font-bold text-lg">Rentec CSV File</span>
+          <span className="font-bold text-lg">Financial CSV File</span>
           <input
             type="file"
             accept=".csv,text/csv"

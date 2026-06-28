@@ -1,11 +1,11 @@
 import Header from "@/components/Header";
-import RentecImportTool from "./RentecImportTool";
+import FinancialImportTool from "./FinancialImportTool";
 
 export default function ImportPage() {
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       <Header />
-      <RentecImportTool />
+      <FinancialImportTool />
     </main>
   );
 }
