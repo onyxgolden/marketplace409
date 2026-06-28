@@ -1,20 +1,16 @@
 import Header from "@/components/Header";
 import ShareButton from "@/components/ShareButton";
 import BusinessAdminControls from "@/components/BusinessAdminControls";
-import { supabase } from "@/lib/supabase";
+import { BusinessService } from "@/domains/business";
 
 export const dynamic = "force-dynamic";
 
 export default async function BusinessDetailPage({ params }) {
-  const { id } = await params;
+  const { id } = params;
 
-  const { data: business, error } = await supabase
-    .from("businesses")
-    .select("*")
-    .eq("id", id)
-    .single();
+  const business = await BusinessService.getById(id);
 
-  if (error || !business) {
+  if (!business) {
     return (
       <main className="min-h-screen bg-gray-100 text-gray-900">
         <Header />
@@ -40,6 +36,14 @@ export default async function BusinessDetailPage({ params }) {
   }
 
   const businessUrl = `https://409marketplace.online/businesses/${business.id}`;
+
+  const city = business.address?.city;
+  const phone = business.contact?.phone;
+  const website_url = business.contact?.website_url;
+  const facebook_url = business.contact?.facebook_url;
+
+  const isClaimed =
+    business.status === "claimed" || business.status === "verified";
 
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
@@ -68,13 +72,15 @@ export default async function BusinessDetailPage({ params }) {
 
           <div className="p-8">
             <p className="text-sm text-gray-500 mb-2">
-              {business.city}
+              {city}
               {business.category ? ` • ${business.category}` : ""}
             </p>
 
-            <h1 className="text-5xl font-extrabold mb-4">{business.name}</h1>
+            <h1 className="text-5xl font-extrabold mb-4">
+              {business.name}
+            </h1>
 
-            {business.claimed && (
+            {isClaimed && (
               <div className="mb-4 inline-block rounded-full bg-green-100 px-4 py-2 text-sm font-bold text-green-800">
                 ✓ Claimed Business
               </div>
@@ -111,18 +117,18 @@ export default async function BusinessDetailPage({ params }) {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-              {business.phone && (
+              {phone && (
                 <a
-                  href={`tel:${business.phone}`}
+                  href={`tel:${phone}`}
                   className="bg-green-700 text-white text-center py-4 rounded-2xl font-bold hover:bg-green-600"
                 >
                   Call Business
                 </a>
               )}
 
-              {business.website_url && (
+              {website_url && (
                 <a
-                  href={business.website_url}
+                  href={website_url}
                   target="_blank"
                   rel="noreferrer"
                   className="bg-blue-900 text-white text-center py-4 rounded-2xl font-bold hover:bg-blue-800"
@@ -131,9 +137,9 @@ export default async function BusinessDetailPage({ params }) {
                 </a>
               )}
 
-              {business.facebook_url && (
+              {facebook_url && (
                 <a
-                  href={business.facebook_url}
+                  href={facebook_url}
                   target="_blank"
                   rel="noreferrer"
                   className="bg-blue-600 text-white text-center py-4 rounded-2xl font-bold hover:bg-blue-500"

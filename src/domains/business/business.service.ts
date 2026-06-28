@@ -6,8 +6,12 @@ class BusinessServiceImpl {
     return BusinessRepository.getAll();
   }
 
-  async getById(id: string): Promise<Business> {
-    return BusinessRepository.getById(id);
+  async getById(id: string): Promise<Business | null> {
+    try {
+      return await BusinessRepository.getById(id);
+    } catch (error) {
+      return null;
+    }
   }
 }
 

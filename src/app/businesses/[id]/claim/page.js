@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { BusinessClaimService } from "@/domains/business-claims/business-claim.service";
 
 export default function ClaimBusinessPage() {
   const params = useParams();
@@ -10,6 +10,8 @@ export default function ClaimBusinessPage() {
 
   const businessId = params.id;
   const businessName = searchParams.get("name") || "";
+
+  const service = new BusinessClaimService();
 
   const [form, setForm] = useState({
     claimant_name: "",
@@ -44,8 +46,8 @@ export default function ClaimBusinessPage() {
       return;
     }
 
-    const { error } = await supabase.from("business_claims").insert([
-      {
+    try {
+      await service.submitClaim({
         business_id: businessId,
         business_name: businessName,
         claimant_name: form.claimant_name,
@@ -57,15 +59,12 @@ export default function ClaimBusinessPage() {
         notes: form.notes,
         certified: form.certified,
         status: "pending",
-      },
-    ]);
+      });
 
-    if (error) {
-      setError(error.message);
-      return;
+      setSubmitted(true);
+    } catch (err) {
+      setError(err.message || "Failed to submit claim");
     }
-
-    setSubmitted(true);
   }
 
   if (submitted) {

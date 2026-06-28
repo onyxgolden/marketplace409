@@ -1,43 +1,19 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { BusinessClaimService } from "@/domains/business-claims/business-claim.service";
 
 export default function BusinessClaimActions({ claim }) {
   const router = useRouter();
+  const service = new BusinessClaimService();
 
   async function approveClaim() {
-    await supabase
-      .from("business_claims")
-      .update({
-        status: "approved",
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: "Jason",
-      })
-      .eq("id", claim.id);
-
-    await supabase
-      .from("businesses")
-      .update({
-        claimed: true,
-        claimed_at: new Date().toISOString(),
-        claimed_by: claim.claimant_name,
-      })
-      .eq("id", claim.business_id);
-
+    await service.approveClaim(claim);
     router.refresh();
   }
 
   async function denyClaim() {
-    await supabase
-      .from("business_claims")
-      .update({
-        status: "denied",
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: "Jason",
-      })
-      .eq("id", claim.id);
-
+    await service.rejectClaim(claim.id);
     router.refresh();
   }
 

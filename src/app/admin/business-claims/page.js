@@ -1,14 +1,20 @@
 import Header from "@/components/Header";
-import { supabase } from "@/lib/supabase";
 import BusinessClaimActions from "@/components/BusinessClaimActions";
+import { BusinessClaimService } from "@/domains/business-claims/business-claim.service";
 
 export const dynamic = "force-dynamic";
 
 export default async function BusinessClaimsAdminPage() {
-  const { data: claims, error } = await supabase
-    .from("business_claims")
-    .select("*")
-    .order("created_at", { ascending: false });
+  const service = new BusinessClaimService();
+
+  let claims = [];
+  let error = null;
+
+  try {
+    claims = await service.getAllClaims();
+  } catch (e) {
+    error = e;
+  }
 
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
@@ -115,6 +121,7 @@ export default async function BusinessClaimsAdminPage() {
                   >
                     Email Claimant
                   </a>
+
                   <BusinessClaimActions claim={claim} />
                 </div>
               </div>
