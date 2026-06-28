@@ -11,6 +11,11 @@ class BusinessRepositoryImpl extends BaseRepository<any> {
     const rows = await super.getAll();
     return rows.map(mapBusinessRowToBusiness);
   }
+
+  async getById(id: string): Promise<Business> {
+    const row = await super.getById(id);
+    return mapBusinessRowToBusiness(row);
+  }
 }
 
 export const BusinessRepository = new BusinessRepositoryImpl();
