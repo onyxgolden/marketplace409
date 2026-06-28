@@ -57,6 +57,9 @@ describe("QuickBooksProductionImportService", () => {
       totalRows: 2,
       importedRows: 2,
       skippedRows: 0,
+      totalIncome: 1500,
+      totalExpenses: 250,
+      properties: ["170 John"],
     });
 
     expect(result.reports.balanceSheet).toBeDefined();
@@ -100,6 +103,9 @@ describe("QuickBooksProductionImportService", () => {
       totalRows: 2,
       importedRows: 2,
       skippedRows: 0,
+      totalIncome: 1500,
+      totalExpenses: 250,
+      properties: ["170 John"],
     });
 
     expect(result.reports.balanceSheet).toBeDefined();
