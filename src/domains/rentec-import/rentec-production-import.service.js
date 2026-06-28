@@ -5,13 +5,16 @@ import { rentecSemanticResolver } from "./rentec-semantic-resolver";
 
 class RentecProductionImportServiceImpl {
   constructor({
+    ownerId = null,
     workflow = new ProductionImportWorkflow({
       parser: new RentecImportParser(),
       semanticResolver: rentecSemanticResolver,
+      ownerId,
       summaryBuilder: (records) => RentecImportService.summarize(records),
       sourceName: "Rentec",
     }),
   } = {}) {
+    this.ownerId = ownerId;
     this.workflow = workflow;
 
     Object.freeze(this);

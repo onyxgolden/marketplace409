@@ -1,13 +1,19 @@
-import { RentecProductionImportService } from "../rentec-import/rentec-production-import.service";
-import { QuickBooksProductionImportService } from "../quickbooks-import/quickbooks-production-import.service";
+import { RentecProductionImportServiceImpl } from "../rentec-import/rentec-production-import.service";
+import { QuickBooksProductionImportServiceImpl } from "../quickbooks-import/quickbooks-production-import.service";
 
-const DEFAULT_IMPORTERS = Object.freeze({
-  rentec: RentecProductionImportService,
-  quickbooks: QuickBooksProductionImportService,
-});
+function buildDefaultImporters({ ownerId = null } = {}) {
+  return Object.freeze({
+    rentec: new RentecProductionImportServiceImpl({ ownerId }),
+    quickbooks: new QuickBooksProductionImportServiceImpl({ ownerId }),
+  });
+}
 
 class FinancialImportServiceImpl {
-  constructor({ importers = DEFAULT_IMPORTERS } = {}) {
+  constructor({
+    ownerId = null,
+    importers = buildDefaultImporters({ ownerId }),
+  } = {}) {
+    this.ownerId = ownerId;
     this.importers = importers;
 
     Object.freeze(this);
@@ -48,4 +54,4 @@ class FinancialImportServiceImpl {
 
 export const FinancialImportService = new FinancialImportServiceImpl();
 
-export { FinancialImportServiceImpl };
+export { FinancialImportServiceImpl, buildDefaultImporters };

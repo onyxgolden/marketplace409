@@ -31,13 +31,16 @@ function summarizeQuickBooksRecords(records) {
 
 class QuickBooksProductionImportServiceImpl {
   constructor({
+    ownerId = null,
     workflow = new ProductionImportWorkflow({
       parser: new QuickBooksImportParser(),
       semanticResolver: quickBooksSemanticResolver,
+      ownerId,
       summaryBuilder: summarizeQuickBooksRecords,
       sourceName: "QuickBooks",
     }),
   } = {}) {
+    this.ownerId = ownerId;
     this.workflow = workflow;
 
     Object.freeze(this);

@@ -8,6 +8,7 @@ export class ImportPipeline {
     semanticResolver,
     eventFactory = financialEventFactory,
     postingAdapter = financialEventPostingAdapter,
+    ownerId = null,
   } = {}) {
     if (!semanticResolver) {
       throw new Error("Semantic resolver is required");
@@ -16,6 +17,7 @@ export class ImportPipeline {
     this.semanticResolver = semanticResolver;
     this.eventFactory = eventFactory;
     this.postingAdapter = postingAdapter;
+    this.ownerId = ownerId;
 
     Object.freeze(this);
   }
@@ -38,7 +40,7 @@ export class ImportPipeline {
     const resolvedRecords = this.semanticResolver.resolveMany(records);
 
     return resolvedRecords.map((record) =>
-      this.eventFactory.fromResolvedInput(record),
+      this.eventFactory.fromResolvedInput(record, this.ownerId),
     );
   }
 

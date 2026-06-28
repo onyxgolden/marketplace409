@@ -4,7 +4,10 @@ import type {
 } from "./financial-event.types";
 
 export class FinancialEventFactory {
-  fromResolvedInput(record: ResolvedFinancialEventInput): FinancialEvent {
+  fromResolvedInput(
+    record: ResolvedFinancialEventInput,
+    ownerId: string | null = null,
+  ): FinancialEvent {
     return {
       id: "",
       created_at: new Date().toISOString(),
@@ -13,7 +16,7 @@ export class FinancialEventFactory {
       created_by: null,
       updated_by: null,
 
-      owner_id: null,
+      owner_id: ownerId,
       organization_id: null,
 
       status: "active",

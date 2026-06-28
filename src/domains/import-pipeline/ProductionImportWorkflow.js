@@ -14,6 +14,7 @@ export class ProductionImportWorkflow {
     parser,
     semanticResolver,
     pipeline,
+    ownerId = null,
     summaryBuilder = buildDefaultSummary,
     sourceName = "Import",
   } = {}) {
@@ -34,7 +35,15 @@ export class ProductionImportWorkflow {
     }
 
     this.parser = parser;
-    this.pipeline = pipeline ?? new ImportPipeline({ semanticResolver });
+    this.ownerId = ownerId;
+
+    this.pipeline =
+      pipeline ??
+      new ImportPipeline({
+        semanticResolver,
+        ownerId: this.ownerId,
+      });
+
     this.summaryBuilder = summaryBuilder;
     this.sourceName = sourceName;
 

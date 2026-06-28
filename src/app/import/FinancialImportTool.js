@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { FinancialImportService } from "@/domains/financial-import/financial-import.service";
+import { FinancialImportServiceImpl } from "@/domains/financial-import/financial-import.service";
 import { buildProductionChartOfAccounts } from "@/domains/production";
 import { Money } from "@/platform";
+import { supabase } from "@/lib/supabase";
 
 function formatCurrency(value) {
   return new Money(Math.round(Number(value || 0) * 100)).toString();
@@ -33,6 +34,16 @@ export default function FinancialImportTool() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
 
+  async function currentOwnerId() {
+    const { data, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !data?.user?.id) {
+      return null;
+    }
+
+    return data.user.id;
+  }
+
   async function handleFileChange(event) {
     const file = event.target.files?.[0];
 
@@ -48,8 +59,13 @@ export default function FinancialImportTool() {
 
     try {
       const csv = await file.text();
+      const ownerId = await currentOwnerId();
 
-      const importResult = FinancialImportService.importCsv({
+      const importService = new FinancialImportServiceImpl({
+        ownerId,
+      });
+
+      const importResult = importService.importCsv({
         source,
         csv,
         chartOfAccounts: buildProductionChartOfAccounts(),
