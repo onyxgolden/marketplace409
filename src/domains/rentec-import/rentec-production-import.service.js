@@ -1,43 +1,26 @@
-import { ImportPipeline, ImportResult } from "../import-pipeline";
+import { ProductionImportWorkflow } from "../import-pipeline";
 import { RentecImportParser } from "./rentec-import.parser";
 import { RentecImportService } from "./rentec-import.service";
 import { rentecSemanticResolver } from "./rentec-semantic-resolver";
 
 class RentecProductionImportServiceImpl {
   constructor({
-    parser = new RentecImportParser(),
-    importService = RentecImportService,
-    pipeline = new ImportPipeline({
+    workflow = new ProductionImportWorkflow({
+      parser: new RentecImportParser(),
       semanticResolver: rentecSemanticResolver,
+      summaryBuilder: (records) => RentecImportService.summarize(records),
+      sourceName: "Rentec",
     }),
   } = {}) {
-    this.parser = parser;
-    this.importService = importService;
-    this.pipeline = pipeline;
+    this.workflow = workflow;
 
     Object.freeze(this);
   }
 
   importCsv({ csv, chartOfAccounts }) {
-    if (typeof csv !== "string") {
-      throw new Error("Rentec CSV is required");
-    }
-
-    if (!chartOfAccounts) {
-      throw new Error("ChartOfAccounts is required");
-    }
-
-    const records = this.parser.parseCsv(csv);
-    const summary = this.importService.summarize(records);
-    const reports = this.pipeline.buildReports({
-      records,
+    return this.workflow.importCsv({
+      csv,
       chartOfAccounts,
-    });
-
-    return new ImportResult({
-      records,
-      summary,
-      reports,
     });
   }
 }
