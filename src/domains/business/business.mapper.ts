@@ -7,6 +7,9 @@ export function mapBusinessRowToBusiness(row: any): Business {
     updated_at: row.updated_at,
 
     name: row.name,
+    status: row.status ?? "unclaimed",
+    owner_user_id: row.owner_user_id ?? null,
+
     category: row.category,
     description: row.description,
 
