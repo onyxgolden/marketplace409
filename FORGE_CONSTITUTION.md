@@ -167,3 +167,16 @@ New capabilities extend existing architecture.
 Do not break public contracts without a deliberate architectural milestone.
 
 Existing tests must continue to pass unchanged.
+---
+
+# RULE 17 — Documentation is Architecture
+
+Architecture documentation is part of the production system.
+
+Significant architectural milestones require documentation updates before the next major feature begins.
+
+Documentation must be reviewed at least once every 3–4 active Forge development days if engineering sessions have occurred.
+
+Documentation reflects repository reality, not plans, assumptions, or memory.
+
+The repository remains the source of truth.

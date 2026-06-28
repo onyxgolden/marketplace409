@@ -85,6 +85,11 @@ Every implementation follows this sequence.
 Inspect all affected files before planning changes.
 
 Understand the existing architecture before modifying it.
+Before selecting an implementation target, inspect the entire architectural feature slice whenever practical.
+
+The objective is to determine what already exists before deciding what should be built.
+
+Repository inspection precedes implementation planning.
 
 ---
 
@@ -193,6 +198,11 @@ Documentation follows the same engineering discipline.
 Documentation is architecture.
 
 Documentation deserves the same care as production code.
+Documentation is synchronized after significant architectural milestones.
+
+Documentation should not drift more than 3–4 active Forge development days when engineering sessions have occurred.
+
+Documentation reflects implemented architecture—not intended architecture.
 
 ---
 
@@ -275,6 +285,9 @@ A Forge session is complete only when:
 * Lessons are captured.
 * The next engineering phase is identified.
 * A startup paste is prepared for the next session.
+* Next architectural priority documented.
+* The next engineering phase is identified.
+* A startup paste is prepared for the next session.
 
 The objective is not merely to finish work.
 
@@ -282,6 +295,7 @@ The objective is to leave the repository in a better state than it was found.
 
 # FORGE STABILITY GUARD
 Version 2.0
+
 
 ---
 
