@@ -16,12 +16,29 @@ export class AccountBalanceReportLineBuilder {
       );
     }
 
-    return accountBalances.all().map(
-      (accountBalance) =>
-        new ReportLine({
-          label: accountBalance.accountId,
-          amount: accountBalance.balance,
-        })
-    );
+    return accountBalances.all().map((accountBalance) => {
+      const accountId = accountBalance.accountId;
+
+      // trace data (builder-level only, not attached to ReportLine)
+      this._ensureTrace(accountId, accountBalance);
+
+      return new ReportLine({
+        label: accountId,
+        amount: accountBalance.balance,
+      });
+    });
+  }
+
+  _ensureTrace(accountId, accountBalance) {
+    if (!this.traceMap) {
+      this.traceMap = new Map();
+    }
+
+    if (!this.traceMap.has(accountId)) {
+      this.traceMap.set(accountId, {
+        journalEntryIds: accountBalance.metadata?.journalEntryIds ?? [],
+        financialEventIds: accountBalance.metadata?.financialEventIds ?? [],
+      });
+    }
   }
 }
