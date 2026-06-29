@@ -10,3 +10,4 @@ export * from "./risk-snapshot.repository";
 export * from "./in-memory-risk-snapshot.repository";
 export * from "./risk-monitoring.service";
 export * from "./risk-timeline.service";
+export * from "./risk-watchlist.service";
