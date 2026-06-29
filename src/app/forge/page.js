@@ -3,6 +3,10 @@
 import React, { useMemo, useState } from "react";
 import Header from "@/components/Header";
 import { NetWorthService } from "@/domains/networth";
+import {
+  RiskAggregationService,
+  RiskScoringService,
+} from "@/domains/risk";
 
 // STEP 15 — READ-ONLY AUDIT LAYER
 import { autonomousAuditAgent } from "@/domains/audit/AutonomousAuditAgent";
@@ -19,10 +23,6 @@ function formatCurrency(value) {
 export default function ForgePage() {
   const [view, setView] = useState("networth");
 
-  /**
-   * STEP 15 — Mock Ledger Context (READ-ONLY INPUT)
-   * Replace later with real ledger injection if available in domain context.
-   */
   const ledgerContext = useMemo(() => {
     return {
       accounts: [
@@ -34,9 +34,6 @@ export default function ForgePage() {
     };
   }, []);
 
-  /**
-   * STEP 15 — Autonomous Audit Execution (READ ONLY)
-   */
   const auditFindings = useMemo(() => {
     try {
       return autonomousAuditAgent.run({
@@ -52,9 +49,17 @@ export default function ForgePage() {
     }
   }, [ledgerContext]);
 
-  /**
-   * NET WORTH (existing system)
-   */
+  const riskSummary = useMemo(() => {
+    const scoring = new RiskScoringService();
+    const aggregation = new RiskAggregationService();
+
+    const scoredFindings = (auditFindings?.anomalies ?? []).map((finding) =>
+      scoring.scoreAuditFinding(finding)
+    );
+
+    return aggregation.summarize(scoredFindings);
+  }, [auditFindings]);
+
   const netWorth = useMemo(() => {
     const assets = [
       { id: "cash", name: "Cash", category: "bank", value: 280000 },
@@ -72,7 +77,6 @@ export default function ForgePage() {
       <Header />
 
       <div className="max-w-6xl mx-auto p-6">
-        {/* NAV TABS */}
         <div className="flex gap-4 mb-6">
           <button
             onClick={() => setView("networth")}
@@ -93,7 +97,6 @@ export default function ForgePage() {
           </button>
         </div>
 
-        {/* NET WORTH VIEW */}
         {view === "networth" && (
           <div className="bg-white p-6 rounded shadow">
             <h2 className="text-xl font-bold mb-4">Net Worth Snapshot</h2>
@@ -113,12 +116,28 @@ export default function ForgePage() {
           </div>
         )}
 
-        {/* AUDIT DASHBOARD VIEW — STEP 15 */}
         {view === "audit" && (
           <div className="bg-white p-6 rounded shadow">
             <h2 className="text-xl font-bold mb-4">
               Live Audit Dashboard (Autonomous Audit Agent)
             </h2>
+
+            <div className="border rounded p-4 bg-gray-50 mb-6">
+              <div className="text-sm text-gray-500">Overall Risk</div>
+              <div className="text-2xl font-bold uppercase">
+                {riskSummary.severity}
+              </div>
+              <div className="mt-1">Score: {riskSummary.score}</div>
+              <div className="mt-1">
+                Findings: {riskSummary.findingCount}
+              </div>
+              <div className="mt-2 text-sm text-gray-700">
+                Low: {riskSummary.severityCounts.low} | Medium:{" "}
+                {riskSummary.severityCounts.medium} | High:{" "}
+                {riskSummary.severityCounts.high} | Critical:{" "}
+                {riskSummary.severityCounts.critical}
+              </div>
+            </div>
 
             {auditFindings?.error && (
               <div className="text-red-600 mb-4">
@@ -133,30 +152,48 @@ export default function ForgePage() {
             )}
 
             <div className="space-y-4">
-              {auditFindings?.anomalies?.map((a, idx) => (
-                <div
-                  key={idx}
-                  className="border rounded p-4 bg-gray-50"
-                >
-                  <div className="font-semibold">
-                    Account: {a.accountId ?? "unknown"}
-                  </div>
+              {auditFindings?.anomalies?.map((a, idx) => {
+                const scoredRisk = riskSummary.topRisks.find(
+                  (risk) =>
+                    risk.accountId === a.accountId &&
+                    risk.sourceFindingType === a.type
+                );
 
-                  <div className="mt-1 text-sm text-gray-700">
-                    Anomaly: {a.type}
-                  </div>
-
-                  <div className="mt-1 text-sm">
-                    Explanation: {a.explanation}
-                  </div>
-
-                  {a.traceSummary && (
-                    <div className="mt-2 text-xs text-gray-500">
-                      Trace: {a.traceSummary}
+                return (
+                  <div key={idx} className="border rounded p-4 bg-gray-50">
+                    <div className="font-semibold">
+                      Account: {a.accountId ?? "unknown"}
                     </div>
-                  )}
-                </div>
-              ))}
+
+                    <div className="mt-1 text-sm text-gray-700">
+                      Anomaly: {a.type}
+                    </div>
+
+                    {scoredRisk && (
+                      <div className="mt-1 text-sm">
+                        Risk: {scoredRisk.severity.toUpperCase()} /{" "}
+                        {scoredRisk.score}
+                      </div>
+                    )}
+
+                    <div className="mt-1 text-sm">
+                      Explanation: {a.explanation}
+                    </div>
+
+                    {scoredRisk && (
+                      <div className="mt-1 text-sm">
+                        Recommended Action: {scoredRisk.recommendedAction}
+                      </div>
+                    )}
+
+                    {a.traceSummary && (
+                      <div className="mt-2 text-xs text-gray-500">
+                        Trace: {a.traceSummary}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
