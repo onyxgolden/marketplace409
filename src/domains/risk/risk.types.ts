@@ -12,9 +12,12 @@ export type RiskFinding = {
   recommendedAction: string;
 };
 
+export type RiskSeverityCounts = Record<RiskSeverity, number>;
+
 export type OverallRiskSummary = {
   severity: RiskSeverity;
   score: number;
   findingCount: number;
+  severityCounts: RiskSeverityCounts;
   topRisks: RiskFinding[];
 };
