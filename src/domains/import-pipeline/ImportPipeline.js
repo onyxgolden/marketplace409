@@ -1,4 +1,4 @@
-import { financialEventFactory } from "../financial-event/financial-event.factory";
+import { FinancialEventGateway } from "../financial-event/FinancialEventGateway";
 import { financialEventPostingAdapter } from "../financial-event/financial-event-posting.adapter";
 import { FinancialEngine } from "../ledger/engines/FinancialEngine";
 import { GeneralLedger } from "../ledger/entities/GeneralLedger";
@@ -6,7 +6,7 @@ import { GeneralLedger } from "../ledger/entities/GeneralLedger";
 export class ImportPipeline {
   constructor({
     semanticResolver,
-    eventFactory = financialEventFactory,
+    eventFactory,
     postingAdapter = financialEventPostingAdapter,
     ownerId = null,
   } = {}) {
@@ -15,9 +15,11 @@ export class ImportPipeline {
     }
 
     this.semanticResolver = semanticResolver;
-    this.eventFactory = eventFactory;
     this.postingAdapter = postingAdapter;
     this.ownerId = ownerId;
+
+    // 🧱 OPTION B: STRICT ENTRY GATE
+    this.gateway = new FinancialEventGateway(eventFactory, ownerId);
 
     Object.freeze(this);
   }
@@ -40,7 +42,7 @@ export class ImportPipeline {
     const resolvedRecords = this.semanticResolver.resolveMany(records);
 
     return resolvedRecords.map((record) =>
-      this.eventFactory.fromResolvedInput(record, this.ownerId),
+      this.gateway.create(record),
     );
   }
 
@@ -59,6 +61,6 @@ export class ImportPipeline {
       throw new Error("Journal entries must be an array");
     }
 
-    return journalEntries.flatMap((journalEntry) => journalEntry.postings);
+    return journalEntries.flatMap((je) => je.postings);
   }
 }
