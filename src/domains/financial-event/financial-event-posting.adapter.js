@@ -1,3 +1,4 @@
+import { FinancialEventTranslator } from "./FinancialEventTranslator";
 import { Money } from "@/platform";
 import { JournalEntry, Posting } from "../ledger/entities";
 import { LedgerDirection } from "../ledger/value-objects";
@@ -25,7 +26,7 @@ export class FinancialEventPostingAdapter {
 
     return new JournalEntry({
       id: `${event.id || "financial-event"}:journal-entry`,
-      date: event.event_date,
+      date: FinancialEventTranslator.getEventDate(event),
       description: event.description,
       postings: [
         new Posting({
