@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from "react";
 import Header from "@/components/Header";
 import { NetWorthService } from "@/domains/networth";
-import { RiskEngine, RiskIntelligenceService } from "@/domains/risk";
+import { RiskDashboardService } from "@/domains/risk";
 
 // STEP 15 — READ-ONLY AUDIT LAYER
 import { autonomousAuditAgent } from "@/domains/audit/AutonomousAuditAgent";
@@ -46,17 +46,17 @@ export default function ForgePage() {
     }
   }, [ledgerContext]);
 
-  const riskSummary = useMemo(() => {
-    const riskEngine = new RiskEngine();
+  const riskDashboard = useMemo(() => {
+    const dashboardService = new RiskDashboardService();
 
-    return riskEngine.analyze(auditFindings?.anomalies ?? []);
+    return dashboardService.build({
+      auditFindings: auditFindings?.anomalies ?? [],
+    });
   }, [auditFindings]);
 
-  const riskAssessment = useMemo(() => {
-    const riskIntelligence = new RiskIntelligenceService();
-
-    return riskIntelligence.assess(riskSummary);
-  }, [riskSummary]);
+  const riskSummary = riskDashboard.summary;
+  const riskAssessment = riskDashboard.assessment;
+  const executiveBriefing = riskDashboard.executiveBriefing;
 
   const netWorth = useMemo(() => {
     const assets = [
@@ -139,6 +139,41 @@ export default function ForgePage() {
               <div className="mt-3 text-sm text-gray-700">
                 {riskAssessment.summary}
               </div>
+              <div className="mt-4 border rounded p-4 bg-white">
+                <div className="text-sm text-gray-500">Executive Briefing</div>
+                <div className="mt-1 font-semibold">
+                  {executiveBriefing.headline}
+                </div>
+                <div className="mt-2 text-sm text-gray-700">
+                  {executiveBriefing.overview}
+                </div>
+                <div className="mt-2 text-sm text-gray-700">
+                  {executiveBriefing.outlook}
+                </div>
+
+                {!!executiveBriefing.concerns.length && (
+                  <div className="mt-3">
+                    <div className="text-sm font-semibold">Concerns</div>
+                    <ul className="list-disc pl-5 text-sm text-gray-700">
+                      {executiveBriefing.concerns.map((concern) => (
+                        <li key={concern}>{concern}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {!!executiveBriefing.priorities.length && (
+                  <div className="mt-3">
+                    <div className="text-sm font-semibold">Priorities</div>
+                    <ul className="list-disc pl-5 text-sm text-gray-700">
+                      {executiveBriefing.priorities.map((priority) => (
+                        <li key={priority}>{priority}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
 
               {!!riskAssessment.recommendations.length && (
                 <div className="mt-3">
