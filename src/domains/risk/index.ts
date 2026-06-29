@@ -4,3 +4,4 @@ export * from "./risk-aggregation.service";
 export * from "./risk-engine.service";
 export * from "./risk-intelligence.service";
 export * from "./risk-history.service";
+export * from "./executive-briefing.service";
