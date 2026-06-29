@@ -7,133 +7,175 @@ function formatCurrency(value) {
   return `$${value.toLocaleString()}`;
 }
 
+/**
+ * Simple navigation item
+ */
+function NavItem({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left px-4 py-2 rounded-xl font-semibold transition ${
+        active
+          ? "bg-blue-600 text-white"
+          : "hover:bg-gray-200 text-gray-700"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Generic panel container
+ */
+function Panel({ title, children }) {
+  return (
+    <div className="bg-white rounded-2xl shadow-md p-6">
+      <h2 className="text-xl font-bold mb-4">{title}</h2>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Metric card
+ */
+function MetricCard({ label, value, tone }) {
+  return (
+    <div className="bg-white rounded-3xl shadow-md p-6">
+      <p className="text-gray-500 font-bold">{label}</p>
+      <h2 className={`text-3xl font-extrabold ${tone}`}>{value}</h2>
+    </div>
+  );
+}
+
+function DashboardView({ summary }) {
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <MetricCard
+          label="Total Assets"
+          value={formatCurrency(summary.totalAssets)}
+          tone="text-green-700"
+        />
+        <MetricCard
+          label="Liabilities"
+          value={formatCurrency(summary.totalLiabilities)}
+          tone="text-red-700"
+        />
+        <MetricCard
+          label="Net Worth"
+          value={formatCurrency(summary.netWorth)}
+          tone="text-blue-900"
+        />
+      </div>
+
+      <Panel title="System Status">
+        <p className="text-gray-600">
+          Financial engine is operational. Ledger, reports, and net worth
+          calculations are active.
+        </p>
+      </Panel>
+    </div>
+  );
+}
+
+function Placeholder({ title }) {
+  return (
+    <Panel title={title}>
+      <p className="text-gray-500">
+        This module is initialized but not yet expanded into a full UI.
+      </p>
+    </Panel>
+  );
+}
+
 export default function ForgePage() {
   const assets = [
     { id: "cash", name: "Cash / Bank", category: "cash", value: 280000 },
-    {
-      id: "rentals",
-      name: "Rental Portfolio",
-      category: "real_estate",
-      value: 0,
-    },
+    { id: "rentals", name: "Rental Portfolio", category: "real_estate", value: 0 },
   ];
 
   const liabilities = [];
 
   const summary = NetWorthService.calculate(assets, liabilities);
 
-  const tools = [
-    {
-      title: "Financial Import",
-      description:
-        "Import Rentec or QuickBooks CSV files through the unified financial import facade.",
-      href: "/import",
-      icon: "📥",
-      status: "Production-ready",
-    },
-    {
-      title: "Business Snapshot",
-      description:
-        "Enter basic business numbers and generate reports from the Forge ledger engine.",
-      href: "/financial-snapshot",
-      icon: "📊",
-      status: "Live tool",
-    },
-    {
-      title: "Financial Reports",
-      description:
-        "Balance sheet, income statement, and trial balance reporting powered by the ledger.",
-      href: "/financial-snapshot",
-      icon: "📚",
-      status: "Engine online",
-    },
+  const [active, setActive] = React.useState("dashboard");
+
+  const nav = [
+    "dashboard",
+    "reports",
+    "ledger",
+    "journal",
+    "events",
+    "replay",
+    "audit",
+    "compliance",
+    "settings",
   ];
 
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       <Header />
 
-      <section className="bg-slate-950 text-white py-16 px-6">
+      {/* HERO */}
+      <section className="bg-slate-950 text-white py-14 px-6">
         <div className="max-w-6xl mx-auto">
-          <p className="text-sm font-bold tracking-[0.3em] text-blue-300 uppercase mb-4">
-            Powered by Forge
+          <p className="text-sm tracking-[0.3em] text-blue-300 uppercase mb-3">
+            Powered by Forge OS
           </p>
 
-          <h1 className="text-5xl font-extrabold mb-4">Financial Forge</h1>
+          <h1 className="text-5xl font-extrabold mb-4">
+            Financial Command Center
+          </h1>
 
           <p className="text-xl text-slate-300 max-w-3xl">
-            Your personal operating system for imports, net worth, cash flow,
-            financial reports, and business decisions.
+            Unified view of ledger, reports, events, replay, audit, and
+            compliance systems.
           </p>
         </div>
       </section>
 
-      <section className="max-w-6xl mx-auto py-12 px-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <MetricCard
-            label="Total Assets"
-            value={formatCurrency(summary.totalAssets)}
-            tone="text-green-700"
-          />
-
-          <MetricCard
-            label="Total Liabilities"
-            value={formatCurrency(summary.totalLiabilities)}
-            tone="text-red-700"
-          />
-
-          <MetricCard
-            label="Net Worth"
-            value={formatCurrency(summary.netWorth)}
-            tone="text-blue-900"
-          />
-        </div>
+      {/* TOP METRICS */}
+      <section className="max-w-6xl mx-auto py-10 px-6">
+        <DashboardView summary={summary} />
       </section>
 
+      {/* MAIN OS LAYOUT */}
       <section className="max-w-6xl mx-auto px-6 pb-16">
-        <div className="mb-8">
-          <h2 className="text-3xl font-extrabold mb-3">
-            Financial OS Command Center
-          </h2>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          {/* NAV */}
+          <div className="space-y-2">
+            <Panel title="Navigation">
+              {nav.map((item) => (
+                <NavItem
+                  key={item}
+                  active={active === item}
+                  onClick={() => setActive(item)}
+                >
+                  {item.toUpperCase()}
+                </NavItem>
+              ))}
+            </Panel>
+          </div>
 
-          <p className="text-gray-600 text-lg">
-            Start with imports, run financial snapshots, and review reports from
-            the same Forge financial engine.
-          </p>
-        </div>
+          {/* WORKSPACE */}
+          <div className="md:col-span-3">
+            {active === "dashboard" && (
+              <DashboardView summary={summary} />
+            )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {tools.map((tool) => (
-            <a
-              key={tool.title}
-              href={tool.href}
-              className="bg-white rounded-3xl shadow-md p-6 hover:shadow-xl transition block"
-            >
-              <div className="text-4xl mb-5">{tool.icon}</div>
-
-              <div className="flex items-center justify-between gap-3 mb-3">
-                <h3 className="text-2xl font-extrabold">{tool.title}</h3>
-                <span className="text-xs font-bold bg-blue-100 text-blue-900 px-3 py-1 rounded-full whitespace-nowrap">
-                  {tool.status}
-                </span>
-              </div>
-
-              <p className="text-gray-600 leading-relaxed">
-                {tool.description}
-              </p>
-            </a>
-          ))}
+            {active === "reports" && <Placeholder title="Reports" />}
+            {active === "ledger" && <Placeholder title="Ledger" />}
+            {active === "journal" && <Placeholder title="Journal" />}
+            {active === "events" && <Placeholder title="Events" />}
+            {active === "replay" && <Placeholder title="Replay" />}
+            {active === "audit" && <Placeholder title="Audit" />}
+            {active === "compliance" && <Placeholder title="Compliance" />}
+            {active === "settings" && <Placeholder title="Settings" />}
+          </div>
         </div>
       </section>
     </main>
-  );
-}
-
-function MetricCard({ label, value, tone }) {
-  return (
-    <div className="bg-white rounded-3xl shadow-md p-6">
-      <p className="text-gray-500 font-bold">{label}</p>
-      <h2 className={`text-4xl font-extrabold ${tone}`}>{value}</h2>
-    </div>
   );
 }
