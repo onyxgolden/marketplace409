@@ -3,10 +3,7 @@
 import React, { useMemo, useState } from "react";
 import Header from "@/components/Header";
 import { NetWorthService } from "@/domains/networth";
-import {
-  RiskAggregationService,
-  RiskScoringService,
-} from "@/domains/risk";
+import { RiskEngine } from "@/domains/risk";
 
 // STEP 15 — READ-ONLY AUDIT LAYER
 import { autonomousAuditAgent } from "@/domains/audit/AutonomousAuditAgent";
@@ -50,14 +47,9 @@ export default function ForgePage() {
   }, [ledgerContext]);
 
   const riskSummary = useMemo(() => {
-    const scoring = new RiskScoringService();
-    const aggregation = new RiskAggregationService();
+    const riskEngine = new RiskEngine();
 
-    const scoredFindings = (auditFindings?.anomalies ?? []).map((finding) =>
-      scoring.scoreAuditFinding(finding)
-    );
-
-    return aggregation.summarize(scoredFindings);
+    return riskEngine.analyze(auditFindings?.anomalies ?? []);
   }, [auditFindings]);
 
   const netWorth = useMemo(() => {
