@@ -181,7 +181,7 @@ export default function ForgePage() {
 
             <div className="space-y-4">
               {auditFindings?.anomalies?.map((a, idx) => {
-                const scoredRisk = riskSummary.topRisks.find(
+                const scoredRisk = riskAssessment.primaryDrivers.find(
                   (risk) =>
                     risk.accountId === a.accountId &&
                     risk.sourceFindingType === a.type
