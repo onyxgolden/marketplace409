@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from "react";
 import Header from "@/components/Header";
 import { NetWorthService } from "@/domains/networth";
-import { RiskEngine } from "@/domains/risk";
+import { RiskEngine, RiskIntelligenceService } from "@/domains/risk";
 
 // STEP 15 — READ-ONLY AUDIT LAYER
 import { autonomousAuditAgent } from "@/domains/audit/AutonomousAuditAgent";
@@ -51,6 +51,12 @@ export default function ForgePage() {
 
     return riskEngine.analyze(auditFindings?.anomalies ?? []);
   }, [auditFindings]);
+
+  const riskAssessment = useMemo(() => {
+    const riskIntelligence = new RiskIntelligenceService();
+
+    return riskIntelligence.assess(riskSummary);
+  }, [riskSummary]);
 
   const netWorth = useMemo(() => {
     const assets = [
@@ -129,6 +135,36 @@ export default function ForgePage() {
                 {riskSummary.severityCounts.high} | Critical:{" "}
                 {riskSummary.severityCounts.critical}
               </div>
+
+              <div className="mt-3 text-sm text-gray-700">
+                {riskAssessment.summary}
+              </div>
+
+              {!!riskAssessment.recommendations.length && (
+                <div className="mt-3">
+                  <div className="text-sm font-semibold">
+                    Recommended Actions
+                  </div>
+                  <ul className="list-disc pl-5 text-sm text-gray-700">
+                    {riskAssessment.recommendations.map((recommendation) => (
+                      <li key={recommendation}>{recommendation}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {!!riskAssessment.trendIndicators.length && (
+                <div className="mt-3">
+                  <div className="text-sm font-semibold">
+                    Trend Indicators
+                  </div>
+                  <ul className="list-disc pl-5 text-sm text-gray-700">
+                    {riskAssessment.trendIndicators.map((indicator) => (
+                      <li key={indicator}>{indicator}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
 
             {auditFindings?.error && (
