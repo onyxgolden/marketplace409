@@ -1,181 +1,166 @@
+"use client";
+
+import React, { useMemo, useState } from "react";
 import Header from "@/components/Header";
 import { NetWorthService } from "@/domains/networth";
+
+// STEP 15 — READ-ONLY AUDIT LAYER
+import { autonomousAuditAgent } from "@/domains/audit/AutonomousAuditAgent";
+import { TraceIntelligenceService } from "@/domains/ledger/trace/TraceIntelligenceService";
+import { TraceResolver } from "@/domains/ledger/trace/TraceResolver";
 
 export const dynamic = "force-dynamic";
 
 function formatCurrency(value) {
-  return `$${value.toLocaleString()}`;
-}
-
-/**
- * Simple navigation item
- */
-function NavItem({ active, onClick, children }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left px-4 py-2 rounded-xl font-semibold transition ${
-        active
-          ? "bg-blue-600 text-white"
-          : "hover:bg-gray-200 text-gray-700"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-/**
- * Generic panel container
- */
-function Panel({ title, children }) {
-  return (
-    <div className="bg-white rounded-2xl shadow-md p-6">
-      <h2 className="text-xl font-bold mb-4">{title}</h2>
-      {children}
-    </div>
-  );
-}
-
-/**
- * Metric card
- */
-function MetricCard({ label, value, tone }) {
-  return (
-    <div className="bg-white rounded-3xl shadow-md p-6">
-      <p className="text-gray-500 font-bold">{label}</p>
-      <h2 className={`text-3xl font-extrabold ${tone}`}>{value}</h2>
-    </div>
-  );
-}
-
-function DashboardView({ summary }) {
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <MetricCard
-          label="Total Assets"
-          value={formatCurrency(summary.totalAssets)}
-          tone="text-green-700"
-        />
-        <MetricCard
-          label="Liabilities"
-          value={formatCurrency(summary.totalLiabilities)}
-          tone="text-red-700"
-        />
-        <MetricCard
-          label="Net Worth"
-          value={formatCurrency(summary.netWorth)}
-          tone="text-blue-900"
-        />
-      </div>
-
-      <Panel title="System Status">
-        <p className="text-gray-600">
-          Financial engine is operational. Ledger, reports, and net worth
-          calculations are active.
-        </p>
-      </Panel>
-    </div>
-  );
-}
-
-function Placeholder({ title }) {
-  return (
-    <Panel title={title}>
-      <p className="text-gray-500">
-        This module is initialized but not yet expanded into a full UI.
-      </p>
-    </Panel>
-  );
+  if (value == null) return "$0";
+  return `$${Number(value).toLocaleString()}`;
 }
 
 export default function ForgePage() {
-  const assets = [
-    { id: "cash", name: "Cash / Bank", category: "cash", value: 280000 },
-    { id: "rentals", name: "Rental Portfolio", category: "real_estate", value: 0 },
-  ];
+  const [view, setView] = useState("networth");
 
-  const liabilities = [];
+  /**
+   * STEP 15 — Mock Ledger Context (READ-ONLY INPUT)
+   * Replace later with real ledger injection if available in domain context.
+   */
+  const ledgerContext = useMemo(() => {
+    return {
+      accounts: [
+        { id: "1000", name: "Cash", balance: 280000 },
+        { id: "1100", name: "Accounts Receivable", balance: 120000 },
+        { id: "2000", name: "Debt", balance: -40000 },
+      ],
+      postings: [],
+    };
+  }, []);
 
-  const summary = NetWorthService.calculate(assets, liabilities);
+  /**
+   * STEP 15 — Autonomous Audit Execution (READ ONLY)
+   */
+  const auditFindings = useMemo(() => {
+    try {
+      return autonomousAuditAgent.run({
+        ledger: ledgerContext,
+        traceResolver: TraceResolver,
+        traceIntelligence: TraceIntelligenceService,
+      });
+    } catch (e) {
+      return {
+        anomalies: [],
+        error: e.message,
+      };
+    }
+  }, [ledgerContext]);
 
-  const [active, setActive] = React.useState("dashboard");
+  /**
+   * NET WORTH (existing system)
+   */
+  const netWorth = useMemo(() => {
+    const assets = [
+      { id: "cash", name: "Cash", category: "bank", value: 280000 },
+    ];
 
-  const nav = [
-    "dashboard",
-    "reports",
-    "ledger",
-    "journal",
-    "events",
-    "replay",
-    "audit",
-    "compliance",
-    "settings",
-  ];
+    const liabilities = [
+      { id: "debt", name: "Debt", category: "loan", balance: 0 },
+    ];
+
+    return NetWorthService.calculate(assets, liabilities);
+  }, []);
 
   return (
-    <main className="min-h-screen bg-gray-100 text-gray-900">
+    <div className="min-h-screen bg-gray-50">
       <Header />
 
-      {/* HERO */}
-      <section className="bg-slate-950 text-white py-14 px-6">
-        <div className="max-w-6xl mx-auto">
-          <p className="text-sm tracking-[0.3em] text-blue-300 uppercase mb-3">
-            Powered by Forge OS
-          </p>
+      <div className="max-w-6xl mx-auto p-6">
+        {/* NAV TABS */}
+        <div className="flex gap-4 mb-6">
+          <button
+            onClick={() => setView("networth")}
+            className={`px-4 py-2 rounded ${
+              view === "networth" ? "bg-black text-white" : "bg-white"
+            }`}
+          >
+            Net Worth
+          </button>
 
-          <h1 className="text-5xl font-extrabold mb-4">
-            Financial Command Center
-          </h1>
-
-          <p className="text-xl text-slate-300 max-w-3xl">
-            Unified view of ledger, reports, events, replay, audit, and
-            compliance systems.
-          </p>
+          <button
+            onClick={() => setView("audit")}
+            className={`px-4 py-2 rounded ${
+              view === "audit" ? "bg-black text-white" : "bg-white"
+            }`}
+          >
+            Live Audit
+          </button>
         </div>
-      </section>
 
-      {/* TOP METRICS */}
-      <section className="max-w-6xl mx-auto py-10 px-6">
-        <DashboardView summary={summary} />
-      </section>
+        {/* NET WORTH VIEW */}
+        {view === "networth" && (
+          <div className="bg-white p-6 rounded shadow">
+            <h2 className="text-xl font-bold mb-4">Net Worth Snapshot</h2>
 
-      {/* MAIN OS LAYOUT */}
-      <section className="max-w-6xl mx-auto px-6 pb-16">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          {/* NAV */}
-          <div className="space-y-2">
-            <Panel title="Navigation">
-              {nav.map((item) => (
-                <NavItem
-                  key={item}
-                  active={active === item}
-                  onClick={() => setActive(item)}
-                >
-                  {item.toUpperCase()}
-                </NavItem>
-              ))}
-            </Panel>
+            <div className="space-y-2">
+              <div>Total Assets: {formatCurrency(netWorth.totalAssets)}</div>
+              <div>
+                Total Liabilities: {formatCurrency(netWorth.totalLiabilities)}
+              </div>
+              <div className="font-bold">
+                Net Worth: {formatCurrency(netWorth.netWorth)}
+              </div>
+              <div>
+                Debt Ratio: {netWorth.debtToAssetRatio?.toFixed(2) ?? "0.00"}
+              </div>
+            </div>
           </div>
+        )}
 
-          {/* WORKSPACE */}
-          <div className="md:col-span-3">
-            {active === "dashboard" && (
-              <DashboardView summary={summary} />
+        {/* AUDIT DASHBOARD VIEW — STEP 15 */}
+        {view === "audit" && (
+          <div className="bg-white p-6 rounded shadow">
+            <h2 className="text-xl font-bold mb-4">
+              Live Audit Dashboard (Autonomous Audit Agent)
+            </h2>
+
+            {auditFindings?.error && (
+              <div className="text-red-600 mb-4">
+                Error: {auditFindings.error}
+              </div>
             )}
 
-            {active === "reports" && <Placeholder title="Reports" />}
-            {active === "ledger" && <Placeholder title="Ledger" />}
-            {active === "journal" && <Placeholder title="Journal" />}
-            {active === "events" && <Placeholder title="Events" />}
-            {active === "replay" && <Placeholder title="Replay" />}
-            {active === "audit" && <Placeholder title="Audit" />}
-            {active === "compliance" && <Placeholder title="Compliance" />}
-            {active === "settings" && <Placeholder title="Settings" />}
+            {!auditFindings?.anomalies?.length && (
+              <div className="text-gray-500">
+                No anomalies detected in current ledger snapshot.
+              </div>
+            )}
+
+            <div className="space-y-4">
+              {auditFindings?.anomalies?.map((a, idx) => (
+                <div
+                  key={idx}
+                  className="border rounded p-4 bg-gray-50"
+                >
+                  <div className="font-semibold">
+                    Account: {a.accountId ?? "unknown"}
+                  </div>
+
+                  <div className="mt-1 text-sm text-gray-700">
+                    Anomaly: {a.type}
+                  </div>
+
+                  <div className="mt-1 text-sm">
+                    Explanation: {a.explanation}
+                  </div>
+
+                  {a.traceSummary && (
+                    <div className="mt-2 text-xs text-gray-500">
+                      Trace: {a.traceSummary}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      </section>
-    </main>
+        )}
+      </div>
+    </div>
   );
 }
