@@ -66,28 +66,34 @@ Topics include:
 This document ensures every engineering session follows a consistent process.
 
 ---
-## 4. FORGE_FILE_STANDARDS.md
 
-Defines approved file types, runtime import rules, backup-file restrictions, and Vite-safe repository standards.
+## 4. FORGE_STATUS.md
 
-This document prevents unsupported files from entering the runtime module graph.
+Defines the current verified project state.
+
+Use this document to understand:
+
+* Current branch assumptions
+* Current stable capabilities
+* Current warnings
+* Current project status
+
+This document should be read before planning new work.
 
 ---
-## 5. ARCHITECTURE_DECISIONS.md
 
-Records major architectural decisions (ADRs).
+## 5. FORGE_FEATURE_MANIFEST.md
 
-Each decision documents:
+Defines the verified implementation inventory.
 
-* Context
-* Decision
-* Rationale
-* Consequences
-* Retirement criteria (when applicable)
+Use this document to distinguish:
 
-The Constitution defines the rules.
+* Features confirmed to exist in the repository
+* Features planned but not started
+* Features implemented in files but not currently mounted in UI
+* Known gaps between prior session plans and actual code
 
-The ADRs explain why those rules were applied.
+This document prevents assumptions from replacing repository evidence.
 
 ---
 
@@ -121,7 +127,33 @@ Unlike the architectural roadmap, this document is expected to evolve continuous
 
 ---
 
-## 8. Ledger Blueprint
+## 8. FORGE_FILE_STANDARDS.md
+
+Defines approved file types, runtime import rules, backup-file restrictions, and Vite-safe repository standards.
+
+This document prevents unsupported files from entering the runtime module graph.
+
+---
+
+## 9. ARCHITECTURE_DECISIONS.md
+
+Records major architectural decisions (ADRs).
+
+Each decision documents:
+
+* Context
+* Decision
+* Rationale
+* Consequences
+* Retirement criteria (when applicable)
+
+The Constitution defines the rules.
+
+The ADRs explain why those rules were applied.
+
+---
+
+## 10. Ledger Blueprint
 
 **ledger-domain-blueprint.md**
 
@@ -129,7 +161,7 @@ Documents the long-term accounting domain model and ledger architecture.
 
 ---
 
-## 9. Future Architecture Documents
+## 11. Future Architecture Documents
 
 As Financial Forge grows, additional architecture documents may describe individual subsystems, including:
 
@@ -142,6 +174,25 @@ As Financial Forge grows, additional architecture documents may describe individ
 * Agent Architecture
 
 Each document should focus on a single architectural area.
+
+---
+
+# Session Boot Rule
+
+Every new Forge development session should begin by reading:
+
+1. `FORGE_CONSTITUTION.md`
+2. `FORGE_WORKFLOW.md`
+3. `FORGE_SESSION.md`
+4. `FORGE_STATUS.md`
+5. `FORGE_FEATURE_MANIFEST.md`
+6. `FORGE_ROADMAP.md`
+
+The roadmap describes where the system is going.
+
+The feature manifest verifies what is actually present.
+
+Do not begin implementation from roadmap assumptions alone.
 
 ---
 
@@ -168,7 +219,8 @@ Financial Forge is organized into complementary layers.
 3. Architecture documents explain design.
 4. Architectural Decision Records preserve engineering reasoning.
 5. Roadmaps describe long-term evolution.
-6. The Forge Constitution governs engineering discipline.
+6. Feature manifests verify implemented capabilities.
+7. The Forge Constitution governs engineering discipline.
 
 Each layer serves a distinct purpose while reinforcing the others.
 
