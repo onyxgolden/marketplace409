@@ -6,3 +6,6 @@ export * from "./risk-intelligence.service";
 export * from "./risk-history.service";
 export * from "./executive-briefing.service";
 export * from "./risk-dashboard.service";
+export * from "./risk-snapshot.repository";
+export * from "./in-memory-risk-snapshot.repository";
+export * from "./risk-monitoring.service";
