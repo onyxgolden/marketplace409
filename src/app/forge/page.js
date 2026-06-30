@@ -70,6 +70,26 @@ export default function ForgePage() {
     return NetWorthService.calculate(assets, liabilities);
   }, []);
 
+  const systemStatusItems = useMemo(() => {
+    return [
+      {
+        label: "Risk Engine",
+        detail: riskSummary.summary,
+        value: riskSummary.status,
+      },
+      {
+        label: "Audit Layer",
+        detail: "Read-only anomaly scan completed.",
+        value: `${auditFindings?.anomalies?.length ?? 0} findings`,
+      },
+      {
+        label: "Net Worth",
+        detail: "Snapshot calculation completed.",
+        value: formatCurrency(netWorth.netWorth),
+      },
+    ];
+  }, [auditFindings, netWorth, riskSummary]);
+
   const recentActivities = useMemo(() => {
     return [
       {
@@ -105,6 +125,7 @@ export default function ForgePage() {
       riskAssessment={riskAssessment}
       executiveBriefing={executiveBriefing}
       auditFindings={auditFindings}
+      systemStatusItems={systemStatusItems}
       recentActivities={recentActivities}
       formatCurrency={formatCurrency}
     />

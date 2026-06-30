@@ -7,6 +7,7 @@ import ForgeQuickActions from "@/components/forge/ForgeQuickActions";
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeRiskCenter from "@/components/forge/ForgeRiskCenter";
 import ForgeSidebar from "@/components/forge/ForgeSidebar";
+import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import ForgeTopBar from "@/components/forge/ForgeTopBar";
 
 export default function ForgeDashboardShell({
@@ -17,6 +18,7 @@ export default function ForgeDashboardShell({
   riskAssessment,
   executiveBriefing,
   auditFindings,
+  systemStatusItems,
   recentActivities,
   formatCurrency,
 }) {
@@ -51,6 +53,8 @@ export default function ForgeDashboardShell({
                   riskSummary={riskSummary}
                   riskAssessment={riskAssessment}
                 />
+
+                <ForgeSystemStatus statusItems={systemStatusItems} />
 
                 <ForgeRecentActivity activities={recentActivities} />
 
