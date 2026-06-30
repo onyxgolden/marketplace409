@@ -38,3 +38,13 @@ export {
   IMPORT_HISTORY_STATUSES,
   IMPORT_HISTORY_TYPES,
 } from "./import-history.types";
+
+export type {
+  ConnectionCapabilities,
+  ConnectionCapabilityKey,
+} from "./connection-capabilities.types";
+
+export {
+  CONNECTION_CAPABILITY_KEYS,
+  hasConnectionCapability,
+} from "./connection-capabilities.types";
