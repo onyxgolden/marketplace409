@@ -3,6 +3,7 @@ import ForgeExecutiveBriefing from "@/components/forge/ForgeExecutiveBriefing";
 import ForgeExecutiveHero from "@/components/forge/ForgeExecutiveHero";
 import ForgeKpiCards from "@/components/forge/ForgeKpiCards";
 import ForgeNetWorthPanel from "@/components/forge/ForgeNetWorthPanel";
+import ForgeQuickActions from "@/components/forge/ForgeQuickActions";
 import ForgeSidebar from "@/components/forge/ForgeSidebar";
 import ForgeTopBar from "@/components/forge/ForgeTopBar";
 
@@ -32,6 +33,8 @@ export default function ForgeDashboardShell({
             auditFindings={auditFindings}
             formatCurrency={formatCurrency}
           />
+
+          {view === "dashboard" && <ForgeQuickActions />}
 
           {(view === "dashboard" || view === "audit") && (
             <ForgeExecutiveBriefing
