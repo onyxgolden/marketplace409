@@ -27,3 +27,14 @@ export type {
 export {
   CREDENTIAL_REFERENCE_STATUSES,
 } from "./credential-reference.types";
+
+export type {
+  ImportHistory,
+  ImportHistoryStatus,
+  ImportHistoryType,
+} from "./import-history.types";
+
+export {
+  IMPORT_HISTORY_STATUSES,
+  IMPORT_HISTORY_TYPES,
+} from "./import-history.types";
