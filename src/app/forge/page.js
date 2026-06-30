@@ -70,6 +70,32 @@ export default function ForgePage() {
     return NetWorthService.calculate(assets, liabilities);
   }, []);
 
+  const recentActivities = useMemo(() => {
+    return [
+      {
+        id: "risk-dashboard",
+        label: "Risk dashboard refreshed",
+        detail: riskSummary.summary,
+        type: "risk",
+        timestamp: "Current session",
+      },
+      {
+        id: "audit-findings",
+        label: "Audit scan completed",
+        detail: `${auditFindings?.anomalies?.length ?? 0} anomalies detected.`,
+        type: "audit",
+        timestamp: "Current session",
+      },
+      {
+        id: "net-worth",
+        label: "Net worth snapshot calculated",
+        detail: `Current net worth is ${formatCurrency(netWorth.netWorth)}.`,
+        type: "wealth",
+        timestamp: "Current session",
+      },
+    ];
+  }, [auditFindings, netWorth, riskSummary]);
+
   return (
     <ForgeDashboardShell
       view={view}
@@ -79,6 +105,7 @@ export default function ForgePage() {
       riskAssessment={riskAssessment}
       executiveBriefing={executiveBriefing}
       auditFindings={auditFindings}
+      recentActivities={recentActivities}
       formatCurrency={formatCurrency}
     />
   );

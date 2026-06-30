@@ -4,6 +4,7 @@ import ForgeExecutiveHero from "@/components/forge/ForgeExecutiveHero";
 import ForgeKpiCards from "@/components/forge/ForgeKpiCards";
 import ForgeNetWorthPanel from "@/components/forge/ForgeNetWorthPanel";
 import ForgeQuickActions from "@/components/forge/ForgeQuickActions";
+import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeRiskCenter from "@/components/forge/ForgeRiskCenter";
 import ForgeSidebar from "@/components/forge/ForgeSidebar";
 import ForgeTopBar from "@/components/forge/ForgeTopBar";
@@ -16,6 +17,7 @@ export default function ForgeDashboardShell({
   riskAssessment,
   executiveBriefing,
   auditFindings,
+  recentActivities,
   formatCurrency,
 }) {
   return (
@@ -49,6 +51,8 @@ export default function ForgeDashboardShell({
                   riskSummary={riskSummary}
                   riskAssessment={riskAssessment}
                 />
+
+                <ForgeRecentActivity activities={recentActivities} />
 
                 <ForgeQuickActions />
               </div>
