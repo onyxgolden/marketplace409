@@ -1,6 +1,7 @@
 import ForgeAlerts from "@/components/forge/ForgeAlerts";
 import ForgeAuditPanel from "@/components/forge/ForgeAuditPanel";
 import ForgeExecutiveBriefing from "@/components/forge/ForgeExecutiveBriefing";
+import ForgeExecutiveCopilot from "@/components/forge/ForgeExecutiveCopilot";
 import ForgeExecutiveHero from "@/components/forge/ForgeExecutiveHero";
 import ForgeInsights from "@/components/forge/ForgeInsights";
 import ForgeKpiCards from "@/components/forge/ForgeKpiCards";
@@ -9,10 +10,13 @@ import ForgePortfolioSummary from "@/components/forge/ForgePortfolioSummary";
 import ForgeQuickActions from "@/components/forge/ForgeQuickActions";
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeRiskCenter from "@/components/forge/ForgeRiskCenter";
+import ForgeRiskHeatMap from "@/components/forge/ForgeRiskHeatMap";
+import ForgeRiskTimeline from "@/components/forge/ForgeRiskTimeline";
 import ForgeSidebar from "@/components/forge/ForgeSidebar";
 import ForgeSystemHealth from "@/components/forge/ForgeSystemHealth";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import ForgeTopBar from "@/components/forge/ForgeTopBar";
+import ForgeTrendChart from "@/components/forge/ForgeTrendChart";
 
 export default function ForgeDashboardShell({
   view,
@@ -58,11 +62,25 @@ export default function ForgeDashboardShell({
                 <ForgePortfolioSummary summaryItems={portfolioSummaryItems} />
 
                 <ForgeInsights insights={insightItems} />
+
+                <ForgeTrendChart
+                  riskSummary={riskSummary}
+                  riskAssessment={riskAssessment}
+                />
+
+                <ForgeRiskTimeline activities={recentActivities} />
               </div>
 
               <div className="space-y-6">
                 <ForgeRiskCenter
                   riskSummary={riskSummary}
+                  riskAssessment={riskAssessment}
+                />
+
+                <ForgeRiskHeatMap riskAssessment={riskAssessment} />
+
+                <ForgeExecutiveCopilot
+                  executiveBriefing={executiveBriefing}
                   riskAssessment={riskAssessment}
                 />
 
