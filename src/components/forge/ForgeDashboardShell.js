@@ -43,6 +43,22 @@ export default function ForgeDashboardShell({
         <main className={forgeTheme.main}>
           <ForgeTopBar view={view} setView={setView} />
 
+          <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="text-2xl">🚧</div>
+              <div>
+                <div className="font-black text-amber-900">
+                  FORGE Executive Workspace 2.0
+                </div>
+                <div className="mt-1 text-sm text-amber-800">
+                  This workspace is under active development. Visual design,
+                  executive intelligence, AI Copilot, charts, and reporting are
+                  being enhanced while core financial services remain stable.
+                </div>
+              </div>
+            </div>
+          </div>
+
           {view === "dashboard" && (
             <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
               <div className="space-y-6">

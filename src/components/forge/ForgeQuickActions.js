@@ -15,7 +15,7 @@ const quickActions = [
 
 export default function ForgeQuickActions() {
   return (
-    <section className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
+    <section className="rounded-3xl border border-slate-200 bg-white p-6">
       <div className="text-sm uppercase tracking-wide text-slate-500">
         Quick Actions
       </div>
@@ -25,10 +25,10 @@ export default function ForgeQuickActions() {
           <button
             key={action.label}
             type="button"
-            className="rounded-2xl border border-slate-800 bg-slate-950 p-4 text-left transition hover:border-slate-600"
+            className="rounded-2xl border border-slate-200 bg-slate-100 p-4 text-left transition hover:border-slate-400"
           >
-            <div className="font-black text-white">{action.label}</div>
-            <div className="mt-2 text-sm text-slate-400">{action.detail}</div>
+            <div className="font-black text-slate-950">{action.label}</div>
+            <div className="mt-2 text-sm text-slate-600">{action.detail}</div>
           </button>
         ))}
       </div>

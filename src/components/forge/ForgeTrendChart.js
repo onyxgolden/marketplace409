@@ -2,20 +2,20 @@ export default function ForgeTrendChart({ riskSummary, riskAssessment }) {
   const indicators = riskAssessment?.trendIndicators ?? [];
 
   return (
-    <section className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
+    <section className="rounded-3xl border border-slate-200 bg-white p-6">
       <div className="text-sm uppercase tracking-wide text-slate-500">
         Trend Chart
       </div>
 
-      <div className="mt-4 rounded-2xl bg-slate-950 p-4">
+      <div className="mt-4 rounded-2xl bg-slate-100 p-4">
         <div className="flex items-end justify-between gap-4">
           <div>
-            <div className="text-sm text-slate-400">Current Risk Score</div>
-            <div className="mt-1 text-3xl font-black text-white">
+            <div className="text-sm text-slate-600">Current Risk Score</div>
+            <div className="mt-1 text-3xl font-black text-slate-950">
               {riskSummary?.score ?? 0}
             </div>
           </div>
-          <div className="text-right text-sm font-bold text-slate-300">
+          <div className="text-right text-sm font-bold text-slate-700">
             {riskSummary?.status ?? "Unknown"}
           </div>
         </div>

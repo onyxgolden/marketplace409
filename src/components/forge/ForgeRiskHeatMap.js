@@ -2,7 +2,7 @@ export default function ForgeRiskHeatMap({ riskAssessment }) {
   const drivers = riskAssessment?.primaryDrivers ?? [];
 
   return (
-    <section className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
+    <section className="rounded-3xl border border-slate-200 bg-white p-6">
       <div className="text-sm uppercase tracking-wide text-slate-500">
         Risk Heat Map
       </div>
@@ -12,11 +12,11 @@ export default function ForgeRiskHeatMap({ riskAssessment }) {
           drivers.map((driver) => (
             <div
               key={`${driver.accountId}-${driver.sourceFindingType}`}
-              className="rounded-2xl border border-slate-800 bg-slate-950 p-4"
+              className="rounded-2xl border border-slate-200 bg-slate-100 p-4"
             >
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <div className="font-bold text-slate-100">
+                  <div className="font-bold text-slate-950">
                     {driver.accountId ?? "Unknown Account"}
                   </div>
                   <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">
@@ -28,7 +28,7 @@ export default function ForgeRiskHeatMap({ riskAssessment }) {
                   <div className="text-xs uppercase tracking-wide text-slate-500">
                     {driver.severity}
                   </div>
-                  <div className="mt-1 text-xl font-black text-white">
+                  <div className="mt-1 text-xl font-black text-slate-950">
                     {driver.score}
                   </div>
                 </div>
@@ -43,7 +43,7 @@ export default function ForgeRiskHeatMap({ riskAssessment }) {
             </div>
           ))
         ) : (
-          <div className="rounded-2xl bg-slate-950 p-4 text-sm text-slate-500">
+          <div className="rounded-2xl bg-slate-100 p-4 text-sm text-slate-500">
             No active risk heat detected.
           </div>
         )}

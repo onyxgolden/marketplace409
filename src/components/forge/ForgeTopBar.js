@@ -26,7 +26,7 @@ export default function ForgeTopBar({ view, setView }) {
             className={`rounded-full px-4 py-2 text-sm font-semibold ${
               view === item.id
                 ? forgeTheme.accentBg
-                : "bg-slate-900 text-slate-300"
+                : "bg-white text-slate-700"
             }`}
           >
             {item.label}
