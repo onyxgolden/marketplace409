@@ -1,5 +1,6 @@
 import ForgeAuditPanel from "@/components/forge/ForgeAuditPanel";
 import ForgeSidebar from "@/components/forge/ForgeSidebar";
+import ForgeTopBar from "@/components/forge/ForgeTopBar";
 
 export default function ForgeDashboardShell({
   view,
@@ -17,30 +18,7 @@ export default function ForgeDashboardShell({
         <ForgeSidebar view={view} setView={setView} />
 
         <main className="w-full p-4 lg:p-8">
-          <div className="mb-6 flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-900/70 p-4 lg:hidden">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-[0.3em] text-red-400">
-                FORGE
-              </div>
-              <div className="text-xl font-black">Command Center</div>
-            </div>
-          </div>
-
-          <div className="mb-6 flex gap-2 overflow-x-auto lg:hidden">
-            {["dashboard", "networth", "audit"].map((item) => (
-              <button
-                key={item}
-                onClick={() => setView(item)}
-                className={`rounded-full px-4 py-2 text-sm font-semibold capitalize ${
-                  view === item
-                    ? "bg-red-600 text-white"
-                    : "bg-slate-900 text-slate-300"
-                }`}
-              >
-                {item === "networth" ? "Net Worth" : item}
-              </button>
-            ))}
-          </div>
+          <ForgeTopBar view={view} setView={setView} />
 
           <section className="mb-8 rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 p-6 shadow-2xl">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
