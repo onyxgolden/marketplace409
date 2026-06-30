@@ -1,5 +1,7 @@
 import ForgeAuditPanel from "@/components/forge/ForgeAuditPanel";
+import ForgeDashboardCard from "@/components/forge/ForgeDashboardCard";
 import ForgeExecutiveHero from "@/components/forge/ForgeExecutiveHero";
+import ForgeKpiCards from "@/components/forge/ForgeKpiCards";
 import ForgeSidebar from "@/components/forge/ForgeSidebar";
 import ForgeTopBar from "@/components/forge/ForgeTopBar";
 
@@ -23,32 +25,12 @@ export default function ForgeDashboardShell({
 
           <ForgeExecutiveHero riskSummary={riskSummary} />
 
-          <section className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <DashboardCard
-              label="Net Worth"
-              value={formatCurrency(netWorth.netWorth)}
-              detail={`Assets ${formatCurrency(netWorth.totalAssets)}`}
-            />
-            <DashboardCard
-              label="Debt Ratio"
-              value={netWorth.debtToAssetRatio?.toFixed(2) ?? "0.00"}
-              detail={`Liabilities ${formatCurrency(netWorth.totalLiabilities)}`}
-            />
-            <DashboardCard
-              label="Risk Score"
-              value={riskSummary.score}
-              detail={`${riskSummary.severityCounts.high} high · ${riskSummary.severityCounts.critical} critical`}
-            />
-            <DashboardCard
-              label="Audit Status"
-              value={auditFindings?.anomalies?.length ? "Review" : "Clear"}
-              detail={
-                auditFindings?.anomalies?.length
-                  ? `${auditFindings.anomalies.length} anomalies`
-                  : "No anomalies detected"
-              }
-            />
-          </section>
+          <ForgeKpiCards
+            netWorth={netWorth}
+            riskSummary={riskSummary}
+            auditFindings={auditFindings}
+            formatCurrency={formatCurrency}
+          />
 
           {(view === "dashboard" || view === "audit") && (
             <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -85,10 +67,10 @@ export default function ForgeDashboardShell({
             <section className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
               <h2 className="text-2xl font-black">Net Worth Snapshot</h2>
               <div className="mt-6 grid gap-4 md:grid-cols-2">
-                <DashboardCard label="Total Assets" value={formatCurrency(netWorth.totalAssets)} />
-                <DashboardCard label="Total Liabilities" value={formatCurrency(netWorth.totalLiabilities)} />
-                <DashboardCard label="Net Worth" value={formatCurrency(netWorth.netWorth)} />
-                <DashboardCard label="Debt Ratio" value={netWorth.debtToAssetRatio?.toFixed(2) ?? "0.00"} />
+                <ForgeDashboardCard label="Total Assets" value={formatCurrency(netWorth.totalAssets)} />
+                <ForgeDashboardCard label="Total Liabilities" value={formatCurrency(netWorth.totalLiabilities)} />
+                <ForgeDashboardCard label="Net Worth" value={formatCurrency(netWorth.netWorth)} />
+                <ForgeDashboardCard label="Debt Ratio" value={netWorth.debtToAssetRatio?.toFixed(2) ?? "0.00"} />
               </div>
             </section>
           )}
@@ -101,18 +83,6 @@ export default function ForgeDashboardShell({
           )}
         </main>
       </div>
-    </div>
-  );
-}
-
-function DashboardCard({ label, value, detail }) {
-  return (
-    <div className="rounded-3xl border border-slate-800 bg-slate-900 p-5 shadow-xl">
-      <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-        {label}
-      </div>
-      <div className="mt-3 text-3xl font-black text-white">{value}</div>
-      {detail && <div className="mt-2 text-sm text-slate-400">{detail}</div>}
     </div>
   );
 }
