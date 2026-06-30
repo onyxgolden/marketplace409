@@ -15,3 +15,5 @@ export * from "./risk-watchlist.service";
 export * from "./risk-action-plan.service";
 export * from "./risk-executive-narrative.service";
 export * from "./risk-executive-scorecard.service";
+
+export * from "./risk-executive-report.service";
