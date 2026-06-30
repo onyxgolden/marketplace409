@@ -25,36 +25,69 @@ export default function ForgeDashboardShell({
         <main className="w-full space-y-6 p-4 lg:p-8">
           <ForgeTopBar view={view} setView={setView} />
 
-          <ForgeExecutiveHero riskSummary={riskSummary} />
+          {view === "dashboard" && (
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
+              <div className="space-y-6">
+                <ForgeExecutiveHero riskSummary={riskSummary} />
 
-          <ForgeKpiCards
-            netWorth={netWorth}
-            riskSummary={riskSummary}
-            auditFindings={auditFindings}
-            formatCurrency={formatCurrency}
-          />
+                <ForgeKpiCards
+                  netWorth={netWorth}
+                  riskSummary={riskSummary}
+                  auditFindings={auditFindings}
+                  formatCurrency={formatCurrency}
+                />
 
-          {view === "dashboard" && <ForgeQuickActions />}
+                <ForgeExecutiveBriefing
+                  executiveBriefing={executiveBriefing}
+                  riskAssessment={riskAssessment}
+                />
+              </div>
 
-          {(view === "dashboard" || view === "audit") && (
-            <ForgeExecutiveBriefing
-              executiveBriefing={executiveBriefing}
-              riskAssessment={riskAssessment}
-            />
-          )}
-
-          {view === "networth" && (
-            <ForgeNetWorthPanel
-              netWorth={netWorth}
-              formatCurrency={formatCurrency}
-            />
+              <div className="space-y-6">
+                <ForgeQuickActions />
+              </div>
+            </div>
           )}
 
           {view === "audit" && (
-            <ForgeAuditPanel
-              auditFindings={auditFindings}
-              riskAssessment={riskAssessment}
-            />
+            <>
+              <ForgeExecutiveHero riskSummary={riskSummary} />
+
+              <ForgeKpiCards
+                netWorth={netWorth}
+                riskSummary={riskSummary}
+                auditFindings={auditFindings}
+                formatCurrency={formatCurrency}
+              />
+
+              <ForgeExecutiveBriefing
+                executiveBriefing={executiveBriefing}
+                riskAssessment={riskAssessment}
+              />
+
+              <ForgeAuditPanel
+                auditFindings={auditFindings}
+                riskAssessment={riskAssessment}
+              />
+            </>
+          )}
+
+          {view === "networth" && (
+            <>
+              <ForgeExecutiveHero riskSummary={riskSummary} />
+
+              <ForgeKpiCards
+                netWorth={netWorth}
+                riskSummary={riskSummary}
+                auditFindings={auditFindings}
+                formatCurrency={formatCurrency}
+              />
+
+              <ForgeNetWorthPanel
+                netWorth={netWorth}
+                formatCurrency={formatCurrency}
+              />
+            </>
           )}
         </main>
       </div>
