@@ -17,3 +17,4 @@ export * from "./risk-executive-narrative.service";
 export * from "./risk-executive-scorecard.service";
 
 export * from "./risk-executive-report.service";
+export * from "./risk-executive-report-orchestrator.service";
