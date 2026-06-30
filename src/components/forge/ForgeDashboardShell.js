@@ -22,7 +22,7 @@ export default function ForgeDashboardShell({
       <div className="mx-auto flex max-w-7xl">
         <ForgeSidebar view={view} setView={setView} />
 
-        <main className="w-full p-4 lg:p-8">
+        <main className="w-full space-y-6 p-4 lg:p-8">
           <ForgeTopBar view={view} setView={setView} />
 
           <ForgeExecutiveHero riskSummary={riskSummary} />

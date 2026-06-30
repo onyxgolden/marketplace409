@@ -3,7 +3,7 @@ export default function ForgeAuditPanel({
   riskAssessment,
 }) {
   return (
-    <section className="mt-6 space-y-6">
+    <section className="space-y-6">
       <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
         <div className="text-sm uppercase tracking-wide text-slate-500">
           Live Audit Findings
