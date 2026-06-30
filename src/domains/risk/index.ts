@@ -13,3 +13,4 @@ export * from "./risk-timeline.service";
 export * from "./risk-watchlist.service";
 
 export * from "./risk-action-plan.service";
+export * from "./risk-executive-narrative.service";
