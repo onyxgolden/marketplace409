@@ -1,3 +1,5 @@
+import { forgeTheme } from "@/components/forge/theme";
+
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard" },
   { id: "networth", label: "Net Worth" },
@@ -6,13 +8,13 @@ const NAV_ITEMS = [
 
 export default function ForgeSidebar({ view, setView }) {
   return (
-    <aside className="hidden min-h-screen w-64 border-r border-slate-800 bg-slate-950 p-6 lg:block">
+    <aside className={forgeTheme.sidebar}>
       <div className="mb-10">
-        <div className="text-xs font-bold uppercase tracking-[0.35em] text-red-400">
+        <div className={`text-xs font-bold uppercase tracking-[0.35em] ${forgeTheme.accent}`}>
           FORGE
         </div>
         <div className="mt-2 text-2xl font-black">Command Center</div>
-        <p className="mt-2 text-sm text-slate-400">
+        <p className={`mt-2 ${forgeTheme.textSmall}`}>
           Financial operating system for 409 Marketplace.
         </p>
       </div>
@@ -24,7 +26,7 @@ export default function ForgeSidebar({ view, setView }) {
             onClick={() => setView(item.id)}
             className={`w-full rounded-xl px-4 py-3 text-left text-sm font-semibold ${
               view === item.id
-                ? "bg-red-600 text-white"
+                ? forgeTheme.accentBg
                 : "text-slate-300 hover:bg-slate-900"
             }`}
           >
