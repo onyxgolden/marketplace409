@@ -18,3 +18,12 @@ export {
   CONNECTION_STATUS_DETAILS,
   getConnectionStatusDetails,
 } from "./connection-status.types";
+
+export type {
+  CredentialReference,
+  CredentialReferenceStatus,
+} from "./credential-reference.types";
+
+export {
+  CREDENTIAL_REFERENCE_STATUSES,
+} from "./credential-reference.types";
