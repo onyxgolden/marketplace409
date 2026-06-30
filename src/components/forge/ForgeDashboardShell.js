@@ -1,12 +1,16 @@
+import ForgeAlerts from "@/components/forge/ForgeAlerts";
 import ForgeAuditPanel from "@/components/forge/ForgeAuditPanel";
 import ForgeExecutiveBriefing from "@/components/forge/ForgeExecutiveBriefing";
 import ForgeExecutiveHero from "@/components/forge/ForgeExecutiveHero";
+import ForgeInsights from "@/components/forge/ForgeInsights";
 import ForgeKpiCards from "@/components/forge/ForgeKpiCards";
 import ForgeNetWorthPanel from "@/components/forge/ForgeNetWorthPanel";
+import ForgePortfolioSummary from "@/components/forge/ForgePortfolioSummary";
 import ForgeQuickActions from "@/components/forge/ForgeQuickActions";
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeRiskCenter from "@/components/forge/ForgeRiskCenter";
 import ForgeSidebar from "@/components/forge/ForgeSidebar";
+import ForgeSystemHealth from "@/components/forge/ForgeSystemHealth";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import ForgeTopBar from "@/components/forge/ForgeTopBar";
 
@@ -18,6 +22,10 @@ export default function ForgeDashboardShell({
   riskAssessment,
   executiveBriefing,
   auditFindings,
+  alertItems,
+  insightItems,
+  portfolioSummaryItems,
+  systemHealthItems,
   systemStatusItems,
   recentActivities,
   formatCurrency,
@@ -46,6 +54,10 @@ export default function ForgeDashboardShell({
                   executiveBriefing={executiveBriefing}
                   riskAssessment={riskAssessment}
                 />
+
+                <ForgePortfolioSummary summaryItems={portfolioSummaryItems} />
+
+                <ForgeInsights insights={insightItems} />
               </div>
 
               <div className="space-y-6">
@@ -55,6 +67,10 @@ export default function ForgeDashboardShell({
                 />
 
                 <ForgeSystemStatus statusItems={systemStatusItems} />
+
+                <ForgeSystemHealth healthItems={systemHealthItems} />
+
+                <ForgeAlerts alerts={alertItems} />
 
                 <ForgeRecentActivity activities={recentActivities} />
 

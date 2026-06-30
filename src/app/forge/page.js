@@ -70,6 +70,60 @@ export default function ForgePage() {
     return NetWorthService.calculate(assets, liabilities);
   }, []);
 
+  const alertItems = useMemo(() => {
+    return [
+      {
+        label: riskSummary.status,
+        detail: riskSummary.summary,
+      },
+      {
+        label: "Audit Findings",
+        detail: `${auditFindings?.anomalies?.length ?? 0} active findings in the current read-only scan.`,
+      },
+    ];
+  }, [auditFindings, riskSummary]);
+
+  const insightItems = useMemo(() => {
+    return [
+      {
+        label: "Executive Outlook",
+        detail: executiveBriefing.outlook,
+      },
+      {
+        label: "Recommended Focus",
+        detail: riskAssessment.recommendations[0] ?? "Continue routine monitoring.",
+      },
+    ];
+  }, [executiveBriefing, riskAssessment]);
+
+  const portfolioSummaryItems = useMemo(() => {
+    return [
+      { label: "Assets", value: formatCurrency(netWorth.totalAssets) },
+      { label: "Liabilities", value: formatCurrency(netWorth.totalLiabilities) },
+      { label: "Net Worth", value: formatCurrency(netWorth.netWorth) },
+    ];
+  }, [netWorth]);
+
+  const systemHealthItems = useMemo(() => {
+    return [
+      {
+        label: "Dashboard Shell",
+        status: "online",
+        detail: "Executive dashboard composition is active.",
+      },
+      {
+        label: "Audit Agent",
+        status: auditFindings?.error ? "review" : "online",
+        detail: auditFindings?.error ?? "Read-only audit completed successfully.",
+      },
+      {
+        label: "Risk Services",
+        status: "online",
+        detail: "Risk dashboard service returned current summary and assessment.",
+      },
+    ];
+  }, [auditFindings]);
+
   const systemStatusItems = useMemo(() => {
     return [
       {
@@ -125,6 +179,10 @@ export default function ForgePage() {
       riskAssessment={riskAssessment}
       executiveBriefing={executiveBriefing}
       auditFindings={auditFindings}
+      alertItems={alertItems}
+      insightItems={insightItems}
+      portfolioSummaryItems={portfolioSummaryItems}
+      systemHealthItems={systemHealthItems}
       systemStatusItems={systemStatusItems}
       recentActivities={recentActivities}
       formatCurrency={formatCurrency}
