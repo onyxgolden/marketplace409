@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import Header from "@/components/Header";
+import ForgeDashboardShell from "@/components/forge/ForgeDashboardShell";
 import { NetWorthService } from "@/domains/networth";
 import { RiskDashboardService } from "@/domains/risk";
 
@@ -71,196 +71,15 @@ export default function ForgePage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Header />
-
-      <div className="max-w-6xl mx-auto p-6">
-        <div className="flex gap-4 mb-6">
-          <button
-            onClick={() => setView("networth")}
-            className={`px-4 py-2 rounded ${
-              view === "networth" ? "bg-black text-white" : "bg-white"
-            }`}
-          >
-            Net Worth
-          </button>
-
-          <button
-            onClick={() => setView("audit")}
-            className={`px-4 py-2 rounded ${
-              view === "audit" ? "bg-black text-white" : "bg-white"
-            }`}
-          >
-            Live Audit
-          </button>
-        </div>
-
-        {view === "networth" && (
-          <div className="bg-white p-6 rounded shadow">
-            <h2 className="text-xl font-bold mb-4">Net Worth Snapshot</h2>
-
-            <div className="space-y-2">
-              <div>Total Assets: {formatCurrency(netWorth.totalAssets)}</div>
-              <div>
-                Total Liabilities: {formatCurrency(netWorth.totalLiabilities)}
-              </div>
-              <div className="font-bold">
-                Net Worth: {formatCurrency(netWorth.netWorth)}
-              </div>
-              <div>
-                Debt Ratio: {netWorth.debtToAssetRatio?.toFixed(2) ?? "0.00"}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {view === "audit" && (
-          <div className="bg-white p-6 rounded shadow">
-            <h2 className="text-xl font-bold mb-4">
-              Live Audit Dashboard (Autonomous Audit Agent)
-            </h2>
-
-            <div className="border rounded p-4 bg-gray-50 mb-6">
-              <div className="text-sm text-gray-500">Overall Risk</div>
-              <div className="text-2xl font-bold uppercase">
-                {riskSummary.severity}
-              </div>
-              <div className="mt-1">Score: {riskSummary.score}</div>
-              <div className="mt-1">
-                Findings: {riskSummary.findingCount}
-              </div>
-              <div className="mt-2 text-sm text-gray-700">
-                Low: {riskSummary.severityCounts.low} | Medium:{" "}
-                {riskSummary.severityCounts.medium} | High:{" "}
-                {riskSummary.severityCounts.high} | Critical:{" "}
-                {riskSummary.severityCounts.critical}
-              </div>
-
-              <div className="mt-3 text-sm text-gray-700">
-                {riskAssessment.summary}
-              </div>
-              <div className="mt-4 border rounded p-4 bg-white">
-                <div className="text-sm text-gray-500">Executive Briefing</div>
-                <div className="mt-1 font-semibold">
-                  {executiveBriefing.headline}
-                </div>
-                <div className="mt-2 text-sm text-gray-700">
-                  {executiveBriefing.overview}
-                </div>
-                <div className="mt-2 text-sm text-gray-700">
-                  {executiveBriefing.outlook}
-                </div>
-
-                {!!executiveBriefing.concerns.length && (
-                  <div className="mt-3">
-                    <div className="text-sm font-semibold">Concerns</div>
-                    <ul className="list-disc pl-5 text-sm text-gray-700">
-                      {executiveBriefing.concerns.map((concern) => (
-                        <li key={concern}>{concern}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {!!executiveBriefing.priorities.length && (
-                  <div className="mt-3">
-                    <div className="text-sm font-semibold">Priorities</div>
-                    <ul className="list-disc pl-5 text-sm text-gray-700">
-                      {executiveBriefing.priorities.map((priority) => (
-                        <li key={priority}>{priority}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-
-
-              {!!riskAssessment.recommendations.length && (
-                <div className="mt-3">
-                  <div className="text-sm font-semibold">
-                    Recommended Actions
-                  </div>
-                  <ul className="list-disc pl-5 text-sm text-gray-700">
-                    {riskAssessment.recommendations.map((recommendation) => (
-                      <li key={recommendation}>{recommendation}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {!!riskAssessment.trendIndicators.length && (
-                <div className="mt-3">
-                  <div className="text-sm font-semibold">
-                    Trend Indicators
-                  </div>
-                  <ul className="list-disc pl-5 text-sm text-gray-700">
-                    {riskAssessment.trendIndicators.map((indicator) => (
-                      <li key={indicator}>{indicator}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            {auditFindings?.error && (
-              <div className="text-red-600 mb-4">
-                Error: {auditFindings.error}
-              </div>
-            )}
-
-            {!auditFindings?.anomalies?.length && (
-              <div className="text-gray-500">
-                No anomalies detected in current ledger snapshot.
-              </div>
-            )}
-
-            <div className="space-y-4">
-              {auditFindings?.anomalies?.map((a, idx) => {
-                const scoredRisk = riskAssessment.primaryDrivers.find(
-                  (risk) =>
-                    risk.accountId === a.accountId &&
-                    risk.sourceFindingType === a.type
-                );
-
-                return (
-                  <div key={idx} className="border rounded p-4 bg-gray-50">
-                    <div className="font-semibold">
-                      Account: {a.accountId ?? "unknown"}
-                    </div>
-
-                    <div className="mt-1 text-sm text-gray-700">
-                      Anomaly: {a.type}
-                    </div>
-
-                    {scoredRisk && (
-                      <div className="mt-1 text-sm">
-                        Risk: {scoredRisk.severity.toUpperCase()} /{" "}
-                        {scoredRisk.score}
-                      </div>
-                    )}
-
-                    <div className="mt-1 text-sm">
-                      Explanation: {a.explanation}
-                    </div>
-
-                    {scoredRisk && (
-                      <div className="mt-1 text-sm">
-                        Recommended Action: {scoredRisk.recommendedAction}
-                      </div>
-                    )}
-
-                    {a.traceSummary && (
-                      <div className="mt-2 text-xs text-gray-500">
-                        Trace: {a.traceSummary}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+    <ForgeDashboardShell
+      view={view}
+      setView={setView}
+      netWorth={netWorth}
+      riskSummary={riskSummary}
+      riskAssessment={riskAssessment}
+      executiveBriefing={executiveBriefing}
+      auditFindings={auditFindings}
+      formatCurrency={formatCurrency}
+    />
   );
 }
