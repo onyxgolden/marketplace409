@@ -4,6 +4,7 @@ import ForgeExecutiveHero from "@/components/forge/ForgeExecutiveHero";
 import ForgeKpiCards from "@/components/forge/ForgeKpiCards";
 import ForgeNetWorthPanel from "@/components/forge/ForgeNetWorthPanel";
 import ForgeQuickActions from "@/components/forge/ForgeQuickActions";
+import ForgeRiskCenter from "@/components/forge/ForgeRiskCenter";
 import ForgeSidebar from "@/components/forge/ForgeSidebar";
 import ForgeTopBar from "@/components/forge/ForgeTopBar";
 
@@ -44,6 +45,11 @@ export default function ForgeDashboardShell({
               </div>
 
               <div className="space-y-6">
+                <ForgeRiskCenter
+                  riskSummary={riskSummary}
+                  riskAssessment={riskAssessment}
+                />
+
                 <ForgeQuickActions />
               </div>
             </div>
