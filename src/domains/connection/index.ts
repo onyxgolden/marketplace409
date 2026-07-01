@@ -70,3 +70,11 @@ export {
 export type {
   ConnectionSummary,
 } from "./connection-summary.types";
+
+export type {
+  ConnectionCollection,
+} from "./connection-collection.types";
+
+export {
+  createConnectionCollection,
+} from "./connection-collection.types";
