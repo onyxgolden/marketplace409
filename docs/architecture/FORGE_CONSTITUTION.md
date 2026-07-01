@@ -86,6 +86,85 @@ Financial Forge must remain:
 
 Short-term convenience must never compromise long-term architecture.
 
+# Provider Contract Principle
+
+Every external integration must implement a FORGE-owned contract.
+
+FORGE defines the business interface.
+
+Providers adapt to FORGE.
+
+Never the reverse.
+
+---
+
+# Adapter Isolation Principle
+
+Vendor SDKs terminate at the adapter boundary.
+
+The domain layer never consumes:
+
+* Vendor payloads
+* SDK objects
+* Authentication models
+* Provider-specific error models
+
+Only immutable FORGE domain objects may cross into the domain layer.
+
+---
+
+# Composition Over Knowledge Principle
+
+Each architectural layer should know only the minimum required about the layer beneath it.
+
+The registry knows providers.
+
+The service knows the registry.
+
+The domain knows only the provider contract.
+
+The business model never knows vendor implementations.
+
+---
+
+# Provider Registry Principle
+
+Every provider must be discovered through a provider registry.
+
+The registry is responsible for:
+
+* Provider registration
+* Provider discovery
+* Provider resolution
+* Provider availability
+
+Business services never contain provider-specific branching logic.
+
+---
+
+# Forbidden Shortcuts
+
+ConnectionService may never contain:
+
+* Provider switch statements
+* Vendor-specific conditionals
+* Vendor SDK imports
+* Provider-specific business logic
+
+Domain objects may never expose:
+
+* Provider identifiers
+* Vendor authentication models
+* SDK types
+* Vendor payloads
+
+Providers may never:
+
+* Mutate domain objects
+* Bypass ConnectionService
+* Perform business calculations
+* Define FORGE business rules
+
 ---
 
 # Ledger Truth Principle

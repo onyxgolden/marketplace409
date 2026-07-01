@@ -182,6 +182,76 @@ Confirm:
 
 Every session should end from a known-good state.
 
+# Connection Platform Workflow
+
+Connection platform development follows a strict dependency order.
+
+```
+Connection Domain
+        ↓
+Connection Service
+        ↓
+ConnectionProvider Contract
+        ↓
+ConnectionProviderRegistry
+        ↓
+Provider Adapters
+        ↓
+Synchronization
+        ↓
+Import Pipeline
+        ↓
+Financial Engine
+```
+
+Each layer must be completed and validated before work begins on the next layer.
+
+---
+
+# Provider Development Rules
+
+Before implementing any provider:
+
+* Verify the ConnectionProvider contract is sufficient.
+* Register the provider through the ConnectionProviderRegistry.
+* Keep provider implementations isolated from the domain.
+* Never introduce vendor-specific branching into ConnectionService.
+* Validate provider behavior through the contract—not through provider-specific code paths.
+
+---
+
+# Registry Before Adapter Rule
+
+No provider adapter may be implemented until the ConnectionProviderRegistry is complete.
+
+The registry is responsible for:
+
+* Provider registration
+* Provider discovery
+* Provider resolution
+* Provider availability
+
+Business services consume the registry.
+
+They never consume vendor implementations directly.
+
+---
+
+# Validation Order
+
+Connection platform work should be validated in the following order:
+
+1. Inspect repository state.
+2. Inspect affected files.
+3. Implement one logical feature.
+4. Verify file saves.
+5. Run targeted tests.
+6. Run the full test suite.
+7. Run the production build.
+8. Review architectural boundaries.
+9. Inspect Git status and diff.
+10. Commit after all quality gates pass.
+
 ---
 
 # Documentation Workflow

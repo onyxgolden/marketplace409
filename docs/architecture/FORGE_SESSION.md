@@ -1,32 +1,19 @@
 # Forge Session
 
-**Version:** 2.0
+**Version:** 3.0
 **Status:** Active
 
 ---
 
 # Purpose
 
-The Forge Session document defines the lifecycle of a single engineering session.
+The Forge Session document defines the lifecycle of a complete engineering session.
 
-Every session should begin, execute, validate, and conclude using the same disciplined process.
-
-Consistency produces reliable engineering.
+Every session should begin, execute, validate, and conclude using the same disciplined engineering process.
 
 The repository—not memory—is the source of truth.
 
----
-
-# Session Objectives
-
-Every Forge session should accomplish one or more complete engineering objectives while preserving architectural integrity.
-
-Objectives should be:
-
-* Clearly defined
-* Independently verifiable
-* Architecturally coherent
-* Fully validated before completion
+Consistency produces reliable engineering.
 
 ---
 
@@ -34,20 +21,34 @@ Objectives should be:
 
 Before implementation begins:
 
-1. Confirm the current architectural phase.
-2. Identify the session objective.
-3. Verify repository status.
-4. Review recent architectural changes if needed.
-5. Identify the files requiring inspection.
-6. Determine whether the session is:
+1. Boot FORGE using the current Session Bootstrap.
+2. Confirm the current architectural milestone.
+3. Confirm the session objective.
+4. Inspect repository status.
+5. Review recent architectural changes when necessary.
+6. Identify affected files before proposing modifications.
 
-   * Production implementation
-   * Documentation
-   * Refactoring
-   * Investigation
-   * Architectural planning
+Implementation does not begin until the boot sequence is complete.
 
-Implementation does not begin until boot is complete.
+---
+
+# Current Architectural Position
+
+The current engineering milestone is:
+
+* Ledger Architecture — Complete
+* Financial Reporting — Complete
+* Business Domain — Stable
+* Risk Domain — Stable
+* Connection Domain — Complete
+* Connection Service — Complete
+* ConnectionProvider Contract — Complete
+
+Current implementation objective:
+
+**ConnectionProviderRegistry**
+
+No provider adapter work begins until the registry is complete.
 
 ---
 
@@ -56,8 +57,9 @@ Implementation does not begin until boot is complete.
 ## Phase 1 — Inspect
 
 * Inspect existing implementation.
-* Read affected files before proposing changes.
+* Read affected files.
 * Never assume repository state.
+* Terminal output overrides assumptions.
 
 ---
 
@@ -71,7 +73,7 @@ Review:
 * Risks
 * Expected outcome
 
-Confirm the proposed solution before editing.
+Confirm the architectural approach before editing.
 
 ---
 
@@ -84,7 +86,7 @@ Preferred cadence:
 1. Inspect
 2. Edit
 3. Save
-4. Verify
+4. Verify Save
 
 Repeat until the objective is complete.
 
@@ -94,9 +96,9 @@ Repeat until the objective is complete.
 
 Preferred validation sequence:
 
-1. Production build
-2. Targeted tests
-3. Full test suite
+1. Targeted tests (when applicable)
+2. Full test suite
+3. Production build
 4. Architecture review
 5. Repository review
 
@@ -110,10 +112,8 @@ Before committing:
 
 * Review Git status.
 * Review Git diff.
-* Confirm documentation updates.
+* Confirm documentation reflects architectural reality.
 * Confirm architectural boundaries remain intact.
-
-The repository should accurately represent the completed objective.
 
 ---
 
@@ -125,7 +125,10 @@ Commits should:
 * Be fully validated.
 * Preserve coherent Git history.
 
-When practical, keep production code and documentation in separate commits.
+Whenever practical:
+
+* Separate production code and documentation commits.
+* Keep commits focused on a single architectural objective.
 
 ---
 
@@ -133,53 +136,11 @@ When practical, keep production code and documentation in separate commits.
 
 Push the repository.
 
-Verify:
+Confirm:
 
 * Remote synchronization
 * Clean working tree
 * Known-good repository state
-
----
-
-# AI / Human Cadence
-
-The engineering cadence remains consistent.
-
-### AI Responsibilities
-
-* Review architecture.
-* Explain reasoning.
-* Propose implementation.
-* Review validation results.
-* Recommend next steps.
-
-### Human Responsibilities
-
-* Execute terminal commands.
-* Edit files.
-* Review changes.
-* Approve commits.
-* Maintain repository ownership.
-
-Neither assumes successful execution.
-
-Terminal output confirms reality.
-
----
-
-# Session Types
-
-A Forge session typically falls into one of the following categories:
-
-* Production implementation
-* Documentation
-* Refactoring
-* Architecture
-* Investigation
-* Testing
-* Performance optimization
-
-Each session should remain focused on a coherent objective.
 
 ---
 
@@ -199,7 +160,40 @@ Never:
 * Assume repository contents.
 * Skip verification.
 * Mix unrelated objectives.
-* Bypass architectural review.
+* Introduce vendor-specific behavior into domain objects.
+* Implement provider adapters before the ConnectionProviderRegistry exists.
+
+---
+
+# Current Connection Architecture
+
+```text
+FORGE Domain
+      │
+      ▼
+ConnectionProvider Contract
+      │
+      ▼
+ConnectionProviderRegistry
+      │
+      ▼
+Provider Adapter
+      │
+      ▼
+ConnectionService
+      │
+      ▼
+Import Pipeline
+      │
+      ▼
+Financial Engine
+```
+
+The domain owns the business model.
+
+Providers adapt to FORGE.
+
+Never the reverse.
 
 ---
 
@@ -207,20 +201,20 @@ Never:
 
 A Forge session concludes only after confirming:
 
-* Production build passes (when applicable).
+* Production build passes.
 * Required tests pass.
-* Documentation reflects architectural changes.
+* Documentation reflects the completed work.
 * Git history is coherent.
 * Repository is synchronized.
-* Completed objectives are identified.
-* Next recommended objective is recorded.
-* A startup paste is prepared for the next session when appropriate.
+* The completed objective is recorded.
+* The next architectural objective is identified.
+* A new bootstrap is prepared when a major architectural milestone has been completed.
 
 ---
 
 # Success Criteria
 
-A successful Forge session leaves the repository in a stronger state than it was found.
+A successful session leaves the repository in a stronger state than it was found.
 
 Success is measured by:
 
@@ -231,4 +225,4 @@ Success is measured by:
 * Documentation quality
 * Repository integrity
 
-Every completed session should improve both the software and the engineering process that produced it.
+Every completed session should strengthen both the software and the engineering process that produced it.
