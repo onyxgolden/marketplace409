@@ -79,6 +79,20 @@ export {
   createConnectionCollection,
 } from "./connection-collection.types";
 
+export type {
+  ConnectionProvider,
+  ConnectionProviderHealth,
+  ConnectionProviderImportResult,
+  ConnectionProviderOperation,
+  ConnectionProviderResult,
+  ConnectionProviderStatus,
+} from "./connection-provider.types";
+
+export {
+  CONNECTION_PROVIDER_OPERATIONS,
+  CONNECTION_PROVIDER_STATUSES,
+} from "./connection-provider.types";
+
 export {
   ConnectionService,
 } from "./connection.service";
