@@ -78,3 +78,7 @@ export type {
 export {
   createConnectionCollection,
 } from "./connection-collection.types";
+
+export {
+  ConnectionService,
+} from "./connection.service";

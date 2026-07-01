@@ -7,6 +7,7 @@ export type ConnectionCollection = Readonly<{
   totalConnections: number;
   healthyConnections: number;
   syncingConnections: number;
+  staleConnections: number;
   needsAttentionConnections: number;
   criticalConnections: number;
   notReadyConnections: number;
@@ -37,6 +38,9 @@ export function createConnectionCollection(
     ).length,
     syncingConnections: connections.filter(
       (connectionSummary) => connectionSummary.health.state === "syncing",
+    ).length,
+    staleConnections: connections.filter(
+      (connectionSummary) => connectionSummary.health.state === "stale",
     ).length,
     needsAttentionConnections: connections.filter(
       (connectionSummary) => connectionSummary.health.state === "needs_attention",
