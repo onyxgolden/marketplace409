@@ -1,6 +1,6 @@
 # Forge Platform Roadmap
 
-**Version:** 1.1
+**Version:** 1.2
 **Status:** Active
 **Project:** Financial Forge Platform
 
@@ -24,36 +24,24 @@ Architectural evolution belongs in **FORGE_ROADMAP.md**.
 
 # Current Platform Status
 
-Financial Forge now contains its first complete production accounting workflow.
+Financial Forge now contains a complete production accounting workflow and an emerging provider-neutral connection platform.
 
 ```
-Rentec CSV
+External Data
       ↓
-RentecImportParser
+Connection Platform / Import Pipeline
       ↓
-Rentec Records
+Financial Events
       ↓
-RentecProductionImportService
+Journal Entries
       ↓
-Import Pipeline
+Immutable Ledger
       ↓
-FinancialEventFactory
-      ↓
-FinancialEvent
-      ↓
-FinancialEventPostingAdapter
-      ↓
-JournalEntry
-      ↓
-Posting[]
-      ↓
-GeneralLedger
-      ↓
-FinancialEngine
+Financial Engine
       ↓
 Financial Statements
       ↓
-Rentec Import UI
+Application UI
 ```
 
 This proves the platform can move external financial data through the full accounting architecture without bypassing the domain.
@@ -106,27 +94,73 @@ This proves the platform can move external financial data through the full accou
 
 ---
 
+## Connection Domain
+
+* Connection
+* ConnectionStatus
+* CredentialReference
+* ImportHistory
+* ConnectionCapabilities
+* InstitutionReference
+* ConnectionHealth
+* ConnectionSummary
+* ConnectionCollection
+* ConnectionService
+* ConnectionProvider
+
+**Status:** Complete
+
+---
+
 # Current Development
 
-## Phase 7.3 — Production Refinement
+## Phase 8 — Connection Platform
 
 ### Objectives
 
-* Shared Production Chart of Accounts
-* ImportResult domain object
-* Import warnings
-* Sample CSV
-* Improved report presentation
+* ConnectionProviderRegistry
+* Provider discovery
+* Provider registration
+* Provider resolution
+* Provider capability enumeration
+* Provider health management
 
 ### Goal
 
-Reduce duplication, improve usability, and prepare the import workflow for persistence without weakening architectural boundaries.
+Create a provider-neutral connection platform that allows all external financial integrations to plug into FORGE through a single business-owned contract.
 
-### Protected Rule
+### Protected Rules
 
-No accounting logic belongs in the UI.
+FORGE owns every business interface.
 
-The Financial Engine remains the single accounting authority.
+Providers adapt to FORGE.
+
+ConnectionService remains vendor-agnostic.
+
+No provider-specific logic may enter the domain layer.
+
+No adapter work begins until the ConnectionProviderRegistry is complete.
+
+### Current Status
+
+✅ Connection Domain
+
+✅ Connection Service
+
+✅ ConnectionProvider Contract
+
+🚧 ConnectionProviderRegistry
+
+### Upcoming
+
+* Plaid Adapter
+* CSV Adapter
+* Stripe Adapter
+* QuickBooks Adapter
+* Rentec Adapter
+* Synchronization Pipeline
+* Import Mapping Layer
+* Connection Monitoring
 
 ---
 
@@ -158,21 +192,34 @@ Planned capabilities:
 
 ## Financial Data Connections
 
-Planned adapters:
+All external integrations now enter FORGE through the Connection Platform.
 
-* Rentec CSV
-* Bank CSV
-* Quicken Simplifi
+```
+ConnectionProvider
+        ↓
+ConnectionProviderRegistry
+        ↓
+Provider Adapter
+        ↓
+ConnectionService
+        ↓
+Import Pipeline
+        ↓
+FinancialEvent
+        ↓
+Financial Engine
+```
+
+Planned providers:
+
 * Plaid
 * Stripe
+* QuickBooks
+* Rentec
+* CSV
+* Future providers
 
-All external adapters must terminate at:
-
-```
-FinancialEvent
-```
-
-No adapter may bypass the accounting architecture.
+No provider adapter may bypass the Connection Platform or the Financial Engine.
 
 ---
 
@@ -228,6 +275,10 @@ Platform features must not duplicate accounting logic.
 
 Importers translate external records into Financial Events.
 
+Provider adapters translate vendor behavior into FORGE-owned contracts.
+
+The Connection Platform owns external integration boundaries.
+
 The Financial Engine remains the single accounting authority.
 
 The Ledger remains the accounting truth.
@@ -243,3 +294,7 @@ The platform should grow quickly.
 The architecture should remain stable.
 
 Every new capability should strengthen the system rather than create shortcuts around it.
+
+FORGE owns the business model.
+
+Everything else is an adapter.
