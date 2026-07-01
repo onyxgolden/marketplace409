@@ -48,3 +48,12 @@ export {
   CONNECTION_CAPABILITY_KEYS,
   hasConnectionCapability,
 } from "./connection-capabilities.types";
+
+export type {
+  InstitutionReference,
+  InstitutionReferenceType,
+} from "./institution-reference.types";
+
+export {
+  INSTITUTION_REFERENCE_TYPES,
+} from "./institution-reference.types";
