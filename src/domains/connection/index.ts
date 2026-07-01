@@ -66,3 +66,7 @@ export type {
 export {
   CONNECTION_HEALTH_STATES,
 } from "./connection-health.types";
+
+export type {
+  ConnectionSummary,
+} from "./connection-summary.types";
