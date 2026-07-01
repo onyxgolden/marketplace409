@@ -57,3 +57,12 @@ export type {
 export {
   INSTITUTION_REFERENCE_TYPES,
 } from "./institution-reference.types";
+
+export type {
+  ConnectionHealth,
+  ConnectionHealthState,
+} from "./connection-health.types";
+
+export {
+  CONNECTION_HEALTH_STATES,
+} from "./connection-health.types";
