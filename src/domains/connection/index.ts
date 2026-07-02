@@ -135,3 +135,27 @@ export {
 export {
   ConnectionProvisioningService,
 } from "./connection-provisioning.service";
+
+export type {
+  ConnectionRepository,
+} from "./connection.repository";
+
+export type {
+  CredentialReferenceRepository,
+} from "./credential-reference.repository";
+
+export type {
+  InstitutionReferenceRepository,
+} from "./institution-reference.repository";
+
+export {
+  InMemoryConnectionRepository,
+} from "./in-memory-connection.repository";
+
+export {
+  InMemoryCredentialReferenceRepository,
+} from "./in-memory-credential-reference.repository";
+
+export {
+  InMemoryInstitutionReferenceRepository,
+} from "./in-memory-institution-reference.repository";
