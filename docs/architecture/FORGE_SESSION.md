@@ -36,31 +36,79 @@ Implementation does not begin until the boot sequence is complete.
 
 The current engineering milestone is:
 
-* Ledger Architecture — Complete
-* Financial Reporting — Complete
-* Business Domain — Stable
-* Risk Domain — Stable
-* Connection Domain — Complete
-* Connection Service — Complete
-* ConnectionProvider Contract — Complete
-* ConnectionProviderRegistry — Complete
+### Core Platform
 
-Current implementation objective:
+✓ Ledger Architecture — Complete
 
-**Live Provider Integration**
+✓ Financial Reporting — Complete
+
+✓ Business Domain — Stable
+
+✓ Risk Domain — Stable
+
+---
+
+### Connection Platform
 
 Completed
 
-* Connection Domain
-* Connection Service
-* ConnectionProvider Contract
-* ConnectionProviderRegistry
-* Connection Import Orchestrator
-* Plaid Adapter
-* Plaid Transaction Mapper
+✓ Connection Domain
 
-The next implementation phase replaces provider scaffolding with live SDK implementations while preserving the FORGE provider contract.
+✓ Connection Service
 
+✓ ConnectionProvider Contract
+
+✓ ConnectionProviderRegistry
+
+✓ Connection Import Orchestrator
+
+✓ Plaid Adapter Foundation
+
+✓ Plaid Link Frontend
+
+✓ Public Token Exchange
+
+✓ Plaid Connection Mapper
+
+✓ ConnectionProvisioningService
+
+✓ Connection Repository Contracts
+
+✓ In-Memory Repository Implementations
+
+---
+
+### Repository State
+
+Current Commit
+
+6c292c1
+
+Validation
+
+✓ 102 test files passing
+
+✓ 341 tests passing
+
+✓ Production build passing
+
+✓ Main synchronized with GitHub
+
+---
+
+### Current Objective
+
+Build the provider-neutral ConnectionPersistenceService.
+
+Responsibilities:
+
+* Persist Connection
+* Persist CredentialReference
+* Persist InstitutionReference
+* Coordinate repository contracts
+* Remain provider-agnostic
+* Remain persistence-implementation agnostic
+* Perform no account or transaction imports
 ---
 
 # Standard Session Lifecycle
@@ -188,14 +236,22 @@ ConnectionProvider Contract
 ConnectionProviderRegistry
       │
       ▼
-Plaid Adapter
-      │
-      ├────────────── Future Adapters
-      ▼
-Connection Import Orchestrator
+Provider Adapter
       │
       ▼
-Transaction Mapper
+ConnectionProvisioningService
+      │
+      ▼
+ConnectionPersistenceService
+      │
+      ▼
+Repository Contracts
+      │
+      ▼
+Account Import
+      │
+      ▼
+Transaction Import
       │
       ▼
 Financial Events

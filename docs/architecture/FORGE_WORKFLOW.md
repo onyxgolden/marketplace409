@@ -195,11 +195,17 @@ ConnectionProvider Contract
         ↓
 ConnectionProviderRegistry
         ↓
-Provider Adapters
+Provider Adapter
         ↓
-Connection Import Orchestrator
+ConnectionProvisioningService
         ↓
-Canonical Transaction Mappers
+ConnectionPersistenceService
+        ↓
+Repository Contracts
+        ↓
+Account Import
+        ↓
+Transaction Import
         ↓
 Financial Events
         ↓
@@ -224,6 +230,19 @@ Before implementing any provider:
 * Never introduce vendor-specific branching into ConnectionService.
 * Validate provider behavior through the contract—not through provider-specific code paths.
 
+# Repository Boundary Rule
+
+Repository interfaces belong to the domain layer.
+
+Persistence implementations satisfy those interfaces.
+
+Business services consume repository contracts—not concrete database implementations.
+
+The Connection domain must never depend on Supabase, PostgreSQL, Plaid, or any other infrastructure implementation.
+
+Infrastructure depends on the domain.
+
+Never the reverse.
 ---
 
 # Registry Before Adapter Rule

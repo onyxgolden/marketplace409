@@ -130,63 +130,61 @@ This proves the platform can move external financial data through the full accou
 
 # Current Development
 
-## Phase 8 — Connection Platform
+## Phase 8 — Provider-Neutral Connection Platform
 
-### Objectives
+### Completed
 
+* Connection Domain
+* Connection Service
+* ConnectionProvider Contract
 * ConnectionProviderRegistry
-* Provider discovery
-* Provider registration
-* Provider resolution
-* Provider capability enumeration
-* Provider health management
+* Connection Import Orchestrator
+* Plaid Adapter Foundation
+* Plaid Link Frontend
+* Public Token Exchange
+* Plaid Connection Mapper
+* ConnectionProvisioningService
+* Connection Repository Contracts
+* In-Memory ConnectionRepository
+* In-Memory CredentialReferenceRepository
+* In-Memory InstitutionReferenceRepository
 
-### Goal
+**Status:** Complete
 
-Create a provider-neutral connection platform that allows all external financial integrations to plug into FORGE through a single business-owned contract.
+---
 
-### Protected Rules
+## Current Objective
 
-FORGE owns every business interface.
+Build the provider-neutral persistence layer that coordinates repository contracts before any database implementation.
 
-Providers adapt to FORGE.
+Next architectural milestone:
 
-ConnectionService remains vendor-agnostic.
+* ConnectionPersistenceService
 
-No provider-specific logic may enter the domain layer.
+Responsibilities:
 
-Provider adapter work may now begin, but no adapter may bypass the ConnectionProviderRegistry.
+* Persist Connection
+* Persist CredentialReference
+* Persist InstitutionReference
+* Coordinate repository operations
+* Remain provider-agnostic
+* Perform no account or transaction imports
 
-### Current Status
+---
 
-✅ Connection Domain
+## Upcoming
 
-✅ Connection Service
-
-✅ ConnectionProvider Contract
-
-✅ ConnectionProviderRegistry
-
-✅ Plaid Adapter Foundation
-
-✅ Live Plaid Sandbox Link Token generation
-
-🚧 Plaid Link Frontend Integration
-
-### Upcoming
-
-* Plaid Link frontend
-* Public token exchange
-* Secure access token storage
-* Plaid account import
-* Plaid transaction synchronization
+* ConnectionPersistenceService
+* Repository-backed persistence
+* Account Import
+* Transaction Import
 * Financial Event pipeline integration
+* Immutable Ledger integration
 * CSV Adapter
 * Stripe Adapter
 * QuickBooks Adapter
 * Rentec Adapter
 * Synchronization Pipeline
-* Import Mapping Layer
 * Connection Monitoring
 
 ---
@@ -228,11 +226,19 @@ ConnectionProviderRegistry
         ↓
 Provider Adapter
         ↓
-ConnectionService
+ConnectionProvisioningService
         ↓
-Import Pipeline
+ConnectionPersistenceService
         ↓
-FinancialEvent
+Repository Contracts
+        ↓
+Account Import
+        ↓
+Transaction Import
+        ↓
+Financial Events
+        ↓
+Immutable Ledger
         ↓
 Financial Engine
 ```
