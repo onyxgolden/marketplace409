@@ -122,3 +122,16 @@ export {
 export {
   ConnectionImportOrchestrator,
 } from "./connection-import-orchestrator.service";
+
+export type {
+  ConnectionProvisioningInput,
+  ConnectionProvisioningResult,
+} from "./connection-provisioning.types";
+
+export {
+  toConnectionProvisioningResult,
+} from "./connection-provisioning.types";
+
+export {
+  ConnectionProvisioningService,
+} from "./connection-provisioning.service";
