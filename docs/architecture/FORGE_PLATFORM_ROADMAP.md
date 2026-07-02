@@ -107,6 +107,22 @@ This proves the platform can move external financial data through the full accou
 * ConnectionCollection
 * ConnectionService
 * ConnectionProvider
+* ConnectionProviderRegistry
+
+**Status:** Complete
+
+---
+
+## Plaid Adapter Foundation
+
+* Official Plaid SDK integration
+* Sandbox configuration boundary
+* Plaid client creation boundary
+* Link Token wrapper
+* Plaid Adapter `createLinkToken()` capability
+* Next.js `/api/plaid/link-token` route
+* Live Sandbox credential verification
+* Verified live Link Token generation
 
 **Status:** Complete
 
@@ -151,11 +167,20 @@ Provider adapter work may now begin, but no adapter may bypass the ConnectionPro
 
 ✅ ConnectionProviderRegistry
 
-🚧 Provider Adapter Foundation
+✅ Plaid Adapter Foundation
+
+✅ Live Plaid Sandbox Link Token generation
+
+🚧 Plaid Link Frontend Integration
 
 ### Upcoming
 
-* Plaid Adapter
+* Plaid Link frontend
+* Public token exchange
+* Secure access token storage
+* Plaid account import
+* Plaid transaction synchronization
+* Financial Event pipeline integration
 * CSV Adapter
 * Stripe Adapter
 * QuickBooks Adapter
