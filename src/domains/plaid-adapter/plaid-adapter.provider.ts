@@ -1,7 +1,6 @@
 import type {
   Connection,
   ConnectionHealth,
-  ConnectionProvider,
   ConnectionProviderHealth,
   ConnectionProviderImportResult,
   ConnectionProviderResult,
@@ -9,10 +8,23 @@ import type {
   CredentialReference,
 } from "../connection";
 
-export function createPlaidAdapter(): ConnectionProvider {
+import type {
+  PlaidAdapter,
+} from "./plaid-adapter.types";
+
+import {
+  createPlaidClient,
+  createPlaidLinkToken,
+} from "./plaid.client";
+
+export function createPlaidAdapter(): PlaidAdapter {
   return {
     provider: "plaid",
     displayName: "Plaid",
+
+    async createLinkToken(request) {
+      return createPlaidLinkToken(createPlaidClient(), request);
+    },
 
     capabilities() {
       const now = new Date().toISOString();

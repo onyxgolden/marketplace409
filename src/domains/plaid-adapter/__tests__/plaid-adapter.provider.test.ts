@@ -22,6 +22,12 @@ describe("createPlaidAdapter", () => {
     expect(capabilities.supportsWebhooks).toBe(true);
   });
 
+  it("exposes Plaid Link Token creation", () => {
+    const adapter = createPlaidAdapter();
+
+    expect(typeof adapter.createLinkToken).toBe("function");
+  });
+
   it("rejects credentials for a different provider", async () => {
     const adapter = createPlaidAdapter();
 

@@ -2,4 +2,10 @@ import type {
   ConnectionProvider,
 } from "../connection";
 
-export type PlaidAdapter = ConnectionProvider;
+import type {
+  PlaidLinkTokenRequest,
+} from "./plaid.client";
+
+export type PlaidAdapter = ConnectionProvider & Readonly<{
+  createLinkToken(request: PlaidLinkTokenRequest): Promise<string>;
+}>;
