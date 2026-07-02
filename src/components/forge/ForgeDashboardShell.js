@@ -6,6 +6,7 @@ import ForgeExecutiveHero from "@/components/forge/ForgeExecutiveHero";
 import ForgeInsights from "@/components/forge/ForgeInsights";
 import ForgeKpiCards from "@/components/forge/ForgeKpiCards";
 import ForgeNetWorthPanel from "@/components/forge/ForgeNetWorthPanel";
+import PlaidConnectButton from "@/components/forge/PlaidConnectButton";
 import ForgePortfolioSummary from "@/components/forge/ForgePortfolioSummary";
 import ForgeQuickActions from "@/components/forge/ForgeQuickActions";
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
@@ -79,6 +80,7 @@ export default function ForgeDashboardShell({
                 <ForgeSystemHealth healthItems={systemHealthItems} />
                 <ForgeAlerts alerts={alertItems} />
                 <ForgeRecentActivity activities={recentActivities} />
+                <PlaidConnectButton />
                 <ForgeQuickActions />
               </div>
             </div>

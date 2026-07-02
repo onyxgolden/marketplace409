@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createPlaidLinkToken,
+  exchangePlaidPublicToken,
 } from "../plaid.client";
 
 describe("createPlaidLinkToken", () => {
@@ -31,6 +32,32 @@ describe("createPlaidLinkToken", () => {
       language: "en",
       country_codes: ["US"],
       products: ["transactions"],
+    });
+  });
+});
+
+describe("exchangePlaidPublicToken", () => {
+  it("exchanges a public token for an access token and item id", async () => {
+    const client = {
+      itemPublicTokenExchange: vi.fn().mockResolvedValue({
+        data: {
+          access_token: "access-sandbox-123",
+          item_id: "item-sandbox-123",
+        },
+      }),
+    };
+
+    const result = await exchangePlaidPublicToken(client, {
+      publicToken: "public-sandbox-123",
+    });
+
+    expect(result).toEqual({
+      accessToken: "access-sandbox-123",
+      itemId: "item-sandbox-123",
+    });
+
+    expect(client.itemPublicTokenExchange).toHaveBeenCalledWith({
+      public_token: "public-sandbox-123",
     });
   });
 });

@@ -28,6 +28,12 @@ describe("createPlaidAdapter", () => {
     expect(typeof adapter.createLinkToken).toBe("function");
   });
 
+  it("exposes Plaid public token exchange", () => {
+    const adapter = createPlaidAdapter();
+
+    expect(typeof adapter.exchangePublicToken).toBe("function");
+  });
+
   it("rejects credentials for a different provider", async () => {
     const adapter = createPlaidAdapter();
 

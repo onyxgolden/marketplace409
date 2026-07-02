@@ -26,3 +26,13 @@ export {
 export {
   mapPlaidTransactionToFinancialEvent,
 } from "./plaid-transaction.mapper";
+
+
+export type {
+  PlaidConnectionMappingInput,
+  PlaidConnectionMappingResult,
+} from "./plaid-connection.mapper";
+
+export {
+  mapPlaidExchangeToConnection,
+} from "./plaid-connection.mapper";

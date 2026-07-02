@@ -22,7 +22,17 @@ export type PlaidLinkTokenRequest = {
   products: Products[];
 };
 
+export type PlaidPublicTokenExchangeRequest = {
+  publicToken: string;
+};
+
+export type PlaidPublicTokenExchangeResult = {
+  accessToken: string;
+  itemId: string;
+};
+
 type PlaidLinkTokenClient = Pick<PlaidApi, "linkTokenCreate">;
+type PlaidPublicTokenExchangeClient = Pick<PlaidApi, "itemPublicTokenExchange">;
 
 export function createPlaidClient(
   config: PlaidConfig = getPlaidConfig(),
@@ -55,4 +65,18 @@ export async function createPlaidLinkToken(
   });
 
   return response.data.link_token;
+}
+
+export async function exchangePlaidPublicToken(
+  client: PlaidPublicTokenExchangeClient,
+  request: PlaidPublicTokenExchangeRequest,
+): Promise<PlaidPublicTokenExchangeResult> {
+  const response = await client.itemPublicTokenExchange({
+    public_token: request.publicToken,
+  });
+
+  return {
+    accessToken: response.data.access_token,
+    itemId: response.data.item_id,
+  };
 }

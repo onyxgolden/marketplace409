@@ -15,6 +15,7 @@ import type {
 import {
   createPlaidClient,
   createPlaidLinkToken,
+  exchangePlaidPublicToken,
 } from "./plaid.client";
 
 export function createPlaidAdapter(): PlaidAdapter {
@@ -24,6 +25,10 @@ export function createPlaidAdapter(): PlaidAdapter {
 
     async createLinkToken(request) {
       return createPlaidLinkToken(createPlaidClient(), request);
+    },
+
+    async exchangePublicToken(request) {
+      return exchangePlaidPublicToken(createPlaidClient(), request);
     },
 
     capabilities() {
