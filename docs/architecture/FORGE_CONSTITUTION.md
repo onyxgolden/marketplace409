@@ -111,6 +111,28 @@ The domain layer never consumes:
 
 Only immutable FORGE domain objects may cross into the domain layer.
 
+# Canonical Data Principle
+
+External providers may expose any payload they choose.
+
+FORGE owns every canonical business model.
+
+All provider payloads must terminate at the adapter boundary.
+
+Before entering the domain, external data must be translated into immutable FORGE domain objects.
+
+Examples include:
+
+• Connection
+• FinancialEvent
+• JournalEntry
+
+The Ledger, Financial Engine, and business domains never consume provider-native models.
+
+Adapters translate.
+
+Domains decide.
+
 ---
 
 # Composition Over Knowledge Principle

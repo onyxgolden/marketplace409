@@ -197,11 +197,17 @@ ConnectionProviderRegistry
         ↓
 Provider Adapters
         ↓
-Synchronization
+Connection Import Orchestrator
         ↓
-Import Pipeline
+Canonical Transaction Mappers
+        ↓
+Financial Events
+        ↓
+Immutable Ledger
         ↓
 Financial Engine
+        ↓
+Reports
 ```
 
 Each layer must be completed and validated before work begins on the next layer.

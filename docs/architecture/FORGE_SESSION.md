@@ -47,9 +47,19 @@ The current engineering milestone is:
 
 Current implementation objective:
 
-**Provider Adapter Foundation**
+**Live Provider Integration**
 
-Provider adapter work may now begin, but every adapter must implement the FORGE-owned ConnectionProvider contract and register through the ConnectionProviderRegistry.
+Completed
+
+* Connection Domain
+* Connection Service
+* ConnectionProvider Contract
+* ConnectionProviderRegistry
+* Connection Import Orchestrator
+* Plaid Adapter
+* Plaid Transaction Mapper
+
+The next implementation phase replaces provider scaffolding with live SDK implementations while preserving the FORGE provider contract.
 
 ---
 
@@ -178,16 +188,26 @@ ConnectionProvider Contract
 ConnectionProviderRegistry
       │
       ▼
-Provider Adapter
+Plaid Adapter
+      │
+      ├────────────── Future Adapters
+      ▼
+Connection Import Orchestrator
       │
       ▼
-ConnectionService
+Transaction Mapper
       │
       ▼
-Import Pipeline
+Financial Events
+      │
+      ▼
+Immutable Ledger
       │
       ▼
 Financial Engine
+      │
+      ▼
+Reports & UI
 ```
 
 The domain owns the business model.
