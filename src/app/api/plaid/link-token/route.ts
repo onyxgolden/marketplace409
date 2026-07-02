@@ -27,6 +27,20 @@ export async function POST() {
       linkToken,
     });
   } catch (error) {
+    const plaidError = error as {
+      response?: {
+        data?: unknown;
+        status?: number;
+      };
+      message?: string;
+    };
+
+    console.error("Plaid Link Token error", {
+      status: plaidError.response?.status,
+      data: plaidError.response?.data,
+      message: plaidError.message,
+    });
+
     const message = error instanceof Error
       ? error.message
       : "Unable to create Plaid Link Token.";
@@ -34,6 +48,7 @@ export async function POST() {
     return NextResponse.json(
       {
         error: message,
+        details: plaidError.response?.data ?? null,
       },
       {
         status: 500,
