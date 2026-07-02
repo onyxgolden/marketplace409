@@ -108,3 +108,17 @@ export {
   hasConnectionProvider,
   providersSupportingCapability,
 } from "./connection-provider-registry.types";
+
+export type {
+  ConnectionImportOrchestratorDependencies,
+  ConnectionImportOrchestratorInput,
+  ConnectionImportOrchestratorResult,
+} from "./connection-import-orchestrator.types";
+
+export {
+  toConnectionImportOrchestratorResult,
+} from "./connection-import-orchestrator.types";
+
+export {
+  ConnectionImportOrchestrator,
+} from "./connection-import-orchestrator.service";
