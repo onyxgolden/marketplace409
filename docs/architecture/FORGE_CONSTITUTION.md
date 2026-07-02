@@ -202,6 +202,7 @@ Reports present results.
 UI displays reports.
 
 No layer should secretly perform another layer's job.
+
 ---
 
 # Domain Independence Principle
@@ -222,6 +223,39 @@ Convenience coupling is prohibited.
 
 Architectural independence takes precedence over short-term implementation convenience.
 ---
+# Operational Truth Principle
+
+Financial Forge models two complementary forms of truth.
+
+Operational Truth captures what happened in the real world.
+
+Examples include:
+
+* Trips
+* Inspections
+* Meetings
+* Maintenance
+* Property activity
+* Vehicle activity
+* Communications
+* AI observations
+
+Financial Truth captures the accounting consequences of those events.
+
+Examples include:
+
+* Financial Events
+* Journal Entries
+* Ledger balances
+* Financial reports
+
+Operational truth may enrich financial truth.
+
+Operational truth never replaces financial truth.
+
+The Ledger remains the sole accounting system of record.
+
+The canonical relationship between operational domains and financial domains is defined in FORGE_DOMAIN_MODEL.md.
 
 # Incremental Architecture
 
@@ -241,6 +275,24 @@ Preferred sequence:
 Never redesign multiple architectural layers simultaneously.
 
 ---
+# Future Domain Principle
+
+Future capabilities belong in architecture documentation before they belong in production code.
+
+New tables, columns, foreign keys, persistence models, and APIs shall not be introduced solely to support anticipated functionality.
+
+A new domain enters implementation only after:
+
+1. The business language is understood.
+2. The architectural boundary is documented.
+3. The implementation objective is approved.
+4. The first useful object can be implemented and validated.
+
+Speculative schema design is prohibited.
+
+Document first.
+
+Implement second.
 
 # Commit Discipline
 
@@ -375,6 +427,31 @@ Engineering methodology belongs in version control.
 The repository should become self-describing.
 
 Lessons learned should be preserved when they create future engineering value.
+
+---
+
+# Domain Model Authority
+
+FORGE_DOMAIN_MODEL.md is the canonical description of:
+
+* Domain relationships
+* Provider relationships
+* Operational truth
+* Financial truth
+* Domain evaluation
+* Long-term domain expansion
+
+The Constitution defines engineering law.
+
+The Domain Model defines architectural structure.
+
+The Roadmap defines architectural evolution.
+
+The Session document defines engineering execution.
+
+Each document has a single responsibility.
+
+Architectural guidance should be added to the appropriate document rather than duplicated across multiple documents.
 
 ---
 
