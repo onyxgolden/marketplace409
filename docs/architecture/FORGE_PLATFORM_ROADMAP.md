@@ -139,7 +139,7 @@ ConnectionService remains vendor-agnostic.
 
 No provider-specific logic may enter the domain layer.
 
-No adapter work begins until the ConnectionProviderRegistry is complete.
+Provider adapter work may now begin, but no adapter may bypass the ConnectionProviderRegistry.
 
 ### Current Status
 
@@ -149,7 +149,9 @@ No adapter work begins until the ConnectionProviderRegistry is complete.
 
 ✅ ConnectionProvider Contract
 
-🚧 ConnectionProviderRegistry
+✅ ConnectionProviderRegistry
+
+🚧 Provider Adapter Foundation
 
 ### Upcoming
 

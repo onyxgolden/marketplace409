@@ -43,12 +43,13 @@ The current engineering milestone is:
 * Connection Domain — Complete
 * Connection Service — Complete
 * ConnectionProvider Contract — Complete
+* ConnectionProviderRegistry — Complete
 
 Current implementation objective:
 
-**ConnectionProviderRegistry**
+**Provider Adapter Foundation**
 
-No provider adapter work begins until the registry is complete.
+Provider adapter work may now begin, but every adapter must implement the FORGE-owned ConnectionProvider contract and register through the ConnectionProviderRegistry.
 
 ---
 
@@ -161,7 +162,7 @@ Never:
 * Skip verification.
 * Mix unrelated objectives.
 * Introduce vendor-specific behavior into domain objects.
-* Implement provider adapters before the ConnectionProviderRegistry exists.
+* Bypass the ConnectionProviderRegistry when implementing provider adapters.
 
 ---
 

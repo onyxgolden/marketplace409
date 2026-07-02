@@ -96,3 +96,15 @@ export {
 export {
   ConnectionService,
 } from "./connection.service";
+
+export type {
+  ConnectionProviderRegistry,
+} from "./connection-provider-registry.types";
+
+export {
+  connectionProviderHealthReport,
+  createConnectionProviderRegistry,
+  findConnectionProvider,
+  hasConnectionProvider,
+  providersSupportingCapability,
+} from "./connection-provider-registry.types";
