@@ -1,6 +1,6 @@
 # Forge Platform Roadmap
 
-**Version:** 1.2
+**Version:** 1.3
 **Status:** Active
 **Project:** Financial Forge Platform
 
@@ -8,9 +8,7 @@
 
 # Purpose
 
-The Forge Platform Roadmap tracks the usable production capabilities built on top of the Financial Forge architecture.
-
-This document changes frequently.
+The Forge Platform Roadmap tracks the production capabilities built on top of the Financial Forge architecture.
 
 The Architecture Roadmap explains **how Forge evolves**.
 
@@ -24,18 +22,30 @@ Architectural evolution belongs in **FORGE_ROADMAP.md**.
 
 # Current Platform Status
 
-Financial Forge now contains a complete production accounting workflow and an emerging provider-neutral connection platform.
+Financial Forge now contains a production accounting platform, provider-neutral connection architecture, and persistent property-learning workflow.
 
 ```
 External Data
       ↓
-Connection Platform / Import Pipeline
+Connection Platform
       ↓
-Financial Events
+FinancialAccount
       ↓
-Journal Entries
+AccountBalance
+      ↓
+Transaction Import
+      ↓
+FinancialEvent Import
+      ↓
+PropertyResolverService
+      ↓
+Transaction Review
+      ↓
+Ledger Posting
       ↓
 Immutable Ledger
+      ↓
+Production Report Service
       ↓
 Financial Engine
       ↓
@@ -44,7 +54,7 @@ Financial Statements
 Application UI
 ```
 
-This proves the platform can move external financial data through the full accounting architecture without bypassing the domain.
+The platform can now import financial data, resolve semantic property ownership, produce immutable accounting truth, and continuously improve future imports through user-guided learning.
 
 ---
 
@@ -67,7 +77,8 @@ This proves the platform can move external financial data through the full accou
 * External category normalization
 * Canonical Forge categories
 * Financial event interpretation
-* Financial event posting adapter
+* FinancialEventImportService
+* Ledger posting integration
 
 **Status:** Complete
 
@@ -76,27 +87,49 @@ This proves the platform can move external financial data through the full accou
 ## Import Platform
 
 * Rentec CSV parser
+* QuickBooks parser
 * Rentec production import service
-* Import pipeline
-* End-to-end Rentec accounting workflow
+* QuickBooks production import service
+* Provider-neutral import pipeline
+* Transaction import pipeline
+* ImportResult contract
+* Transaction Review contract
+* End-to-end accounting workflow
 
 **Status:** Complete
 
 ---
 
-## User-Facing Financial Tools
+## Property Intelligence
+
+* PropertyResolverService
+* PropertyRuleRepository
+* InMemoryPropertyRuleRepository
+* SupabasePropertyRuleRepository
+* property_rules persistence
+* PropertyRuleManagementService
+* ManualPropertyAssignmentService
+* Transaction assignment API
+* Persistent property learning loop
+
+**Status:** Complete
+
+---
+
+## User Financial Tools
 
 * Business Financial Snapshot
-* Net Worth calculations
-* Rentec Import UI
+* Net Worth
+* Financial Import UI
+* Transaction Review UI
 
 **Status:** Complete
 
 ---
 
-## Connection Domain
+## Connection Platform
 
-* Connection
+* Connection Domain
 * ConnectionStatus
 * CredentialReference
 * ImportHistory
@@ -108,21 +141,23 @@ This proves the platform can move external financial data through the full accou
 * ConnectionService
 * ConnectionProvider
 * ConnectionProviderRegistry
+* ConnectionProvisioningService
+* ConnectionPersistenceService
 
 **Status:** Complete
 
 ---
 
-## Plaid Adapter Foundation
+## Plaid Platform
 
 * Official Plaid SDK integration
-* Sandbox configuration boundary
-* Plaid client creation boundary
-* Link Token wrapper
-* Plaid Adapter `createLinkToken()` capability
-* Next.js `/api/plaid/link-token` route
-* Live Sandbox credential verification
-* Verified live Link Token generation
+* Sandbox support
+* Link Token generation
+* Public token exchange
+* Live sandbox verification
+* Financial account import
+* Account balance import
+* Transaction import foundation
 
 **Status:** Complete
 
@@ -130,24 +165,21 @@ This proves the platform can move external financial data through the full accou
 
 # Current Development
 
-## Phase 8 — Provider-Neutral Connection Platform
+## Phase 9 — Transaction Review & Property Intelligence
 
-### Completed
+### Recently Completed
 
-* Connection Domain
-* Connection Service
-* ConnectionProvider Contract
-* ConnectionProviderRegistry
-* Connection Import Orchestrator
-* Plaid Adapter Foundation
-* Plaid Link Frontend
-* Public Token Exchange
-* Plaid Connection Mapper
-* ConnectionProvisioningService
-* Connection Repository Contracts
-* In-Memory ConnectionRepository
-* In-Memory CredentialReferenceRepository
-* In-Memory InstitutionReferenceRepository
+* Provider-neutral connection platform
+* FinancialAccount import pipeline
+* AccountBalance import pipeline
+* Transaction import pipeline
+* FinancialEvent import pipeline
+* PropertyResolverService
+* Persistent PropertyRuleRepository
+* ManualPropertyAssignmentService
+* Transaction property assignment API
+* Transaction Review UI
+* Persistent property learning feedback loop
 
 **Status:** Complete
 
@@ -155,59 +187,154 @@ This proves the platform can move external financial data through the full accou
 
 ## Current Objective
 
-Build the provider-neutral persistence layer that coordinates repository contracts before any database implementation.
+Elevate Transaction Review into a first-class domain.
 
-Next architectural milestone:
+Candidate object:
 
-* ConnectionPersistenceService
+```text
+TransactionReviewItem
+    transaction
+    resolvedProperty
+    suggestedProperties
+    confidence
+    needsAssignment
+    assignmentStatus
+    reviewState
+```
 
 Responsibilities:
 
-* Persist Connection
-* Persist CredentialReference
-* Persist InstitutionReference
-* Coordinate repository operations
-* Remain provider-agnostic
-* Perform no account or transaction imports
+* Represent review state independently of imports
+* Support confidence scoring
+* Support multiple suggested properties
+* Support bulk assignment
+* Support similar transaction learning
+* Support future AI recommendations
+* Keep provider adapters independent
+* Keep PropertyResolverService read-only
+* Keep ManualPropertyAssignmentService command-side only
 
 ---
 
-## Completed Platform Milestones
+# Transaction Review Platform
 
-* ConnectionProvisioningService
-* ConnectionPersistenceService
-* Repository-backed connection persistence
-* Provider-agnostic Account Import
-* FinancialAccount domain
-* AccountBalance domain
-* BalanceImport pipeline
-* Provider-agnostic Transaction Import domain
+Current workflow:
 
-## Upcoming
+```text
+Import
+      ↓
+Provider Parser
+      ↓
+FinancialEvent Import
+      ↓
+PropertyResolverService
+      ↓
+transactionReview[]
+      ↓
+Financial Import UI
+      ↓
+User Assignment
+      ↓
+POST /api/transactions/assign-property
+      ↓
+ManualPropertyAssignmentService
+      ↓
+PropertyRuleManagementService
+      ↓
+PropertyRuleRepository
+      ↓
+Future imports automatically resolve
+```
 
-* PlaidTransactionMapper to Transaction pipeline integration
-* Financial Event pipeline integration
-* Immutable Ledger integration
-* CSV Adapter
-* Stripe Adapter
-* QuickBooks Adapter
-* Rentec Adapter
-* Synchronization Pipeline
-* Connection Monitoring
+Every importer now emits a provider-neutral `transactionReview` collection.
+
+The review layer is intentionally separated from accounting.
+
+Accounting consumes Financial Events.
+
+Users interact with Transaction Review.
+
+---
+
+# Knowledge Feedback Loop
+
+The property engine now improves over time.
+
+```text
+Unknown Transaction
+        ↓
+Transaction Review
+        ↓
+User selects Property
+        ↓
+Manual Property Rule
+        ↓
+PropertyRuleRepository
+        ↓
+Future imports resolve automatically
+```
+
+This feedback loop allows FORGE to become progressively smarter without modifying accounting logic.
+
+---
+
+# Architectural Rules
+
+PropertyResolverService
+
+* Reads rules only.
+* Never persists rules.
+
+ManualPropertyAssignmentService
+
+* Creates knowledge.
+* Never resolves transactions.
+
+Import Pipeline
+
+* Emits immutable review objects.
+* Never writes repository state.
+
+Accounting
+
+* Never depends on manual assignment.
+
+Reporting
+
+* Never depends on review state.
+
+The Property Rule Repository is the single source of truth for learned property knowledge.
 
 ---
 
 # Upcoming Platform Capability Areas
 
+## Transaction Review
+
+Planned capabilities:
+
+* First-class TransactionReview domain
+* Bulk property assignment
+* Similar transaction grouping
+* Confidence scoring
+* Suggested property ranking
+* Rule preview before save
+* Assignment audit history
+* Review queue filtering
+* AI-assisted property recommendations
+
+---
+
 ## Persistence
 
 Planned capabilities:
 
-* Imported transaction storage
+* Imported transaction persistence
 * Import history
-* Persistent import identifiers
-* Financial database integration
-* Saved report snapshots
+* Persistent review queues
+* Saved financial snapshots
+* Report history
+* Review state persistence
 
 ---
 
@@ -215,19 +342,23 @@ Planned capabilities:
 
 Planned capabilities:
 
-* Property registry
-* Property matching
-* Multi-property imports
-* Property-level reporting
-* Owner/investor reporting views
+* Multi-property ownership
+* Property performance reporting
+* Property maintenance records
+* Appliance inventories
+* Insurance documentation
+* Asset documentation
+* Property valuation integration
+* Fair market value estimates
+* Cost segregation support
 
 ---
 
 ## Financial Data Connections
 
-All external integrations now enter FORGE through the Connection Platform.
+Every external integration enters FORGE through the Connection Platform.
 
-```
+```text
 ConnectionProvider
         ↓
 ConnectionProviderRegistry
@@ -238,35 +369,33 @@ ConnectionProvisioningService
         ↓
 ConnectionPersistenceService
         ↓
-Repository Contracts
+FinancialAccount Import
         ↓
-Account Import
-        ↓
-FinancialAccount
-        ↓
-AccountBalance
+AccountBalance Import
         ↓
 Transaction Import
         ↓
-Transaction
+FinancialEvent Import
         ↓
-Financial Events
+PropertyResolverService
+        ↓
+Ledger Posting
         ↓
 Immutable Ledger
         ↓
 Financial Engine
 ```
 
-Planned providers:
+Supported / Planned Providers
 
 * Plaid
-* Stripe
 * QuickBooks
 * Rentec
 * CSV
+* Stripe
 * Future providers
 
-No provider adapter may bypass the Connection Platform or the Financial Engine.
+Provider adapters never bypass the Connection Platform or the Financial Engine.
 
 ---
 
@@ -274,27 +403,17 @@ No provider adapter may bypass the Connection Platform or the Financial Engine.
 
 Planned dashboards:
 
+* Executive Dashboard
 * Business Dashboard
 * Investor Dashboard
 * Property Dashboard
 * Financial Health Dashboard
-* Import Review Dashboard
+* Transaction Review Dashboard
+* Import Dashboard
 
-Dashboards consume reports and read models.
+Dashboards consume read models.
 
-Dashboards do not compute accounting truth.
-
----
-
-## Reporting Presentation
-
-Planned improvements:
-
-* Cleaner financial statement formatting
-* Report sections in the UI
-* Export-ready report views
-* Print-friendly statements
-* Period-based report display
+Dashboards never create accounting truth.
 
 ---
 
@@ -303,14 +422,17 @@ Planned improvements:
 Planned capabilities:
 
 * Financial explanations
+* Cash flow forecasting
+* Portfolio analysis
 * Trend summaries
-* Cash flow warnings
+* Financial recommendations
+* Property assignment recommendations
 * Scenario comparisons
-* Planning recommendations
+* Executive summaries
 
-AI may explain and assist.
+AI may assist decision making.
 
-AI does not become the accounting authority.
+AI never replaces accounting truth.
 
 ---
 
@@ -318,29 +440,39 @@ AI does not become the accounting authority.
 
 User-facing capabilities compose existing architectural components.
 
-Platform features must not duplicate accounting logic.
+Importers produce Financial Events and Transaction Review objects.
 
-Importers translate external records into Financial Events.
+Provider adapters translate external systems into FORGE-owned contracts.
 
-Provider adapters translate vendor behavior into FORGE-owned contracts.
+Resolvers read knowledge.
 
-The Connection Platform owns external integration boundaries.
+Manual assignment writes knowledge.
 
-The Financial Engine remains the single accounting authority.
+The Connection Platform owns every external integration.
 
-The Ledger remains the accounting truth.
+The Financial Engine remains the sole accounting authority.
+
+The Ledger remains immutable accounting truth.
+
+The Property Rule Repository remains the single source of learned property knowledge.
 
 ---
 
 # Long-Term Vision
 
-Forge becomes a financial operating platform built from reusable architectural components.
+FORGE becomes a complete Financial Operating System.
 
-The platform should grow quickly.
+The architecture remains stable.
 
-The architecture should remain stable.
+Platform capabilities expand through composition rather than duplication.
 
-Every new capability should strengthen the system rather than create shortcuts around it.
+Every new subsystem should strengthen the core architecture instead of creating shortcuts.
+
+Knowledge should accumulate over time.
+
+User decisions should continuously improve future automation.
+
+Accounting truth remains immutable.
 
 FORGE owns the business model.
 

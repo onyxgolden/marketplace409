@@ -78,37 +78,63 @@ Completed
 
 ---
 
-### Repository State
+### Repository Status
 
-Current Commit
+Current Branch
 
-6c292c1
+main
+
+Latest Commits
+
+b900b1e — Add transaction review workflow for property assignment
+62f827c — Add transaction property assignment API route
+55a4828 — Add manual property assignment service
+f5e4478 — Add persistent property rule repository
 
 Validation
 
-✓ 102 test files passing
-
-✓ 341 tests passing
-
-✓ Production build passing
-
 ✓ Main synchronized with GitHub
-
+✓ Production build passing
+✓ Transaction Review workflow operational
+✓ Property learning loop operational
 ---
 
 ### Current Objective
 
-Build the provider-neutral ConnectionPersistenceService.
+Elevate Transaction Review into a first-class domain.
 
-Responsibilities:
+Current architecture now supports:
 
-* Persist Connection
-* Persist CredentialReference
-* Persist InstitutionReference
-* Coordinate repository contracts
-* Remain provider-agnostic
-* Remain persistence-implementation agnostic
-* Perform no account or transaction imports
+• Provider-neutral transaction review
+• Manual property assignment
+• Persistent property learning
+• Automatic future property resolution
+
+Next engineering objective:
+
+```text
+TransactionReviewItem
+    transaction
+    resolvedProperty
+    suggestedProperties
+    confidence
+    needsAssignment
+    assignmentStatus
+```
+
+Future work:
+
+• Bulk assignment
+• Similar transaction grouping
+• Confidence scoring
+• AI-assisted recommendations
+
+Accounting remains unchanged.
+
+Resolver remains read-side.
+
+Manual assignment remains command-side.
+
 ---
 
 # Standard Session Lifecycle
@@ -224,55 +250,36 @@ Never:
 
 ---
 
-# Current Connection Architecture
+# Current Platform Architecture
 
 ```text
-FORGE Domain
-      │
-      ▼
-ConnectionProvider Contract
-      │
-      ▼
-ConnectionProviderRegistry
-      │
-      ▼
-Provider Adapter
-      │
-      ▼
 ConnectionProvisioningService
-      │
-      ▼
+        ↓
 ConnectionPersistenceService
-      │
-      ▼
-Repository Contracts
-      │
-      ▼
-Account Import
-      │
-      ▼
-FinancialAccount
-      │
-      ▼
-AccountBalance
-      │
-      ▼
-Transaction Import
-      │
-      ▼
-Transaction
-      │
-      ▼
-Financial Events
-      │
-      ▼
-Immutable Ledger
-      │
-      ▼
-Financial Engine
-      │
-      ▼
-Reports & UI
+        ↓
+FinancialAccountImportService
+        ↓
+BalanceImportService
+        ↓
+TransactionImportService
+        ↓
+FinancialEventImportService
+        ↓
+PropertyResolverService
+        ↓
+Transaction Review
+        ↓
+LedgerPostingService
+        ↓
+PostingEngine
+        ↓
+GeneralLedger
+        ↓
+ProductionReportService
+        ↓
+FinancialEngine
+        ↓
+Financial Reports
 ```
 
 The domain owns the business model.
@@ -280,6 +287,26 @@ The domain owns the business model.
 Providers adapt to FORGE.
 
 Never the reverse.
+
+---
+
+# Architectural Invariants
+
+The following architectural boundaries are mandatory:
+
+• PropertyResolverService is read-side only.
+
+• ManualPropertyAssignmentService is command-side only.
+
+• Importers never persist property knowledge.
+
+• PropertyRuleRepository is the single source of learned property knowledge.
+
+• Accounting never depends on review state.
+
+• Reporting never depends on manual assignment.
+
+These boundaries preserve the separation between semantic resolution, knowledge acquisition, and accounting truth.
 
 ---
 

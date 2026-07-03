@@ -182,44 +182,42 @@ Confirm:
 
 Every session should end from a known-good state.
 
-# Connection Platform Workflow
+# Platform Workflow
 
-Connection platform development follows a strict dependency order.
+Platform development follows a strict dependency order.
 
 ```
-Connection Domain
-        ↓
-Connection Service
-        ↓
-ConnectionProvider Contract
-        ↓
-ConnectionProviderRegistry
-        ↓
-Provider Adapter
-        ↓
 ConnectionProvisioningService
         ↓
 ConnectionPersistenceService
         ↓
-Repository Contracts
+FinancialAccountImportService
         ↓
-Account Import
+BalanceImportService
         ↓
-FinancialAccount
+TransactionImportService
         ↓
-AccountBalance
+FinancialEventImportService
         ↓
-Transaction Import
+PropertyResolverService
         ↓
-Transaction
+Transaction Review
         ↓
-Financial Events
+ManualPropertyAssignmentService
         ↓
-Immutable Ledger
+PropertyRuleRepository
         ↓
-Financial Engine
+LedgerPostingService
         ↓
-Reports
+PostingEngine
+        ↓
+GeneralLedger
+        ↓
+ProductionReportService
+        ↓
+FinancialEngine
+        ↓
+Financial Reports
 ```
 
 Each layer must be completed and validated before work begins on the next layer.
@@ -249,6 +247,43 @@ The Connection domain must never depend on Supabase, PostgreSQL, Plaid, or any o
 Infrastructure depends on the domain.
 
 Never the reverse.
+
+---
+
+# Knowledge Feedback Rule
+
+Knowledge acquisition is separate from semantic resolution.
+
+PropertyResolverService
+
+• Reads property knowledge.
+
+• Never creates property knowledge.
+
+ManualPropertyAssignmentService
+
+• Creates property knowledge.
+
+• Never resolves transactions.
+
+PropertyRuleRepository
+
+• Owns persistent learned knowledge.
+
+Importers
+
+• Produce immutable review objects.
+
+• Never persist business knowledge.
+
+Accounting
+
+• Never depends on review state.
+
+Reporting
+
+• Never depends on manual assignment.
+
 ---
 
 # Registry Before Adapter Rule
@@ -274,14 +309,18 @@ Connection platform work should be validated in the following order:
 
 1. Inspect repository state.
 2. Inspect affected files.
-3. Implement one logical feature.
-4. Verify file saves.
-5. Run targeted tests.
-6. Run the full test suite.
-7. Run the production build.
-8. Review architectural boundaries.
-9. Inspect Git status and diff.
-10. Commit after all quality gates pass.
+3. Plan architectural approach.
+4. Implement one logical feature.
+5. Verify saves.
+6. Run targeted tests.
+7. Run production build.
+8. Run broader validation as needed.
+9. Review architectural boundaries.
+10. Review Git status and diff.
+11. Commit.
+12. Push.
+13. Verify synchronization.
+14. Update documentation.
 
 ---
 
@@ -385,10 +424,8 @@ A Forge session is complete only when:
 * Repository is synchronized.
 * Lessons are captured.
 * The next engineering phase is identified.
-* A startup paste is prepared for the next session.
-* Next architectural priority documented.
-* The next engineering phase is identified.
-* A startup paste is prepared for the next session.
+* The next architectural priority is documented.
+* A startup bootstrap is prepared for the next session.
 
 The objective is not merely to finish work.
 
@@ -464,3 +501,4 @@ Verify repository state.
 
 ```bash
 git status
+```
