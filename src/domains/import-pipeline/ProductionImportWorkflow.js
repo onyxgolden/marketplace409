@@ -1,3 +1,4 @@
+import { TransactionReviewItem } from "../transaction-review/transaction-review-item";
 import { ImportPipeline } from "./ImportPipeline";
 import { ImportResult } from "./ImportResult";
 
@@ -50,7 +51,7 @@ function buildTransactionReview(records, sourceName) {
       name: record.property ?? "Unknown Property",
     };
 
-    return Object.freeze({
+    return new TransactionReviewItem({
       record,
       transaction: buildReviewTransaction(record, index, sourceName),
       resolvedProperty,
