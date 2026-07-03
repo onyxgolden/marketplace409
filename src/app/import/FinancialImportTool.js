@@ -130,70 +130,93 @@ export default function FinancialImportTool() {
     }
   }
 
-  async function assignProperty(reviewItem, index) {
-    const propertyId = selectedProperties[index];
-    const property = properties.find((candidate) => candidate.id === propertyId);
+async function assignProperty(reviewItem, index) {
+  const propertyId = selectedProperties[index];
+  const property = properties.find((candidate) => candidate.id === propertyId);
 
-    if (!property) {
-      setAssignmentStatus((current) => ({
-        ...current,
-        [index]: {
-          type: "error",
-          message: "Select a property first.",
-        },
-      }));
-      return;
+  if (!property) {
+    setAssignmentStatus((current) => ({
+      ...current,
+      [index]: {
+        type: "error",
+        message: "Select a property first.",
+      },
+    }));
+    return;
+  }
+
+  setAssignmentStatus((current) => ({
+    ...current,
+    [index]: {
+      type: "saving",
+      message: "Assigning...",
+    },
+  }));
+
+  try {
+    const response = await fetch("/api/transactions/assign-property", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        transaction: reviewItem.transaction,
+        property,
+        ownerId,
+        organizationId: property.organization_id ?? null,
+        reviewItem,
+      }),
+    });
+
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Unable to assign property.");
     }
+
+    const updatedReviewItem = payload.reviewItem || {
+      ...reviewItem,
+      resolvedProperty: property,
+      needsAssignment: false,
+      confidence: 1,
+      assignmentStatus: "assigned",
+      reviewState: "reviewed",
+    };
+
+    setResult((current) => {
+      if (!current?.transactionReview) {
+        return current;
+      }
+
+      return {
+        ...current,
+        transactionReview: current.transactionReview.map(
+          (candidate, candidateIndex) =>
+            candidateIndex === index ? updatedReviewItem : candidate
+        ),
+      };
+    });
 
     setAssignmentStatus((current) => ({
       ...current,
       [index]: {
-        type: "saving",
-        message: "Assigning...",
+        type: "success",
+        message: `Assigned to ${propertyLabel(property)}.`,
       },
     }));
-
-    try {
-      const response = await fetch("/api/transactions/assign-property", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          transaction: reviewItem.transaction,
-          property,
-          ownerId,
-          organizationId: property.organization_id ?? null,
-        }),
-      });
-
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error || "Unable to assign property.");
-      }
-
-      setAssignmentStatus((current) => ({
-        ...current,
-        [index]: {
-          type: "success",
-          message: `Assigned to ${propertyLabel(property)}.`,
-        },
-      }));
-    } catch (caughtError) {
-      setAssignmentStatus((current) => ({
-        ...current,
-        [index]: {
-          type: "error",
-          message:
-            caughtError instanceof Error
-              ? caughtError.message
-              : "Unable to assign property.",
-        },
-      }));
-    }
+  } catch (caughtError) {
+    setAssignmentStatus((current) => ({
+      ...current,
+      [index]: {
+        type: "error",
+        message:
+          caughtError instanceof Error
+            ? caughtError.message
+            : "Unable to assign property.",
+      },
+    }));
   }
-
+}
   return (
     <section className="max-w-6xl mx-auto px-6 py-12">
       <div className="bg-white rounded-3xl shadow-xl p-8 mb-8">

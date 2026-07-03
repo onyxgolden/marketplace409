@@ -6,6 +6,10 @@ import {
   SupabasePropertyRuleRepository,
   type Property,
 } from "@/domains/property";
+import {
+  TransactionReviewItem,
+  type TransactionReviewItemInput,
+} from "@/domains/transaction-review";
 import type { Transaction } from "@/domains/transaction";
 
 type AssignPropertyRequestBody = Readonly<{
@@ -13,11 +17,12 @@ type AssignPropertyRequestBody = Readonly<{
   property?: Property;
   ownerId?: string | null;
   organizationId?: string | null;
+  reviewItem?: TransactionReviewItemInput;
 }>;
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as AssignPropertyRequestBody;
+    const body = (await request.json()) as AssignPropertyRequestBody;
 
     if (!isTransaction(body.transaction)) {
       return NextResponse.json(
@@ -46,6 +51,9 @@ export async function POST(request: Request) {
       property: body.property,
       ownerId: normalizeNullableString(body.ownerId),
       organizationId: normalizeNullableString(body.organizationId),
+      reviewItem: body.reviewItem
+        ? new TransactionReviewItem(body.reviewItem)
+        : undefined,
     });
 
     return NextResponse.json({
@@ -53,13 +61,15 @@ export async function POST(request: Request) {
       transaction: result.transaction,
       property: result.property,
       rule: result.rule,
+      reviewItem: result.reviewItem,
     });
   } catch (error) {
     console.error("Manual property assignment error", error);
 
-    const message = error instanceof Error
-      ? error.message
-      : "Unable to assign transaction to property.";
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unable to assign transaction to property.";
 
     return NextResponse.json(
       { error: message },
