@@ -1,5 +1,6 @@
 export * from "./PostingEngine";
 export * from "./PostingValidator";
+export * from "./LedgerPostingService";
 export * from "./AccountRollupService";
 export * from "./AccountRollupCachedService";
 export * from "./AccountRollupSnapshotBuilder";
