@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FinancialImportServiceImpl } from "@/domains/financial-import/financial-import.service";
 import { buildProductionChartOfAccounts } from "@/domains/production";
 import { Money } from "@/platform";
@@ -12,6 +12,22 @@ function formatCurrency(value) {
 
 function formatReportCurrency(value) {
   return new Money(value).toString();
+}
+
+function propertyLabel(property) {
+  return property.name || property.address || property.id;
+}
+
+function recordIncome(record) {
+  if (Number(record.income || 0) > 0) return record.income;
+  if (Number(record.amount || 0) > 0) return record.amount;
+  return 0;
+}
+
+function recordExpense(record) {
+  if (Number(record.expense || 0) > 0) return record.expense;
+  if (Number(record.amount || 0) < 0) return Math.abs(record.amount);
+  return 0;
 }
 
 function reportSections(report) {
@@ -33,6 +49,33 @@ export default function FinancialImportTool() {
   const [fileName, setFileName] = useState("");
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  const [ownerId, setOwnerId] = useState(null);
+  const [properties, setProperties] = useState([]);
+  const [selectedProperties, setSelectedProperties] = useState({});
+  const [assignmentStatus, setAssignmentStatus] = useState({});
+
+  useEffect(() => {
+    loadProperties();
+    loadOwnerId();
+  }, []);
+
+  async function loadOwnerId() {
+    setOwnerId(await currentOwnerId());
+  }
+
+  async function loadProperties() {
+    const { data, error: propertyError } = await supabase
+      .from("investor_properties")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (propertyError) {
+      setError(propertyError.message);
+      return;
+    }
+
+    setProperties(data || []);
+  }
 
   async function currentOwnerId() {
     const { data, error: authError } = await supabase.auth.getUser();
@@ -49,6 +92,8 @@ export default function FinancialImportTool() {
 
     setError("");
     setResult(null);
+    setSelectedProperties({});
+    setAssignmentStatus({});
 
     if (!file) {
       setFileName("");
@@ -59,10 +104,14 @@ export default function FinancialImportTool() {
 
     try {
       const csv = await file.text();
-      const ownerId = await currentOwnerId();
+      const resolvedOwnerId = ownerId ?? await currentOwnerId();
+
+      if (resolvedOwnerId !== ownerId) {
+        setOwnerId(resolvedOwnerId);
+      }
 
       const importService = new FinancialImportServiceImpl({
-        ownerId,
+        ownerId: resolvedOwnerId,
       });
 
       const importResult = importService.importCsv({
@@ -78,6 +127,70 @@ export default function FinancialImportTool() {
           ? caughtError.message
           : "Unable to import financial CSV."
       );
+    }
+  }
+
+  async function assignProperty(reviewItem, index) {
+    const propertyId = selectedProperties[index];
+    const property = properties.find((candidate) => candidate.id === propertyId);
+
+    if (!property) {
+      setAssignmentStatus((current) => ({
+        ...current,
+        [index]: {
+          type: "error",
+          message: "Select a property first.",
+        },
+      }));
+      return;
+    }
+
+    setAssignmentStatus((current) => ({
+      ...current,
+      [index]: {
+        type: "saving",
+        message: "Assigning...",
+      },
+    }));
+
+    try {
+      const response = await fetch("/api/transactions/assign-property", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          transaction: reviewItem.transaction,
+          property,
+          ownerId,
+          organizationId: property.organization_id ?? null,
+        }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to assign property.");
+      }
+
+      setAssignmentStatus((current) => ({
+        ...current,
+        [index]: {
+          type: "success",
+          message: `Assigned to ${propertyLabel(property)}.`,
+        },
+      }));
+    } catch (caughtError) {
+      setAssignmentStatus((current) => ({
+        ...current,
+        [index]: {
+          type: "error",
+          message:
+            caughtError instanceof Error
+              ? caughtError.message
+              : "Unable to assign property.",
+        },
+      }));
     }
   }
 
@@ -102,6 +215,8 @@ export default function FinancialImportTool() {
               setFileName("");
               setResult(null);
               setError("");
+              setSelectedProperties({});
+              setAssignmentStatus({});
             }}
             className="mt-3 block w-full rounded-xl border bg-gray-50 px-4 py-4"
           >
@@ -137,6 +252,15 @@ export default function FinancialImportTool() {
         <div className="space-y-8">
           <ImportSummary summary={result.summary} />
 
+          <TransactionReview
+            reviews={result.transactionReview || []}
+            properties={properties}
+            selectedProperties={selectedProperties}
+            setSelectedProperties={setSelectedProperties}
+            assignmentStatus={assignmentStatus}
+            assignProperty={assignProperty}
+          />
+
           <ParsedRecords records={result.records} />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -162,6 +286,8 @@ export default function FinancialImportTool() {
 }
 
 function ImportSummary({ summary }) {
+  const properties = summary.properties || [];
+
   return (
     <div className="bg-white rounded-3xl shadow-lg p-8">
       <h2 className="text-2xl font-bold mb-6">Import Summary</h2>
@@ -170,7 +296,7 @@ function ImportSummary({ summary }) {
         <Metric label="Total rows" value={summary.totalRows} />
         <Metric label="Imported rows" value={summary.importedRows} />
         <Metric label="Skipped rows" value={summary.skippedRows} />
-        <Metric label="Properties" value={summary.properties.length} />
+        <Metric label="Properties" value={properties.length} />
         <Metric label="Total income" value={formatCurrency(summary.totalIncome)} />
         <Metric
           label="Total expenses"
@@ -181,11 +307,115 @@ function ImportSummary({ summary }) {
       <div className="rounded-2xl border bg-gray-50 p-5">
         <p className="font-bold mb-2">Imported properties</p>
         <p className="text-gray-700">
-          {summary.properties.length > 0
-            ? summary.properties.join(", ")
+          {properties.length > 0
+            ? properties.join(", ")
             : "No properties detected."}
         </p>
       </div>
+    </div>
+  );
+}
+
+function TransactionReview({
+  reviews,
+  properties,
+  selectedProperties,
+  setSelectedProperties,
+  assignmentStatus,
+  assignProperty,
+}) {
+  const needsReview = reviews.filter((review) => review.needsAssignment);
+
+  return (
+    <div className="bg-white rounded-3xl shadow-lg p-8">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+        <div>
+          <h2 className="text-2xl font-bold">Transaction Review</h2>
+          <p className="text-gray-600 mt-1">
+            Assign unknown transactions to a property so Forge can learn future rules.
+          </p>
+        </div>
+
+        <div className="rounded-2xl border bg-gray-50 px-5 py-3 font-bold">
+          {needsReview.length} need assignment
+        </div>
+      </div>
+
+      {reviews.length === 0 ? (
+        <p className="text-gray-500">No transaction review items available.</p>
+      ) : (
+        <div className="space-y-4">
+          {reviews.map((review, index) => {
+            const status = assignmentStatus[index];
+
+            return (
+              <div
+                key={`${review.transaction?.id || review.record?.date}-${index}`}
+                className="rounded-2xl border bg-gray-50 p-5"
+              >
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-center">
+                  <div className="lg:col-span-2">
+                    <p className="font-bold">{review.transaction?.description || "No description"}</p>
+                    <p className="text-sm text-gray-500">
+                      {review.transaction?.date} · {formatReportCurrency(review.transaction?.amountCents || 0)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-gray-500 font-bold">
+                      Current Property
+                    </p>
+                    <p className="font-semibold">
+                      {review.resolvedProperty?.name || review.record?.property || "Unknown Property"}
+                    </p>
+                  </div>
+
+                  <select
+                    value={selectedProperties[index] || ""}
+                    onChange={(event) =>
+                      setSelectedProperties((current) => ({
+                        ...current,
+                        [index]: event.target.value,
+                      }))
+                    }
+                    disabled={!review.needsAssignment}
+                    className="rounded-xl border bg-white px-4 py-3"
+                  >
+                    <option value="">
+                      {review.needsAssignment ? "Select property" : "Already resolved"}
+                    </option>
+
+                    {properties.map((property) => (
+                      <option key={property.id} value={property.id}>
+                        {propertyLabel(property)}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => assignProperty(review, index)}
+                    disabled={!review.needsAssignment || status?.type === "saving"}
+                    className="rounded-xl bg-green-700 px-4 py-3 font-bold text-white disabled:bg-gray-400"
+                  >
+                    {status?.type === "saving" ? "Assigning..." : "Assign"}
+                  </button>
+                </div>
+
+                {status && (
+                  <p
+                    className={`mt-3 text-sm font-semibold ${
+                      status.type === "error" ? "text-red-700" : "text-green-700"
+                    }`}
+                  >
+                    {status.message}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -223,10 +453,10 @@ function ParsedRecords({ records }) {
                 <td className="px-4 py-3">{record.property}</td>
                 <td className="px-4 py-3">{record.description}</td>
                 <td className="px-4 py-3 text-right">
-                  {formatCurrency(record.income)}
+                  {formatCurrency(recordIncome(record))}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  {formatCurrency(record.expense)}
+                  {formatCurrency(recordExpense(record))}
                 </td>
               </tr>
             ))}

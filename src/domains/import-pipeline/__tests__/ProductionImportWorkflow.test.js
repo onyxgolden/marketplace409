@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { ProductionImportWorkflow } from "../ProductionImportWorkflow";
 
 describe("ProductionImportWorkflow", () => {
-  test("builds an ImportResult using parsed records, reports, and default summary", () => {
+  test("builds an ImportResult using parsed records, reports, review items, and default summary", () => {
     const parser = {
       parseCsv(csv) {
         return JSON.parse(csv);
@@ -27,17 +27,45 @@ describe("ProductionImportWorkflow", () => {
     });
 
     const result = workflow.importCsv({
-      csv: JSON.stringify([{ id: "record-1" }]),
+      csv: JSON.stringify([
+        {
+          id: "record-1",
+          property: "Unknown Property",
+        },
+      ]),
       chartOfAccounts: {},
     });
 
-    expect(result.records).toEqual([{ id: "record-1" }]);
+    expect(result.records).toEqual([
+      {
+        id: "record-1",
+        property: "Unknown Property",
+      },
+    ]);
     expect(result.summary).toEqual({
       totalRows: 1,
       importedRows: 1,
       skippedRows: 0,
     });
     expect(result.reports.balanceSheet).toEqual({ recordCount: 1 });
+    expect(result.transactionReview).toMatchObject([
+      {
+        record: {
+          id: "record-1",
+          property: "Unknown Property",
+        },
+        transaction: {
+          id: "review-transaction:Test:test-undefined-0",
+          provider: "test",
+          amountCents: 0,
+          description: "",
+        },
+        resolvedProperty: {
+          name: "Unknown Property",
+        },
+        needsAssignment: true,
+      },
+    ]);
     expect(result.warningCount).toBe(0);
   });
 

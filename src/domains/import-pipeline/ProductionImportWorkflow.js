@@ -9,6 +9,59 @@ function buildDefaultSummary(records) {
   };
 }
 
+function buildReviewTransaction(record, index, sourceName) {
+  const sourceRecordId =
+    record.sourceRecordId ??
+    record.rawRow?.ID ??
+    record.rawRow?.Id ??
+    record.rawRow?.["Transaction ID"] ??
+    `${sourceName.toLowerCase()}-${record.date}-${index}`;
+
+  const description = String(record.description ?? "").trim();
+  const merchantName = description.length > 0 ? description : null;
+  const amount = Number(record.amount ?? record.income ?? record.expense ?? 0);
+
+  return Object.freeze({
+    id: `review-transaction:${sourceName}:${sourceRecordId}`,
+    financialAccountId: `review-account:${sourceName}`,
+    connectionId: `review-connection:${sourceName}`,
+    provider: sourceName.toLowerCase(),
+    providerTransactionId: String(sourceRecordId),
+    providerAccountId: `review-provider-account:${sourceName}`,
+    amountCents: Math.round(amount * 100),
+    currencyCode: "USD",
+    date: String(record.date ?? ""),
+    description,
+    merchantName,
+    category: Object.freeze(
+      [record.sourceCategory ?? record.category ?? record.type].filter(
+        (value) => typeof value === "string" && value.length > 0,
+      ),
+    ),
+    pending: false,
+    raw: record.rawRow ?? null,
+    createdAt: new Date(0).toISOString(),
+  });
+}
+
+function buildTransactionReview(records, sourceName) {
+  return records.map((record, index) => {
+    const resolvedProperty = record.resolvedProperty ?? {
+      name: record.property ?? "Unknown Property",
+    };
+
+    return Object.freeze({
+      record,
+      transaction: buildReviewTransaction(record, index, sourceName),
+      resolvedProperty,
+      needsAssignment:
+        !record.property ||
+        record.property === "Unknown Property" ||
+        resolvedProperty?.name === "Unknown Property",
+    });
+  });
+}
+
 export class ProductionImportWorkflow {
   constructor({
     parser,
@@ -106,6 +159,7 @@ export class ProductionImportWorkflow {
       records,
       summary: this.summaryBuilder(records),
       reports,
+      transactionReview: buildTransactionReview(records, this.sourceName),
     });
   }
 }

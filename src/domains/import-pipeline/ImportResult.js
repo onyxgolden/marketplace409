@@ -6,6 +6,7 @@ export class ImportResult {
     summary,
     reports,
     warnings = [],
+    transactionReview = [],
   }) {
     if (!Array.isArray(records)) {
       throw new Error("ImportResult records must be an array");
@@ -29,10 +30,15 @@ export class ImportResult {
       );
     }
 
+    if (!Array.isArray(transactionReview)) {
+      throw new Error("ImportResult transactionReview must be an array");
+    }
+
     this.records = Object.freeze([...records]);
     this.summary = summary;
     this.reports = reports;
     this.warnings = Object.freeze([...warnings]);
+    this.transactionReview = Object.freeze([...transactionReview]);
 
     Object.freeze(this);
   }
@@ -45,14 +51,20 @@ export class ImportResult {
     return this.warnings.length;
   }
 
+  get transactionReviewCount() {
+    return this.transactionReview.length;
+  }
+
   toJSON() {
     return {
       recordCount: this.recordCount,
       warningCount: this.warningCount,
+      transactionReviewCount: this.transactionReviewCount,
       records: this.records,
       summary: this.summary,
       reports: this.reports,
       warnings: this.warnings,
+      transactionReview: this.transactionReview,
     };
   }
 }

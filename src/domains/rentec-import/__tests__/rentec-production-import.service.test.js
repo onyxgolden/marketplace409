@@ -50,6 +50,23 @@ describe("RentecProductionImportService", () => {
     expect(result.reports.incomeStatement).toBeDefined();
     expect(result.reports.trialBalance).toBeDefined();
 
+    expect(result.transactionReview).toHaveLength(2);
+    expect(result.transactionReview[0]).toMatchObject({
+      record: {
+        property: "170 John",
+      },
+      transaction: {
+        id: "review-transaction:Rentec:rentec-2026-01-01-0",
+        provider: "rentec",
+        description: "Rental Income",
+        amountCents: 150000,
+      },
+      resolvedProperty: {
+        name: "170 John",
+      },
+      needsAssignment: false,
+    });
+
     expect(result.warnings).toEqual([]);
     expect(result.warningCount).toBe(0);
   });
