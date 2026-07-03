@@ -1,17 +1,26 @@
-import { BaseRepository } from "@/repositories";
-import { mapFinancialAccountRowToFinancialAccount } from "./financial-account.mapper";
-import type { FinancialAccount } from "./financial-account.types";
+import type {
+  FinancialAccount,
+} from "./financial-account.types";
 
-class FinancialAccountRepositoryImpl extends BaseRepository<any> {
-  constructor() {
-    super("financial_accounts");
-  }
+export interface FinancialAccountRepository {
+  save(
+    account: FinancialAccount,
+  ): Promise<FinancialAccount>;
 
-  async getAll(): Promise<FinancialAccount[]> {
-    const rows = await super.getAll();
-    return rows.map(mapFinancialAccountRowToFinancialAccount);
-  }
+  saveMany(
+    accounts: readonly FinancialAccount[],
+  ): Promise<readonly FinancialAccount[]>;
+
+  findById(
+    id: string,
+  ): Promise<FinancialAccount | null>;
+
+  findByConnection(
+    connectionId: string,
+  ): Promise<readonly FinancialAccount[]>;
+
+  findByProviderAccountId(
+    provider: string,
+    providerAccountId: string,
+  ): Promise<FinancialAccount | null>;
 }
-
-export const FinancialAccountRepository =
-  new FinancialAccountRepositoryImpl();

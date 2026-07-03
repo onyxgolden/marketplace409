@@ -3,6 +3,10 @@ export type {
 } from "./plaid-adapter.types";
 
 export type {
+  PlaidAccount,
+} from "./plaid-account.types";
+
+export type {
   PlaidTransaction,
 } from "./plaid-transaction.types";
 
@@ -24,9 +28,12 @@ export {
 } from "./plaid-adapter.provider";
 
 export {
+  PlaidFinancialAccountMapper,
+} from "./plaid-financial-account.mapper";
+
+export {
   mapPlaidTransactionToFinancialEvent,
 } from "./plaid-transaction.mapper";
-
 
 export type {
   PlaidConnectionMappingInput,

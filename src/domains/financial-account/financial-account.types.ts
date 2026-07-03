@@ -1,30 +1,34 @@
-import type { Entity } from "@/types/entity";
+export const FINANCIAL_ACCOUNT_TYPES = [
+  "depository",
+  "credit",
+  "loan",
+  "investment",
+  "other",
+] as const;
 
-export type FinancialAccountType =
-  | "checking"
-  | "savings"
-  | "money_market"
-  | "brokerage"
-  | "retirement"
-  | "crypto_wallet"
-  | "credit_card"
-  | "mortgage"
-  | "loan"
-  | "manual"
-  | "other";
+export type FinancialAccountType = typeof FINANCIAL_ACCOUNT_TYPES[number];
 
-export type FinancialAccount = Entity & {
-  institution_id?: string | null;
-
+export type FinancialAccount = Readonly<{
+  id: string;
+  connectionId: string;
+  provider: string;
+  providerAccountId: string;
+  institutionId: string;
   name: string;
+  officialName: string | null;
+  mask: string | null;
   type: FinancialAccountType;
+  subtype: string | null;
+  currencyCode: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}>;
 
-  account_mask?: string | null;
-
-  current_balance?: number | null;
-
-  supports_sync?: boolean;
-  last_synced_at?: string | null;
-
-  notes?: string | null;
-};
+export function createFinancialAccount(
+  account: FinancialAccount,
+): FinancialAccount {
+  return Object.freeze({
+    ...account,
+  });
+}
