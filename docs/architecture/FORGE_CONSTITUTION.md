@@ -24,6 +24,8 @@ This document exists so the development methodology is versioned alongside the s
 
 Financial Forge is not built by chasing features.
 
+Manual user actions form a closed-loop rule learning system through persistent rule storage and reuse in the resolver.
+
 It is built by constructing durable, reusable architectural foundations.
 
 Every decision should improve the system's ability to grow for the next decade rather than merely solving today's problem.
