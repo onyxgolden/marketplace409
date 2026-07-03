@@ -9,3 +9,4 @@ export * from "./property-resolution-rule.types";
 export * from "./property-rule.repository";
 export * from "./in-memory-property-rule.repository";
 export * from "./property-rule-management.service";
+export * from "./supabase-property-rule.repository";
