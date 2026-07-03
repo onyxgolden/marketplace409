@@ -1,3 +1,4 @@
+import { TransactionReviewItem } from "../transaction-review";
 import type { Transaction } from "../transaction/transaction.types";
 import type { PropertyResolutionRule } from "./property-resolution-rule.types";
 import type {
@@ -11,12 +12,14 @@ export type ManualPropertyAssignmentInput = Readonly<{
   property: Property;
   ownerId?: string | null;
   organizationId?: string | null;
+  reviewItem?: TransactionReviewItem;
 }>;
 
 export type ManualPropertyAssignmentResult = Readonly<{
   transaction: Transaction;
   property: Property;
   rule: PropertyResolutionRule;
+  reviewItem: TransactionReviewItem | null;
 }>;
 
 type PropertyRuleManagementServiceLike = Pick<
@@ -36,6 +39,7 @@ export class ManualPropertyAssignmentService {
     property,
     ownerId = null,
     organizationId = null,
+    reviewItem = undefined,
   }: ManualPropertyAssignmentInput): Promise<ManualPropertyAssignmentResult> {
     const input: CreateManualPropertyRuleInput = {
       transaction,
@@ -53,6 +57,18 @@ export class ManualPropertyAssignmentService {
       transaction,
       property,
       rule,
+      reviewItem: reviewItem
+        ? new TransactionReviewItem({
+            record: reviewItem.record,
+            transaction: reviewItem.transaction,
+            resolvedProperty: property,
+            needsAssignment: false,
+            confidence: 1,
+            suggestedProperties: reviewItem.suggestedProperties,
+            assignmentStatus: "assigned",
+            reviewState: "reviewed",
+          })
+        : null,
     };
   }
 }

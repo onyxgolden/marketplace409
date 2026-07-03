@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TransactionReviewItem } from "../../transaction-review";
 
 import { InMemoryPropertyRuleRepository } from "../in-memory-property-rule.repository";
 import { ManualPropertyAssignmentService } from "../manual-property-assignment.service";
@@ -88,5 +89,44 @@ describe("ManualPropertyAssignmentService", () => {
 
     expect(result.strategy).toBe("manual_rule");
     expect(result.property.name).toBe("170 John");
+  });
+  it("returns an updated reviewed assignment item when a review item is supplied", async () => {
+    const repository = new InMemoryPropertyRuleRepository();
+
+    const service = new ManualPropertyAssignmentService({
+      ruleManagementService: new PropertyRuleManagementService(repository),
+    });
+
+    const transaction = buildTransaction();
+    const property = buildProperty("170 John");
+
+    const reviewItem = new TransactionReviewItem({
+      record: { id: "record-1" },
+      transaction,
+      resolvedProperty: { name: "Unknown Property" },
+      needsAssignment: true,
+      confidence: 0,
+      suggestedProperties: [property],
+      assignmentStatus: "suggested",
+      reviewState: "pending",
+    });
+
+    const result = await service.assignTransactionToProperty({
+      transaction,
+      property,
+      reviewItem,
+    });
+
+    expect(result.reviewItem).toMatchObject({
+      resolvedProperty: property,
+      needsAssignment: false,
+      confidence: 1,
+      suggestedProperties: [property],
+      assignmentStatus: "assigned",
+      reviewState: "reviewed",
+    });
+
+    expect(result.reviewItem).not.toBe(reviewItem);
+    expect(Object.isFrozen(result.reviewItem)).toBe(true);
   });
 });
