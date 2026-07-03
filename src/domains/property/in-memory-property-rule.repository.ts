@@ -9,26 +9,26 @@ export class InMemoryPropertyRuleRepository
   implements PropertyRuleRepository {
   private readonly rules = new Map<string, PropertyResolutionRule>();
 
-  save(
+  async save(
     rule: PropertyResolutionRule,
-  ): PropertyResolutionRule {
+  ): Promise<PropertyResolutionRule> {
     this.rules.set(rule.id, rule);
     return rule;
   }
 
-  saveMany(
+  async saveMany(
     rules: readonly PropertyResolutionRule[],
-  ): readonly PropertyResolutionRule[] {
+  ): Promise<readonly PropertyResolutionRule[]> {
     for (const rule of rules) {
-      this.save(rule);
+      await this.save(rule);
     }
 
     return rules;
   }
 
-  findRules(
+  async findRules(
     context: PropertyResolutionRuleContext = {},
-  ): readonly PropertyResolutionRule[] {
+  ): Promise<readonly PropertyResolutionRule[]> {
     const {
       ownerId = null,
       organizationId = null,

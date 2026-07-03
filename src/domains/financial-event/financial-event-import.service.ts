@@ -25,9 +25,9 @@ type PropertyResolverLike = {
     transaction: Transaction;
     ownerId?: string | null;
     organizationId?: string | null;
-  }): {
+  }): Promise<{
     property: ResolvedFinancialEventInput["resolvedProperty"];
-  };
+  }>;
 };
 
 type FinancialEventFactoryLike = {
@@ -64,15 +64,17 @@ export class FinancialEventImportService {
     this.ownerId = ownerId;
   }
 
-  import(
+  async import(
     input: FinancialEventImportInput,
-  ): FinancialEventImportResult {
+  ): Promise<FinancialEventImportResult> {
     if (!input.readyForFinancialEventImport) {
       throw new Error("Transaction import result is not ready for financial event import");
     }
 
-    const financialEvents = input.transactions.map((transaction) =>
-      this.toFinancialEvent(transaction),
+    const financialEvents = await Promise.all(
+      input.transactions.map((transaction) =>
+        this.toFinancialEvent(transaction),
+      ),
     );
 
     const persistedFinancialEvents =
@@ -81,7 +83,7 @@ export class FinancialEventImportService {
     return toFinancialEventImportResult(input, persistedFinancialEvents);
   }
 
-  private toFinancialEvent(transaction: Transaction): FinancialEvent {
+  private async toFinancialEvent(transaction: Transaction): Promise<FinancialEvent> {
     const semanticDescription =
       transaction.merchantName ??
       transaction.description;
@@ -90,10 +92,12 @@ export class FinancialEventImportService {
       date: transaction.date,
       description: transaction.description,
       amount: transaction.amountCents,
-      resolvedProperty: this.propertyResolver.resolveTransaction({
-        transaction,
-        ownerId: this.ownerId,
-      }).property,
+      resolvedProperty: (
+        await this.propertyResolver.resolveTransaction({
+          transaction,
+          ownerId: this.ownerId,
+        })
+      ).property,
       knowledge: this.normalizer.normalize(semanticDescription),
       sourceSystem: "transaction",
       sourceRecordId: transaction.id,

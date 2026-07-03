@@ -55,14 +55,14 @@ function buildTransactionImport(transactions: readonly Transaction[]) {
 }
 
 describe("FinancialEventImportService", () => {
-  it("imports canonical transactions as financial events", () => {
+  it("imports canonical transactions as financial events", async () => {
     const repository = new InMemoryFinancialEventRepository();
     const service = new FinancialEventImportService({
       repository,
       ownerId: "owner-1",
     });
 
-    const result = service.import(
+    const result = await service.import(
       buildTransactionImport([buildTransaction()]),
     );
 
@@ -95,13 +95,13 @@ describe("FinancialEventImportService", () => {
     });
   });
 
-  it("uses merchant name for knowledge normalization when available", () => {
+  it("uses merchant name for knowledge normalization when available", async () => {
     const repository = new InMemoryFinancialEventRepository();
     const service = new FinancialEventImportService({
       repository,
     });
 
-    const result = service.import(
+    const result = await service.import(
       buildTransactionImport([
         buildTransaction({
           description: "External Bank Description",

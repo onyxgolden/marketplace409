@@ -58,14 +58,14 @@ function buildRule(
 }
 
 describe("PropertyResolverService", () => {
-  it("returns Unknown Property when no rule matches", () => {
+  it("returns Unknown Property when no rule matches", async () => {
     const repository = new InMemoryPropertyRuleRepository();
 
     const resolver = new PropertyResolverService({
       ruleRepository: repository,
     });
 
-    const result = resolver.resolveTransaction({
+    const result = await resolver.resolveTransaction({
       transaction: buildTransaction(),
     });
 
@@ -77,16 +77,16 @@ describe("PropertyResolverService", () => {
     );
   });
 
-  it("matches a merchant rule", () => {
+  it("matches a merchant rule", async () => {
     const repository = new InMemoryPropertyRuleRepository();
 
-    repository.save(buildRule());
+    await repository.save(buildRule());
 
     const resolver = new PropertyResolverService({
       ruleRepository: repository,
     });
 
-    const result = resolver.resolveTransaction({
+    const result = await resolver.resolveTransaction({
       transaction: buildTransaction(),
     });
 
@@ -98,10 +98,10 @@ describe("PropertyResolverService", () => {
     );
   });
 
-  it("prefers manual rules over merchant rules", () => {
+  it("prefers manual rules over merchant rules", async () => {
     const repository = new InMemoryPropertyRuleRepository();
 
-    repository.save(
+    await repository.save(
       buildRule({
         id: "merchant",
         type: "merchant",
@@ -109,7 +109,7 @@ describe("PropertyResolverService", () => {
       }),
     );
 
-    repository.save(
+    await repository.save(
       buildRule({
         id: "manual",
         type: "manual",
@@ -121,7 +121,7 @@ describe("PropertyResolverService", () => {
       ruleRepository: repository,
     });
 
-    const result = resolver.resolveTransaction({
+    const result = await resolver.resolveTransaction({
       transaction: buildTransaction(),
     });
 
@@ -133,10 +133,10 @@ describe("PropertyResolverService", () => {
     );
   });
 
-  it("matches description rules", () => {
+  it("matches description rules", async () => {
     const repository = new InMemoryPropertyRuleRepository();
 
-    repository.save(
+    await repository.save(
       buildRule({
         type: "description",
         property: buildProperty("Description Property"),
@@ -152,7 +152,7 @@ describe("PropertyResolverService", () => {
       ruleRepository: repository,
     });
 
-    const result = resolver.resolveTransaction({
+    const result = await resolver.resolveTransaction({
       transaction: buildTransaction(),
     });
 

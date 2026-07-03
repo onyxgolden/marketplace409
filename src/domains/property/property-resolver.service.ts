@@ -99,18 +99,18 @@ export class PropertyResolverService {
     };
   }
 
-  static resolveTransaction(
+  static async resolveTransaction(
     input: TransactionPropertyResolutionInput,
-  ): PropertyResolutionResult {
+  ): Promise<PropertyResolutionResult> {
     return new PropertyResolverService().resolveTransaction(input);
   }
 
-  resolveTransaction({
+  async resolveTransaction({
     transaction,
     ownerId = null,
     organizationId = null,
-  }: TransactionPropertyResolutionInput): PropertyResolutionResult {
-    const matchedRule = this.findMatchingRule({
+  }: TransactionPropertyResolutionInput): Promise<PropertyResolutionResult> {
+    const matchedRule = await this.findMatchingRule({
       transaction,
       ownerId,
       organizationId,
@@ -140,7 +140,7 @@ export class PropertyResolverService {
     };
   }
 
-  private findMatchingRule({
+  private async findMatchingRule({
     transaction,
     ownerId,
     organizationId,
@@ -148,9 +148,9 @@ export class PropertyResolverService {
     transaction: Transaction;
     ownerId: string | null;
     organizationId: string | null;
-  }): PropertyResolutionRule | null {
+  }): Promise<PropertyResolutionRule | null> {
     const rules =
-      this.ruleRepository?.findRules({
+      await this.ruleRepository?.findRules({
         ownerId,
         organizationId,
       }) ?? [];

@@ -6,13 +6,13 @@ import type {
 export interface PropertyRuleRepository {
   findRules(
     context?: PropertyResolutionRuleContext,
-  ): readonly PropertyResolutionRule[];
+  ): Promise<readonly PropertyResolutionRule[]>;
 
   save(
     rule: PropertyResolutionRule,
-  ): PropertyResolutionRule;
+  ): Promise<PropertyResolutionRule>;
 
   saveMany(
     rules: readonly PropertyResolutionRule[],
-  ): readonly PropertyResolutionRule[];
+  ): Promise<readonly PropertyResolutionRule[]>;
 }
