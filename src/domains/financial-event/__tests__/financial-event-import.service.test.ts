@@ -78,7 +78,7 @@ describe("FinancialEventImportService", () => {
     expect(event.amount).toBe(12500);
     expect(event.source_system).toBe("transaction");
     expect(event.source_record_id).toBe("transaction-1");
-    expect(event.property_id).toBe("unassigned");
+    expect(event.property_id).toBe("unknown-property");
     expect(event.normalized_category).toBe("property_repairs");
     expect(event.transaction_kind).toBe("expense");
     expect(event.metadata).toMatchObject({

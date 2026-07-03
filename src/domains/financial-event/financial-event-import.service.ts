@@ -21,10 +21,13 @@ type CategoryNormalizerLike = {
 };
 
 type PropertyResolverLike = {
-  fromSourceName(input: {
-    sourceName: string;
-    sourceSystem?: string | null;
-  }): ResolvedFinancialEventInput["resolvedProperty"];
+  resolveTransaction(input: {
+    transaction: Transaction;
+    ownerId?: string | null;
+    organizationId?: string | null;
+  }): {
+    property: ResolvedFinancialEventInput["resolvedProperty"];
+  };
 };
 
 type FinancialEventFactoryLike = {
@@ -87,10 +90,10 @@ export class FinancialEventImportService {
       date: transaction.date,
       description: transaction.description,
       amount: transaction.amountCents,
-      resolvedProperty: this.propertyResolver.fromSourceName({
-        sourceName: "Unassigned",
-        sourceSystem: transaction.provider,
-      }),
+      resolvedProperty: this.propertyResolver.resolveTransaction({
+        transaction,
+        ownerId: this.ownerId,
+      }).property,
       knowledge: this.normalizer.normalize(semanticDescription),
       sourceSystem: "transaction",
       sourceRecordId: transaction.id,
