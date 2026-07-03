@@ -7,6 +7,7 @@ import {
 describe("ConnectionCapabilities", () => {
   it("supports provider-agnostic capability keys", () => {
     expect(CONNECTION_CAPABILITY_KEYS).toEqual([
+      "import_accounts",
       "import_transactions",
       "import_balances",
       "import_invoices",

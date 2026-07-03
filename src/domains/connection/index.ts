@@ -137,9 +137,33 @@ export {
 } from "./connection-provisioning.service";
 
 export type {
+  ConnectionPersistenceInput,
+  ConnectionPersistenceResult,
+} from "./connection-persistence.types";
+
+export {
+  toConnectionPersistenceResult,
+} from "./connection-persistence.types";
+
+export {
+  ConnectionPersistenceService,
+} from "./connection-persistence.service";
+export type {
   ConnectionRepository,
 } from "./connection.repository";
 
+export type {
+  AccountImportInput,
+  AccountImportResult,
+} from "./account-import.types";
+
+export {
+  toAccountImportResult,
+} from "./account-import.types";
+
+export {
+  AccountImportService,
+} from "./account-import.service";
 export type {
   CredentialReferenceRepository,
 } from "./credential-reference.repository";

@@ -1,4 +1,5 @@
 export const CONNECTION_CAPABILITY_KEYS = [
+  "import_accounts",
   "import_transactions",
   "import_balances",
   "import_invoices",

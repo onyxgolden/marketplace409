@@ -37,6 +37,7 @@ export function createPlaidAdapter(): PlaidAdapter {
       return {
         connectionId: "plaid",
         capabilities: [
+          "import_accounts",
           "import_transactions",
           "import_balances",
           "manual_sync",
