@@ -172,12 +172,20 @@ Responsibilities:
 
 ---
 
+## Completed Platform Milestones
+
+* ConnectionProvisioningService
+* ConnectionPersistenceService
+* Repository-backed connection persistence
+* Provider-agnostic Account Import
+* FinancialAccount domain
+* AccountBalance domain
+* BalanceImport pipeline
+* Provider-agnostic Transaction Import domain
+
 ## Upcoming
 
-* ConnectionPersistenceService
-* Repository-backed persistence
-* Account Import
-* Transaction Import
+* PlaidTransactionMapper to Transaction pipeline integration
 * Financial Event pipeline integration
 * Immutable Ledger integration
 * CSV Adapter
@@ -234,7 +242,13 @@ Repository Contracts
         ↓
 Account Import
         ↓
+FinancialAccount
+        ↓
+AccountBalance
+        ↓
 Transaction Import
+        ↓
+Transaction
         ↓
 Financial Events
         ↓

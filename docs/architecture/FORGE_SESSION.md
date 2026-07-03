@@ -251,7 +251,16 @@ Repository Contracts
 Account Import
       │
       ▼
+FinancialAccount
+      │
+      ▼
+AccountBalance
+      │
+      ▼
 Transaction Import
+      │
+      ▼
+Transaction
       │
       ▼
 Financial Events
