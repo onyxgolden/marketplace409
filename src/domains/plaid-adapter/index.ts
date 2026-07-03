@@ -43,3 +43,11 @@ export type {
 export {
   mapPlaidExchangeToConnection,
 } from "./plaid-connection.mapper";
+
+export type {
+  PlaidAccountBalance,
+} from "./plaid-account-balance.types";
+
+export {
+  PlaidAccountBalanceMapper,
+} from "./plaid-account-balance.mapper";
