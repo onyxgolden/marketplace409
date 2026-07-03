@@ -1,25 +1,26 @@
-import type { Entity } from "@/types/entity";
-
-export type TransactionType =
-  | "income"
-  | "expense"
-  | "transfer"
-  | "asset_purchase"
-  | "asset_sale"
-  | "debt_payment"
-  | "adjustment";
-
-export type Transaction = Entity & {
-  owner_id?: string | null;
-  financial_account_id?: string | null;
-
-  type: TransactionType;
-
+export type Transaction = Readonly<{
+  id: string;
+  financialAccountId: string;
+  connectionId: string;
+  provider: string;
+  providerTransactionId: string;
+  providerAccountId: string;
+  amountCents: number;
+  currencyCode: string;
+  date: string;
   description: string;
-  amount: number;
+  merchantName: string | null;
+  category: readonly string[];
+  pending: boolean;
+  raw: Record<string, unknown> | null;
+  createdAt: string;
+}>;
 
-  transaction_date: string;
-
-  category?: string | null;
-  notes?: string | null;
-};
+export function createTransaction(
+  transaction: Transaction,
+): Transaction {
+  return Object.freeze({
+    ...transaction,
+    category: Object.freeze([...transaction.category]),
+  });
+}
