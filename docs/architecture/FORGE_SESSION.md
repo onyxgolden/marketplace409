@@ -339,3 +339,58 @@ Success is measured by:
 * Repository integrity
 
 Every completed session should strengthen both the software and the engineering process that produced it.
+
+## Phase 10 Update — Transaction Review Aggregate Introduced (2026-07-03)
+
+### Summary
+The Transaction Review domain has been expanded from a single entity model into a full aggregate-based structure.
+
+### New Domain Structure
+
+- TransactionReviewItem (canonical immutable entity)
+- TransactionReviewCollection (immutable aggregate)
+
+### Architectural Shift
+
+The system has moved from:
+
+UI-driven aggregation:
+- UI computed counts, filters, and review state
+
+To:
+
+Domain-driven aggregation:
+- TransactionReviewCollection owns all derived metrics
+- UI renders precomputed canonical aggregate
+
+### Aggregate Responsibilities
+
+TransactionReviewCollection now owns:
+
+- needsReviewCount
+- assignedCount
+- reviewedCount
+- ignoredCount
+- completionPercentage
+
+All metrics are derived strictly from TransactionReviewItem state.
+
+### Key Invariants
+
+- TransactionReviewItem remains immutable
+- TransactionReviewCollection is immutable
+- No persistence layer introduced yet
+- No repository abstraction introduced yet
+- UI no longer performs aggregation logic
+
+### Design Principle Reinforced
+
+> All business aggregation logic must live inside domain objects, not in UI or API layers.
+
+### Next Phase Candidate
+
+- TransactionReviewWorkflowService (state machine orchestration)
+
+This will introduce lifecycle control for:
+
+pending → suggested → assigned → reviewed → ignored
