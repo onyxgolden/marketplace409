@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
 
 import {
-  mapPlaidTransactionToFinancialEvent,
+  PlaidTransactionMapper,
 } from "../plaid-transaction.mapper";
 
-describe("mapPlaidTransactionToFinancialEvent", () => {
-  it("maps a Plaid transaction into a FORGE financial event", () => {
-    const event = mapPlaidTransactionToFinancialEvent(
+describe("PlaidTransactionMapper", () => {
+  it("maps Plaid transaction data into a canonical Transaction", () => {
+    const mapper = new PlaidTransactionMapper();
+
+    const transaction = mapper.map(
       {
         transactionId: "plaid_txn_1",
         accountId: "plaid_account_1",
@@ -20,51 +26,36 @@ describe("mapPlaidTransactionToFinancialEvent", () => {
           paymentChannel: "in store",
         },
       },
-      {
-        id: "property_1",
-        status: "active",
-        is_deleted: false,
-        created_at: "2026-01-01T00:00:00.000Z",
-        updated_at: "2026-01-01T00:00:00.000Z",
-      },
-      {
-        rawCategory: "Hardware",
-        normalizedCategory: "property_repairs",
-        transactionKind: "expense",
-        taxDeductible: true,
-        affectsNOI: true,
-        capitalized: false,
-      },
-      "owner_1",
+      "connection_1",
+      "plaid",
+      "financial_account_1",
+      "plaid_account_1",
     );
 
-    expect(event).toMatchObject({
-      owner_id: "owner_1",
-      property_id: "property_1",
-      event_date: "2026-01-15",
-      description: "Home Depot",
-      amount: 125.5,
-      transaction_kind: "expense",
-      normalized_category: "property_repairs",
-      tax_deductible: true,
-      affects_noi: true,
-      capitalized: false,
-      source_system: "plaid",
-      source_record_id: "plaid_txn_1",
-      metadata: {
-        accountId: "plaid_account_1",
-        category: ["Shops", "Hardware"],
-        merchantName: "Home Depot",
-        pending: false,
-        raw: {
-          paymentChannel: "in store",
-        },
-      },
+    expect(transaction.id).toBe("transaction_plaid_plaid_txn_1");
+    expect(transaction.financialAccountId).toBe("financial_account_1");
+    expect(transaction.connectionId).toBe("connection_1");
+    expect(transaction.provider).toBe("plaid");
+    expect(transaction.providerTransactionId).toBe("plaid_txn_1");
+    expect(transaction.providerAccountId).toBe("plaid_account_1");
+    expect(transaction.amountCents).toBe(12550);
+    expect(transaction.currencyCode).toBe("USD");
+    expect(transaction.date).toBe("2026-01-15");
+    expect(transaction.description).toBe("Home Depot");
+    expect(transaction.merchantName).toBe("Home Depot");
+    expect(transaction.category).toEqual(["Shops", "Hardware"]);
+    expect(transaction.pending).toBe(false);
+    expect(transaction.raw).toEqual({
+      paymentChannel: "in store",
     });
+    expect(Object.isFrozen(transaction)).toBe(true);
+    expect(Object.isFrozen(transaction.category)).toBe(true);
   });
 
-  it("defaults optional Plaid metadata safely", () => {
-    const event = mapPlaidTransactionToFinancialEvent(
+  it("defaults optional Plaid transaction fields safely", () => {
+    const mapper = new PlaidTransactionMapper();
+
+    const transaction = mapper.map(
       {
         transactionId: "plaid_txn_2",
         accountId: "plaid_account_2",
@@ -72,29 +63,48 @@ describe("mapPlaidTransactionToFinancialEvent", () => {
         name: "Bank Fee",
         amount: 12,
       },
-      {
-        id: "property_2",
-        status: "active",
-        is_deleted: false,
-        created_at: "2026-01-01T00:00:00.000Z",
-        updated_at: "2026-01-01T00:00:00.000Z",
-      },
-      {
-        rawCategory: "Bank Fee",
-        normalizedCategory: "other",
-        transactionKind: "expense",
-        taxDeductible: true,
-        affectsNOI: true,
-        capitalized: false,
-      },
+      "connection_1",
+      "plaid",
+      "financial_account_2",
+      "plaid_account_2",
     );
 
-    expect(event.metadata).toMatchObject({
-      accountId: "plaid_account_2",
-      category: [],
-      merchantName: null,
-      pending: false,
-      raw: null,
-    });
+    expect(transaction.amountCents).toBe(1200);
+    expect(transaction.currencyCode).toBe("USD");
+    expect(transaction.merchantName).toBeNull();
+    expect(transaction.category).toEqual([]);
+    expect(transaction.pending).toBe(false);
+    expect(transaction.raw).toBeNull();
+  });
+
+  it("maps many Plaid transactions", () => {
+    const mapper = new PlaidTransactionMapper();
+
+    const transactions = mapper.mapMany(
+      [
+        {
+          transactionId: "plaid_txn_1",
+          accountId: "plaid_account_1",
+          date: "2026-01-15",
+          name: "Home Depot",
+          amount: 125.5,
+        },
+        {
+          transactionId: "plaid_txn_2",
+          accountId: "plaid_account_1",
+          date: "2026-01-16",
+          name: "Bank Fee",
+          amount: 12,
+        },
+      ],
+      "connection_1",
+      "plaid",
+      "financial_account_1",
+      "plaid_account_1",
+    );
+
+    expect(transactions).toHaveLength(2);
+    expect(transactions[0]?.id).toBe("transaction_plaid_plaid_txn_1");
+    expect(transactions[1]?.id).toBe("transaction_plaid_plaid_txn_2");
   });
 });

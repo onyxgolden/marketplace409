@@ -32,7 +32,7 @@ export {
 } from "./plaid-financial-account.mapper";
 
 export {
-  mapPlaidTransactionToFinancialEvent,
+  PlaidTransactionMapper,
 } from "./plaid-transaction.mapper";
 
 export type {

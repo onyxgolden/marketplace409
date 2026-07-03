@@ -1,46 +1,61 @@
-import type {
-  FinancialEvent,
-} from "../financial-event";
-
 import {
-  financialEventFactory,
-} from "../financial-event";
+  createTransaction,
+} from "../transaction";
 
 import type {
-  KnowledgeRecord,
-} from "../knowledge/knowledge.types";
-
-import type {
-  Property,
-} from "../property";
+  Transaction,
+  TransactionMapper,
+} from "../transaction";
 
 import type {
   PlaidTransaction,
 } from "./plaid-transaction.types";
 
-export function mapPlaidTransactionToFinancialEvent(
-  transaction: PlaidTransaction,
-  property: Property,
-  knowledge: KnowledgeRecord,
-  ownerId: string | null = null,
-): FinancialEvent {
-  return financialEventFactory.fromResolvedInput(
-    {
+export class PlaidTransactionMapper
+  implements TransactionMapper<PlaidTransaction> {
+  map(
+    transaction: PlaidTransaction,
+    connectionId: string,
+    provider: string,
+    financialAccountId: string,
+    providerAccountId: string,
+  ): Transaction {
+    const now = new Date().toISOString();
+
+    return createTransaction({
+      id: `transaction_${provider}_${transaction.transactionId}`,
+      financialAccountId,
+      connectionId,
+      provider,
+      providerTransactionId: transaction.transactionId,
+      providerAccountId,
+      amountCents: Math.round(transaction.amount * 100),
+      currencyCode: "USD",
       date: transaction.date,
       description: transaction.name,
-      amount: transaction.amount,
-      resolvedProperty: property,
-      knowledge,
-      sourceSystem: "plaid",
-      sourceRecordId: transaction.transactionId,
-      metadata: {
-        accountId: transaction.accountId,
-        category: transaction.category ?? [],
-        merchantName: transaction.merchantName ?? null,
-        pending: transaction.pending ?? false,
-        raw: transaction.raw ?? null,
-      },
-    },
-    ownerId,
-  );
+      merchantName: transaction.merchantName ?? null,
+      category: transaction.category ?? [],
+      pending: transaction.pending ?? false,
+      raw: transaction.raw ?? null,
+      createdAt: now,
+    });
+  }
+
+  mapMany(
+    transactions: readonly PlaidTransaction[],
+    connectionId: string,
+    provider: string,
+    financialAccountId: string,
+    providerAccountId: string,
+  ): readonly Transaction[] {
+    return transactions.map((transaction) =>
+      this.map(
+        transaction,
+        connectionId,
+        provider,
+        financialAccountId,
+        providerAccountId,
+      ),
+    );
+  }
 }
