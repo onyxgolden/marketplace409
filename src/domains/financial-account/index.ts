@@ -31,3 +31,16 @@ export {
 export {
   FinancialAccountService,
 } from "./financial-account.service";
+
+export {
+  FinancialAccountImportService,
+} from "./financial-account-import.service";
+
+export type {
+  FinancialAccountImportInput,
+  FinancialAccountImportResult,
+} from "./financial-account-import.types";
+
+export {
+  toFinancialAccountImportResult,
+} from "./financial-account-import.types";
