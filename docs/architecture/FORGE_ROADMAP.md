@@ -522,12 +522,14 @@ Status: Complete at 32525da
 
 ### Phase 8.2 — AccountingPeriodService
 
-Current objective:
+Delivered capability:
 
-* Introduce a deterministic domain service for accounting period use cases
-* Depend only on AccountingPeriodRepository
-* Preserve dependency inversion
-* Avoid posting integration until the service object is verified
+* AccountingPeriodService deterministic domain service
+* Domain service depends only on AccountingPeriodRepository
+* Public Ledger service export updated
+* Comprehensive AccountingPeriodService domain tests
+* Strict dependency inversion preserved
+* Domain layer remains infrastructure-independent
 
 Current layering:
 
@@ -538,6 +540,8 @@ Current layering:
     InMemoryAccountingPeriodRepository
             ↓
     AccountingPeriodService
+
+Status: Complete at f76840e
 
 Future capabilities include:
 

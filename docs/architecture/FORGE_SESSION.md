@@ -41,50 +41,46 @@ The repository—not memory—is the source of truth.
 
 # Latest Completed Milestone
 
-## Phase 8.1 – Accounting Period Repository Foundation
+## Phase 8.2 – AccountingPeriodService
 
 Started after commit:
 
-    615a9ac Document Phase 7.9 application service architecture
+    32525da Add accounting period repository foundation
 
 Completed at commit:
 
-    32525da Add accounting period repository foundation
+    f76840e Add accounting period domain service
 
 ### Delivered
 
-- AccountingPeriod immutable domain entity introduced.
-- AccountingPeriod exported through the public Ledger API.
-- AccountingPeriod entity tests added.
-- AccountingPeriod public export integration test added.
-- AccountingPeriodRepository domain contract introduced.
-- InMemoryAccountingPeriodRepository deterministic testing adapter introduced.
-- Repository exports updated.
-- Repository tests added for seeded lookup, missing lookup, and save behavior.
-- Repository layer remains domain-only.
-- Financial Engine remains infrastructure-independent.
+- AccountingPeriodService domain service introduced.
+- Service depends only on the AccountingPeriodRepository contract.
+- Deterministic accounting period use cases encapsulated within the domain service.
+- Public Ledger service exports updated.
+- Comprehensive AccountingPeriodService domain tests added.
+- Domain layer remains infrastructure-independent.
+- Financial Engine architectural boundaries preserved.
 
 ### Validation
 
-- ✓ 16 targeted AccountingPeriod and repository tests passing
-- ✓ AccountingPeriod entity verified
-- ✓ AccountingPeriod public Ledger API export verified
-- ✓ AccountingPeriodRepository contract verified
-- ✓ InMemoryAccountingPeriodRepository verified
+- ✓ 21 targeted AccountingPeriod service tests passing
+- ✓ AccountingPeriodService verified
+- ✓ AccountingPeriodRepository dependency inversion verified
+- ✓ Public Ledger service export verified
 - ✓ Main synchronized with origin
 
 ---
 
 # Current Objective
 
-## Phase 8.2 – AccountingPeriodService
+## Phase 8.3 – Posting Integration Foundation
 
 ### Immediate Goals
 
-- Introduce a deterministic domain service for accounting period use cases.
-- Depend only on the AccountingPeriodRepository contract.
-- Preserve strict dependency inversion.
-- Do not begin posting integration until the service object is complete.
+- Integrate accounting periods into posting workflows.
+- Preserve strict domain boundaries.
+- Continue depending only on domain contracts and services.
+- Maintain deterministic accounting behavior before infrastructure integration.
 
 Current Phase 8 layering:
 
@@ -94,7 +90,9 @@ Current Phase 8 layering:
             ↓
     InMemoryAccountingPeriodRepository
             ↓
-    AccountingPeriodService   ← Current Objective
+    AccountingPeriodService
+            ↓
+    Posting Integration (Next)
 
 ---
 
