@@ -23,6 +23,12 @@ export class AccountingPeriodService {
     return this.repository.findById(id);
   }
 
+  getPeriodForDate(date) {
+    const periods = this.repository.findAll();
+
+    return periods.find((period) => period.containsDate(date));
+  }
+
   closePeriod(id) {
     const period = this.repository.findById(id);
 

@@ -50,6 +50,33 @@ describe("AccountingPeriodService", () => {
     expect(loaded).toBe(period);
   });
 
+  it("finds the period containing a date", () => {
+    const january = createPeriod("2026-01");
+    const february = new AccountingPeriod({
+      id: "2026-02",
+      name: "February 2026",
+      startDate: "2026-02-01",
+      endDate: "2026-02-28",
+    });
+
+    const repository = new InMemoryAccountingPeriodRepository([
+      january,
+      february,
+    ]);
+    const service = new AccountingPeriodService(repository);
+
+    expect(service.getPeriodForDate("2026-02-14")).toBe(february);
+  });
+
+  it("returns undefined when no period contains the date", () => {
+    const repository = new InMemoryAccountingPeriodRepository([
+      createPeriod(),
+    ]);
+    const service = new AccountingPeriodService(repository);
+
+    expect(service.getPeriodForDate("2026-03-01")).toBeUndefined();
+  });
+
   it("closes an existing period", () => {
     const repository = new InMemoryAccountingPeriodRepository();
     const service = new AccountingPeriodService(repository);

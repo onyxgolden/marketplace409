@@ -4,6 +4,9 @@ import { Money } from "../../../../platform";
 import { JournalEntry } from "../../entities/JournalEntry";
 import { Posting } from "../../entities/Posting";
 import { LedgerDirection } from "../../value-objects";
+import { AccountingPeriod } from "../../entities/AccountingPeriod";
+import { InMemoryAccountingPeriodRepository } from "../../repositories/InMemoryAccountingPeriodRepository";
+import { AccountingPeriodService } from "../AccountingPeriodService";
 import { PostingValidator } from "../PostingValidator";
 
 function createDebitPosting(amount = 100) {
@@ -29,6 +32,31 @@ function createJournalEntry(debit = 100, credit = 100) {
     id: "JE1",
     date: "2026-06-18",
     postings: [createDebitPosting(debit), createCreditPosting(credit)],
+  });
+}
+
+function createAccountingPeriodService(periods = []) {
+  return new AccountingPeriodService(
+    new InMemoryAccountingPeriodRepository(periods),
+  );
+}
+
+function createOpenPeriod() {
+  return new AccountingPeriod({
+    id: "2026-06",
+    name: "June 2026",
+    startDate: "2026-06-01",
+    endDate: "2026-06-30",
+  });
+}
+
+function createClosedPeriod() {
+  return new AccountingPeriod({
+    id: "2026-06",
+    name: "June 2026",
+    startDate: "2026-06-01",
+    endDate: "2026-06-30",
+    isClosed: true,
   });
 }
 
@@ -66,6 +94,46 @@ describe("PostingValidator", () => {
     expect(entry.postings).toHaveLength(2);
     expect(entry.getDebitTotal().amount).toBe(100);
     expect(entry.getCreditTotal().amount).toBe(100);
+  });
+
+  test("validates journal entry date against an open accounting period when provided", () => {
+    const validator = new PostingValidator({
+      accountingPeriodService: createAccountingPeriodService([
+        createOpenPeriod(),
+      ]),
+    });
+
+    expect(validator.validate(createJournalEntry())).toBe(true);
+  });
+
+  test("throws when journal entry date is outside all accounting periods", () => {
+    const validator = new PostingValidator({
+      accountingPeriodService: createAccountingPeriodService([
+        createOpenPeriod(),
+      ]),
+    });
+
+    const entry = new JournalEntry({
+      id: "JE-MISSING-PERIOD",
+      date: "2026-07-01",
+      postings: [createDebitPosting(), createCreditPosting()],
+    });
+
+    expect(() => validator.validate(entry)).toThrow(
+      "JournalEntry date is outside an accounting period: 2026-07-01",
+    );
+  });
+
+  test("throws when journal entry date belongs to a closed accounting period", () => {
+    const validator = new PostingValidator({
+      accountingPeriodService: createAccountingPeriodService([
+        createClosedPeriod(),
+      ]),
+    });
+
+    expect(() => validator.validate(createJournalEntry())).toThrow(
+      "JournalEntry date belongs to a closed accounting period: 2026-06",
+    );
   });
 
   test("requires a JournalEntry", () => {

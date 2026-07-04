@@ -10,6 +10,10 @@ export class AccountingPeriodRepository {
     throw new Error("Not implemented");
   }
 
+  findAll() {
+    throw new Error("Not implemented");
+  }
+
   save(_period) {
     throw new Error("Not implemented");
   }

@@ -19,6 +19,10 @@ export class InMemoryAccountingPeriodRepository extends AccountingPeriodReposito
     return this._periods.get(id);
   }
 
+  findAll() {
+    return Array.from(this._periods.values());
+  }
+
   save(period) {
     this._periods.set(period.id, period);
   }
