@@ -292,6 +292,38 @@ Provider implementations adapt external and internal data sources into a canonic
 
 **Status:** Complete
 
+---
+
+## Phase 7.3 — Executive Dashboard Domain
+
+### Purpose
+
+Separate executive financial interpretation from React presentation while preserving the Financial Engine as the accounting computation boundary.
+
+### Delivered
+
+* FinancialDashboardService
+* Immutable Dashboard DTO
+* Executive KPI model
+* Financial health status model
+* Balance sheet dashboard lines
+* Financial API returning reports and dashboard data
+* React financial dashboard converted to presentation-only rendering
+
+### Protected Rule
+
+Computation belongs to domain engines.
+
+Interpretation belongs to domain services.
+
+Presentation belongs to the UI.
+
+React presents financial truth.
+
+React does not calculate financial truth.
+
+**Status:** Complete
+
 # Future Architectural Evolution
 
 ## Phase 8 — Multi-Period Accounting

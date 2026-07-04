@@ -4,6 +4,7 @@
 **Status:** Active
 **Last Updated:** 2026-07-04
 **Latest Commit:** 5271803 — Add financial data provider abstraction
+
 ---
 
 # Purpose
@@ -38,7 +39,7 @@ The repository—not memory—is the source of truth.
 
 # Latest Completed Milestone
 
-## Phase 7.2 — Financial Data Provider Abstraction
+## Phase 7.3 – Executive Dashboard Domain
 
 Completed in commit:
 
@@ -48,37 +49,43 @@ Completed in commit:
 
 ### Delivered
 
-- FinancialDataProvider contract
-- DemoFinancialDataProvider
-- ProductionFinancialDataProvider
-- Provider unit tests
-- Financial API decoupled from `createDemoFinancialData()`
+- FinancialDashboardService
+- Immutable Dashboard DTO
+- Financial API returning reports and dashboard data
+- React financial page converted to presentation layer
+- Business KPI calculations removed from React
+- Executive dashboard domain exported from ledger public API
 
 ### Validation
 
-- ✓ Provider unit tests passing
+- ✓ FinancialDashboardService unit tests passing
 - ✓ Production build passing
-- ✓ Financial API routes consuming provider abstraction
-- ✓ Executive dashboard unchanged
+- ✓ Financial API routes returning immutable dashboard DTO
+- ✓ React dashboard consuming API DTO as presentation data
 
 ---
 
 # Current Objective
 
-Implement the production financial data layer that will replace demo bootstrap data while preserving the Financial Engine boundary.
+7.5 – Immutable Financial Snapshot Architecture
 
-Current engineering objective:
+Architecture pipeline :
 
 ```text
-FinancialRepository
-        ↓
-ProductionFinancialDataProvider
+Financial Provider
         ↓
 FinancialEngine
         ↓
+Financial Reports
+        ↓
+FinancialDashboardService
+        ↓
+Immutable Dashboard DTO
+        ↓
 Financial API
         ↓
-Executive KPI Dashboard
+React Presentation
+
 ```
 
 ### Immediate Goals
@@ -91,33 +98,9 @@ Executive KPI Dashboard
 
 ---
 
-# Important Architectural Lesson
+# Permanent Architectural Lesson
 
-Empty reports were **not** caused by the reporting engine.
-
-Root cause:
-
-```text
-FinancialEngine
-    generalLedger.entries = []
-    chartOfAccounts.accounts = []
-```
-
-Result:
-
-- No balances
-- No reports
-- No KPIs
-
-Resolution:
-
-- Introduced `createDemoFinancialData()`
-- API routes now inject a populated `GeneralLedger`
-- API routes now inject a populated `ChartOfAccounts`
-
-Future objective:
-
-Replace demo data with a production `FinancialDataProvider`.
+Interpretation belongs to domain services. Computation belongs to domain engines. Presentation belongs to the UI.
 
 ---
 
