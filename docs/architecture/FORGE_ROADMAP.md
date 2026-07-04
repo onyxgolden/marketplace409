@@ -244,6 +244,32 @@ Financial Engine
 
 ---
 
+## Phase 7.1 — Financial API & Executive Dashboard
+
+### Purpose
+
+Expose Financial Engine capabilities through stable application-facing APIs and establish the foundation for executive financial decision support.
+
+### Delivered
+
+* Financial Reports API (`/api/financial/reports`)
+* Financial Snapshot API (`/api/financial/snapshot`)
+* Demo financial data provider for development
+* Executive KPI dashboard foundation
+* Financial statement presentation layer
+
+### Protected Rule
+
+Application UIs consume Financial Engine outputs through stable APIs.
+
+User interfaces present financial truth.
+
+They do not generate accounting truth.
+
+**Status:** Complete
+
+---
+
 # Future Architectural Evolution
 
 ## Phase 8 — Multi-Period Accounting

@@ -37,6 +37,62 @@ The repository—not memory—is the engineering source of truth.
 
 ---
 
+# Workflow Refinements
+
+The FORGE workflow continuously evolves through validated engineering experience.
+
+The following refinements are now standard practice.
+
+## Repository Inspection
+
+Whenever practical:
+
+- Batch related inspections into a single terminal command.
+- Inspect the complete architectural feature slice before planning implementation.
+- Let verified terminal output determine repository state.
+
+Repository inspection precedes implementation.
+
+---
+
+## Documentation Updates
+
+Large architecture documents should be updated incrementally.
+
+Preferred cadence:
+
+1. Inspect
+2. Edit one logical section
+3. Verify the saved document
+4. Review Git diff
+5. Continue
+
+Production source files may still use full-file replacement when appropriate.
+
+---
+
+## Validation Strategy
+
+Preferred validation order:
+
+1. Verify save
+2. Production build
+3. Targeted tests
+4. Full test suite
+5. Repository review
+
+Repository-wide lint modernization may be performed independently when unrelated to the completed objective.
+
+---
+
+## Engineering Principle
+
+Every modification should reduce uncertainty.
+
+Small verified improvements are preferred over large unverified changes.
+
+Architectural stability always takes precedence over implementation speed.
+
 # Development Tools
 
 ## VS Code

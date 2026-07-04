@@ -1,7 +1,9 @@
 # Forge Session
 
-**Version:** 3.0
+**Version:** 3.1
 **Status:** Active
+**Last Updated:** 2026-07-03
+**Latest Commit:** ff52e7c — Add Forge financial KPI dashboard data wiring
 
 ---
 
@@ -9,223 +11,115 @@
 
 The Forge Session document defines the lifecycle of a complete engineering session.
 
-Every session should begin, execute, validate, and conclude using the same disciplined engineering process.
+Every session begins, executes, validates, and concludes using disciplined engineering process.
 
 The repository—not memory—is the source of truth.
-
-Consistency produces reliable engineering.
-
----
-
-# Session Boot
-
-Before implementation begins:
-
-1. Boot FORGE using the current Session Bootstrap.
-2. Confirm the current architectural milestone.
-3. Confirm the session objective.
-4. Inspect repository status.
-5. Review recent architectural changes when necessary.
-6. Identify affected files before proposing modifications.
-
-Implementation does not begin until the boot sequence is complete.
 
 ---
 
 # Current Architectural Position
 
-The current engineering milestone is:
-
-### Core Platform
+## Core Platform
 
 ✓ Ledger Architecture — Complete
 
 ✓ Financial Reporting — Complete
 
-✓ Business Domain — Stable
+✓ Financial Engine — Complete
 
-✓ Risk Domain — Stable
+✓ Transaction Review Domain — Stable
 
----
+✓ Transaction Review Workflow — Stable
 
-### Connection Platform
+✓ Financial API Layer — Active
 
-Completed
-
-✓ Connection Domain
-
-✓ Connection Service
-
-✓ ConnectionProvider Contract
-
-✓ ConnectionProviderRegistry
-
-✓ Connection Import Orchestrator
-
-✓ Plaid Adapter Foundation
-
-✓ Plaid Link Frontend
-
-✓ Public Token Exchange
-
-✓ Plaid Connection Mapper
-
-✓ ConnectionProvisioningService
-
-✓ Connection Repository Contracts
-
-✓ In-Memory Repository Implementations
+✓ Financial KPI Dashboard — Active
 
 ---
 
-### Repository Status
+# Latest Completed Milestone
 
-Current Branch
+## Phase 7 — Financial KPI Dashboard Data Wiring
 
-main
+Completed in commit:
 
-Latest Commits
+```text
+ff52e7c Add Forge financial KPI dashboard data wiring
+```
 
-b900b1e — Add transaction review workflow for property assignment
-62f827c — Add transaction property assignment API route
-55a4828 — Add manual property assignment service
-f5e4478 — Add persistent property rule repository
+### Delivered
 
-Validation
+- `/api/financial/reports`
+- `/api/financial/snapshot`
+- `createDemoFinancialData()`
+- `/forge/financial` KPI dashboard
+- `/forge/results` build correction
 
-✓ Main synchronized with GitHub
-✓ Production build passing
-✓ Transaction Review workflow operational
-✓ Property learning loop operational
+### Validation
+
+- ✓ Production build passing
+- ✓ Financial reports populated
+- ✓ Snapshot API populated
+- ✓ Financial dashboard consuming live report data
+
 ---
 
-### Current Objective
+# Current Objective
 
-Elevate Transaction Review into a first-class domain.
+Advance the FORGE financial dashboard from a data/debug surface into an executive decision dashboard.
 
-Current architecture now supports:
+Current dashboard capabilities:
 
-• Provider-neutral transaction review
-• Manual property assignment
-• Persistent property learning
-• Automatic future property resolution
+- Profit KPI
+- Margin KPI
+- Equity KPI
+- Cash Position KPI
+- Financial statement table
+- Raw debug visibility
 
 Next engineering objective:
 
 ```text
-TransactionReviewItem
-    transaction
-    resolvedProperty
-    suggestedProperties
-    confidence
-    needsAssignment
-    assignmentStatus
+FinancialDataProvider
+        ↓
+DemoFinancialDataProvider
+        ↓
+ProductionFinancialDataProvider
+        ↓
+FinancialEngine
+        ↓
+Financial KPI Dashboard
 ```
 
-Future work:
-
-• Bulk assignment
-• Similar transaction grouping
-• Confidence scoring
-• AI-assisted recommendations
-
-Accounting remains unchanged.
-
-Resolver remains read-side.
-
-Manual assignment remains command-side.
-
 ---
 
-# Standard Session Lifecycle
+# Important Architectural Lesson
 
-## Phase 1 — Inspect
+Empty reports were **not** caused by the reporting engine.
 
-* Inspect existing implementation.
-* Read affected files.
-* Never assume repository state.
-* Terminal output overrides assumptions.
+Root cause:
 
----
+```text
+FinancialEngine
+    generalLedger.entries = []
+    chartOfAccounts.accounts = []
+```
 
-## Phase 2 — Plan
+Result:
 
-Review:
+- No balances
+- No reports
+- No KPIs
 
-* Architectural reasoning
-* Scope
-* Dependencies
-* Risks
-* Expected outcome
+Resolution:
 
-Confirm the architectural approach before editing.
+- Introduced `createDemoFinancialData()`
+- API routes now inject a populated `GeneralLedger`
+- API routes now inject a populated `ChartOfAccounts`
 
----
+Future objective:
 
-## Phase 3 — Execute
-
-Implementation proceeds one file at a time.
-
-Preferred cadence:
-
-1. Inspect
-2. Edit
-3. Save
-4. Verify Save
-
-Repeat until the objective is complete.
-
----
-
-## Phase 4 — Validate
-
-Preferred validation sequence:
-
-1. Targeted tests (when applicable)
-2. Full test suite
-3. Production build
-4. Architecture review
-5. Repository review
-
-Validation is mandatory.
-
----
-
-## Phase 5 — Repository Review
-
-Before committing:
-
-* Review Git status.
-* Review Git diff.
-* Confirm documentation reflects architectural reality.
-* Confirm architectural boundaries remain intact.
-
----
-
-## Phase 6 — Commit
-
-Commits should:
-
-* Represent one completed objective.
-* Be fully validated.
-* Preserve coherent Git history.
-
-Whenever practical:
-
-* Separate production code and documentation commits.
-* Keep commits focused on a single architectural objective.
-
----
-
-## Phase 7 — Synchronize
-
-Push the repository.
-
-Confirm:
-
-* Remote synchronization
-* Clean working tree
-* Known-good repository state
+Replace demo data with a production `FinancialDataProvider`.
 
 ---
 
@@ -233,20 +127,19 @@ Confirm:
 
 Always:
 
-* Inspect before editing.
-* Verify every save.
-* Preserve architectural boundaries.
-* Keep implementation incremental.
-* Validate before committing.
-* End from a known-good repository state.
+- Inspect before editing.
+- Batch safe inspections into one terminal command whenever practical.
+- Verify every save.
+- Validate before committing.
+- Preserve architectural boundaries.
+- End from a known-good repository state.
 
 Never:
 
-* Assume repository contents.
-* Skip verification.
-* Mix unrelated objectives.
-* Introduce vendor-specific behavior into domain objects.
-* Bypass the ConnectionProviderRegistry when implementing provider adapters.
+- Assume repository contents.
+- Skip verification.
+- Mix unrelated objectives.
+- Treat bootstrap/demo data as production truth.
 
 ---
 
@@ -269,6 +162,10 @@ PropertyResolverService
         ↓
 Transaction Review
         ↓
+ManualPropertyAssignmentService
+        ↓
+PropertyRuleRepository
+        ↓
 LedgerPostingService
         ↓
 PostingEngine
@@ -279,7 +176,9 @@ ProductionReportService
         ↓
 FinancialEngine
         ↓
-Financial Reports
+Financial API
+        ↓
+Financial KPI Dashboard
 ```
 
 The domain owns the business model.
@@ -294,19 +193,15 @@ Never the reverse.
 
 The following architectural boundaries are mandatory:
 
-• PropertyResolverService is read-side only.
-
-• ManualPropertyAssignmentService is command-side only.
-
-• Importers never persist property knowledge.
-
-• PropertyRuleRepository is the single source of learned property knowledge.
-
-• Accounting never depends on review state.
-
-• Reporting never depends on manual assignment.
-
-These boundaries preserve the separation between semantic resolution, knowledge acquisition, and accounting truth.
+- PropertyResolverService is read-side only.
+- ManualPropertyAssignmentService is command-side only.
+- Importers never persist property knowledge.
+- PropertyRuleRepository is the single source of learned property knowledge.
+- Accounting never depends on review state.
+- Reporting never depends on manual assignment.
+- Reports present truth.
+- UI renders truth.
+- Demo financial data is bootstrap infrastructure only.
 
 ---
 
@@ -314,83 +209,26 @@ These boundaries preserve the separation between semantic resolution, knowledge 
 
 A Forge session concludes only after confirming:
 
-* Production build passes.
-* Required tests pass.
-* Documentation reflects the completed work.
-* Git history is coherent.
-* Repository is synchronized.
-* The completed objective is recorded.
-* The next architectural objective is identified.
-* A new bootstrap is prepared when a major architectural milestone has been completed.
+- Production build passes.
+- Required tests pass.
+- Documentation reflects completed work.
+- Git history is coherent.
+- Repository is synchronized.
+- Completed objective is recorded.
+- Next architectural objective is identified.
+- Bootstrap for the next session is prepared.
 
 ---
 
 # Success Criteria
 
-A successful session leaves the repository in a stronger state than it was found.
+A successful Forge session leaves the repository stronger than it was found.
 
 Success is measured by:
 
-* Architectural quality
-* Correctness
-* Validation
-* Maintainability
-* Documentation quality
-* Repository integrity
-
-Every completed session should strengthen both the software and the engineering process that produced it.
-
-## Phase 10 Update — Transaction Review Aggregate Introduced (2026-07-03)
-
-### Summary
-The Transaction Review domain has been expanded from a single entity model into a full aggregate-based structure.
-
-### New Domain Structure
-
-- TransactionReviewItem (canonical immutable entity)
-- TransactionReviewCollection (immutable aggregate)
-
-### Architectural Shift
-
-The system has moved from:
-
-UI-driven aggregation:
-- UI computed counts, filters, and review state
-
-To:
-
-Domain-driven aggregation:
-- TransactionReviewCollection owns all derived metrics
-- UI renders precomputed canonical aggregate
-
-### Aggregate Responsibilities
-
-TransactionReviewCollection now owns:
-
-- needsReviewCount
-- assignedCount
-- reviewedCount
-- ignoredCount
-- completionPercentage
-
-All metrics are derived strictly from TransactionReviewItem state.
-
-### Key Invariants
-
-- TransactionReviewItem remains immutable
-- TransactionReviewCollection is immutable
-- No persistence layer introduced yet
-- No repository abstraction introduced yet
-- UI no longer performs aggregation logic
-
-### Design Principle Reinforced
-
-> All business aggregation logic must live inside domain objects, not in UI or API layers.
-
-### Next Phase Candidate
-
-- TransactionReviewWorkflowService (state machine orchestration)
-
-This will introduce lifecycle control for:
-
-pending → suggested → assigned → reviewed → ignored
+- Architectural quality
+- Correctness
+- Validation
+- Maintainability
+- Documentation quality
+- Repository integrity
