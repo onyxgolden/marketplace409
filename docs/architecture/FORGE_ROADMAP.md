@@ -506,11 +506,44 @@ Infrastructure initializes lazily.
 
 ### Purpose
 
-Support historical accounting across reporting periods.
+Support historical accounting across reporting periods while preserving immutable financial truth and infrastructure-independent domain behavior.
 
-Expected capabilities include:
+### Phase 8.1 — Accounting Period Repository Foundation
 
-* Accounting periods
+Delivered capability:
+
+* AccountingPeriod immutable domain entity
+* AccountingPeriod public Ledger API export
+* AccountingPeriodRepository domain contract
+* InMemoryAccountingPeriodRepository deterministic testing adapter
+* Repository tests for seeded lookup, missing lookup, and save behavior
+
+Status: Complete at 32525da
+
+### Phase 8.2 — AccountingPeriodService
+
+Current objective:
+
+* Introduce a deterministic domain service for accounting period use cases
+* Depend only on AccountingPeriodRepository
+* Preserve dependency inversion
+* Avoid posting integration until the service object is verified
+
+Current layering:
+
+    AccountingPeriod
+            ↓
+    AccountingPeriodRepository
+            ↓
+    InMemoryAccountingPeriodRepository
+            ↓
+    AccountingPeriodService
+
+Future capabilities include:
+
+* Posting validation integration
+* Application services
+* Infrastructure persistence
 * Comparative reports
 * Historical balances
 * Time-based reporting

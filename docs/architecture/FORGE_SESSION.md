@@ -3,7 +3,7 @@
 **Version:** 3.2
 **Status:** Active
 **Last Updated:** 2026-07-04
-**Latest Commit:** 34ed98a — Add application service layer for financial workflows
+**Latest Commit:** 32525da — Add accounting period repository foundation
 
 ---
 
@@ -41,53 +41,60 @@ The repository—not memory—is the source of truth.
 
 # Latest Completed Milestone
 
-## Phase 7.9 – Application Services
+## Phase 8.1 – Accounting Period Repository Foundation
 
 Started after commit:
 
-```text
-34ed98a Add application service layer for financial workflows
-```
+    615a9ac Document Phase 7.9 application service architecture
+
+Completed at commit:
+
+    32525da Add accounting period repository foundation
 
 ### Delivered
 
-- FinancialReportingApplication introduced to orchestrate financial report use cases.
-- FinancialSnapshotApplication introduced to orchestrate snapshot capture and history use cases.
-- Application service exports added for reusable financial workflows.
-- Application composition factory refactored to assemble application services.
-- Financial Reports API refactored to consume application services.
-- Financial Snapshot API refactored to consume application services.
-- API routes remain thin HTTP orchestration endpoints.
-- Composition continues to assemble dependencies.
-- Domain services continue to execute deterministic business behavior.
-- Repository contracts continue to define persistence boundaries.
-- Infrastructure adapters remain isolated behind contracts.
-- Lazy infrastructure initialization remains preserved.
-- Reusable application-service pattern established for future FORGE domains.
+- AccountingPeriod immutable domain entity introduced.
+- AccountingPeriod exported through the public Ledger API.
+- AccountingPeriod entity tests added.
+- AccountingPeriod public export integration test added.
+- AccountingPeriodRepository domain contract introduced.
+- InMemoryAccountingPeriodRepository deterministic testing adapter introduced.
+- Repository exports updated.
+- Repository tests added for seeded lookup, missing lookup, and save behavior.
+- Repository layer remains domain-only.
+- Financial Engine remains infrastructure-independent.
 
 ### Validation
 
-- ✓ 426 tests passing
-- ✓ 135 test files passing
-- ✓ Production build passing
+- ✓ 16 targeted AccountingPeriod and repository tests passing
+- ✓ AccountingPeriod entity verified
+- ✓ AccountingPeriod public Ledger API export verified
+- ✓ AccountingPeriodRepository contract verified
+- ✓ InMemoryAccountingPeriodRepository verified
 - ✓ Main synchronized with origin
-- ✓ Application services integrated into production routes
-- ✓ Composition factory assembles application services
-- ✓ Domain remains infrastructure independent
 
 ---
 
 # Current Objective
 
-## Phase 8 – Multi-Period Accounting
+## Phase 8.2 – AccountingPeriodService
 
 ### Immediate Goals
 
-- Prepare the Financial Engine for historical accounting periods.
-- Support comparative reporting across multiple periods.
-- Preserve immutable financial truth while adding time-based reporting.
-- Keep API routes thin and application services responsible for use-case orchestration.
-- Extend FORGE architecture without weakening existing domain boundaries.
+- Introduce a deterministic domain service for accounting period use cases.
+- Depend only on the AccountingPeriodRepository contract.
+- Preserve strict dependency inversion.
+- Do not begin posting integration until the service object is complete.
+
+Current Phase 8 layering:
+
+    AccountingPeriod
+            ↓
+    AccountingPeriodRepository
+            ↓
+    InMemoryAccountingPeriodRepository
+            ↓
+    AccountingPeriodService   ← Current Objective
 
 ---
 
