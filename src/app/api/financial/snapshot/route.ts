@@ -3,7 +3,9 @@ import { createFinancialSnapshotApplication } from "@/infrastructure/composition
 export async function GET() {
   try {
     const application = await createFinancialSnapshotApplication();
-    const { reports, dashboard } = await application.captureDashboardSnapshot();
+
+    const { reports, dashboard } =
+      await application.snapshotApplication.captureDashboardSnapshot();
 
     return Response.json({
       success: true,
@@ -18,7 +20,7 @@ export async function GET() {
         success: false,
         error: error.message,
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

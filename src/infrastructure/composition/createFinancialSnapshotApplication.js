@@ -1,4 +1,8 @@
 import {
+  FinancialReportingApplication,
+  FinancialSnapshotApplication,
+} from "../../application/index.js";
+import {
   DemoFinancialDataProvider,
   FinancialDashboardService,
   FinancialEngine,
@@ -17,37 +21,22 @@ export async function createFinancialSnapshotApplication(options = {}) {
   const historyService =
     options.historyService || new SnapshotHistoryService(repository);
 
-  function buildDashboardReports() {
-    const reports = engine.buildReports();
-    const dashboard = dashboardService.buildFromReports(reports);
-
-    return {
-      reports,
-      dashboard,
-    };
-  }
-
-  async function captureDashboardSnapshot(snapshotInput = {}) {
-    const { reports, dashboard } = buildDashboardReports();
-
-    await historyService.captureDashboardSnapshot({
-      id: snapshotInput.id || crypto.randomUUID(),
-      capturedAt: snapshotInput.capturedAt || new Date().toISOString(),
-      period: snapshotInput.period || {
-        start: null,
-        end: null,
-      },
-      dashboard,
+  const reportingApplication =
+    options.reportingApplication ||
+    new FinancialReportingApplication({
+      engine,
+      dashboardService,
     });
 
-    return {
-      reports,
-      dashboard,
-    };
-  }
+  const snapshotApplication =
+    options.snapshotApplication ||
+    new FinancialSnapshotApplication({
+      reportingApplication,
+      historyService,
+    });
 
   return Object.freeze({
-    buildDashboardReports,
-    captureDashboardSnapshot,
+    reportingApplication,
+    snapshotApplication,
   });
 }
