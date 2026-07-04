@@ -71,6 +71,22 @@ Production source files may still use full-file replacement when appropriate.
 
 ---
 
+## Terminal Reliability
+
+Shell reliability is part of engineering reliability.
+
+When creating or replacing files:
+
+- Write one file per heredoc (`cat <<EOF`) command.
+- Verify each file immediately after it is written.
+- Batch inspections whenever practical.
+- Isolate write operations from verification commands.
+- Never continue after an unverified file write.
+
+These practices reduce recovery work caused by interrupted terminal pastes while preserving the inspect → edit → verify workflow.
+
+---
+
 ## Validation Strategy
 
 Preferred validation order:

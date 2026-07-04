@@ -1,10 +1,9 @@
 # Forge Session
 
-**Version:** 3.1
+**Version:** 3.2
 **Status:** Active
-**Last Updated:** 2026-07-03
-**Latest Commit:** ff52e7c — Add Forge financial KPI dashboard data wiring
-
+**Last Updated:** 2026-07-04
+**Latest Commit:** 5271803 — Add financial data provider abstraction
 ---
 
 # Purpose
@@ -39,57 +38,56 @@ The repository—not memory—is the source of truth.
 
 # Latest Completed Milestone
 
-## Phase 7 — Financial KPI Dashboard Data Wiring
+## Phase 7.2 — Financial Data Provider Abstraction
 
 Completed in commit:
 
 ```text
-ff52e7c Add Forge financial KPI dashboard data wiring
+5271803 Add financial data provider abstraction
 ```
 
 ### Delivered
 
-- `/api/financial/reports`
-- `/api/financial/snapshot`
-- `createDemoFinancialData()`
-- `/forge/financial` KPI dashboard
-- `/forge/results` build correction
+- FinancialDataProvider contract
+- DemoFinancialDataProvider
+- ProductionFinancialDataProvider
+- Provider unit tests
+- Financial API decoupled from `createDemoFinancialData()`
 
 ### Validation
 
+- ✓ Provider unit tests passing
 - ✓ Production build passing
-- ✓ Financial reports populated
-- ✓ Snapshot API populated
-- ✓ Financial dashboard consuming live report data
+- ✓ Financial API routes consuming provider abstraction
+- ✓ Executive dashboard unchanged
 
 ---
 
 # Current Objective
 
-Advance the FORGE financial dashboard from a data/debug surface into an executive decision dashboard.
+Implement the production financial data layer that will replace demo bootstrap data while preserving the Financial Engine boundary.
 
-Current dashboard capabilities:
-
-- Profit KPI
-- Margin KPI
-- Equity KPI
-- Cash Position KPI
-- Financial statement table
-- Raw debug visibility
-
-Next engineering objective:
+Current engineering objective:
 
 ```text
-FinancialDataProvider
-        ↓
-DemoFinancialDataProvider
+FinancialRepository
         ↓
 ProductionFinancialDataProvider
         ↓
 FinancialEngine
         ↓
-Financial KPI Dashboard
+Financial API
+        ↓
+Executive KPI Dashboard
 ```
+
+### Immediate Goals
+
+- Introduce FinancialRepository abstraction.
+- Assemble financial context from persisted domain data.
+- Preserve FinancialEngine independence from external systems.
+- Prepare for rental portfolio integration.
+- Prepare for financial institution integrations.
 
 ---
 

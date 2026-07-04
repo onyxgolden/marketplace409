@@ -270,6 +270,28 @@ They do not generate accounting truth.
 
 ---
 
+## Phase 7.2 — Financial Data Provider Abstraction
+
+### Purpose
+
+Separate financial data acquisition from financial computation while preserving the Financial Engine as the application-facing accounting boundary.
+
+### Delivered
+
+* FinancialDataProvider contract
+* DemoFinancialDataProvider
+* ProductionFinancialDataProvider
+* Provider unit tests
+* Financial API decoupled from `createDemoFinancialData()`
+
+### Protected Rule
+
+The Financial Engine never knows where financial data originates.
+
+Provider implementations adapt external and internal data sources into a canonical financial context consumed by the Financial Engine.
+
+**Status:** Complete
+
 # Future Architectural Evolution
 
 ## Phase 8 — Multi-Period Accounting
