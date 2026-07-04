@@ -7,6 +7,7 @@ import { LedgerDirection } from "../../value-objects";
 import { AccountingPeriod } from "../../entities/AccountingPeriod";
 import { InMemoryAccountingPeriodRepository } from "../../repositories/InMemoryAccountingPeriodRepository";
 import { AccountingPeriodService } from "../AccountingPeriodService";
+import { AccountingPeriodValidator } from "../AccountingPeriodValidator";
 import { PostingValidator } from "../PostingValidator";
 
 function createDebitPosting(amount = 100) {
@@ -35,10 +36,12 @@ function createJournalEntry(debit = 100, credit = 100) {
   });
 }
 
-function createAccountingPeriodService(periods = []) {
-  return new AccountingPeriodService(
-    new InMemoryAccountingPeriodRepository(periods),
-  );
+function createAccountingPeriodValidator(periods = []) {
+  return new AccountingPeriodValidator({
+    accountingPeriodService: new AccountingPeriodService(
+      new InMemoryAccountingPeriodRepository(periods),
+    ),
+  });
 }
 
 function createOpenPeriod() {
@@ -98,7 +101,7 @@ describe("PostingValidator", () => {
 
   test("validates journal entry date against an open accounting period when provided", () => {
     const validator = new PostingValidator({
-      accountingPeriodService: createAccountingPeriodService([
+      accountingPeriodValidator: createAccountingPeriodValidator([
         createOpenPeriod(),
       ]),
     });
@@ -108,7 +111,7 @@ describe("PostingValidator", () => {
 
   test("throws when journal entry date is outside all accounting periods", () => {
     const validator = new PostingValidator({
-      accountingPeriodService: createAccountingPeriodService([
+      accountingPeriodValidator: createAccountingPeriodValidator([
         createOpenPeriod(),
       ]),
     });
@@ -126,7 +129,7 @@ describe("PostingValidator", () => {
 
   test("throws when journal entry date belongs to a closed accounting period", () => {
     const validator = new PostingValidator({
-      accountingPeriodService: createAccountingPeriodService([
+      accountingPeriodValidator: createAccountingPeriodValidator([
         createClosedPeriod(),
       ]),
     });

@@ -2,8 +2,8 @@ import { JournalEntry } from "../entities/JournalEntry";
 import { Posting } from "../entities/Posting";
 
 export class PostingValidator {
-  constructor({ accountingPeriodService = null } = {}) {
-    this.accountingPeriodService = accountingPeriodService;
+  constructor({ accountingPeriodValidator = null } = {}) {
+    this.accountingPeriodValidator = accountingPeriodValidator;
   }
 
   validate(journalEntry) {
@@ -27,22 +27,8 @@ export class PostingValidator {
 
     journalEntry.validateBalanced();
 
-    if (this.accountingPeriodService) {
-      const period = this.accountingPeriodService.getPeriodForDate(
-        journalEntry.date,
-      );
-
-      if (!period) {
-        throw new Error(
-          `JournalEntry date is outside an accounting period: ${journalEntry.date}`,
-        );
-      }
-
-      if (!period.isOpen()) {
-        throw new Error(
-          `JournalEntry date belongs to a closed accounting period: ${period.id}`,
-        );
-      }
+    if (this.accountingPeriodValidator) {
+      this.accountingPeriodValidator.validateDateIsPostable(journalEntry.date);
     }
 
     return true;
