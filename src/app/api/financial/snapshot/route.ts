@@ -1,9 +1,9 @@
-import { FinancialEngine } from "@/domains/ledger";
-import { createDemoFinancialData } from "@/domains/ledger/demoFinancialData";
+import { DemoFinancialDataProvider, FinancialEngine } from "@/domains/ledger";
 
 export async function GET() {
   try {
-    const engine = new FinancialEngine(createDemoFinancialData());
+    const provider = new DemoFinancialDataProvider();
+    const engine = new FinancialEngine(provider.getFinancialData());
     const reports = engine.buildReports();
 
     return Response.json({
