@@ -324,6 +324,33 @@ React does not calculate financial truth.
 
 **Status:** Complete
 
+
+---
+
+## Phase 7.5 — Immutable Financial Snapshot Architecture
+
+### Purpose
+
+Create immutable executive financial history without changing the current dashboard API contract.
+
+### Delivered
+
+* FinancialSnapshot immutable domain object
+* FinancialSnapshotRepository in-memory repository boundary
+* SnapshotHistoryService for capturing Dashboard DTO history
+* HistoricalDashboardQuery for future KPI chart series
+* Snapshot domain exported through the ledger public API
+
+### Protected Rule
+
+Financial history is captured from the richest stable dashboard object.
+
+React does not calculate history.
+React does not own history.
+APIs may expose history later, but the domain model comes first.
+
+**Status:** Active
+
 # Future Architectural Evolution
 
 ## Phase 8 — Multi-Period Accounting

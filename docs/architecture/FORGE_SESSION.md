@@ -3,7 +3,7 @@
 **Version:** 3.2
 **Status:** Active
 **Last Updated:** 2026-07-04
-**Latest Commit:** 5271803 — Add financial data provider abstraction
+**Latest Commit:** 2c842ad — Add financial dashboard domain service
 
 ---
 
@@ -35,33 +35,36 @@ The repository—not memory—is the source of truth.
 
 ✓ Financial KPI Dashboard — Active
 
+✓ Immutable Financial Snapshot Architecture — Active
+
 ---
 
 # Latest Completed Milestone
 
-## Phase 7.3 – Executive Dashboard Domain
+## Phase 7.5 – Immutable Financial Snapshot Architecture
 
-Completed in commit:
+Started after commit:
 
 ```text
-5271803 Add financial data provider abstraction
+2c842ad Add financial dashboard domain service
 ```
 
 ### Delivered
 
-- FinancialDashboardService
-- Immutable Dashboard DTO
-- Financial API returning reports and dashboard data
-- React financial page converted to presentation layer
-- Business KPI calculations removed from React
-- Executive dashboard domain exported from ledger public API
+- FinancialSnapshot immutable domain object
+- FinancialSnapshotRepository in-memory boundary
+- SnapshotHistoryService
+- HistoricalDashboardQuery
+- Snapshot domain exported from ledger public API
+- React and API contracts unchanged
 
 ### Validation
 
-- ✓ FinancialDashboardService unit tests passing
-- ✓ Production build passing
-- ✓ Financial API routes returning immutable dashboard DTO
-- ✓ React dashboard consuming API DTO as presentation data
+- ✓ FinancialSnapshot unit tests passing
+- ✓ FinancialSnapshotRepository unit tests passing
+- ✓ SnapshotHistoryService unit tests passing
+- ✓ HistoricalDashboardQuery unit tests passing
+- ✓ Snapshot domain test set passing
 
 ---
 
