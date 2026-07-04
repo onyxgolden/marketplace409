@@ -1,10 +1,10 @@
-import { createFinancialSnapshotApplication } from "@/infrastructure/composition";
+import { createFinancialApplicationSuite } from "@/infrastructure/composition";
 
 export async function GET() {
-  const application = await createFinancialSnapshotApplication();
+  const { reportingApplication } = createFinancialApplicationSuite();
 
   const { reports, dashboard } =
-    application.reportingApplication.buildDashboardReports();
+    reportingApplication.buildDashboardReports();
 
   return Response.json({
     success: true,
