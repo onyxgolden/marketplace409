@@ -6,3 +6,4 @@ export * from "./AccountRollupCachedService";
 export * from "./AccountRollupSnapshotBuilder";
 export * from "./ClassificationSemanticGroup";
 export * from "./ClassificationTaxonomy";
+export * from "./AccountingPeriodService";
