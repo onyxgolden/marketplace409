@@ -43,6 +43,27 @@ The FORGE workflow continuously evolves through validated engineering experience
 
 The following refinements are now standard practice.
 
+## Assistant Response Protocol
+
+During engineering sessions, implementation guidance should follow a consistent structure.
+
+Preferred response order:
+
+1. State the objective.
+2. Provide the Nano command to open the file.
+3. Identify the exact replacement boundaries.
+4. Provide the complete replacement content.
+5. Provide save instructions.
+6. Provide the verification command.
+7. Stop and await repository verification before issuing the next edit.
+
+During implementation:
+
+- Never change approved replacement boundaries after editing has begun unless repository inspection proves the plan incorrect.
+- Resolve uncertainty through repository inspection before proposing corrective edits.
+- Complete one verified step before introducing additional architectural discussion.
+- Every response should leave the next engineering action unambiguous.
+
 ## Repository Inspection
 
 Whenever practical:
@@ -59,13 +80,22 @@ Repository inspection precedes implementation.
 
 Large architecture documents should be updated incrementally.
 
+Documentation follows a strict section replacement workflow.
+
 Preferred cadence:
 
-1. Inspect
-2. Edit one logical section
-3. Verify the saved document
-4. Review Git diff
-5. Continue
+1. Inspect the target section.
+2. Open the document in Nano.
+3. Identify the exact replacement boundaries.
+4. Replace one complete logical section.
+5. Save the document.
+6. Verify the saved section using terminal output.
+7. Review the verification before continuing.
+8. Continue to the next section.
+
+Never replace an entire architecture document unless the objective explicitly requires it.
+
+Section replacement preserves historical context, reduces editing risk, and keeps documentation synchronized with the repository through small, verifiable changes.
 
 Production source files may still use full-file replacement when appropriate.
 
@@ -108,6 +138,17 @@ Every modification should reduce uncertainty.
 Small verified improvements are preferred over large unverified changes.
 
 Architectural stability always takes precedence over implementation speed.
+
+Approved implementation plans should execute without introducing new ambiguity.
+
+Once editing begins:
+
+- Do not redefine replacement boundaries.
+- Do not change the implementation plan unless repository inspection proves the plan is incorrect.
+- Complete the current verified step before introducing additional architectural discussion.
+- Recover repository certainty through inspection before proposing corrective edits whenever uncertainty arises.
+
+Engineering discipline values predictable execution over improvisation.
 
 # Development Tools
 

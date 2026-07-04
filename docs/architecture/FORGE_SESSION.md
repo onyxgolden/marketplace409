@@ -41,65 +41,67 @@ The repository—not memory—is the source of truth.
 
 # Latest Completed Milestone
 
-## Phase 7.5 – Immutable Financial Snapshot Architecture
+## Phase 7.7 – Repository Composition
 
 Started after commit:
 
 ```text
-2c842ad Add financial dashboard domain service
+ff109bd Add application composition layer for financial snapshots
 ```
 
 ### Delivered
 
-- FinancialSnapshot immutable domain object
-- FinancialSnapshotRepository in-memory boundary
-- SnapshotHistoryService
-- HistoricalDashboardQuery
-- Snapshot domain exported from ledger public API
-- React and API contracts unchanged
+- Financial Snapshot persistence architecture completed.
+- Supabase persistence adapter implemented behind the FinancialSnapshotRepository contract.
+- Repository composition root introduced to assemble application dependencies.
+- Snapshot API refactored to consume composed services instead of constructing infrastructure directly.
+- Lazy infrastructure initialization implemented.
+- Domain services remain infrastructure-agnostic.
+- Repository contracts continue to define persistence boundaries.
+- Application composition established as the permanent location for infrastructure selection.
 
 ### Validation
 
-- ✓ FinancialSnapshot unit tests passing
-- ✓ FinancialSnapshotRepository unit tests passing
-- ✓ SnapshotHistoryService unit tests passing
-- ✓ HistoricalDashboardQuery unit tests passing
-- ✓ Snapshot domain test set passing
+- ✓ 426 tests passing
+- ✓ 135 test files passing
+- ✓ Production build passing
+- ✓ Main synchronized with origin
+- ✓ Repository composition integrated into Snapshot API
+- ✓ Domain remains independent of infrastructure
 
 ---
 
 # Current Objective
 
-7.5 – Immutable Financial Snapshot Architecture
+## Phase 7.8 – Application Composition Factory
 
-Architecture pipeline :
+Architecture pipeline:
 
 ```text
-Financial Provider
+Infrastructure
         ↓
-FinancialEngine
+Persistence Adapter
         ↓
-Financial Reports
+Repository Contract
         ↓
-FinancialDashboardService
+Application Composition
         ↓
-Immutable Dashboard DTO
+Domain Service
         ↓
-Financial API
+API Route
         ↓
 React Presentation
-
 ```
 
 ### Immediate Goals
 
-- Introduce FinancialRepository abstraction.
-- Assemble financial context from persisted domain data.
-- Preserve FinancialEngine independence from external systems.
-- Prepare for rental portfolio integration.
-- Prepare for financial institution integrations.
-
----
+- Establish the Application Composition Factory as the single composition root.
+- Centralize infrastructure selection outside the domain.
+- Ensure infrastructure continues to initialize lazily.
+- Keep domain services dependent only on contracts.
+- Standardize dependency assembly for future application services.
+- Prepare composition patterns for additional infrastructure providers.
+- Preserve complete separation between orchestration, business behavior, and infrastructure.
 
 # Permanent Architectural Lesson
 
@@ -130,42 +132,28 @@ Never:
 # Current Platform Architecture
 
 ```text
-ConnectionProvisioningService
+External Provider / Demo Provider
         ↓
-ConnectionPersistenceService
+Infrastructure Adapter
         ↓
-FinancialAccountImportService
+FinancialSnapshotRepository Contract
         ↓
-BalanceImportService
+Application Composition Layer
         ↓
-TransactionImportService
+FinancialDashboardService
         ↓
-FinancialEventImportService
+API Route Orchestration
         ↓
-PropertyResolverService
-        ↓
-Transaction Review
-        ↓
-ManualPropertyAssignmentService
-        ↓
-PropertyRuleRepository
-        ↓
-LedgerPostingService
-        ↓
-PostingEngine
-        ↓
-GeneralLedger
-        ↓
-ProductionReportService
-        ↓
-FinancialEngine
-        ↓
-Financial API
-        ↓
-Financial KPI Dashboard
+React Presentation
 ```
 
-The domain owns the business model.
+The domain owns business behavior.
+
+Infrastructure adapts external systems to FORGE contracts.
+
+Application composition selects and assembles dependencies.
+
+Routes orchestrate request/response flow.
 
 Providers adapt to FORGE.
 
@@ -175,17 +163,21 @@ Never the reverse.
 
 # Architectural Invariants
 
-The following architectural boundaries are mandatory:
+The following architectural boundaries are permanent:
 
-- PropertyResolverService is read-side only.
-- ManualPropertyAssignmentService is command-side only.
-- Importers never persist property knowledge.
-- PropertyRuleRepository is the single source of learned property knowledge.
-- Accounting never depends on review state.
-- Reporting never depends on manual assignment.
+- Infrastructure selection belongs exclusively in the Application Composition Layer.
+- Infrastructure initializes lazily.
+- Domain services depend only on contracts—not infrastructure.
+- Repository contracts define persistence boundaries.
+- Routes orchestrate request and response flow.
+- Application composition assembles dependencies.
+- Domain services execute business behavior.
+- Infrastructure adapters translate external systems into domain contracts.
+- The Financial Engine remains infrastructure-independent.
+- The domain owns business truth.
 - Reports present truth.
 - UI renders truth.
-- Demo financial data is bootstrap infrastructure only.
+- Demo data is bootstrap infrastructure only and is never production truth.
 
 ---
 

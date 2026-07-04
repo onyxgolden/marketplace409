@@ -26,25 +26,51 @@ Architecture should evolve deliberately and infrequently.
 
 # Current Architectural Position
 
-Financial Forge has completed its foundational accounting architecture and has proven horizontal domain expansion.
-
-The ledger is now stable infrastructure.
-
-Future growth should primarily occur through independent sibling domains that consume stable financial truth objects instead of reaching back into accounting internals or presentation reports.
-
-The accounting truth remains entirely inside the domain.
-
-Applications orchestrate.
-
-The Financial Engine computes.
+Financial Forge has completed its foundational accounting architecture and now employs application composition to assemble infrastructure, repositories, and domain services while preserving strict architectural boundaries.
 
 The Ledger remains the single accounting authority.
 
-Business intelligence domains interpret stable financial truth.
+The Financial Engine computes accounting truth.
 
-They do not create accounting truth.
+Repository contracts define persistence boundaries.
 
-They do not depend on presentation reports when richer stable domain objects are available.
+Application composition assembles infrastructure and domain dependencies.
+
+Routes orchestrate application flow.
+
+Domain services execute business behavior.
+
+Infrastructure adapts external systems to domain contracts.
+
+Business intelligence domains consume stable financial truth.
+
+They never create accounting truth.
+
+They never depend directly on infrastructure or presentation objects when richer stable domain objects are available.
+
+The architecture now follows a consistent layered model:
+
+```text
+External Systems
+        ↓
+Infrastructure Adapters
+        ↓
+Repository Contracts
+        ↓
+Application Composition
+        ↓
+Domain Services
+        ↓
+API Routes
+        ↓
+React Presentation
+```
+
+Each layer has a single responsibility.
+
+Dependencies flow inward toward the domain.
+
+Business truth always remains inside the domain.
 
 ---
 
@@ -260,96 +286,180 @@ Expose Financial Engine capabilities through stable application-facing APIs and 
 
 ### Protected Rule
 
-Application UIs consume Financial Engine outputs through stable APIs.
+Routes orchestrate access to financial truth.
 
-User interfaces present financial truth.
-
-They do not generate accounting truth.
+They do not own business logic.
 
 **Status:** Complete
 
 ---
 
-## Phase 7.2 — Financial Data Provider Abstraction
+## Phase 7.2 — Financial Dashboard Domain
 
 ### Purpose
 
-Separate financial data acquisition from financial computation while preserving the Financial Engine as the application-facing accounting boundary.
-
-### Delivered
-
-* FinancialDataProvider contract
-* DemoFinancialDataProvider
-* ProductionFinancialDataProvider
-* Provider unit tests
-* Financial API decoupled from `createDemoFinancialData()`
-
-### Protected Rule
-
-The Financial Engine never knows where financial data originates.
-
-Provider implementations adapt external and internal data sources into a canonical financial context consumed by the Financial Engine.
-
-**Status:** Complete
-
----
-
-## Phase 7.3 — Executive Dashboard Domain
-
-### Purpose
-
-Separate executive financial interpretation from React presentation while preserving the Financial Engine as the accounting computation boundary.
+Move financial dashboard interpretation out of the API and UI into a dedicated domain service.
 
 ### Delivered
 
 * FinancialDashboardService
-* Immutable Dashboard DTO
-* Executive KPI model
-* Financial health status model
-* Balance sheet dashboard lines
-* Financial API returning reports and dashboard data
-* React financial dashboard converted to presentation-only rendering
+* Dashboard KPI calculation
+* Financial statement summary interpretation
+* Stable dashboard DTO consumed by the API and React presentation
 
 ### Protected Rule
-
-Computation belongs to domain engines.
 
 Interpretation belongs to domain services.
 
 Presentation belongs to the UI.
 
-React presents financial truth.
-
-React does not calculate financial truth.
-
 **Status:** Complete
-
 
 ---
 
-## Phase 7.5 — Immutable Financial Snapshot Architecture
+## Phase 7.3 — Immutable Financial Snapshot
 
 ### Purpose
 
-Create immutable executive financial history without changing the current dashboard API contract.
+Represent dashboard financial state as immutable historical truth.
 
 ### Delivered
 
 * FinancialSnapshot immutable domain object
-* FinancialSnapshotRepository in-memory repository boundary
-* SnapshotHistoryService for capturing Dashboard DTO history
-* HistoricalDashboardQuery for future KPI chart series
-* Snapshot domain exported through the ledger public API
+* Snapshot creation boundary
+* Snapshot domain exported from the ledger public API
+* React and API contracts preserved
 
 ### Protected Rule
 
-Financial history is captured from the richest stable dashboard object.
+Snapshots preserve financial state.
 
-React does not calculate history.
-React does not own history.
-APIs may expose history later, but the domain model comes first.
+They do not mutate accounting truth.
 
-**Status:** Active
+**Status:** Complete
+
+---
+
+## Phase 7.4 — Repository Contracts
+
+### Purpose
+
+Define persistence boundaries without coupling the domain to infrastructure.
+
+### Delivered
+
+* FinancialSnapshotRepository contract
+* In-memory repository implementation for development and tests
+* Repository boundary owned by the domain
+
+### Protected Rule
+
+Domain services consume repository contracts.
+
+They never depend on infrastructure.
+
+**Status:** Complete
+
+---
+
+## Phase 7.5 — Snapshot History
+
+### Purpose
+
+Enable retrieval and interpretation of historical financial snapshots.
+
+### Delivered
+
+* SnapshotHistoryService
+* HistoricalDashboardQuery
+* Snapshot history tests
+* Historical read model boundary
+
+### Protected Rule
+
+Historical queries read immutable snapshot truth.
+
+They do not recreate or alter accounting truth.
+
+**Status:** Complete
+
+---
+
+## Phase 7.6 — Financial Snapshot Persistence
+
+### Purpose
+
+Persist immutable financial snapshots behind the repository contract.
+
+### Delivered
+
+* Supabase financial snapshot persistence adapter
+* Financial snapshot persistence migration
+* Repository adapter tests
+* Persistence implementation kept outside the domain
+
+### Protected Rule
+
+Infrastructure adapts persistence systems to FORGE contracts.
+
+The domain remains infrastructure-agnostic.
+
+**Status:** Complete
+
+---
+
+## Phase 7.7 — Repository Composition
+
+### Purpose
+
+Assemble repository dependencies outside routes and outside the domain.
+
+### Delivered
+
+* FinancialSnapshotRepository composition root
+* Lazy infrastructure initialization
+* Snapshot API integration with composed repository dependency
+* Infrastructure selection moved out of route implementation details
+
+### Protected Rule
+
+Infrastructure selection belongs in the application composition layer.
+
+Routes orchestrate.
+
+Domain services execute business behavior.
+
+**Status:** Complete
+
+---
+
+## Phase 7.8 — Application Composition Factory
+
+### Purpose
+
+Establish a stable application composition factory for assembling domain services, repositories, and infrastructure adapters.
+
+### Planned Capability
+
+* Single application composition boundary
+* Standardized dependency assembly
+* Lazy infrastructure initialization as default behavior
+* Route-level orchestration consuming composed application services
+* Repeatable pattern for future infrastructure-backed domains
+
+### Protected Rule
+
+Application composition assembles dependencies.
+
+Infrastructure initializes lazily.
+
+Domain services consume contracts.
+
+Routes orchestrate.
+
+**Status:** Next
+
+---
 
 # Future Architectural Evolution
 
