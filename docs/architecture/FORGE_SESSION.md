@@ -75,32 +75,63 @@ ff109bd Add application composition layer for financial snapshots
 
 ## Phase 7.8 – Application Composition Factory
 
+Started after commit:
+
+```text
+f6ade81 Add financial snapshot application composition factory
+```
+
+### Delivered
+
+- Application Composition Factory introduced as the single application composition root.
+- Repository selection remains isolated inside the composition layer.
+- Financial engine, dashboard service, repository, and snapshot history service are assembled through a reusable application factory.
+- Financial Reports API now consumes the application composition factory.
+- Financial Snapshot API now consumes the application composition factory.
+- API routes now focus exclusively on request orchestration.
+- Lazy infrastructure initialization remains preserved.
+- Domain services continue consuming contracts rather than infrastructure.
+
+### Validation
+
+- ✓ 426 tests passing
+- ✓ 135 test files passing
+- ✓ Production build passing
+- ✓ Application composition factory integrated into production routes
+- ✓ Infrastructure selection isolated to composition
+- ✓ Domain remains infrastructure independent
+
+---
+
+# Current Objective
+
+## Phase 7.9 – Application Services
+
 Architecture pipeline:
 
 ```text
 Infrastructure
         ↓
-Persistence Adapter
+Application Composition Factory
         ↓
-Repository Contract
+Application Services
         ↓
-Application Composition
+Domain Services
         ↓
-Domain Service
+Repository Contracts
         ↓
-API Route
+Infrastructure Adapters
         ↓
-React Presentation
+Persistence
 ```
 
 ### Immediate Goals
 
-- Establish the Application Composition Factory as the single composition root.
-- Centralize infrastructure selection outside the domain.
-- Ensure infrastructure continues to initialize lazily.
-- Keep domain services dependent only on contracts.
-- Standardize dependency assembly for future application services.
-- Prepare composition patterns for additional infrastructure providers.
+- Introduce reusable application services representing business use cases.
+- Keep API routes as thin orchestration endpoints.
+- Separate dependency assembly from application behavior.
+- Standardize use-case orchestration for future financial modules.
+- Establish a repeatable pattern for additional FORGE domains.
 - Preserve complete separation between orchestration, business behavior, and infrastructure.
 
 # Permanent Architectural Lesson

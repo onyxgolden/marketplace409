@@ -437,15 +437,17 @@ Domain services execute business behavior.
 
 ### Purpose
 
-Establish a stable application composition factory for assembling domain services, repositories, and infrastructure adapters.
+Establish a stable application composition factory for assembling repositories, domain services, and infrastructure adapters while keeping API routes thin.
 
-### Planned Capability
+### Delivered
 
+* Financial Snapshot Application Composition Factory
 * Single application composition boundary
 * Standardized dependency assembly
-* Lazy infrastructure initialization as default behavior
-* Route-level orchestration consuming composed application services
-* Repeatable pattern for future infrastructure-backed domains
+* Lazy infrastructure initialization preserved
+* Financial Reports API refactored to consume the application composition factory
+* Financial Snapshot API refactored to consume the application composition factory
+* Reusable composition pattern established for future infrastructure-backed domains
 
 ### Protected Rule
 
@@ -456,6 +458,33 @@ Infrastructure initializes lazily.
 Domain services consume contracts.
 
 Routes orchestrate.
+
+**Status:** Complete
+
+---
+
+## Phase 7.9 — Application Services
+
+### Purpose
+
+Introduce reusable application services that encapsulate business use cases while keeping composition, domain logic, and infrastructure cleanly separated.
+
+### Planned Capability
+
+* FinancialSnapshotApplication
+* Report generation use cases
+* Snapshot capture use cases
+* Historical query use cases
+* Thin API routes
+* Reusable application-service pattern across FORGE domains
+
+### Protected Rule
+
+Application services coordinate business use cases.
+
+Composition assembles dependencies.
+
+Domain services execute business behavior.
 
 **Status:** Next
 
