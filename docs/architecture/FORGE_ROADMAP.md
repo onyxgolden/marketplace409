@@ -543,9 +543,41 @@ Current layering:
 
 Status: Complete at f76840e
 
+### Phase 8.3 — Posting Integration Foundation
+
+Delivered capability:
+
+* AccountingPeriodRepository list query support
+* AccountingPeriodService period resolution by date
+* PostingValidator accounting period integration
+* Missing-period validation
+* Closed-period validation
+* Dependency inversion preserved
+* PostingEngine remains accounting-period agnostic
+* Deterministic domain behavior maintained
+
+Current layering:
+
+    AccountingPeriod
+            ↓
+    AccountingPeriodRepository
+            ↓
+    AccountingPeriodService
+            ↓
+    PostingValidator
+            ↓
+    PostingEngine
+            ↓
+    GeneralLedger
+
+Status: Complete at 926e15d
+
+Current objective:
+
+* Phase 8.4
+
 Future capabilities include:
 
-* Posting validation integration
 * Application services
 * Infrastructure persistence
 * Comparative reports

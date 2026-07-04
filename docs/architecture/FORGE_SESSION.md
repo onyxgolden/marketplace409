@@ -3,7 +3,7 @@
 **Version:** 3.2
 **Status:** Active
 **Last Updated:** 2026-07-04
-**Latest Commit:** 32525da — Add accounting period repository foundation
+**Latest Commit:** 926e15d — Integrate accounting periods into posting validation
 
 ---
 
@@ -41,43 +41,47 @@ The repository—not memory—is the source of truth.
 
 # Latest Completed Milestone
 
-## Phase 8.2 – AccountingPeriodService
+## Phase 8.3 – Posting Integration Foundation
 
 Started after commit:
 
-    32525da Add accounting period repository foundation
+    111c7e8 Document Phase 8.2 accounting period service
 
 Completed at commit:
 
-    f76840e Add accounting period domain service
+    926e15d Integrate accounting periods into posting validation
 
 ### Delivered
 
-- AccountingPeriodService domain service introduced.
-- Service depends only on the AccountingPeriodRepository contract.
-- Deterministic accounting period use cases encapsulated within the domain service.
-- Public Ledger service exports updated.
-- Comprehensive AccountingPeriodService domain tests added.
-- Domain layer remains infrastructure-independent.
-- Financial Engine architectural boundaries preserved.
+- AccountingPeriodRepository list query support added.
+- InMemoryAccountingPeriodRepository list query support added.
+- AccountingPeriodService period resolution by date implemented.
+- PostingValidator optionally integrates with AccountingPeriodService.
+- Missing accounting periods are rejected during posting validation.
+- Closed accounting periods are rejected during posting validation.
+- Backward compatibility preserved when no AccountingPeriodService is injected.
+- PostingEngine remains accounting-period agnostic.
+- Deterministic domain behavior preserved.
 
 ### Validation
 
-- ✓ 21 targeted AccountingPeriod service tests passing
-- ✓ AccountingPeriodService verified
-- ✓ AccountingPeriodRepository dependency inversion verified
-- ✓ Public Ledger service export verified
+- ✓ 57 Ledger test files passed
+- ✓ 182 Ledger tests passed
+- ✓ PostingValidator accounting period integration verified
+- ✓ Missing accounting period validation verified
+- ✓ Closed accounting period validation verified
+- ✓ Mutation Firewall passed
 - ✓ Main synchronized with origin
 
 ---
 
 # Current Objective
 
-## Phase 8.3 – Posting Integration Foundation
+## Phase 8.4 – Next Multi-Period Accounting Step
 
 ### Immediate Goals
 
-- Integrate accounting periods into posting workflows.
+- Inspect repository state before selecting the next Phase 8.4 implementation target.
 - Preserve strict domain boundaries.
 - Continue depending only on domain contracts and services.
 - Maintain deterministic accounting behavior before infrastructure integration.
@@ -88,11 +92,13 @@ Current Phase 8 layering:
             ↓
     AccountingPeriodRepository
             ↓
-    InMemoryAccountingPeriodRepository
-            ↓
     AccountingPeriodService
             ↓
-    Posting Integration (Next)
+    PostingValidator
+            ↓
+    PostingEngine
+            ↓
+    GeneralLedger
 
 ---
 
