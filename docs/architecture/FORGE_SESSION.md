@@ -3,7 +3,7 @@
 **Version:** 3.2
 **Status:** Active
 **Last Updated:** 2026-07-04
-**Latest Commit:** 2c842ad — Add financial dashboard domain service
+**Latest Commit:** 34ed98a — Add application service layer for financial workflows
 
 ---
 
@@ -41,24 +41,29 @@ The repository—not memory—is the source of truth.
 
 # Latest Completed Milestone
 
-## Phase 7.7 – Repository Composition
+## Phase 7.9 – Application Services
 
 Started after commit:
 
 ```text
-ff109bd Add application composition layer for financial snapshots
+34ed98a Add application service layer for financial workflows
 ```
 
 ### Delivered
 
-- Financial Snapshot persistence architecture completed.
-- Supabase persistence adapter implemented behind the FinancialSnapshotRepository contract.
-- Repository composition root introduced to assemble application dependencies.
-- Snapshot API refactored to consume composed services instead of constructing infrastructure directly.
-- Lazy infrastructure initialization implemented.
-- Domain services remain infrastructure-agnostic.
+- FinancialReportingApplication introduced to orchestrate financial report use cases.
+- FinancialSnapshotApplication introduced to orchestrate snapshot capture and history use cases.
+- Application service exports added for reusable financial workflows.
+- Application composition factory refactored to assemble application services.
+- Financial Reports API refactored to consume application services.
+- Financial Snapshot API refactored to consume application services.
+- API routes remain thin HTTP orchestration endpoints.
+- Composition continues to assemble dependencies.
+- Domain services continue to execute deterministic business behavior.
 - Repository contracts continue to define persistence boundaries.
-- Application composition established as the permanent location for infrastructure selection.
+- Infrastructure adapters remain isolated behind contracts.
+- Lazy infrastructure initialization remains preserved.
+- Reusable application-service pattern established for future FORGE domains.
 
 ### Validation
 
@@ -66,73 +71,25 @@ ff109bd Add application composition layer for financial snapshots
 - ✓ 135 test files passing
 - ✓ Production build passing
 - ✓ Main synchronized with origin
-- ✓ Repository composition integrated into Snapshot API
-- ✓ Domain remains independent of infrastructure
-
----
-
-# Current Objective
-
-## Phase 7.8 – Application Composition Factory
-
-Started after commit:
-
-```text
-f6ade81 Add financial snapshot application composition factory
-```
-
-### Delivered
-
-- Application Composition Factory introduced as the single application composition root.
-- Repository selection remains isolated inside the composition layer.
-- Financial engine, dashboard service, repository, and snapshot history service are assembled through a reusable application factory.
-- Financial Reports API now consumes the application composition factory.
-- Financial Snapshot API now consumes the application composition factory.
-- API routes now focus exclusively on request orchestration.
-- Lazy infrastructure initialization remains preserved.
-- Domain services continue consuming contracts rather than infrastructure.
-
-### Validation
-
-- ✓ 426 tests passing
-- ✓ 135 test files passing
-- ✓ Production build passing
-- ✓ Application composition factory integrated into production routes
-- ✓ Infrastructure selection isolated to composition
+- ✓ Application services integrated into production routes
+- ✓ Composition factory assembles application services
 - ✓ Domain remains infrastructure independent
 
 ---
 
 # Current Objective
 
-## Phase 7.9 – Application Services
-
-Architecture pipeline:
-
-```text
-Infrastructure
-        ↓
-Application Composition Factory
-        ↓
-Application Services
-        ↓
-Domain Services
-        ↓
-Repository Contracts
-        ↓
-Infrastructure Adapters
-        ↓
-Persistence
-```
+## Phase 8 – Multi-Period Accounting
 
 ### Immediate Goals
 
-- Introduce reusable application services representing business use cases.
-- Keep API routes as thin orchestration endpoints.
-- Separate dependency assembly from application behavior.
-- Standardize use-case orchestration for future financial modules.
-- Establish a repeatable pattern for additional FORGE domains.
-- Preserve complete separation between orchestration, business behavior, and infrastructure.
+- Prepare the Financial Engine for historical accounting periods.
+- Support comparative reporting across multiple periods.
+- Preserve immutable financial truth while adding time-based reporting.
+- Keep API routes thin and application services responsible for use-case orchestration.
+- Extend FORGE architecture without weakening existing domain boundaries.
+
+---
 
 # Permanent Architectural Lesson
 

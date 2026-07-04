@@ -467,16 +467,18 @@ Routes orchestrate.
 
 ### Purpose
 
-Introduce reusable application services that encapsulate business use cases while keeping composition, domain logic, and infrastructure cleanly separated.
+Introduce reusable application services that encapsulate business use cases while keeping composition, domain logic, infrastructure, and API orchestration cleanly separated.
 
-### Planned Capability
+### Delivered Capability
 
-* FinancialSnapshotApplication
-* Report generation use cases
-* Snapshot capture use cases
-* Historical query use cases
-* Thin API routes
-* Reusable application-service pattern across FORGE domains
+* FinancialReportingApplication introduced for report generation use cases
+* FinancialSnapshotApplication introduced for snapshot capture and history use cases
+* Application service exports added for reusable financial workflows
+* Composition factory refactored to assemble application services
+* Financial Reports API refactored to consume application services
+* Financial Snapshot API refactored to consume application services
+* API routes preserved as thin HTTP orchestration endpoints
+* Reusable application-service pattern established for future FORGE domains
 
 ### Protected Rule
 
@@ -484,9 +486,17 @@ Application services coordinate business use cases.
 
 Composition assembles dependencies.
 
-Domain services execute business behavior.
+Domain services execute deterministic business behavior.
 
-**Status:** Next
+Repository contracts define persistence boundaries.
+
+Infrastructure adapters translate external systems.
+
+API routes orchestrate HTTP only.
+
+Infrastructure initializes lazily.
+
+**Status:** Complete
 
 ---
 
