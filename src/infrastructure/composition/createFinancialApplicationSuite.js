@@ -4,6 +4,7 @@ import { createFinancialSnapshotRepository } from "./createFinancialSnapshotRepo
 import {
   FinancialDashboardIntelligenceApplication,
   FinancialExplainabilityApplication,
+  FinancialIntelligenceApplication,
   FinancialReportingApplication,
   FinancialReadModelApplication,
 } from "../../application/financial";
@@ -49,6 +50,12 @@ export async function createFinancialApplicationSuite(deps = {}) {
       reportingApplication,
     });
 
+  const financialIntelligenceApplication =
+    deps.financialIntelligenceApplication ||
+    new FinancialIntelligenceApplication({
+      readModelApplication,
+    });
+
   const explainabilityApplication =
     deps.explainabilityApplication ||
     new FinancialExplainabilityApplication({
@@ -71,6 +78,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     snapshotApplication,
     reportingApplication,
     readModelApplication,
+    financialIntelligenceApplication,
     explainabilityApplication,
     dashboardIntelligenceApplication,
     snapshotRepository,
