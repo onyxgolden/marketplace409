@@ -189,22 +189,36 @@ Completed after implementation and validation.
 
 ### Next Objective — Phase 9.4
 
-Begin dashboard intelligence hardening and contract refinement.
+Dashboard Intelligence hardening and contract refinement is in progress.
 
-Potential next work:
+Completed work:
 
-- Add a stable developer-facing dashboard intelligence payload contract.
-- Add route-level tests if the project introduces an API route test pattern.
-- Normalize dashboard intelligence fallback behavior against the application response shape.
-- Prepare future dashboard panels for trace/explain consumption without bypassing the application layer.
-- Continue removing any remaining UI assumptions that duplicate application orchestration.
+- Stabilized dashboard intelligence response contract (`dashboardIntelligenceContract.js`)
+- Added deterministic fallback builder for dashboard intelligence responses
+- Normalized nested fields and defensive array handling
+- Introduced dedicated contract test coverage:
+  - `dashboardIntelligenceContract.test.js`
+- Validated orchestration boundary in:
+  - `FinancialDashboardIntelligenceApplication`
+- Confirmed system stability:
+  - 7/7 dashboard-related tests passing
+  - Production build passing
 
-Engineering guardrail:
+Engineering guardrail remains active:
 
-- Determine whether work targets Dashboard Intelligence (`/api/financial/dashboard-intelligence`) or Financial Explainability (`/api/financial/trace` and `/api/financial/explain`) before editing.
-- Keep dashboard intelligence hardening and trace/explain consumption planning in separate implementation and commit cycles.
+- Dashboard Intelligence remains isolated from Financial Explainability
+- No cross-contamination with `/api/financial/trace` or `/api/financial/explain`
+- Application layer remains the sole orchestration boundary
 
-Continue preserving immutable ledger behavior while exposing deterministic, read-only financial intelligence services.
+---
+
+### Status
+
+Phase 9.4 is partially complete:
+- Contract hardening: complete
+- Application stability: complete
+- Test coverage: complete
+- API route test convention: not introduced (by design decision)
 
 ---
 
