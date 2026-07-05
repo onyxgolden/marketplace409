@@ -662,6 +662,21 @@ Delivered capability:
 * Exported `createFinancialApplicationSuite` through the composition index
 * Verified production build
 
+Status: Complete
+
+### Phase 9.2 — Explainability API Exposure
+
+Delivered capability:
+
+* Added `POST /api/financial/trace`
+* Added `POST /api/financial/explain`
+* Routed both endpoints through `FinancialApplicationSuite`
+* Preserved `FinancialExplainabilityApplication` as the application-layer façade
+* Avoided direct route dependencies on trace domain services
+* Added request validation for required `reportLine` and `query` inputs
+* Returned deterministic read-only trace and explanation payloads
+* Verified both routes are registered in the production build
+
 Current architecture:
 
     FinancialEngine
@@ -678,14 +693,16 @@ Current architecture:
 
 Status: Complete
 
-### Current Objective — Phase 9.2
+### Next Objective — Phase 9.3
 
-Expose explainability through dedicated application/API endpoints:
+Plan UI/API consumption of financial explainability.
 
-* `/api/financial/trace`
-* `/api/financial/explain`
+Expected next capabilities include:
 
-using the integrated `FinancialExplainabilityApplication`.
+* Developer-facing request/response payload contract for trace and explain routes
+* Future UI trace panel backed by `/api/financial/trace`
+* Future explanation prompt surface backed by `/api/financial/explain`
+* Optional route-level tests if the project introduces an API route testing convention
 
 The application layer remains the orchestration boundary while the financial engine and trace services continue to provide deterministic, immutable, read-only financial explainability.
 

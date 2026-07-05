@@ -74,9 +74,9 @@ Completed at commit:
 
 ### Status
 
-Completed through **Phase 9.1**.
+Completed through **Phase 9.2**.
 
-Phase 9 established the complete read-only financial explainability layer while preserving the immutable accounting architecture.
+Phase 9 established the complete read-only financial explainability layer and exposed it through dedicated API endpoints while preserving the immutable accounting architecture.
 
 ### Phase 9.0 — Financial Trace Hardening
 
@@ -119,13 +119,28 @@ Completed at commit:
 - Exported `createFinancialApplicationSuite` through the composition index
 - Verified production build after integration
 
+### Phase 9.2 — Explainability API Exposure
+
+#### Delivered
+
+- Added `POST /api/financial/trace`
+- Added `POST /api/financial/explain`
+- Routed both endpoints through `FinancialApplicationSuite`
+- Preserved `FinancialExplainabilityApplication` as the application-layer façade
+- Avoided direct route dependencies on trace domain services
+- Added request validation for required `reportLine` and `query` inputs
+- Returned deterministic read-only trace and explanation payloads
+- Verified both routes are registered in the production build
+
 ### Validation
 
 - ✓ 148 test files passed
 - ✓ 474 tests passed
 - ✓ Production build passed
-- ✓ Main synchronized with origin
-- ✓ Mutation Firewall passed
+- ✓ `/api/financial/trace` registered
+- ✓ `/api/financial/explain` registered
+- ✓ Main synchronized with origin before Phase 9.2 implementation
+- ✓ Mutation Firewall passed in previous commit cycle
 
 Current Phase 9 layering:
 
@@ -143,14 +158,16 @@ Current Phase 9 layering:
 
 ---
 
-### Next Objective — Phase 9.2
+### Next Objective — Phase 9.3
 
-Expose explainability through dedicated application/API endpoints:
+Begin UI/API consumption planning for financial explainability.
 
-- `/api/financial/trace`
-- `/api/financial/explain`
+Potential next work:
 
-using the already integrated `FinancialExplainabilityApplication`.
+- Add route-level tests if the project introduces an API route test pattern
+- Add a developer-facing payload contract for trace/explain requests
+- Wire a future UI panel to call `/api/financial/trace`
+- Wire a future explainability prompt surface to call `/api/financial/explain`
 
 Continue preserving immutable ledger behavior while exposing deterministic, read-only explainability services.
 
