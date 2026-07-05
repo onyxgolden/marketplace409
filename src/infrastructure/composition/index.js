@@ -4,3 +4,5 @@ export {
 } from "./createFinancialSnapshotRepository.js";
 
 export { createFinancialSnapshotApplication } from "./createFinancialSnapshotApplication.js";
+
+export { createFinancialApplicationSuite } from "./createFinancialApplicationSuite.js";

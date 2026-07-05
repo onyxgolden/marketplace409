@@ -1,18 +1,23 @@
 import { createFinancialSnapshotApplication } from "./createFinancialSnapshotApplication.js";
 import { createFinancialSnapshotRepository } from "./createFinancialSnapshotRepository.js";
 
-import { FinancialReportingApplication } from "../../application/financial/FinancialReportingApplication.js";
+import {
+  FinancialExplainabilityApplication,
+  FinancialReportingApplication,
+} from "../../application/financial";
 
 import { FinancialEngine } from "../../domains/ledger/engines/FinancialEngine.js";
 import { FinancialDashboardService } from "../../domains/ledger/dashboard/FinancialDashboardService.js";
+import { traceExplorerService } from "../../domains/ledger/trace/TraceExplorerService.js";
+import { traceQueryService } from "../../domains/ledger/trace/TraceQueryService.js";
 
-export function createFinancialApplicationSuite(deps = {}) {
+export async function createFinancialApplicationSuite(deps = {}) {
   const snapshotRepository =
     deps.snapshotRepository || createFinancialSnapshotRepository();
 
   const snapshotApplication =
     deps.snapshotApplication ||
-    createFinancialSnapshotApplication({
+    await createFinancialSnapshotApplication({
       snapshotRepository,
     });
 
@@ -33,9 +38,19 @@ export function createFinancialApplicationSuite(deps = {}) {
       dashboardService,
     });
 
+  const explainabilityApplication =
+    deps.explainabilityApplication ||
+    new FinancialExplainabilityApplication({
+      traceExplorerService:
+        deps.traceExplorerService || traceExplorerService,
+      traceQueryService:
+        deps.traceQueryService || traceQueryService,
+    });
+
   return {
     snapshotApplication,
     reportingApplication,
+    explainabilityApplication,
     snapshotRepository,
     engine,
     dashboardService,

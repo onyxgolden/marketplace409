@@ -2,7 +2,7 @@ import { createFinancialApplicationSuite } from "@/infrastructure/composition";
 
 export async function GET() {
   try {
-    const { snapshotApplication } = createFinancialApplicationSuite();
+    const { snapshotApplication } = await createFinancialApplicationSuite();
 
     const { reports, dashboard } =
       await snapshotApplication.captureDashboardSnapshot();

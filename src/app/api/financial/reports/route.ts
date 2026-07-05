@@ -1,7 +1,7 @@
 import { createFinancialApplicationSuite } from "@/infrastructure/composition";
 
 export async function GET() {
-  const { reportingApplication } = createFinancialApplicationSuite();
+  const { reportingApplication } = await createFinancialApplicationSuite();
 
   const { reports, dashboard } =
     reportingApplication.buildDashboardReports();
