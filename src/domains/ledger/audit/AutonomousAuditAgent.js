@@ -51,7 +51,8 @@ export class AutonomousAuditAgent {
     const flags = [];
 
     // Large movement detection
-    if (entry.amount && Math.abs(entry.amount) > 100000) {
+    const amount = entry.amount?.amount ?? entry.amount;
+    if (typeof amount === "number" && Math.abs(amount) > 100000) {
       flags.push("Large transaction detected");
     }
 
