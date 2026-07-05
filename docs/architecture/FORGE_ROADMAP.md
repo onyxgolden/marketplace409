@@ -743,6 +743,7 @@ Strengthen the dashboard intelligence contract while preparing future dashboard 
 - Normalize fallback behavior against the application response model.
 - Expand dashboard intelligence to support future trace and explainability panels.
 - Continue eliminating remaining presentation-layer orchestration.
+- Continue dashboard intelligence response-contract normalization through reusable application-facing response and fallback builders.
 
 ### Protected Rule
 
@@ -763,6 +764,11 @@ API
 UI
 
 The application layer remains the orchestration boundary.
+
+Engineering guardrail:
+
+- Determine whether work targets Dashboard Intelligence (`/api/financial/dashboard-intelligence`) or Financial Explainability (`/api/financial/trace` and `/api/financial/explain`) before editing.
+- Keep dashboard intelligence hardening and trace/explain consumption planning in separate implementation and commit cycles.
 
 ---
 

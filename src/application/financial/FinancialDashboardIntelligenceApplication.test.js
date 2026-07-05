@@ -47,10 +47,28 @@ describe("FinancialDashboardIntelligenceApplication", () => {
       liabilities: [{ balance: 25 }],
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       auditFindings,
-      riskDashboard,
-      netWorth,
+      riskDashboard: {
+        summary: {
+          findingCount: 1,
+          severity: "low",
+          score: 0,
+          status: "Ready",
+        },
+        assessment: {
+          recommendations: ["Continue routine monitoring."],
+        },
+        executiveBriefing: {
+          recommendedActions: ["Continue routine monitoring."],
+        },
+      },
+      netWorth: {
+        totalAssets: 100,
+        totalLiabilities: 25,
+        netWorth: 75,
+        debtToAssetRatio: 0,
+      },
     });
 
     expect(auditAgent.run).toHaveBeenCalledWith({

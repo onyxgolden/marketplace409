@@ -1,3 +1,8 @@
+import {
+  buildDashboardIntelligenceFallback,
+  buildDashboardIntelligenceResponse,
+} from "./dashboardIntelligenceContract.js";
+
 export class FinancialDashboardIntelligenceApplication {
   constructor({ auditAgent, riskDashboardService, netWorthService }) {
     if (!auditAgent) {
@@ -38,11 +43,19 @@ export class FinancialDashboardIntelligenceApplication {
 
     const netWorth = this.netWorthService.calculate(assets, liabilities);
 
-    return {
+    return buildDashboardIntelligenceResponse({
       auditFindings,
       riskDashboard,
       netWorth,
-    };
+    });
+  }
+
+  static buildFallbackResponse(input) {
+    return buildDashboardIntelligenceFallback(input);
+  }
+
+  static buildResponse(input) {
+    return buildDashboardIntelligenceResponse(input);
   }
 }
 

@@ -175,6 +175,7 @@ Completed after implementation and validation.
   - TraceResolver
   - TraceIntelligenceService
 - Preserved Domain → Application → Composition → API → UI layering.
+- Established reusable application-facing response and fallback builders to normalize the dashboard intelligence response contract.
 
 #### Validation
 
@@ -197,6 +198,11 @@ Potential next work:
 - Normalize dashboard intelligence fallback behavior against the application response shape.
 - Prepare future dashboard panels for trace/explain consumption without bypassing the application layer.
 - Continue removing any remaining UI assumptions that duplicate application orchestration.
+
+Engineering guardrail:
+
+- Determine whether work targets Dashboard Intelligence (`/api/financial/dashboard-intelligence`) or Financial Explainability (`/api/financial/trace` and `/api/financial/explain`) before editing.
+- Keep dashboard intelligence hardening and trace/explain consumption planning in separate implementation and commit cycles.
 
 Continue preserving immutable ledger behavior while exposing deterministic, read-only financial intelligence services.
 
