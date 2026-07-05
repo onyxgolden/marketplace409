@@ -5,6 +5,7 @@ import {
   FinancialDashboardIntelligenceApplication,
   FinancialExplainabilityApplication,
   FinancialReportingApplication,
+  FinancialReadModelApplication,
 } from "../../application/financial";
 
 import { autonomousAuditAgent } from "../../domains/audit/AutonomousAuditAgent.js";
@@ -21,9 +22,9 @@ export async function createFinancialApplicationSuite(deps = {}) {
 
   const snapshotApplication =
     deps.snapshotApplication ||
-    await createFinancialSnapshotApplication({
+    (await createFinancialSnapshotApplication({
       snapshotRepository,
-    });
+    }));
 
   const engine =
     deps.engine ||
@@ -40,6 +41,12 @@ export async function createFinancialApplicationSuite(deps = {}) {
     new FinancialReportingApplication({
       engine,
       dashboardService,
+    });
+
+  const readModelApplication =
+    deps.readModelApplication ||
+    new FinancialReadModelApplication({
+      reportingApplication,
     });
 
   const explainabilityApplication =
@@ -63,6 +70,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
   return {
     snapshotApplication,
     reportingApplication,
+    readModelApplication,
     explainabilityApplication,
     dashboardIntelligenceApplication,
     snapshotRepository,

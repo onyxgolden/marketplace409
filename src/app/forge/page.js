@@ -73,6 +73,7 @@ export default function ForgePage() {
   const [dashboardIntelligence, setDashboardIntelligence] = useState(
     fallbackDashboardIntelligence,
   );
+  const [readModels, setReadModels] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -118,7 +119,28 @@ export default function ForgePage() {
       }
     }
 
+    async function loadReadModels() {
+      try {
+        const response = await fetch(
+          "/api/financial/read-models?business=true&investor=true&kpi=true&executive=true",
+        );
+
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload?.error ?? "Read models failed.");
+        }
+
+        if (isMounted) {
+          setReadModels(payload.data);
+        }
+      } catch (error) {
+        console.warn("Read models failed (non-blocking):", error);
+      }
+    }
+
     loadDashboardIntelligence();
+    loadReadModels();
 
     return () => {
       isMounted = false;
@@ -249,21 +271,46 @@ export default function ForgePage() {
   }, [auditFindings, netWorth]);
 
   return (
-    <ForgeDashboardShell
-      view={view}
-      setView={setView}
-      netWorth={netWorth}
-      riskSummary={riskSummary}
-      riskAssessment={riskAssessment}
-      executiveBriefing={executiveBriefing}
-      auditFindings={auditFindings}
-      alertItems={alertItems}
-      insightItems={insightItems}
-      portfolioSummaryItems={portfolioSummaryItems}
-      systemHealthItems={systemHealthItems}
-      systemStatusItems={systemStatusItems}
-      recentActivities={recentActivities}
-      formatCurrency={formatCurrency}
-    />
+    <div>
+      <ForgeDashboardShell
+        view={view}
+        setView={setView}
+        netWorth={netWorth}
+        riskSummary={riskSummary}
+        riskAssessment={riskAssessment}
+        executiveBriefing={executiveBriefing}
+        auditFindings={auditFindings}
+        alertItems={alertItems}
+        insightItems={insightItems}
+        portfolioSummaryItems={portfolioSummaryItems}
+        systemHealthItems={systemHealthItems}
+        systemStatusItems={systemStatusItems}
+        recentActivities={recentActivities}
+        formatCurrency={formatCurrency}
+      />
+
+      {readModels && (
+        <section className="mt-8 rounded-3xl border border-slate-200 bg-white p-6">
+          <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Read Model Shadow Layer (Phase 10)
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <pre className="overflow-auto text-xs">
+              {JSON.stringify(readModels.businessDashboard, null, 2)}
+            </pre>
+            <pre className="overflow-auto text-xs">
+              {JSON.stringify(readModels.investorDashboard, null, 2)}
+            </pre>
+            <pre className="overflow-auto text-xs">
+              {JSON.stringify(readModels.kpiModel, null, 2)}
+            </pre>
+            <pre className="overflow-auto text-xs">
+              {JSON.stringify(readModels.executiveSummary, null, 2)}
+            </pre>
+          </div>
+        </section>
+      )}
+    </div>
   );
 }

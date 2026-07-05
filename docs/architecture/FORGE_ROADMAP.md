@@ -774,16 +774,69 @@ Engineering guardrail:
 
 ## Phase 10 — Read Models & Dashboards
 
+### Status
+
+Completed.
+
 ### Purpose
 
 Expose optimized read models without affecting accounting truth.
 
-Expected capabilities include:
+### Delivered
 
-* Business dashboards
-* Investor dashboards
-* KPI models
-* Executive summaries
+- Introduced `FinancialReadModelApplication` as the dedicated application-layer projection boundary.
+- Established consumer-specific read model projections for:
+  - Business dashboards
+  - Investor dashboards
+  - KPI models
+  - Executive summaries
+- Integrated read models into `FinancialApplicationSuite`.
+- Exposed read models through:
+  - `GET /api/financial/read-models`
+- Added non-breaking shadow consumption within the Forge dashboard for validation and future UI evolution.
+- Preserved immutable financial architecture throughout implementation.
+
+### Protected Rule
+
+Read models are projections.
+
+They may:
+
+- summarize data
+- shape data
+- group data
+- filter data
+- prepare data for presentation
+
+They must never:
+
+- become accounting truth
+- mutate ledger state
+- bypass the application layer
+- replace FinancialReportingApplication
+
+Architecture remains:
+
+    FinancialEngine
+            ↓
+    FinancialReportingApplication
+            ↓
+    FinancialReadModelApplication
+            ↓
+    FinancialApplicationSuite
+            ↓
+    API
+            ↓
+    UI
+
+### Validation
+
+- ✓ 150 test files passed
+- ✓ 483 tests passed
+- ✓ Production build passed
+- ✓ Existing dashboard intelligence preserved
+- ✓ Existing explainability preserved
+- ✓ Existing ledger architecture unchanged
 
 ---
 
