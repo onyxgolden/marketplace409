@@ -74,7 +74,7 @@ Completed at commit:
 
 ### Status
 
-Completed through **Phase 9.2**.
+Completed through Phase 9.3
 
 Phase 9 established the complete read-only financial explainability layer and exposed it through dedicated API endpoints while preserving the immutable accounting architecture.
 
@@ -158,18 +158,47 @@ Current Phase 9 layering:
 
 ---
 
-### Next Objective — Phase 9.3
+### Phase 9.3 — Dashboard Intelligence Consumption
 
-Begin UI/API consumption planning for financial explainability.
+Completed after implementation and validation.
+
+#### Delivered
+
+- Added FinancialDashboardIntelligenceApplication as the application-layer orchestration boundary for dashboard intelligence.
+- Integrated the application into FinancialApplicationSuite through dependency injection.
+- Added POST /api/financial/dashboard-intelligence.
+- Migrated ForgePage from direct domain orchestration to consuming the application layer through the API.
+- Removed direct UI dependencies on:
+  - NetWorthService
+  - RiskDashboardService
+  - AutonomousAuditAgent
+  - TraceResolver
+  - TraceIntelligenceService
+- Preserved Domain → Application → Composition → API → UI layering.
+
+#### Validation
+
+- ✓ 2 targeted test files passed
+- ✓ 8 targeted tests passed
+- ✓ Production build passed
+- ✓ /api/financial/dashboard-intelligence registered
+- ✓ Forge dashboard consumes the application boundary
+
+---
+
+### Next Objective — Phase 9.4
+
+Begin dashboard intelligence hardening and contract refinement.
 
 Potential next work:
 
-- Add route-level tests if the project introduces an API route test pattern
-- Add a developer-facing payload contract for trace/explain requests
-- Wire a future UI panel to call `/api/financial/trace`
-- Wire a future explainability prompt surface to call `/api/financial/explain`
+- Add a stable developer-facing dashboard intelligence payload contract.
+- Add route-level tests if the project introduces an API route test pattern.
+- Normalize dashboard intelligence fallback behavior against the application response shape.
+- Prepare future dashboard panels for trace/explain consumption without bypassing the application layer.
+- Continue removing any remaining UI assumptions that duplicate application orchestration.
 
-Continue preserving immutable ledger behavior while exposing deterministic, read-only explainability services.
+Continue preserving immutable ledger behavior while exposing deterministic, read-only financial intelligence services.
 
 ---
 

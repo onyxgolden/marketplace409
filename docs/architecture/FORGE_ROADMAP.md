@@ -693,18 +693,76 @@ Current architecture:
 
 Status: Complete
 
-### Next Objective — Phase 9.3
+### Phase 9.3 — Dashboard Intelligence Consumption
 
-Plan UI/API consumption of financial explainability.
+### Purpose
 
-Expected next capabilities include:
+Move dashboard orchestration out of the UI and establish the application layer as the single entry point for dashboard intelligence.
 
-* Developer-facing request/response payload contract for trace and explain routes
-* Future UI trace panel backed by `/api/financial/trace`
-* Future explanation prompt surface backed by `/api/financial/explain`
-* Optional route-level tests if the project introduces an API route testing convention
+### Delivered
 
-The application layer remains the orchestration boundary while the financial engine and trace services continue to provide deterministic, immutable, read-only financial explainability.
+- Added `FinancialDashboardIntelligenceApplication`.
+- Established a unified application-layer orchestration boundary for:
+  - Audit
+  - Risk
+  - Net Worth
+- Integrated the application into `FinancialApplicationSuite`.
+- Added `POST /api/financial/dashboard-intelligence`.
+- Migrated the FORGE dashboard to consume dashboard intelligence through the application/API boundary.
+- Eliminated direct UI orchestration of:
+  - `NetWorthService`
+  - `RiskDashboardService`
+  - `AutonomousAuditAgent`
+  - `TraceResolver`
+  - `TraceIntelligenceService`
+
+### Protected Rule
+
+Dashboard presentation consumes application services.
+
+UI components never orchestrate domain services directly.
+
+Application services coordinate domain capabilities.
+
+The domain remains the single source of business behavior.
+
+**Status:** Complete
+
+---
+
+### Next Objective — Phase 9.4
+
+### Purpose
+
+Strengthen the dashboard intelligence contract while preparing future dashboard capabilities.
+
+### Planned Direction
+
+- Stabilize the dashboard intelligence response contract.
+- Add route-level tests if an API route testing convention is adopted.
+- Normalize fallback behavior against the application response model.
+- Expand dashboard intelligence to support future trace and explainability panels.
+- Continue eliminating remaining presentation-layer orchestration.
+
+### Protected Rule
+
+Dashboard intelligence continues to flow exclusively through:
+
+FinancialEngine
+        ↓
+FinancialReportingApplication
+        ↓
+FinancialExplainabilityApplication
+        ↓
+FinancialDashboardIntelligenceApplication
+        ↓
+FinancialApplicationSuite
+        ↓
+API
+        ↓
+UI
+
+The application layer remains the orchestration boundary.
 
 ---
 

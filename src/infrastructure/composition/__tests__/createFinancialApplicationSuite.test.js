@@ -1,5 +1,8 @@
 import { createFinancialApplicationSuite } from "../createFinancialApplicationSuite.js";
-import { FinancialExplainabilityApplication } from "../../../application/financial";
+import {
+  FinancialDashboardIntelligenceApplication,
+  FinancialExplainabilityApplication,
+} from "../../../application/financial";
 
 describe("createFinancialApplicationSuite", () => {
   test("wires financial explainability application into the suite", async () => {
@@ -28,6 +31,35 @@ describe("createFinancialApplicationSuite", () => {
 
     expect(suite.explainabilityApplication).toBe(
       explainabilityApplication,
+    );
+  });
+
+  test("wires dashboard intelligence application into the suite", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(suite.dashboardIntelligenceApplication).toBeInstanceOf(
+      FinancialDashboardIntelligenceApplication,
+    );
+  });
+
+  test("allows dashboard intelligence application injection", async () => {
+    const dashboardIntelligenceApplication = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      dashboardIntelligenceApplication,
+    });
+
+    expect(suite.dashboardIntelligenceApplication).toBe(
+      dashboardIntelligenceApplication,
     );
   });
 });

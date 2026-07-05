@@ -1,14 +1,7 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import ForgeDashboardShell from "@/components/forge/ForgeDashboardShell";
-import { NetWorthService } from "@/domains/networth";
-import { RiskDashboardService } from "@/domains/risk";
-
-// STEP 15 — READ-ONLY AUDIT LAYER
-import { autonomousAuditAgent } from "@/domains/audit/AutonomousAuditAgent";
-import { TraceIntelligenceService } from "@/domains/ledger/trace/TraceIntelligenceService";
-import { TraceResolver } from "@/domains/ledger/trace/TraceResolver";
 
 export const dynamic = "force-dynamic";
 
@@ -17,58 +10,135 @@ function formatCurrency(value) {
   return `$${Number(value).toLocaleString()}`;
 }
 
+const ledgerContext = {
+  accounts: [
+    { id: "1000", name: "Cash", balance: 280000 },
+    { id: "1100", name: "Accounts Receivable", balance: 120000 },
+    { id: "2000", name: "Debt", balance: -40000 },
+  ],
+  postings: [],
+};
+
+const assets = [{ id: "cash", name: "Cash", category: "bank", value: 280000 }];
+
+const liabilities = [
+  { id: "debt", name: "Debt", category: "loan", balance: 0 },
+];
+
+const fallbackDashboardIntelligence = {
+  auditFindings: {
+    anomalies: [],
+  },
+  riskDashboard: {
+    summary: {
+      severity: "low",
+      score: 0,
+      findingCount: 0,
+      severityCounts: {
+        low: 0,
+        medium: 0,
+        high: 0,
+        critical: 0,
+      },
+      topRisks: [],
+      status: "Loading",
+      summary: "Dashboard intelligence is loading.",
+    },
+    assessment: {
+      summary: "Dashboard intelligence is loading.",
+      primaryDrivers: [],
+      recommendations: ["Continue routine monitoring."],
+      trendIndicators: [],
+    },
+    executiveBriefing: {
+      headline: "Dashboard intelligence loading.",
+      overview: "Dashboard intelligence is loading.",
+      improvements: [],
+      concerns: [],
+      priorities: [],
+      recommendedActions: ["Continue routine monitoring."],
+      outlook: "Dashboard intelligence is being prepared.",
+    },
+  },
+  netWorth: {
+    totalAssets: 0,
+    totalLiabilities: 0,
+    netWorth: 0,
+    debtToAssetRatio: 0,
+  },
+};
+
 export default function ForgePage() {
   const [view, setView] = useState("networth");
+  const [dashboardIntelligence, setDashboardIntelligence] = useState(
+    fallbackDashboardIntelligence,
+  );
 
-  const ledgerContext = useMemo(() => {
-    return {
-      accounts: [
-        { id: "1000", name: "Cash", balance: 280000 },
-        { id: "1100", name: "Accounts Receivable", balance: 120000 },
-        { id: "2000", name: "Debt", balance: -40000 },
-      ],
-      postings: [],
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadDashboardIntelligence() {
+      try {
+        const response = await fetch("/api/financial/dashboard-intelligence", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            ledgerContext,
+            assets,
+            liabilities,
+          }),
+        });
+
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            payload?.error ?? "Unable to load dashboard intelligence.",
+          );
+        }
+
+        if (isMounted) {
+          setDashboardIntelligence(payload.data);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setDashboardIntelligence({
+            ...fallbackDashboardIntelligence,
+            auditFindings: {
+              anomalies: [],
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Unable to load dashboard intelligence.",
+            },
+          });
+        }
+      }
+    }
+
+    loadDashboardIntelligence();
+
+    return () => {
+      isMounted = false;
     };
   }, []);
 
-  const auditFindings = useMemo(() => {
-    try {
-      return autonomousAuditAgent.run({
-        ledger: ledgerContext,
-        traceResolver: TraceResolver,
-        traceIntelligence: TraceIntelligenceService,
-      });
-    } catch (e) {
-      return {
-        anomalies: [],
-        error: e.message,
-      };
-    }
-  }, [ledgerContext]);
+  const auditFindings =
+    dashboardIntelligence.auditFindings ??
+    fallbackDashboardIntelligence.auditFindings;
 
-  const riskDashboard = useMemo(() => {
-    const dashboardService = new RiskDashboardService();
+  const riskDashboard =
+    dashboardIntelligence.riskDashboard ??
+    fallbackDashboardIntelligence.riskDashboard;
 
-    return dashboardService.build({
-      auditFindings: auditFindings?.anomalies ?? [],
-    });
-  }, [auditFindings]);
+  const netWorth =
+    dashboardIntelligence.netWorth ?? fallbackDashboardIntelligence.netWorth;
 
   const riskSummary = riskDashboard.summary;
   const riskAssessment = riskDashboard.assessment;
   const executiveBriefing = riskDashboard.executiveBriefing;
-
-  const netWorth = useMemo(() => {
-    const assets = [
-      { id: "cash", name: "Cash", category: "bank", value: 280000 },
-    ];
-
-    const liabilities = [
-      { id: "debt", name: "Debt", category: "loan", balance: 0 },
-    ];
-
-    return NetWorthService.calculate(assets, liabilities);
-  }, []);
 
   const alertItems = useMemo(() => {
     return [
@@ -91,7 +161,8 @@ export default function ForgePage() {
       },
       {
         label: "Recommended Focus",
-        detail: riskAssessment.recommendations[0] ?? "Continue routine monitoring.",
+        detail:
+          riskAssessment.recommendations[0] ?? "Continue routine monitoring.",
       },
     ];
   }, [executiveBriefing, riskAssessment]);
@@ -99,7 +170,10 @@ export default function ForgePage() {
   const portfolioSummaryItems = useMemo(() => {
     return [
       { label: "Assets", value: formatCurrency(netWorth.totalAssets) },
-      { label: "Liabilities", value: formatCurrency(netWorth.totalLiabilities) },
+      {
+        label: "Liabilities",
+        value: formatCurrency(netWorth.totalLiabilities),
+      },
       { label: "Net Worth", value: formatCurrency(netWorth.netWorth) },
     ];
   }, [netWorth]);
@@ -112,14 +186,17 @@ export default function ForgePage() {
         detail: "Executive dashboard composition is active.",
       },
       {
-        label: "Audit Agent",
+        label: "Dashboard Intelligence API",
         status: auditFindings?.error ? "review" : "online",
-        detail: auditFindings?.error ?? "Read-only audit completed successfully.",
+        detail:
+          auditFindings?.error ??
+          "Dashboard intelligence loaded through the financial application API.",
       },
       {
         label: "Risk Services",
         status: "online",
-        detail: "Risk dashboard service returned current summary and assessment.",
+        detail:
+          "Risk dashboard service returned current summary and assessment.",
       },
     ];
   }, [auditFindings]);
@@ -147,10 +224,11 @@ export default function ForgePage() {
   const recentActivities = useMemo(() => {
     return [
       {
-        id: "risk-dashboard",
-        label: "Risk dashboard refreshed",
-        detail: riskSummary.summary,
-        type: "risk",
+        id: "dashboard-intelligence",
+        label: "Dashboard intelligence refreshed",
+        detail:
+          "Financial dashboard intelligence loaded through the application API.",
+        type: "system",
         timestamp: "Current session",
       },
       {
@@ -168,7 +246,7 @@ export default function ForgePage() {
         timestamp: "Current session",
       },
     ];
-  }, [auditFindings, netWorth, riskSummary]);
+  }, [auditFindings, netWorth]);
 
   return (
     <ForgeDashboardShell

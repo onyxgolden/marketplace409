@@ -2,14 +2,18 @@ import { createFinancialSnapshotApplication } from "./createFinancialSnapshotApp
 import { createFinancialSnapshotRepository } from "./createFinancialSnapshotRepository.js";
 
 import {
+  FinancialDashboardIntelligenceApplication,
   FinancialExplainabilityApplication,
   FinancialReportingApplication,
 } from "../../application/financial";
 
+import { autonomousAuditAgent } from "../../domains/audit/AutonomousAuditAgent.js";
 import { FinancialEngine } from "../../domains/ledger/engines/FinancialEngine.js";
 import { FinancialDashboardService } from "../../domains/ledger/dashboard/FinancialDashboardService.js";
 import { traceExplorerService } from "../../domains/ledger/trace/TraceExplorerService.js";
 import { traceQueryService } from "../../domains/ledger/trace/TraceQueryService.js";
+import { NetWorthService } from "../../domains/networth";
+import { RiskDashboardService } from "../../domains/risk";
 
 export async function createFinancialApplicationSuite(deps = {}) {
   const snapshotRepository =
@@ -47,10 +51,20 @@ export async function createFinancialApplicationSuite(deps = {}) {
         deps.traceQueryService || traceQueryService,
     });
 
+  const dashboardIntelligenceApplication =
+    deps.dashboardIntelligenceApplication ||
+    new FinancialDashboardIntelligenceApplication({
+      auditAgent: deps.auditAgent || autonomousAuditAgent,
+      riskDashboardService:
+        deps.riskDashboardService || new RiskDashboardService(),
+      netWorthService: deps.netWorthService || NetWorthService,
+    });
+
   return {
     snapshotApplication,
     reportingApplication,
     explainabilityApplication,
+    dashboardIntelligenceApplication,
     snapshotRepository,
     engine,
     dashboardService,
