@@ -41,64 +41,118 @@ The repository—not memory—is the source of truth.
 
 # Latest Completed Milestone
 
-## Phase 8.3 – Posting Integration Foundation
+## Phase 8.5 – Composition Symmetry & API Alignment
 
 Started after commit:
 
-    111c7e8 Document Phase 8.2 accounting period service
+    926e15d Integrate accounting periods into posting validation
 
 Completed at commit:
 
-    926e15d Integrate accounting periods into posting validation
+    23bc6a8 Add FinancialApplicationSuite and align API composition layer
 
 ### Delivered
 
-- AccountingPeriodRepository list query support added.
-- InMemoryAccountingPeriodRepository list query support added.
-- AccountingPeriodService period resolution by date implemented.
-- PostingValidator optionally integrates with AccountingPeriodService.
-- Missing accounting periods are rejected during posting validation.
-- Closed accounting periods are rejected during posting validation.
-- Backward compatibility preserved when no AccountingPeriodService is injected.
-- PostingEngine remains accounting-period agnostic.
-- Deterministic domain behavior preserved.
+- Introduced `createFinancialApplicationSuite` as unified composition root
+- Eliminated legacy snapshot-only composition entry point from API layer
+- Aligned financial API routes (snapshot + reports) to suite
+- Standardized FinancialEngine + FinancialDashboardService wiring in composition layer
+- Removed inconsistent application bootstrap patterns
 
 ### Validation
 
-- ✓ 57 Ledger test files passed
-- ✓ 182 Ledger tests passed
-- ✓ PostingValidator accounting period integration verified
-- ✓ Missing accounting period validation verified
-- ✓ Closed accounting period validation verified
+- ✓ 456 tests passed
+- ✓ API routes aligned
+- ✓ Composition layer unified
+- ✓ Engine wiring verified
+- ✓ Dashboard integration verified
 - ✓ Mutation Firewall passed
-- ✓ Main synchronized with origin
 
 ---
 
-# Current Objective
+## Phase 9 – Audit & Traceability
 
-## Phase 8.4 – Next Multi-Period Accounting Step
+### Status
 
-### Immediate Goals
+Completed through **Phase 9.1**.
 
-- Inspect repository state before selecting the next Phase 8.4 implementation target.
-- Preserve strict domain boundaries.
-- Continue depending only on domain contracts and services.
-- Maintain deterministic accounting behavior before infrastructure integration.
+Phase 9 established the complete read-only financial explainability layer while preserving the immutable accounting architecture.
 
-Current Phase 8 layering:
+### Phase 9.0 — Financial Trace Hardening
 
-    AccountingPeriod
+Started after commit:
+
+    23bc6a8 Add FinancialApplicationSuite and align API composition layer
+
+Completed at commit:
+
+    be3b91f Harden financial trace and audit services with test coverage
+
+#### Delivered
+
+- Added comprehensive automated coverage for the financial trace subsystem
+- Added tests for:
+  - `TraceResolver`
+  - `TraceExplorerService`
+  - `TraceIntelligenceService`
+  - `TraceQueryService`
+  - `AutonomousAuditAgent`
+- Fixed Money-object handling within `AutonomousAuditAgent`
+- Preserved immutable ledger architecture
+- No accounting logic modified
+- Maintained a read-only trace architecture
+
+### Phase 9.1 — Financial Explainability Application Integration
+
+Completed at commit:
+
+    8af3595 Wire financial explainability into application suite
+
+#### Delivered
+
+- Added `FinancialExplainabilityApplication`
+- Introduced an application-layer façade over financial trace services
+- Integrated explainability into `FinancialApplicationSuite`
+- Added composition-layer integration tests
+- Converted `FinancialApplicationSuite` to asynchronous composition
+- Updated financial API routes to await asynchronous suite construction
+- Exported `createFinancialApplicationSuite` through the composition index
+- Verified production build after integration
+
+### Validation
+
+- ✓ 148 test files passed
+- ✓ 474 tests passed
+- ✓ Production build passed
+- ✓ Main synchronized with origin
+- ✓ Mutation Firewall passed
+
+Current Phase 9 layering:
+
+    FinancialEngine
             ↓
-    AccountingPeriodRepository
+    FinancialReportingApplication
             ↓
-    AccountingPeriodService
+    FinancialExplainabilityApplication
             ↓
-    PostingValidator
+    FinancialApplicationSuite
             ↓
-    PostingEngine
+    API
             ↓
-    GeneralLedger
+    Future UI / AI Explainability
+
+---
+
+### Next Objective — Phase 9.2
+
+Expose explainability through dedicated application/API endpoints:
+
+- `/api/financial/trace`
+- `/api/financial/explain`
+
+using the already integrated `FinancialExplainabilityApplication`.
+
+Continue preserving immutable ledger behavior while exposing deterministic, read-only explainability services.
 
 ---
 

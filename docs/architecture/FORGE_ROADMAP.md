@@ -572,17 +572,48 @@ Current layering:
 
 Status: Complete at 926e15d
 
-Current objective:
+### Phase 8.4 — Accounting Period Validation Boundary
 
-* Phase 8.4
+Delivered capability:
 
-Future capabilities include:
+* AccountingPeriodValidator domain service
+* PostingValidator delegates accounting-period enforcement
+* PostingValidator no longer performs accounting-period lookup directly
+* Accounting-period validation reusable by future application and reporting services
+* PostingEngine remains accounting-period agnostic
+* Dependency inversion preserved
+* Deterministic domain behavior maintained
 
-* Application services
-* Infrastructure persistence
-* Comparative reports
-* Historical balances
-* Time-based reporting
+Current layering:
+
+    AccountingPeriod
+            ↓
+    AccountingPeriodRepository
+            ↓
+    AccountingPeriodService
+            ↓
+    AccountingPeriodValidator
+            ↓
+    PostingValidator
+            ↓
+    PostingEngine
+            ↓
+    GeneralLedger
+
+Status: Complete at c1ec75d
+
+### Phase 8.5 — Composition Symmetry & API Alignment
+
+- Introduced `createFinancialApplicationSuite` as the unified composition root
+- Eliminated legacy snapshot-only composition entry point from API layer
+- Aligned both financial API routes (snapshot + reports) to use unified suite
+- Standardized FinancialEngine + FinancialDashboardService wiring in composition layer
+- Removed inconsistent application bootstrap patterns across financial endpoints
+
+Outcome:
+- Single authoritative composition entry point for all financial application flows
+- API layer fully decoupled from ad-hoc application construction
+- System composition now deterministic and test-verified (Phase 8.5 complete)
 
 ---
 
@@ -590,14 +621,73 @@ Future capabilities include:
 
 ### Purpose
 
-Provide complete financial explainability.
+Provide complete financial explainability while preserving immutable accounting truth.
 
-Expected capabilities include:
+### Phase 9.0 — Financial Trace Hardening
 
-* Audit trails
-* Source attribution
-* Drill-down navigation
-* Posting lineage
+Completed at commit:
+
+    be3b91f Harden financial trace and audit services with test coverage
+
+Delivered capability:
+
+* Comprehensive automated coverage for the financial trace subsystem
+* Added coverage for:
+  * `TraceResolver`
+  * `TraceExplorerService`
+  * `TraceIntelligenceService`
+  * `TraceQueryService`
+  * `AutonomousAuditAgent`
+* Corrected Money-object handling within `AutonomousAuditAgent`
+* Preserved immutable ledger architecture
+* No accounting logic modified
+* Read-only trace architecture maintained
+
+Status: Complete
+
+### Phase 9.1 — Financial Explainability Application Integration
+
+Completed at commit:
+
+    8af3595 Wire financial explainability into application suite
+
+Delivered capability:
+
+* Added `FinancialExplainabilityApplication`
+* Introduced an application-layer façade over financial trace services
+* Integrated explainability into `FinancialApplicationSuite`
+* Added composition-layer integration tests
+* Converted `FinancialApplicationSuite` to asynchronous composition
+* Updated financial API routes to await asynchronous suite construction
+* Exported `createFinancialApplicationSuite` through the composition index
+* Verified production build
+
+Current architecture:
+
+    FinancialEngine
+            ↓
+    FinancialReportingApplication
+            ↓
+    FinancialExplainabilityApplication
+            ↓
+    FinancialApplicationSuite
+            ↓
+    API
+            ↓
+    Future UI / AI Explainability
+
+Status: Complete
+
+### Current Objective — Phase 9.2
+
+Expose explainability through dedicated application/API endpoints:
+
+* `/api/financial/trace`
+* `/api/financial/explain`
+
+using the integrated `FinancialExplainabilityApplication`.
+
+The application layer remains the orchestration boundary while the financial engine and trace services continue to provide deterministic, immutable, read-only financial explainability.
 
 ---
 
