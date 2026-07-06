@@ -77,6 +77,42 @@ describe("createFinancialApplicationSuite", () => {
     );
   });
 
+  test("injects financial intelligence domain services from the composition root", async () => {
+    const trendAnalysisService = {};
+    const scenarioModelingService = {};
+    const forecastService = {};
+    const recommendationService = {};
+    const planningService = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      trendAnalysisService,
+      scenarioModelingService,
+      forecastService,
+      recommendationService,
+      planningService,
+    });
+
+    expect(suite.financialIntelligenceApplication.trendAnalysisService).toBe(
+      trendAnalysisService,
+    );
+    expect(suite.financialIntelligenceApplication.scenarioModelingService).toBe(
+      scenarioModelingService,
+    );
+    expect(suite.financialIntelligenceApplication.forecastService).toBe(
+      forecastService,
+    );
+    expect(suite.financialIntelligenceApplication.recommendationService).toBe(
+      recommendationService,
+    );
+    expect(suite.financialIntelligenceApplication.planningService).toBe(
+      planningService,
+    );
+  });
+
   test("allows financial intelligence application injection", async () => {
     const financialIntelligenceApplication = {};
 

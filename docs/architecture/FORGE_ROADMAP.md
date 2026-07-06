@@ -730,45 +730,57 @@ The domain remains the single source of business behavior.
 
 ---
 
-### Next Objective — Phase 9.4
+### Phase 9.4 — Dashboard Intelligence Contract Hardening
 
 ### Purpose
 
-Strengthen the dashboard intelligence contract while preparing future dashboard capabilities.
+Stabilize the dashboard intelligence contract while preserving strict separation between dashboard intelligence and financial explainability.
 
-### Planned Direction
+### Delivered
 
-- Stabilize the dashboard intelligence response contract.
-- Add route-level tests if an API route testing convention is adopted.
-- Normalize fallback behavior against the application response model.
-- Expand dashboard intelligence to support future trace and explainability panels.
-- Continue eliminating remaining presentation-layer orchestration.
-- Continue dashboard intelligence response-contract normalization through reusable application-facing response and fallback builders.
+- Standardized the dashboard intelligence response contract.
+- Added deterministic fallback response builders.
+- Normalized nested response structures and defensive array handling.
+- Introduced dedicated dashboard intelligence contract tests.
+- Hardened `FinancialDashboardIntelligenceApplication` orchestration.
+- Preserved complete separation between:
+  - Dashboard Intelligence
+  - Financial Explainability
+- Maintained the application layer as the exclusive orchestration boundary.
 
 ### Protected Rule
 
-Dashboard intelligence continues to flow exclusively through:
+Dashboard intelligence consumes application services.
 
-FinancialEngine
-        ↓
-FinancialReportingApplication
-        ↓
-FinancialExplainabilityApplication
-        ↓
-FinancialDashboardIntelligenceApplication
-        ↓
-FinancialApplicationSuite
-        ↓
-API
-        ↓
-UI
+Financial explainability consumes trace services.
 
-The application layer remains the orchestration boundary.
+Neither subsystem owns or duplicates the responsibilities of the other.
 
-Engineering guardrail:
+Current architecture:
 
-- Determine whether work targets Dashboard Intelligence (`/api/financial/dashboard-intelligence`) or Financial Explainability (`/api/financial/trace` and `/api/financial/explain`) before editing.
-- Keep dashboard intelligence hardening and trace/explain consumption planning in separate implementation and commit cycles.
+    FinancialEngine
+            ↓
+    FinancialReportingApplication
+            ↓
+    FinancialExplainabilityApplication
+            ↓
+    FinancialDashboardIntelligenceApplication
+            ↓
+    FinancialApplicationSuite
+            ↓
+    API
+            ↓
+    UI
+
+### Validation
+
+- ✓ Dashboard intelligence contract stabilized
+- ✓ Dedicated contract test coverage added
+- ✓ Deterministic fallback responses verified
+- ✓ Existing explainability preserved
+- ✓ Existing dashboard behavior preserved
+
+**Status:** Complete
 
 ---
 
@@ -844,19 +856,97 @@ Architecture remains:
 
 ### Purpose
 
-Provide deterministic financial reasoning built on the Financial Engine.
+Provide deterministic financial intelligence derived exclusively from stable financial read models while preserving immutable accounting truth and composition symmetry.
 
-Expected capabilities include:
+---
 
-* Trend analysis
-* Scenario modeling
-* Forecasting
-* Recommendations
-* Planning assistance
+### Phase 11.1 — Financial Intelligence Domain Extraction
 
-AI assists financial decision-making.
+### Delivered
 
-AI never becomes the accounting authority.
+- Introduced dedicated financial intelligence domain services:
+  - `FinancialTrendAnalysisService`
+  - `FinancialScenarioModelingService`
+  - `FinancialForecastService`
+  - `FinancialRecommendationService`
+  - `FinancialPlanningService`
+- Reduced `FinancialIntelligenceApplication` to orchestration only.
+- Preserved deterministic financial intelligence generation.
+- Ensured financial intelligence consumes only stable read models.
+- Maintained immutable ledger architecture.
+
+---
+
+### Phase 11.2 — Financial Intelligence Composition Symmetry
+
+### Delivered
+
+- Moved construction of all financial intelligence domain services into `createFinancialApplicationSuite`.
+- Removed hidden service instantiation from `FinancialIntelligenceApplication`.
+- Required explicit dependency injection for:
+  - `FinancialTrendAnalysisService`
+  - `FinancialScenarioModelingService`
+  - `FinancialForecastService`
+  - `FinancialRecommendationService`
+  - `FinancialPlanningService`
+- Added constructor validation for all required services.
+- Expanded automated tests to verify composition ownership and dependency injection.
+- Preserved deterministic behavior and existing application API.
+
+---
+
+### Protected Rule
+
+Financial intelligence consumes stable read-model projections.
+
+Applications orchestrate.
+
+Composition assembles dependencies.
+
+Domain services implement business behavior.
+
+Applications never construct their own domain services.
+
+---
+
+### Architecture
+
+    FinancialEngine
+            ↓
+    FinancialReportingApplication
+            ↓
+    FinancialReadModelApplication
+            ↓
+    FinancialIntelligenceApplication
+            ↑
+    Composition Root
+            │
+            ├── FinancialTrendAnalysisService
+            ├── FinancialScenarioModelingService
+            ├── FinancialForecastService
+            ├── FinancialRecommendationService
+            └── FinancialPlanningService
+            ↓
+    FinancialApplicationSuite
+            ↓
+    API
+            ↓
+    UI
+
+---
+
+### Validation
+
+- ✓ 151 test files passed
+- ✓ 489 tests passed
+- ✓ Production build passed
+- ✓ Deterministic financial intelligence verified
+- ✓ Composition symmetry achieved
+- ✓ Application remains orchestration only
+- ✓ No ledger mutation
+- ✓ No changes to reporting, explainability, dashboard intelligence, or read-model architecture
+
+**Status:** Complete
 
 ---
 

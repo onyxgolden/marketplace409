@@ -1,23 +1,45 @@
-import {
-  FinancialForecastService,
-  FinancialPlanningService,
-  FinancialRecommendationService,
-  FinancialScenarioModelingService,
-  FinancialTrendAnalysisService,
-} from "../../domains/financial-intelligence";
-
 export class FinancialIntelligenceApplication {
   constructor({
     readModelApplication,
-    trendAnalysisService = new FinancialTrendAnalysisService(),
-    scenarioModelingService = new FinancialScenarioModelingService(),
-    forecastService = new FinancialForecastService(),
-    recommendationService = new FinancialRecommendationService(),
-    planningService = new FinancialPlanningService(),
+    trendAnalysisService,
+    scenarioModelingService,
+    forecastService,
+    recommendationService,
+    planningService,
   }) {
     if (!readModelApplication) {
       throw new Error(
         "FinancialIntelligenceApplication requires a read model application.",
+      );
+    }
+
+    if (!trendAnalysisService) {
+      throw new Error(
+        "FinancialIntelligenceApplication requires a trend analysis service.",
+      );
+    }
+
+    if (!scenarioModelingService) {
+      throw new Error(
+        "FinancialIntelligenceApplication requires a scenario modeling service.",
+      );
+    }
+
+    if (!forecastService) {
+      throw new Error(
+        "FinancialIntelligenceApplication requires a forecast service.",
+      );
+    }
+
+    if (!recommendationService) {
+      throw new Error(
+        "FinancialIntelligenceApplication requires a recommendation service.",
+      );
+    }
+
+    if (!planningService) {
+      throw new Error(
+        "FinancialIntelligenceApplication requires a planning service.",
       );
     }
 

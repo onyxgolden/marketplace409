@@ -9,6 +9,14 @@ import {
   FinancialReadModelApplication,
 } from "../../application/financial";
 
+import {
+  FinancialForecastService,
+  FinancialPlanningService,
+  FinancialRecommendationService,
+  FinancialScenarioModelingService,
+  FinancialTrendAnalysisService,
+} from "../../domains/financial-intelligence";
+
 import { autonomousAuditAgent } from "../../domains/audit/AutonomousAuditAgent.js";
 import { FinancialEngine } from "../../domains/ledger/engines/FinancialEngine.js";
 import { FinancialDashboardService } from "../../domains/ledger/dashboard/FinancialDashboardService.js";
@@ -50,10 +58,30 @@ export async function createFinancialApplicationSuite(deps = {}) {
       reportingApplication,
     });
 
+  const trendAnalysisService =
+    deps.trendAnalysisService || new FinancialTrendAnalysisService();
+
+  const scenarioModelingService =
+    deps.scenarioModelingService || new FinancialScenarioModelingService();
+
+  const forecastService =
+    deps.forecastService || new FinancialForecastService();
+
+  const recommendationService =
+    deps.recommendationService || new FinancialRecommendationService();
+
+  const planningService =
+    deps.planningService || new FinancialPlanningService();
+
   const financialIntelligenceApplication =
     deps.financialIntelligenceApplication ||
     new FinancialIntelligenceApplication({
       readModelApplication,
+      trendAnalysisService,
+      scenarioModelingService,
+      forecastService,
+      recommendationService,
+      planningService,
     });
 
   const explainabilityApplication =

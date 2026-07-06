@@ -397,3 +397,96 @@ They must:
 - never mutate ledger state
 - never bypass FinancialEngine
 - remain UI-consumable representations only
+
+---
+
+### Phase 11 — Financial Intelligence
+
+#### Status
+
+Phase 11.2 completed after implementation and validation.
+
+---
+
+#### Phase 11.1 — Financial Intelligence Domain Extraction
+
+##### Delivered
+
+- Extracted financial intelligence behavior into dedicated domain services:
+  - `FinancialTrendAnalysisService`
+  - `FinancialScenarioModelingService`
+  - `FinancialForecastService`
+  - `FinancialRecommendationService`
+  - `FinancialPlanningService`
+- Reduced `FinancialIntelligenceApplication` to orchestration only.
+- Preserved deterministic financial intelligence generation.
+- Maintained read-model-only consumption.
+- Preserved immutable ledger architecture.
+
+---
+
+#### Phase 11.2 — Financial Intelligence Composition Symmetry
+
+##### Delivered
+
+- Moved construction of all financial intelligence domain services into `createFinancialApplicationSuite`.
+- Removed hidden service instantiation from `FinancialIntelligenceApplication`.
+- Required explicit dependency injection for:
+  - `FinancialTrendAnalysisService`
+  - `FinancialScenarioModelingService`
+  - `FinancialForecastService`
+  - `FinancialRecommendationService`
+  - `FinancialPlanningService`
+- Added application-level validation for required injected services.
+- Expanded automated tests to verify composition ownership and dependency injection.
+- Preserved the existing public application API and deterministic behavior.
+
+---
+
+#### Architectural Result
+
+    FinancialEngine
+            ↓
+    FinancialReportingApplication
+            ↓
+    FinancialReadModelApplication
+            ↓
+    FinancialIntelligenceApplication
+            ↑
+    Composition Root
+            │
+            ├── FinancialTrendAnalysisService
+            ├── FinancialScenarioModelingService
+            ├── FinancialForecastService
+            ├── FinancialRecommendationService
+            └── FinancialPlanningService
+            ↓
+    FinancialApplicationSuite
+            ↓
+    API
+            ↓
+    UI
+
+---
+
+#### Validation
+
+- ✓ 151 test files passed
+- ✓ 489 tests passed
+- ✓ Financial intelligence composition verified
+- ✓ Application remains orchestration only
+- ✓ No ledger mutation
+- ✓ No changes to reporting, explainability, dashboard intelligence, or read-model architecture
+- ✓ Composition symmetry achieved
+
+---
+
+#### Architectural Rule Reinforced
+
+Applications orchestrate.
+
+Composition constructs.
+
+Domain services implement business behavior.
+
+No application constructs its own domain dependencies.
