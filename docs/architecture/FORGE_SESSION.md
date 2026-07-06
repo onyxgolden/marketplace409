@@ -1,9 +1,9 @@
 # Forge Session
 
-**Version:** 3.2
+**Version:** 3.3
 **Status:** Active
-**Last Updated:** 2026-07-04
-**Latest Commit:** 926e15d — Integrate accounting periods into posting validation
+**Last Updated:** 2026-07-05
+**Latest Commit:** 299f83f — Complete financial intelligence composition symmetry
 
 ---
 
@@ -14,6 +14,8 @@ The Forge Session document defines the lifecycle of a complete engineering sessi
 Every session begins, executes, validates, and concludes using disciplined engineering process.
 
 The repository—not memory—is the source of truth.
+
+This document records completed architectural milestones in chronological order while preserving the engineering rules that govern every FORGE session.
 
 ---
 
@@ -27,15 +29,17 @@ The repository—not memory—is the source of truth.
 
 ✓ Financial Engine — Complete
 
-✓ Transaction Review Domain — Stable
+✓ Financial Explainability — Complete
 
-✓ Transaction Review Workflow — Stable
+✓ Dashboard Intelligence — Complete
 
-✓ Financial API Layer — Active
+✓ Financial Read Models — Complete
 
-✓ Financial KPI Dashboard — Active
+✓ Financial Intelligence — Complete
 
 ✓ Immutable Financial Snapshot Architecture — Active
+
+✓ Application Composition Symmetry — Complete
 
 ---
 
@@ -74,7 +78,7 @@ Completed at commit:
 
 ### Status
 
-Completed through Phase 9.3
+Complete
 
 Phase 9 established the complete read-only financial explainability layer and exposed it through dedicated API endpoints while preserving the immutable accounting architecture.
 
@@ -187,146 +191,55 @@ Completed after implementation and validation.
 
 ---
 
-### Next Objective — Phase 9.4
+### Phase 9.4 — Dashboard Intelligence Contract Hardening
 
-Dashboard Intelligence hardening and contract refinement is in progress.
+Completed after implementation and validation.
 
-Completed work:
+#### Delivered
 
-- Stabilized dashboard intelligence response contract (`dashboardIntelligenceContract.js`)
-- Added deterministic fallback builder for dashboard intelligence responses
-- Normalized nested fields and defensive array handling
-- Introduced dedicated contract test coverage:
-  - `dashboardIntelligenceContract.test.js`
-- Validated orchestration boundary in:
-  - `FinancialDashboardIntelligenceApplication`
-- Confirmed system stability:
-  - 7/7 dashboard-related tests passing
-  - Production build passing
+- Stabilized the dashboard intelligence response contract.
+- Added deterministic fallback response builders.
+- Normalized nested response structures and defensive array handling.
+- Introduced dedicated dashboard intelligence contract tests.
+- Hardened `FinancialDashboardIntelligenceApplication` orchestration.
+- Preserved strict separation between:
+  - Dashboard Intelligence
+  - Financial Explainability
+- Maintained the application layer as the exclusive orchestration boundary.
+- Preserved Domain → Application → Composition → API → UI layering.
 
-Engineering guardrail remains active:
+#### Validation
 
-- Dashboard Intelligence remains isolated from Financial Explainability
-- No cross-contamination with `/api/financial/trace` or `/api/financial/explain`
-- Application layer remains the sole orchestration boundary
+- ✓ Dashboard intelligence contract stabilized
+- ✓ Dedicated contract test coverage added
+- ✓ Deterministic fallback responses verified
+- ✓ Existing explainability preserved
+- ✓ Existing dashboard behavior preserved
+- ✓ Production build passed
 
----
+#### Architectural Result
 
-### Status
+    FinancialEngine
+            ↓
+    FinancialReportingApplication
+            ↓
+    FinancialExplainabilityApplication
+            ↓
+    FinancialDashboardIntelligenceApplication
+            ↓
+    FinancialApplicationSuite
+            ↓
+    API
+            ↓
+    UI
 
-Phase 9.4 is partially complete:
-- Contract hardening: complete
-- Application stability: complete
-- Test coverage: complete
-- API route test convention: not introduced (by design decision)
+#### Architectural Rule Reinforced
 
----
+Dashboard intelligence consumes application services.
 
-# Permanent Architectural Lesson
+Financial explainability consumes trace services.
 
-Interpretation belongs to domain services. Computation belongs to domain engines. Presentation belongs to the UI.
-
----
-
-# Session Rules
-
-Always:
-
-- Inspect before editing.
-- Batch safe inspections into one terminal command whenever practical.
-- Verify every save.
-- Validate before committing.
-- Preserve architectural boundaries.
-- End from a known-good repository state.
-
-Never:
-
-- Assume repository contents.
-- Skip verification.
-- Mix unrelated objectives.
-- Treat bootstrap/demo data as production truth.
-
----
-
-# Current Platform Architecture
-
-```text
-External Provider / Demo Provider
-        ↓
-Infrastructure Adapter
-        ↓
-FinancialSnapshotRepository Contract
-        ↓
-Application Composition Layer
-        ↓
-FinancialDashboardService
-        ↓
-API Route Orchestration
-        ↓
-React Presentation
-```
-
-The domain owns business behavior.
-
-Infrastructure adapts external systems to FORGE contracts.
-
-Application composition selects and assembles dependencies.
-
-Routes orchestrate request/response flow.
-
-Providers adapt to FORGE.
-
-Never the reverse.
-
----
-
-# Architectural Invariants
-
-The following architectural boundaries are permanent:
-
-- Infrastructure selection belongs exclusively in the Application Composition Layer.
-- Infrastructure initializes lazily.
-- Domain services depend only on contracts—not infrastructure.
-- Repository contracts define persistence boundaries.
-- Routes orchestrate request and response flow.
-- Application composition assembles dependencies.
-- Domain services execute business behavior.
-- Infrastructure adapters translate external systems into domain contracts.
-- The Financial Engine remains infrastructure-independent.
-- The domain owns business truth.
-- Reports present truth.
-- UI renders truth.
-- Demo data is bootstrap infrastructure only and is never production truth.
-
----
-
-# Session Closeout
-
-A Forge session concludes only after confirming:
-
-- Production build passes.
-- Required tests pass.
-- Documentation reflects completed work.
-- Git history is coherent.
-- Repository is synchronized.
-- Completed objective is recorded.
-- Next architectural objective is identified.
-- Bootstrap for the next session is prepared.
-
----
-
-# Success Criteria
-
-A successful Forge session leaves the repository stronger than it was found.
-
-Success is measured by:
-
-- Architectural quality
-- Correctness
-- Validation
-- Maintainability
-- Documentation quality
-- Repository integrity
+Neither subsystem owns or duplicates the responsibilities of the other.
 
 ---
 
@@ -490,3 +403,112 @@ Composition constructs.
 Domain services implement business behavior.
 
 No application constructs its own domain dependencies.
+
+---
+
+# Permanent Architectural Lesson
+
+Interpretation belongs to domain services. Computation belongs to domain engines. Presentation belongs to the UI.
+
+---
+
+# Session Rules
+
+Always:
+
+- Inspect before editing.
+- Batch safe inspections into one terminal command whenever practical.
+- Verify every save.
+- Validate before committing.
+- Preserve architectural boundaries.
+- End from a known-good repository state.
+
+Never:
+
+- Assume repository contents.
+- Skip verification.
+- Mix unrelated objectives.
+- Treat bootstrap/demo data as production truth.
+
+---
+
+# Current Platform Architecture
+
+```text
+External Provider / Demo Provider
+        ↓
+Infrastructure Adapter
+        ↓
+FinancialSnapshotRepository Contract
+        ↓
+Application Composition Layer
+        ↓
+FinancialDashboardService
+        ↓
+API Route Orchestration
+        ↓
+React Presentation
+```
+
+The domain owns business behavior.
+
+Infrastructure adapts external systems to FORGE contracts.
+
+Application composition selects and assembles dependencies.
+
+Routes orchestrate request/response flow.
+
+Providers adapt to FORGE.
+
+Never the reverse.
+
+---
+
+# Architectural Invariants
+
+The following architectural boundaries are permanent:
+
+- Infrastructure selection belongs exclusively in the Application Composition Layer.
+- Infrastructure initializes lazily.
+- Domain services depend only on contracts—not infrastructure.
+- Repository contracts define persistence boundaries.
+- Routes orchestrate request and response flow.
+- Application composition assembles dependencies.
+- Domain services execute business behavior.
+- Infrastructure adapters translate external systems into domain contracts.
+- The Financial Engine remains infrastructure-independent.
+- The domain owns business truth.
+- Reports present truth.
+- UI renders truth.
+- Demo data is bootstrap infrastructure only and is never production truth.
+
+---
+
+# Session Closeout
+
+A Forge session concludes only after confirming:
+
+- Production build passes.
+- Required tests pass.
+- Documentation reflects completed work.
+- Git history is coherent.
+- Repository is synchronized.
+- Completed objective is recorded.
+- Next architectural objective is identified.
+- Bootstrap for the next session is prepared.
+
+---
+
+# Success Criteria
+
+A successful Forge session leaves the repository stronger than it was found.
+
+Success is measured by:
+
+- Architectural quality
+- Correctness
+- Validation
+- Maintainability
+- Documentation quality
+- Repository integrity
+
