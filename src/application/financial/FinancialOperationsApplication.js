@@ -23,22 +23,10 @@ export class FinancialOperationsApplication {
     const intelligence =
       this.financialIntelligenceApplication.buildFinancialIntelligence();
 
-    const priority = intelligence.planningAssistance?.priority || "monitor";
-    const focus =
-      intelligence.planningAssistance?.suggestedFocus || "financial controls";
-    const operations =
-      this.financialOperationsService.buildOperations(intelligence);
+    const plan =
+      this.financialOperationsService.buildOperationPlan(intelligence);
 
-    return Object.freeze({
-      type: "financial-operations",
-      priority,
-      focus,
-      actions: operations.toArray(),
-      source: Object.freeze({
-        ...(intelligence.source || {}),
-        derivedFrom: "financial-intelligence",
-      }),
-    });
+    return plan.toResponse();
   }
 }
 

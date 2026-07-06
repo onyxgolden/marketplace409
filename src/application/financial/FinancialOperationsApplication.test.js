@@ -38,25 +38,36 @@ describe("FinancialOperationsApplication", () => {
       buildFinancialIntelligenceApplication();
 
     const financialOperationsService = {
-      buildOperations: vi.fn(() => ({
-        toArray: () => [
-          {
-            id: "financial-operation-1",
-            title: "Continue routine monitoring and preserve current controls.",
-            category: "controlled growth",
-            priority: "optimize",
-            status: "recommended",
-            rationale: "Derived from deterministic financial intelligence.",
+      buildOperationPlan: vi.fn(() => ({
+        toResponse: () => ({
+          type: "financial-operations",
+          priority: "optimize",
+          focus: "controlled growth",
+          actions: [
+            {
+              id: "financial-operation-1",
+              title: "Continue routine monitoring and preserve current controls.",
+              category: "controlled growth",
+              priority: "optimize",
+              status: "recommended",
+              rationale: "Derived from deterministic financial intelligence.",
+            },
+            {
+              id: "financial-operation-2",
+              title: "Review pricing, margins, and operating costs.",
+              category: "controlled growth",
+              priority: "optimize",
+              status: "recommended",
+              rationale: "Derived from deterministic financial intelligence.",
+            },
+          ],
+          source: {
+            authority: "financial-engine-derived-read-models",
+            mutableLedgerState: false,
+            aiGenerated: false,
+            derivedFrom: "financial-intelligence",
           },
-          {
-            id: "financial-operation-2",
-            title: "Review pricing, margins, and operating costs.",
-            category: "controlled growth",
-            priority: "optimize",
-            status: "recommended",
-            rationale: "Derived from deterministic financial intelligence.",
-          },
-        ],
+        }),
       })),
     };
 
@@ -100,7 +111,7 @@ describe("FinancialOperationsApplication", () => {
     expect(
       financialIntelligenceApplication.buildFinancialIntelligence,
     ).toHaveBeenCalled();
-    expect(financialOperationsService.buildOperations).toHaveBeenCalledWith(
+    expect(financialOperationsService.buildOperationPlan).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "financial-intelligence",
       }),

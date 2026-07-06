@@ -1072,6 +1072,67 @@ Current architecture:
 
 ---
 
+### Phase 12.3 — Immutable Financial Operation Plan
+
+### Delivered
+
+* Introduced `FinancialOperationPlan` as the immutable aggregate representing deterministic financial operations.
+* Refactored `FinancialOperationsService` to construct complete operation plans.
+* Simplified `FinancialOperationsApplication` to orchestration-only behavior.
+* Preserved the existing public response contract through `FinancialOperationPlan.toResponse()`.
+* Preserved immutable ledger architecture.
+* Avoided scheduling, workflow execution, persistence, AI execution, and ledger mutation.
+
+### Protected Rule
+
+Financial operation plans are immutable domain aggregates.
+
+Domain services construct plans.
+
+Applications orchestrate.
+
+Composition assembles dependencies.
+
+Operations consume financial intelligence.
+
+Operations never create accounting truth.
+
+Operations never mutate the ledger.
+
+Current architecture:
+
+```text
+FinancialEngine
+        ↓
+FinancialReportingApplication
+        ↓
+FinancialReadModelApplication
+        ↓
+FinancialIntelligenceApplication
+        ↓
+FinancialOperationsService
+        ↓
+FinancialOperationPlan
+        ↓
+FinancialOperationsApplication
+        ↓
+FinancialApplicationSuite
+        ↓
+API
+        ↓
+UI
+
+### Validation
+
+- ✓ 156 test files passed
+- ✓ 509 tests passed
+- ✓ Production build passed
+- ✓ Financial operations plan verified
+- ✓ Application orchestration preserved
+- ✓ Composition ownership verified
+
+**Status:** Complete
+
 # Relationship to the Platform Roadmap
 
 The Architecture Roadmap changes infrequently.

@@ -517,6 +517,45 @@ Operations do not mutate ledger state.
 
 ---
 
+#### Phase 12.3 — Immutable Financial Operation Plan
+
+##### Delivered
+
+- Introduced `FinancialOperationPlan` as the immutable aggregate representing a deterministic financial operations plan.
+- Moved financial operation plan construction into `FinancialOperationsService`.
+- Reduced `FinancialOperationsApplication` to orchestration-only behavior by delegating plan construction to the domain.
+- Preserved the existing financial operations public response contract through `FinancialOperationPlan.toResponse()`.
+- Preserved immutable ledger architecture.
+- Avoided scheduling, workflow execution, automation, persistence, AI execution, or ledger mutation.
+
+##### Validation
+
+- ✓ 156 test files passed
+- ✓ 509 tests passed
+- ✓ Production build passed
+- ✓ Financial operation plan verified
+- ✓ Application orchestration preserved
+- ✓ Composition ownership preserved
+- ✓ Existing API surface preserved
+
+#### Architectural Rule Reinforced
+
+Financial operation plans are immutable domain aggregates.
+
+Domain services construct plans.
+
+Applications orchestrate.
+
+Composition constructs dependencies.
+
+Operations remain deterministic consumers of financial intelligence.
+
+Operations never create accounting truth.
+
+Operations never mutate ledger state.
+
+---
+
 # Permanent Architectural Lesson
 
 Interpretation belongs to domain services. Computation belongs to domain engines. Presentation belongs to the UI.

@@ -1,6 +1,7 @@
 import {
   FinancialOperation,
   FinancialOperationCollection,
+  FinancialOperationPlan,
 } from "./index.js";
 
 export class FinancialOperationsService {
@@ -23,6 +24,24 @@ export class FinancialOperationsService {
 
     return new FinancialOperationCollection(operations);
   }
+
+  buildOperationPlan(intelligence = {}) {
+    const priority = intelligence.planningAssistance?.priority || "monitor";
+    const focus =
+      intelligence.planningAssistance?.suggestedFocus || "financial controls";
+    const actions = this.buildOperations(intelligence);
+
+    return new FinancialOperationPlan({
+      priority,
+      focus,
+      actions,
+      source: Object.freeze({
+        ...(intelligence.source || {}),
+        derivedFrom: "financial-intelligence",
+      }),
+    });
+  }
+
 }
 
 Object.freeze(FinancialOperationsService);
