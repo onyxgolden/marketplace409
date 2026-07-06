@@ -1012,6 +1012,66 @@ Current architecture:
 
 ---
 
+### Phase 12.2 — Immutable Financial Operations Domain
+
+### Delivered
+
+* Introduced `FinancialOperation` as the immutable operational work-item domain object.
+* Introduced `FinancialOperationCollection` as the immutable collection boundary for operations.
+* Introduced `FinancialOperationsService` as the deterministic domain service that converts financial intelligence into operational work items.
+* Refactored `FinancialOperationsApplication` to delegate work-item construction to the domain service.
+* Moved `FinancialOperationsService` construction into `createFinancialApplicationSuite`.
+* Preserved the existing financial operations application contract.
+* Preserved immutable ledger architecture.
+* Avoided persistence, scheduling, workflow automation, AI execution, or ledger mutation.
+
+### Protected Rule
+
+Financial operations domain services own operational work-item construction.
+
+Applications orchestrate.
+
+Composition assembles dependencies.
+
+Operations consume financial intelligence.
+
+Operations never create accounting truth.
+
+Operations never mutate the ledger.
+
+Current architecture:
+
+    FinancialEngine
+            ↓
+    FinancialReportingApplication
+            ↓
+    FinancialReadModelApplication
+            ↓
+    FinancialIntelligenceApplication
+            ↓
+    FinancialOperationsService
+            ↓
+    FinancialOperationsApplication
+            ↓
+    FinancialApplicationSuite
+            ↓
+    API
+            ↓
+    UI
+
+### Validation
+
+- ✓ 155 test files passed
+- ✓ 506 tests passed
+- ✓ Production build passed
+- ✓ Financial operations domain verified
+- ✓ Application orchestration preserved
+- ✓ Composition ownership verified
+
+**Status:** Complete
+
+---
+
 # Relationship to the Platform Roadmap
 
 The Architecture Roadmap changes infrequently.

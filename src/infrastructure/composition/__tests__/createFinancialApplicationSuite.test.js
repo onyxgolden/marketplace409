@@ -6,6 +6,8 @@ import {
   FinancialOperationsApplication,
 } from "../../../application/financial";
 
+import { FinancialOperationsService } from "../../../domains/financial-operations";
+
 describe("createFinancialApplicationSuite", () => {
   test("wires financial explainability application into the suite", async () => {
     const suite = await createFinancialApplicationSuite({
@@ -139,6 +141,39 @@ describe("createFinancialApplicationSuite", () => {
 
     expect(suite.financialOperationsApplication).toBeInstanceOf(
       FinancialOperationsApplication,
+    );
+  });
+
+  test("wires financial operations service into the suite", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(suite.financialOperationsService).toBeInstanceOf(
+      FinancialOperationsService,
+    );
+    expect(suite.financialOperationsApplication.financialOperationsService).toBe(
+      suite.financialOperationsService,
+    );
+  });
+
+  test("allows financial operations service injection", async () => {
+    const financialOperationsService = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      financialOperationsService,
+    });
+
+    expect(suite.financialOperationsService).toBe(financialOperationsService);
+    expect(suite.financialOperationsApplication.financialOperationsService).toBe(
+      financialOperationsService,
     );
   });
 

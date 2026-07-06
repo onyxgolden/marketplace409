@@ -1,12 +1,22 @@
 export class FinancialOperationsApplication {
-  constructor({ financialIntelligenceApplication }) {
+  constructor({
+    financialIntelligenceApplication,
+    financialOperationsService,
+  }) {
     if (!financialIntelligenceApplication) {
       throw new Error(
         "FinancialOperationsApplication requires a financial intelligence application.",
       );
     }
 
+    if (!financialOperationsService) {
+      throw new Error(
+        "FinancialOperationsApplication requires a financial operations service.",
+      );
+    }
+
     this.financialIntelligenceApplication = financialIntelligenceApplication;
+    this.financialOperationsService = financialOperationsService;
   }
 
   buildFinancialOperations() {
@@ -16,24 +26,14 @@ export class FinancialOperationsApplication {
     const priority = intelligence.planningAssistance?.priority || "monitor";
     const focus =
       intelligence.planningAssistance?.suggestedFocus || "financial controls";
-
-    const actions = (intelligence.recommendations || []).map(
-      (recommendation, index) =>
-        Object.freeze({
-          id: `financial-operation-${index + 1}`,
-          title: recommendation,
-          category: focus,
-          priority,
-          status: "recommended",
-          rationale: "Derived from deterministic financial intelligence.",
-        }),
-    );
+    const operations =
+      this.financialOperationsService.buildOperations(intelligence);
 
     return Object.freeze({
       type: "financial-operations",
       priority,
       focus,
-      actions: Object.freeze(actions),
+      actions: operations.toArray(),
       source: Object.freeze({
         ...(intelligence.source || {}),
         derivedFrom: "financial-intelligence",

@@ -3,7 +3,7 @@
 **Version:** 3.3
 **Status:** Active
 **Last Updated:** 2026-07-05
-**Latest Commit:** a75ccab — Add financial operations application foundation
+**Latest Commit:** Pending — Extract immutable financial operations domain
 
 ---
 
@@ -474,6 +474,46 @@ Operations do not create accounting truth.
 Operations do not mutate ledger state.
 
 Operations do not execute automation until an explicit execution boundary exists.
+
+---
+
+#### Phase 12.2 — Immutable Financial Operations Domain
+
+##### Delivered
+
+- Introduced immutable financial operations domain objects:
+  - `FinancialOperation`
+  - `FinancialOperationCollection`
+- Introduced `FinancialOperationsService` as the deterministic domain service responsible for converting financial intelligence into operational work items.
+- Reduced `FinancialOperationsApplication` back to orchestration-only behavior.
+- Moved financial operations service construction into `createFinancialApplicationSuite`.
+- Added composition support for direct `financialOperationsService` injection.
+- Preserved the existing financial operations application response contract.
+- Preserved immutable ledger architecture.
+- Avoided AI execution, scheduling, automation, persistence, or workflow execution.
+
+##### Validation
+
+- ✓ 155 test files passed
+- ✓ 506 tests passed
+- ✓ Production build passed
+- ✓ Financial operations domain verified
+- ✓ Financial operations application orchestration verified
+- ✓ Composition ownership verified
+- ✓ No ledger mutation
+- ✓ Existing API surface preserved
+
+#### Architectural Rule Reinforced
+
+Financial Operations services own deterministic operational work-item construction.
+
+Applications orchestrate only.
+
+Composition constructs dependencies.
+
+Operations do not create accounting truth.
+
+Operations do not mutate ledger state.
 
 ---
 

@@ -18,6 +18,8 @@ import {
   FinancialTrendAnalysisService,
 } from "../../domains/financial-intelligence";
 
+import { FinancialOperationsService } from "../../domains/financial-operations";
+
 import { autonomousAuditAgent } from "../../domains/audit/AutonomousAuditAgent.js";
 import { FinancialEngine } from "../../domains/ledger/engines/FinancialEngine.js";
 import { FinancialDashboardService } from "../../domains/ledger/dashboard/FinancialDashboardService.js";
@@ -85,10 +87,14 @@ export async function createFinancialApplicationSuite(deps = {}) {
       planningService,
     });
 
+  const financialOperationsService =
+    deps.financialOperationsService || new FinancialOperationsService();
+
   const financialOperationsApplication =
     deps.financialOperationsApplication ||
     new FinancialOperationsApplication({
       financialIntelligenceApplication,
+      financialOperationsService,
     });
 
   const explainabilityApplication =
@@ -115,6 +121,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     readModelApplication,
     financialIntelligenceApplication,
     financialOperationsApplication,
+    financialOperationsService,
     explainabilityApplication,
     dashboardIntelligenceApplication,
     snapshotRepository,

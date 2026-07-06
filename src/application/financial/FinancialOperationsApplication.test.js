@@ -37,8 +37,32 @@ describe("FinancialOperationsApplication", () => {
     const financialIntelligenceApplication =
       buildFinancialIntelligenceApplication();
 
+    const financialOperationsService = {
+      buildOperations: vi.fn(() => ({
+        toArray: () => [
+          {
+            id: "financial-operation-1",
+            title: "Continue routine monitoring and preserve current controls.",
+            category: "controlled growth",
+            priority: "optimize",
+            status: "recommended",
+            rationale: "Derived from deterministic financial intelligence.",
+          },
+          {
+            id: "financial-operation-2",
+            title: "Review pricing, margins, and operating costs.",
+            category: "controlled growth",
+            priority: "optimize",
+            status: "recommended",
+            rationale: "Derived from deterministic financial intelligence.",
+          },
+        ],
+      })),
+    };
+
     const application = new FinancialOperationsApplication({
       financialIntelligenceApplication,
+      financialOperationsService,
     });
 
     const result = application.buildFinancialOperations();
@@ -76,6 +100,11 @@ describe("FinancialOperationsApplication", () => {
     expect(
       financialIntelligenceApplication.buildFinancialIntelligence,
     ).toHaveBeenCalled();
+    expect(financialOperationsService.buildOperations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "financial-intelligence",
+      }),
+    );
   });
 
   test("requires a financial intelligence application", () => {
@@ -83,4 +112,16 @@ describe("FinancialOperationsApplication", () => {
       "FinancialOperationsApplication requires a financial intelligence application.",
     );
   });
+
+  test("requires a financial operations service", () => {
+    expect(
+      () =>
+        new FinancialOperationsApplication({
+          financialIntelligenceApplication: buildFinancialIntelligenceApplication(),
+        }),
+    ).toThrow(
+      "FinancialOperationsApplication requires a financial operations service.",
+    );
+  });
+
 });
