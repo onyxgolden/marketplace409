@@ -960,6 +960,56 @@ The principles established in the earlier phases remain immutable.
 
 Future capabilities build upon the architecture—they never replace it.
 
+### Phase 12.1 — Financial Operations Foundation
+
+### Delivered
+
+* Introduced `FinancialOperationsApplication` as the first operations-layer application.
+* Established a deterministic operations boundary that consumes financial intelligence.
+* Converted recommendations into immutable operational action items.
+* Integrated financial operations into `FinancialApplicationSuite`.
+* Preserved immutable ledger architecture.
+* Preserved composition ownership through dependency injection.
+* Kept operations deterministic with no AI, scheduling, automation, persistence, or workflow execution.
+
+### Protected Rule
+
+Financial intelligence recommends.
+
+Financial operations transforms recommendations into deterministic operational work.
+
+Operations never create accounting truth.
+
+Operations never mutate the ledger.
+
+Current architecture:
+
+    FinancialEngine
+            ↓
+    FinancialReportingApplication
+            ↓
+    FinancialReadModelApplication
+            ↓
+    FinancialIntelligenceApplication
+            ↓
+    FinancialOperationsApplication
+            ↓
+    FinancialApplicationSuite
+            ↓
+    API
+            ↓
+    UI
+
+### Validation
+
+- ✓ 152 test files passed
+- ✓ 493 tests passed
+- ✓ Composition wiring verified
+- ✓ Deterministic operations generation verified
+- ✓ Existing architecture preserved
+
+**Status:** Complete
+
 ---
 
 # Relationship to the Platform Roadmap

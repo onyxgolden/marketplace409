@@ -3,6 +3,7 @@ import {
   FinancialDashboardIntelligenceApplication,
   FinancialExplainabilityApplication,
   FinancialIntelligenceApplication,
+  FinancialOperationsApplication,
 } from "../../../application/financial";
 
 describe("createFinancialApplicationSuite", () => {
@@ -128,4 +129,33 @@ describe("createFinancialApplicationSuite", () => {
       financialIntelligenceApplication,
     );
   });
+  test("wires financial operations application into the suite", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(suite.financialOperationsApplication).toBeInstanceOf(
+      FinancialOperationsApplication,
+    );
+  });
+
+  test("allows financial operations application injection", async () => {
+    const financialOperationsApplication = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      financialOperationsApplication,
+    });
+
+    expect(suite.financialOperationsApplication).toBe(
+      financialOperationsApplication,
+    );
+  });
+
 });

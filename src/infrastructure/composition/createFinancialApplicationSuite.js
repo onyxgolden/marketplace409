@@ -5,6 +5,7 @@ import {
   FinancialDashboardIntelligenceApplication,
   FinancialExplainabilityApplication,
   FinancialIntelligenceApplication,
+  FinancialOperationsApplication,
   FinancialReportingApplication,
   FinancialReadModelApplication,
 } from "../../application/financial";
@@ -84,6 +85,12 @@ export async function createFinancialApplicationSuite(deps = {}) {
       planningService,
     });
 
+  const financialOperationsApplication =
+    deps.financialOperationsApplication ||
+    new FinancialOperationsApplication({
+      financialIntelligenceApplication,
+    });
+
   const explainabilityApplication =
     deps.explainabilityApplication ||
     new FinancialExplainabilityApplication({
@@ -107,6 +114,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     reportingApplication,
     readModelApplication,
     financialIntelligenceApplication,
+    financialOperationsApplication,
     explainabilityApplication,
     dashboardIntelligenceApplication,
     snapshotRepository,

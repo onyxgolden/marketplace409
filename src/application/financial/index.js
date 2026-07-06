@@ -4,3 +4,4 @@ export { FinancialExplainabilityApplication } from "./FinancialExplainabilityApp
 export { FinancialDashboardIntelligenceApplication } from "./FinancialDashboardIntelligenceApplication.js";
 export { FinancialReadModelApplication } from "./read-models/FinancialReadModelApplication.js";
 export { FinancialIntelligenceApplication } from "./FinancialIntelligenceApplication.js";
+export { FinancialOperationsApplication } from "./FinancialOperationsApplication.js";
