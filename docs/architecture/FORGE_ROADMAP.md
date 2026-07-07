@@ -1254,6 +1254,26 @@ UI
 
 ---
 
+### Phase 13.1 — Financial Operations API Integration
+
+#### Delivered
+
+* Added the production Financial Operations API route.
+* Connected `FinancialOperationsApplication` to `/api/financial/operations`.
+* Preserved existing application composition and immutable domain boundaries.
+* Introduced no new architectural abstractions.
+
+#### Validation
+
+- ✓ FinancialOperationsApplication tests passed.
+- ✓ FinancialApplicationSuite composition tests passed.
+- ✓ Production build passed.
+- ✓ `/api/financial/operations` registered successfully.
+
+**Status:** Complete
+
+---
+
 # Relationship to the Platform Roadmap
 
 The Architecture Roadmap changes infrequently.
