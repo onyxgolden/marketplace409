@@ -596,6 +596,43 @@ Operations never mutate ledger state.
 
 ---
 
+#### Phase 12.5 — Financial Operations Architecture Inspection
+
+##### Decision
+
+No code change warranted.
+
+##### Rationale
+
+Inspection confirmed the current financial operations architecture is aligned with FORGE boundaries.
+
+`FinancialPlanningService` owns deterministic planning semantics.
+
+`FinancialOperationsService` consumes financial intelligence and planning semantics.
+
+`FinancialOperationPlan` represents immutable operation plan context.
+
+`FinancialOperationsApplication` remains orchestration-only.
+
+Composition owns dependency construction.
+
+No new aggregate, value object, workflow, execution, scheduling, automation, persistence, AI execution, or ledger mutation is warranted at this phase.
+
+##### Validation
+
+- ✓ Repository inspected
+- ✓ Financial operations domain inspected
+- ✓ Financial operations application inspected
+- ✓ Composition inspected
+- ✓ Phase 12.4 documentation inspected
+- ✓ No code change required
+
+##### Protected Rule Reinforced
+
+The repository determines the next architectural step.
+
+When no deterministic architectural capability is warranted, FORGE stops rather than introducing speculative abstractions.
+
 # Permanent Architectural Lesson
 
 Interpretation belongs to domain services. Computation belongs to domain engines. Presentation belongs to the UI.
