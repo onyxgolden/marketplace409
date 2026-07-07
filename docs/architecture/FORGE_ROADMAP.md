@@ -1274,6 +1274,28 @@ UI
 
 ---
 
+### Phase 13.2 — Financial Operations UI Consumption
+
+#### Delivered
+
+* Connected `/forge/financial` to `/api/financial/operations`.
+* Rendered the Financial Operations plan in the existing financial command UI.
+* Corrected default financial application suite composition for runtime API usage.
+* Added regression coverage for default suite financial data wiring.
+* Introduced no new domain abstractions.
+
+#### Validation
+
+- ✓ FinancialApplicationSuite default composition test passed.
+- ✓ `/api/financial/snapshot` returned success.
+- ✓ `/api/financial/operations` returned success.
+- ✓ Production build passed.
+- ✓ `/forge/financial` compiled successfully.
+
+**Status:** Complete
+
+---
+
 # Relationship to the Platform Roadmap
 
 The Architecture Roadmap changes infrequently.

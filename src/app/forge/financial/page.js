@@ -24,6 +24,7 @@ function percent(value) {
 
 export default function FinancialPage() {
   const [dashboard, setDashboard] = useState(null);
+  const [operationsPlan, setOperationsPlan] = useState(null);
   const [loadState, setLoadState] = useState("loading");
   const [error, setError] = useState(null);
 
@@ -37,7 +38,17 @@ export default function FinancialPage() {
           throw new Error(payload.error || "Financial snapshot failed.");
         }
 
+        const operationsResponse = await fetch("/api/financial/operations");
+        const operationsPayload = await operationsResponse.json();
+
+        if (!operationsPayload.success) {
+          throw new Error(
+            operationsPayload.error || "Financial operations failed.",
+          );
+        }
+
         setDashboard(payload.data?.dashboard || null);
+        setOperationsPlan(operationsPayload.data || null);
         setLoadState("ready");
       } catch (loadError) {
         setError(loadError.message);
@@ -91,6 +102,13 @@ export default function FinancialPage() {
       detail: "Dashboard is reading through the financial API boundary.",
       type: "provider",
       timestamp: `Phase ${metadata.phase || "7.3"}`,
+    },
+    {
+      id: "operations-api",
+      label: "Operations plan connected",
+      detail: "Financial operations guidance is supplied through the operations API.",
+      type: "application",
+      timestamp: "Phase 13.2",
     },
     {
       id: "imports-deferred",
@@ -220,6 +238,45 @@ export default function FinancialPage() {
           <div className="space-y-6">
             <ForgeSystemStatus statusItems={statusItems} />
             <ForgeRecentActivity activities={activities} />
+
+            <section className={forgeTheme.cardCompact}>
+              <div className={forgeTheme.labelSmall}>Financial Operations</div>
+              <h2 className="mt-2 text-xl font-black text-slate-950">
+                {operationsPlan?.focus || "Operations Plan"}
+              </h2>
+              <p className="mt-3 text-sm text-slate-600">
+                {operationsPlan?.summary ||
+                  "Financial operations guidance is loading."}
+              </p>
+
+              <div className="mt-4 rounded-2xl bg-slate-100 p-4">
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+                  Priority
+                </div>
+                <div className="mt-1 text-lg font-black capitalize text-slate-950">
+                  {operationsPlan?.priority || "monitor"}
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {(operationsPlan?.actions || []).slice(0, 3).map((action) => (
+                  <div
+                    key={action.id}
+                    className="rounded-2xl border border-slate-200 p-4"
+                  >
+                    <div className="font-black text-slate-900">
+                      {action.title}
+                    </div>
+                    <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">
+                      {action.status} · {action.priority}
+                    </div>
+                    <div className="mt-2 text-sm text-slate-600">
+                      {action.rationale}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
 
             <section className={forgeTheme.cardCompact}>
               <div className={forgeTheme.labelSmall}>Phase Guardrails</div>

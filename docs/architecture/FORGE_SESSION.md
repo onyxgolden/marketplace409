@@ -654,6 +654,33 @@ The correct solution was production integration, not additional architecture.
 
 ---
 
+## Phase 13.2 — Financial Operations UI Consumption
+
+### Completed
+
+- Connected the FORGE Financial dashboard to the production Financial Operations API.
+- Displayed deterministic operational guidance alongside financial reporting.
+- Corrected default FinancialApplicationSuite runtime composition by supplying demo financial data when explicit dependencies are not provided.
+- Corrected snapshot application composition so runtime API consumers receive the actual application instance.
+- Added regression coverage verifying the default composition produces usable snapshot and operations applications.
+- Preserved existing domain, application, composition, and infrastructure boundaries.
+
+### Validation
+
+- ✓ FinancialApplicationSuite default composition test passed.
+- ✓ `/api/financial/snapshot` returned success.
+- ✓ `/api/financial/operations` returned success.
+- ✓ Production build passed.
+- ✓ Financial dashboard successfully consumed the operations API.
+
+### Architectural Observation
+
+The repository exposed a production composition defect rather than a domain design deficiency.
+
+The correct solution was to strengthen application composition and runtime validation, not introduce additional architectural layers.
+
+---
+
 ##### Protected Rule Reinforced
 
 The repository determines the next architectural step.

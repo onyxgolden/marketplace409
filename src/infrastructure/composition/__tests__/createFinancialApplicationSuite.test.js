@@ -192,5 +192,17 @@ describe("createFinancialApplicationSuite", () => {
       financialOperationsApplication,
     );
   });
+  test("builds default applications with usable financial data", async () => {
+    const suite = await createFinancialApplicationSuite();
 
+    const snapshot =
+      await suite.snapshotApplication.captureDashboardSnapshot();
+
+    const operations =
+      suite.financialOperationsApplication.buildFinancialOperations();
+
+    expect(snapshot.dashboard).toBeDefined();
+    expect(operations.type).toBe("financial-operations");
+    expect(Array.isArray(operations.actions)).toBe(true);
+  });
 });
