@@ -23,6 +23,7 @@ describe("FinancialOperationsApplication", () => {
         planningAssistance: {
           priority: "optimize",
           suggestedFocus: "controlled growth",
+          summary: "Optimize operating performance.",
         },
         source: {
           authority: "financial-engine-derived-read-models",
@@ -43,6 +44,7 @@ describe("FinancialOperationsApplication", () => {
           type: "financial-operations",
           priority: "optimize",
           focus: "controlled growth",
+          summary: "Optimize operating performance.",
           actions: [
             {
               id: "financial-operation-1",
@@ -81,6 +83,7 @@ describe("FinancialOperationsApplication", () => {
     expect(result.type).toBe("financial-operations");
     expect(result.priority).toBe("optimize");
     expect(result.focus).toBe("controlled growth");
+    expect(result.summary).toBe("Optimize operating performance.");
 
     expect(result.actions).toEqual([
       {
@@ -114,6 +117,9 @@ describe("FinancialOperationsApplication", () => {
     expect(financialOperationsService.buildOperationPlan).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "financial-intelligence",
+        planningAssistance: expect.objectContaining({
+          summary: "Optimize operating performance.",
+        }),
       }),
     );
   });
@@ -134,5 +140,4 @@ describe("FinancialOperationsApplication", () => {
       "FinancialOperationsApplication requires a financial operations service.",
     );
   });
-
 });

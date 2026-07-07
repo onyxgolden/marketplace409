@@ -932,6 +932,7 @@ Applications never construct their own domain services.
     API
             ↓
     UI
+...
 
 ---
 
@@ -999,6 +1000,9 @@ Current architecture:
     API
             ↓
     UI
+    ...
+
+---
 
 ### Validation
 
@@ -1058,6 +1062,9 @@ Current architecture:
     API
             ↓
     UI
+    ...
+
+---
 
 ### Validation
 
@@ -1121,6 +1128,9 @@ FinancialApplicationSuite
 API
         ↓
 UI
+...
+
+---
 
 ### Validation
 
@@ -1132,6 +1142,75 @@ UI
 - ✓ Composition ownership verified
 
 **Status:** Complete
+
+### Phase 12.4 — Deterministic Financial Operation Plan Context
+
+### Delivered
+
+* Added deterministic plan-level `summary` context to `FinancialOperationPlan`.
+* Extended `FinancialPlanningService` to own planning summary semantics.
+* Preserved `FinancialIntelligenceApplication` as orchestration-only by passing through planning assistance.
+* Updated `FinancialOperationsService` to consume planning metadata instead of recreating planning rules.
+* Expanded the financial operations response contract additively through `FinancialOperationPlan.toResponse()`.
+* Preserved immutable ledger architecture.
+* Avoided scheduling, workflow execution, persistence, automation, AI execution, and ledger mutation.
+
+### Protected Rule
+
+Planning domain services own planning semantics.
+
+Operations domain services construct immutable operational plans from those semantics.
+
+Applications orchestrate.
+
+Composition assembles dependencies.
+
+Operations consume financial intelligence.
+
+Operations never create accounting truth.
+
+Operations never mutate the ledger.
+
+Current architecture:
+
+```text
+FinancialEngine
+        ↓
+FinancialReportingApplication
+        ↓
+FinancialReadModelApplication
+        ↓
+FinancialIntelligenceApplication
+        ↓
+FinancialPlanningService
+        ↓
+FinancialOperationsService
+        ↓
+FinancialOperationPlan
+        ↓
+FinancialOperationsApplication
+        ↓
+FinancialApplicationSuite
+        ↓
+API
+        ↓
+UI
+...
+
+---
+
+### Validation
+
+- ✓ 157 test files passed
+- ✓ 513 tests passed
+- ✓ Production build passed
+- ✓ Financial planning summary semantics verified
+- ✓ Financial operation plan context verified
+- ✓ Application orchestration preserved
+- ✓ Operations consume intelligence without creating accounting truth
+
+**Status:** Complete
+
 
 # Relationship to the Platform Roadmap
 

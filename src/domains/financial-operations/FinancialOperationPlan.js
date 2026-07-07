@@ -4,12 +4,14 @@ export class FinancialOperationPlan {
   constructor({
     priority = "monitor",
     focus = "financial controls",
+    summary = "Maintain current financial controls.",
     actions = FinancialOperationCollection.empty(),
     source = {},
   } = {}) {
     this.type = "financial-operations";
     this.priority = priority;
     this.focus = focus;
+    this.summary = summary;
     this.actions = actions;
     this.source = Object.freeze({
       ...source,
@@ -23,6 +25,7 @@ export class FinancialOperationPlan {
       type: this.type,
       priority: this.priority,
       focus: this.focus,
+      summary: this.summary,
       actions: this.actions.toArray(),
       source: this.source,
     });
@@ -30,3 +33,4 @@ export class FinancialOperationPlan {
 }
 
 Object.freeze(FinancialOperationPlan);
+

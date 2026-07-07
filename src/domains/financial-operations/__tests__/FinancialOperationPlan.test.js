@@ -20,6 +20,7 @@ describe("FinancialOperationPlan", () => {
     const plan = new FinancialOperationPlan({
       priority: "optimize",
       focus: "controlled growth",
+      summary: "Optimize operating performance.",
       actions,
       source: {
         derivedFrom: "financial-intelligence",
@@ -29,6 +30,7 @@ describe("FinancialOperationPlan", () => {
     expect(plan.type).toBe("financial-operations");
     expect(plan.priority).toBe("optimize");
     expect(plan.focus).toBe("controlled growth");
+    expect(plan.summary).toBe("Optimize operating performance.");
     expect(plan.actions).toBe(actions);
     expect(plan.source).toEqual({
       derivedFrom: "financial-intelligence",
@@ -38,7 +40,7 @@ describe("FinancialOperationPlan", () => {
     expect(Object.isFrozen(plan.source)).toBe(true);
   });
 
-  test("preserves the public response contract", () => {
+  test("preserves the public response contract with deterministic summary context", () => {
     const operation = new FinancialOperation({
       id: "financial-operation-1",
       title: "Review operating costs.",
@@ -51,6 +53,7 @@ describe("FinancialOperationPlan", () => {
     const plan = new FinancialOperationPlan({
       priority: "optimize",
       focus: "controlled growth",
+      summary: "Optimize operating performance.",
       actions: new FinancialOperationCollection([operation]),
       source: {
         derivedFrom: "financial-intelligence",
@@ -61,6 +64,7 @@ describe("FinancialOperationPlan", () => {
       type: "financial-operations",
       priority: "optimize",
       focus: "controlled growth",
+      summary: "Optimize operating performance.",
       actions: [operation],
       source: {
         derivedFrom: "financial-intelligence",
@@ -77,6 +81,7 @@ describe("FinancialOperationPlan", () => {
       type: "financial-operations",
       priority: "monitor",
       focus: "financial controls",
+      summary: "Maintain current financial controls.",
       actions: [],
       source: {},
     });

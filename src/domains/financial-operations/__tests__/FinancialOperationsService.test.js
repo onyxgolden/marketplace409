@@ -12,6 +12,7 @@ describe("FinancialOperationsService", () => {
       planningAssistance: {
         priority: "optimize",
         suggestedFocus: "controlled growth",
+        summary: "Optimize operating performance.",
       },
     });
 
@@ -41,6 +42,52 @@ describe("FinancialOperationsService", () => {
     expect(Object.isFrozen(collection.toArray()[0])).toBe(true);
   });
 
+  test("builds an immutable operation plan from financial intelligence", () => {
+    const service = new FinancialOperationsService();
+
+    const plan = service.buildOperationPlan({
+      recommendations: [
+        "Continue routine monitoring and preserve current controls.",
+      ],
+      planningAssistance: {
+        priority: "optimize",
+        suggestedFocus: "controlled growth",
+        summary: "Optimize operating performance.",
+      },
+      source: {
+        authority: "financial-engine-derived-read-models",
+        mutableLedgerState: false,
+        aiGenerated: false,
+      },
+    });
+
+    expect(plan.toResponse()).toEqual({
+      type: "financial-operations",
+      priority: "optimize",
+      focus: "controlled growth",
+      summary: "Optimize operating performance.",
+      actions: [
+        {
+          id: "financial-operation-1",
+          title: "Continue routine monitoring and preserve current controls.",
+          category: "controlled growth",
+          priority: "optimize",
+          status: "recommended",
+          rationale: "Derived from deterministic financial intelligence.",
+        },
+      ],
+      source: {
+        authority: "financial-engine-derived-read-models",
+        mutableLedgerState: false,
+        aiGenerated: false,
+        derivedFrom: "financial-intelligence",
+      },
+    });
+
+    expect(Object.isFrozen(plan)).toBe(true);
+    expect(Object.isFrozen(plan.source)).toBe(true);
+  });
+
   test("uses deterministic defaults when planning assistance is missing", () => {
     const service = new FinancialOperationsService();
 
@@ -58,6 +105,30 @@ describe("FinancialOperationsService", () => {
         rationale: "Derived from deterministic financial intelligence.",
       },
     ]);
+
+    const plan = service.buildOperationPlan({
+      recommendations: ["Prioritize cash reserves and short-term liquidity."],
+    });
+
+    expect(plan.toResponse()).toEqual({
+      type: "financial-operations",
+      priority: "monitor",
+      focus: "financial controls",
+      summary: "Maintain current financial controls.",
+      actions: [
+        {
+          id: "financial-operation-1",
+          title: "Prioritize cash reserves and short-term liquidity.",
+          category: "financial controls",
+          priority: "monitor",
+          status: "recommended",
+          rationale: "Derived from deterministic financial intelligence.",
+        },
+      ],
+      source: {
+        derivedFrom: "financial-intelligence",
+      },
+    });
   });
 
   test("returns an empty immutable collection when recommendations are missing", () => {

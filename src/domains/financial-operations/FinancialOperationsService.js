@@ -29,11 +29,15 @@ export class FinancialOperationsService {
     const priority = intelligence.planningAssistance?.priority || "monitor";
     const focus =
       intelligence.planningAssistance?.suggestedFocus || "financial controls";
+    const summary =
+      intelligence.planningAssistance?.summary ||
+      "Maintain current financial controls.";
     const actions = this.buildOperations(intelligence);
 
     return new FinancialOperationPlan({
       priority,
       focus,
+      summary,
       actions,
       source: Object.freeze({
         ...(intelligence.source || {}),
@@ -41,7 +45,6 @@ export class FinancialOperationsService {
       }),
     });
   }
-
 }
 
 Object.freeze(FinancialOperationsService);

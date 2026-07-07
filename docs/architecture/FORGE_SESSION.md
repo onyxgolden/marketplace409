@@ -556,6 +556,46 @@ Operations never mutate ledger state.
 
 ---
 
+#### Phase 12.4 — Deterministic Financial Operation Plan Context
+
+##### Delivered
+
+- Added deterministic plan-level `summary` context to `FinancialOperationPlan`.
+- Extended `FinancialPlanningService` to own planning summary semantics.
+- Preserved `FinancialIntelligenceApplication` as orchestration-only by passing through planning assistance.
+- Updated `FinancialOperationsService` to consume planning metadata instead of recreating planning rules.
+- Expanded the financial operations response contract additively through `FinancialOperationPlan.toResponse()`.
+- Preserved immutable ledger architecture.
+- Avoided scheduling, workflow execution, automation, persistence, AI execution, or ledger mutation.
+
+##### Validation
+
+- ✓ 157 test files passed
+- ✓ 513 tests passed
+- ✓ Production build passed
+- ✓ Financial planning summary semantics verified
+- ✓ Financial operation plan context verified
+- ✓ Application orchestration preserved
+- ✓ Operations consume intelligence without creating accounting truth
+
+#### Architectural Rule Reinforced
+
+Planning domain services own planning semantics.
+
+Operations domain services construct immutable operational plans from those semantics.
+
+Applications orchestrate.
+
+Composition constructs dependencies.
+
+Operations remain deterministic consumers of financial intelligence.
+
+Operations never create accounting truth.
+
+Operations never mutate ledger state.
+
+---
+
 # Permanent Architectural Lesson
 
 Interpretation belongs to domain services. Computation belongs to domain engines. Presentation belongs to the UI.

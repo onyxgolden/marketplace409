@@ -61,6 +61,7 @@ describe("FinancialIntelligenceApplication", () => {
         buildPlan: vi.fn(() => ({
           priority: "optimize",
           suggestedFocus: "controlled growth",
+          summary: "Optimize operating performance.",
         })),
       },
     };
@@ -100,6 +101,7 @@ describe("FinancialIntelligenceApplication", () => {
     expect(result.planningAssistance).toEqual({
       priority: "optimize",
       suggestedFocus: "controlled growth",
+      summary: "Optimize operating performance.",
     });
 
     expect(readModelApplication.buildExecutiveSummary).toHaveBeenCalled();
@@ -116,6 +118,22 @@ describe("FinancialIntelligenceApplication", () => {
     });
 
     expect(services.recommendationService.recommend).toHaveBeenCalledWith(
+      {
+        revenue: 100000,
+        expenses: 70000,
+        profit: 30000,
+        margin: 0.3,
+        cash: 25000,
+        assets: 200000,
+        liabilities: 60000,
+      },
+      {
+        label: "Healthy",
+        detail: "Business is performing well.",
+      },
+    );
+
+    expect(services.planningService.buildPlan).toHaveBeenCalledWith(
       {
         revenue: 100000,
         expenses: 70000,
