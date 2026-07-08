@@ -10,4 +10,5 @@ export * from "./property-rule.repository";
 export * from "./in-memory-property-rule.repository";
 export * from "./property-rule-management.service";
 export * from "./manual-property-assignment.service";
+export * from "./bulk-property-assignment.service";
 export * from "./supabase-property-rule.repository";

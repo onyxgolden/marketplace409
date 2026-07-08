@@ -109,7 +109,9 @@ The platform can now import financial data, resolve semantic property ownership,
 * property_rules persistence
 * PropertyRuleManagementService
 * ManualPropertyAssignmentService
+* BulkPropertyAssignmentService
 * Transaction assignment API
+* Bulk transaction assignment API
 * Persistent property learning loop
 
 **Status:** Complete
@@ -309,14 +311,28 @@ The Property Rule Repository is the single source of truth for learned property 
 
 # Upcoming Platform Capability Areas
 
+These areas have been reconciled against the repository.
+
+Where implementation exists, the roadmap reflects verified repository capabilities.
+
+Where implementation has not been verified, the roadmap reflects future platform direction.
+
+---
+
 ## Transaction Review
 
-Planned capabilities:
+### Verified Foundation
 
 * First-class TransactionReview domain
+* Confidence scoring foundation
+* Transaction review workflow
+* Transaction assignment API
+* Property assignment integration
+
+### Future Expansion
+
 * Bulk property assignment
 * Similar transaction grouping
-* Confidence scoring
 * Suggested property ranking
 * Rule preview before save
 * Assignment audit history
@@ -327,10 +343,13 @@ Planned capabilities:
 
 ## Persistence
 
-Planned capabilities:
+### Verified Foundation
+
+* Import history foundation
+
+### Future Expansion
 
 * Imported transaction persistence
-* Import history
 * Persistent review queues
 * Saved financial snapshots
 * Report history
@@ -340,7 +359,15 @@ Planned capabilities:
 
 ## Property Intelligence
 
-Planned capabilities:
+### Verified Foundation
+
+* PropertyResolverService
+* PropertyRuleRepository
+* Manual property assignment
+* Property learning
+* Asset domain foundation
+
+### Future Expansion
 
 * Multi-property ownership
 * Property performance reporting
@@ -386,14 +413,17 @@ Immutable Ledger
 Financial Engine
 ```
 
-Supported / Planned Providers
+### Verified Providers
 
 * Plaid
 * QuickBooks
 * Rentec
-* CSV
+* CSV import
+
+### Future Providers
+
 * Stripe
-* Future providers
+* Additional provider adapters
 
 Provider adapters never bypass the Connection Platform or the Financial Engine.
 
@@ -401,9 +431,16 @@ Provider adapters never bypass the Connection Platform or the Financial Engine.
 
 ## Dashboards
 
-Planned dashboards:
+### Verified Foundation
 
-* Executive Dashboard
+* Executive dashboard
+* Forge dashboard
+* Financial dashboard intelligence
+* Dashboard API
+* Dashboard UI components
+
+### Future Expansion
+
 * Business Dashboard
 * Investor Dashboard
 * Property Dashboard
@@ -419,15 +456,19 @@ Dashboards never create accounting truth.
 
 ## Decision Intelligence
 
-Planned capabilities:
+### Verified Foundation
 
 * Financial explanations
 * Cash flow forecasting
-* Portfolio analysis
-* Trend summaries
+* Trend analysis
 * Financial recommendations
+* Scenario modeling
+* Financial insights
+
+### Future Expansion
+
+* Portfolio analysis
 * Property assignment recommendations
-* Scenario comparisons
 * Executive summaries
 
 AI may assist decision making.
