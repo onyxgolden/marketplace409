@@ -52,6 +52,7 @@ export default function FinancialImportTool() {
   const [ownerId, setOwnerId] = useState(null);
   const [properties, setProperties] = useState([]);
   const [selectedProperties, setSelectedProperties] = useState({});
+  const [selectedReviewItems, setSelectedReviewItems] = useState({});
   const [assignmentStatus, setAssignmentStatus] = useState({});
 
   useEffect(() => {
@@ -93,6 +94,7 @@ export default function FinancialImportTool() {
     setError("");
     setResult(null);
     setSelectedProperties({});
+    setSelectedReviewItems({});
     setAssignmentStatus({});
 
     if (!file) {
@@ -130,95 +132,241 @@ export default function FinancialImportTool() {
     }
   }
 
-async function assignProperty(reviewItem, index) {
-  const propertyId = selectedProperties[index];
-  const property = properties.find((candidate) => candidate.id === propertyId);
+  async function assignProperty(reviewItem, index) {
+    const propertyId = selectedProperties[index];
+    const property = properties.find((candidate) => candidate.id === propertyId);
 
-  if (!property) {
+    if (!property) {
+      setAssignmentStatus((current) => ({
+        ...current,
+        [index]: {
+          type: "error",
+          message: "Select a property first.",
+        },
+      }));
+      return;
+    }
+
     setAssignmentStatus((current) => ({
       ...current,
       [index]: {
-        type: "error",
-        message: "Select a property first.",
+        type: "saving",
+        message: "Assigning...",
       },
     }));
-    return;
-  }
 
-  setAssignmentStatus((current) => ({
-    ...current,
-    [index]: {
-      type: "saving",
-      message: "Assigning...",
-    },
-  }));
+    try {
+      const response = await fetch("/api/transactions/assign-property", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          transaction: reviewItem.transaction,
+          property,
+          ownerId,
+          organizationId: property.organization_id ?? null,
+          reviewItem,
+        }),
+      });
 
-  try {
-    const response = await fetch("/api/transactions/assign-property", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        transaction: reviewItem.transaction,
-        property,
-        ownerId,
-        organizationId: property.organization_id ?? null,
-        reviewItem,
-      }),
-    });
+      const payload = await response.json();
 
-    const payload = await response.json();
-
-    if (!response.ok) {
-      throw new Error(payload.error || "Unable to assign property.");
-    }
-
-    const updatedReviewItem = payload.reviewItem || {
-      ...reviewItem,
-      resolvedProperty: property,
-      needsAssignment: false,
-      confidence: 1,
-      assignmentStatus: "assigned",
-      reviewState: "reviewed",
-    };
-
-    setResult((current) => {
-      if (!current?.transactionReview) {
-        return current;
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to assign property.");
       }
 
-      return {
+      const updatedReviewItem = payload.reviewItem || {
+        ...reviewItem,
+        resolvedProperty: property,
+        needsAssignment: false,
+        confidence: 1,
+        assignmentStatus: "assigned",
+        reviewState: "reviewed",
+      };
+
+      setResult((current) => {
+        if (!current?.transactionReview) {
+          return current;
+        }
+
+        return {
+          ...current,
+          transactionReview: current.transactionReview.map(
+            (candidate, candidateIndex) =>
+              candidateIndex === index ? updatedReviewItem : candidate
+          ),
+        };
+      });
+
+      setAssignmentStatus((current) => ({
         ...current,
-        transactionReview: current.transactionReview.map(
-          (candidate, candidateIndex) =>
-            candidateIndex === index ? updatedReviewItem : candidate
-        ),
+        [index]: {
+          type: "success",
+          message: `Assigned to ${propertyLabel(property)}.`,
+        },
+      }));
+    } catch (caughtError) {
+      setAssignmentStatus((current) => ({
+        ...current,
+        [index]: {
+          type: "error",
+          message:
+            caughtError instanceof Error
+              ? caughtError.message
+              : "Unable to assign property.",
+        },
+      }));
+    }
+  }
+
+  async function assignSelectedProperties() {
+    const selectedIndexes = Object.entries(selectedReviewItems)
+      .filter(([, selected]) => selected)
+      .map(([index]) => Number(index));
+
+    if (selectedIndexes.length === 0) {
+      return;
+    }
+
+    const assignments = [];
+    const validationStatuses = {};
+
+    selectedIndexes.forEach((index) => {
+      const reviewItem = result?.transactionReview?.[index];
+      const propertyId = selectedProperties[index];
+      const property = properties.find((candidate) => candidate.id === propertyId);
+
+      if (!reviewItem?.needsAssignment) {
+        return;
+      }
+
+      if (!property) {
+        validationStatuses[index] = {
+          type: "error",
+          message: "Select a property first.",
+        };
+        return;
+      }
+
+      assignments.push({
+        index,
+        reviewItem,
+        property,
+      });
+
+      validationStatuses[index] = {
+        type: "saving",
+        message: "Assigning...",
       };
     });
 
     setAssignmentStatus((current) => ({
       ...current,
-      [index]: {
-        type: "success",
-        message: `Assigned to ${propertyLabel(property)}.`,
-      },
+      ...validationStatuses,
     }));
-  } catch (caughtError) {
-    setAssignmentStatus((current) => ({
-      ...current,
-      [index]: {
-        type: "error",
-        message:
-          caughtError instanceof Error
-            ? caughtError.message
-            : "Unable to assign property.",
-      },
-    }));
+
+    if (assignments.length === 0) {
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/transactions/assign-properties", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          assignments: assignments.map(({ reviewItem, property }) => ({
+            transaction: reviewItem.transaction,
+            property,
+            ownerId,
+            organizationId: property.organization_id ?? null,
+            reviewItem,
+          })),
+          ownerId,
+        }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to assign selected properties.");
+      }
+
+      const updatedByIndex = {};
+      const nextStatuses = {};
+      const completedSelections = {};
+
+      assignments.forEach(({ index, reviewItem, property }, assignmentIndex) => {
+        const assignmentResult = payload.assignments?.[assignmentIndex];
+        const updatedReviewItem = assignmentResult?.reviewItem || {
+          ...reviewItem,
+          resolvedProperty: property,
+          needsAssignment: false,
+          confidence: 1,
+          assignmentStatus: "assigned",
+          reviewState: "reviewed",
+        };
+
+        updatedByIndex[index] = updatedReviewItem;
+        completedSelections[index] = true;
+        nextStatuses[index] = {
+          type: "success",
+          message: `Assigned to ${propertyLabel(property)}.`,
+        };
+      });
+
+      setResult((current) => {
+        if (!current?.transactionReview) {
+          return current;
+        }
+
+        return {
+          ...current,
+          transactionReview: current.transactionReview.map(
+            (candidate, candidateIndex) =>
+              updatedByIndex[candidateIndex] || candidate
+          ),
+        };
+      });
+
+      setSelectedReviewItems((current) => {
+        const nextSelection = { ...current };
+
+        Object.keys(completedSelections).forEach((index) => {
+          delete nextSelection[index];
+        });
+
+        return nextSelection;
+      });
+
+      setAssignmentStatus((current) => ({
+        ...current,
+        ...nextStatuses,
+      }));
+    } catch (caughtError) {
+      const message =
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Unable to assign selected properties.";
+
+      setAssignmentStatus((current) => {
+        const nextStatuses = { ...current };
+
+        assignments.forEach(({ index }) => {
+          nextStatuses[index] = {
+            type: "error",
+            message,
+          };
+        });
+
+        return nextStatuses;
+      });
+    }
   }
-}
-  return (
-    <section className="max-w-6xl mx-auto px-6 py-12">
+ return (   
+  <section className="max-w-6xl mx-auto px-6 py-12">
       <div className="bg-white rounded-3xl shadow-xl p-8 mb-8">
         <h1 className="text-5xl font-extrabold mb-4">
           Financial Import
@@ -239,6 +387,7 @@ async function assignProperty(reviewItem, index) {
               setResult(null);
               setError("");
               setSelectedProperties({});
+              setSelectedReviewItems({});
               setAssignmentStatus({});
             }}
             className="mt-3 block w-full rounded-xl border bg-gray-50 px-4 py-4"
@@ -280,8 +429,11 @@ async function assignProperty(reviewItem, index) {
             properties={properties}
             selectedProperties={selectedProperties}
             setSelectedProperties={setSelectedProperties}
+            selectedReviewItems={selectedReviewItems}
+            setSelectedReviewItems={setSelectedReviewItems}
             assignmentStatus={assignmentStatus}
             assignProperty={assignProperty}
+            assignSelectedProperties={assignSelectedProperties}
           />
 
           <ParsedRecords records={result.records} />
@@ -344,10 +496,38 @@ function TransactionReview({
   properties,
   selectedProperties,
   setSelectedProperties,
+  selectedReviewItems,
+  setSelectedReviewItems,
   assignmentStatus,
   assignProperty,
+  assignSelectedProperties,
 }) {
   const needsReview = reviews.filter((review) => review.needsAssignment);
+
+  const selectedCount = Object.values(selectedReviewItems).filter(Boolean).length;
+
+  const allSelectableIndexes = reviews
+    .map((review, index) => (review.needsAssignment ? index : null))
+    .filter((index) => index !== null);
+
+  const allSelected =
+    allSelectableIndexes.length > 0 &&
+    allSelectableIndexes.every((index) => selectedReviewItems[index]);
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelectedReviewItems({});
+      return;
+    }
+
+    const nextSelection = {};
+
+    allSelectableIndexes.forEach((index) => {
+      nextSelection[index] = true;
+    });
+
+    setSelectedReviewItems(nextSelection);
+  }
 
   return (
     <div className="bg-white rounded-3xl shadow-lg p-8">
@@ -364,6 +544,40 @@ function TransactionReview({
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6 rounded-2xl border bg-gray-50 px-5 py-4">
+        <div className="font-semibold">
+          {selectedCount} transaction{selectedCount === 1 ? "" : "s"} selected
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={toggleSelectAll}
+            className="rounded-xl border px-4 py-2 font-semibold hover:bg-white"
+          >
+            {allSelected ? "Clear All" : "Select All"}
+          </button>
+
+          <button
+            type="button"
+            onClick={assignSelectedProperties}
+            disabled={selectedCount === 0}
+            className="rounded-xl bg-green-700 px-4 py-2 font-bold text-white disabled:bg-gray-400"
+          >
+            Assign Selected
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedReviewItems({})}
+            disabled={selectedCount === 0}
+            className="rounded-xl border px-4 py-2 font-semibold disabled:opacity-50"
+          >
+            Clear Selection
+          </button>
+        </div>
+      </div>
+
       {reviews.length === 0 ? (
         <p className="text-gray-500">No transaction review items available.</p>
       ) : (
@@ -376,7 +590,23 @@ function TransactionReview({
                 key={`${review.transaction?.id || review.record?.date}-${index}`}
                 className="rounded-2xl border bg-gray-50 p-5"
               >
-                <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-center">
+                <div className="grid grid-cols-1 lg:grid-cols-6 gap-4 items-center">
+                  <label className="flex items-center gap-3 font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(selectedReviewItems[index])}
+                      onChange={(event) =>
+                        setSelectedReviewItems((current) => ({
+                          ...current,
+                          [index]: event.target.checked,
+                        }))
+                      }
+                      disabled={!review.needsAssignment}
+                      className="h-5 w-5"
+                    />
+                    Select
+                  </label>
+
                   <div className="lg:col-span-2">
                     <p className="font-bold">{review.transaction?.description || "No description"}</p>
                     <p className="text-sm text-gray-500">
