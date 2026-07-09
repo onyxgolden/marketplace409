@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FinancialImportServiceImpl } from "@/domains/financial-import/financial-import.service";
-import { buildProductionChartOfAccounts } from "@/domains/production";
 import { Money } from "@/platform";
 import { supabase } from "@/lib/supabase";
+import { FinancialImportApplication } from "@/application/financial/FinancialImportApplication";
 import { TransactionReviewApplication } from "@/application/financial/TransactionReviewApplication";
 
 function formatCurrency(value) {
@@ -98,38 +97,21 @@ export default function FinancialImportTool() {
     setSelectedReviewItems({});
     setAssignmentStatus({});
 
-    if (!file) {
-      setFileName("");
-      return;
-    }
+    const importApplication = new FinancialImportApplication();
 
-    setFileName(file.name);
+    const importResponse = await importApplication.importFile({
+      file,
+      source,
+      ownerId,
+      resolveOwnerId: currentOwnerId,
+    });
 
-    try {
-      const csv = await file.text();
-      const resolvedOwnerId = ownerId ?? await currentOwnerId();
+    setFileName(importResponse.fileName);
+    setResult(importResponse.result);
+    setError(importResponse.error);
 
-      if (resolvedOwnerId !== ownerId) {
-        setOwnerId(resolvedOwnerId);
-      }
-
-      const importService = new FinancialImportServiceImpl({
-        ownerId: resolvedOwnerId,
-      });
-
-      const importResult = importService.importCsv({
-        source,
-        csv,
-        chartOfAccounts: buildProductionChartOfAccounts(),
-      });
-
-      setResult(importResult);
-    } catch (caughtError) {
-      setError(
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Unable to import financial CSV."
-      );
+    if (importResponse.ownerId !== ownerId) {
+      setOwnerId(importResponse.ownerId);
     }
   }
 
