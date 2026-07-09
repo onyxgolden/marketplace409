@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import Header from "@/components/Header";
+import { InvestorPropertyApplication } from "@/application/investors";
 import { supabase } from "@/lib/supabase";
+
+const investorPropertyApplication = new InvestorPropertyApplication({
+  supabase,
+});
 
 export default function AddInvestorPropertyPage() {
   const [address, setAddress] = useState("");
@@ -25,73 +30,45 @@ export default function AddInvestorPropertyPage() {
   async function handleSubmit() {
     setIsPosting(true);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    try {
+      const result = await investorPropertyApplication.createProperty({
+        form: {
+          address,
+          city,
+          county,
+          asking_price: askingPrice,
+          arv,
+          rehab_cost: rehabCost,
+          estimated_rent: estimatedRent,
+          bedrooms,
+          bathrooms,
+          sqft,
+          lot_size: lotSize,
+          occupancy,
+          property_type: propertyType,
+          summary,
+        },
+        image,
+      });
 
-    if (!user) {
-      alert(
-        "Please create a free account before posting an investment property.",
-      );
-      window.location.href = "/auth";
-      return;
-    }
+      if (!result.ok) {
+        alert(result.message);
 
-    let imageUrl = "";
+        if (result.reason === "authentication_required") {
+          window.location.href = "/auth";
+          return;
+        }
 
-    if (image) {
-      const fileExt = image.name.split(".").pop();
-      const fileName = `${Date.now()}-investor-property.${fileExt}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("listing-images")
-        .upload(fileName, image, {
-          contentType: image.type,
-          upsert: false,
-        });
-
-      if (uploadError) {
-        alert("Error uploading property image");
-        console.log(uploadError);
         setIsPosting(false);
         return;
       }
 
-      const { data } = supabase.storage
-        .from("listing-images")
-        .getPublicUrl(fileName);
-
-      imageUrl = data.publicUrl;
-    }
-
-    const { error } = await supabase.from("investor_properties").insert([
-      {
-        address,
-        city,
-        county,
-        asking_price: askingPrice || null,
-        arv: arv || null,
-        rehab_cost: rehabCost || null,
-        estimated_rent: estimatedRent || null,
-        bedrooms: bedrooms || null,
-        bathrooms: bathrooms || null,
-        sqft: sqft || null,
-        lot_size: lotSize,
-        occupancy,
-        property_type: propertyType,
-        summary,
-        image_url: imageUrl,
-        created_by: user.id,
-      },
-    ]);
-
-    if (error) {
-      alert("Error posting investment property");
-      console.log(error);
+      alert(result.message);
+      window.location.href = result.redirectTo;
+    } catch (error) {
+      alert(error?.message || "Error posting investment property");
+      console.error(error);
       setIsPosting(false);
-    } else {
-      alert("Investment property posted!");
-      window.location.href = "/investors/properties";
     }
   }
 

@@ -3,31 +3,23 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
+import { InvestorPropertyApplication } from "@/application/investors";
 import { supabase } from "@/lib/supabase";
 import { uploadImage } from "@/lib/uploadImage";
+
+const investorPropertyApplication = new InvestorPropertyApplication({
+  supabase,
+  imageUploader: uploadImage,
+});
 
 export default function EditInvestorPropertyPage() {
   const params = useParams();
   const router = useRouter();
   const propertyId = params.id;
 
-  const [form, setForm] = useState({
-    address: "",
-    city: "",
-    county: "",
-    asking_price: "",
-    arv: "",
-    rehab_cost: "",
-    estimated_rent: "",
-    bedrooms: "",
-    bathrooms: "",
-    sqft: "",
-    lot_size: "",
-    occupancy: "",
-    property_type: "",
-    summary: "",
-    image_url: "",
-  });
+  const [form, setForm] = useState(
+    investorPropertyApplication.getInitialPropertyForm(),
+  );
 
   const [newImage, setNewImage] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -36,32 +28,12 @@ export default function EditInvestorPropertyPage() {
 
   useEffect(() => {
     async function loadProperty() {
-      const { data, error } = await supabase
-        .from("investor_properties")
-        .select("*")
-        .eq("id", propertyId)
-        .single();
+      const result = await investorPropertyApplication.loadProperty(propertyId);
 
-      if (error) {
-        setError(error.message);
-      } else if (data) {
-        setForm({
-          address: data.address || "",
-          city: data.city || "",
-          county: data.county || "",
-          asking_price: data.asking_price || "",
-          arv: data.arv || "",
-          rehab_cost: data.rehab_cost || "",
-          estimated_rent: data.estimated_rent || "",
-          bedrooms: data.bedrooms || "",
-          bathrooms: data.bathrooms || "",
-          sqft: data.sqft || "",
-          lot_size: data.lot_size || "",
-          occupancy: data.occupancy || "",
-          property_type: data.property_type || "",
-          summary: data.summary || "",
-          image_url: data.image_url || "",
-        });
+      if (!result.ok) {
+        setError(result.message);
+      } else {
+        setForm(result.form);
       }
 
       setLoading(false);
@@ -81,36 +53,19 @@ export default function EditInvestorPropertyPage() {
     setError("");
 
     try {
-      const imageUrl = await uploadImage({
-        file: newImage,
-        currentImageUrl: form.image_url,
-        folder: "investor-properties",
-        prefix: "investor-property",
-        recordId: propertyId,
+      const result = await investorPropertyApplication.updateProperty({
+        propertyId,
+        form,
+        newImage,
       });
 
-      const { error } = await supabase
-        .from("investor_properties")
-        .update({
-          ...form,
-          image_url: imageUrl,
-          asking_price: form.asking_price || null,
-          arv: form.arv || null,
-          rehab_cost: form.rehab_cost || null,
-          estimated_rent: form.estimated_rent || null,
-          bedrooms: form.bedrooms || null,
-          bathrooms: form.bathrooms || null,
-          sqft: form.sqft || null,
-        })
-        .eq("id", propertyId);
-
-      if (error) {
-        setError(error.message);
+      if (!result.ok) {
+        setError(result.message);
         setSaving(false);
         return;
       }
 
-      router.push("/investors/properties");
+      router.push(result.redirectTo);
     } catch (err) {
       setError(err.message || "Image upload failed.");
       setSaving(false);
@@ -127,19 +82,16 @@ export default function EditInvestorPropertyPage() {
     setSaving(true);
     setError("");
 
-    const { error } = await supabase
-      .from("investor_properties")
-      .delete()
-      .eq("id", propertyId);
+    const result = await investorPropertyApplication.deleteProperty(propertyId);
 
     setSaving(false);
 
-    if (error) {
-      setError(error.message);
+    if (!result.ok) {
+      setError(result.message);
       return;
     }
 
-    router.push("/investors/properties");
+    router.push(result.redirectTo);
   }
 
   if (loading) {
