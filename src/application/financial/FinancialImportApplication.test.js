@@ -12,6 +12,51 @@ function createCsvFile({
 }
 
 describe("FinancialImportApplication", () => {
+  it("initializes financial import page data", async () => {
+    const properties = [
+      {
+        id: "property-1",
+        name: "170 John",
+      },
+    ];
+
+    const application = new FinancialImportApplication({
+      currentOwnerId: vi.fn(async () => "owner-1"),
+      loadProperties: vi.fn(async () => properties),
+    });
+
+    const result = await application.initialize();
+
+    expect(result).toEqual({
+      ownerId: "owner-1",
+      properties,
+      error: "",
+    });
+
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.properties)).toBe(true);
+  });
+
+  it("models initialization errors without throwing", async () => {
+    const application = new FinancialImportApplication({
+      currentOwnerId: vi.fn(async () => "owner-1"),
+      loadProperties: vi.fn(async () => {
+        throw new Error("Unable to load properties.");
+      }),
+    });
+
+    const result = await application.initialize();
+
+    expect(result).toEqual({
+      ownerId: null,
+      properties: [],
+      error: "Unable to load properties.",
+    });
+
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.properties)).toBe(true);
+  });
+
   it("returns an empty import model when no file is selected", async () => {
     const application = new FinancialImportApplication();
 

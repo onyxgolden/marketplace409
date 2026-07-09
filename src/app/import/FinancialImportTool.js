@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Money } from "@/platform";
-import { supabase } from "@/lib/supabase";
 import { FinancialImportApplication } from "@/application/financial/FinancialImportApplication";
 import { TransactionReviewApplication } from "@/application/financial/TransactionReviewApplication";
 
@@ -56,37 +55,18 @@ export default function FinancialImportTool() {
   const [assignmentStatus, setAssignmentStatus] = useState({});
 
   useEffect(() => {
-    loadProperties();
-    loadOwnerId();
+    const importApplication = new FinancialImportApplication();
+
+    async function initializeImportTool() {
+      const initialized = await importApplication.initialize();
+
+      setOwnerId(initialized.ownerId);
+      setProperties(initialized.properties);
+      setError(initialized.error);
+    }
+
+    initializeImportTool();
   }, []);
-
-  async function loadOwnerId() {
-    setOwnerId(await currentOwnerId());
-  }
-
-  async function loadProperties() {
-    const { data, error: propertyError } = await supabase
-      .from("investor_properties")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (propertyError) {
-      setError(propertyError.message);
-      return;
-    }
-
-    setProperties(data || []);
-  }
-
-  async function currentOwnerId() {
-    const { data, error: authError } = await supabase.auth.getUser();
-
-    if (authError || !data?.user?.id) {
-      return null;
-    }
-
-    return data.user.id;
-  }
 
   async function handleFileChange(event) {
     const file = event.target.files?.[0];
@@ -103,7 +83,7 @@ export default function FinancialImportTool() {
       file,
       source,
       ownerId,
-      resolveOwnerId: currentOwnerId,
+      resolveOwnerId: importApplication.currentOwnerId,
     });
 
     setFileName(importResponse.fileName);
