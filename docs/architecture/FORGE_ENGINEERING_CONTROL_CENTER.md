@@ -41,30 +41,57 @@ The repository—not memory, documentation, or prior conversation—is the singl
 
 ## Last Verified
 
-**Verified:** 2026-07-07
+**Verified:** 2026-07-08
 
 ### Repository State
 
 * Current Branch: main
-* Latest Commit: 3628969 — Establish governance theory and research layers
+* Latest Commit: 6af79b6 — Extract assignment state reconciliation to application layer
 * Repository Status: Clean
 * Repository Clean: Yes
-* Current Objective: Transaction Review bulk property assignment capability implemented and awaiting commit.
-* Current Architectural Phase: Governance & Capability Reconciliation
-* Current Inspection: Platform Capability Reality Inspection
 
-* Current Risk: New implementation must extend verified Transaction Review and Property Assignment foundations without introducing speculative architecture.
-* Blocking Issues:
-  * Three untracked governance documents pending verification and commit.
+### Current Architectural Objective
 
-* Documentation Status:
-  * Governance architecture established.
-  * Platform capability reconciliation complete.
-  * Executive Dashboard reconciliation complete.
-  * Production route verification complete.
-  * Architecture, Platform Roadmap, and Dashboard status synchronized.
-  * Architecture freeze decision recorded.
-  * Next platform objective selected from repository evidence.
+Continue application-layer refinement by reducing presentation components to rendering and transient UI state while preserving existing production behavior.
+
+### Current Architectural Phase
+
+Application Layer Consolidation
+
+### Current Repository State
+
+The Financial Import presentation reduction campaign has reached a stable milestone.
+
+Completed during this engineering cycle:
+
+* TransactionReviewApplication extracted transaction assignment orchestration.
+* FinancialImportApplication extracted financial import orchestration.
+* Financial import initialization moved into the application layer.
+* Assignment state reconciliation moved from React into the application layer.
+* Immutable application result models established for initialization, imports, and assignment workflows.
+* FinancialImportTool now primarily owns React state, rendering, and user interaction.
+
+### Verification Status
+
+* Mutation Firewall passing.
+* Focused Vitest application tests passing.
+* Production build passing.
+* Repository synchronized with origin/main.
+
+### Current Risk
+
+Continue architectural refinement without moving presentation concerns into the application layer or business rules into React components.
+
+### Blocking Issues
+
+None.
+
+### Documentation Status
+
+* Engineering Control Center synchronized.
+* Workflow synchronized with repository practices.
+* Platform Roadmap synchronized.
+* Application-layer extraction milestone recorded.
 
 ---
 
