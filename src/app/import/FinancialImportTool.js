@@ -5,6 +5,7 @@ import { FinancialImportServiceImpl } from "@/domains/financial-import/financial
 import { buildProductionChartOfAccounts } from "@/domains/production";
 import { Money } from "@/platform";
 import { supabase } from "@/lib/supabase";
+import { TransactionReviewApplication } from "@/application/financial/TransactionReviewApplication";
 
 function formatCurrency(value) {
   return new Money(Math.round(Number(value || 0) * 100)).toString();
@@ -221,54 +222,26 @@ export default function FinancialImportTool() {
   }
 
   async function assignSelectedProperties() {
-    const selectedIndexes = Object.entries(selectedReviewItems)
-      .filter(([, selected]) => selected)
-      .map(([index]) => Number(index));
+    const reviewApplication = new TransactionReviewApplication();
 
-    if (selectedIndexes.length === 0) {
-      return;
-    }
-
-    const assignments = [];
-    const validationStatuses = {};
-
-    selectedIndexes.forEach((index) => {
-      const reviewItem = result?.transactionReview?.[index];
-      const propertyId = selectedProperties[index];
-      const property = properties.find((candidate) => candidate.id === propertyId);
-
-      if (!reviewItem?.needsAssignment) {
-        return;
-      }
-
-      if (!property) {
-        validationStatuses[index] = {
-          type: "error",
-          message: "Select a property first.",
-        };
-        return;
-      }
-
-      assignments.push({
-        index,
-        reviewItem,
-        property,
+    const preparedAssignments =
+      reviewApplication.prepareSelectedPropertyAssignments({
+        reviews: result?.transactionReview || [],
+        properties,
+        selectedProperties,
+        selectedReviewItems,
       });
-
-      validationStatuses[index] = {
-        type: "saving",
-        message: "Assigning...",
-      };
-    });
 
     setAssignmentStatus((current) => ({
       ...current,
-      ...validationStatuses,
+      ...preparedAssignments.statuses,
     }));
 
-    if (assignments.length === 0) {
+    if (!preparedAssignments.hasAssignments) {
       return;
     }
+
+    const assignments = preparedAssignments.assignments;
 
     try {
       const response = await fetch("/api/transactions/assign-properties", {
@@ -276,16 +249,12 @@ export default function FinancialImportTool() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          assignments: assignments.map(({ reviewItem, property }) => ({
-            transaction: reviewItem.transaction,
-            property,
+        body: JSON.stringify(
+          reviewApplication.buildBulkAssignmentRequest({
+            assignments,
             ownerId,
-            organizationId: property.organization_id ?? null,
-            reviewItem,
-          })),
-          ownerId,
-        }),
+          })
+        ),
       });
 
       const payload = await response.json();
@@ -311,10 +280,8 @@ export default function FinancialImportTool() {
 
         updatedByIndex[index] = updatedReviewItem;
         completedSelections[index] = true;
-        nextStatuses[index] = {
-          type: "success",
-          message: `Assigned to ${propertyLabel(property)}.`,
-        };
+        nextStatuses[index] =
+          reviewApplication.createAssignmentSuccessStatus(property);
       });
 
       setResult((current) => {
