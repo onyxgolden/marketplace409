@@ -46,13 +46,13 @@ The repository—not memory, documentation, or prior conversation—is the singl
 ### Repository State
 
 * Current Branch: main
-* Latest Commit: 6af79b6 — Extract assignment state reconciliation to application layer
+* Latest Commit: dc34495 — Extract forge dashboard view model application
 * Repository Status: Clean
 * Repository Clean: Yes
 
 ### Current Architectural Objective
 
-Continue application-layer refinement by reducing presentation components to rendering and transient UI state while preserving existing production behavior.
+Continue application-layer consolidation by reducing React presentation components to rendering, user interaction, and transient UI state while moving workflow orchestration and immutable view-model construction into the application layer without changing production behavior.
 
 ### Current Architectural Phase
 
@@ -62,6 +62,8 @@ Application Layer Consolidation
 
 The Financial Import presentation reduction campaign has reached a stable milestone.
 
+The Forge Dashboard application-layer consolidation has now begun.
+
 Completed during this engineering cycle:
 
 * TransactionReviewApplication extracted transaction assignment orchestration.
@@ -70,6 +72,8 @@ Completed during this engineering cycle:
 * Assignment state reconciliation moved from React into the application layer.
 * Immutable application result models established for initialization, imports, and assignment workflows.
 * FinancialImportTool now primarily owns React state, rendering, and user interaction.
+* ForgeDashboardApplication extracted immutable dashboard request construction, fallback state creation, dashboard normalization, and dashboard view-model composition from the Forge dashboard React page.
+* Forge dashboard presentation reduced toward rendering and fetch lifecycle responsibilities.
 
 ### Verification Status
 
@@ -80,7 +84,7 @@ Completed during this engineering cycle:
 
 ### Current Risk
 
-Continue architectural refinement without moving presentation concerns into the application layer or business rules into React components.
+Continue architectural refinement without moving presentation concerns into the application layer or business rules into React components. Preserve existing production APIs, routes, and domain behavior while reducing remaining presentation-layer orchestration.
 
 ### Blocking Issues
 
@@ -89,9 +93,9 @@ None.
 ### Documentation Status
 
 * Engineering Control Center synchronized.
-* Workflow synchronized with repository practices.
-* Platform Roadmap synchronized.
-* Application-layer extraction milestone recorded.
+* Workflow pending verification against repository.
+* Platform Roadmap pending verification against repository.
+* Forge dashboard application-layer extraction milestone recorded.
 
 ---
 

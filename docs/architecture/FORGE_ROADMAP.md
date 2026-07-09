@@ -1296,6 +1296,47 @@ UI
 
 ---
 
+### Phase 13.3 — Application Layer Consolidation
+
+#### Purpose
+
+Continue reducing presentation components to rendering, user interaction, and transient UI state while moving workflow orchestration and immutable view-model construction into dedicated application services.
+
+#### Delivered
+
+* Introduced `TransactionReviewApplication` to own transaction assignment orchestration.
+* Introduced `FinancialImportApplication` to own financial import workflow orchestration.
+* Moved financial import initialization into the application layer.
+* Moved assignment state reconciliation from React into immutable application result models.
+* Reduced `FinancialImportTool` toward presentation-only responsibilities.
+* Introduced `ForgeDashboardApplication` as the presentation-facing application service for the FORGE dashboard.
+* Centralized dashboard request construction, fallback response creation, dashboard normalization, and immutable dashboard view-model composition.
+* Reduced the FORGE dashboard page to rendering, fetch lifecycle management, and transient UI state.
+* Preserved all production APIs, domain services, routes, and runtime behavior.
+
+#### Protected Rule
+
+Presentation components render.
+
+Application services coordinate workflows and immutable presentation models.
+
+Domain services own business rules.
+
+Production behavior must remain unchanged while architectural boundaries become more explicit.
+
+#### Validation
+
+- ✓ TransactionReviewApplication tests passed.
+- ✓ FinancialImportApplication tests passed.
+- ✓ ForgeDashboardApplication tests passed.
+- ✓ Mutation Firewall passed.
+- ✓ Production build passed.
+- ✓ Repository synchronized with `origin/main`.
+
+**Status:** Complete
+
+---
+
 # Relationship to the Platform Roadmap
 
 The Architecture Roadmap changes infrequently.
