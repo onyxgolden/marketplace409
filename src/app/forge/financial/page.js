@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { ForgeFinancialDashboardApplication } from "@/application/financial";
 import ForgeDashboardCard from "@/components/forge/ForgeDashboardCard";
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
@@ -23,101 +24,29 @@ function percent(value) {
 }
 
 export default function FinancialPage() {
-  const [dashboard, setDashboard] = useState(null);
-  const [operationsPlan, setOperationsPlan] = useState(null);
-  const [loadState, setLoadState] = useState("loading");
-  const [error, setError] = useState(null);
+  const [viewModel, setViewModel] = useState(
+    ForgeFinancialDashboardApplication.buildLoadingModel(),
+  );
 
   useEffect(() => {
     async function load() {
-      try {
-        const response = await fetch("/api/financial/snapshot");
-        const payload = await response.json();
-
-        if (!payload.success) {
-          throw new Error(payload.error || "Financial snapshot failed.");
-        }
-
-        const operationsResponse = await fetch("/api/financial/operations");
-        const operationsPayload = await operationsResponse.json();
-
-        if (!operationsPayload.success) {
-          throw new Error(
-            operationsPayload.error || "Financial operations failed.",
-          );
-        }
-
-        setDashboard(payload.data?.dashboard || null);
-        setOperationsPlan(operationsPayload.data || null);
-        setLoadState("ready");
-      } catch (loadError) {
-        setError(loadError.message);
-        setLoadState("error");
-      }
+      const result = await ForgeFinancialDashboardApplication.load();
+      setViewModel(result);
     }
 
     load();
   }, []);
 
-  const kpis = dashboard?.kpis || {};
-  const health = dashboard?.health || {
-    label: "Loading",
-    detail: "Financial dashboard data is loading.",
-  };
-  const metadata = dashboard?.metadata || {};
-  const balanceSheetLines = dashboard?.balanceSheetLines || [];
-
-  const statusItems = useMemo(
-    () => [
-      {
-        label: "Financial Engine",
-        detail: "Reports are generated through the ledger domain engine.",
-        value: loadState === "ready" ? "online" : loadState,
-      },
-      {
-        label: "Data Provider",
-        detail: "Provider abstraction is active for Phase 7.3.",
-        value: metadata.provider || "pending",
-      },
-      {
-        label: "Snapshot Status",
-        detail: "Live persistence and sync history are deferred.",
-        value: metadata.snapshotStatus || "pending",
-      },
-    ],
-    [loadState, metadata.provider, metadata.snapshotStatus],
-  );
-
-  const activities = [
-    {
-      id: "dashboard-built",
-      label: "Dashboard DTO generated",
-      detail: "KPIs, health status, and statement lines are supplied by the domain service.",
-      type: "domain",
-      timestamp: "Current session",
-    },
-    {
-      id: "provider-active",
-      label: "Provider abstraction active",
-      detail: "Dashboard is reading through the financial API boundary.",
-      type: "provider",
-      timestamp: `Phase ${metadata.phase || "7.3"}`,
-    },
-    {
-      id: "operations-api",
-      label: "Operations plan connected",
-      detail: "Financial operations guidance is supplied through the operations API.",
-      type: "application",
-      timestamp: "Phase 13.2",
-    },
-    {
-      id: "imports-deferred",
-      label: "External imports deferred",
-      detail: "Rental, Plaid, brokerage, Stripe, and valuation feeds remain sequenced after dashboard stabilization.",
-      type: "roadmap",
-      timestamp: "Planned",
-    },
-  ];
+  const {
+    operationsPlan,
+    loadState,
+    error,
+    kpis,
+    health,
+    balanceSheetLines,
+    statusItems,
+    activities,
+  } = viewModel;
 
   return (
     <div className={forgeTheme.page}>

@@ -6,3 +6,4 @@ export { FinancialReadModelApplication } from "./read-models/FinancialReadModelA
 export { FinancialIntelligenceApplication } from "./FinancialIntelligenceApplication.js";
 export { FinancialOperationsApplication } from "./FinancialOperationsApplication.js";
 export { ForgeDashboardApplication } from "./ForgeDashboardApplication.js";
+export { ForgeFinancialDashboardApplication } from "./ForgeFinancialDashboardApplication.js";
