@@ -152,4 +152,153 @@ describe("TransactionReviewApplication", () => {
       message: "Assigned to 170 John.",
     });
   });
+  it("assigns a single property through the assignment API", async () => {
+    const application = new TransactionReviewApplication();
+    const reviewItem = buildReviewItem();
+    const property = buildProperty();
+    const apiReviewItem = {
+      ...reviewItem,
+      resolvedProperty: property,
+      needsAssignment: false,
+    };
+
+    const fetcher = async (url, options) => {
+      expect(url).toBe("/api/transactions/assign-property");
+      expect(options.method).toBe("POST");
+      expect(JSON.parse(options.body)).toEqual({
+        transaction: reviewItem.transaction,
+        property,
+        ownerId: "owner-1",
+        organizationId: "organization-1",
+        reviewItem,
+      });
+
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          reviewItem: apiReviewItem,
+        }),
+      };
+    };
+
+    const result = await application.assignProperty({
+      fetcher,
+      reviewItem,
+      index: 0,
+      properties: [property],
+      selectedProperties: {
+        0: "property-1",
+      },
+      ownerId: "owner-1",
+    });
+
+    expect(result.updatedByIndex).toEqual({
+      0: apiReviewItem,
+    });
+    expect(result.statuses).toEqual({
+      0: {
+        type: "success",
+        message: "Assigned to 170 John.",
+      },
+    });
+  });
+
+  it("creates fallback review item when single assignment response has no review item", async () => {
+    const application = new TransactionReviewApplication();
+    const reviewItem = buildReviewItem();
+    const property = buildProperty();
+
+    const result = await application.assignProperty({
+      fetcher: async () => ({
+        ok: true,
+        json: async () => ({
+          success: true,
+        }),
+      }),
+      reviewItem,
+      index: 0,
+      properties: [property],
+      selectedProperties: {
+        0: "property-1",
+      },
+    });
+
+    expect(result.updatedByIndex[0]).toEqual({
+      ...reviewItem,
+      resolvedProperty: property,
+      needsAssignment: false,
+      confidence: 1,
+      assignmentStatus: "assigned",
+      reviewState: "reviewed",
+    });
+  });
+
+  it("reconciles bulk assignment API response", () => {
+    const application = new TransactionReviewApplication();
+    const reviewItem = buildReviewItem();
+    const property = buildProperty();
+    const apiReviewItem = {
+      ...reviewItem,
+      resolvedProperty: property,
+      needsAssignment: false,
+    };
+
+    const result = application.reconcileBulkAssignmentResponse({
+      assignments: [
+        {
+          index: 0,
+          reviewItem,
+          property,
+        },
+      ],
+      payload: {
+        assignments: [
+          {
+            reviewItem: apiReviewItem,
+          },
+        ],
+      },
+    });
+
+    expect(result.updatedByIndex).toEqual({
+      0: apiReviewItem,
+    });
+    expect(result.completedSelections).toEqual({
+      0: true,
+    });
+    expect(result.statuses).toEqual({
+      0: {
+        type: "success",
+        message: "Assigned to 170 John.",
+      },
+    });
+  });
+
+  it("creates bulk assignment failure statuses", () => {
+    const application = new TransactionReviewApplication();
+
+    const result = application.createBulkAssignmentFailureResult({
+      assignments: [
+        {
+          index: 0,
+        },
+        {
+          index: 2,
+        },
+      ],
+      message: "API failed.",
+    });
+
+    expect(result.statuses).toEqual({
+      0: {
+        type: "error",
+        message: "API failed.",
+      },
+      2: {
+        type: "error",
+        message: "API failed.",
+      },
+    });
+  });
 });

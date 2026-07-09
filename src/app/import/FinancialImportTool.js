@@ -133,204 +133,63 @@ export default function FinancialImportTool() {
     }
   }
 
-  async function assignProperty(reviewItem, index) {
-    const propertyId = selectedProperties[index];
-    const property = properties.find((candidate) => candidate.id === propertyId);
+  function applyAssignmentResult(assignmentResult) {
+    setResult((current) => {
+      if (!current?.transactionReview) {
+        return current;
+      }
 
-    if (!property) {
-      setAssignmentStatus((current) => ({
+      return {
         ...current,
-        [index]: {
-          type: "error",
-          message: "Select a property first.",
-        },
-      }));
-      return;
-    }
+        transactionReview: current.transactionReview.map(
+          (candidate, candidateIndex) =>
+            assignmentResult.updatedByIndex[candidateIndex] || candidate
+        ),
+      };
+    });
+
+    setSelectedReviewItems((current) => {
+      const nextSelection = { ...current };
+
+      Object.keys(assignmentResult.completedSelections).forEach((index) => {
+        delete nextSelection[index];
+      });
+
+      return nextSelection;
+    });
 
     setAssignmentStatus((current) => ({
       ...current,
-      [index]: {
-        type: "saving",
-        message: "Assigning...",
-      },
+      ...assignmentResult.statuses,
     }));
+  }
 
-    try {
-      const response = await fetch("/api/transactions/assign-property", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          transaction: reviewItem.transaction,
-          property,
-          ownerId,
-          organizationId: property.organization_id ?? null,
-          reviewItem,
-        }),
-      });
+  async function assignProperty(reviewItem, index) {
+    const reviewApplication = new TransactionReviewApplication();
 
-      const payload = await response.json();
+    const assignmentResult = await reviewApplication.assignProperty({
+      reviewItem,
+      index,
+      properties,
+      selectedProperties,
+      ownerId,
+    });
 
-      if (!response.ok) {
-        throw new Error(payload.error || "Unable to assign property.");
-      }
-
-      const updatedReviewItem = payload.reviewItem || {
-        ...reviewItem,
-        resolvedProperty: property,
-        needsAssignment: false,
-        confidence: 1,
-        assignmentStatus: "assigned",
-        reviewState: "reviewed",
-      };
-
-      setResult((current) => {
-        if (!current?.transactionReview) {
-          return current;
-        }
-
-        return {
-          ...current,
-          transactionReview: current.transactionReview.map(
-            (candidate, candidateIndex) =>
-              candidateIndex === index ? updatedReviewItem : candidate
-          ),
-        };
-      });
-
-      setAssignmentStatus((current) => ({
-        ...current,
-        [index]: {
-          type: "success",
-          message: `Assigned to ${propertyLabel(property)}.`,
-        },
-      }));
-    } catch (caughtError) {
-      setAssignmentStatus((current) => ({
-        ...current,
-        [index]: {
-          type: "error",
-          message:
-            caughtError instanceof Error
-              ? caughtError.message
-              : "Unable to assign property.",
-        },
-      }));
-    }
+    applyAssignmentResult(assignmentResult);
   }
 
   async function assignSelectedProperties() {
     const reviewApplication = new TransactionReviewApplication();
 
-    const preparedAssignments =
-      reviewApplication.prepareSelectedPropertyAssignments({
-        reviews: result?.transactionReview || [],
-        properties,
-        selectedProperties,
-        selectedReviewItems,
-      });
+    const assignmentResult = await reviewApplication.assignSelectedProperties({
+      reviews: result?.transactionReview || [],
+      properties,
+      selectedProperties,
+      selectedReviewItems,
+      ownerId,
+    });
 
-    setAssignmentStatus((current) => ({
-      ...current,
-      ...preparedAssignments.statuses,
-    }));
-
-    if (!preparedAssignments.hasAssignments) {
-      return;
-    }
-
-    const assignments = preparedAssignments.assignments;
-
-    try {
-      const response = await fetch("/api/transactions/assign-properties", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(
-          reviewApplication.buildBulkAssignmentRequest({
-            assignments,
-            ownerId,
-          })
-        ),
-      });
-
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error || "Unable to assign selected properties.");
-      }
-
-      const updatedByIndex = {};
-      const nextStatuses = {};
-      const completedSelections = {};
-
-      assignments.forEach(({ index, reviewItem, property }, assignmentIndex) => {
-        const assignmentResult = payload.assignments?.[assignmentIndex];
-        const updatedReviewItem = assignmentResult?.reviewItem || {
-          ...reviewItem,
-          resolvedProperty: property,
-          needsAssignment: false,
-          confidence: 1,
-          assignmentStatus: "assigned",
-          reviewState: "reviewed",
-        };
-
-        updatedByIndex[index] = updatedReviewItem;
-        completedSelections[index] = true;
-        nextStatuses[index] =
-          reviewApplication.createAssignmentSuccessStatus(property);
-      });
-
-      setResult((current) => {
-        if (!current?.transactionReview) {
-          return current;
-        }
-
-        return {
-          ...current,
-          transactionReview: current.transactionReview.map(
-            (candidate, candidateIndex) =>
-              updatedByIndex[candidateIndex] || candidate
-          ),
-        };
-      });
-
-      setSelectedReviewItems((current) => {
-        const nextSelection = { ...current };
-
-        Object.keys(completedSelections).forEach((index) => {
-          delete nextSelection[index];
-        });
-
-        return nextSelection;
-      });
-
-      setAssignmentStatus((current) => ({
-        ...current,
-        ...nextStatuses,
-      }));
-    } catch (caughtError) {
-      const message =
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Unable to assign selected properties.";
-
-      setAssignmentStatus((current) => {
-        const nextStatuses = { ...current };
-
-        assignments.forEach(({ index }) => {
-          nextStatuses[index] = {
-            type: "error",
-            message,
-          };
-        });
-
-        return nextStatuses;
-      });
-    }
+    applyAssignmentResult(assignmentResult);
   }
  return (   
   <section className="max-w-6xl mx-auto px-6 py-12">
