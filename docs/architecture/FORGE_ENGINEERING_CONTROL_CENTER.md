@@ -46,13 +46,13 @@ The repository—not memory, documentation, or prior conversation—is the singl
 ### Repository State
 
 * Current Branch: main
-* Latest Commit: 9248730 — Extract forge dashboard loading workflows
+* Latest Commit: 088820b — Extract investor property application workflows
 * Repository Status: Clean
 * Repository Clean: Yes
 
 ### Current Architectural Objective
 
-Continue application-layer consolidation by reducing React presentation components to rendering, user interaction, transient UI state, and presentation formatting while moving workflow orchestration and immutable view-model construction into the application layer without changing production behavior.
+Continue application-layer consolidation by reducing React presentation components to rendering, user interaction, transient UI state, routing, and presentation formatting while moving workflow orchestration, dependency coordination, persistence coordination, and immutable view-model construction into application services without changing production behavior.
 
 ### Current Architectural Phase
 
@@ -60,7 +60,7 @@ Application Layer Consolidation
 
 ### Current Repository State
 
-The application-layer consolidation campaign continues to progress through presentation reduction.
+The application-layer consolidation campaign has expanded beyond the financial subsystem.
 
 Completed during this engineering cycle:
 
@@ -77,6 +77,10 @@ Completed during this engineering cycle:
 * FinancialSnapshotTool now primarily owns rendering, form state, user interaction, memoized application execution, and presentation formatting.
 * ForgeFinancialDashboardApplication extracted snapshot/operations fetch coordination, response validation, loading and error models, status item composition, and activity view-model construction from the Forge Financial dashboard page.
 * Forge Financial dashboard page now primarily owns rendering, React lifecycle state, and presentation formatting.
+* Financial application exports were centralized through `src/application/financial/index.js`.
+* InvestorPropertyApplication established the first non-financial application service.
+* Investor property creation, loading, update, and delete workflows moved from React pages into `src/application/investors/InvestorPropertyApplication.js`.
+* Investor add-property and edit-property pages now primarily own React state, lifecycle, routing, user interaction, and rendering.
 
 ### Verification Status
 
@@ -87,7 +91,7 @@ Completed during this engineering cycle:
 
 ### Current Risk
 
-Continue reducing React presentation components without allowing application orchestration to migrate back into presentation code. Preserve existing domain boundaries, production APIs, routes, ledger behavior, and immutable application models throughout the remaining consolidation work.
+Continue reducing React presentation components without allowing application orchestration to migrate back into presentation code. Preserve existing domain boundaries, production APIs, routes, ledger behavior, repository behavior, storage behavior, and immutable application models throughout the remaining consolidation work.
 
 ### Blocking Issues
 
@@ -95,9 +99,9 @@ None.
 
 ### Documentation Status
 
-* Engineering Control Center synchronized.
+* Engineering Control Center synchronization in progress.
 * Workflow synchronized.
-* Application-layer consolidation synchronized through Forge dashboard loading workflow extraction.
+* Architecture Roadmap pending synchronization with investor application-layer milestone.
 * Platform Roadmap pending synchronization with the latest application-layer milestone.
 
 ---
