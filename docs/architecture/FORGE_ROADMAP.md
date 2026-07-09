@@ -1315,6 +1315,9 @@ Continue reducing presentation components to rendering, user interaction, and tr
 * Introduced `FinancialSnapshotViewApplication` as the presentation-facing application service for the Financial Snapshot page.
 * Moved ledger composition, chart construction, report generation, KPI calculation, health-message evaluation, and immutable snapshot view-model creation out of `FinancialSnapshotTool`.
 * Preserved all production APIs, domain services, routes, and runtime behavior.
+* Introduced `ForgeFinancialDashboardApplication` as the presentation-facing application service for the Forge Financial dashboard.
+* Moved snapshot/operations fetch coordination, response validation, loading/error models, status items, and activity view-model composition out of `src/app/forge/financial/page.js`.
+* Reduced the Forge Financial dashboard page to rendering, React lifecycle state, and presentation formatting.
 
 #### Protected Rule
 
@@ -1335,6 +1338,7 @@ Production behavior must remain unchanged while architectural boundaries become 
 - ✓ Production build passed.
 - ✓ Repository synchronized with `origin/main`.
 - ✓ FinancialSnapshotViewApplication tests passed.
+- ✓ ForgeFinancialDashboardApplication tests passed.
 
 **Status:** Complete
 
