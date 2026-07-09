@@ -26,7 +26,7 @@ Architecture should evolve deliberately and infrequently.
 
 # Current Architectural Position
 
-Financial Forge has completed its foundational accounting architecture and now employs application composition to assemble infrastructure, repositories, and domain services while preserving strict architectural boundaries.
+Financial Forge has completed its foundational accounting architecture and now employs application services to coordinate workflows, persistence, external services, and immutable presentation-facing view models while preserving strict architectural boundaries.
 
 The Ledger remains the single accounting authority.
 
@@ -36,7 +36,11 @@ Repository contracts define persistence boundaries.
 
 Application composition assembles infrastructure and domain dependencies.
 
-Routes orchestrate application flow.
+Application services orchestrate workflow coordination, dependency coordination, persistence coordination, external service coordination, immutable view-model construction, error normalization, and response validation.
+
+Routes remain thin delivery boundaries.
+
+React presentation owns rendering, React lifecycle, transient UI state, event handlers, routing, presentation formatting, and user interaction.
 
 Domain services execute business behavior.
 
@@ -59,11 +63,11 @@ Repository Contracts
         ↓
 Application Composition
         ↓
+Application Services
+        ↓
 Domain Services
         ↓
-API Routes
-        ↓
-React Presentation
+API Routes / React Presentation
 ```
 
 Each layer has a single responsibility.
@@ -1305,7 +1309,7 @@ UI
 
 #### Purpose
 
-Continue reducing presentation components to rendering, user interaction, and transient UI state while moving workflow orchestration and immutable view-model construction into dedicated application services.
+Continue reducing presentation components to rendering, user interaction, routing, formatting, React lifecycle, and transient UI state while moving workflow orchestration, persistence coordination, external service coordination, response validation, error normalization, and immutable view-model construction into dedicated application services.
 
 #### Delivered
 
@@ -1314,21 +1318,26 @@ Continue reducing presentation components to rendering, user interaction, and tr
 * Moved financial import initialization into the application layer.
 * Moved assignment state reconciliation from React into immutable application result models.
 * Reduced `FinancialImportTool` toward presentation-only responsibilities.
+* Centralized financial application exports.
 * Introduced `ForgeDashboardApplication` as the presentation-facing application service for the FORGE dashboard.
 * Centralized dashboard request construction, fallback response creation, dashboard normalization, and immutable dashboard view-model composition.
 * Reduced the FORGE dashboard page to rendering, fetch lifecycle management, and transient UI state.
 * Introduced `FinancialSnapshotViewApplication` as the presentation-facing application service for the Financial Snapshot page.
 * Moved ledger composition, chart construction, report generation, KPI calculation, health-message evaluation, and immutable snapshot view-model creation out of `FinancialSnapshotTool`.
-* Preserved all production APIs, domain services, routes, and runtime behavior.
 * Introduced `ForgeFinancialDashboardApplication` as the presentation-facing application service for the Forge Financial dashboard.
 * Moved snapshot/operations fetch coordination, response validation, loading/error models, status items, and activity view-model composition out of `src/app/forge/financial/page.js`.
 * Reduced the Forge Financial dashboard page to rendering, React lifecycle state, and presentation formatting.
+* Introduced `InvestorPropertyApplication` as the first non-financial application service.
+* Moved investor property create, load, update, and delete workflows into the application layer.
+* Reduced investor add-property and edit-property pages to React lifecycle, transient UI state, routing, rendering, and user interaction.
+* Confirmed application-layer consolidation now extends beyond the financial subsystem.
+* Preserved all production APIs, domain services, routes, and runtime behavior.
 
 #### Protected Rule
 
-Presentation components render.
+Presentation components render and handle user interaction.
 
-Application services coordinate workflows and immutable presentation models.
+Application services coordinate workflows, dependencies, persistence, external services, immutable presentation models, response validation, and error normalization.
 
 Domain services own business rules.
 
@@ -1339,11 +1348,12 @@ Production behavior must remain unchanged while architectural boundaries become 
 - ✓ TransactionReviewApplication tests passed.
 - ✓ FinancialImportApplication tests passed.
 - ✓ ForgeDashboardApplication tests passed.
+- ✓ FinancialSnapshotViewApplication tests passed.
+- ✓ ForgeFinancialDashboardApplication tests passed.
+- ✓ InvestorPropertyApplication tests passed.
 - ✓ Mutation Firewall passed.
 - ✓ Production build passed.
 - ✓ Repository synchronized with `origin/main`.
-- ✓ FinancialSnapshotViewApplication tests passed.
-- ✓ ForgeFinancialDashboardApplication tests passed.
 
 **Status:** Complete
 
