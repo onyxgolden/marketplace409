@@ -1312,6 +1312,8 @@ Continue reducing presentation components to rendering, user interaction, and tr
 * Introduced `ForgeDashboardApplication` as the presentation-facing application service for the FORGE dashboard.
 * Centralized dashboard request construction, fallback response creation, dashboard normalization, and immutable dashboard view-model composition.
 * Reduced the FORGE dashboard page to rendering, fetch lifecycle management, and transient UI state.
+* Introduced `FinancialSnapshotViewApplication` as the presentation-facing application service for the Financial Snapshot page.
+* Moved ledger composition, chart construction, report generation, KPI calculation, health-message evaluation, and immutable snapshot view-model creation out of `FinancialSnapshotTool`.
 * Preserved all production APIs, domain services, routes, and runtime behavior.
 
 #### Protected Rule
@@ -1332,6 +1334,7 @@ Production behavior must remain unchanged while architectural boundaries become 
 - ✓ Mutation Firewall passed.
 - ✓ Production build passed.
 - ✓ Repository synchronized with `origin/main`.
+- ✓ FinancialSnapshotViewApplication tests passed.
 
 **Status:** Complete
 

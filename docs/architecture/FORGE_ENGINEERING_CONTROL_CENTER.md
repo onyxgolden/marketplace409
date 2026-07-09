@@ -46,13 +46,13 @@ The repository—not memory, documentation, or prior conversation—is the singl
 ### Repository State
 
 * Current Branch: main
-* Latest Commit: dc34495 — Extract forge dashboard view model application
+* Latest Commit: a7f4d38 — Extract financial snapshot view application
 * Repository Status: Clean
 * Repository Clean: Yes
 
 ### Current Architectural Objective
 
-Continue application-layer consolidation by reducing React presentation components to rendering, user interaction, and transient UI state while moving workflow orchestration and immutable view-model construction into the application layer without changing production behavior.
+Continue application-layer consolidation by reducing React presentation components to rendering, user interaction, transient UI state, and presentation formatting while moving workflow orchestration and immutable view-model construction into the application layer without changing production behavior.
 
 ### Current Architectural Phase
 
@@ -60,9 +60,7 @@ Application Layer Consolidation
 
 ### Current Repository State
 
-The Financial Import presentation reduction campaign has reached a stable milestone.
-
-The Forge Dashboard application-layer consolidation has now begun.
+The application-layer consolidation campaign continues to progress through presentation reduction.
 
 Completed during this engineering cycle:
 
@@ -73,7 +71,8 @@ Completed during this engineering cycle:
 * Immutable application result models established for initialization, imports, and assignment workflows.
 * FinancialImportTool now primarily owns React state, rendering, and user interaction.
 * ForgeDashboardApplication extracted immutable dashboard request construction, fallback state creation, dashboard normalization, and dashboard view-model composition from the Forge dashboard React page.
-* Forge dashboard presentation reduced toward rendering and fetch lifecycle responsibilities.
+* FinancialSnapshotViewApplication extracted ledger composition, chart construction, report generation, KPI calculation, health-message evaluation, and immutable snapshot view-model creation from the Financial Snapshot React presentation.
+* FinancialSnapshotTool now primarily owns rendering, form state, user interaction, memoized application execution, and presentation formatting.
 
 ### Verification Status
 
@@ -84,7 +83,7 @@ Completed during this engineering cycle:
 
 ### Current Risk
 
-Continue architectural refinement without moving presentation concerns into the application layer or business rules into React components. Preserve existing production APIs, routes, and domain behavior while reducing remaining presentation-layer orchestration.
+Continue reducing React components without allowing application orchestration to migrate back into presentation code. Preserve existing domain boundaries, production APIs, routes, ledger behavior, and immutable application models throughout the remaining consolidation work.
 
 ### Blocking Issues
 
@@ -93,9 +92,9 @@ None.
 ### Documentation Status
 
 * Engineering Control Center synchronized.
-* Workflow pending verification against repository.
 * Platform Roadmap pending verification against repository.
-* Forge dashboard application-layer extraction milestone recorded.
+* Workflow synchronized.
+* Financial Snapshot application-layer extraction milestone recorded.
 
 ---
 
