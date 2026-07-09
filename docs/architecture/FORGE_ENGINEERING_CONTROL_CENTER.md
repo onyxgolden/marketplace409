@@ -41,12 +41,12 @@ The repository—not memory, documentation, or prior conversation—is the singl
 
 ## Last Verified
 
-**Verified:** 2026-07-08
+**Verified:** 2026-07-09
 
 ### Repository State
 
 * Current Branch: main
-* Latest Commit: 154683e — Extract forge financial dashboard application workflow
+* Latest Commit: 9248730 — Extract forge dashboard loading workflows
 * Repository Status: Clean
 * Repository Clean: Yes
 
@@ -71,6 +71,8 @@ Completed during this engineering cycle:
 * Immutable application result models established for initialization, imports, and assignment workflows.
 * FinancialImportTool now primarily owns React state, rendering, and user interaction.
 * ForgeDashboardApplication extracted immutable dashboard request construction, fallback state creation, dashboard normalization, and dashboard view-model composition from the Forge dashboard React page.
+* ForgeDashboardApplication now also owns dashboard intelligence fetch orchestration, read-model fetch orchestration, HTTP response validation, error normalization, and non-blocking read-model failure policy.
+* Forge dashboard page now primarily owns rendering, React lifecycle, transient UI state, memoized application execution, and presentation formatting.
 * FinancialSnapshotViewApplication extracted ledger composition, chart construction, report generation, KPI calculation, health-message evaluation, and immutable snapshot view-model creation from the Financial Snapshot React presentation.
 * FinancialSnapshotTool now primarily owns rendering, form state, user interaction, memoized application execution, and presentation formatting.
 * ForgeFinancialDashboardApplication extracted snapshot/operations fetch coordination, response validation, loading and error models, status item composition, and activity view-model construction from the Forge Financial dashboard page.
@@ -85,7 +87,7 @@ Completed during this engineering cycle:
 
 ### Current Risk
 
-Continue reducing React components without allowing application orchestration to migrate back into presentation code. Preserve existing domain boundaries, production APIs, routes, ledger behavior, and immutable application models throughout the remaining consolidation work.
+Continue reducing React presentation components without allowing application orchestration to migrate back into presentation code. Preserve existing domain boundaries, production APIs, routes, ledger behavior, and immutable application models throughout the remaining consolidation work.
 
 ### Blocking Issues
 
@@ -94,9 +96,9 @@ None.
 ### Documentation Status
 
 * Engineering Control Center synchronized.
-* Platform Roadmap pending verification against repository.
 * Workflow synchronized.
-* Forge Financial dashboard application-layer extraction milestone pending roadmap synchronization.
+* Application-layer consolidation synchronized through Forge dashboard loading workflow extraction.
+* Platform Roadmap pending synchronization with the latest application-layer milestone.
 
 ---
 

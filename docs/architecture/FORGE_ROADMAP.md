@@ -479,6 +479,11 @@ Introduce reusable application services that encapsulate business use cases whil
 * Financial Snapshot API refactored to consume application services
 * API routes preserved as thin HTTP orchestration endpoints
 * Reusable application-service pattern established for future FORGE domains
+* TransactionReviewApplication consolidated transaction assignment orchestration outside React presentation.
+* FinancialImportApplication consolidated financial import orchestration and initialization workflows outside React presentation.
+* FinancialSnapshotViewApplication consolidated snapshot ledger composition, report generation, KPI calculation, and immutable view-model construction outside React presentation.
+* ForgeFinancialDashboardApplication consolidated Forge Financial dashboard loading, response validation, status modeling, and activity view-model construction outside React presentation.
+* ForgeDashboardApplication consolidated Forge dashboard request construction, dashboard intelligence loading, read-model loading, error normalization, non-blocking read-model policy, and immutable dashboard view-model construction outside React presentation.
 
 ### Protected Rule
 
