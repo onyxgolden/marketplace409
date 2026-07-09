@@ -324,4 +324,37 @@ export class TransactionReviewApplication {
       message: `Assigned to ${propertyLabel(property)}.`,
     });
   }
+
+  applyAssignmentResult({
+    currentResult = null,
+    selectedReviewItems = {},
+    assignmentStatus = {},
+    assignmentResult = {},
+  } = {}) {
+    const nextResult =
+      currentResult?.transactionReview
+        ? {
+            ...currentResult,
+            transactionReview: currentResult.transactionReview.map(
+              (candidate, candidateIndex) =>
+                assignmentResult.updatedByIndex?.[candidateIndex] || candidate
+            ),
+          }
+        : currentResult;
+
+    const nextSelectedReviewItems = { ...selectedReviewItems };
+
+    Object.keys(assignmentResult.completedSelections || {}).forEach((index) => {
+      delete nextSelectedReviewItems[index];
+    });
+
+    return Object.freeze({
+      result: nextResult,
+      selectedReviewItems: Object.freeze(nextSelectedReviewItems),
+      assignmentStatus: Object.freeze({
+        ...assignmentStatus,
+        ...(assignmentResult.statuses || {}),
+      }),
+    });
+  }
 }

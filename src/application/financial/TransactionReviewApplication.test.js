@@ -301,4 +301,62 @@ describe("TransactionReviewApplication", () => {
       },
     });
   });
+  it("applies assignment results to presentation state", () => {
+    const application = new TransactionReviewApplication();
+    const originalReviewItem = buildReviewItem();
+    const updatedReviewItem = {
+      ...originalReviewItem,
+      needsAssignment: false,
+    };
+
+    const result = application.applyAssignmentResult({
+      currentResult: {
+        transactionReview: [originalReviewItem],
+        records: [],
+      },
+      selectedReviewItems: {
+        0: true,
+        1: true,
+      },
+      assignmentStatus: {
+        1: {
+          type: "error",
+          message: "Existing status.",
+        },
+      },
+      assignmentResult: {
+        updatedByIndex: {
+          0: updatedReviewItem,
+        },
+        completedSelections: {
+          0: true,
+        },
+        statuses: {
+          0: {
+            type: "success",
+            message: "Assigned.",
+          },
+        },
+      },
+    });
+
+    expect(result.result.transactionReview).toEqual([updatedReviewItem]);
+    expect(result.selectedReviewItems).toEqual({
+      1: true,
+    });
+    expect(result.assignmentStatus).toEqual({
+      0: {
+        type: "success",
+        message: "Assigned.",
+      },
+      1: {
+        type: "error",
+        message: "Existing status.",
+      },
+    });
+
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.selectedReviewItems)).toBe(true);
+    expect(Object.isFrozen(result.assignmentStatus)).toBe(true);
+  });
 });

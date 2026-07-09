@@ -96,34 +96,18 @@ export default function FinancialImportTool() {
   }
 
   function applyAssignmentResult(assignmentResult) {
-    setResult((current) => {
-      if (!current?.transactionReview) {
-        return current;
-      }
+    const reviewApplication = new TransactionReviewApplication();
 
-      return {
-        ...current,
-        transactionReview: current.transactionReview.map(
-          (candidate, candidateIndex) =>
-            assignmentResult.updatedByIndex[candidateIndex] || candidate
-        ),
-      };
+    const nextState = reviewApplication.applyAssignmentResult({
+      currentResult: result,
+      selectedReviewItems,
+      assignmentStatus,
+      assignmentResult,
     });
 
-    setSelectedReviewItems((current) => {
-      const nextSelection = { ...current };
-
-      Object.keys(assignmentResult.completedSelections).forEach((index) => {
-        delete nextSelection[index];
-      });
-
-      return nextSelection;
-    });
-
-    setAssignmentStatus((current) => ({
-      ...current,
-      ...assignmentResult.statuses,
-    }));
+    setResult(nextState.result);
+    setSelectedReviewItems(nextState.selectedReviewItems);
+    setAssignmentStatus(nextState.assignmentStatus);
   }
 
   async function assignProperty(reviewItem, index) {
