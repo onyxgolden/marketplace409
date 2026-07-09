@@ -21,64 +21,17 @@ export default function ForgePage() {
   useEffect(() => {
     let isMounted = true;
 
-    async function loadDashboardIntelligence() {
-      try {
-        const response = await fetch("/api/financial/dashboard-intelligence", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(
-            ForgeDashboardApplication.buildDashboardRequestInput(),
-          ),
-        });
-
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            payload?.error ?? "Unable to load dashboard intelligence.",
-          );
-        }
-
-        if (isMounted) {
-          setDashboardIntelligence(
-            ForgeDashboardApplication.normalizeDashboardIntelligence(
-              payload.data,
-            ),
-          );
-        }
-      } catch (error) {
-        if (isMounted) {
-          setDashboardIntelligence(
-            ForgeDashboardApplication.buildErrorDashboardIntelligence(error),
-          );
-        }
+    ForgeDashboardApplication.loadDashboardIntelligence().then((result) => {
+      if (isMounted) {
+        setDashboardIntelligence(result);
       }
-    }
+    });
 
-    async function loadReadModels() {
-      try {
-        const response = await fetch(
-          "/api/financial/read-models?business=true&investor=true&kpi=true&executive=true",
-        );
-
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload?.error ?? "Read models failed.");
-        }
-
-        if (isMounted) {
-          setReadModels(payload.data);
-        }
-      } catch (error) {
-        console.warn("Read models failed (non-blocking):", error);
+    ForgeDashboardApplication.loadReadModels().then((result) => {
+      if (isMounted && result) {
+        setReadModels(result);
       }
-    }
-
-    loadDashboardIntelligence();
-    loadReadModels();
+    });
 
     return () => {
       isMounted = false;

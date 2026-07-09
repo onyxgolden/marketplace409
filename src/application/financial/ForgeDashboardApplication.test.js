@@ -122,4 +122,90 @@ describe("ForgeDashboardApplication", () => {
       detail: "1 anomalies detected.",
     });
   });
+  test("loads dashboard intelligence through injected fetcher", async () => {
+    const fetcher = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: {
+          auditFindings: { anomalies: [] },
+          riskDashboard: {
+            summary: { status: "Ready", summary: "Loaded." },
+            assessment: { recommendations: [] },
+            executiveBriefing: { outlook: "Stable." },
+          },
+          netWorth: {
+            totalAssets: 100,
+            totalLiabilities: 25,
+            netWorth: 75,
+            debtToAssetRatio: 0.25,
+          },
+        },
+      }),
+    }));
+
+    const result = await ForgeDashboardApplication.loadDashboardIntelligence({
+      fetcher,
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/financial/dashboard-intelligence",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(result.riskDashboard.summary.status).toBe("Ready");
+    expect(result.netWorth.netWorth).toBe(75);
+  });
+
+  test("normalizes dashboard intelligence failures into fallback state", async () => {
+    const fetcher = vi.fn(async () => ({
+      ok: false,
+      json: async () => ({ error: "API failed." }),
+    }));
+
+    const result = await ForgeDashboardApplication.loadDashboardIntelligence({
+      fetcher,
+    });
+
+    expect(result.auditFindings.error).toBe("API failed.");
+    expect(result.riskDashboard.summary.status).toBe("Review");
+  });
+
+  test("loads read models through injected fetcher", async () => {
+    const data = {
+      businessDashboard: { total: 1 },
+      investorDashboard: { total: 2 },
+      kpiModel: { total: 3 },
+      executiveSummary: { total: 4 },
+    };
+
+    const fetcher = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data }),
+    }));
+
+    const result = await ForgeDashboardApplication.loadReadModels({ fetcher });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/financial/read-models?business=true&investor=true&kpi=true&executive=true",
+    );
+    expect(result).toBe(data);
+  });
+
+  test("keeps read model failures non-blocking", async () => {
+    const fetcher = vi.fn(async () => ({
+      ok: false,
+      json: async () => ({ error: "Read models failed." }),
+    }));
+    const logger = { warn: vi.fn() };
+
+    const result = await ForgeDashboardApplication.loadReadModels({
+      fetcher,
+      logger,
+    });
+
+    expect(result).toBeNull();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Read models failed (non-blocking):",
+      expect.any(Error),
+    );
+  });
 });

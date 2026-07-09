@@ -56,6 +56,49 @@ export class ForgeDashboardApplication {
     return buildDashboardIntelligenceResponse(input);
   }
 
+  static async loadDashboardIntelligence({ fetcher = fetch } = {}) {
+    try {
+      const response = await fetcher("/api/financial/dashboard-intelligence", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(this.buildDashboardRequestInput()),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error ?? "Unable to load dashboard intelligence.",
+        );
+      }
+
+      return this.normalizeDashboardIntelligence(payload.data);
+    } catch (error) {
+      return this.buildErrorDashboardIntelligence(error);
+    }
+  }
+
+  static async loadReadModels({ fetcher = fetch, logger = console } = {}) {
+    try {
+      const response = await fetcher(
+        "/api/financial/read-models?business=true&investor=true&kpi=true&executive=true",
+      );
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Read models failed.");
+      }
+
+      return payload.data;
+    } catch (error) {
+      logger.warn("Read models failed (non-blocking):", error);
+      return null;
+    }
+  }
+
   static buildViewModel(dashboardIntelligence) {
     const normalized = this.normalizeDashboardIntelligence(
       dashboardIntelligence ?? this.buildLoadingDashboardIntelligence(),
