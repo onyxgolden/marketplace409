@@ -64,6 +64,7 @@ During implementation:
 - Never guess repository code or replacement boundaries. Every replacement must be anchored to exact START and END text copied from verified repository inspection.
 - Combine related repository inspections into a single terminal command whenever practical. Inspection commands should continue gathering evidence even if one inspection returns no results.
 - Use repository-native tooling and commands. Never assume a framework; inspect the repository first (for example, use Vitest commands for repositories that use Vitest rather than Jest-specific options).
+- Business workflow belongs in the application layer. React components own presentation and transient UI state only; domain objects own business rules; application services orchestrate business use cases.
 - Complete one verified step before introducing additional architectural discussion.
 - Every response should leave the next engineering action unambiguous.
 
