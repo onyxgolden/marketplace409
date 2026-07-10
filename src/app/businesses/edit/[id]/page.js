@@ -1,104 +1,94 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Header from "@/components/Header";
+import { BusinessEditApplication } from "@/application";
 import { supabase } from "@/lib/supabase";
 import { uploadImage } from "@/lib/uploadImage";
-import { useEffect, useState } from "react";
+
+const businessEditApplication = new BusinessEditApplication({
+  supabase,
+  imageUploader: uploadImage,
+});
+
+const TRUST_TAGS = [
+  "Community Listing",
+  "Texas Made",
+  "Veteran Owned",
+  "Family Owned",
+  "Local Farm",
+  "Licensed Contractor",
+  "Shelter Partner",
+  "Non Profit",
+];
 
 export default function EditBusinessPage({ params }) {
   const [businessId, setBusinessId] = useState("");
+  const [form, setForm] = useState(() =>
+    businessEditApplication.getInitialBusinessEditForm(),
+  );
+  const [newImageFile, setNewImageFile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState("");
-  const [city, setCity] = useState("");
-  const [phone, setPhone] = useState("");
-  const [websiteUrl, setWebsiteUrl] = useState("");
-  const [facebookUrl, setFacebookUrl] = useState("");
-  const [description, setDescription] = useState("");
-  const [trustTags, setTrustTags] = useState([]);
-  const [imageUrl, setImageUrl] = useState("");
-  const [newImageFile, setNewImageFile] = useState(null);
+  function updateField(field, value) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }));
+  }
 
   function toggleTag(tag) {
-    if (trustTags.includes(tag)) {
-      setTrustTags(trustTags.filter((t) => t !== tag));
-    } else {
-      setTrustTags([...trustTags, tag]);
-    }
+    setForm((currentForm) => ({
+      ...currentForm,
+      trustTags: currentForm.trustTags.includes(tag)
+        ? currentForm.trustTags.filter((candidate) => candidate !== tag)
+        : [...currentForm.trustTags, tag],
+    }));
   }
 
   useEffect(() => {
     async function start() {
       const resolvedParams = await params;
-      setBusinessId(resolvedParams.id);
-      loadBusiness(resolvedParams.id);
+      const resolvedBusinessId = resolvedParams.id;
+
+      setBusinessId(resolvedBusinessId);
+
+      const result =
+        await businessEditApplication.loadBusiness(resolvedBusinessId);
+
+      if (!result.ok) {
+        alert(result.message);
+        window.location.href = result.redirectTo;
+        return;
+      }
+
+      setForm(result.form);
+      setLoading(false);
     }
 
     start();
   }, [params]);
 
-  async function loadBusiness(id) {
-    const { data, error } = await supabase
-      .from("businesses")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (error || !data) {
-      alert("Business not found.");
-      window.location.href = "/businesses";
-      return;
-    }
-
-    setName(data.name || "");
-    setCategory(data.category || "");
-    setCity(data.city || "");
-    setPhone(data.phone || "");
-    setWebsiteUrl(data.website_url || "");
-    setFacebookUrl(data.facebook_url || "");
-    setDescription(data.description || "");
-    setTrustTags(data.trust_tags || []);
-    setImageUrl(data.image_url || "");
-    setLoading(false);
-  }
-
   async function handleUpdate() {
     setSaving(true);
 
-    const finalImageUrl = await uploadImage({
-      file: newImageFile,
-      currentImageUrl: imageUrl,
-      folder: "businesses",
-      prefix: "business",
-      recordId: businessId,
+    const result = await businessEditApplication.updateBusiness({
+      businessId,
+      form,
+      newImageFile,
     });
-
-    const { error } = await supabase
-      .from("businesses")
-      .update({
-        name,
-        category,
-        city,
-        phone,
-        website_url: websiteUrl,
-        facebook_url: facebookUrl,
-        description,
-        trust_tags: trustTags,
-        image_url: finalImageUrl,
-      })
-      .eq("id", businessId);
 
     setSaving(false);
 
-    if (error) {
-      alert("Error updating business");
-      console.log(error);
-    } else {
-      alert("Business updated!");
-      window.location.href = "/businesses";
+    if (!result.ok) {
+      alert(result.message);
+      console.log(result.error);
+      return;
     }
+
+    alert(result.message);
+    window.location.href = result.redirectTo;
   }
 
   if (loading) {
@@ -123,12 +113,12 @@ export default function EditBusinessPage({ params }) {
           <h1 className="text-4xl font-extrabold mb-8">Edit Business</h1>
 
           <div className="space-y-6">
-            {imageUrl && (
+            {form.imageUrl && (
               <div>
                 <label className="block font-bold mb-3">Current Image</label>
                 <img
-                  src={imageUrl}
-                  alt={name}
+                  src={form.imageUrl}
+                  alt={form.name}
                   className="w-full max-h-80 object-cover rounded-2xl border"
                 />
               </div>
@@ -139,7 +129,9 @@ export default function EditBusinessPage({ params }) {
               <input
                 type="file"
                 accept="image/*"
-                onChange={(e) => setNewImageFile(e.target.files[0])}
+                onChange={(event) =>
+                  setNewImageFile(event.target.files?.[0] || null)
+                }
                 className="w-full p-4 rounded-2xl border border-gray-300"
               />
               <p className="text-sm text-gray-500 mt-2">
@@ -150,16 +142,16 @@ export default function EditBusinessPage({ params }) {
             <input
               type="text"
               placeholder="Business Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              value={form.name}
+              onChange={(event) => updateField("name", event.target.value)}
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="text"
               placeholder="Category"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              value={form.category}
+              onChange={(event) => updateField("category", event.target.value)}
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
@@ -167,23 +159,14 @@ export default function EditBusinessPage({ params }) {
               <label className="block font-bold mb-3">Trust Tags</label>
 
               <div className="grid grid-cols-2 gap-3">
-                {[
-                  "Community Listing",
-                  "Texas Made",
-                  "Veteran Owned",
-                  "Family Owned",
-                  "Local Farm",
-                  "Licensed Contractor",
-                  "Shelter Partner",
-                  "Non Profit",
-                ].map((tag) => (
+                {TRUST_TAGS.map((tag) => (
                   <label
                     key={tag}
                     className="flex items-center gap-2 bg-gray-100 p-3 rounded-xl"
                   >
                     <input
                       type="checkbox"
-                      checked={trustTags.includes(tag)}
+                      checked={form.trustTags.includes(tag)}
                       onChange={() => toggleTag(tag)}
                     />
 
@@ -196,39 +179,45 @@ export default function EditBusinessPage({ params }) {
             <input
               type="text"
               placeholder="City"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
+              value={form.city}
+              onChange={(event) => updateField("city", event.target.value)}
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="text"
               placeholder="Phone"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              value={form.phone}
+              onChange={(event) => updateField("phone", event.target.value)}
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="text"
               placeholder="Website URL"
-              value={websiteUrl}
-              onChange={(e) => setWebsiteUrl(e.target.value)}
+              value={form.websiteUrl}
+              onChange={(event) =>
+                updateField("websiteUrl", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="text"
               placeholder="Facebook URL"
-              value={facebookUrl}
-              onChange={(e) => setFacebookUrl(e.target.value)}
+              value={form.facebookUrl}
+              onChange={(event) =>
+                updateField("facebookUrl", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <textarea
               placeholder="Business Description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              value={form.description}
+              onChange={(event) =>
+                updateField("description", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300 h-40"
             />
 
