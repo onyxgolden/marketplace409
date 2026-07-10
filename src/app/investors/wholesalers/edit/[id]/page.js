@@ -2,97 +2,57 @@
 
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
+import { InvestorWholesalerApplication } from "@/application/investors";
 import { supabase } from "@/lib/supabase";
+
+const application = new InvestorWholesalerApplication({ supabase });
 
 export default function EditWholesalerPage({ params }) {
   const [contactId, setContactId] = useState("");
   const [loading, setLoading] = useState(true);
-
-  const [name, setName] = useState("");
-  const [companyName, setCompanyName] = useState("");
-  const [contactType, setContactType] = useState("");
-  const [countiesServed, setCountiesServed] = useState("");
-
-  const [city, setCity] = useState("");
-  const [serviceArea, setServiceArea] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [websiteUrl, setWebsiteUrl] = useState("");
-  const [facebookUrl, setFacebookUrl] = useState("");
-  const [dealTypes, setDealTypes] = useState("");
-  const [buyerTypes, setBuyerTypes] = useState("");
-  const [notes, setNotes] = useState("");
-  const [communityContact, setCommunityContact] = useState(false);
+  const [form, setForm] = useState(application.getInitialWholesalerForm());
 
   useEffect(() => {
     async function start() {
       const resolvedParams = await params;
       setContactId(resolvedParams.id);
-      loadContact(resolvedParams.id);
+
+      const result = await application.loadWholesaler(resolvedParams.id);
+
+      if (!result.ok) {
+        alert(result.message);
+        window.location.href = result.redirectTo;
+        return;
+      }
+
+      setForm(result.form);
+      setLoading(false);
     }
 
     start();
   }, [params]);
 
-  async function loadContact(id) {
-    const { data, error } = await supabase
-      .from("investor_wholesalers")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (error || !data) {
-      alert("Wholesaler contact not found");
-      window.location.href = "/investors/wholesalers";
-      return;
-    }
-
-    setName(data.name || "");
-    setCompanyName(data.company_name || "");
-    setContactType(data.contact_type || "");
-    setCountiesServed(data.counties_served || "");
-    setCity(data.city || "");
-    setServiceArea(data.service_area || "");
-    setPhone(data.phone || "");
-    setEmail(data.email || "");
-    setWebsiteUrl(data.website_url || "");
-    setFacebookUrl(data.facebook_url || "");
-    setDealTypes(data.deal_types || "");
-    setBuyerTypes(data.buyer_types || "");
-    setNotes(data.notes || "");
-    setCommunityContact(data.community_contact || false);
-    setLoading(false);
+  function updateField(field, value) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }));
   }
 
   async function handleUpdate() {
-    const { error } = await supabase
-      .from("investor_wholesalers")
-      .update({
-        name,
-        company_name: companyName,
-        contact_type: contactType,
-        counties_served: countiesServed,
-        city,
-        service_area: serviceArea,
-        phone,
-        email,
-        website_url: websiteUrl,
-        facebook_url: facebookUrl,
-        deal_types: dealTypes,
-        buyer_types: buyerTypes,
-        notes,
-        community_contact: communityContact,
-      })
-      .eq("id", contactId);
+    const result = await application.updateWholesaler({
+      wholesalerId: contactId,
+      form,
+    });
 
-    if (error) {
-      alert("Error updating wholesaler contact: " + error.message);
-      console.log(error);
+    if (!result.ok) {
+      alert("Error updating wholesaler contact: " + result.message);
+      console.log(result.error);
       return;
     }
 
-    alert("Wholesaler contact updated");
-    window.location.href = "/investors/wholesalers";
+    alert(result.message);
+    window.location.href = result.redirectTo;
   }
 
   if (loading) {
@@ -119,110 +79,27 @@ export default function EditWholesalerPage({ params }) {
           </h1>
 
           <div className="space-y-4">
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Contact Name"
-              className="w-full p-4 border rounded-xl"
-            />
+            <input value={form.name} onChange={(e) => updateField("name", e.target.value)} placeholder="Contact Name" className="w-full p-4 border rounded-xl" />
+            <input value={form.companyName} onChange={(e) => updateField("companyName", e.target.value)} placeholder="Company Name" className="w-full p-4 border rounded-xl" />
+            <input value={form.contactType} onChange={(e) => updateField("contactType", e.target.value)} placeholder="Contact Type: Cash Buyer, Wholesaler, Bird Dog, Land Buyer" className="w-full p-4 border rounded-xl" />
+            <input value={form.countiesServed} onChange={(e) => updateField("countiesServed", e.target.value)} placeholder="Counties Served: Orange, Jefferson, Hardin" className="w-full p-4 border rounded-xl" />
+            <input value={form.city} onChange={(e) => updateField("city", e.target.value)} placeholder="City" className="w-full p-4 border rounded-xl" />
+            <input value={form.serviceArea} onChange={(e) => updateField("serviceArea", e.target.value)} placeholder="Service Area / Counties" className="w-full p-4 border rounded-xl" />
+            <input value={form.phone} onChange={(e) => updateField("phone", e.target.value)} placeholder="Phone" className="w-full p-4 border rounded-xl" />
+            <input value={form.email} onChange={(e) => updateField("email", e.target.value)} placeholder="Email" className="w-full p-4 border rounded-xl" />
+            <input value={form.websiteUrl} onChange={(e) => updateField("websiteUrl", e.target.value)} placeholder="Website URL" className="w-full p-4 border rounded-xl" />
+            <input value={form.facebookUrl} onChange={(e) => updateField("facebookUrl", e.target.value)} placeholder="Facebook URL" className="w-full p-4 border rounded-xl" />
+            <input value={form.dealTypes} onChange={(e) => updateField("dealTypes", e.target.value)} placeholder="Deal Types" className="w-full p-4 border rounded-xl" />
+            <input value={form.buyerTypes} onChange={(e) => updateField("buyerTypes", e.target.value)} placeholder="Buyer Types" className="w-full p-4 border rounded-xl" />
 
-            <input
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="Company Name"
-              className="w-full p-4 border rounded-xl"
-            />
-            <input
-              value={contactType}
-              onChange={(e) => setContactType(e.target.value)}
-              placeholder="Contact Type: Cash Buyer, Wholesaler, Bird Dog, Land Buyer"
-              className="w-full p-4 border rounded-xl"
-            />
-
-            <input
-              value={countiesServed}
-              onChange={(e) => setCountiesServed(e.target.value)}
-              placeholder="Counties Served: Orange, Jefferson, Hardin"
-              className="w-full p-4 border rounded-xl"
-            />
-
-            <input
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
-              placeholder="City"
-              className="w-full p-4 border rounded-xl"
-            />
-
-            <input
-              value={serviceArea}
-              onChange={(e) => setServiceArea(e.target.value)}
-              placeholder="Service Area / Counties"
-              className="w-full p-4 border rounded-xl"
-            />
-
-            <input
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="Phone"
-              className="w-full p-4 border rounded-xl"
-            />
-
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Email"
-              className="w-full p-4 border rounded-xl"
-            />
-
-            <input
-              value={websiteUrl}
-              onChange={(e) => setWebsiteUrl(e.target.value)}
-              placeholder="Website URL"
-              className="w-full p-4 border rounded-xl"
-            />
-
-            <input
-              value={facebookUrl}
-              onChange={(e) => setFacebookUrl(e.target.value)}
-              placeholder="Facebook URL"
-              className="w-full p-4 border rounded-xl"
-            />
-
-            <input
-              value={dealTypes}
-              onChange={(e) => setDealTypes(e.target.value)}
-              placeholder="Deal Types"
-              className="w-full p-4 border rounded-xl"
-            />
-
-            <input
-              value={buyerTypes}
-              onChange={(e) => setBuyerTypes(e.target.value)}
-              placeholder="Buyer Types"
-              className="w-full p-4 border rounded-xl"
-            />
-
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Notes"
-              className="w-full p-4 border rounded-xl h-32"
-            />
+            <textarea value={form.notes} onChange={(e) => updateField("notes", e.target.value)} placeholder="Notes" className="w-full p-4 border rounded-xl h-32" />
 
             <label className="flex items-center gap-3 bg-gray-100 p-4 rounded-2xl">
-              <input
-                type="checkbox"
-                checked={communityContact}
-                onChange={(e) => setCommunityContact(e.target.checked)}
-              />
-
+              <input type="checkbox" checked={form.communityContact} onChange={(e) => updateField("communityContact", e.target.checked)} />
               <span className="font-bold">Community Contact</span>
             </label>
 
-            <button
-              onClick={handleUpdate}
-              className="w-full bg-blue-900 text-white py-4 rounded-xl font-bold hover:bg-blue-800"
-            >
+            <button onClick={handleUpdate} className="w-full bg-blue-900 text-white py-4 rounded-xl font-bold hover:bg-blue-800">
               Save Contact Changes
             </button>
           </div>

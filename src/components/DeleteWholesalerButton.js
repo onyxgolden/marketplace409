@@ -1,6 +1,9 @@
 "use client";
 
+import { InvestorWholesalerApplication } from "@/application/investors";
 import { supabase } from "@/lib/supabase";
+
+const application = new InvestorWholesalerApplication({ supabase });
 
 export default function DeleteWholesalerButton({ wholesalerId }) {
   async function handleDelete() {
@@ -10,18 +13,15 @@ export default function DeleteWholesalerButton({ wholesalerId }) {
 
     if (!confirmed) return;
 
-    const { error } = await supabase
-      .from("investor_wholesalers")
-      .delete()
-      .eq("id", wholesalerId);
+    const result = await application.deleteWholesaler(wholesalerId);
 
-    if (error) {
-      alert("Error deleting wholesaler contact: " + error.message);
-      console.log(error);
+    if (!result.ok) {
+      alert("Error deleting wholesaler contact: " + result.message);
+      console.log(result.error);
       return;
     }
 
-    alert("Wholesaler contact deleted");
+    alert(result.message);
     window.location.reload();
   }
 
