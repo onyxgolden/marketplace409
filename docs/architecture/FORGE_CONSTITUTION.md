@@ -88,6 +88,46 @@ Financial Forge must remain:
 
 Short-term convenience must never compromise long-term architecture.
 
+# Compliance-Ready Engineering Principle
+
+Engineer FORGE so that security, privacy, auditability, least-privilege access, recoverability, and compliance are built into reusable platform capabilities—not added later as feature-specific patches.
+
+When multiple designs are viable, prefer the one that:
+
+* Reduces future compliance rework
+* Preserves development speed through reusable infrastructure
+* Minimizes unnecessary data collection
+* Improves auditability
+* Preserves clear trust boundaries
+* Increases FORGE's long-term intelligence through secure, authorized, reusable data
+
+Compliance should strengthen architecture rather than constrain it.
+
+---
+
+# Platform Capability Principle
+
+Cross-cutting concerns evolve as reusable platform capabilities rather than feature-specific implementations.
+
+Examples include:
+
+* Authentication
+* Authorization
+* Audit logging
+* Secrets management
+* Encryption
+* Data retention
+* Privacy controls
+* Compliance
+* AI governance
+* Observability
+
+Business features consume these platform capabilities.
+
+They do not recreate them.
+
+Platform capabilities should continuously improve while remaining reusable across the entire FORGE ecosystem.
+
 # Provider Contract Principle
 
 Every external integration must implement a FORGE-owned contract.

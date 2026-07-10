@@ -37,6 +37,30 @@ The repository—not memory—is the engineering source of truth.
 
 ---
 
+## Compliance Review
+
+Before implementing any new feature or architectural change, perform a proportional compliance review.
+
+Ask:
+
+* Does this introduce, expose, transform, or retain sensitive data?
+* Is authentication required?
+* Is authorization required?
+* Should this action produce an audit record?
+* Does this introduce secrets, external services, or new trust boundaries?
+* Is data collection and retention limited to what provides foreseeable user value?
+* Can the implementation reuse existing platform capabilities instead of creating feature-specific security or compliance logic?
+* Does the design preserve recoverability and operational visibility?
+* Does the design allow authorized data to improve FORGE intelligence without weakening privacy or security?
+
+Security and compliance should evolve as reusable platform capabilities that support growth, AI intelligence, and future certification without introducing unnecessary development overhead.
+
+Compliance review depth should remain proportional to the risk, data sensitivity, and architectural reach of the change.
+
+Repository inspection precedes compliance decisions just as it precedes architectural decisions.
+
+---
+
 # Workflow Refinements
 
 The FORGE workflow continuously evolves through validated engineering experience.
@@ -219,6 +243,14 @@ Explain:
 * Scope
 * Risks
 * Expected outcome
+* Security and privacy implications
+* Authentication and authorization requirements
+* Auditability and compliance implications
+* Data collection and retention implications
+* Secrets, external services, and trust boundaries
+* Reusable platform capabilities that should be consumed or extended
+
+Architectural and compliance impacts should be identified before code is written whenever practical.
 
 ---
 
