@@ -2,20 +2,15 @@
 
 import { useState } from "react";
 import Header from "@/components/Header";
+import { InvestorCashBuyerApplication } from "@/application/investors";
 import { supabase } from "@/lib/supabase";
 
+const cashBuyerApplication = new InvestorCashBuyerApplication({ supabase });
+
 export default function AddCashBuyerPage() {
-  const [form, setForm] = useState({
-    name: "",
-    company_name: "",
-    email: "",
-    phone: "",
-    cities: "",
-    property_types: "",
-    max_price: "",
-    funding_type: "",
-    notes: "",
-  });
+  const [form, setForm] = useState(() =>
+    cashBuyerApplication.getInitialCashBuyerForm(),
+  );
 
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
@@ -29,19 +24,14 @@ export default function AddCashBuyerPage() {
     e.preventDefault();
     setError("");
 
-    const { error } = await supabase.from("cash_buyers").insert([
-      {
-        ...form,
-        is_active: true,
-      },
-    ]);
+    const result = await cashBuyerApplication.createCashBuyer(form);
 
-    if (error) {
-      setError(error.message);
+    if (!result.ok) {
+      setError(result.message);
       return;
     }
 
-    setSubmitted(true);
+    setSubmitted(result.submitted);
   }
 
   if (submitted) {

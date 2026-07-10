@@ -3,24 +3,19 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
+import { InvestorCashBuyerApplication } from "@/application/investors";
 import { supabase } from "@/lib/supabase";
+
+const cashBuyerApplication = new InvestorCashBuyerApplication({ supabase });
 
 export default function EditCashBuyerPage() {
   const params = useParams();
   const router = useRouter();
   const buyerId = params.id;
 
-  const [form, setForm] = useState({
-    name: "",
-    company_name: "",
-    email: "",
-    phone: "",
-    cities: "",
-    property_types: "",
-    max_price: "",
-    funding_type: "",
-    notes: "",
-  });
+  const [form, setForm] = useState(() =>
+    cashBuyerApplication.getInitialCashBuyerForm(),
+  );
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -28,32 +23,20 @@ export default function EditCashBuyerPage() {
 
   useEffect(() => {
     async function loadBuyer() {
-      const { data, error } = await supabase
-        .from("cash_buyers")
-        .select("*")
-        .eq("id", buyerId)
-        .single();
+      const result = await cashBuyerApplication.loadCashBuyer(buyerId);
 
-      if (error) {
-        setError(error.message);
-      } else if (data) {
-        setForm({
-          name: data.name || "",
-          company_name: data.company_name || "",
-          email: data.email || "",
-          phone: data.phone || "",
-          cities: data.cities || "",
-          property_types: data.property_types || "",
-          max_price: data.max_price || "",
-          funding_type: data.funding_type || "",
-          notes: data.notes || "",
-        });
+      if (!result.ok) {
+        setError(result.message);
+      } else {
+        setForm(result.form);
       }
 
       setLoading(false);
     }
 
-    if (buyerId) loadBuyer();
+    if (buyerId) {
+      loadBuyer();
+    }
   }, [buyerId]);
 
   function updateField(e) {
@@ -66,19 +49,19 @@ export default function EditCashBuyerPage() {
     setSaving(true);
     setError("");
 
-    const { error } = await supabase
-      .from("cash_buyers")
-      .update(form)
-      .eq("id", buyerId);
+    const result = await cashBuyerApplication.updateCashBuyer({
+      buyerId,
+      form,
+    });
 
     setSaving(false);
 
-    if (error) {
-      setError(error.message);
+    if (!result.ok) {
+      setError(result.message);
       return;
     }
 
-    router.push("/investors/cash-buyers");
+    router.push(result.redirectTo);
   }
 
   async function deleteBuyer() {
@@ -86,24 +69,23 @@ export default function EditCashBuyerPage() {
       "Remove this cash buyer from the public directory?",
     );
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
     setSaving(true);
     setError("");
 
-    const { error } = await supabase
-      .from("cash_buyers")
-      .update({ is_active: false })
-      .eq("id", buyerId);
+    const result = await cashBuyerApplication.deleteCashBuyer(buyerId);
 
     setSaving(false);
 
-    if (error) {
-      setError(error.message);
+    if (!result.ok) {
+      setError(result.message);
       return;
     }
 
-    router.push("/investors/cash-buyers");
+    router.push(result.redirectTo);
   }
 
   if (loading) {
