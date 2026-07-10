@@ -1,22 +1,32 @@
 "use client";
 
+import { PetApplication } from "@/application";
 import { supabase } from "@/lib/supabase";
+
+const petApplication = new PetApplication({
+  supabase,
+});
 
 export default function DeletePetButton({ petId }) {
   async function handleDelete() {
-    const confirmed = confirm("Delete this pet post?");
+    const confirmed = window.confirm("Delete this pet post?");
 
     if (!confirmed) return;
 
-    const { error } = await supabase.from("pets").delete().eq("id", petId);
+    const result = await petApplication.deletePet(petId);
 
-    if (error) {
-      alert("Error deleting pet post");
-      console.log(error);
-    } else {
-      alert("Pet post deleted");
-      window.location.reload();
+    if (!result.ok) {
+      alert(result.message);
+
+      if (result.error) {
+        console.log(result.error);
+      }
+
+      return;
     }
+
+    alert(result.message);
+    window.location.reload();
   }
 
   return (

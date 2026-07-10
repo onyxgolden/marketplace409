@@ -9,3 +9,4 @@ export {
 } from "./financial/index.js";
 
 export { JobApplication } from "./jobs/index.js";
+export { PetApplication } from "./pets/index.js";

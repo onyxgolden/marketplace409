@@ -2,98 +2,87 @@
 
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
+import { PetApplication } from "@/application";
 import { supabase } from "@/lib/supabase";
 import { uploadImage } from "@/lib/uploadImage";
 
+const petApplication = new PetApplication({
+  supabase,
+  imageUploader: uploadImage,
+});
+
 export default function EditPetPage({ params }) {
   const [petId, setPetId] = useState("");
+  const [form, setForm] = useState(() =>
+    petApplication.getInitialPetForm(),
+  );
+  const [newImageFile, setNewImageFile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  const [petName, setPetName] = useState("");
-  const [petType, setPetType] = useState("");
-  const [postType, setPostType] = useState("");
-  const [petOfWeekEligible, setPetOfWeekEligible] = useState(false);
-  const [description, setDescription] = useState("");
-  const [contactName, setContactName] = useState("");
-  const [contactPhone, setContactPhone] = useState("");
-  const [contactEmail, setContactEmail] = useState("");
-  const [city, setCity] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
-  const [newImageFile, setNewImageFile] = useState(null);
+  function updateField(field, value) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }));
+  }
+
+  function updatePostType(postType) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      postType,
+      petOfWeekEligible:
+        postType === "Lost Pet" || postType === "Found Pet"
+          ? false
+          : currentForm.petOfWeekEligible,
+    }));
+  }
 
   useEffect(() => {
     async function start() {
       const resolvedParams = await params;
-      setPetId(resolvedParams.id);
-      loadPet(resolvedParams.id);
+      const resolvedPetId = resolvedParams.id;
+
+      setPetId(resolvedPetId);
+
+      const result = await petApplication.loadPet(resolvedPetId);
+
+      if (!result.ok) {
+        alert(result.message);
+        window.location.href = result.redirectTo;
+        return;
+      }
+
+      setForm(result.form);
+      setLoading(false);
     }
 
     start();
   }, [params]);
 
-  async function loadPet(id) {
-    const { data, error } = await supabase
-      .from("pets")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (error || !data) {
-      alert("Pet post not found.");
-      window.location.href = "/pets";
-      return;
-    }
-
-    setPetName(data.pet_name || "");
-    setPetType(data.pet_type || "");
-    setPostType(data.post_type || "");
-    setPetOfWeekEligible(data.pet_of_week_eligible || false);
-    setDescription(data.description || "");
-    setContactName(data.contact_name || "");
-    setContactPhone(data.contact_phone || "");
-    setContactEmail(data.contact_email || "");
-    setCity(data.city || "");
-    setImageUrl(data.image_url || "");
-    setLoading(false);
-  }
-
   async function handleUpdate() {
     setIsSaving(true);
 
-    const finalImageUrl = await uploadImage({
-      file: newImageFile,
-      currentImageUrl: imageUrl,
-      folder: "pets",
-      prefix: "pet",
-      recordId: petId,
+    const result = await petApplication.updatePet({
+      petId,
+      form,
+      imageFile: newImageFile,
     });
 
-    const { error } = await supabase
-      .from("pets")
-      .update({
-        pet_name: petName,
-        pet_type: petType,
-        post_type: postType,
-        pet_of_week_eligible: petOfWeekEligible,
-        description,
-        contact_name: contactName,
-        contact_phone: contactPhone,
-        contact_email: contactEmail,
-        city,
-        image_url: finalImageUrl,
-      })
-      .eq("id", petId);
+    setIsSaving(false);
 
-    if (error) {
-      alert("Error updating pet post.");
-      console.log(error);
-      setIsSaving(false);
+    if (!result.ok) {
+      alert(result.message);
+
+      if (result.error) {
+        console.log(result.error);
+      }
+
       return;
     }
 
-    alert("Pet post updated.");
-    window.location.href = "/pets";
+    alert(result.message);
+    window.location.href = result.redirectTo;
   }
 
   if (loading) {
@@ -118,12 +107,12 @@ export default function EditPetPage({ params }) {
           <h1 className="text-4xl font-extrabold mb-8">Edit Pet Post</h1>
 
           <div className="space-y-6">
-            {imageUrl && (
+            {form.imageUrl && (
               <div>
                 <label className="block font-bold mb-3">Current Image</label>
                 <img
-                  src={imageUrl}
-                  alt={petName}
+                  src={form.imageUrl}
+                  alt={form.petName}
                   className="w-full max-h-80 object-cover rounded-2xl border"
                 />
               </div>
@@ -134,7 +123,9 @@ export default function EditPetPage({ params }) {
               <input
                 type="file"
                 accept="image/*"
-                onChange={(e) => setNewImageFile(e.target.files[0])}
+                onChange={(event) =>
+                  setNewImageFile(event.target.files?.[0] || null)
+                }
                 className="w-full p-4 rounded-2xl border border-gray-300"
               />
               <p className="text-sm text-gray-500 mt-2">
@@ -145,23 +136,16 @@ export default function EditPetPage({ params }) {
             <input
               type="text"
               placeholder="Pet Name"
-              value={petName}
-              onChange={(e) => setPetName(e.target.value)}
+              value={form.petName}
+              onChange={(event) =>
+                updateField("petName", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <select
-              value={postType}
-              onChange={(e) => {
-                setPostType(e.target.value);
-
-                if (
-                  e.target.value === "Lost Pet" ||
-                  e.target.value === "Found Pet"
-                ) {
-                  setPetOfWeekEligible(false);
-                }
-              }}
+              value={form.postType}
+              onChange={(event) => updatePostType(event.target.value)}
               className="w-full p-4 rounded-2xl border border-gray-300"
             >
               <option value="">Select Post Type</option>
@@ -171,14 +155,19 @@ export default function EditPetPage({ params }) {
               <option value="Personal Pet">Personal Pet</option>
             </select>
 
-            {postType !== "Lost Pet" &&
-              postType !== "Found Pet" &&
-              postType !== "" && (
+            {form.postType !== "Lost Pet" &&
+              form.postType !== "Found Pet" &&
+              form.postType !== "" && (
                 <label className="flex items-center gap-3 text-lg font-bold">
                   <input
                     type="checkbox"
-                    checked={petOfWeekEligible}
-                    onChange={(e) => setPetOfWeekEligible(e.target.checked)}
+                    checked={form.petOfWeekEligible}
+                    onChange={(event) =>
+                      updateField(
+                        "petOfWeekEligible",
+                        event.target.checked,
+                      )
+                    }
                     className="w-5 h-5"
                   />
                   Enter this pet for Pet of the Week
@@ -186,8 +175,10 @@ export default function EditPetPage({ params }) {
               )}
 
             <select
-              value={petType}
-              onChange={(e) => setPetType(e.target.value)}
+              value={form.petType}
+              onChange={(event) =>
+                updateField("petType", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             >
               <option value="">Select Pet Type</option>
@@ -201,40 +192,50 @@ export default function EditPetPage({ params }) {
 
             <textarea
               placeholder="Description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              value={form.description}
+              onChange={(event) =>
+                updateField("description", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300 h-40"
             />
 
             <input
               type="text"
               placeholder="Contact Name"
-              value={contactName}
-              onChange={(e) => setContactName(e.target.value)}
+              value={form.contactName}
+              onChange={(event) =>
+                updateField("contactName", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="text"
               placeholder="Contact Phone"
-              value={contactPhone}
-              onChange={(e) => setContactPhone(e.target.value)}
+              value={form.contactPhone}
+              onChange={(event) =>
+                updateField("contactPhone", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="email"
               placeholder="Contact Email"
-              value={contactEmail}
-              onChange={(e) => setContactEmail(e.target.value)}
+              value={form.contactEmail}
+              onChange={(event) =>
+                updateField("contactEmail", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="text"
               placeholder="City"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
+              value={form.city}
+              onChange={(event) =>
+                updateField("city", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 

@@ -2,85 +2,66 @@
 
 import { useState } from "react";
 import Header from "@/components/Header";
+import { PetApplication } from "@/application";
 import { supabase } from "@/lib/supabase";
+import { uploadImage } from "@/lib/uploadImage";
+
+const petApplication = new PetApplication({
+  supabase,
+  imageUploader: uploadImage,
+});
 
 export default function AddPetPage() {
-  const [petName, setPetName] = useState("");
-  const [petType, setPetType] = useState("");
-  const [postType, setPostType] = useState("");
-  const [petOfWeekEligible, setPetOfWeekEligible] = useState(false);
-  const [description, setDescription] = useState("");
-  const [contactName, setContactName] = useState("");
-  const [contactPhone, setContactPhone] = useState("");
-  const [contactEmail, setContactEmail] = useState("");
-  const [city, setCity] = useState("");
-  const [image, setImage] = useState(null);
+  const [form, setForm] = useState(() =>
+    petApplication.getInitialPetForm(),
+  );
+  const [imageFile, setImageFile] = useState(null);
   const [isPosting, setIsPosting] = useState(false);
+
+  function updateField(field, value) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }));
+  }
+
+  function updatePostType(postType) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      postType,
+      petOfWeekEligible:
+        postType === "Lost Pet" || postType === "Found Pet"
+          ? false
+          : currentForm.petOfWeekEligible,
+    }));
+  }
 
   async function handleSubmit() {
     setIsPosting(true);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const result = await petApplication.createPet({
+      form,
+      imageFile,
+    });
 
-    if (!user) {
-      alert("Please create a free account before posting a pet.");
-      window.location.href = "/auth";
-      return;
-    }
+    if (!result.ok) {
+      alert(result.message);
 
-    let imageUrl = "";
+      if (result.error) {
+        console.log(result.error);
+      }
 
-    if (image) {
-      const fileExt = image.name.split(".").pop();
-      const fileName = `${Date.now()}-pet.${fileExt}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("listing-images")
-        .upload(fileName, image, {
-          contentType: image.type,
-          upsert: false,
-        });
-
-      if (uploadError) {
-        alert("Error uploading pet image");
-        console.log(uploadError);
-        setIsPosting(false);
+      if (result.redirectTo) {
+        window.location.href = result.redirectTo;
         return;
       }
 
-      const { data } = supabase.storage
-        .from("listing-images")
-        .getPublicUrl(fileName);
-
-      imageUrl = data.publicUrl;
-    }
-
-    const { error } = await supabase.from("pets").insert([
-      {
-        pet_name: petName,
-        pet_type: petType,
-        post_type: postType,
-        description,
-        image_url: imageUrl,
-        contact_name: contactName,
-        contact_phone: contactPhone,
-        contact_email: contactEmail,
-        city,
-        votes: 0,
-        pet_of_week_eligible: petOfWeekEligible,
-      },
-    ]);
-
-    if (error) {
-      alert("Error adding pet post");
-      console.log(error);
       setIsPosting(false);
-    } else {
-      alert("Pet post added!");
-      window.location.href = "/pets";
+      return;
     }
+
+    alert(result.message);
+    window.location.href = result.redirectTo;
   }
 
   return (
@@ -95,23 +76,16 @@ export default function AddPetPage() {
             <input
               type="text"
               placeholder="Pet Name"
-              value={petName}
-              onChange={(e) => setPetName(e.target.value)}
+              value={form.petName}
+              onChange={(event) =>
+                updateField("petName", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <select
-              value={postType}
-              onChange={(e) => {
-                setPostType(e.target.value);
-
-                if (
-                  e.target.value === "Lost Pet" ||
-                  e.target.value === "Found Pet"
-                ) {
-                  setPetOfWeekEligible(false);
-                }
-              }}
+              value={form.postType}
+              onChange={(event) => updatePostType(event.target.value)}
               className="w-full p-4 rounded-2xl border border-gray-300"
             >
               <option value="">Select Post Type</option>
@@ -121,14 +95,19 @@ export default function AddPetPage() {
               <option value="Personal Pet">Personal Pet</option>
             </select>
 
-            {postType !== "Lost Pet" &&
-              postType !== "Found Pet" &&
-              postType !== "" && (
+            {form.postType !== "Lost Pet" &&
+              form.postType !== "Found Pet" &&
+              form.postType !== "" && (
                 <label className="flex items-center gap-3 text-lg font-bold">
                   <input
                     type="checkbox"
-                    checked={petOfWeekEligible}
-                    onChange={(e) => setPetOfWeekEligible(e.target.checked)}
+                    checked={form.petOfWeekEligible}
+                    onChange={(event) =>
+                      updateField(
+                        "petOfWeekEligible",
+                        event.target.checked,
+                      )
+                    }
                     className="w-5 h-5"
                   />
                   Enter this pet for Pet of the Week
@@ -136,8 +115,10 @@ export default function AddPetPage() {
               )}
 
             <select
-              value={petType}
-              onChange={(e) => setPetType(e.target.value)}
+              value={form.petType}
+              onChange={(event) =>
+                updateField("petType", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             >
               <option value="">Select Pet Type</option>
@@ -151,47 +132,59 @@ export default function AddPetPage() {
 
             <textarea
               placeholder="Description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              value={form.description}
+              onChange={(event) =>
+                updateField("description", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300 h-40"
             />
 
             <input
               type="text"
               placeholder="Contact Name"
-              value={contactName}
-              onChange={(e) => setContactName(e.target.value)}
+              value={form.contactName}
+              onChange={(event) =>
+                updateField("contactName", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="text"
               placeholder="Contact Phone"
-              value={contactPhone}
-              onChange={(e) => setContactPhone(e.target.value)}
+              value={form.contactPhone}
+              onChange={(event) =>
+                updateField("contactPhone", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="email"
               placeholder="Contact Email"
-              value={contactEmail}
-              onChange={(e) => setContactEmail(e.target.value)}
+              value={form.contactEmail}
+              onChange={(event) =>
+                updateField("contactEmail", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="text"
               placeholder="City"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
+              value={form.city}
+              onChange={(event) =>
+                updateField("city", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="file"
               accept="image/*"
-              onChange={(e) => setImage(e.target.files[0])}
+              onChange={(event) =>
+                setImageFile(event.target.files?.[0] || null)
+              }
             />
 
             <button
