@@ -2,40 +2,45 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { BusinessService } from "@/domains/business/business.service";
+import { BusinessCreateApplication } from "@/application";
+import { supabase } from "@/lib/supabase";
+
+const businessCreateApplication = new BusinessCreateApplication({
+  supabase,
+});
 
 export default function AddBusinessPage() {
   const router = useRouter();
 
-  const [form, setForm] = useState({
-    name: "",
-    address: "",
-  });
-
+  const [form, setForm] = useState(() =>
+    businessCreateApplication.getInitialBusinessCreateForm(),
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   function updateField(field, value) {
-    setForm((prev) => ({
-      ...prev,
+    setForm((currentForm) => ({
+      ...currentForm,
       [field]: value,
     }));
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault();
+  async function handleSubmit(event) {
+    event.preventDefault();
     setLoading(true);
     setError(null);
 
     try {
-      await BusinessService.createBusiness({
-        name: form.name,
-        address: form.address,
-      });
+      const result = await businessCreateApplication.createBusiness(form);
 
-      router.push("/businesses");
-    } catch (err) {
-      setError(err?.message || "Failed to create business");
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+
+      router.push(result.redirectTo);
+    } catch (creationError) {
+      setError(creationError?.message || "Failed to create business");
     } finally {
       setLoading(false);
     }
@@ -50,7 +55,7 @@ export default function AddBusinessPage() {
           <label>Name</label>
           <input
             value={form.name}
-            onChange={(e) => updateField("name", e.target.value)}
+            onChange={(event) => updateField("name", event.target.value)}
             required
             style={{ display: "block", width: "100%" }}
           />
@@ -60,7 +65,7 @@ export default function AddBusinessPage() {
           <label>Address</label>
           <input
             value={form.address}
-            onChange={(e) => updateField("address", e.target.value)}
+            onChange={(event) => updateField("address", event.target.value)}
             required
             style={{ display: "block", width: "100%" }}
           />

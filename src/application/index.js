@@ -1,4 +1,7 @@
-export { BusinessEditApplication } from "./business/index.js";
+export {
+  BusinessCreateApplication,
+  BusinessEditApplication,
+} from "./business/index.js";
 
 export {
   FinancialReportingApplication,
