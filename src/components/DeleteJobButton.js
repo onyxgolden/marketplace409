@@ -1,6 +1,9 @@
 "use client";
 
+import { JobApplication } from "@/application";
 import { supabase } from "@/lib/supabase";
+
+const jobApplication = new JobApplication({ supabase });
 
 export default function DeleteJobButton({ jobId }) {
   async function handleDelete() {
@@ -10,15 +13,15 @@ export default function DeleteJobButton({ jobId }) {
 
     if (!confirmed) return;
 
-    const { error } = await supabase.from("jobs").delete().eq("id", jobId);
+    const result = await jobApplication.deleteJob(jobId);
 
-    if (error) {
-      alert("Error deleting job");
-      console.log(error);
+    if (!result.ok) {
+      alert(result.message);
+      console.log(result.error);
       return;
     }
 
-    alert("Job deleted");
+    alert(result.message);
     window.location.reload();
   }
 

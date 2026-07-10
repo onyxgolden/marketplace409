@@ -7,3 +7,5 @@ export {
   FinancialReportingApplication,
   FinancialSnapshotApplication,
 } from "./financial/index.js";
+
+export { JobApplication } from "./jobs/index.js";

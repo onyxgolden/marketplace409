@@ -2,62 +2,47 @@
 
 import { useState } from "react";
 import Header from "@/components/Header";
+import { JobApplication } from "@/application";
 import { supabase } from "@/lib/supabase";
 
+const jobApplication = new JobApplication({ supabase });
+
 export default function AddJobPage() {
-  const [jobTitle, setJobTitle] = useState("");
-  const [companyName, setCompanyName] = useState("");
-  const [category, setCategory] = useState("");
-  const [city, setCity] = useState("");
-  const [employmentType, setEmploymentType] = useState("");
-  const [payRange, setPayRange] = useState("");
-  const [description, setDescription] = useState("");
-  const [requirements, setRequirements] = useState("");
-  const [contactName, setContactName] = useState("");
-  const [contactPhone, setContactPhone] = useState("");
-  const [contactEmail, setContactEmail] = useState("");
-  const [applyUrl, setApplyUrl] = useState("");
+  const [form, setForm] = useState(() =>
+    jobApplication.getInitialJobForm(),
+  );
   const [isPosting, setIsPosting] = useState(false);
-  const [communityJobPosting, setCommunityJobPosting] = useState(false);
+
+  function updateField(field, value) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }));
+  }
 
   async function handleSubmit() {
     setIsPosting(true);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const result = await jobApplication.createJob(form);
 
-    if (!user) {
-      alert("Please create a free account before posting a job.");
-      window.location.href = "/auth";
+    if (!result.ok) {
+      alert(result.message);
+
+      if (result.error) {
+        console.log(result.error);
+      }
+
+      if (result.redirectTo) {
+        window.location.href = result.redirectTo;
+        return;
+      }
+
+      setIsPosting(false);
       return;
     }
 
-    const { error } = await supabase.from("jobs").insert([
-      {
-        job_title: jobTitle,
-        company_name: companyName,
-        category,
-        city,
-        employment_type: employmentType,
-        pay_range: payRange,
-        description,
-        requirements,
-        contact_name: contactName,
-        contact_phone: contactPhone,
-        contact_email: contactEmail,
-        apply_url: applyUrl,
-      },
-    ]);
-
-    if (error) {
-      alert("Error posting job");
-      console.log(error);
-      setIsPosting(false);
-    } else {
-      alert("Job posted!");
-      window.location.href = "/jobs";
-    }
+    alert(result.message);
+    window.location.href = result.redirectTo;
   }
 
   return (
@@ -72,22 +57,28 @@ export default function AddJobPage() {
             <input
               type="text"
               placeholder="Job Title"
-              value={jobTitle}
-              onChange={(e) => setJobTitle(e.target.value)}
+              value={form.jobTitle}
+              onChange={(event) =>
+                updateField("jobTitle", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="text"
               placeholder="Company Name"
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
+              value={form.companyName}
+              onChange={(event) =>
+                updateField("companyName", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              value={form.category}
+              onChange={(event) =>
+                updateField("category", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             >
               <option value="">Select Category</option>
@@ -109,14 +100,18 @@ export default function AddJobPage() {
             <input
               type="text"
               placeholder="City"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
+              value={form.city}
+              onChange={(event) =>
+                updateField("city", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <select
-              value={employmentType}
-              onChange={(e) => setEmploymentType(e.target.value)}
+              value={form.employmentType}
+              onChange={(event) =>
+                updateField("employmentType", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             >
               <option value="">Employment Type</option>
@@ -131,8 +126,13 @@ export default function AddJobPage() {
             <label className="flex items-center gap-3 bg-gray-100 p-4 rounded-2xl">
               <input
                 type="checkbox"
-                checked={communityJobPosting}
-                onChange={(e) => setCommunityJobPosting(e.target.checked)}
+                checked={form.communityJobPosting}
+                onChange={(event) =>
+                  updateField(
+                    "communityJobPosting",
+                    event.target.checked,
+                  )
+                }
               />
 
               <span className="font-bold">Community Job Posting</span>
@@ -141,54 +141,68 @@ export default function AddJobPage() {
             <input
               type="text"
               placeholder="Pay Range, e.g. $18-$25/hr"
-              value={payRange}
-              onChange={(e) => setPayRange(e.target.value)}
+              value={form.payRange}
+              onChange={(event) =>
+                updateField("payRange", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <textarea
               placeholder="Job Description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              value={form.description}
+              onChange={(event) =>
+                updateField("description", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300 h-40"
             />
 
             <textarea
               placeholder="Requirements"
-              value={requirements}
-              onChange={(e) => setRequirements(e.target.value)}
+              value={form.requirements}
+              onChange={(event) =>
+                updateField("requirements", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300 h-32"
             />
 
             <input
               type="text"
               placeholder="Contact Name"
-              value={contactName}
-              onChange={(e) => setContactName(e.target.value)}
+              value={form.contactName}
+              onChange={(event) =>
+                updateField("contactName", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="text"
               placeholder="Contact Phone"
-              value={contactPhone}
-              onChange={(e) => setContactPhone(e.target.value)}
+              value={form.contactPhone}
+              onChange={(event) =>
+                updateField("contactPhone", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="email"
               placeholder="Contact Email"
-              value={contactEmail}
-              onChange={(e) => setContactEmail(e.target.value)}
+              value={form.contactEmail}
+              onChange={(event) =>
+                updateField("contactEmail", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
             <input
               type="text"
               placeholder="Apply URL"
-              value={applyUrl}
-              onChange={(e) => setApplyUrl(e.target.value)}
+              value={form.applyUrl}
+              onChange={(event) =>
+                updateField("applyUrl", event.target.value)
+              }
               className="w-full p-4 rounded-2xl border border-gray-300"
             />
 
