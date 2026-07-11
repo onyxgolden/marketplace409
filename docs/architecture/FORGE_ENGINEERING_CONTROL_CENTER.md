@@ -46,26 +46,26 @@ The repository—not memory, documentation, or prior conversation—is the singl
 ### Repository State
 
 * Current Branch: main
-* Latest Commit: 144e9af — Extract pet voting application workflow
+* Latest Commit: 8ff9a45 — Extract business admin authorization application
 * Repository Status: Clean
 * Repository Clean: Yes
 * Repository synchronized with origin/main.
 
 ### Current Architectural Objective
 
-Complete the final review phase of application-layer consolidation.
+Formally close the completed application-layer consolidation phase and select the next architectural objective from verified repository evidence.
 
-The large React workflow extraction campaign is substantially complete.
+The repository-wide final audit confirmed that meaningful React workflow orchestration has been extracted across financial, business, investor, job, pet, listing, favorite, saved-listing, and user-listing capabilities.
 
-Repository inspection must now determine whether any remaining React components still perform meaningful authentication, authorization, persistence coordination, payload construction, redirect decisions, response normalization, or multi-step orchestration that belongs in the application layer.
+`BusinessAdminControls` now delegates authentication and administrator authorization to `AdminAuthorizationApplication`.
 
-Remaining candidates are expected to be smaller than the completed workflow extractions.
+Remaining direct authentication in `Header` and the authentication feature page does not block consolidation closeout. A future `SessionApplication` remains an optional refinement rather than an active architectural requirement.
 
-Each extraction must remain one cohesive architectural objective and preserve existing production behavior unless repository evidence identifies a separate defect that requires an independently scoped correction.
+Read-only server-rendered query pages remain unchanged because repository evidence does not justify extracting application services solely for consistency.
 
 ### Current Architectural Phase
 
-Application Layer Consolidation — Final Review Phase
+Application Layer Consolidation — Complete
 
 ### Current Repository State
 
@@ -90,6 +90,7 @@ Completed application services include:
 
 #### Business
 
+* AdminAuthorizationApplication
 * BusinessCreateApplication
 * BusinessEditApplication
 * BusinessClaimApplication
@@ -207,9 +208,9 @@ Direct authentication and Supabase persistence no longer remain in VotePetButton
 * Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
 * PetVotingApplication targeted suite passed: 6 tests.
 * Pet application targeted suites passed: 21 tests.
-* Full Vitest suite passed: 177 test files and 672 tests.
+* Full Vitest suite passed: 178 test files and 676 tests.
 * Production build passed.
-* Commit 144e9af pushed successfully.
+* Commit 8ff9a45 pushed successfully.
 * Repository synchronized with origin/main.
 * Working tree clean.
 
@@ -255,18 +256,17 @@ Documentation is corrected.
 
 ## Active
 
-* [ ] Perform repository-wide final review for remaining React application orchestration.
+* [ ] Synchronize governance documentation with the completed application-layer consolidation milestone.
 
 ## Next
 
-* [ ] Inspect BusinessAdminControls for authentication and authorization workflow extraction.
-* [ ] Inspect Header for current-user lookup and sign-out workflow extraction.
-* [ ] Determine whether remaining read-only server pages require application services or should remain unchanged.
+* [ ] Inspect verified roadmap priorities and repository reality to select the next architectural phase.
+* [ ] Define one cohesive next objective before implementation begins.
 
 ## Future
 
-* [ ] Synchronize roadmap and status documentation when application-layer consolidation is formally closed.
-* [ ] Select the next architectural phase only after repository-wide consolidation review is complete.
+* [ ] Consider `SessionApplication` only if future authentication complexity justifies the extraction.
+* [ ] Continue leaving read-only server-rendered query pages unchanged unless meaningful orchestration emerges.
 
 ## Completed
 
@@ -293,9 +293,14 @@ Documentation is corrected.
 * [x] Extract saved-listings workflow.
 * [x] Extract my-listings workflow.
 * [x] Extract pet-voting workflow.
-* [x] Verify 177 test files and 672 tests passed.
-* [x] Verify production build passed after PetVotingApplication extraction.
-* [x] Push commit 144e9af and verify origin/main synchronization.
+* [x] Extract business administrator authorization workflow.
+* [x] Complete repository-wide final application-layer audit.
+* [x] Confirm Header session extraction is optional rather than blocking.
+* [x] Confirm read-only server pages should remain unchanged.
+* [x] Verify 178 test files and 676 tests passed.
+* [x] Verify production build passed after AdminAuthorizationApplication extraction.
+* [x] Push commit 8ff9a45 and verify origin/main synchronization.
+* [x] Formally close application-layer consolidation.
 
 ---
 
@@ -523,14 +528,14 @@ Repository-Wide React Workflow Consolidation Review
 * My Listings Workflow
 * Pet Voting Workflow
 
-## Remaining Inspections
+## Final Audit Outcome
 
-* BusinessAdminControls authentication and authorization
-* Header current-user and sign-out workflow
-* Remaining direct Supabase authentication usage in React components
-* Remaining direct persistence coordination in React components
-* Read-only server page classification
-* Formal application-layer consolidation closeout
+* `BusinessAdminControls` authentication and authorization were extracted into `AdminAuthorizationApplication`.
+* `Header` current-user lookup and sign-out remain an optional future session refinement.
+* The authentication page remains the authentication feature itself and does not require extraction for architectural uniformity.
+* No meaningful direct client persistence orchestration remains outside the application layer.
+* Read-only server-rendered query pages remain unchanged.
+* Application-layer consolidation is formally complete.
 
 ---
 
@@ -614,26 +619,24 @@ A FORGE engineering session concludes only after confirming:
 
 ## Current Objective
 
-Perform the repository-wide final review of remaining React workflow orchestration.
+Synchronize governance documentation with the completed application-layer consolidation milestone.
 
-The major application-layer extraction campaign is substantially complete.
-
-Remaining candidates are expected to be smaller workflow extractions rather than page-scale consolidations.
+The next implementation objective must be selected from verified repository and roadmap evidence after this documentation synchronization is committed.
 
 ## Active
 
-* [ ] Inspect BusinessAdminControls for authentication and authorization workflow extraction.
+* [ ] Synchronize Engineering Control Center, Roadmap, Status, and Session documentation.
 
 ## Next
 
-* [ ] Inspect Header for current-user lookup and sign-out workflow extraction.
-* [ ] Inspect remaining React components for direct authentication or persistence coordination.
-* [ ] Determine whether application-layer consolidation can be formally closed.
+* [ ] Inspect roadmap priorities and repository reality.
+* [ ] Select one cohesive next architectural objective.
+* [ ] Begin implementation only after repository-first inspection.
 
 ## Future
 
-* [ ] Synchronize FORGE Roadmap, FORGE Status, and FORGE Session after consolidation closeout.
-* [ ] Select the next architectural phase from verified repository evidence.
+* [ ] Consider `SessionApplication` only if future authentication complexity warrants it.
+* [ ] Preserve completed application-layer boundaries during future feature development.
 
 ## Completed
 
@@ -642,20 +645,22 @@ Remaining candidates are expected to be smaller workflow extractions rather than
 * [x] Extract MyListingsApplication.
 * [x] Extract BusinessDeleteApplication.
 * [x] Extract PetVotingApplication.
+* [x] Extract AdminAuthorizationApplication.
+* [x] Complete repository-wide final application-layer audit.
+* [x] Formally close application-layer consolidation.
 * [x] Verify Mutation Firewall passed with expected legacy warning only.
-* [x] Verify 177 test files and 672 tests passed.
+* [x] Verify 178 test files and 676 tests passed.
 * [x] Verify production build passed.
-* [x] Commit and push 144e9af.
-* [x] Synchronize Engineering Control Center through 144e9af.
+* [x] Commit and push 8ff9a45.
 
 ## Repository State
 
 * Branch: main
-* Latest Commit: 144e9af — Extract pet voting application workflow
+* Latest Commit: 8ff9a45 — Extract business admin authorization application
 * Working Tree: Clean
 * Remote State: Synchronized with origin/main
 * Mutation Firewall: Passing with expected legacy `"claimed"` warning only
-* Full Test Suite: 177 test files and 672 tests passing
+* Full Test Suite: 178 test files and 676 tests passing
 * Production Build: Passing
 
 ## Known Blockers

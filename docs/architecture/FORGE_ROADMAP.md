@@ -1330,10 +1330,13 @@ Continue reducing presentation components to rendering, user interaction, routin
 
 ##### Business Application Services
 
+* Introduced `AdminAuthorizationApplication`.
 * Introduced `BusinessCreateApplication`.
 * Introduced `BusinessEditApplication`.
 * Introduced `BusinessClaimApplication`.
-* Moved business creation, editing, claim submission, claim review, approval, rejection, authentication, persistence coordination, and response normalization into the application layer.
+* Introduced `BusinessDeleteApplication`.
+* Moved business creation, editing, deletion, claim submission, claim review, approval, rejection, authentication, administrator authorization, persistence coordination, reload decisions, and response normalization into the application layer.
+* Removed direct authentication and hard-coded administrator authorization coordination from `BusinessAdminControls`.
 * Reduced business React pages and administrative controls toward rendering, lifecycle, transient state, notifications, navigation, and user interaction.
 
 ##### Investor Application Services
@@ -1350,7 +1353,10 @@ Continue reducing presentation components to rendering, user interaction, routin
 * Introduced `PetApplication`.
 * Introduced `ListingApplication`.
 * Introduced `FavoriteApplication`.
-* Moved job, pet, listing, and favorite workflow orchestration into dedicated application services.
+* Introduced `SavedListingsApplication`.
+* Introduced `MyListingsApplication`.
+* Introduced `PetVotingApplication`.
+* Moved job, pet, listing, favorite, saved-listing, user-listing, and pet-voting workflow orchestration into dedicated application services.
 * Consolidated listing creation, loading, editing, multi-image upload orchestration, replacement image upload, deletion, ownership authorization, sold-status changes, redirect decisions, error normalization, and response normalization.
 * Reduced listing pages, `DeleteListingButton`, and `MarkSoldButton` toward rendering, local state, form events, confirmations, notifications, navigation, and reload behavior.
 * Moved favorite authentication, favorite-status lookup, favorite creation, favorite removal, persistence coordination, redirect decisions, error normalization, response normalization, and state reconciliation results into `FavoriteApplication`.
@@ -1358,11 +1364,14 @@ Continue reducing presentation components to rendering, user interaction, routin
 
 ##### Architectural Outcome
 
-* Application-layer consolidation now spans financial, business, investor, job, pet, listing, and favorite workflows.
-* Application services are exported through domain-specific barrels and the root `src/application/index.js` barrel.
-* Presentation components increasingly delegate workflow orchestration to application services.
+* Application-layer consolidation spans financial, business, investor, job, pet, listing, favorite, saved-listing, user-listing, pet-voting, and administrator-authorization workflows.
+* Application services are exported through capability-specific barrels and the root `src/application/index.js` barrel.
+* Presentation components delegate meaningful workflow orchestration to application services while retaining rendering, React lifecycle, transient state, notifications, navigation, and user interaction.
+* No meaningful direct client persistence orchestration remains outside the application layer.
+* Read-only server-rendered query pages remain unchanged because extraction solely for consistency was rejected.
+* `Header` session coordination remains an optional refinement rather than a blocking architectural gap.
 * Production APIs, domain services, routes, persistence behavior, storage behavior, and user-facing behavior were preserved throughout the completed extractions.
-* Repository inspection determines the next cohesive workflow extraction before implementation begins.
+* Future extractions require repository evidence of meaningful cohesive orchestration.
 
 #### Protected Rule
 
@@ -1383,13 +1392,16 @@ Production behavior must remain unchanged while architectural boundaries become 
 - ✓ Targeted application-service suites passed.
 - ✓ `ListingApplication`: 27 targeted tests passed.
 - ✓ `FavoriteApplication`: 9 targeted tests passed.
-- ✓ Full Vitest suite passed: 173 test files and 650 tests.
+- ✓ `AdminAuthorizationApplication`: 4 targeted tests passed.
+- ✓ Final business application suites passed: 5 files and 29 tests.
+- ✓ Full Vitest suite passed: 178 test files and 676 tests.
 - ✓ Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
 - ✓ Production build passed.
-- ✓ Latest application-layer commit: `9554a78` — Extract favorite application workflows.
+- ✓ Final application-layer commit: `8ff9a45` — Extract business admin authorization application.
 - ✓ Repository synchronized with `origin/main`.
+- ✓ Repository-wide final audit completed.
 
-**Status:** Active
+**Status:** Complete
 
 ---
 

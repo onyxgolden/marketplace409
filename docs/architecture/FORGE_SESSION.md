@@ -3,7 +3,7 @@
 **Version:** 4.0
 **Status:** Active
 **Last Updated:** 2026-07-10
-**Latest Commit:** 93a1ff8 — Synchronize governance documentation with application architecture
+**Latest Commit:** 8ff9a45 — Extract business admin authorization application
 
 ---
 
@@ -34,42 +34,48 @@ Historical milestones remain recorded below.
 
 ## Active Phase
 
-Application Layer Consolidation
+Application Layer Consolidation — Complete
 
 ## Current Objective
 
-Inspect the repository to identify the next remaining React workflow that performs direct authentication, authorization, persistence coordination, payload construction, redirect decisions, response normalization, or multi-step orchestration.
+Synchronize governance documentation and select the next architectural phase through repository-first inspection.
 
-Repository evidence determines the next implementation target.
+The completed application-layer boundary must be preserved during future capability development.
 
-One cohesive workflow is extracted at a time.
+A future `SessionApplication` is optional and should be introduced only if additional session complexity creates a meaningful cohesive workflow.
 
 ## Repository Health
 
 - Branch: `main`
-- Latest commit: `93a1ff8`
+- Latest commit: `8ff9a45`
 - Repository synchronized with `origin/main`
 - Working tree clean
 - Mutation Firewall passing
 - Expected legacy business `"claimed"` warning only
-- Full Vitest suite passing: 173 test files and 650 tests
+- Full Vitest suite passing: 178 test files and 676 tests
 - Production build passing
 
 ## Completed Application-Layer Reach
 
-Application-layer consolidation now spans:
+Application-layer consolidation spans:
 
 - Financial
 - Business
+- Administrator authorization
 - Investors
 - Jobs
 - Pets
+- Pet voting
 - Listings
 - Favorites
+- Saved listings
+- User listings
 
-Presentation components increasingly own rendering, React lifecycle, transient UI state, user interaction, notifications, and navigation.
+Presentation components own rendering, React lifecycle, transient UI state, user interaction, notifications, navigation, and presentation formatting.
 
-Application services increasingly own authentication, authorization, workflow orchestration, dependency coordination, persistence coordination, payload construction, redirect decisions, response validation, response normalization, error normalization, and immutable application results.
+Application services own meaningful authentication, authorization, workflow orchestration, dependency coordination, persistence coordination, payload construction, redirect decisions, response validation, response normalization, error normalization, and immutable application results.
+
+Read-only server-rendered query pages remain unchanged unless future repository evidence establishes meaningful orchestration.
 
 ---
 
