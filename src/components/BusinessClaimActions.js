@@ -1,20 +1,32 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+
+import { BusinessClaimApplication } from "@/application/business";
+import { BusinessClaimRepository } from "@/domains/business-claims/business-claim.repository";
 import { BusinessClaimService } from "@/domains/business-claims/business-claim.service";
+
+const businessClaimApplication = new BusinessClaimApplication({
+  service: new BusinessClaimService(new BusinessClaimRepository()),
+});
 
 export default function BusinessClaimActions({ claim }) {
   const router = useRouter();
-  const service = new BusinessClaimService();
 
   async function approveClaim() {
-    await service.approveClaim(claim);
-    router.refresh();
+    const result = await businessClaimApplication.approveClaim(claim);
+
+    if (result.ok && result.refresh) {
+      router.refresh();
+    }
   }
 
   async function denyClaim() {
-    await service.rejectClaim(claim.id);
-    router.refresh();
+    const result = await businessClaimApplication.rejectClaim(claim.id);
+
+    if (result.ok && result.refresh) {
+      router.refresh();
+    }
   }
 
   return (

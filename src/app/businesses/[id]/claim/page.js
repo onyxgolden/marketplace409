@@ -2,7 +2,14 @@
 
 import { useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
+
+import { BusinessClaimApplication } from "@/application/business";
+import { BusinessClaimRepository } from "@/domains/business-claims/business-claim.repository";
 import { BusinessClaimService } from "@/domains/business-claims/business-claim.service";
+
+const businessClaimApplication = new BusinessClaimApplication({
+  service: new BusinessClaimService(new BusinessClaimRepository()),
+});
 
 export default function ClaimBusinessPage() {
   const params = useParams();
@@ -11,26 +18,17 @@ export default function ClaimBusinessPage() {
   const businessId = params.id;
   const businessName = searchParams.get("name") || "";
 
-  const service = new BusinessClaimService();
-
-  const [form, setForm] = useState({
-    claimant_name: "",
-    title: "",
-    email: "",
-    phone: "",
-    website: "",
-    facebook_url: "",
-    notes: "",
-    certified: false,
-  });
-
+  const [form, setForm] = useState(() =>
+    businessClaimApplication.getInitialBusinessClaimForm(),
+  );
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
 
   function updateField(e) {
     const { name, value, type, checked } = e.target;
-    setForm((prev) => ({
-      ...prev,
+
+    setForm((previousForm) => ({
+      ...previousForm,
       [name]: type === "checkbox" ? checked : value,
     }));
   }
@@ -39,41 +37,29 @@ export default function ClaimBusinessPage() {
     e.preventDefault();
     setError("");
 
-    if (!form.certified) {
-      setError(
-        "You must certify that you are authorized to represent this business.",
-      );
+    const result = await businessClaimApplication.submitClaim({
+      businessId,
+      businessName,
+      form,
+    });
+
+    if (!result.ok) {
+      setError(result.message);
       return;
     }
 
-    try {
-      await service.submitClaim({
-        business_id: businessId,
-        business_name: businessName,
-        claimant_name: form.claimant_name,
-        title: form.title,
-        email: form.email,
-        phone: form.phone,
-        website: form.website,
-        facebook_url: form.facebook_url,
-        notes: form.notes,
-        certified: form.certified,
-        status: "pending",
-      });
-
-      setSubmitted(true);
-    } catch (err) {
-      setError(err.message || "Failed to submit claim");
-    }
+    setSubmitted(true);
   }
 
   if (submitted) {
     return (
       <main className="mx-auto max-w-2xl px-4 py-10">
         <h1 className="text-3xl font-bold">Claim Request Submitted</h1>
+
         <p className="mt-4 text-gray-700">
           Thanks. Your claim request has been submitted for review.
         </p>
+
         <p className="mt-2 text-gray-700">
           We may contact you or call the publicly listed business phone number
           to confirm ownership.
@@ -161,6 +147,7 @@ export default function ClaimBusinessPage() {
             checked={form.certified}
             onChange={updateField}
           />
+
           <span>
             I certify that I am authorized to represent this business.
           </span>

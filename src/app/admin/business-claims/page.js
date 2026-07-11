@@ -1,20 +1,21 @@
 import Header from "@/components/Header";
 import BusinessClaimActions from "@/components/BusinessClaimActions";
+
+import { BusinessClaimApplication } from "@/application/business";
+import { BusinessClaimRepository } from "@/domains/business-claims/business-claim.repository";
 import { BusinessClaimService } from "@/domains/business-claims/business-claim.service";
 
 export const dynamic = "force-dynamic";
 
+const businessClaimApplication = new BusinessClaimApplication({
+  service: new BusinessClaimService(new BusinessClaimRepository()),
+});
+
 export default async function BusinessClaimsAdminPage() {
-  const service = new BusinessClaimService();
+  const result = await businessClaimApplication.loadClaims();
 
-  let claims = [];
-  let error = null;
-
-  try {
-    claims = await service.getAllClaims();
-  } catch (e) {
-    error = e;
-  }
+  const claims = result.claims;
+  const error = result.ok ? null : { message: result.message };
 
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
@@ -33,7 +34,7 @@ export default async function BusinessClaimsAdminPage() {
           </div>
         )}
 
-        {!claims || claims.length === 0 ? (
+        {!claims.length ? (
           <div className="bg-white rounded-2xl shadow p-8 text-center">
             <p className="text-gray-600">No business claims yet.</p>
           </div>
@@ -101,6 +102,7 @@ export default async function BusinessClaimsAdminPage() {
                 {claim.notes && (
                   <div className="mt-5">
                     <p className="font-bold text-sm">Notes</p>
+
                     <p className="text-gray-700 whitespace-pre-wrap">
                       {claim.notes}
                     </p>
