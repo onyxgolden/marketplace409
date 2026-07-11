@@ -53,7 +53,7 @@ The repository—not memory, documentation, or prior conversation—is the singl
 
 ### Current Architectural Objective
 
-Phase 13.5 has been completed and synchronized.
+Phase 14.1 has been completed and synchronized.
 
 The next engineering session should begin with repository-first inspection to identify the next cohesive architectural objective from verified repository evidence and roadmap priorities.
 
@@ -63,7 +63,7 @@ Do not introduce abstractions solely for architectural symmetry.
 
 ### Current Architectural Phase
 
-Phase 13.5 — Connection Platform Composition Foundation — Complete
+Phase 14.1 — Marketplace Composition Foundation — Complete
 
 ### Current Repository State
 
@@ -74,23 +74,21 @@ Composition ownership now includes:
 * `createFinancialApplicationSuite`
 * `createTransactionReviewApplicationSuite`
 * `createConnectionPlatformSuite`
+* `createMarketplaceApplicationSuite`
 
-The Connection Platform composition root now owns dependency assembly for:
+The repository now includes dedicated composition ownership for Financial, Transaction Review, Connection Platform, and Marketplace workflows.
 
-* ConnectionProvisioningService
-* ConnectionPersistenceService
-* ConnectionImportOrchestrator
-* AccountImportService
-* FinancialAccountImportService
-* FinancialAccountService
-* TransactionImportService
-* Provider Registry
-* Plaid Provider
-* Connection repositories
-* Financial Account repository
-* Transaction repository
-* Account Balance repository
-* Plaid mappers
+The Marketplace composition root now owns dependency assembly for:
+
+* ListingApplication
+* MyListingsApplication
+* FavoriteApplication
+* SavedListingsApplication
+* JobApplication
+* PetApplication
+* PetVotingApplication
+* Shared Supabase dependency
+* Shared image uploader dependency
 
 No production behavior changed.
 
@@ -98,12 +96,11 @@ Composition ownership continues expanding while application services remain focu
 
 ### Verification Status
 
-* Focused composition suites passed: 3 test files and 18 tests.
-* Full Vitest suite passed: 180 test files and 682 tests.
+* Focused composition suites passed: 4 test files and 21 tests.
+* Full Vitest suite passed: 181 test files and 685 tests.
 * Production build passed.
 * Mutation Firewall passed (expected legacy business "claimed" warning only).
-* Repository synchronized with origin/main.
-* Working tree clean.
+* Marketplace Composition Foundation implementation is complete and awaiting governance commit and push.
 
 ### Current Risk
 
@@ -169,6 +166,7 @@ Documentation is corrected.
 * [x] Complete application-layer consolidation.
 * [x] Complete Transaction Review composition.
 * [x] Complete Connection Platform composition.
+* [x] Complete Marketplace composition.
 * [x] Synchronize governance documentation.
 * [x] Verify repository synchronization.
 

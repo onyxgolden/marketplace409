@@ -83,6 +83,7 @@ Preferred response order:
 
 During implementation:
 
+- During governance synchronization, only verified repository-derived facts may change. Workflow directives, execution queues, objectives, protected rules, engineering methodology, and governance philosophy remain unchanged unless the user explicitly approves a governance change.
 - Never change approved replacement boundaries after editing has begun unless repository inspection proves the plan incorrect.
 - Resolve uncertainty through repository inspection before proposing corrective edits.
 - Never guess repository code or replacement boundaries. Every replacement must be anchored to exact START and END text copied from verified repository inspection.

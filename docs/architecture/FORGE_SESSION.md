@@ -34,13 +34,13 @@ Historical milestones remain recorded below.
 
 ## Active Phase
 
-Phase 13.5 — Connection Platform Composition Foundation — Complete
+Phase 14.1 — Marketplace Composition Foundation — Complete
 
 ## Current Objective
 
 Begin repository-first inspection to identify the next cohesive architectural objective from verified repository evidence and roadmap priorities.
 
-Phase 13.5 — Connection Platform Composition Foundation is complete.
+Phase 14.1 — Marketplace Composition Foundation is complete.
 
 Future implementation must continue extending meaningful architectural capabilities rather than introducing application services, composition roots, or other abstractions solely for symmetry.
 
@@ -48,42 +48,38 @@ Future implementation must continue extending meaningful architectural capabilit
 
 - Branch: `main`
 - Latest commit: `564347a`
-- Repository synchronized with `origin/main`
-- Working tree clean
+- Marketplace Composition Foundation changes are not yet committed or pushed
+- Working tree contains only intended Marketplace Composition Foundation implementation and governance changes
 - Mutation Firewall passed
 - Expected legacy business `"claimed"` warning only
-- Full Vitest suite passing: **180 test files / 682 tests**
-- Focused composition suites passing: **3 test files / 18 tests**
+- Full Vitest suite passing: **181 test files / 685 tests**
+- Focused composition suites passing: **4 test files / 21 tests**
 - Production build passing
 
 ## Current Architectural State
 
 Application-layer consolidation remains complete.
 
-The repository now includes three dedicated composition roots:
+The repository now includes four dedicated composition roots:
 
 - `createFinancialApplicationSuite`
 - `createTransactionReviewApplicationSuite`
 - `createConnectionPlatformSuite`
+- `createMarketplaceApplicationSuite`
 
-The Connection Platform composition root centralizes dependency construction for:
+The Marketplace composition root centralizes dependency construction for:
 
-- `ConnectionProvisioningService`
-- `ConnectionPersistenceService`
-- `ConnectionImportOrchestrator`
-- `AccountImportService`
-- `FinancialAccountImportService`
-- `FinancialAccountService`
-- `TransactionImportService`
-- Provider Registry
-- Plaid Provider
-- Connection repositories
-- Financial Account repository
-- Transaction repository
-- Account Balance repository
-- Plaid mappers
+- `ListingApplication`
+- `MyListingsApplication`
+- `FavoriteApplication`
+- `SavedListingsApplication`
+- `JobApplication`
+- `PetApplication`
+- `PetVotingApplication`
+- Shared Supabase dependency
+- Shared image uploader dependency
 
-No new Connection Platform application service was introduced because repository inspection demonstrated that the architectural gap was dependency composition rather than workflow orchestration.
+Marketplace delivery boundaries now consume the composition root while existing application workflow ownership and production behavior remain preserved.
 
 Composition roots own:
 
@@ -186,6 +182,44 @@ Confirm Clean Repository
 ---
 
 # Historical Architectural Milestones
+
+## Phase 14.1 — Marketplace Composition Foundation
+
+### Status
+
+Complete
+
+### Delivered
+
+- Introduced `createMarketplaceApplicationSuite`
+- Centralized Marketplace dependency construction
+- Composed `ListingApplication`
+- Composed `MyListingsApplication`
+- Composed `FavoriteApplication`
+- Composed `SavedListingsApplication`
+- Composed `JobApplication`
+- Composed `PetApplication`
+- Composed `PetVotingApplication`
+- Centralized the shared Supabase dependency
+- Centralized the shared image uploader dependency
+- Exported the suite through `src/infrastructure/composition/index.js`
+- Added dedicated Marketplace composition tests
+- Migrated Marketplace delivery boundaries to consume the composition root
+- Preserved all production behavior
+- ✓ Mutation Firewall passed with the expected legacy business `"claimed"` warning only
+- ✓ Focused composition suites passed: 4 test files and 21 tests
+- ✓ Full Vitest suite passed: 181 test files and 685 tests
+- ✓ Production build passed
+- Governance synchronization, commit, and push remain
+
+### Validation
+
+- ✓ Focused composition suites passed: 4 test files and 21 tests
+- ✓ Full Vitest suite passed: 181 test files and 685 tests
+- ✓ Production build passed
+- ✓ Mutation Firewall passed with the expected legacy business `"claimed"` warning only
+
+---
 
 ## Phase 13.5 — Connection Platform Composition Foundation
 

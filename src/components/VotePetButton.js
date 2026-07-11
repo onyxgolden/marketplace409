@@ -1,15 +1,16 @@
 "use client";
 
-import { PetVotingApplication } from "@/application";
-import { supabase } from "@/lib/supabase";
+import {
+  createMarketplaceApplicationSuite,
+} from "@/infrastructure/composition";
 
-const application = new PetVotingApplication({
-  supabase,
-});
+const {
+  petVotingApplication,
+} = createMarketplaceApplicationSuite();
 
 export default function VotePetButton({ petId, currentVotes = 0 }) {
   async function handleVote() {
-    const result = await application.voteForPet({
+    const result = await petVotingApplication.voteForPet({
       petId,
       currentVotes,
     });

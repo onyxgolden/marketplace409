@@ -1,9 +1,12 @@
 "use client";
 
-import { JobApplication } from "@/application";
-import { supabase } from "@/lib/supabase";
+import {
+  createMarketplaceApplicationSuite,
+} from "@/infrastructure/composition";
 
-const jobApplication = new JobApplication({ supabase });
+const {
+  jobApplication,
+} = createMarketplaceApplicationSuite();
 
 export default function DeleteJobButton({ jobId }) {
   async function handleDelete() {

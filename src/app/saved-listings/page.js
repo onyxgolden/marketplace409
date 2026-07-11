@@ -1,13 +1,14 @@
 "use client";
 
-import { SavedListingsApplication } from "@/application";
 import Header from "@/components/Header";
-import { supabase } from "@/lib/supabase";
+import {
+  createMarketplaceApplicationSuite,
+} from "@/infrastructure/composition";
 import { useEffect, useState } from "react";
 
-const savedListingsApplication = new SavedListingsApplication({
-  supabase,
-});
+const {
+  savedListingsApplication,
+} = createMarketplaceApplicationSuite();
 
 export default function SavedListingsPage() {
   const [favorites, setFavorites] = useState([]);

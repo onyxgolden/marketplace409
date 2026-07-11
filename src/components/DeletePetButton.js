@@ -1,11 +1,12 @@
 "use client";
 
-import { PetApplication } from "@/application";
-import { supabase } from "@/lib/supabase";
+import {
+  createMarketplaceApplicationSuite,
+} from "@/infrastructure/composition";
 
-const petApplication = new PetApplication({
-  supabase,
-});
+const {
+  petApplication,
+} = createMarketplaceApplicationSuite();
 
 export default function DeletePetButton({ petId }) {
   async function handleDelete() {

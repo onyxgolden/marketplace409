@@ -1,15 +1,14 @@
 "use client";
 
-import { ListingApplication } from "@/application";
 import Header from "@/components/Header";
-import { supabase } from "@/lib/supabase";
-import { uploadImage } from "@/lib/uploadImage";
+import {
+  createMarketplaceApplicationSuite,
+} from "@/infrastructure/composition";
 import { useEffect, useState } from "react";
 
-const listingApplication = new ListingApplication({
-  supabase,
-  imageUploader: uploadImage,
-});
+const {
+  listingApplication,
+} = createMarketplaceApplicationSuite();
 
 export default function EditListingPage({ params }) {
   const [listingId, setListingId] = useState("");

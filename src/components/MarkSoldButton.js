@@ -1,11 +1,12 @@
 "use client";
 
-import { ListingApplication } from "@/application";
-import { supabase } from "@/lib/supabase";
+import {
+  createMarketplaceApplicationSuite,
+} from "@/infrastructure/composition";
 
-const listingApplication = new ListingApplication({
-  supabase,
-});
+const {
+  listingApplication,
+} = createMarketplaceApplicationSuite();
 
 export default function MarkSoldButton({ listingId, ownerId, isSold }) {
   async function handleMarkSold() {

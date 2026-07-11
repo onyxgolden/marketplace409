@@ -1,15 +1,14 @@
 "use client";
 
-import { ListingApplication } from "@/application";
 import Header from "@/components/Header";
-import { supabase } from "@/lib/supabase";
-import { uploadImage } from "@/lib/uploadImage";
+import {
+  createMarketplaceApplicationSuite,
+} from "@/infrastructure/composition";
 import { useState } from "react";
 
-const listingApplication = new ListingApplication({
-  supabase,
-  imageUploader: uploadImage,
-});
+const {
+  listingApplication,
+} = createMarketplaceApplicationSuite();
 
 export default function PostPage() {
   const [form, setForm] = useState(() =>

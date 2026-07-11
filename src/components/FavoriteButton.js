@@ -1,12 +1,13 @@
 "use client";
 
-import { FavoriteApplication } from "@/application";
-import { supabase } from "@/lib/supabase";
+import {
+  createMarketplaceApplicationSuite,
+} from "@/infrastructure/composition";
 import { useEffect, useState } from "react";
 
-const favoriteApplication = new FavoriteApplication({
-  supabase,
-});
+const {
+  favoriteApplication,
+} = createMarketplaceApplicationSuite();
 
 export default function FavoriteButton({ listingId }) {
   const [isSaved, setIsSaved] = useState(false);

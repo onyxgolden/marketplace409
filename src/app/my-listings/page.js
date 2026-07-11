@@ -1,13 +1,14 @@
 "use client";
 
-import { MyListingsApplication } from "@/application";
 import Header from "@/components/Header";
-import { supabase } from "@/lib/supabase";
+import {
+  createMarketplaceApplicationSuite,
+} from "@/infrastructure/composition";
 import { useEffect, useState } from "react";
 
-const myListingsApplication = new MyListingsApplication({
-  supabase,
-});
+const {
+  myListingsApplication,
+} = createMarketplaceApplicationSuite();
 
 export default function MyListingsPage() {
   const [listings, setListings] = useState([]);

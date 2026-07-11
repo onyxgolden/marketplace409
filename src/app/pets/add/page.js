@@ -2,14 +2,13 @@
 
 import { useState } from "react";
 import Header from "@/components/Header";
-import { PetApplication } from "@/application";
-import { supabase } from "@/lib/supabase";
-import { uploadImage } from "@/lib/uploadImage";
+import {
+  createMarketplaceApplicationSuite,
+} from "@/infrastructure/composition";
 
-const petApplication = new PetApplication({
-  supabase,
-  imageUploader: uploadImage,
-});
+const {
+  petApplication,
+} = createMarketplaceApplicationSuite();
 
 export default function AddPetPage() {
   const [form, setForm] = useState(() =>

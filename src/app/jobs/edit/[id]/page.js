@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
-import { JobApplication } from "@/application";
-import { supabase } from "@/lib/supabase";
+import {
+  createMarketplaceApplicationSuite,
+} from "@/infrastructure/composition";
 
-const jobApplication = new JobApplication({ supabase });
+const {
+  jobApplication,
+} = createMarketplaceApplicationSuite();
 
 export default function EditJobPage({ params }) {
   const [jobId, setJobId] = useState("");
