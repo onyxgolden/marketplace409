@@ -1,6 +1,6 @@
 # FORGE ENGINEERING CONTROL CENTER
 
-**Version:** 1.1
+**Version:** 1.2
 **Status:** Active
 **Purpose:** Live Engineering Execution Control
 
@@ -46,26 +46,30 @@ The repository—not memory, documentation, or prior conversation—is the singl
 ### Repository State
 
 * Current Branch: main
-* Latest Commit: 9554a78 — Extract favorite application workflows
+* Latest Commit: 144e9af — Extract pet voting application workflow
 * Repository Status: Clean
 * Repository Clean: Yes
 * Repository synchronized with origin/main.
 
 ### Current Architectural Objective
 
-Continue application-layer consolidation by identifying the next React workflow that performs direct authentication, authorization, persistence coordination, payload construction, redirect decisions, response normalization, or multi-step orchestration.
+Complete the final review phase of application-layer consolidation.
 
-Repository inspection must determine the next target.
+The large React workflow extraction campaign is substantially complete.
 
-Each extraction must remain one cohesive workflow and preserve existing production behavior unless repository evidence identifies a separate defect that requires an independently scoped correction.
+Repository inspection must now determine whether any remaining React components still perform meaningful authentication, authorization, persistence coordination, payload construction, redirect decisions, response normalization, or multi-step orchestration that belongs in the application layer.
+
+Remaining candidates are expected to be smaller than the completed workflow extractions.
+
+Each extraction must remain one cohesive architectural objective and preserve existing production behavior unless repository evidence identifies a separate defect that requires an independently scoped correction.
 
 ### Current Architectural Phase
 
-Application Layer Consolidation
+Application Layer Consolidation — Final Review Phase
 
 ### Current Repository State
 
-The application-layer consolidation campaign now spans financial, business, investor, job, pet, listing, and favorite workflows.
+The application-layer consolidation campaign now spans financial, business, investor, job, pet, listing, favorite, saved-listing, and user-listing workflows.
 
 Completed application services include:
 
@@ -89,6 +93,7 @@ Completed application services include:
 * BusinessCreateApplication
 * BusinessEditApplication
 * BusinessClaimApplication
+* BusinessDeleteApplication
 
 #### Investors
 
@@ -96,14 +101,30 @@ Completed application services include:
 * InvestorWholesalerApplication
 * InvestorCashBuyerApplication
 
-#### Marketplace Workflows
+#### Jobs
 
 * JobApplication
-* PetApplication
-* ListingApplication
-* FavoriteApplication
 
-FavoriteApplication now owns:
+#### Pets
+
+* PetApplication
+* PetVotingApplication
+
+#### Listings
+
+* ListingApplication
+* MyListingsApplication
+
+#### Favorites and Saved Listings
+
+* FavoriteApplication
+* SavedListingsApplication
+
+### Recently Completed Workflow Extractions
+
+#### FavoriteApplication
+
+FavoriteApplication owns:
 
 * Authentication for favorite mutations
 * Favorite-status lookup
@@ -115,7 +136,7 @@ FavoriteApplication now owns:
 * Response normalization
 * Favorite state reconciliation results
 
-FavoriteButton now primarily owns:
+FavoriteButton primarily owns:
 
 * Rendering
 * Local UI state
@@ -124,23 +145,81 @@ FavoriteButton now primarily owns:
 * User notifications
 * Navigation
 
-Direct favorite authentication and Supabase persistence no longer remain in FavoriteButton.
+#### SavedListingsApplication
+
+SavedListingsApplication owns:
+
+* Authentication
+* Authentication redirect decisions
+* Saved-listing queries
+* Favorite removal
+* Ownership filtering
+* Persistence coordination
+* Error normalization
+* Immutable application results
+
+#### MyListingsApplication
+
+MyListingsApplication owns:
+
+* Authentication
+* Authentication redirect decisions
+* User listing queries
+* Ordering
+* Persistence coordination
+* Error normalization
+* Immutable application results
+
+#### BusinessDeleteApplication
+
+BusinessDeleteApplication owns:
+
+* Business deletion persistence
+* Error normalization
+* Reload decisions
+* Success result normalization
+
+#### PetVotingApplication
+
+PetVotingApplication owns:
+
+* Current-user authentication
+* Anonymous-user rejection
+* Vote persistence
+* Duplicate-vote handling
+* Pet vote-total updates
+* Error normalization
+* Success result normalization
+* Reload decisions
+
+VotePetButton primarily owns:
+
+* Rendering
+* User interaction
+* Alerts
+* Reload execution
+* Local presentation behavior
+
+Direct authentication and Supabase persistence no longer remain in VotePetButton.
 
 ### Verification Status
 
 * Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
-* FavoriteApplication targeted suite passed: 9 tests.
-* Full Vitest suite passed: 173 test files and 650 tests.
+* PetVotingApplication targeted suite passed: 6 tests.
+* Pet application targeted suites passed: 21 tests.
+* Full Vitest suite passed: 177 test files and 672 tests.
 * Production build passed.
-* Commit 9554a78 pushed successfully.
+* Commit 144e9af pushed successfully.
 * Repository synchronized with origin/main.
 * Working tree clean.
 
 ### Current Risk
 
-Continue reducing React presentation components without allowing application orchestration to migrate back into presentation code.
+Continue reducing remaining React presentation components without allowing application orchestration to migrate back into presentation code.
 
-Preserve existing domain boundaries, production APIs, routes, ledger behavior, repository behavior, storage behavior, and immutable application result models throughout the remaining consolidation work.
+Do not extract simple rendering, local UI state, alerts, navigation execution, or server-rendered read-only queries merely to increase application-service count.
+
+Preserve existing domain boundaries, production APIs, routes, ledger behavior, repository behavior, storage behavior, and immutable application result models throughout remaining consolidation work.
 
 Do not combine architectural extraction with unrelated feature implementation or defect correction unless repository evidence proves they are inseparable.
 
@@ -150,11 +229,11 @@ None.
 
 ### Documentation Status
 
-* Engineering Control Center synchronization in progress.
+* Engineering Control Center synchronized through commit 144e9af.
 * Workflow governance synchronized with application-layer principles.
-* FORGE Roadmap pending synchronization with the latest application-layer milestones.
-* FORGE Status pending synchronization with current repository health.
-* FORGE Session pending synchronization for the next handoff.
+* FORGE Roadmap may require later milestone synchronization.
+* FORGE Status may require later repository-health synchronization.
+* FORGE Session should be synchronized at session handoff.
 
 ---
 
@@ -176,15 +255,18 @@ Documentation is corrected.
 
 ## Active
 
-* Reserved.
+* [ ] Perform repository-wide final review for remaining React application orchestration.
 
 ## Next
 
-* Reserved.
+* [ ] Inspect BusinessAdminControls for authentication and authorization workflow extraction.
+* [ ] Inspect Header for current-user lookup and sign-out workflow extraction.
+* [ ] Determine whether remaining read-only server pages require application services or should remain unchanged.
 
 ## Future
 
-* Reserved.
+* [ ] Synchronize roadmap and status documentation when application-layer consolidation is formally closed.
+* [ ] Select the next architectural phase only after repository-wide consolidation review is complete.
 
 ## Completed
 
@@ -192,12 +274,28 @@ Documentation is corrected.
 * [x] Reconcile Executive Dashboard messaging with repository implementation.
 * [x] Verify production routes against documented capabilities.
 * [x] Synchronize Architecture Roadmap, Platform Roadmap, and Dashboard status.
-* [x] Determine the next architectural objective after reconciliation.
+* [x] Determine the application-layer consolidation architectural objective.
 * [x] Implement Transaction Review bulk property assignment capability.
 * [x] Add BulkPropertyAssignmentService domain orchestration.
 * [x] Add dedicated bulk transaction assignment API route.
-* [x] Verify 158 test files and 517 tests passed.
-* [x] Verify production build and `/api/transactions/assign-properties` route registration.
+* [x] Extract financial application workflows.
+* [x] Extract business create workflow.
+* [x] Extract business edit workflow.
+* [x] Extract business claim workflows.
+* [x] Extract business delete workflow.
+* [x] Extract investor property workflow.
+* [x] Extract investor wholesaler workflow.
+* [x] Extract investor cash-buyer workflow.
+* [x] Extract job workflows.
+* [x] Extract pet create, edit, and delete workflows.
+* [x] Extract listing create, edit, delete, and sold-status workflows.
+* [x] Extract favorite workflows.
+* [x] Extract saved-listings workflow.
+* [x] Extract my-listings workflow.
+* [x] Extract pet-voting workflow.
+* [x] Verify 177 test files and 672 tests passed.
+* [x] Verify production build passed after PetVotingApplication extraction.
+* [x] Push commit 144e9af and verify origin/main synchronization.
 
 ---
 
@@ -322,27 +420,68 @@ Verify Repository Clean
 
 ---
 
+# Application-Layer Consolidation Standard
+
+Application services own workflow coordination.
+
+Application services may own:
+
+* Authentication checks
+* Authorization checks
+* Persistence coordination
+* Payload construction
+* Multi-step workflow sequencing
+* Redirect decisions
+* Reload decisions
+* Error normalization
+* Success-result normalization
+* Immutable application result models
+
+React presentation components should primarily own:
+
+* Rendering
+* Local UI state
+* User interaction
+* Alerts and notifications
+* Navigation execution
+* Reload execution
+* React lifecycle behavior
+
+Server-rendered read-only pages should not receive application services solely for architectural uniformity.
+
+A new application service is justified only when repository inspection proves meaningful orchestration exists outside the application layer.
+
+---
+
 # Platform Capability Reality Matrix
 
-| Capability                 | Repository | API      | UI       | Documentation | Status   |
-| -------------------------- | ---------- | -------- | -------- | ------------- | -------- |
-| Financial Engine           | Verified   | Verified | Verified | Verified      | Complete |
-| Financial Reporting        | Verified   | Verified | Verified | Verified      | Complete |
-| Read Models                | Verified   | Verified | Verified | Verified      | Complete |
-| Financial Intelligence     | Verified   | Verified | Verified | Verified      | Complete |
-| Financial Operations       | Verified   | Verified | Verified | Verified      | Complete |
-| Explainability             | Verified   | Verified | Verified | Verified      | Complete |
-| Dashboard Intelligence     | Verified   | Verified | Verified | Verified      | Complete |
-| Runtime Composition        | Verified   | Verified | Verified | Verified      | Complete |
-| Connection Platform        | Verified   | Inspect  | Inspect  | Reconcile     | Active   |
-| Plaid Foundation           | Verified   | Inspect  | Inspect  | Reconcile     | Active   |
-| Financial Account Import   | Verified   | Inspect  | Inspect  | Reconcile     | Active   |
-| Transaction Import         | Verified   | Inspect  | Inspect  | Reconcile     | Active   |
-| Financial Event Import     | Verified   | Inspect  | Inspect  | Reconcile     | Active   |
-| Property Intelligence      | Verified   | Inspect  | Inspect  | Reconcile     | Active   |
-| Transaction Review Domain  | Verified   | Inspect  | Inspect  | Reconcile     | Active   |
-| Transaction Assignment API | Verified   | Inspect  | Inspect  | Reconcile     | Active   |
-| Financial Import UI        | Verified   | Inspect  | Inspect  | Reconcile     | Active   |
+| Capability                    | Repository | API      | UI       | Documentation | Status       |
+| ----------------------------- | ---------- | -------- | -------- | ------------- | ------------ |
+| Financial Engine              | Verified   | Verified | Verified | Verified      | Complete     |
+| Financial Reporting           | Verified   | Verified | Verified | Verified      | Complete     |
+| Read Models                   | Verified   | Verified | Verified | Verified      | Complete     |
+| Financial Intelligence        | Verified   | Verified | Verified | Verified      | Complete     |
+| Financial Operations          | Verified   | Verified | Verified | Verified      | Complete     |
+| Explainability                | Verified   | Verified | Verified | Verified      | Complete     |
+| Dashboard Intelligence        | Verified   | Verified | Verified | Verified      | Complete     |
+| Runtime Composition           | Verified   | Verified | Verified | Verified      | Complete     |
+| Connection Platform           | Verified   | Inspect  | Inspect  | Reconcile     | Active       |
+| Plaid Foundation              | Verified   | Inspect  | Inspect  | Reconcile     | Active       |
+| Financial Account Import      | Verified   | Inspect  | Inspect  | Reconcile     | Active       |
+| Transaction Import            | Verified   | Inspect  | Inspect  | Reconcile     | Active       |
+| Financial Event Import        | Verified   | Inspect  | Inspect  | Reconcile     | Active       |
+| Property Intelligence         | Verified   | Inspect  | Inspect  | Reconcile     | Active       |
+| Transaction Review Domain     | Verified   | Verified | Verified | Reconcile     | Active       |
+| Transaction Assignment API    | Verified   | Verified | Verified | Reconcile     | Active       |
+| Financial Import UI           | Verified   | Inspect  | Verified | Reconcile     | Active       |
+| Application Layer — Financial | Verified   | N/A      | Verified | Verified      | Complete     |
+| Application Layer — Business  | Verified   | N/A      | Verified | Verified      | Complete     |
+| Application Layer — Investors | Verified   | N/A      | Verified | Verified      | Complete     |
+| Application Layer — Jobs      | Verified   | N/A      | Verified | Verified      | Complete     |
+| Application Layer — Pets      | Verified   | N/A      | Verified | Verified      | Complete     |
+| Application Layer — Listings  | Verified   | N/A      | Verified | Verified      | Complete     |
+| Application Layer — Favorites | Verified   | N/A      | Verified | Verified      | Complete     |
+| Remaining React Workflows     | Inspect    | N/A      | Inspect  | Active        | Final Review |
 
 ---
 
@@ -350,7 +489,7 @@ Verify Repository Clean
 
 ## Current Inspection
 
-Platform Capability Reality Inspection
+Repository-Wide React Workflow Consolidation Review
 
 ## Completed Inspections
 
@@ -372,16 +511,26 @@ Platform Capability Reality Inspection
 * Transaction Assignment API
 * Financial Import UI
 * Architecture Freeze Decision
-* Next Objective Selection
-
+* Application-Layer Objective Selection
+* Financial Application Workflows
+* Business Application Workflows
+* Investor Application Workflows
+* Job Application Workflows
+* Pet Application Workflows
+* Listing Application Workflows
+* Favorite Application Workflows
+* Saved Listings Workflow
+* My Listings Workflow
+* Pet Voting Workflow
 
 ## Remaining Inspections
 
-* Platform Roadmap reconciliation
-* Executive Dashboard reconciliation
-* Production route verification
-* Documentation synchronization
-* Capability reconciliation
+* BusinessAdminControls authentication and authorization
+* Header current-user and sign-out workflow
+* Remaining direct Supabase authentication usage in React components
+* Remaining direct persistence coordination in React components
+* Read-only server page classification
+* Formal application-layer consolidation closeout
 
 ---
 
@@ -397,6 +546,10 @@ Always:
 * End from a known-good repository state.
 * Keep the repository as the source of truth.
 * Leave the repository stronger than it was found.
+* Use Vitest-native commands.
+* Use exact START and END replacement boundaries for partial edits.
+* Treat each architectural objective as a separate commit.
+* Synchronize governance documentation when milestones warrant it.
 
 Never:
 
@@ -407,6 +560,9 @@ Never:
 * Introduce speculative architecture.
 * Begin implementation before repository inspection.
 * Duplicate responsibility already owned by another governance document.
+* Extract presentation-only behavior into application services.
+* Move infrastructure or repository responsibilities into React components.
+* Continue after cascading, parsing, module-resolution, or unrelated failures.
 
 ---
 
@@ -428,6 +584,8 @@ The following boundaries are permanent.
 * Demo data is never production truth.
 * Financial Operations never create accounting truth.
 * Financial Operations never mutate ledger state.
+* React components do not own application workflow orchestration when a cohesive application service can own it.
+* Application services do not absorb infrastructure, domain, or presentation responsibilities.
 
 ---
 
@@ -456,42 +614,57 @@ A FORGE engineering session concludes only after confirming:
 
 ## Current Objective
 
-* Current Objective: Synchronize Architecture Roadmap, Platform Roadmap, and Dashboard status.
-* Current Risk: Documentation synchronization in progress.
-* Forge Financial dashboard application-layer extraction milestone pending roadmap synchronization.
+Perform the repository-wide final review of remaining React workflow orchestration.
 
-## Next Execution Item
+The major application-layer extraction campaign is substantially complete.
+
+Remaining candidates are expected to be smaller workflow extractions rather than page-scale consolidations.
 
 ## Active
 
-* [ ] Synchronize Architecture Roadmap, Platform Roadmap, and Dashboard status.
-* [ ] Determine the next architectural objective after reconciliation.
+* [ ] Inspect BusinessAdminControls for authentication and authorization workflow extraction.
 
 ## Next
 
-* Reserved.
+* [ ] Inspect Header for current-user lookup and sign-out workflow extraction.
+* [ ] Inspect remaining React components for direct authentication or persistence coordination.
+* [ ] Determine whether application-layer consolidation can be formally closed.
 
 ## Future
 
-* Reserved.
+* [ ] Synchronize FORGE Roadmap, FORGE Status, and FORGE Session after consolidation closeout.
+* [ ] Select the next architectural phase from verified repository evidence.
 
 ## Completed
 
-* [x] Reconcile Platform Roadmap with repository implementation.
-* [x] Reconcile Executive Dashboard messaging with repository implementation.
-* [x] Verify production routes against documented capabilities.
+* [x] Extract FavoriteApplication.
+* [x] Extract SavedListingsApplication.
+* [x] Extract MyListingsApplication.
+* [x] Extract BusinessDeleteApplication.
+* [x] Extract PetVotingApplication.
+* [x] Verify Mutation Firewall passed with expected legacy warning only.
+* [x] Verify 177 test files and 672 tests passed.
+* [x] Verify production build passed.
+* [x] Commit and push 144e9af.
+* [x] Synchronize Engineering Control Center through 144e9af.
 
 ## Repository State
 
-Record the branch, commit, and repository cleanliness.
+* Branch: main
+* Latest Commit: 144e9af — Extract pet voting application workflow
+* Working Tree: Clean
+* Remote State: Synchronized with origin/main
+* Mutation Firewall: Passing with expected legacy `"claimed"` warning only
+* Full Test Suite: 177 test files and 672 tests passing
+* Production Build: Passing
 
 ## Known Blockers
 
-Record only verified blockers.
+None.
 
 ## Starting Point
 
-Every new engineering session begins by inspecting the first unchecked execution item.
+Every new engineering session begins by inspecting the first unchecked Active execution item.
 
 Implementation never begins before inspection.
 
