@@ -1,49 +1,49 @@
 "use client";
 
+import { MyListingsApplication } from "@/application";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { useEffect, useState } from "react";
+
+const myListingsApplication = new MyListingsApplication({
+  supabase,
+});
 
 export default function MyListingsPage() {
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    async function loadMyListings() {
+      const result = await myListingsApplication.loadMyListings();
+
+      if (!result.ok) {
+        if (result.requiresAuthentication) {
+          window.location.href = result.redirectTo;
+          return;
+        }
+
+        console.log(result.error);
+        alert(result.message);
+        setLoading(false);
+        return;
+      }
+
+      setListings(result.listings);
+      setLoading(false);
+    }
+
     loadMyListings();
   }, []);
-
-  async function loadMyListings() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      window.location.href = "/auth";
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("listings")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.log(error);
-      alert("Could not load your listings.");
-    } else {
-      setListings(data || []);
-    }
-
-    setLoading(false);
-  }
 
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       <Header />
 
       <section className="max-w-6xl mx-auto py-12 px-6">
-        <h1 className="text-5xl font-extrabold mb-4">My Listings</h1>
+        <h1 className="text-5xl font-extrabold mb-4">
+          My Listings
+        </h1>
 
         <p className="text-xl text-gray-600 mb-8">
           Manage the listings you posted on 409 Marketplace.
@@ -55,7 +55,9 @@ export default function MyListingsPage() {
           </div>
         ) : listings.length === 0 ? (
           <div className="bg-white rounded-2xl shadow-md p-8 text-center">
-            <h2 className="text-2xl font-bold mb-2">No listings yet</h2>
+            <h2 className="text-2xl font-bold mb-2">
+              No listings yet
+            </h2>
 
             <a
               href="/post"
@@ -85,11 +87,18 @@ export default function MyListingsPage() {
                 )}
 
                 <div className="p-5">
-                  <p className="text-sm text-gray-500">{listing.city}</p>
-                  <h2 className="text-xl font-bold">{listing.title}</h2>
+                  <p className="text-sm text-gray-500">
+                    {listing.city}
+                  </p>
+
+                  <h2 className="text-xl font-bold">
+                    {listing.title}
+                  </h2>
+
                   <p className="text-2xl font-bold text-green-700 mt-2">
                     {listing.price}
                   </p>
+
                   <p className="text-sm text-gray-500 mt-2">
                     {listing.category}
                   </p>

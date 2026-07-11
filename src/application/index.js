@@ -34,4 +34,7 @@ export {
 export { JobApplication } from "./jobs/index.js";
 
 export { PetApplication } from "./pets/index.js";
-export { ListingApplication } from "./listings/index.js";
+export {
+  ListingApplication,
+  MyListingsApplication,
+} from "./listings/index.js";
