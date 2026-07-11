@@ -41,18 +41,23 @@ The repository—not memory, documentation, or prior conversation—is the singl
 
 ## Last Verified
 
-**Verified:** 2026-07-09
+**Verified:** 2026-07-10
 
 ### Repository State
 
 * Current Branch: main
-* Latest Commit: 088820b — Extract investor property application workflows
+* Latest Commit: 9554a78 — Extract favorite application workflows
 * Repository Status: Clean
 * Repository Clean: Yes
+* Repository synchronized with origin/main.
 
 ### Current Architectural Objective
 
-Continue application-layer consolidation by reducing React presentation components to rendering, user interaction, transient UI state, routing, and presentation formatting while moving workflow orchestration, dependency coordination, persistence coordination, and immutable view-model construction into application services without changing production behavior.
+Continue application-layer consolidation by identifying the next React workflow that performs direct authentication, authorization, persistence coordination, payload construction, redirect decisions, response normalization, or multi-step orchestration.
+
+Repository inspection must determine the next target.
+
+Each extraction must remain one cohesive workflow and preserve existing production behavior unless repository evidence identifies a separate defect that requires an independently scoped correction.
 
 ### Current Architectural Phase
 
@@ -60,38 +65,84 @@ Application Layer Consolidation
 
 ### Current Repository State
 
-The application-layer consolidation campaign has expanded beyond the financial subsystem.
+The application-layer consolidation campaign now spans financial, business, investor, job, pet, listing, and favorite workflows.
 
-Completed during this engineering cycle:
+Completed application services include:
 
-* TransactionReviewApplication extracted transaction assignment orchestration.
-* FinancialImportApplication extracted financial import orchestration.
-* Financial import initialization moved into the application layer.
-* Assignment state reconciliation moved from React into the application layer.
-* Immutable application result models established for initialization, imports, and assignment workflows.
-* FinancialImportTool now primarily owns React state, rendering, and user interaction.
-* ForgeDashboardApplication extracted immutable dashboard request construction, fallback state creation, dashboard normalization, and dashboard view-model composition from the Forge dashboard React page.
-* ForgeDashboardApplication now also owns dashboard intelligence fetch orchestration, read-model fetch orchestration, HTTP response validation, error normalization, and non-blocking read-model failure policy.
-* Forge dashboard page now primarily owns rendering, React lifecycle, transient UI state, memoized application execution, and presentation formatting.
-* FinancialSnapshotViewApplication extracted ledger composition, chart construction, report generation, KPI calculation, health-message evaluation, and immutable snapshot view-model creation from the Financial Snapshot React presentation.
-* FinancialSnapshotTool now primarily owns rendering, form state, user interaction, memoized application execution, and presentation formatting.
-* ForgeFinancialDashboardApplication extracted snapshot/operations fetch coordination, response validation, loading and error models, status item composition, and activity view-model construction from the Forge Financial dashboard page.
-* Forge Financial dashboard page now primarily owns rendering, React lifecycle state, and presentation formatting.
-* Financial application exports were centralized through `src/application/financial/index.js`.
-* InvestorPropertyApplication established the first non-financial application service.
-* Investor property creation, loading, update, and delete workflows moved from React pages into `src/application/investors/InvestorPropertyApplication.js`.
-* Investor add-property and edit-property pages now primarily own React state, lifecycle, routing, user interaction, and rendering.
+#### Financial
+
+* FinancialReportingApplication
+* FinancialSnapshotApplication
+* FinancialImportApplication
+* TransactionReviewApplication
+* FinancialOperationsApplication
+* FinancialExplainabilityApplication
+* FinancialIntelligenceApplication
+* FinancialDashboardIntelligenceApplication
+* FinancialReadModelApplication
+* FinancialSnapshotViewApplication
+* ForgeDashboardApplication
+* ForgeFinancialDashboardApplication
+
+#### Business
+
+* BusinessCreateApplication
+* BusinessEditApplication
+* BusinessClaimApplication
+
+#### Investors
+
+* InvestorPropertyApplication
+* InvestorWholesalerApplication
+* InvestorCashBuyerApplication
+
+#### Marketplace Workflows
+
+* JobApplication
+* PetApplication
+* ListingApplication
+* FavoriteApplication
+
+FavoriteApplication now owns:
+
+* Authentication for favorite mutations
+* Favorite-status lookup
+* Favorite creation
+* Favorite removal
+* Persistence coordination
+* Authentication redirect decisions
+* Error normalization
+* Response normalization
+* Favorite state reconciliation results
+
+FavoriteButton now primarily owns:
+
+* Rendering
+* Local UI state
+* React lifecycle
+* User interaction
+* User notifications
+* Navigation
+
+Direct favorite authentication and Supabase persistence no longer remain in FavoriteButton.
 
 ### Verification Status
 
-* Mutation Firewall passing.
-* Focused Vitest application tests passing.
-* Production build passing.
+* Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
+* FavoriteApplication targeted suite passed: 9 tests.
+* Full Vitest suite passed: 173 test files and 650 tests.
+* Production build passed.
+* Commit 9554a78 pushed successfully.
 * Repository synchronized with origin/main.
+* Working tree clean.
 
 ### Current Risk
 
-Continue reducing React presentation components without allowing application orchestration to migrate back into presentation code. Preserve existing domain boundaries, production APIs, routes, ledger behavior, repository behavior, storage behavior, and immutable application models throughout the remaining consolidation work.
+Continue reducing React presentation components without allowing application orchestration to migrate back into presentation code.
+
+Preserve existing domain boundaries, production APIs, routes, ledger behavior, repository behavior, storage behavior, and immutable application result models throughout the remaining consolidation work.
+
+Do not combine architectural extraction with unrelated feature implementation or defect correction unless repository evidence proves they are inseparable.
 
 ### Blocking Issues
 
@@ -100,9 +151,10 @@ None.
 ### Documentation Status
 
 * Engineering Control Center synchronization in progress.
-* Workflow synchronized.
-* Architecture Roadmap pending synchronization with investor application-layer milestone.
-* Platform Roadmap pending synchronization with the latest application-layer milestone.
+* Workflow governance synchronized with application-layer principles.
+* FORGE Roadmap pending synchronization with the latest application-layer milestones.
+* FORGE Status pending synchronization with current repository health.
+* FORGE Session pending synchronization for the next handoff.
 
 ---
 

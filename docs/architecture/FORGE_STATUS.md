@@ -1,25 +1,23 @@
-# Forge Status
+# FORGE Status
 
-**Version:** 1.0
+**Version:** 2.0
 **Status:** Active
-**Last Updated:** 2026-06-28
+**Last Updated:** 2026-07-10
 
 ---
 
 # Purpose
 
-Forge Status is the operational snapshot of the Financial Forge repository.
-
-Unlike the Architecture Roadmap, this document reflects the repository as it exists today.
+FORGE Status is the operational snapshot of the repository.
 
 It answers:
 
-- Where are we?
+- Where is the repository today?
 - What is production ready?
-- What is the next architectural milestone?
+- What architectural work is currently active?
 - Is the repository healthy?
 
-This document should be reviewed at the beginning of every Forge session.
+Repository inspection—not documentation—is always the source of truth.
 
 ---
 
@@ -27,15 +25,19 @@ This document should be reviewed at the beginning of every Forge session.
 
 ## Current Branch
 
-forge/business-domain-lockdown
+main
 
 ## Latest Green Commit
 
-79538df — Expand Forge into financial dashboard
+9554a78 — Extract favorite application workflows
+
+## Repository
+
+Synchronized with `origin/main`
 
 ## Working Tree
 
-Expected: Clean
+Clean
 
 ## Production Build
 
@@ -43,15 +45,15 @@ PASS
 
 ## Test Status
 
-61 Test Files Passed
+173 test files passing
 
-189 Tests Passed
+650 tests passing
 
 ## Mutation Firewall
 
 PASS
 
-Legacy Business Domain warnings currently expected.
+Expected legacy business `"claimed"` warning only.
 
 ---
 
@@ -59,151 +61,162 @@ Legacy Business Domain warnings currently expected.
 
 ## Phase
 
-Transition from Production Financial Platform to User-Scoped Financial Persistence.
+Application Layer Consolidation
 
 ## Immediate Objective
 
-Persist Financial Forge objects under authenticated user ownership.
+Continue identifying React workflows that still perform authentication, authorization, persistence coordination, payload construction, redirect decisions, response normalization, or multi-step orchestration.
 
-## Why
+Repository inspection determines the next extraction.
 
-The financial platform is now capable of producing reports, metrics, imports, and dashboards.
-
-The next architectural milestone is allowing every authenticated user to own their own financial system.
+Each extraction should remain one cohesive workflow.
 
 ---
 
-# Production Capability Status
+# Repository Capability Status
 
-| Capability | Status |
-|------------|--------|
-| Immutable Ledger | Production Ready |
-| Financial Engine | Production Ready |
-| Financial Reporting | Production Ready |
-| Production Report Service | Production Ready |
-| Financial Events | Production Ready |
-| Financial Metrics | Production Ready |
-| Financial Insights | Production Ready |
-| Net Worth | Production Ready |
-| Rentec Import | Production Ready |
-| QuickBooks Import | Production Ready |
-| Unified Financial Import Platform | Production Ready |
-| Production Import UI | Production Ready |
-| Forge Dashboard | Initial Production |
-| Business Domain | Stabilizing |
+## Financial
+
+✅ FinancialReportingApplication
+
+✅ FinancialSnapshotApplication
+
+✅ FinancialImportApplication
+
+✅ TransactionReviewApplication
+
+✅ FinancialOperationsApplication
+
+✅ FinancialExplainabilityApplication
+
+✅ FinancialIntelligenceApplication
+
+✅ FinancialDashboardIntelligenceApplication
+
+✅ FinancialReadModelApplication
+
+✅ FinancialSnapshotViewApplication
+
+✅ ForgeDashboardApplication
+
+✅ ForgeFinancialDashboardApplication
+
+## Business
+
+✅ BusinessCreateApplication
+
+✅ BusinessEditApplication
+
+✅ BusinessClaimApplication
+
+## Investors
+
+✅ InvestorPropertyApplication
+
+✅ InvestorWholesalerApplication
+
+✅ InvestorCashBuyerApplication
+
+## Marketplace
+
+✅ JobApplication
+
+✅ PetApplication
+
+✅ ListingApplication
+
+✅ FavoriteApplication
 
 ---
 
 # Current Repository Reality
 
-Completed:
+Application-layer consolidation now spans:
 
-- Immutable accounting platform
-- Unified financial import platform
-- Shared production import workflow
-- Financial dashboard foundation
-- Financial reporting
-- Financial metrics
-- Financial insights
-- Net worth
-- Import normalization
-- Production fixture testing
+- Financial
+- Business
+- Investors
+- Jobs
+- Pets
+- Listings
+- Favorites
 
-Deferred:
+Presentation components increasingly own only:
 
-- User-owned persistence
-- Import history
-- Financial account persistence
-- Ledger persistence
-- Multi-user dashboards
-- Row Level Security for financial domains
+- Rendering
+- React lifecycle
+- Local UI state
+- User interaction
+- Notifications
+- Navigation
 
-Experimental:
+Application services own:
 
-None.
+- Authentication
+- Authorization
+- Workflow orchestration
+- Persistence coordination
+- Payload construction
+- Redirect decisions
+- Response normalization
+- Error normalization
 
-Production architecture remains the priority.
+Production behavior has been preserved throughout the consolidation effort.
+
+Repository inspection, verification, and governance documentation now precede every architectural extraction.
 
 ---
 
 # Immediate Next Milestone
 
-## User-Scoped Financial Persistence
+Continue Application Layer Consolidation.
 
-### Objective
+Repository inspection will determine the next cohesive workflow extraction.
 
-Allow every authenticated user to own independent financial data.
-
-### Deliverables
-
-- User-owned imports
-- Financial account persistence
-- Financial event persistence
-- Ledger persistence
-- Repository layer
-- Row Level Security
-- Dashboard backed by persisted data
-
-### Exit Criteria
-
-A user can:
-
-- Sign in
-- Import financial data
-- Persist financial information
-- Return later and continue where they left off
+No implementation target should be selected before repository inspection.
 
 ---
 
 # Recent Architectural Milestones
 
-### 2026-06-28
+### 2026-07-10
 
-79538df
+9554a78
 
-Expanded Forge into the Financial Dashboard.
+Extract favorite application workflows.
 
----
+### 2026-07-10
 
-### 2026-06-28
+54ff8e4
 
-0698144
+Complete listing application workflow consolidation.
 
-Unified QuickBooks summary with shared Financial Import UI.
+### 2026-07-10
 
----
+df6ef3d
 
-### Recent Sessions
-
-Completed:
-
-- Shared Financial Import Facade
-- Production Import Workflow
-- Unified Financial Import Platform
-- Financial Dashboard foundation
+Extract listing edit application workflow.
 
 ---
 
 # Session Boot Checklist
 
-1. Read FORGE_STATUS.md.
-2. Review FORGE_ROADMAP.md.
-3. Determine the current architectural phase.
-4. Inspect the complete architectural feature slice.
-5. Confirm whether the requested capability already exists.
-6. Choose one implementation objective.
-7. Begin implementation.
+1. Read FORGE_ENGINEERING_CONTROL_CENTER.md.
+2. Read FORGE_WORKFLOW.md.
+3. Read FORGE_STATUS.md.
+4. Perform combined repository inspection before planning implementation.
+5. Verify the current architectural objective.
+6. Select one cohesive extraction.
+7. Implement.
+8. Validate.
+9. Synchronize documentation.
 
 ---
 
 # Documentation Synchronization
 
-Documentation is reviewed:
+Documentation follows verified repository implementation.
 
-- After every significant architectural milestone.
-- Before beginning a new major architectural phase.
-- At least once every 3–4 active Forge development days when engineering sessions have occurred.
-
-Documentation reflects repository reality.
+Repository inspection always precedes documentation changes.
 
 The repository remains the source of truth.

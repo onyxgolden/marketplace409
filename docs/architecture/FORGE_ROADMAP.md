@@ -1309,53 +1309,87 @@ UI
 
 #### Purpose
 
-Continue reducing presentation components to rendering, user interaction, routing, formatting, React lifecycle, and transient UI state while moving workflow orchestration, persistence coordination, external service coordination, response validation, error normalization, and immutable view-model construction into dedicated application services.
+Continue reducing presentation components to rendering, user interaction, routing, formatting, React lifecycle, notifications, navigation, and transient UI state while moving workflow orchestration, authentication, authorization, persistence coordination, external service coordination, payload construction, redirect decisions, response validation, error normalization, response normalization, and immutable view-model construction into dedicated application services.
 
 #### Delivered
+
+##### Financial Application Services
 
 * Introduced `TransactionReviewApplication` to own transaction assignment orchestration.
 * Introduced `FinancialImportApplication` to own financial import workflow orchestration.
 * Moved financial import initialization into the application layer.
 * Moved assignment state reconciliation from React into immutable application result models.
 * Reduced `FinancialImportTool` toward presentation-only responsibilities.
-* Centralized financial application exports.
 * Introduced `ForgeDashboardApplication` as the presentation-facing application service for the FORGE dashboard.
-* Centralized dashboard request construction, fallback response creation, dashboard normalization, and immutable dashboard view-model composition.
-* Reduced the FORGE dashboard page to rendering, fetch lifecycle management, and transient UI state.
+* Centralized dashboard request construction, fallback response creation, dashboard normalization, fetch orchestration, response validation, error normalization, and immutable dashboard view-model composition.
 * Introduced `FinancialSnapshotViewApplication` as the presentation-facing application service for the Financial Snapshot page.
 * Moved ledger composition, chart construction, report generation, KPI calculation, health-message evaluation, and immutable snapshot view-model creation out of `FinancialSnapshotTool`.
 * Introduced `ForgeFinancialDashboardApplication` as the presentation-facing application service for the Forge Financial dashboard.
-* Moved snapshot/operations fetch coordination, response validation, loading/error models, status items, and activity view-model composition out of `src/app/forge/financial/page.js`.
-* Reduced the Forge Financial dashboard page to rendering, React lifecycle state, and presentation formatting.
-* Introduced `InvestorPropertyApplication` as the first non-financial application service.
-* Moved investor property create, load, update, and delete workflows into the application layer.
-* Reduced investor add-property and edit-property pages to React lifecycle, transient UI state, routing, rendering, and user interaction.
-* Confirmed application-layer consolidation now extends beyond the financial subsystem.
-* Preserved all production APIs, domain services, routes, and runtime behavior.
+* Moved snapshot and operations fetch coordination, response validation, loading and error models, status items, and activity view-model composition out of `src/app/forge/financial/page.js`.
+* Centralized financial application exports through `src/application/financial/index.js`.
+
+##### Business Application Services
+
+* Introduced `BusinessCreateApplication`.
+* Introduced `BusinessEditApplication`.
+* Introduced `BusinessClaimApplication`.
+* Moved business creation, editing, claim submission, claim review, approval, rejection, authentication, persistence coordination, and response normalization into the application layer.
+* Reduced business React pages and administrative controls toward rendering, lifecycle, transient state, notifications, navigation, and user interaction.
+
+##### Investor Application Services
+
+* Introduced `InvestorPropertyApplication`.
+* Introduced `InvestorWholesalerApplication`.
+* Introduced `InvestorCashBuyerApplication`.
+* Moved investor property, wholesaler, and cash-buyer create, load, update, and delete workflows into the application layer.
+* Reduced investor add, edit, and delete React workflows toward presentation responsibilities.
+
+##### Marketplace Application Services
+
+* Introduced `JobApplication`.
+* Introduced `PetApplication`.
+* Introduced `ListingApplication`.
+* Introduced `FavoriteApplication`.
+* Moved job, pet, listing, and favorite workflow orchestration into dedicated application services.
+* Consolidated listing creation, loading, editing, multi-image upload orchestration, replacement image upload, deletion, ownership authorization, sold-status changes, redirect decisions, error normalization, and response normalization.
+* Reduced listing pages, `DeleteListingButton`, and `MarkSoldButton` toward rendering, local state, form events, confirmations, notifications, navigation, and reload behavior.
+* Moved favorite authentication, favorite-status lookup, favorite creation, favorite removal, persistence coordination, redirect decisions, error normalization, response normalization, and state reconciliation results into `FavoriteApplication`.
+* Removed direct favorite authentication and Supabase persistence from `FavoriteButton`.
+
+##### Architectural Outcome
+
+* Application-layer consolidation now spans financial, business, investor, job, pet, listing, and favorite workflows.
+* Application services are exported through domain-specific barrels and the root `src/application/index.js` barrel.
+* Presentation components increasingly delegate workflow orchestration to application services.
+* Production APIs, domain services, routes, persistence behavior, storage behavior, and user-facing behavior were preserved throughout the completed extractions.
+* Repository inspection determines the next cohesive workflow extraction before implementation begins.
 
 #### Protected Rule
 
-Presentation components render and handle user interaction.
+Presentation components render and manage React lifecycle, transient UI state, user interaction, notifications, navigation, and presentation formatting.
 
-Application services coordinate workflows, dependencies, persistence, external services, immutable presentation models, response validation, and error normalization.
+Application services coordinate workflows, authentication, authorization, dependencies, persistence, external services, payload construction, redirect decisions, immutable presentation models, response validation, response normalization, and error normalization.
 
 Domain services own business rules.
 
-Production behavior must remain unchanged while architectural boundaries become more explicit.
+Repository inspection determines extraction boundaries.
+
+Each extraction must remain one cohesive workflow.
+
+Production behavior must remain unchanged while architectural boundaries become more explicit unless a separately scoped defect correction is required.
 
 #### Validation
 
-- ✓ TransactionReviewApplication tests passed.
-- ✓ FinancialImportApplication tests passed.
-- ✓ ForgeDashboardApplication tests passed.
-- ✓ FinancialSnapshotViewApplication tests passed.
-- ✓ ForgeFinancialDashboardApplication tests passed.
-- ✓ InvestorPropertyApplication tests passed.
-- ✓ Mutation Firewall passed.
+- ✓ Targeted application-service suites passed.
+- ✓ `ListingApplication`: 27 targeted tests passed.
+- ✓ `FavoriteApplication`: 9 targeted tests passed.
+- ✓ Full Vitest suite passed: 173 test files and 650 tests.
+- ✓ Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
 - ✓ Production build passed.
+- ✓ Latest application-layer commit: `9554a78` — Extract favorite application workflows.
 - ✓ Repository synchronized with `origin/main`.
 
-**Status:** Complete
+**Status:** Active
 
 ---
 
