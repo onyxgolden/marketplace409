@@ -14,3 +14,5 @@ export { createConnectionPlatformSuite } from "./createConnectionPlatformSuite.j
 export { createMarketplaceApplicationSuite } from "./createMarketplaceApplicationSuite.js";
 
 export { createBusinessApplicationSuite } from "./createBusinessApplicationSuite.js";
+
+export { createInvestorApplicationSuite } from "./createInvestorApplicationSuite.js";

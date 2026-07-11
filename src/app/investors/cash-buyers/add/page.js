@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import Header from "@/components/Header";
-import { InvestorCashBuyerApplication } from "@/application/investors";
-import { supabase } from "@/lib/supabase";
+import { createInvestorApplicationSuite } from "@/infrastructure/composition";
 
-const cashBuyerApplication = new InvestorCashBuyerApplication({ supabase });
+const {
+  investorCashBuyerApplication: cashBuyerApplication,
+} = createInvestorApplicationSuite();
 
 export default function AddCashBuyerPage() {
   const [form, setForm] = useState(() =>

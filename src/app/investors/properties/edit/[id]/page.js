@@ -3,14 +3,11 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
-import { InvestorPropertyApplication } from "@/application/investors";
-import { supabase } from "@/lib/supabase";
-import { uploadImage } from "@/lib/uploadImage";
+import { createInvestorApplicationSuite } from "@/infrastructure/composition";
 
-const investorPropertyApplication = new InvestorPropertyApplication({
-  supabase,
-  imageUploader: uploadImage,
-});
+const {
+  investorPropertyApplication,
+} = createInvestorApplicationSuite();
 
 export default function EditInvestorPropertyPage() {
   const params = useParams();

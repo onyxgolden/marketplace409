@@ -2,12 +2,11 @@
 
 import { useState } from "react";
 import Header from "@/components/Header";
-import { InvestorPropertyApplication } from "@/application/investors";
-import { supabase } from "@/lib/supabase";
+import { createInvestorApplicationSuite } from "@/infrastructure/composition";
 
-const investorPropertyApplication = new InvestorPropertyApplication({
-  supabase,
-});
+const {
+  investorPropertyApplication,
+} = createInvestorApplicationSuite();
 
 export default function AddInvestorPropertyPage() {
   const [address, setAddress] = useState("");

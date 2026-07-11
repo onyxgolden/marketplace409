@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
-import { InvestorCashBuyerApplication } from "@/application/investors";
-import { supabase } from "@/lib/supabase";
+import { createInvestorApplicationSuite } from "@/infrastructure/composition";
 
-const cashBuyerApplication = new InvestorCashBuyerApplication({ supabase });
+const {
+  investorCashBuyerApplication: cashBuyerApplication,
+} = createInvestorApplicationSuite();
 
 export default function EditCashBuyerPage() {
   const params = useParams();

@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import Header from "@/components/Header";
-import { InvestorWholesalerApplication } from "@/application/investors";
-import { supabase } from "@/lib/supabase";
+import { createInvestorApplicationSuite } from "@/infrastructure/composition";
 
-const application = new InvestorWholesalerApplication({ supabase });
+const {
+  investorWholesalerApplication: application,
+} = createInvestorApplicationSuite();
 
 export default function AddWholesalerPage() {
   const [form, setForm] = useState(application.getInitialWholesalerForm());
