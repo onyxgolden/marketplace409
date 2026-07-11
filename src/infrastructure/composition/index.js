@@ -12,3 +12,5 @@ export { createTransactionReviewApplicationSuite } from "./createTransactionRevi
 export { createConnectionPlatformSuite } from "./createConnectionPlatformSuite.js";
 
 export { createMarketplaceApplicationSuite } from "./createMarketplaceApplicationSuite.js";
+
+export { createBusinessApplicationSuite } from "./createBusinessApplicationSuite.js";

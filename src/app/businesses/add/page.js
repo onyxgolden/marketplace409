@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { BusinessCreateApplication } from "@/application";
-import { supabase } from "@/lib/supabase";
+import {
+  createBusinessApplicationSuite,
+} from "@/infrastructure/composition";
 
-const businessCreateApplication = new BusinessCreateApplication({
-  supabase,
-});
+const {
+  businessCreateApplication,
+} = createBusinessApplicationSuite();
 
 export default function AddBusinessPage() {
   const router = useRouter();

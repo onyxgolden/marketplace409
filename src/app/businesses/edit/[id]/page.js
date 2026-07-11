@@ -2,14 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
-import { BusinessEditApplication } from "@/application";
-import { supabase } from "@/lib/supabase";
-import { uploadImage } from "@/lib/uploadImage";
+import {
+  createBusinessApplicationSuite,
+} from "@/infrastructure/composition";
 
-const businessEditApplication = new BusinessEditApplication({
-  supabase,
-  imageUploader: uploadImage,
-});
+const {
+  businessEditApplication,
+} = createBusinessApplicationSuite();
 
 const TRUST_TAGS = [
   "Community Listing",

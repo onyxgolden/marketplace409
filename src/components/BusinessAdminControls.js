@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 
-import { AdminAuthorizationApplication } from "@/application/business";
+import {
+  createBusinessApplicationSuite,
+} from "@/infrastructure/composition";
 import DeleteBusinessButton from "@/components/DeleteBusinessButton";
-import { supabase } from "@/lib/supabase";
 
-const adminAuthorizationApplication = new AdminAuthorizationApplication({
-  supabase,
-});
+const {
+  adminAuthorizationApplication,
+} = createBusinessApplicationSuite();
 
 export default function BusinessAdminControls({ businessId }) {
   const [isAdmin, setIsAdmin] = useState(false);

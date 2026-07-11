@@ -2,13 +2,13 @@
 
 import { useRouter } from "next/navigation";
 
-import { BusinessClaimApplication } from "@/application/business";
-import { BusinessClaimRepository } from "@/domains/business-claims/business-claim.repository";
-import { BusinessClaimService } from "@/domains/business-claims/business-claim.service";
+import {
+  createBusinessApplicationSuite,
+} from "@/infrastructure/composition";
 
-const businessClaimApplication = new BusinessClaimApplication({
-  service: new BusinessClaimService(new BusinessClaimRepository()),
-});
+const {
+  businessClaimApplication,
+} = createBusinessApplicationSuite();
 
 export default function BusinessClaimActions({ claim }) {
   const router = useRouter();

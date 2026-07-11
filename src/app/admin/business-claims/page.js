@@ -1,15 +1,15 @@
 import Header from "@/components/Header";
 import BusinessClaimActions from "@/components/BusinessClaimActions";
 
-import { BusinessClaimApplication } from "@/application/business";
-import { BusinessClaimRepository } from "@/domains/business-claims/business-claim.repository";
-import { BusinessClaimService } from "@/domains/business-claims/business-claim.service";
+import {
+  createBusinessApplicationSuite,
+} from "@/infrastructure/composition";
 
 export const dynamic = "force-dynamic";
 
-const businessClaimApplication = new BusinessClaimApplication({
-  service: new BusinessClaimService(new BusinessClaimRepository()),
-});
+const {
+  businessClaimApplication,
+} = createBusinessApplicationSuite();
 
 export default async function BusinessClaimsAdminPage() {
   const result = await businessClaimApplication.loadClaims();

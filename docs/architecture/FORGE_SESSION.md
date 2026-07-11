@@ -34,52 +34,60 @@ Historical milestones remain recorded below.
 
 ## Active Phase
 
-Phase 14.1 — Marketplace Composition Foundation — Complete
+Phase 14.2 — Business Composition Foundation — Complete
 
 ## Current Objective
 
-Begin repository-first inspection to identify the next cohesive architectural objective from verified repository evidence and roadmap priorities.
+Synchronize governance from verified repository evidence.
 
-Phase 14.1 — Marketplace Composition Foundation is complete.
+Commit the Business Composition Foundation milestone.
+
+Push to origin/main.
+
+Verify a clean repository.
+
+Then perform repository-first inspection to identify the next cohesive architectural objective from verified repository evidence and roadmap priorities.
 
 Future implementation must continue extending meaningful architectural capabilities rather than introducing application services, composition roots, or other abstractions solely for symmetry.
 
 ## Repository Health
 
 - Branch: `main`
-- Latest commit: `564347a`
-- Marketplace Composition Foundation changes are not yet committed or pushed
-- Working tree contains only intended Marketplace Composition Foundation implementation and governance changes
+- Latest commit: `e8a77d9`
+- Business Composition Foundation implementation completed
+- Governance synchronization in progress
+- Working tree contains only intended Business Composition Foundation implementation and governance updates
 - Mutation Firewall passed
 - Expected legacy business `"claimed"` warning only
 - Full Vitest suite passing: **181 test files / 685 tests**
-- Focused composition suites passing: **4 test files / 21 tests**
+- Focused composition suites passing: **6 test files / 28 tests**
 - Production build passing
 
 ## Current Architectural State
 
 Application-layer consolidation remains complete.
 
-The repository now includes four dedicated composition roots:
+The repository now includes five dedicated composition roots:
 
 - `createFinancialApplicationSuite`
 - `createTransactionReviewApplicationSuite`
 - `createConnectionPlatformSuite`
 - `createMarketplaceApplicationSuite`
+- `createBusinessApplicationSuite`
 
-The Marketplace composition root centralizes dependency construction for:
+The Business composition root centralizes dependency construction for:
 
-- `ListingApplication`
-- `MyListingsApplication`
-- `FavoriteApplication`
-- `SavedListingsApplication`
-- `JobApplication`
-- `PetApplication`
-- `PetVotingApplication`
+- `AdminAuthorizationApplication`
+- `BusinessCreateApplication`
+- `BusinessEditApplication`
+- `BusinessDeleteApplication`
+- `BusinessClaimApplication`
+- `BusinessClaimService`
+- `BusinessClaimRepository`
 - Shared Supabase dependency
 - Shared image uploader dependency
 
-Marketplace delivery boundaries now consume the composition root while existing application workflow ownership and production behavior remain preserved.
+Business delivery boundaries now consume the composition root while existing application workflow ownership and production behavior remain preserved.
 
 Composition roots own:
 
@@ -178,6 +186,44 @@ Push
     ↓
 Confirm Clean Repository
 ```
+
+---
+
+## Phase 14.2 — Business Composition Foundation
+
+### Status
+
+Complete
+
+### Delivered
+
+- Introduced `createBusinessApplicationSuite`
+- Centralized Business dependency construction
+- Composed `AdminAuthorizationApplication`
+- Composed `BusinessCreateApplication`
+- Composed `BusinessEditApplication`
+- Composed `BusinessDeleteApplication`
+- Composed `BusinessClaimApplication`
+- Composed `BusinessClaimService`
+- Composed `BusinessClaimRepository`
+- Centralized the shared Supabase dependency
+- Centralized the shared image uploader dependency
+- Exported the suite through `src/infrastructure/composition/index.js`
+- Added dedicated Business composition tests
+- Migrated Business delivery boundaries to consume the composition root
+- Preserved all production behavior
+- ✓ Mutation Firewall passed with the expected legacy business `"claimed"` warning only
+- ✓ Focused composition suites passed: 6 test files and 28 tests
+- ✓ Full Vitest suite passed: 181 test files and 685 tests
+- ✓ Production build passed
+- Governance synchronization, commit, and push remain
+
+### Validation
+
+- ✓ Focused composition suites passed: 6 test files and 28 tests
+- ✓ Full Vitest suite passed: 181 test files and 685 tests
+- ✓ Production build passed
+- ✓ Mutation Firewall passed with the expected legacy business `"claimed"` warning only
 
 ---
 

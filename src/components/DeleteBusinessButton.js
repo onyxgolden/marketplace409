@@ -1,11 +1,12 @@
 "use client";
 
-import { BusinessDeleteApplication } from "@/application";
-import { supabase } from "@/lib/supabase";
+import {
+  createBusinessApplicationSuite,
+} from "@/infrastructure/composition";
 
-const application = new BusinessDeleteApplication({
-  supabase,
-});
+const {
+  businessDeleteApplication,
+} = createBusinessApplicationSuite();
 
 export default function DeleteBusinessButton({ businessId }) {
   async function handleDelete() {
@@ -13,7 +14,7 @@ export default function DeleteBusinessButton({ businessId }) {
 
     if (!confirmed) return;
 
-    const result = await application.deleteBusiness({
+    const result = await businessDeleteApplication.deleteBusiness({
       businessId,
     });
 
