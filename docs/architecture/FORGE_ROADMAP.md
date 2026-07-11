@@ -1475,6 +1475,87 @@ Financial Import UI
 
 ---
 
+### Phase 13.5 — Connection Platform Composition Foundation
+
+#### Purpose
+
+Centralize dependency construction for the Connection Platform while preserving the distinction between composition ownership, application orchestration, domain behavior, and infrastructure implementation.
+
+#### Delivered
+
+* Introduced `createConnectionPlatformSuite`.
+* Centralized construction and dependency injection for:
+  * `ConnectionProvisioningService`
+  * `ConnectionPersistenceService`
+  * `ConnectionImportOrchestrator`
+  * `AccountImportService`
+  * `FinancialAccountImportService`
+  * `FinancialAccountService`
+  * `TransactionImportService`
+  * Provider Registry
+  * Plaid Provider
+  * Connection repositories
+  * Financial Account repository
+  * Transaction repository
+  * Account Balance repository
+  * Plaid mappers
+* Exported the composition suite through `src/infrastructure/composition/index.js`.
+* Added dedicated composition tests covering default composition and dependency injection.
+* Preserved all production behavior, API contracts, persistence behavior, provider integrations, and user-facing behavior.
+* Rejected creation of an unnecessary Connection Platform application service because repository inspection demonstrated that composition—not orchestration—was the architectural requirement.
+
+#### Protected Rule
+
+Composition roots assemble dependency graphs.
+
+Application services orchestrate workflows.
+
+Domain services own business behavior.
+
+Infrastructure provides concrete implementations.
+
+Architectural symmetry alone is never sufficient justification for introducing a new application service.
+
+#### Current Architecture
+
+```text
+Connection Repositories
+        ↓
+Provider Registry
+        ↓
+Plaid Provider
+        ↓
+ConnectionProvisioningService
+        ↓
+ConnectionPersistenceService
+        ↓
+ConnectionImportOrchestrator
+        ↓
+AccountImportService
+        ↓
+FinancialAccountImportService
+        ↓
+FinancialAccountService
+        ↓
+TransactionImportService
+        ↓
+createConnectionPlatformSuite
+        ↓
+Connection APIs
+```
+
+#### Validation
+
+- ✓ Focused composition suites passed: 3 test files and 18 tests.
+- ✓ Full Vitest suite passed: 180 test files and 682 tests.
+- ✓ Production build passed.
+- ✓ Repository synchronized with `origin/main`.
+- ✓ Mutation Firewall scheduled for commit validation.
+
+**Status:** Complete
+
+---
+
 # Relationship to the Platform Roadmap
 
 The Architecture Roadmap changes infrequently.

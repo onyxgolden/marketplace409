@@ -2,8 +2,8 @@
 
 **Version:** 4.0
 **Status:** Active
-**Last Updated:** 2026-07-10
-**Latest Commit:** 8ff9a45 — Extract business admin authorization application
+**Last Updated:** 2026-07-11
+**Latest Commit:** 6c6cb9d — Synchronize governance after transaction review composition
 
 ---
 
@@ -34,46 +34,85 @@ Historical milestones remain recorded below.
 
 ## Active Phase
 
-Transaction Review Composition — Complete
+Phase 13.5 — Connection Platform Composition Foundation — Complete
 
 ## Current Objective
 
-Synchronize governance documentation for commit `265c182`.
+Complete governance synchronization for the Connection Platform Composition Foundation milestone.
 
-After documentation synchronization is complete, determine the next architectural objective through repository-first inspection of roadmap priorities and verified repository capability gaps.
+After this milestone is committed and pushed, inspect verified roadmap priorities and repository capability gaps before selecting the next cohesive architectural objective.
 
-Future implementation must continue extending meaningful architectural capabilities rather than pursuing symmetry alone.
-
-`SessionApplication` remains an optional future refinement and should be introduced only if repository evidence establishes a cohesive session-management workflow.
+Future implementation must continue extending meaningful architectural capabilities rather than introducing application services or other abstractions for symmetry alone.
 
 ## Repository Health
 
 - Branch: `main`
-- Latest commit: `265c182`
-- Repository synchronized with `origin/main`
-- Working tree clean
-- Mutation Firewall passing
+- Latest commit: `6c6cb9d`
+- Repository synchronized with `origin/main` before the current milestone changes
+- Working tree contains only the intended Connection Platform composition and governance changes
+- Mutation Firewall pending for the current milestone
 - Expected legacy business `"claimed"` warning only
-- Full Vitest suite passing: **179 test files / 679 tests**
+- Full Vitest suite passing: **180 test files / 682 tests**
+- Focused composition suites passing: **3 test files / 18 tests**
 - Production build passing
 
 ## Current Architectural State
 
 Application-layer consolidation remains complete.
 
-The Transaction Review architecture now includes a dedicated composition root:
+The repository now includes three dedicated composition roots:
 
+- `createFinancialApplicationSuite`
 - `createTransactionReviewApplicationSuite`
+- `createConnectionPlatformSuite`
 
-Composition ownership now centralizes:
+The Connection Platform composition root centralizes dependency construction for:
 
-- `PropertyRuleRepository`
-- `PropertyRuleManagementService`
-- `ManualPropertyAssignmentService`
-- `BulkPropertyAssignmentService`
-- `TransactionReviewApplication`
+- `ConnectionProvisioningService`
+- `ConnectionPersistenceService`
+- `ConnectionImportOrchestrator`
+- `AccountImportService`
+- `FinancialAccountImportService`
+- `FinancialAccountService`
+- `TransactionImportService`
+- Provider Registry
+- Plaid Provider
+- Connection repositories
+- Financial Account repository
+- Transaction repository
+- Account Balance repository
+- Plaid mappers
 
-Manual and bulk transaction-assignment APIs now consume the shared composition root rather than constructing dependency graphs directly.
+No new Connection Platform application service was introduced because repository inspection demonstrated that the architectural gap was dependency composition rather than workflow orchestration.
+
+Composition roots own:
+
+- Dependency construction
+- Repository selection
+- Provider selection
+- Infrastructure selection
+- Mapper construction
+- Domain-service construction
+- Application-service construction
+- Service-graph assembly
+- Dependency injection
+
+Application services own:
+
+- Authentication
+- Authorization
+- Workflow orchestration
+- Persistence coordination
+- External-service coordination
+- Payload construction
+- Redirect decisions
+- Response normalization
+- Error normalization
+- Immutable result construction
+
+Domain services own business behavior.
+
+Infrastructure provides concrete implementations.
 
 Presentation components continue owning:
 
@@ -83,25 +122,7 @@ Presentation components continue owning:
 - User interaction
 - Notifications
 - Navigation
-
-Application services continue owning:
-
-- Authentication
-- Authorization
-- Workflow orchestration
-- Persistence coordination
-- Payload construction
-- Redirect decisions
-- Response normalization
-- Error normalization
-
-Composition roots own:
-
-- Dependency construction
-- Repository selection
-- Infrastructure selection
-- Service graph assembly
-- Dependency injection
+- Presentation formatting
 
 Read-only server-rendered query pages remain unchanged unless repository evidence establishes meaningful orchestration.
 
@@ -165,6 +186,46 @@ Confirm Clean Repository
 ---
 
 # Historical Architectural Milestones
+
+## Phase 13.5 — Connection Platform Composition Foundation
+
+### Status
+
+Complete
+
+### Delivered
+
+- Introduced `createConnectionPlatformSuite`
+- Centralized Connection Platform dependency construction
+- Composed existing connection, account-import, financial-account, and transaction-import services
+- Composed provider registry and Plaid provider dependencies
+- Composed connection, financial-account, transaction, and account-balance repositories
+- Composed Plaid mappers
+- Exported the suite through `src/infrastructure/composition/index.js`
+- Added dedicated composition tests
+- Preserved all production behavior
+- Rejected an unnecessary application abstraction because repository evidence identified composition—not orchestration—as the architectural responsibility
+
+### Protected Rule
+
+Composition roots construct dependency graphs.
+
+Application services orchestrate workflows.
+
+Domain services own business behavior.
+
+Infrastructure provides concrete implementations.
+
+Architectural symmetry alone does not justify a new abstraction.
+
+### Validation
+
+- ✓ Focused composition suites passed: 3 test files and 18 tests
+- ✓ Full Vitest suite passed: 180 test files and 682 tests
+- ✓ Production build passed
+- ✓ Mutation Firewall scheduled for commit validation
+
+---
 
 ## Phase 8.5 – Composition Symmetry & API Alignment
 

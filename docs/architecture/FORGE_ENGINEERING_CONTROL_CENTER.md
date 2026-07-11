@@ -41,65 +41,83 @@ The repository—not memory, documentation, or prior conversation—is the singl
 
 ## Last Verified
 
-**Verified:** 2026-07-10
+**Verified:** 2026-07-11
 
 ### Repository State
 
 * Current Branch: main
-* Latest Commit: 265c182 — Introduce transaction review composition suite
-* Repository Status: Clean
-* Repository Clean: Yes
-* Repository synchronized with origin/main.
+* Latest Commit: 6c6cb9d — Synchronize governance after transaction review composition
+* Repository Status: Intended Connection Platform composition and governance changes in progress
+* Repository Clean: No
+* Repository synchronized with origin/main before the current milestone changes.
 
 ### Current Architectural Objective
 
-Synchronize governance documentation with the completed Transaction Review composition milestone and identify the next architectural phase from verified repository and roadmap evidence.
+Synchronize governance documentation with the completed Connection Platform Composition Foundation milestone and identify the next architectural phase from verified repository and roadmap evidence.
 
-The repository now includes a dedicated `createTransactionReviewApplicationSuite` composition root that centralizes dependency assembly for transaction review and property assignment workflows.
+The repository now includes a dedicated `createConnectionPlatformSuite` composition root that centralizes dependency assembly for the Connection Platform while preserving existing domain and application boundaries.
 
-Manual and bulk transaction assignment APIs now consume the shared composition root rather than constructing dependency graphs internally, bringing the transaction/property workflow into architectural alignment with the existing financial composition pattern.
+No new application service was introduced because repository inspection demonstrated that composition—not orchestration—was the correct architectural responsibility.
 
-Future architectural work should be selected from verified repository evidence rather than continuing application-layer extraction for symmetry alone.
+Future architectural work should continue being selected from verified repository evidence rather than introducing abstractions for symmetry alone.
 
 ### Current Architectural Phase
 
-Application Layer Consolidation — Complete
+Phase 13.5 — Connection Platform Composition Foundation — Complete
 
 ### Current Repository State
 
-Application-layer consolidation remains complete across financial, business, investor, marketplace, favorites, listings, and administrator authorization workflows.
+Application-layer consolidation remains complete across financial, business, investor, marketplace, favorites, listings, administrator authorization, and transaction review workflows.
 
-Transaction Review now includes a dedicated composition root that owns dependency assembly for:
+Composition ownership now includes:
 
-* PropertyRuleRepository
-* PropertyRuleManagementService
-* ManualPropertyAssignmentService
-* BulkPropertyAssignmentService
-* TransactionReviewApplication
+* `createFinancialApplicationSuite`
+* `createTransactionReviewApplicationSuite`
+* `createConnectionPlatformSuite`
 
-API routes now consume the composition layer rather than manually constructing workflow dependencies.
+The Connection Platform composition root now owns dependency assembly for:
 
-Composition ownership is now consistent across both the financial and transaction-review architectures.
+* ConnectionProvisioningService
+* ConnectionPersistenceService
+* ConnectionImportOrchestrator
+* AccountImportService
+* FinancialAccountImportService
+* FinancialAccountService
+* TransactionImportService
+* Provider Registry
+* Plaid Provider
+* Connection repositories
+* Financial Account repository
+* Transaction repository
+* Account Balance repository
+* Plaid mappers
+
+No production behavior changed.
+
+Composition ownership continues expanding while application services remain focused exclusively on workflow orchestration.
 
 ### Verification Status
 
-* Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
-* Focused composition integration suites passed.
-* Full Vitest suite passed: 179 test files and 679 tests.
+* Focused composition suites passed: 3 test files and 18 tests.
+* Full Vitest suite passed: 180 test files and 682 tests.
 * Production build passed.
-* Commit 265c182 pushed successfully.
 * Repository synchronized with origin/main.
-* Working tree clean.
+* Working tree contains only the intended Connection Platform composition changes.
+* Mutation Firewall will execute during commit validation.
 
 ### Current Risk
 
-Continue reducing remaining React presentation components without allowing application orchestration to migrate back into presentation code.
+Do not introduce application services merely to mirror other architectural areas.
 
-Do not extract simple rendering, local UI state, alerts, navigation execution, or server-rendered read-only queries merely to increase application-service count.
+Preserve the distinction between dependency construction and workflow orchestration.
 
-Preserve existing domain boundaries, production APIs, routes, ledger behavior, repository behavior, storage behavior, and immutable application result models throughout remaining consolidation work.
+Composition roots should construct repositories, providers, mappers, domain services, and application services.
 
-Do not combine architectural extraction with unrelated feature implementation or defect correction unless repository evidence proves they are inseparable.
+Application services should be introduced only when a meaningful workflow requires orchestration, authorization, persistence coordination, response normalization, or immutable result construction.
+
+Preserve existing Connection Platform behavior, provider integrations, repository behavior, import behavior, transaction behavior, and financial-account behavior throughout future architectural work.
+
+Do not combine composition work with unrelated feature implementation or defect correction unless repository evidence proves they are inseparable.
 
 ### Blocking Issues
 
@@ -107,10 +125,10 @@ None.
 
 ### Documentation Status
 
-* Engineering Control Center synchronization is active for commit 265c182.
-* FORGE Roadmap requires the Transaction Review composition milestone.
-* FORGE Status requires current repository health and milestone synchronization.
-* FORGE Session requires current objective and repository-health synchronization.
+* Engineering Control Center synchronization is active for the Connection Platform Composition Foundation milestone.
+* FORGE Roadmap requires the Phase 13.5 completion milestone.
+* FORGE Status requires current repository health synchronization.
+* FORGE Session requires current architectural objective synchronization.
 * Workflow governance remains synchronized with repository-first and composition-ownership principles.
 
 ---
@@ -133,7 +151,7 @@ Documentation is corrected.
 
 ## Active
 
-* [ ] Synchronize Engineering Control Center, Roadmap, Status, and Session documentation with commit 265c182.
+* [ ] Synchronize Engineering Control Center, Roadmap, Status, and Session documentation with the completed Connection Platform Composition Foundation milestone.
 
 ## Next
 
@@ -142,26 +160,20 @@ Documentation is corrected.
 
 ## Future
 
-* [ ] Consider `SessionApplication` only if future authentication complexity justifies the extraction.
-* [ ] Continue leaving read-only server-rendered query pages unchanged unless meaningful orchestration emerges.
-* [ ] Preserve composition ownership across future transaction and property capabilities.
+* [ ] Continue expanding composition ownership where dependency graphs become sufficiently complex.
+* [ ] Preserve the rule that application services are introduced only when workflow orchestration—not dependency construction—emerges.
+* [ ] Continue leaving read-only server-rendered query pages unchanged unless meaningful orchestration develops.
 
 ## Completed
 
 * [x] Complete application-layer consolidation.
-* [x] Inspect Transaction Review and property-assignment architecture.
-* [x] Identify duplicated dependency construction in transaction assignment API routes.
-* [x] Introduce `createTransactionReviewApplicationSuite`.
-* [x] Centralize PropertyRuleRepository, PropertyRuleManagementService, ManualPropertyAssignmentService, BulkPropertyAssignmentService, and TransactionReviewApplication composition.
-* [x] Refactor manual transaction property assignment API to consume the composition root.
-* [x] Refactor bulk transaction property assignment API to consume the composition root.
+* [x] Complete Transaction Review composition.
+* [x] Introduce `createConnectionPlatformSuite`.
+* [x] Centralize Connection Platform dependency assembly.
 * [x] Add composition dependency-injection tests.
-* [x] Verify focused suites: 5 files and 22 tests passed.
-* [x] Verify full Vitest suite: 179 test files and 679 tests passed.
+* [x] Verify focused composition suites: 3 files and 18 tests passed.
+* [x] Verify full Vitest suite: 180 test files and 682 tests passed.
 * [x] Verify production build passed.
-* [x] Verify Mutation Firewall passed with expected legacy `"claimed"` warning only.
-* [x] Commit and push 265c182.
-* [x] Verify repository synchronized with origin/main.
 
 ---
 

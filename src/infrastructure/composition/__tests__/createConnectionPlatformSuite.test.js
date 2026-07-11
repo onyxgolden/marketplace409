@@ -1,0 +1,260 @@
+import {
+describe,
+expect,
+it,
+} from "vitest";
+
+import {
+AccountImportService,
+ConnectionImportOrchestrator,
+ConnectionPersistenceService,
+ConnectionProvisioningService,
+InMemoryConnectionRepository,
+InMemoryCredentialReferenceRepository,
+InMemoryInstitutionReferenceRepository,
+} from "../../../domains/connection";
+
+import {
+FinancialAccountImportService,
+FinancialAccountService,
+InMemoryFinancialAccountRepository,
+} from "../../../domains/financial-account";
+
+import {
+InMemoryAccountBalanceRepository,
+} from "../../../domains/account-balance";
+
+import {
+InMemoryTransactionRepository,
+TransactionImportService,
+} from "../../../domains/transaction";
+
+import {
+PlaidAccountBalanceMapper,
+PlaidFinancialAccountMapper,
+PlaidTransactionMapper,
+} from "../../../domains/plaid-adapter";
+
+import {
+createConnectionPlatformSuite,
+} from "../createConnectionPlatformSuite.js";
+
+describe("createConnectionPlatformSuite", () => {
+it("builds the default connection platform suite", () => {
+const suite = createConnectionPlatformSuite();
+
+
+expect(suite.plaidProvider.provider).toBe("plaid");
+expect(suite.providers).toEqual([
+  suite.plaidProvider,
+]);
+expect(suite.providerRegistry.totalProviders).toBe(1);
+expect(suite.providerRegistry.providerNames).toEqual([
+  "plaid",
+]);
+
+expect(suite.connectionRepository).toBeInstanceOf(
+  InMemoryConnectionRepository,
+);
+expect(suite.credentialReferenceRepository).toBeInstanceOf(
+  InMemoryCredentialReferenceRepository,
+);
+expect(suite.institutionReferenceRepository).toBeInstanceOf(
+  InMemoryInstitutionReferenceRepository,
+);
+expect(suite.financialAccountRepository).toBeInstanceOf(
+  InMemoryFinancialAccountRepository,
+);
+expect(suite.accountBalanceRepository).toBeInstanceOf(
+  InMemoryAccountBalanceRepository,
+);
+expect(suite.transactionRepository).toBeInstanceOf(
+  InMemoryTransactionRepository,
+);
+
+expect(suite.financialAccountMapper).toBeInstanceOf(
+  PlaidFinancialAccountMapper,
+);
+expect(suite.accountBalanceMapper).toBeInstanceOf(
+  PlaidAccountBalanceMapper,
+);
+expect(suite.transactionMapper).toBeInstanceOf(
+  PlaidTransactionMapper,
+);
+
+expect(suite.provisioningService).toBeInstanceOf(
+  ConnectionProvisioningService,
+);
+expect(suite.persistenceService).toBeInstanceOf(
+  ConnectionPersistenceService,
+);
+expect(suite.connectionImportOrchestrator).toBeInstanceOf(
+  ConnectionImportOrchestrator,
+);
+expect(suite.accountImportService).toBeInstanceOf(
+  AccountImportService,
+);
+expect(suite.financialAccountImportService).toBeInstanceOf(
+  FinancialAccountImportService,
+);
+expect(suite.financialAccountService).toBeInstanceOf(
+  FinancialAccountService,
+);
+expect(suite.transactionImportService).toBeInstanceOf(
+  TransactionImportService,
+);
+
+expect(Object.isFrozen(suite)).toBe(true);
+
+
+});
+
+it("injects repositories and mappers through the service graph", () => {
+const connectionRepository = {};
+const credentialReferenceRepository = {};
+const institutionReferenceRepository = {};
+const financialAccountRepository = {};
+const accountBalanceRepository = {};
+const transactionRepository = {};
+const financialAccountMapper = {};
+const accountBalanceMapper = {};
+const transactionMapper = {};
+
+
+const suite = createConnectionPlatformSuite({
+  connectionRepository,
+  credentialReferenceRepository,
+  institutionReferenceRepository,
+  financialAccountRepository,
+  accountBalanceRepository,
+  transactionRepository,
+  financialAccountMapper,
+  accountBalanceMapper,
+  transactionMapper,
+});
+
+expect(suite.connectionRepository).toBe(
+  connectionRepository,
+);
+expect(suite.credentialReferenceRepository).toBe(
+  credentialReferenceRepository,
+);
+expect(suite.institutionReferenceRepository).toBe(
+  institutionReferenceRepository,
+);
+expect(suite.financialAccountRepository).toBe(
+  financialAccountRepository,
+);
+expect(suite.accountBalanceRepository).toBe(
+  accountBalanceRepository,
+);
+expect(suite.transactionRepository).toBe(
+  transactionRepository,
+);
+expect(suite.financialAccountMapper).toBe(
+  financialAccountMapper,
+);
+expect(suite.accountBalanceMapper).toBe(
+  accountBalanceMapper,
+);
+expect(suite.transactionMapper).toBe(
+  transactionMapper,
+);
+
+expect(suite.persistenceService.connectionRepository).toBe(
+  connectionRepository,
+);
+expect(
+  suite.persistenceService.credentialReferenceRepository,
+).toBe(
+  credentialReferenceRepository,
+);
+expect(
+  suite.persistenceService.institutionReferenceRepository,
+).toBe(
+  institutionReferenceRepository,
+);
+
+expect(
+  suite.financialAccountImportService.repository,
+).toBe(
+  financialAccountRepository,
+);
+expect(
+  suite.financialAccountImportService.mapper,
+).toBe(
+  financialAccountMapper,
+);
+expect(suite.financialAccountService.repository).toBe(
+  financialAccountRepository,
+);
+expect(suite.transactionImportService.repository).toBe(
+  transactionRepository,
+);
+expect(suite.transactionImportService.mapper).toBe(
+  transactionMapper,
+);
+
+
+});
+
+it("allows providers, registry, and services to be injected", () => {
+const plaidProvider = {
+provider: "plaid",
+};
+const providers = [
+plaidProvider,
+];
+const providerRegistry = {};
+const provisioningService = {};
+const persistenceService = {};
+const connectionImportOrchestrator = {};
+const accountImportService = {};
+const financialAccountImportService = {};
+const financialAccountService = {};
+const transactionImportService = {};
+
+
+const suite = createConnectionPlatformSuite({
+  plaidProvider,
+  providers,
+  providerRegistry,
+  provisioningService,
+  persistenceService,
+  connectionImportOrchestrator,
+  accountImportService,
+  financialAccountImportService,
+  financialAccountService,
+  transactionImportService,
+});
+
+expect(suite.plaidProvider).toBe(plaidProvider);
+expect(suite.providers).toBe(providers);
+expect(suite.providerRegistry).toBe(
+  providerRegistry,
+);
+expect(suite.provisioningService).toBe(
+  provisioningService,
+);
+expect(suite.persistenceService).toBe(
+  persistenceService,
+);
+expect(suite.connectionImportOrchestrator).toBe(
+  connectionImportOrchestrator,
+);
+expect(suite.accountImportService).toBe(
+  accountImportService,
+);
+expect(suite.financialAccountImportService).toBe(
+  financialAccountImportService,
+);
+expect(suite.financialAccountService).toBe(
+  financialAccountService,
+);
+expect(suite.transactionImportService).toBe(
+  transactionImportService,
+);
+
+
+});
+});

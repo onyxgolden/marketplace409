@@ -8,3 +8,5 @@ export { createFinancialSnapshotApplication } from "./createFinancialSnapshotApp
 export { createFinancialApplicationSuite } from "./createFinancialApplicationSuite.js";
 
 export { createTransactionReviewApplicationSuite } from "./createTransactionReviewApplicationSuite.js";
+
+export { createConnectionPlatformSuite } from "./createConnectionPlatformSuite.js";

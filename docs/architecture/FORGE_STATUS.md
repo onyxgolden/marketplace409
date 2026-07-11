@@ -29,7 +29,7 @@ main
 
 ## Latest Green Commit
 
-265c182 — Introduce transaction review composition suite
+6c6cb9d — Synchronize governance after transaction review composition
 
 ## Repository
 
@@ -37,7 +37,7 @@ Synchronized with `origin/main`
 
 ## Working Tree
 
-Clean
+Contains only the intended Connection Platform composition and governance changes.
 
 ## Production Build
 
@@ -45,15 +45,15 @@ PASS
 
 ## Test Status
 
-179 test files passing
+180 test files passing
 
-679 tests passing
+682 tests passing
 
 ## Mutation Firewall
 
-PASS
+Pending for the current milestone.
 
-Expected legacy business `"claimed"` warning only.
+Expected legacy business `"claimed"` warning only during commit validation.
 
 ---
 
@@ -61,15 +61,13 @@ Expected legacy business `"claimed"` warning only.
 
 ## Phase
 
-Transaction Review Composition — Complete
+Phase 13.5 — Connection Platform Composition Foundation — Complete
 
 ## Immediate Objective
 
-Synchronize governance documentation with commit `265c182`, then inspect verified roadmap priorities and repository capability gaps to select one cohesive next architectural objective.
+Complete governance synchronization for the Connection Platform Composition Foundation milestone, then inspect verified roadmap priorities and repository capability gaps to select one cohesive next architectural objective.
 
-No implementation target should be selected before repository-first inspection.
-
-Future architectural work must be justified by a meaningful repository gap rather than symmetry alone.
+Future architectural work must continue following repository evidence rather than introducing abstractions for architectural symmetry alone.
 
 ---
 
@@ -137,76 +135,81 @@ Future architectural work must be justified by a meaningful repository gap rathe
 
 ✅ PetVotingApplication
 
-## Transaction Review Composition
+## Composition
+
+### Financial Composition
+
+✅ `createFinancialApplicationSuite`
+
+### Transaction Review Composition
 
 ✅ `createTransactionReviewApplicationSuite`
 
-✅ `PropertyRuleRepository` composition ownership
+### Connection Platform Composition
 
-✅ `PropertyRuleManagementService` composition ownership
+✅ `createConnectionPlatformSuite`
 
-✅ `ManualPropertyAssignmentService` composition ownership
+✅ ConnectionProvisioningService composition ownership
 
-✅ `BulkPropertyAssignmentService` composition ownership
+✅ ConnectionPersistenceService composition ownership
 
-✅ Manual assignment API consumes shared composition root
+✅ ConnectionImportOrchestrator composition ownership
 
-✅ Bulk assignment API consumes shared composition root
+✅ AccountImportService composition ownership
+
+✅ FinancialAccountImportService composition ownership
+
+✅ FinancialAccountService composition ownership
+
+✅ TransactionImportService composition ownership
+
+✅ Provider Registry composition ownership
+
+✅ Plaid Provider composition ownership
+
+✅ Connection repositories composed
+
+✅ Financial Account repository composed
+
+✅ Transaction repository composed
+
+✅ Account Balance repository composed
+
+✅ Plaid mappers composed
 
 ---
 
 # Current Repository Reality
 
-Application-layer consolidation remains complete across financial, business, investor, marketplace, listings, favorites, saved listings, user listings, pet voting, and administrator authorization workflows.
+Application-layer consolidation remains complete across financial, business, investor, marketplace, listings, favorites, saved listings, user listings, pet voting, administrator authorization, and transaction review workflows.
 
-Transaction Review now has a dedicated composition root that centralizes dependency construction for property-assignment workflows.
+The repository now includes three dedicated composition roots:
 
-The manual and bulk transaction assignment APIs no longer construct repository and domain-service dependency graphs directly.
+- `createFinancialApplicationSuite`
+- `createTransactionReviewApplicationSuite`
+- `createConnectionPlatformSuite`
 
-Composition ownership is now consistent across both the financial and transaction-review architectures.
+Connection Platform dependency construction has been centralized without introducing an unnecessary application service.
 
-Presentation components remain responsible for:
+Composition roots continue owning dependency construction.
 
-- Rendering
-- React lifecycle
-- Local UI state
-- User interaction
-- Notifications
-- Navigation
-- Presentation formatting
+Application services continue owning workflow orchestration.
 
-Application services remain responsible for:
+Domain services continue owning business behavior.
 
-- Authentication
-- Authorization
-- Workflow orchestration
-- Persistence coordination
-- Payload construction
-- Redirect decisions
-- Response validation
-- Response normalization
-- Error normalization
-- Immutable application results
+Infrastructure continues providing concrete implementations.
 
-Composition roots remain responsible for:
-
-- Repository construction
-- Domain-service construction
-- Application-service construction
-- Dependency injection
-- Infrastructure selection
-
-Production behavior has been preserved.
+Production behavior remains unchanged.
 
 ---
 
 # Immediate Next Milestone
 
-Complete governance synchronization for commit `265c182`.
+Complete governance synchronization for the Connection Platform Composition Foundation milestone.
 
-After documentation is committed, inspect roadmap priorities and repository capability gaps to select one cohesive next architectural objective.
+After documentation is committed, inspect roadmap priorities and verified repository capability gaps before selecting the next architectural objective.
 
-`SessionApplication` remains an optional future refinement and is not a blocking milestone.
+Continue introducing application services only when repository evidence demonstrates meaningful workflow orchestration rather than dependency construction alone.
 
 ---
 
@@ -214,9 +217,9 @@ After documentation is committed, inspect roadmap priorities and repository capa
 
 ### 2026-07-11
 
-265c182
+Phase 13.5 — Connection Platform Composition Foundation
 
-Introduce `createTransactionReviewApplicationSuite`, centralize transaction/property dependency assembly, and refactor manual and bulk assignment APIs to consume the shared composition root.
+Introduced `createConnectionPlatformSuite`, centralized Connection Platform dependency assembly, preserved production behavior, and reinforced the architectural distinction between composition ownership and workflow orchestration.
 
 ### 2026-07-10
 
