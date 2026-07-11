@@ -33,7 +33,10 @@ export {
 
 export { JobApplication } from "./jobs/index.js";
 
-export { PetApplication } from "./pets/index.js";
+export {
+  PetApplication,
+  PetVotingApplication,
+} from "./pets/index.js";
 export {
   ListingApplication,
   MyListingsApplication,

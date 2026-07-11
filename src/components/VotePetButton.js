@@ -1,43 +1,27 @@
 "use client";
 
+import { PetVotingApplication } from "@/application";
 import { supabase } from "@/lib/supabase";
+
+const application = new PetVotingApplication({
+  supabase,
+});
 
 export default function VotePetButton({ petId, currentVotes = 0 }) {
   async function handleVote() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const result = await application.voteForPet({
+      petId,
+      currentVotes,
+    });
 
-    if (!user) {
-      alert("Please login to vote.");
+    if (!result.ok) {
+      alert(result.message);
       return;
     }
 
-    const { error: voteError } = await supabase.from("pet_votes").insert([
-      {
-        pet_id: petId,
-        user_id: user.id,
-      },
-    ]);
-
-    if (voteError) {
-      alert("You have already voted for this pet.");
-      return;
+    if (result.reload) {
+      window.location.reload();
     }
-
-    const { error } = await supabase
-      .from("pets")
-      .update({
-        votes: currentVotes + 1,
-      })
-      .eq("id", petId);
-
-    if (error) {
-      alert("Vote failed");
-      return;
-    }
-
-    window.location.reload();
   }
 
   return (
