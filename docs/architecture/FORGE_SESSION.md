@@ -1,49 +1,136 @@
-# Forge Session
+# FORGE Session
 
-**Version:** 3.3
+**Version:** 4.0
 **Status:** Active
-**Last Updated:** 2026-07-05
-**Latest Commit:** Pending — Extract immutable financial operations domain
+**Last Updated:** 2026-07-10
+**Latest Commit:** 93a1ff8 — Synchronize governance documentation with application architecture
 
 ---
 
 # Purpose
 
-The Forge Session document defines the lifecycle of a complete engineering session.
+The FORGE Session document defines the lifecycle of a complete engineering session.
 
-Every session begins, executes, validates, and concludes using disciplined engineering process.
+Every session begins, executes, validates, documents, and concludes through disciplined repository-first engineering.
 
-The repository—not memory—is the source of truth.
+The repository—not memory, documentation, or prior conversation—is the source of truth.
 
-This document records completed architectural milestones in chronological order while preserving the engineering rules that govern every FORGE session.
+This document serves two purposes:
+
+1. Define the permanent operating process for FORGE engineering sessions.
+2. Preserve completed architectural milestones as a chronological engineering record.
+
+Current repository state belongs in:
+
+- `FORGE_ENGINEERING_CONTROL_CENTER.md`
+- `FORGE_STATUS.md`
+- `FORGE_ROADMAP.md`
+
+Historical milestones remain recorded below.
 
 ---
 
 # Current Architectural Position
 
-## Core Platform
+## Active Phase
 
-✓ Ledger Architecture — Complete
+Application Layer Consolidation
 
-✓ Financial Reporting — Complete
+## Current Objective
 
-✓ Financial Engine — Complete
+Inspect the repository to identify the next remaining React workflow that performs direct authentication, authorization, persistence coordination, payload construction, redirect decisions, response normalization, or multi-step orchestration.
 
-✓ Financial Explainability — Complete
+Repository evidence determines the next implementation target.
 
-✓ Dashboard Intelligence — Complete
+One cohesive workflow is extracted at a time.
 
-✓ Financial Read Models — Complete
+## Repository Health
 
-✓ Financial Intelligence — Complete
+- Branch: `main`
+- Latest commit: `93a1ff8`
+- Repository synchronized with `origin/main`
+- Working tree clean
+- Mutation Firewall passing
+- Expected legacy business `"claimed"` warning only
+- Full Vitest suite passing: 173 test files and 650 tests
+- Production build passing
 
-✓ Immutable Financial Snapshot Architecture — Active
+## Completed Application-Layer Reach
 
-✓ Application Composition Symmetry — Complete
+Application-layer consolidation now spans:
+
+- Financial
+- Business
+- Investors
+- Jobs
+- Pets
+- Listings
+- Favorites
+
+Presentation components increasingly own rendering, React lifecycle, transient UI state, user interaction, notifications, and navigation.
+
+Application services increasingly own authentication, authorization, workflow orchestration, dependency coordination, persistence coordination, payload construction, redirect decisions, response validation, response normalization, error normalization, and immutable application results.
 
 ---
 
-# Latest Completed Milestone
+# Session Boot
+
+Every FORGE engineering session begins by:
+
+1. Loading `FORGE_ENGINEERING_CONTROL_CENTER.md`.
+2. Loading `FORGE_WORKFLOW.md`.
+3. Loading `FORGE_STATUS.md`.
+4. Reviewing the applicable roadmap section.
+5. Inspecting Git status and recent commits.
+6. Performing combined repository inspection before planning implementation.
+7. Reconciling documentation with repository evidence.
+8. Selecting one cohesive objective.
+9. Performing a proportional compliance review.
+10. Beginning implementation only after repository reality is established.
+
+No implementation plan may be based solely on memory, documentation, or prior conversation.
+
+---
+
+# Repository-First Engineering Loop
+
+Every engineering objective follows this sequence:
+
+```text
+Inspect
+    ↓
+Verify
+    ↓
+Evaluate
+    ↓
+Determine Repository Reality
+    ↓
+Identify Exact Gap
+    ↓
+Plan
+    ↓
+Implement
+    ↓
+Verify
+    ↓
+Run Targeted Tests
+    ↓
+Run Full Test Suite
+    ↓
+Run Production Build
+    ↓
+Synchronize Documentation
+    ↓
+Commit
+    ↓
+Push
+    ↓
+Confirm Clean Repository
+```
+
+---
+
+# Historical Architectural Milestones
 
 ## Phase 8.5 – Composition Symmetry & API Alignment
 
@@ -687,109 +774,116 @@ The repository determines the next architectural step.
 
 When no deterministic architectural capability is warranted, FORGE stops rather than introducing speculative abstractions.
 
-# Permanent Architectural Lesson
+# Permanent Architectural Lessons
 
-Interpretation belongs to domain services. Computation belongs to domain engines. Presentation belongs to the UI.
+Interpretation belongs to domain services.
+
+Computation belongs to domain engines.
+
+Workflow orchestration belongs to application services.
+
+Infrastructure adapts external systems to FORGE contracts.
+
+Presentation belongs to React components and UI surfaces.
+
+The repository determines the next architectural step.
+
+When no deterministic capability is warranted, FORGE stops rather than introducing speculative abstractions.
 
 ---
 
 # Session Rules
 
-Always:
+## Always
 
 - Inspect before editing.
-- Batch safe inspections into one terminal command whenever practical.
+- Load governance documents before planning implementation.
+- Batch related inspections into one terminal command whenever practical.
+- Base architectural decisions on verified repository evidence.
+- Use exact START and END anchors copied from inspected files.
+- Prefer full-file replacement when it is clearly safer.
+- Complete one cohesive architectural objective at a time.
+- Extend existing barrel exports rather than replacing them.
 - Verify every save.
-- Validate before committing.
-- Preserve architectural boundaries.
-- End from a known-good repository state.
+- Run targeted tests before broad validation.
+- Use repository-native tooling and Vitest-native commands.
+- Run the full Vitest suite before committing.
+- Run the production build before committing.
+- Allow the pre-commit hook to run the Mutation Firewall.
+- Stage only intended files.
+- Push only after validation is green.
+- End from a known-good, synchronized repository state.
+- Stop after green.
 
-Never:
+## Never
 
 - Assume repository contents.
-- Skip verification.
-- Mix unrelated objectives.
-- Treat bootstrap/demo data as production truth.
+- Guess replacement boundaries.
+- Plan implementation before repository inspection.
+- Skip save verification.
+- Mix unrelated objectives in one extraction.
+- Combine architectural refactoring with unrelated feature work unless repository evidence proves they are inseparable.
+- Replace existing exports without proving they are obsolete.
+- Continue after unrelated or cascading failures.
+- Use framework-specific commands without verifying the repository framework.
+- Treat bootstrap or demo data as production truth.
+- Treat presentation-layer visibility checks as sufficient authorization.
+- Introduce speculative abstractions without a deterministic repository need.
+
+---
+
+# Application-Layer Rule
+
+Workflow orchestration belongs in the application layer.
+
+Application services own:
+
+- Authentication coordination
+- Authorization decisions
+- Dependency coordination
+- Persistence coordination
+- External-service coordination
+- Payload construction
+- Redirect decisions
+- Response validation
+- Response normalization
+- Error normalization
+- Immutable application result construction
+
+React components primarily own:
+
+- Rendering
+- React lifecycle
+- Local and transient UI state
+- Form events
+- Confirmation prompts
+- Loading state
+- Notifications
+- Navigation
+- Presentation formatting
+- Reload behavior
+
+Domain services own business rules.
+
+Infrastructure adapters translate external systems into domain contracts.
+
+Routes coordinate transport concerns and delegate application workflows.
 
 ---
 
 # Current Platform Architecture
 
 ```text
-External Provider / Demo Provider
+External Provider / User Input / Stored Data
         ↓
-Infrastructure Adapter
+Infrastructure Adapter or Repository
         ↓
-FinancialSnapshotRepository Contract
+Domain Contract
         ↓
-Application Composition Layer
+Domain Service or Engine
         ↓
-FinancialDashboardService
+Application Service
         ↓
-API Route Orchestration
+Composition Layer
         ↓
-React Presentation
-```
-
-The domain owns business behavior.
-
-Infrastructure adapts external systems to FORGE contracts.
-
-Application composition selects and assembles dependencies.
-
-Routes orchestrate request/response flow.
-
-Providers adapt to FORGE.
-
-Never the reverse.
-
----
-
-# Architectural Invariants
-
-The following architectural boundaries are permanent:
-
-- Infrastructure selection belongs exclusively in the Application Composition Layer.
-- Infrastructure initializes lazily.
-- Domain services depend only on contracts—not infrastructure.
-- Repository contracts define persistence boundaries.
-- Routes orchestrate request and response flow.
-- Application composition assembles dependencies.
-- Domain services execute business behavior.
-- Infrastructure adapters translate external systems into domain contracts.
-- The Financial Engine remains infrastructure-independent.
-- The domain owns business truth.
-- Reports present truth.
-- UI renders truth.
-- Demo data is bootstrap infrastructure only and is never production truth.
-
----
-
-# Session Closeout
-
-A Forge session concludes only after confirming:
-
-- Production build passes.
-- Required tests pass.
-- Documentation reflects completed work.
-- Git history is coherent.
-- Repository is synchronized.
-- Completed objective is recorded.
-- Next architectural objective is identified.
-- Bootstrap for the next session is prepared.
-
----
-
-# Success Criteria
-
-A successful Forge session leaves the repository stronger than it was found.
-
-Success is measured by:
-
-- Architectural quality
-- Correctness
-- Validation
-- Maintainability
-- Documentation quality
-- Repository integrity
-
+API Route or React Presentation
