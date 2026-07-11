@@ -210,6 +210,103 @@ export class ListingApplication {
       message: "Listing updated.",
     };
   }
+
+  async deleteListing({ listingId, ownerId, confirmed }) {
+    const {
+      data: { user },
+    } = await this.supabase.auth.getUser();
+
+    if (!user) {
+      return {
+        ok: false,
+        redirectTo: "/auth",
+        message: "Please sign in first.",
+        requiresAuthentication: true,
+      };
+    }
+
+    if (user.id !== ownerId) {
+      return {
+        ok: false,
+        message: "You can only delete your own listings.",
+        unauthorized: true,
+      };
+    }
+
+    if (!confirmed) {
+      return {
+        ok: false,
+        cancelled: true,
+      };
+    }
+
+    const { error } = await this.supabase
+      .from("listings")
+      .delete()
+      .eq("id", listingId)
+      .eq("user_id", user.id);
+
+    if (error) {
+      return {
+        ok: false,
+        message: error.message || "Error deleting listing",
+        error,
+      };
+    }
+
+    return {
+      ok: true,
+      redirectTo: "/browse",
+      message: "Listing deleted",
+    };
+  }
+
+  async toggleListingSold({ listingId, ownerId, isSold }) {
+    const {
+      data: { user },
+    } = await this.supabase.auth.getUser();
+
+    if (!user) {
+      return {
+        ok: false,
+        redirectTo: "/auth",
+        message: "Please sign in first.",
+        requiresAuthentication: true,
+      };
+    }
+
+    if (user.id !== ownerId) {
+      return {
+        ok: false,
+        message: "You can only update your own listings.",
+        unauthorized: true,
+      };
+    }
+
+    const nextIsSold = !isSold;
+
+    const { error } = await this.supabase
+      .from("listings")
+      .update({
+        is_sold: nextIsSold,
+      })
+      .eq("id", listingId)
+      .eq("user_id", user.id);
+
+    if (error) {
+      return {
+        ok: false,
+        message: error.message || "Error updating listing.",
+        error,
+      };
+    }
+
+    return {
+      ok: true,
+      reload: true,
+      isSold: nextIsSold,
+    };
+  }
 }
 
 Object.freeze(ListingApplication);

@@ -1,34 +1,37 @@
 "use client";
 
+import { ListingApplication } from "@/application";
 import { supabase } from "@/lib/supabase";
+
+const listingApplication = new ListingApplication({
+  supabase,
+});
 
 export default function MarkSoldButton({ listingId, ownerId, isSold }) {
   async function handleMarkSold() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const result = await listingApplication.toggleListingSold({
+      listingId,
+      ownerId,
+      isSold,
+    });
 
-    if (!user) {
-      alert("Please sign in first.");
-      window.location.href = "/auth";
+    if (!result.ok) {
+      if (result.message) {
+        alert(result.message);
+      }
+
+      if (result.error) {
+        console.log(result.error);
+      }
+
+      if (result.redirectTo) {
+        window.location.href = result.redirectTo;
+      }
+
       return;
     }
 
-    if (user.id !== ownerId) {
-      alert("You can only update your own listings.");
-      return;
-    }
-
-    const { error } = await supabase
-      .from("listings")
-      .update({ is_sold: !isSold })
-      .eq("id", listingId)
-      .eq("user_id", user.id);
-
-    if (error) {
-      alert("Error updating listing.");
-      console.log(error);
-    } else {
+    if (result.reload) {
       window.location.reload();
     }
   }

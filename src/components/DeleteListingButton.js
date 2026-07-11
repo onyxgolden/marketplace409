@@ -1,45 +1,44 @@
 "use client";
 
+import { ListingApplication } from "@/application";
 import { supabase } from "@/lib/supabase";
+
+const listingApplication = new ListingApplication({
+  supabase,
+});
 
 export default function DeleteListingButton({ listingId, ownerId }) {
   async function handleDelete() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      alert("Please sign in first.");
-      window.location.href = "/auth";
-      return;
-    }
-
-    if (user.id !== ownerId) {
-      alert("You can only delete your own listings.");
-      return;
-    }
-
-    const confirmDelete = confirm(
+    const confirmed = window.confirm(
       "Are you sure you want to delete this listing?",
     );
 
-    if (!confirmDelete) {
+    if (!confirmed) return;
+
+    const result = await listingApplication.deleteListing({
+      listingId,
+      ownerId,
+      confirmed,
+    });
+
+    if (!result.ok) {
+      if (result.message) {
+        alert(result.message);
+      }
+
+      if (result.error) {
+        console.log(result.error);
+      }
+
+      if (result.redirectTo) {
+        window.location.href = result.redirectTo;
+      }
+
       return;
     }
 
-    const { error } = await supabase
-      .from("listings")
-      .delete()
-      .eq("id", listingId)
-      .eq("user_id", user.id);
-
-    if (error) {
-      alert("Error deleting listing");
-      console.log(error);
-    } else {
-      alert("Listing deleted");
-      window.location.href = "/browse";
-    }
+    alert(result.message);
+    window.location.href = result.redirectTo;
   }
 
   return (

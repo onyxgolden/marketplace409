@@ -9,6 +9,7 @@ function createSupabaseMock({
   loadData = null,
   loadError = null,
   updateError = null,
+  deleteError = null,
 } = {}) {
   const getUser = vi.fn(async () => ({
     data: {
@@ -46,8 +47,36 @@ function createSupabaseMock({
     error: updateError,
   }));
 
-  const update = vi.fn(() => ({
-    eq: updateEq,
+  const soldUpdateUserEq = vi.fn(async () => ({
+    error: updateError,
+  }));
+
+  const soldUpdateIdEq = vi.fn(() => ({
+    eq: soldUpdateUserEq,
+  }));
+
+  const update = vi.fn((payload) => {
+    if (Object.hasOwn(payload, "is_sold")) {
+      return {
+        eq: soldUpdateIdEq,
+      };
+    }
+
+    return {
+      eq: updateEq,
+    };
+  });
+
+  const deleteUserEq = vi.fn(async () => ({
+    error: deleteError,
+  }));
+
+  const deleteIdEq = vi.fn(() => ({
+    eq: deleteUserEq,
+  }));
+
+  const deleteFn = vi.fn(() => ({
+    eq: deleteIdEq,
   }));
 
   const from = vi.fn((table) => {
@@ -57,6 +86,7 @@ function createSupabaseMock({
       insert,
       select,
       update,
+      delete: deleteFn,
     };
   });
 
@@ -76,6 +106,11 @@ function createSupabaseMock({
       loadSingle,
       update,
       updateEq,
+      soldUpdateIdEq,
+      soldUpdateUserEq,
+      deleteFn,
+      deleteIdEq,
+      deleteUserEq,
     },
   };
 }
@@ -656,4 +691,260 @@ describe("ListingApplication", () => {
       error: updateError,
     });
   });
+
+  it("requires authentication before deleting a listing", async () => {
+    const supabase = createSupabaseMock({
+      user: null,
+    });
+
+    const application = new ListingApplication({
+      supabase,
+    });
+
+    const result = await application.deleteListing({
+      listingId: "listing-1",
+      ownerId: "user-1",
+      confirmed: true,
+    });
+
+    expect(supabase.mocks.deleteFn).not.toHaveBeenCalled();
+
+    expect(result).toEqual({
+      ok: false,
+      redirectTo: "/auth",
+      message: "Please sign in first.",
+      requiresAuthentication: true,
+    });
+  });
+
+  it("prevents a non-owner from deleting a listing", async () => {
+    const supabase = createSupabaseMock();
+
+    const application = new ListingApplication({
+      supabase,
+    });
+
+    const result = await application.deleteListing({
+      listingId: "listing-1",
+      ownerId: "different-user",
+      confirmed: true,
+    });
+
+    expect(supabase.mocks.deleteFn).not.toHaveBeenCalled();
+
+    expect(result).toEqual({
+      ok: false,
+      message: "You can only delete your own listings.",
+      unauthorized: true,
+    });
+  });
+
+  it("does not delete a listing when confirmation is cancelled", async () => {
+    const supabase = createSupabaseMock();
+
+    const application = new ListingApplication({
+      supabase,
+    });
+
+    const result = await application.deleteListing({
+      listingId: "listing-1",
+      ownerId: "user-1",
+      confirmed: false,
+    });
+
+    expect(supabase.mocks.deleteFn).not.toHaveBeenCalled();
+
+    expect(result).toEqual({
+      ok: false,
+      cancelled: true,
+    });
+  });
+
+  it("deletes an owned listing", async () => {
+    const supabase = createSupabaseMock();
+
+    const application = new ListingApplication({
+      supabase,
+    });
+
+    const result = await application.deleteListing({
+      listingId: "listing-1",
+      ownerId: "user-1",
+      confirmed: true,
+    });
+
+    expect(supabase.mocks.deleteIdEq).toHaveBeenCalledWith(
+      "id",
+      "listing-1",
+    );
+
+    expect(supabase.mocks.deleteUserEq).toHaveBeenCalledWith(
+      "user_id",
+      "user-1",
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      redirectTo: "/browse",
+      message: "Listing deleted",
+    });
+  });
+
+  it("normalizes listing deletion failures", async () => {
+    const deleteError = {
+      message: "Delete failed",
+    };
+
+    const supabase = createSupabaseMock({
+      deleteError,
+    });
+
+    const application = new ListingApplication({
+      supabase,
+    });
+
+    const result = await application.deleteListing({
+      listingId: "listing-1",
+      ownerId: "user-1",
+      confirmed: true,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message: "Delete failed",
+      error: deleteError,
+    });
+  });
+
+  it("requires authentication before toggling sold status", async () => {
+    const supabase = createSupabaseMock({
+      user: null,
+    });
+
+    const application = new ListingApplication({
+      supabase,
+    });
+
+    const result = await application.toggleListingSold({
+      listingId: "listing-1",
+      ownerId: "user-1",
+      isSold: false,
+    });
+
+    expect(supabase.mocks.update).not.toHaveBeenCalled();
+
+    expect(result).toEqual({
+      ok: false,
+      redirectTo: "/auth",
+      message: "Please sign in first.",
+      requiresAuthentication: true,
+    });
+  });
+
+  it("prevents a non-owner from toggling sold status", async () => {
+    const supabase = createSupabaseMock();
+
+    const application = new ListingApplication({
+      supabase,
+    });
+
+    const result = await application.toggleListingSold({
+      listingId: "listing-1",
+      ownerId: "different-user",
+      isSold: false,
+    });
+
+    expect(supabase.mocks.update).not.toHaveBeenCalled();
+
+    expect(result).toEqual({
+      ok: false,
+      message: "You can only update your own listings.",
+      unauthorized: true,
+    });
+  });
+
+  it("marks an available listing as sold", async () => {
+    const supabase = createSupabaseMock();
+
+    const application = new ListingApplication({
+      supabase,
+    });
+
+    const result = await application.toggleListingSold({
+      listingId: "listing-1",
+      ownerId: "user-1",
+      isSold: false,
+    });
+
+    expect(supabase.mocks.update).toHaveBeenCalledWith({
+      is_sold: true,
+    });
+
+    expect(supabase.mocks.soldUpdateIdEq).toHaveBeenCalledWith(
+      "id",
+      "listing-1",
+    );
+
+    expect(supabase.mocks.soldUpdateUserEq).toHaveBeenCalledWith(
+      "user_id",
+      "user-1",
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      reload: true,
+      isSold: true,
+    });
+  });
+
+  it("marks a sold listing as available", async () => {
+    const supabase = createSupabaseMock();
+
+    const application = new ListingApplication({
+      supabase,
+    });
+
+    const result = await application.toggleListingSold({
+      listingId: "listing-1",
+      ownerId: "user-1",
+      isSold: true,
+    });
+
+    expect(supabase.mocks.update).toHaveBeenCalledWith({
+      is_sold: false,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      reload: true,
+      isSold: false,
+    });
+  });
+
+  it("normalizes sold-status update failures", async () => {
+    const updateError = {
+      message: "Status update failed",
+    };
+
+    const supabase = createSupabaseMock({
+      updateError,
+    });
+
+    const application = new ListingApplication({
+      supabase,
+    });
+
+    const result = await application.toggleListingSold({
+      listingId: "listing-1",
+      ownerId: "user-1",
+      isSold: false,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message: "Status update failed",
+      error: updateError,
+    });
+  });
+
 });
