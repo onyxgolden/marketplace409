@@ -1,41 +1,67 @@
 "use client";
 
+import { SavedListingsApplication } from "@/application";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { useEffect, useState } from "react";
+
+const savedListingsApplication = new SavedListingsApplication({
+  supabase,
+});
 
 export default function SavedListingsPage() {
   const [favorites, setFavorites] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    async function loadSavedListings() {
+      const result =
+        await savedListingsApplication.loadSavedListings();
+
+      if (!result.ok) {
+        if (result.requiresAuthentication) {
+          window.location.href = result.redirectTo;
+          return;
+        }
+
+        console.log(result.error);
+        alert(result.message);
+        setLoading(false);
+        return;
+      }
+
+      setFavorites(result.favorites);
+      setLoading(false);
+    }
+
     loadSavedListings();
   }, []);
 
-  async function loadSavedListings() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+  async function handleRemoveFavorite(favoriteId) {
+    const result =
+      await savedListingsApplication.removeSavedListing({
+        favoriteId,
+      });
 
-    if (!user) {
-      window.location.href = "/auth";
+    if (!result.ok) {
+      if (result.requiresAuthentication) {
+        alert(result.message);
+        window.location.href = result.redirectTo;
+        return;
+      }
+
+      console.log(result.error);
+      alert(result.message);
       return;
     }
 
-    const { data, error } = await supabase
-      .from("favorites")
-      .select("id, listings(*)")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+    setFavorites((currentFavorites) =>
+      currentFavorites.filter(
+        (favorite) => favorite.id !== result.favoriteId,
+      ),
+    );
 
-    if (error) {
-      console.log(error);
-      alert("Could not load saved listings.");
-    } else {
-      setFavorites(data || []);
-    }
-
-    setLoading(false);
+    alert(result.message);
   }
 
   return (
@@ -43,7 +69,9 @@ export default function SavedListingsPage() {
       <Header />
 
       <section className="max-w-6xl mx-auto py-12 px-6">
-        <h1 className="text-5xl font-extrabold mb-4">Saved Listings</h1>
+        <h1 className="text-5xl font-extrabold mb-4">
+          Saved Listings
+        </h1>
 
         <p className="text-xl text-gray-600 mb-8">
           Listings you saved for later.
@@ -63,45 +91,59 @@ export default function SavedListingsPage() {
               const listing = favorite.listings;
 
               return (
-                <a
+                <div
                   key={favorite.id}
-                  href={`/listing/${listing.id}`}
-                  className="bg-white rounded-2xl shadow-md overflow-hidden hover:shadow-xl transition block"
+                  className="bg-white rounded-2xl shadow-md overflow-hidden hover:shadow-xl transition"
                 >
-                  {listing.image_url ? (
-                    <img
-                      src={listing.image_url}
-                      alt={listing.title}
-                      className="h-44 w-full object-cover"
-                    />
-                  ) : (
-                    <div className="h-44 bg-gray-300 flex items-center justify-center text-6xl">
-                      📦
-                    </div>
-                  )}
+                  <a
+                    href={`/listing/${listing.id}`}
+                    className="block"
+                  >
+                    {listing.image_url ? (
+                      <img
+                        src={listing.image_url}
+                        alt={listing.title}
+                        className="h-44 w-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-44 bg-gray-300 flex items-center justify-center text-6xl">
+                        📦
+                      </div>
+                    )}
 
-                  <div className="p-5">
-                    <p className="text-sm text-gray-500">{listing.city}</p>
-                    <h2 className="text-xl font-bold">{listing.title}</h2>
-                    <p className="text-2xl font-bold text-green-700 mt-2">
-                      {listing.price}
-                    </p>
-                    <p className="text-sm text-gray-500 mt-2">
-                      {listing.category}
-                    </p>
+                    <div className="p-5">
+                      <p className="text-sm text-gray-500">
+                        {listing.city}
+                      </p>
+
+                      <h2 className="text-xl font-bold">
+                        {listing.title}
+                      </h2>
+
+                      <p className="text-2xl font-bold text-green-700 mt-2">
+                        {listing.price}
+                      </p>
+
+                      <p className="text-sm text-gray-500 mt-2">
+                        {listing.category}
+                      </p>
+                    </div>
+                  </a>
+
+                  <div className="px-5 pb-5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRemoveFavorite(favorite.id)
+                      }
+                      className="w-full bg-gray-800 text-white py-3 rounded-xl font-bold hover:bg-gray-700"
+                    >
+                      Remove Saved Listing
+                    </button>
                   </div>
-                </a>
+                </div>
               );
             })}
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-                removeFavorite(favorite.id);
-              }}
-              className="mt-4 w-full bg-gray-800 text-white py-3 rounded-xl font-bold hover:bg-gray-700"
-            >
-              Remove Saved Listing
-            </button>
           </div>
         )}
       </section>
