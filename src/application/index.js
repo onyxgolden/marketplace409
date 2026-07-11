@@ -1,6 +1,7 @@
 export {
   BusinessClaimApplication,
   BusinessCreateApplication,
+  BusinessDeleteApplication,
   BusinessEditApplication,
 } from "./business/index.js";
 

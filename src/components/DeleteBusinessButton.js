@@ -1,6 +1,11 @@
 "use client";
 
+import { BusinessDeleteApplication } from "@/application";
 import { supabase } from "@/lib/supabase";
+
+const application = new BusinessDeleteApplication({
+  supabase,
+});
 
 export default function DeleteBusinessButton({ businessId }) {
   async function handleDelete() {
@@ -8,16 +13,19 @@ export default function DeleteBusinessButton({ businessId }) {
 
     if (!confirmed) return;
 
-    const { error } = await supabase
-      .from("businesses")
-      .delete()
-      .eq("id", businessId);
+    const result = await application.deleteBusiness({
+      businessId,
+    });
 
-    if (error) {
-      alert("Error deleting business");
-      console.log(error);
-    } else {
-      alert("Business deleted");
+    if (!result.ok) {
+      alert(result.message);
+      console.log(result.error);
+      return;
+    }
+
+    alert(result.message);
+
+    if (result.reload) {
       window.location.reload();
     }
   }
