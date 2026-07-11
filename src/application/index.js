@@ -4,6 +4,8 @@ export {
   BusinessEditApplication,
 } from "./business/index.js";
 
+export { FavoriteApplication } from "./favorites/index.js";
+
 export {
   FinancialReportingApplication,
   FinancialSnapshotApplication,
