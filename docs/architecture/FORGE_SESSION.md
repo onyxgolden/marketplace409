@@ -34,48 +34,76 @@ Historical milestones remain recorded below.
 
 ## Active Phase
 
-Application Layer Consolidation — Complete
+Transaction Review Composition — Complete
 
 ## Current Objective
 
-Synchronize governance documentation and select the next architectural phase through repository-first inspection.
+Synchronize governance documentation for commit `265c182`.
 
-The completed application-layer boundary must be preserved during future capability development.
+After documentation synchronization is complete, determine the next architectural objective through repository-first inspection of roadmap priorities and verified repository capability gaps.
 
-A future `SessionApplication` is optional and should be introduced only if additional session complexity creates a meaningful cohesive workflow.
+Future implementation must continue extending meaningful architectural capabilities rather than pursuing symmetry alone.
+
+`SessionApplication` remains an optional future refinement and should be introduced only if repository evidence establishes a cohesive session-management workflow.
 
 ## Repository Health
 
 - Branch: `main`
-- Latest commit: `8ff9a45`
+- Latest commit: `265c182`
 - Repository synchronized with `origin/main`
 - Working tree clean
 - Mutation Firewall passing
 - Expected legacy business `"claimed"` warning only
-- Full Vitest suite passing: 178 test files and 676 tests
+- Full Vitest suite passing: **179 test files / 679 tests**
 - Production build passing
 
-## Completed Application-Layer Reach
+## Current Architectural State
 
-Application-layer consolidation spans:
+Application-layer consolidation remains complete.
 
-- Financial
-- Business
-- Administrator authorization
-- Investors
-- Jobs
-- Pets
-- Pet voting
-- Listings
-- Favorites
-- Saved listings
-- User listings
+The Transaction Review architecture now includes a dedicated composition root:
 
-Presentation components own rendering, React lifecycle, transient UI state, user interaction, notifications, navigation, and presentation formatting.
+- `createTransactionReviewApplicationSuite`
 
-Application services own meaningful authentication, authorization, workflow orchestration, dependency coordination, persistence coordination, payload construction, redirect decisions, response validation, response normalization, error normalization, and immutable application results.
+Composition ownership now centralizes:
 
-Read-only server-rendered query pages remain unchanged unless future repository evidence establishes meaningful orchestration.
+- `PropertyRuleRepository`
+- `PropertyRuleManagementService`
+- `ManualPropertyAssignmentService`
+- `BulkPropertyAssignmentService`
+- `TransactionReviewApplication`
+
+Manual and bulk transaction-assignment APIs now consume the shared composition root rather than constructing dependency graphs directly.
+
+Presentation components continue owning:
+
+- Rendering
+- React lifecycle
+- Local UI state
+- User interaction
+- Notifications
+- Navigation
+
+Application services continue owning:
+
+- Authentication
+- Authorization
+- Workflow orchestration
+- Persistence coordination
+- Payload construction
+- Redirect decisions
+- Response normalization
+- Error normalization
+
+Composition roots own:
+
+- Dependency construction
+- Repository selection
+- Infrastructure selection
+- Service graph assembly
+- Dependency injection
+
+Read-only server-rendered query pages remain unchanged unless repository evidence establishes meaningful orchestration.
 
 ---
 

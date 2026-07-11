@@ -46,22 +46,20 @@ The repository—not memory, documentation, or prior conversation—is the singl
 ### Repository State
 
 * Current Branch: main
-* Latest Commit: 8ff9a45 — Extract business admin authorization application
+* Latest Commit: 265c182 — Introduce transaction review composition suite
 * Repository Status: Clean
 * Repository Clean: Yes
 * Repository synchronized with origin/main.
 
 ### Current Architectural Objective
 
-Formally close the completed application-layer consolidation phase and select the next architectural objective from verified repository evidence.
+Synchronize governance documentation with the completed Transaction Review composition milestone and identify the next architectural phase from verified repository and roadmap evidence.
 
-The repository-wide final audit confirmed that meaningful React workflow orchestration has been extracted across financial, business, investor, job, pet, listing, favorite, saved-listing, and user-listing capabilities.
+The repository now includes a dedicated `createTransactionReviewApplicationSuite` composition root that centralizes dependency assembly for transaction review and property assignment workflows.
 
-`BusinessAdminControls` now delegates authentication and administrator authorization to `AdminAuthorizationApplication`.
+Manual and bulk transaction assignment APIs now consume the shared composition root rather than constructing dependency graphs internally, bringing the transaction/property workflow into architectural alignment with the existing financial composition pattern.
 
-Remaining direct authentication in `Header` and the authentication feature page does not block consolidation closeout. A future `SessionApplication` remains an optional refinement rather than an active architectural requirement.
-
-Read-only server-rendered query pages remain unchanged because repository evidence does not justify extracting application services solely for consistency.
+Future architectural work should be selected from verified repository evidence rather than continuing application-layer extraction for symmetry alone.
 
 ### Current Architectural Phase
 
@@ -69,148 +67,27 @@ Application Layer Consolidation — Complete
 
 ### Current Repository State
 
-The application-layer consolidation campaign now spans financial, business, investor, job, pet, listing, favorite, saved-listing, and user-listing workflows.
+Application-layer consolidation remains complete across financial, business, investor, marketplace, favorites, listings, and administrator authorization workflows.
 
-Completed application services include:
+Transaction Review now includes a dedicated composition root that owns dependency assembly for:
 
-#### Financial
-
-* FinancialReportingApplication
-* FinancialSnapshotApplication
-* FinancialImportApplication
+* PropertyRuleRepository
+* PropertyRuleManagementService
+* ManualPropertyAssignmentService
+* BulkPropertyAssignmentService
 * TransactionReviewApplication
-* FinancialOperationsApplication
-* FinancialExplainabilityApplication
-* FinancialIntelligenceApplication
-* FinancialDashboardIntelligenceApplication
-* FinancialReadModelApplication
-* FinancialSnapshotViewApplication
-* ForgeDashboardApplication
-* ForgeFinancialDashboardApplication
 
-#### Business
+API routes now consume the composition layer rather than manually constructing workflow dependencies.
 
-* AdminAuthorizationApplication
-* BusinessCreateApplication
-* BusinessEditApplication
-* BusinessClaimApplication
-* BusinessDeleteApplication
-
-#### Investors
-
-* InvestorPropertyApplication
-* InvestorWholesalerApplication
-* InvestorCashBuyerApplication
-
-#### Jobs
-
-* JobApplication
-
-#### Pets
-
-* PetApplication
-* PetVotingApplication
-
-#### Listings
-
-* ListingApplication
-* MyListingsApplication
-
-#### Favorites and Saved Listings
-
-* FavoriteApplication
-* SavedListingsApplication
-
-### Recently Completed Workflow Extractions
-
-#### FavoriteApplication
-
-FavoriteApplication owns:
-
-* Authentication for favorite mutations
-* Favorite-status lookup
-* Favorite creation
-* Favorite removal
-* Persistence coordination
-* Authentication redirect decisions
-* Error normalization
-* Response normalization
-* Favorite state reconciliation results
-
-FavoriteButton primarily owns:
-
-* Rendering
-* Local UI state
-* React lifecycle
-* User interaction
-* User notifications
-* Navigation
-
-#### SavedListingsApplication
-
-SavedListingsApplication owns:
-
-* Authentication
-* Authentication redirect decisions
-* Saved-listing queries
-* Favorite removal
-* Ownership filtering
-* Persistence coordination
-* Error normalization
-* Immutable application results
-
-#### MyListingsApplication
-
-MyListingsApplication owns:
-
-* Authentication
-* Authentication redirect decisions
-* User listing queries
-* Ordering
-* Persistence coordination
-* Error normalization
-* Immutable application results
-
-#### BusinessDeleteApplication
-
-BusinessDeleteApplication owns:
-
-* Business deletion persistence
-* Error normalization
-* Reload decisions
-* Success result normalization
-
-#### PetVotingApplication
-
-PetVotingApplication owns:
-
-* Current-user authentication
-* Anonymous-user rejection
-* Vote persistence
-* Duplicate-vote handling
-* Pet vote-total updates
-* Error normalization
-* Success result normalization
-* Reload decisions
-
-VotePetButton primarily owns:
-
-* Rendering
-* User interaction
-* Alerts
-* Reload execution
-* Local presentation behavior
-
-Direct authentication and Supabase persistence no longer remain in VotePetButton.
+Composition ownership is now consistent across both the financial and transaction-review architectures.
 
 ### Verification Status
 
 * Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
-* PetVotingApplication targeted suite passed: 6 tests.
-* Pet application targeted suites passed: 21 tests.
-* Full Vitest suite passed: 178 test files and 676 tests.
+* Focused composition integration suites passed.
+* Full Vitest suite passed: 179 test files and 679 tests.
 * Production build passed.
-* Commit 8ff9a45 pushed successfully.
+* Commit 265c182 pushed successfully.
 * Repository synchronized with origin/main.
 * Working tree clean.
 
@@ -230,11 +107,11 @@ None.
 
 ### Documentation Status
 
-* Engineering Control Center synchronized through commit 144e9af.
-* Workflow governance synchronized with application-layer principles.
-* FORGE Roadmap may require later milestone synchronization.
-* FORGE Status may require later repository-health synchronization.
-* FORGE Session should be synchronized at session handoff.
+* Engineering Control Center synchronization is active for commit 265c182.
+* FORGE Roadmap requires the Transaction Review composition milestone.
+* FORGE Status requires current repository health and milestone synchronization.
+* FORGE Session requires current objective and repository-health synchronization.
+* Workflow governance remains synchronized with repository-first and composition-ownership principles.
 
 ---
 
@@ -256,51 +133,35 @@ Documentation is corrected.
 
 ## Active
 
-* [ ] Synchronize governance documentation with the completed application-layer consolidation milestone.
+* [ ] Synchronize Engineering Control Center, Roadmap, Status, and Session documentation with commit 265c182.
 
 ## Next
 
-* [ ] Inspect verified roadmap priorities and repository reality to select the next architectural phase.
-* [ ] Define one cohesive next objective before implementation begins.
+* [ ] Inspect verified roadmap priorities and repository capability gaps.
+* [ ] Select one cohesive next architectural objective before implementation begins.
 
 ## Future
 
 * [ ] Consider `SessionApplication` only if future authentication complexity justifies the extraction.
 * [ ] Continue leaving read-only server-rendered query pages unchanged unless meaningful orchestration emerges.
+* [ ] Preserve composition ownership across future transaction and property capabilities.
 
 ## Completed
 
-* [x] Reconcile Platform Roadmap with repository implementation.
-* [x] Reconcile Executive Dashboard messaging with repository implementation.
-* [x] Verify production routes against documented capabilities.
-* [x] Synchronize Architecture Roadmap, Platform Roadmap, and Dashboard status.
-* [x] Determine the application-layer consolidation architectural objective.
-* [x] Implement Transaction Review bulk property assignment capability.
-* [x] Add BulkPropertyAssignmentService domain orchestration.
-* [x] Add dedicated bulk transaction assignment API route.
-* [x] Extract financial application workflows.
-* [x] Extract business create workflow.
-* [x] Extract business edit workflow.
-* [x] Extract business claim workflows.
-* [x] Extract business delete workflow.
-* [x] Extract investor property workflow.
-* [x] Extract investor wholesaler workflow.
-* [x] Extract investor cash-buyer workflow.
-* [x] Extract job workflows.
-* [x] Extract pet create, edit, and delete workflows.
-* [x] Extract listing create, edit, delete, and sold-status workflows.
-* [x] Extract favorite workflows.
-* [x] Extract saved-listings workflow.
-* [x] Extract my-listings workflow.
-* [x] Extract pet-voting workflow.
-* [x] Extract business administrator authorization workflow.
-* [x] Complete repository-wide final application-layer audit.
-* [x] Confirm Header session extraction is optional rather than blocking.
-* [x] Confirm read-only server pages should remain unchanged.
-* [x] Verify 178 test files and 676 tests passed.
-* [x] Verify production build passed after AdminAuthorizationApplication extraction.
-* [x] Push commit 8ff9a45 and verify origin/main synchronization.
-* [x] Formally close application-layer consolidation.
+* [x] Complete application-layer consolidation.
+* [x] Inspect Transaction Review and property-assignment architecture.
+* [x] Identify duplicated dependency construction in transaction assignment API routes.
+* [x] Introduce `createTransactionReviewApplicationSuite`.
+* [x] Centralize PropertyRuleRepository, PropertyRuleManagementService, ManualPropertyAssignmentService, BulkPropertyAssignmentService, and TransactionReviewApplication composition.
+* [x] Refactor manual transaction property assignment API to consume the composition root.
+* [x] Refactor bulk transaction property assignment API to consume the composition root.
+* [x] Add composition dependency-injection tests.
+* [x] Verify focused suites: 5 files and 22 tests passed.
+* [x] Verify full Vitest suite: 179 test files and 679 tests passed.
+* [x] Verify production build passed.
+* [x] Verify Mutation Firewall passed with expected legacy `"claimed"` warning only.
+* [x] Commit and push 265c182.
+* [x] Verify repository synchronized with origin/main.
 
 ---
 

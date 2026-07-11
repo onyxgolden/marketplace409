@@ -1405,6 +1405,76 @@ Production behavior must remain unchanged while architectural boundaries become 
 
 ---
 
+### Phase 13.4 — Transaction Review Composition Alignment
+
+#### Purpose
+
+Centralize dependency construction for transaction review and property-assignment workflows so API routes remain thin delivery boundaries and composition ownership remains consistent across FORGE architectures.
+
+#### Delivered
+
+* Introduced `createTransactionReviewApplicationSuite`.
+* Centralized construction and dependency injection for:
+  * `PropertyRuleRepository`
+  * `PropertyRuleManagementService`
+  * `ManualPropertyAssignmentService`
+  * `BulkPropertyAssignmentService`
+  * `TransactionReviewApplication`
+* Exported the composition suite through `src/infrastructure/composition/index.js`.
+* Refactored the manual transaction property-assignment API to consume the shared composition root.
+* Refactored the bulk transaction property-assignment API to consume the shared composition root.
+* Removed duplicated service-graph construction from transaction assignment routes.
+* Added composition tests covering:
+  * default composition
+  * repository injection
+  * application and service injection
+* Preserved all domain behavior, API contracts, persistence behavior, and user-facing behavior.
+
+#### Protected Rule
+
+Composition roots construct repositories, infrastructure adapters, domain services, and application services.
+
+API routes validate and translate HTTP requests and responses.
+
+Routes do not own dependency construction.
+
+Domain services remain independent from delivery and infrastructure concerns.
+
+Applications orchestrate workflows without constructing their own dependencies.
+
+#### Current Architecture
+
+```text
+SupabasePropertyRuleRepository
+        ↓
+PropertyRuleManagementService
+        ↓
+ManualPropertyAssignmentService
+        ↓
+BulkPropertyAssignmentService
+        ↓
+TransactionReviewApplication
+        ↓
+createTransactionReviewApplicationSuite
+        ↓
+Manual and Bulk Assignment APIs
+        ↓
+Financial Import UI
+```
+
+#### Validation
+
+- ✓ Focused suites passed: 5 test files and 22 tests.
+- ✓ Full Vitest suite passed: 179 test files and 679 tests.
+- ✓ Production build passed.
+- ✓ Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
+- ✓ Commit `265c182` pushed to `origin/main`.
+- ✓ Repository synchronized and clean.
+
+**Status:** Complete
+
+---
+
 # Relationship to the Platform Roadmap
 
 The Architecture Roadmap changes infrequently.
