@@ -1,3 +1,4 @@
+export { AdminAuthorizationApplication } from "./AdminAuthorizationApplication.js";
 export { BusinessClaimApplication } from "./BusinessClaimApplication.js";
 export { BusinessCreateApplication } from "./BusinessCreateApplication.js";
 export { BusinessDeleteApplication } from "./BusinessDeleteApplication.js";

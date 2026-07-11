@@ -1,25 +1,36 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+
+import { AdminAuthorizationApplication } from "@/application/business";
 import DeleteBusinessButton from "@/components/DeleteBusinessButton";
+import { supabase } from "@/lib/supabase";
+
+const adminAuthorizationApplication = new AdminAuthorizationApplication({
+  supabase,
+});
 
 export default function BusinessAdminControls({ businessId }) {
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    checkAdmin();
-  }, []);
+    let active = true;
 
-  async function checkAdmin() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    async function loadAdminAuthorization() {
+      const result =
+        await adminAuthorizationApplication.loadAdminAuthorization();
 
-    if (user?.email === "jasonmorgan99@gmail.com") {
-      setIsAdmin(true);
+      if (active && result.ok) {
+        setIsAdmin(result.isAdmin);
+      }
     }
-  }
+
+    loadAdminAuthorization();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   if (!isAdmin) return null;
 

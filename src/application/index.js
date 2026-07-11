@@ -1,4 +1,5 @@
 export {
+  AdminAuthorizationApplication,
   BusinessClaimApplication,
   BusinessCreateApplication,
   BusinessDeleteApplication,
