@@ -1,97 +1,57 @@
 "use client";
 
+import { ListingApplication } from "@/application";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { uploadImage } from "@/lib/uploadImage";
 import { useState } from "react";
 
+const listingApplication = new ListingApplication({
+  supabase,
+  imageUploader: uploadImage,
+});
+
 export default function PostPage() {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [price, setPrice] = useState("");
-  const [category, setCategory] = useState("");
-  const [city, setCity] = useState("");
+  const [form, setForm] = useState(() =>
+    listingApplication.getInitialListingForm(),
+  );
   const [images, setImages] = useState([]);
   const [imagePreviews, setImagePreviews] = useState([]);
-  const [sellerName, setSellerName] = useState("");
-  const [sellerEmail, setSellerEmail] = useState("");
-  const [sellerPhone, setSellerPhone] = useState("");
   const [isPosting, setIsPosting] = useState(false);
+
+  function updateForm(field, value) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }));
+  }
 
   async function handleSubmit() {
     setIsPosting(true);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const result = await listingApplication.createListing({
+      form,
+      imageFiles: images,
+    });
 
-    if (!user) {
-      alert(
-        "You can browse listings as a guest, but you need a free account to post.",
-      );
+    if (!result.ok) {
+      alert(result.message);
+
+      if (result.error) {
+        console.log(result.error);
+      }
+
       setIsPosting(false);
-      window.location.href = "/auth";
+
+      if (result.redirectTo) {
+        window.location.href = result.redirectTo;
+      }
+
       return;
     }
 
-    let imageUrl = "";
-
-    let imageUrls = [];
-
-    if (images.length > 0) {
-      for (const image of images) {
-        const fileExt = image.name.split(".").pop();
-        const fileName = `${Date.now()}-${Math.random()}.${fileExt}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from("listing-images")
-          .upload(fileName, image, {
-            contentType: image.type,
-            upsert: false,
-          });
-
-        if (uploadError) {
-          alert("Error uploading one of the images");
-          console.log(uploadError);
-          setIsPosting(false);
-          return;
-        }
-
-        const { data } = supabase.storage
-          .from("listing-images")
-          .getPublicUrl(fileName);
-
-        imageUrls.push(data.publicUrl);
-      }
-    }
-
-    const { data: newListing, error } = await supabase
-      .from("listings")
-      .insert([
-        {
-          title,
-          description,
-          price,
-          category,
-          city,
-          image_url: imageUrls[0] || "",
-          image_urls: imageUrls,
-          seller_name: sellerName,
-          seller_email: sellerEmail,
-          seller_phone: sellerPhone,
-          user_id: user.id,
-        },
-      ])
-      .select()
-      .single();
-
-    if (error) {
-      alert("Error posting listing");
-      console.log(error);
-      setIsPosting(false);
-    } else {
-      alert("Listing posted successfully!");
-      window.location.href = `/listing/${newListing.id}`;
-    }
+    alert(result.message);
+    window.location.href = result.redirectTo;
   }
 
   return (
@@ -110,29 +70,37 @@ export default function PostPage() {
             <input
               className="border rounded-xl px-4 py-4"
               placeholder="Listing Title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              value={form.title}
+              onChange={(event) =>
+                updateForm("title", event.target.value)
+              }
             />
 
             <textarea
               className="border rounded-xl px-4 py-4 h-40"
               placeholder="Describe your item or service..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              value={form.description}
+              onChange={(event) =>
+                updateForm("description", event.target.value)
+              }
             />
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <input
                 className="border rounded-xl px-4 py-4"
                 placeholder="Price"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
+                value={form.price}
+                onChange={(event) =>
+                  updateForm("price", event.target.value)
+                }
               />
 
               <select
                 className="border rounded-xl px-4 py-4"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                value={form.category}
+                onChange={(event) =>
+                  updateForm("category", event.target.value)
+                }
               >
                 <option value="">Select Category</option>
                 <option>Vehicles</option>
@@ -141,10 +109,16 @@ export default function PostPage() {
                 <option>Farm & Ranch</option>
                 <option>Pets</option>
                 <option value="Electronics">Electronics</option>
-                <option value="Music & Instruments">Music & Instruments</option>
+                <option value="Music & Instruments">
+                  Music & Instruments
+                </option>
                 <option value="Boats & Marine">Boats & Marine</option>
-                <option value="Hunting & Fishing">Hunting & Fishing</option>
-                <option value="Tools & Equipment">Tools & Equipment</option>
+                <option value="Hunting & Fishing">
+                  Hunting & Fishing
+                </option>
+                <option value="Tools & Equipment">
+                  Tools & Equipment
+                </option>
                 <option value="Miscellaneous">Miscellaneous</option>
               </select>
             </div>
@@ -152,42 +126,52 @@ export default function PostPage() {
             <input
               className="border rounded-xl px-4 py-4"
               placeholder="City or ZIP"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
+              value={form.city}
+              onChange={(event) =>
+                updateForm("city", event.target.value)
+              }
             />
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <input
                 className="border rounded-xl px-4 py-4"
                 placeholder="Seller Name"
-                value={sellerName}
-                onChange={(e) => setSellerName(e.target.value)}
+                value={form.sellerName}
+                onChange={(event) =>
+                  updateForm("sellerName", event.target.value)
+                }
               />
 
               <input
                 className="border rounded-xl px-4 py-4"
                 placeholder="Seller Email"
-                value={sellerEmail}
-                onChange={(e) => setSellerEmail(e.target.value)}
+                value={form.sellerEmail}
+                onChange={(event) =>
+                  updateForm("sellerEmail", event.target.value)
+                }
               />
             </div>
 
             <input
               className="border rounded-xl px-4 py-4"
               placeholder="Seller Phone"
-              value={sellerPhone}
-              onChange={(e) => setSellerPhone(e.target.value)}
+              value={form.sellerPhone}
+              onChange={(event) =>
+                updateForm("sellerPhone", event.target.value)
+              }
             />
 
             <div className="border-2 border-dashed rounded-2xl p-10 text-center bg-gray-50">
-              <p className="text-lg font-semibold mb-3">📸 Upload Photo</p>
+              <p className="text-lg font-semibold mb-3">
+                📸 Upload Photo
+              </p>
 
               <input
                 type="file"
                 accept="image/*"
                 multiple
-                onChange={(e) => {
-                  const files = Array.from(e.target.files);
+                onChange={(event) => {
+                  const files = Array.from(event.target.files || []);
 
                   setImages(files);
                   setImagePreviews(
@@ -200,7 +184,7 @@ export default function PostPage() {
                 <div className="mt-6 grid grid-cols-2 md:grid-cols-3 gap-4">
                   {imagePreviews.map((preview, index) => (
                     <img
-                      key={index}
+                      key={preview}
                       src={preview}
                       alt={`Preview ${index + 1}`}
                       className="h-32 w-full object-cover rounded-2xl shadow"
