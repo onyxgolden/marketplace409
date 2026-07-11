@@ -1,16 +1,11 @@
 import { NextResponse } from "next/server";
 
-import {
-  BulkPropertyAssignmentService,
-  ManualPropertyAssignmentService,
-  PropertyRuleManagementService,
-  SupabasePropertyRuleRepository,
-  type Property,
-} from "@/domains/property";
+import { createTransactionReviewApplicationSuite } from "@/infrastructure/composition";
 import {
   TransactionReviewItem,
   type TransactionReviewItemInput,
 } from "@/domains/transaction-review";
+import type { Property } from "@/domains/property";
 import type { Transaction } from "@/domains/transaction";
 
 type BulkAssignPropertyRequestBody = Readonly<{
@@ -61,29 +56,25 @@ export async function POST(request: Request) {
       }
     }
 
-    const ruleRepository = new SupabasePropertyRuleRepository();
+    const { bulkAssignmentService } =
+      createTransactionReviewApplicationSuite();
 
-    const manualAssignmentService = new ManualPropertyAssignmentService({
-      ruleManagementService: new PropertyRuleManagementService(ruleRepository),
-    });
-
-    const bulkAssignmentService = new BulkPropertyAssignmentService({
-      manualAssignmentService,
-    });
-
-    const result = await bulkAssignmentService.assignTransactionsToProperty({
-      assignments: body.assignments.map((assignment) => ({
-        transaction: assignment.transaction as Transaction,
-        property: assignment.property as Property,
-        ownerId: normalizeNullableString(assignment.ownerId),
-        organizationId: normalizeNullableString(assignment.organizationId),
-        reviewItem: assignment.reviewItem
-          ? new TransactionReviewItem(assignment.reviewItem)
-          : undefined,
-      })),
-      ownerId: normalizeNullableString(body.ownerId),
-      organizationId: normalizeNullableString(body.organizationId),
-    });
+    const result =
+      await bulkAssignmentService.assignTransactionsToProperty({
+        assignments: body.assignments.map((assignment) => ({
+          transaction: assignment.transaction as Transaction,
+          property: assignment.property as Property,
+          ownerId: normalizeNullableString(assignment.ownerId),
+          organizationId: normalizeNullableString(
+            assignment.organizationId,
+          ),
+          reviewItem: assignment.reviewItem
+            ? new TransactionReviewItem(assignment.reviewItem)
+            : undefined,
+        })),
+        ownerId: normalizeNullableString(body.ownerId),
+        organizationId: normalizeNullableString(body.organizationId),
+      });
 
     return NextResponse.json({
       success: true,

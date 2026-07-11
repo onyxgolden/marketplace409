@@ -6,3 +6,5 @@ export {
 export { createFinancialSnapshotApplication } from "./createFinancialSnapshotApplication.js";
 
 export { createFinancialApplicationSuite } from "./createFinancialApplicationSuite.js";
+
+export { createTransactionReviewApplicationSuite } from "./createTransactionReviewApplicationSuite.js";

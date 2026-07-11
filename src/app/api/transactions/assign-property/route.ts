@@ -1,15 +1,11 @@
 import { NextResponse } from "next/server";
 
-import {
-  ManualPropertyAssignmentService,
-  PropertyRuleManagementService,
-  SupabasePropertyRuleRepository,
-  type Property,
-} from "@/domains/property";
+import { createTransactionReviewApplicationSuite } from "@/infrastructure/composition";
 import {
   TransactionReviewItem,
   type TransactionReviewItemInput,
 } from "@/domains/transaction-review";
+import type { Property } from "@/domains/property";
 import type { Transaction } from "@/domains/transaction";
 
 type AssignPropertyRequestBody = Readonly<{
@@ -38,23 +34,19 @@ export async function POST(request: Request) {
       );
     }
 
-    const ruleRepository = new SupabasePropertyRuleRepository();
+    const { manualAssignmentService } =
+      createTransactionReviewApplicationSuite();
 
-    const assignmentService = new ManualPropertyAssignmentService({
-      ruleManagementService: new PropertyRuleManagementService(
-        ruleRepository,
-      ),
-    });
-
-    const result = await assignmentService.assignTransactionToProperty({
-      transaction: body.transaction,
-      property: body.property,
-      ownerId: normalizeNullableString(body.ownerId),
-      organizationId: normalizeNullableString(body.organizationId),
-      reviewItem: body.reviewItem
-        ? new TransactionReviewItem(body.reviewItem)
-        : undefined,
-    });
+    const result =
+      await manualAssignmentService.assignTransactionToProperty({
+        transaction: body.transaction,
+        property: body.property,
+        ownerId: normalizeNullableString(body.ownerId),
+        organizationId: normalizeNullableString(body.organizationId),
+        reviewItem: body.reviewItem
+          ? new TransactionReviewItem(body.reviewItem)
+          : undefined,
+      });
 
     return NextResponse.json({
       success: true,
