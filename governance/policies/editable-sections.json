@@ -1,0 +1,96 @@
+{
+"version": "1.0",
+"description": "Sections of experimental shadow governance documents that the FORGE Governance Synchronizer may update during the evaluation period.",
+"defaultPolicy": "deny",
+"documents": {
+"FORGE_SYNC_CONTROL_CENTER.md": {
+"editableSections": [
+"repository_state",
+"active_phase",
+"current_objective",
+"completed_work",
+"validation_evidence",
+"synchronization_metadata"
+],
+"humanControlledSections": [
+"active_queue",
+"next_queue",
+"future_queue",
+"architectural_direction",
+"protected_rules"
+]
+},
+"FORGE_SYNC_STATUS.md": {
+"editableSections": [
+"repository_state",
+"active_phase",
+"current_objective",
+"capability_status",
+"validation_evidence",
+"synchronization_metadata"
+],
+"humanControlledSections": [
+"architectural_direction",
+"protected_rules"
+]
+},
+"FORGE_SYNC_SESSION.md": {
+"editableSections": [
+"active_phase",
+"current_objective",
+"last_completed_work",
+"repository_health",
+"known_warnings",
+"starting_inspection",
+"synchronization_metadata"
+],
+"humanControlledSections": [
+"session_rules",
+"architectural_direction",
+"protected_rules"
+]
+},
+"FORGE_SYNC_ROADMAP.md": {
+"editableSections": [
+"synchronization_metadata",
+"verified_validation_evidence"
+],
+"humanControlledSections": [
+"purpose",
+"current_architectural_position",
+"phase_definitions",
+"phase_names",
+"phase_status",
+"delivered_capabilities",
+"protected_rules",
+"future_architectural_evolution",
+"completion_criteria",
+"guiding_principle"
+]
+},
+"FORGE_SYNC_EVALUATION.md": {
+"editableSections": [
+"trial_history",
+"comparison_results",
+"observed_strengths",
+"observed_failures",
+"corrections_required",
+"promotion_recommendations",
+"synchronization_metadata"
+],
+"humanControlledSections": [
+"authority_decisions",
+"promotion_approvals"
+]
+}
+},
+"rules": [
+"The synchronizer may update only explicitly listed editable sections.",
+"Any section not explicitly listed as editable is denied by default.",
+"Human-controlled sections may be read for comparison but may not be modified.",
+"The synchronizer may not create new editable section identifiers without explicit owner approval.",
+"The synchronizer may not move content from a human-controlled section into an editable section.",
+"All updates must be supported by captured repository or session evidence.",
+"The synchronizer must stop without writing files when a requested update exceeds its granted authority."
+]
+}

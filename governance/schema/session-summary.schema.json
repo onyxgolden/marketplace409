@@ -1,0 +1,245 @@
+{
+"$schema": "https://json-schema.org/draft/2020-12/schema",
+"$id": "forge-governance-session-summary.schema.json",
+"title": "FORGE Governance Session Summary",
+"description": "Structured, repository-supported evidence describing the outcome of a FORGE engineering session.",
+"type": "object",
+"additionalProperties": false,
+"required": [
+"schemaVersion",
+"sessionId",
+"sessionDate",
+"phase",
+"objective",
+"repository",
+"work",
+"validation",
+"completion",
+"nextSession"
+],
+"properties": {
+"schemaVersion": {
+"type": "string",
+"const": "1.0"
+},
+"sessionId": {
+"type": "string",
+"minLength": 1
+},
+"sessionDate": {
+"type": "string",
+"format": "date"
+},
+"phase": {
+"type": "object",
+"additionalProperties": false,
+"required": [
+"identifier",
+"title",
+"status"
+],
+"properties": {
+"identifier": {
+"type": "string",
+"minLength": 1
+},
+"title": {
+"type": "string",
+"minLength": 1
+},
+"status": {
+"type": "string",
+"enum": [
+"planned",
+"active",
+"blocked",
+"incomplete",
+"complete"
+]
+}
+}
+},
+"objective": {
+"type": "object",
+"additionalProperties": false,
+"required": [
+"startingObjective",
+"endingObjective"
+],
+"properties": {
+"startingObjective": {
+"type": "string",
+"minLength": 1
+},
+"endingObjective": {
+"type": "string",
+"minLength": 1
+}
+}
+},
+"repository": {
+"type": "object",
+"additionalProperties": false,
+"required": [
+"head",
+"originMain",
+"workingTreeClean",
+"branch"
+],
+"properties": {
+"head": {
+"type": "string",
+"pattern": "^[0-9a-f]{7,40}$"
+},
+"originMain": {
+"type": "string",
+"pattern": "^[0-9a-f]{7,40}$"
+},
+"branch": {
+"type": "string",
+"minLength": 1
+},
+"workingTreeClean": {
+"type": "boolean"
+},
+"implementationCommit": {
+"type": [
+"string",
+"null"
+],
+"pattern": "^[0-9a-f]{7,40}$"
+},
+"governanceCommit": {
+"type": [
+"string",
+"null"
+],
+"pattern": "^[0-9a-f]{7,40}$"
+}
+}
+},
+"work": {
+"type": "object",
+"additionalProperties": false,
+"required": [
+"delivered",
+"modifiedFiles"
+],
+"properties": {
+"delivered": {
+"type": "array",
+"items": {
+"type": "string",
+"minLength": 1
+}
+},
+"modifiedFiles": {
+"type": "array",
+"items": {
+"type": "string",
+"minLength": 1
+}
+},
+"knownWarnings": {
+"type": "array",
+"items": {
+"type": "string",
+"minLength": 1
+},
+"default": []
+}
+}
+},
+"validation": {
+"type": "object",
+"additionalProperties": false,
+"required": [
+"focusedTests",
+"fullTests",
+"productionBuild"
+],
+"properties": {
+"focusedTests": {
+"$ref": "#/$defs/validationResult"
+},
+"fullTests": {
+"$ref": "#/$defs/validationResult"
+},
+"productionBuild": {
+"$ref": "#/$defs/validationResult"
+}
+}
+},
+"completion": {
+"type": "object",
+"additionalProperties": false,
+"required": [
+"workComplete",
+"supportedByEvidence"
+],
+"properties": {
+"workComplete": {
+"type": "boolean"
+},
+"supportedByEvidence": {
+"type": "boolean"
+},
+"incompleteReason": {
+"type": [
+"string",
+"null"
+]
+}
+}
+},
+"nextSession": {
+"type": "object",
+"additionalProperties": false,
+"required": [
+"objective",
+"startingInspection"
+],
+"properties": {
+"objective": {
+"type": "string",
+"minLength": 1
+},
+"startingInspection": {
+"type": "string",
+"minLength": 1
+}
+}
+}
+},
+"$defs": {
+"validationResult": {
+"type": "object",
+"additionalProperties": false,
+"required": [
+"status"
+],
+"properties": {
+"status": {
+"type": "string",
+"enum": [
+"not-run",
+"passing",
+"failing"
+]
+},
+"command": {
+"type": [
+"string",
+"null"
+]
+},
+"summary": {
+"type": [
+"string",
+"null"
+]
+}
+}
+}
+}
+}

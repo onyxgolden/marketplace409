@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+
+  "description": "Capabilities granted to the FORGE Governance Synchronizer.",
+
+  "defaultPolicy": "deny",
+
+  "capabilities": {
+    "inspectRepository": true,
+    "readGovernanceDocuments": true,
+    "generateSessionSnapshot": true,
+    "generateShadowGovernance": true,
+    "compareShadowToAuthoritative": true,
+    "generateEvaluationReport": true,
+
+    "updateShadowDocuments": true,
+    "updateAuthoritativeDocuments": false,
+
+    "modifyProtectedRules": false,
+    "modifyArchitectureHistory": false,
+    "createArchitecturalPhase": false,
+    "renameArchitecturalPhase": false,
+    "changeGovernancePolicy": false,
+
+    "selectNextObjective": false,
+    "reorderExecutionQueue": false,
+    "markWorkCompleteWithoutEvidence": false,
+
+    "commitRepository": false,
+    "pushRepository": false,
+    "deleteFiles": false
+  }
+}

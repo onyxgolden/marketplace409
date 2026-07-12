@@ -1,0 +1,40 @@
+{
+  "version": "1.0",
+
+  "description": "Sections that the Governance Synchronizer may never modify without explicit owner authorization.",
+
+  "documents": {
+    "FORGE_ENGINEERING_CONTROL_CENTER.md": [
+      "Repository Reality",
+      "Engineering Principles",
+      "Governance Rules"
+    ],
+
+    "FORGE_STATUS.md": [
+      "Repository Truth Rules"
+    ],
+
+    "FORGE_SESSION.md": [
+      "Session Rules",
+      "Bootstrap Rules"
+    ],
+
+    "FORGE_ROADMAP.md": [
+      "Purpose",
+      "Completed Architectural Phases",
+      "Protected Rule",
+      "Guiding Principle",
+      "Completion Criteria"
+    ]
+  },
+
+  "globalRules": [
+    "Never modify protected rules.",
+    "Never rename architectural phases.",
+    "Never rewrite historical architecture.",
+    "Never change governance policy.",
+    "Never infer completed work.",
+    "Never change engineering principles.",
+    "Never modify immutable content without explicit owner authorization."
+  ]
+}

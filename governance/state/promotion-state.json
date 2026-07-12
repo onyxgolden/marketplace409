@@ -1,0 +1,97 @@
+{
+"version": "1.0",
+"lastUpdated": null,
+"updatedBy": "owner",
+"defaultAuthority": "human",
+"trialCount": 0,
+"documents": {
+"FORGE_SYNC_CONTROL_CENTER.md": {
+"state": "shadow-only",
+"successfulTrials": 0,
+"sections": {
+"repository_state": "shadow-only",
+"active_phase": "shadow-only",
+"current_objective": "shadow-only",
+"completed_work": "shadow-only",
+"validation_evidence": "shadow-only",
+"synchronization_metadata": "shadow-only",
+"active_queue": "human",
+"next_queue": "human",
+"future_queue": "human",
+"architectural_direction": "human",
+"protected_rules": "human"
+}
+},
+"FORGE_SYNC_STATUS.md": {
+"state": "shadow-only",
+"successfulTrials": 0,
+"sections": {
+"repository_state": "shadow-only",
+"active_phase": "shadow-only",
+"current_objective": "shadow-only",
+"capability_status": "shadow-only",
+"validation_evidence": "shadow-only",
+"synchronization_metadata": "shadow-only",
+"architectural_direction": "human",
+"protected_rules": "human"
+}
+},
+"FORGE_SYNC_SESSION.md": {
+"state": "shadow-only",
+"successfulTrials": 0,
+"sections": {
+"active_phase": "shadow-only",
+"current_objective": "shadow-only",
+"last_completed_work": "shadow-only",
+"repository_health": "shadow-only",
+"known_warnings": "shadow-only",
+"starting_inspection": "shadow-only",
+"synchronization_metadata": "shadow-only",
+"session_rules": "human",
+"architectural_direction": "human",
+"protected_rules": "human"
+}
+},
+"FORGE_SYNC_ROADMAP.md": {
+"state": "shadow-only",
+"successfulTrials": 0,
+"sections": {
+"synchronization_metadata": "shadow-only",
+"verified_validation_evidence": "shadow-only",
+"purpose": "human",
+"current_architectural_position": "human",
+"phase_definitions": "human",
+"phase_names": "human",
+"phase_status": "human",
+"delivered_capabilities": "human",
+"protected_rules": "human",
+"future_architectural_evolution": "human",
+"completion_criteria": "human",
+"guiding_principle": "human"
+}
+},
+"FORGE_SYNC_EVALUATION.md": {
+"state": "shadow-only",
+"successfulTrials": 0,
+"sections": {
+"trial_history": "shadow-only",
+"comparison_results": "shadow-only",
+"observed_strengths": "shadow-only",
+"observed_failures": "shadow-only",
+"corrections_required": "shadow-only",
+"promotion_recommendations": "shadow-only",
+"synchronization_metadata": "shadow-only",
+"authority_decisions": "human",
+"promotion_approvals": "human"
+}
+}
+},
+"rules": [
+"No document or section has authoritative control during the initial evaluation period.",
+"Shadow-only permits updates only to experimental shadow documents.",
+"Human sections may not be modified by the synchronizer.",
+"Authority changes require explicit owner approval.",
+"The synchronizer may recommend promotion but may not modify this state file.",
+"A suspended section may not be updated until the owner restores its authority."
+]
+}

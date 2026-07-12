@@ -1,0 +1,105 @@
+{
+"version": "1.0",
+"description": "Validation requirements enforced before and after the FORGE Governance Synchronizer updates experimental shadow governance documents.",
+"defaultResult": "fail",
+"preWriteChecks": [
+{
+"id": "repository-inspected",
+"required": true,
+"description": "Repository state must be captured before synchronization."
+},
+{
+"id": "session-evidence-present",
+"required": true,
+"description": "A structured session snapshot must exist."
+},
+{
+"id": "evidence-schema-valid",
+"required": true,
+"description": "The session snapshot must satisfy its schema."
+},
+{
+"id": "target-is-shadow-document",
+"required": true,
+"description": "Every target file must be inside docs/architecture/synchronized."
+},
+{
+"id": "section-is-editable",
+"required": true,
+"description": "Every requested section update must be explicitly permitted by editable-sections.json."
+},
+{
+"id": "capability-is-granted",
+"required": true,
+"description": "Every requested operation must be explicitly granted by capabilities.json."
+},
+{
+"id": "completion-supported-by-evidence",
+"required": true,
+"description": "Work may be marked complete only when repository and validation evidence support completion."
+}
+],
+"postWriteChecks": [
+{
+"id": "authoritative-documents-unchanged",
+"required": true,
+"description": "Authoritative FORGE governance documents must remain byte-for-byte unchanged."
+},
+{
+"id": "human-controlled-sections-unchanged",
+"required": true,
+"description": "Human-controlled shadow sections must remain unchanged."
+},
+{
+"id": "protected-content-unchanged",
+"required": true,
+"description": "Protected content must remain unchanged."
+},
+{
+"id": "document-markers-valid",
+"required": true,
+"description": "All synchronization section markers must be present, unique, and correctly paired."
+},
+{
+"id": "cross-document-phase-consistent",
+"required": true,
+"description": "Active phase information must agree across applicable shadow documents."
+},
+{
+"id": "cross-document-objective-consistent",
+"required": true,
+"description": "Current objective information must agree across applicable shadow documents."
+},
+{
+"id": "repository-state-consistent",
+"required": true,
+"description": "Recorded HEAD, origin/main, working-tree state, tests, and build results must match captured evidence."
+},
+{
+"id": "no-invented-claims",
+"required": true,
+"description": "Every factual claim introduced by synchronization must be traceable to captured evidence."
+},
+{
+"id": "shadow-warning-present",
+"required": true,
+"description": "Every shadow document must identify itself as experimental and non-authoritative."
+}
+],
+"failureBehavior": {
+"writeFiles": false,
+"commitRepository": false,
+"pushRepository": false,
+"generateFailureReport": true,
+"exitWithError": true
+},
+"rules": [
+"All required checks must pass.",
+"Warnings may not override required failures.",
+"Validation failures must identify the failed rule and supporting evidence.",
+"A failed synchronization must not leave partially updated files.",
+"The synchronizer must restore original shadow content if post-write validation fails.",
+"The synchronizer must never repair a failure by modifying authoritative governance documents.",
+"Owner approval is required before any validation rule may be weakened, removed, or made optional."
+]
+}
