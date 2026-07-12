@@ -629,6 +629,36 @@ describe.sequential(
           shadowVerification.status,
         ).toBe(0);
 
+        const evaluationDocument =
+          readRelativeFile(
+            temporaryRepositoryRoot,
+            "docs/architecture/synchronized/FORGE_SYNC_EVALUATION.md",
+          );
+
+        expect(
+          evaluationDocument,
+        ).toContain(
+          "## Promotion Recommendations",
+        );
+
+        expect(
+          evaluationDocument,
+        ).toContain(
+          "No promotion recommendations have been made.",
+        );
+
+        expect(
+          evaluationDocument,
+        ).toContain(
+          "Recommendations do not modify authority. Only the owner may approve promotion.",
+        );
+
+        expect(
+          evaluationDocument,
+        ).not.toContain(
+          "recommend promotion to `eligible-for-review`",
+        );
+
         expectFilesToEqualCapture(
           temporaryRepositoryRoot,
           authoritativeBefore,
