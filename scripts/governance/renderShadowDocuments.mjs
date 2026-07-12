@@ -1,5 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  evaluatePromotionEligibility,
+} from "./evaluatePromotionEligibility.mjs";
 
 import {
   buildComparisonResults,
@@ -50,6 +53,9 @@ const synchronizedDirectory =
 
 const promotionStatePath =
   "governance/state/promotion-state.json";
+
+const promotionPolicyPath =
+  "governance/policies/promotion-policy.json";
 
 const documentNames = [
   "FORGE_SYNC_CONTROL_CENTER.md",
@@ -275,6 +281,7 @@ function buildRoadmapSections(
 function buildEvaluationSections(
   governanceState,
   promotionState,
+  promotionEvaluation,
 ) {
   return {
     trial_history:
@@ -302,7 +309,7 @@ function buildEvaluationSections(
 
     promotion_recommendations:
       buildPromotionRecommendations(
-        promotionState,
+        promotionEvaluation,
       ),
 
     synchronization_metadata:
@@ -314,11 +321,11 @@ function buildEvaluationSections(
       ),
   };
 }
-
 function buildSectionMapForDocument(
   documentName,
   governanceState,
   promotionState,
+  promotionEvaluation,
 ) {
   switch (documentName) {
     case "FORGE_SYNC_CONTROL_CENTER.md":
@@ -345,6 +352,7 @@ function buildSectionMapForDocument(
       return buildEvaluationSections(
         governanceState,
         promotionState,
+        promotionEvaluation,
       );
 
     default:
@@ -359,6 +367,11 @@ export function renderShadowDocumentContent(
   documentContent,
   governanceState,
   promotionState,
+  promotionEvaluation = {
+    recommendations: [],
+    authorityBoundary:
+      "Recommendations do not modify authority. Only the owner may approve promotion.",
+  },
 ) {
   if (
     typeof documentName !== "string" ||
@@ -390,6 +403,7 @@ export function renderShadowDocumentContent(
       documentName,
       governanceState,
       promotionState,
+      promotionEvaluation,
     );
 
   return applySectionMap(
@@ -426,6 +440,19 @@ export function renderAllShadowDocuments({
     "Promotion state",
   );
 
+  const promotionPolicy = readJsonFile(
+    repositoryRoot,
+    promotionPolicyPath,
+    "Promotion policy",
+  );
+
+  const promotionEvaluation =
+    evaluatePromotionEligibility({
+      promotionPolicy,
+      promotionState,
+      governanceState,
+    });
+
   return Object.fromEntries(
     documentNames.map((documentName) => {
       const originalContent =
@@ -440,6 +467,7 @@ export function renderAllShadowDocuments({
           originalContent,
           governanceState,
           promotionState,
+          promotionEvaluation,
         );
 
       return [

@@ -182,44 +182,90 @@ export function buildCorrectionsRequired(
 }
 
 export function buildPromotionRecommendations(
-  promotionState,
+  promotionEvaluation,
 ) {
   assertObject(
-    promotionState,
-    "promotionState",
+    promotionEvaluation,
+    "promotionEvaluation",
   );
 
-  assertObject(
-    promotionState.documents,
-    "promotionState.documents",
-  );
+  if (
+    !Array.isArray(
+      promotionEvaluation.recommendations,
+    )
+  ) {
+    throw new TypeError(
+      "promotionEvaluation.recommendations must be an array",
+    );
+  }
 
-  const promotableDocuments =
-    Object.entries(promotionState.documents)
-      .filter(([, documentState]) => {
+  const recommendations =
+    promotionEvaluation.recommendations.map(
+      (
+        recommendation,
+        index,
+      ) => {
         assertObject(
-          documentState,
-          "promotionState document",
+          recommendation,
+          `promotionEvaluation.recommendations[${index}]`,
         );
 
-        return (
-          documentState.state !== "shadow-only"
-        );
-      })
-      .map(([documentName]) => documentName);
+        const {
+          documentName,
+          sectionName,
+          recommendedState,
+          requiresOwnerApproval,
+        } = recommendation;
+
+        if (
+          typeof documentName !== "string" ||
+          documentName.length === 0
+        ) {
+          throw new TypeError(
+            `promotionEvaluation.recommendations[${index}].documentName must be a non-empty string`,
+          );
+        }
+
+        if (
+          typeof sectionName !== "string" ||
+          sectionName.length === 0
+        ) {
+          throw new TypeError(
+            `promotionEvaluation.recommendations[${index}].sectionName must be a non-empty string`,
+          );
+        }
+
+        if (
+          recommendedState !==
+          "eligible-for-review"
+        ) {
+          throw new TypeError(
+            `promotionEvaluation.recommendations[${index}].recommendedState must be eligible-for-review`,
+          );
+        }
+
+        if (
+          requiresOwnerApproval !== true
+        ) {
+          throw new TypeError(
+            `promotionEvaluation.recommendations[${index}].requiresOwnerApproval must be true`,
+          );
+        }
+
+        return [
+          `- **${documentName} / ${sectionName}:**`,
+          "recommend promotion to `eligible-for-review`; owner approval remains required.",
+        ].join(" ");
+      },
+    );
 
   return [
     "## Promotion Recommendations",
     "",
-    promotableDocuments.length === 0
+    recommendations.length === 0
       ? "No promotion recommendations have been made."
-      : promotableDocuments
-          .map(
-            (documentName) =>
-              `- Review ${documentName} for its currently recorded promotion state.`,
-          )
-          .join("\n"),
+      : recommendations.join("\n"),
     "",
-    "The synchronizer may recommend promotion but may not approve it.",
+    promotionEvaluation.authorityBoundary,
   ].join("\n");
 }
