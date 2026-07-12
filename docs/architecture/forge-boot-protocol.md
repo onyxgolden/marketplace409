@@ -11,6 +11,27 @@ It combines:
 
 # 🧭 1. FORGE STARTUP CHECKLIST (ACTIVE RULESET)
 
+## Repository Synchronization Update (When Applicable)
+
+If resuming work in an older FORGE conversation after repository advancement:
+
+1. Inspect the current repository state.
+2. Generate a Repository Synchronization Update using only verified repository facts.
+3. Synchronize the older conversation with:
+   - Repository status
+   - New commits
+   - Completed capabilities
+   - New engineering principles
+   - Validation state
+   - Architectural constraints
+4. Treat the synchronized information as completed repository state.
+5. Continue from the next unfinished repository objective.
+6. Do not re-plan, re-implement, or re-validate completed work unless current repository inspection identifies a verified discrepancy.
+
+The repository is the authoritative source of continuity across FORGE conversations.
+
+---
+
 ## Core Principles
 
 ### Immutable Domain Rule

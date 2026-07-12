@@ -67,6 +67,20 @@ The FORGE workflow continuously evolves through validated engineering experience
 
 The following refinements are now standard practice.
 
+## Conversation Continuity Principle
+
+The repository—not conversation history—is the authoritative source of continuity across FORGE conversations.
+
+When a conversation resumes after the repository has advanced:
+
+- Inspect the current repository state first.
+- Provide a Repository Synchronization Update containing only verified repository facts.
+- Treat completed commits, capabilities, principles, validation, and architectural constraints as completed repository state.
+- Continue from the next unfinished repository objective.
+- Do not re-plan, re-implement, or re-validate completed work unless current repository inspection identifies a specific discrepancy.
+
+Parallel FORGE conversations synchronize through verified repository state rather than reconstructed conversation memory.
+
 ## Assistant Response Protocol
 
 During engineering sessions, implementation guidance should follow a consistent structure.
