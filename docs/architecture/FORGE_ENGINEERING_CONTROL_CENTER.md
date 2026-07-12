@@ -454,6 +454,10 @@ Always:
 * Use exact START and END replacement boundaries for partial edits.
 * Treat each architectural objective as a separate commit.
 * Synchronize governance documentation when milestones warrant it.
+* Production architecture takes precedence over test convenience.
+* When integration tests require additional inputs, expand the disposable fixture rather than weakening production code.
+* Do not modify production architecture solely to simplify testing.
+* Do not export production-only internals merely to support tests.
 
 Never:
 

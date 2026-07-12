@@ -1042,6 +1042,14 @@ The repository determines the next architectural step.
 
 When no deterministic capability is warranted, FORGE stops rather than introducing speculative abstractions.
 
+Production architecture always takes precedence over test convenience.
+
+Integration tests should exercise production behavior using representative disposable fixtures.
+
+When additional resources are required for testing, expand the fixture rather than modifying production architecture.
+
+Testing infrastructure validates production architecture; it does not redefine it.
+
 ---
 
 # Session Rules
