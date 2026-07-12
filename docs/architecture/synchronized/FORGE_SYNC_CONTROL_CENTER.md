@@ -16,9 +16,11 @@
 
 ## Synchronization Metadata
 
-**Last Synchronization:** Not yet synchronized
-**Session ID:** Not yet assigned
-**Evidence Snapshot:** Not yet assigned
+**Last Synchronization:** Not yet generated
+**Session ID:** Not recorded
+**Evidence Snapshot:** governance/snapshots/forge-session-20260711-234450.json
+**Renderer Version:** Not recorded
+**Mode:** shadow-only
 
 <!-- FORGE:SYNC:synchronization_metadata:END -->
 
@@ -28,14 +30,14 @@
 
 ## Repository State
 
-| Check                 | Result               |
-| --------------------- | -------------------- |
-| Branch                | Not yet synchronized |
-| HEAD                  | Not yet synchronized |
-| origin/main           | Not yet synchronized |
-| Working tree          | Not yet synchronized |
-| Implementation commit | Not yet synchronized |
-| Governance commit     | Not yet synchronized |
+| Check                 | Result       |
+| --------------------- | ------------ |
+| Branch                | main |
+| HEAD                  | 96072872754bf157923f32115fc28292e5710e8c |
+| origin/main           | 96072872754bf157923f32115fc28292e5710e8c |
+| Working tree          | dirty |
+| Implementation commit | Not recorded |
+| Governance commit     | Not recorded |
 
 <!-- FORGE:SYNC:repository_state:END -->
 
@@ -45,9 +47,9 @@
 
 ## Active Phase
 
-**Phase:** Not yet synchronized
-**Title:** Not yet synchronized
-**Status:** Not yet synchronized
+**Phase:** REVIEW_REQUIRED
+**Title:** REVIEW_REQUIRED
+**Status:** incomplete
 
 <!-- FORGE:SYNC:active_phase:END -->
 
@@ -57,7 +59,7 @@
 
 ## Current Objective
 
-Not yet synchronized.
+REVIEW_REQUIRED.
 
 <!-- FORGE:SYNC:current_objective:END -->
 
@@ -99,7 +101,7 @@ Future queue selection remains human-controlled during the shadow evaluation per
 
 ## Completed
 
-Not yet synchronized.
+None recorded.
 
 <!-- FORGE:SYNC:completed_work:END -->
 
@@ -109,11 +111,11 @@ Not yet synchronized.
 
 ## Validation Evidence
 
-| Validation       | Status               | Summary              |
-| ---------------- | -------------------- | -------------------- |
-| Focused tests    | Not yet synchronized | Not yet synchronized |
-| Full tests       | Not yet synchronized | Not yet synchronized |
-| Production build | Not yet synchronized | Not yet synchronized |
+| Validation       | Status | Summary |
+| ---------------- | ------ | ------- |
+| Focused tests    | not-run | Not recorded |
+| Full tests       | not-run | Not recorded |
+| Production build | not-run | Not recorded |
 
 <!-- FORGE:SYNC:validation_evidence:END -->
 

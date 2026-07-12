@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "1.0",
+  "repository": {
+    "branch": "main",
+    "head": "96072872754bf157923f32115fc28292e5710e8c",
+    "originMain": "96072872754bf157923f32115fc28292e5710e8c",
+    "workingTreeClean": false,
+    "headMatchesOriginMain": true
+  },
+  "session": {
+    "latestSnapshot": "governance/snapshots/forge-session-20260711-234450.json",
+    "lastUpdated": "2026-07-12T04:44:50.902Z"
+  },
+  "state": {
+    "activePhase": {
+      "identifier": "REVIEW_REQUIRED",
+      "title": "REVIEW_REQUIRED",
+      "status": "incomplete"
+    },
+    "currentObjective": "REVIEW_REQUIRED",
+    "completedWork": [],
+    "knownWarnings": [],
+    "nextSession": {
+      "objective": "REVIEW_REQUIRED",
+      "startingInspection": "REVIEW_REQUIRED"
+    }
+  },
+  "validation": {
+    "focusedTests": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    },
+    "fullTests": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    },
+    "productionBuild": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    }
+  },
+  "completion": {
+    "workComplete": false,
+    "supportedByEvidence": false,
+    "incompleteReason": "The canonical governance state does not infer phase, objective, completion, or next-session direction. Human review is required."
+  },
+  "authority": {
+    "defaultAuthority": "human",
+    "promotionStateVersion": "1.0",
+    "capabilitiesVersion": "1.0",
+    "editableSectionsVersion": "1.0"
+  },
+  "synchronization": {
+    "mode": "shadow-only",
+    "stateGeneratedAt": null,
+    "sourceSnapshot": "governance/snapshots/forge-session-20260711-234450.json",
+    "rendererVersion": null
+  }
+}

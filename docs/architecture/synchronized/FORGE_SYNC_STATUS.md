@@ -16,9 +16,11 @@
 
 ## Synchronization Metadata
 
-**Last Synchronization:** Not yet synchronized
-**Session ID:** Not yet assigned
-**Evidence Snapshot:** Not yet assigned
+**Last Synchronization:** Not yet generated
+**Session ID:** Not recorded
+**Evidence Snapshot:** governance/snapshots/forge-session-20260711-234450.json
+**Renderer Version:** Not recorded
+**Mode:** shadow-only
 
 <!-- FORGE:SYNC:synchronization_metadata:END -->
 
@@ -28,9 +30,9 @@
 
 ## Current Architectural Phase
 
-**Phase:** Not yet synchronized
-**Title:** Not yet synchronized
-**Status:** Not yet synchronized
+**Phase:** REVIEW_REQUIRED
+**Title:** REVIEW_REQUIRED
+**Status:** incomplete
 
 <!-- FORGE:SYNC:active_phase:END -->
 
@@ -40,7 +42,7 @@
 
 ## Immediate Objective
 
-Not yet synchronized.
+REVIEW_REQUIRED.
 
 <!-- FORGE:SYNC:current_objective:END -->
 
@@ -50,14 +52,14 @@ Not yet synchronized.
 
 ## Repository State
 
-| Check                 | Result               |
-| --------------------- | -------------------- |
-| Branch                | Not yet synchronized |
-| HEAD                  | Not yet synchronized |
-| origin/main           | Not yet synchronized |
-| Working tree          | Not yet synchronized |
-| Implementation commit | Not yet synchronized |
-| Governance commit     | Not yet synchronized |
+| Check                 | Result       |
+| --------------------- | ------------ |
+| Branch                | main |
+| HEAD                  | 96072872754bf157923f32115fc28292e5710e8c |
+| origin/main           | 96072872754bf157923f32115fc28292e5710e8c |
+| Working tree          | dirty |
+| Implementation commit | Not recorded |
+| Governance commit     | Not recorded |
 
 <!-- FORGE:SYNC:repository_state:END -->
 
@@ -67,11 +69,11 @@ Not yet synchronized.
 
 ## Validation Evidence
 
-| Validation       | Status               | Summary              |
-| ---------------- | -------------------- | -------------------- |
-| Focused tests    | Not yet synchronized | Not yet synchronized |
-| Full tests       | Not yet synchronized | Not yet synchronized |
-| Production build | Not yet synchronized | Not yet synchronized |
+| Validation       | Status | Summary |
+| ---------------- | ------ | ------- |
+| Focused tests    | not-run | Not recorded |
+| Full tests       | not-run | Not recorded |
+| Production build | not-run | Not recorded |
 
 <!-- FORGE:SYNC:validation_evidence:END -->
 
@@ -81,7 +83,14 @@ Not yet synchronized.
 
 ## Repository Capability Status
 
-Not yet synchronized.
+**Recorded completed work:**
+
+None recorded.
+
+**Work status:** incomplete
+**Completion supported by evidence:** no
+
+The canonical governance state does not infer phase, objective, completion, or next-session direction. Human review is required.
 
 <!-- FORGE:SYNC:capability_status:END -->
 

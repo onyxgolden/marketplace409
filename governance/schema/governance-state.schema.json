@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "forge-governance-state.schema.json",
+  "title": "FORGE Canonical Governance State",
+  "description": "Canonical structured governance state used to render experimental shadow governance documents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "repository",
+    "session",
+    "state",
+    "validation",
+    "completion",
+    "authority",
+    "synchronization"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "branch",
+        "head",
+        "originMain",
+        "workingTreeClean",
+        "headMatchesOriginMain"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "originMain": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "workingTreeClean": {
+          "type": "boolean"
+        },
+        "headMatchesOriginMain": {
+          "type": "boolean"
+        }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "latestSnapshot",
+        "lastUpdated"
+      ],
+      "properties": {
+        "latestSnapshot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastUpdated": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "activePhase",
+        "currentObjective",
+        "completedWork",
+        "knownWarnings",
+        "nextSession"
+      ],
+      "properties": {
+        "activePhase": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "identifier",
+            "title",
+            "status"
+          ],
+          "properties": {
+            "identifier": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "planned",
+                "active",
+                "blocked",
+                "incomplete",
+                "complete"
+              ]
+            }
+          }
+        },
+        "currentObjective": {
+          "type": "string",
+          "minLength": 1
+        },
+        "completedWork": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "knownWarnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "nextSession": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "objective",
+            "startingInspection"
+          ],
+          "properties": {
+            "objective": {
+              "type": "string",
+              "minLength": 1
+            },
+            "startingInspection": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "focusedTests",
+        "fullTests",
+        "productionBuild"
+      ],
+      "properties": {
+        "focusedTests": {
+          "$ref": "#/$defs/validationResult"
+        },
+        "fullTests": {
+          "$ref": "#/$defs/validationResult"
+        },
+        "productionBuild": {
+          "$ref": "#/$defs/validationResult"
+        }
+      }
+    },
+    "completion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workComplete",
+        "supportedByEvidence"
+      ],
+      "properties": {
+        "workComplete": {
+          "type": "boolean"
+        },
+        "supportedByEvidence": {
+          "type": "boolean"
+        },
+        "incompleteReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "defaultAuthority",
+        "promotionStateVersion",
+        "capabilitiesVersion",
+        "editableSectionsVersion"
+      ],
+      "properties": {
+        "defaultAuthority": {
+          "type": "string",
+          "const": "human"
+        },
+        "promotionStateVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capabilitiesVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "editableSectionsVersion": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "synchronization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "stateGeneratedAt",
+        "sourceSnapshot",
+        "rendererVersion"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "const": "shadow-only"
+        },
+        "stateGeneratedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "sourceSnapshot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rendererVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "validationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not-run",
+            "passing",
+            "failing"
+          ]
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -16,9 +16,11 @@
 
 ## Synchronization Metadata
 
-**Last Synchronization:** Not yet synchronized
-**Session ID:** Not yet assigned
-**Evidence Snapshot:** Not yet assigned
+**Last Synchronization:** Not yet generated
+**Session ID:** Not recorded
+**Evidence Snapshot:** governance/snapshots/forge-session-20260711-234450.json
+**Renderer Version:** Not recorded
+**Mode:** shadow-only
 
 <!-- FORGE:SYNC:synchronization_metadata:END -->
 
@@ -96,7 +98,13 @@ The synchronizer may record completed implementation evidence in other shadow do
 
 ## Verified Validation Evidence
 
-Not yet synchronized.
+- **Focused tests:** not-run; Not recorded
+- **Full tests:** not-run; Not recorded
+- **Production build:** not-run; Not recorded
+
+**Completion supported by evidence:** no
+
+The canonical governance state does not infer phase, objective, completion, or next-session direction. Human review is required.
 
 <!-- FORGE:SYNC:verified_validation_evidence:END -->
 

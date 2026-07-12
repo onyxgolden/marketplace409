@@ -16,9 +16,11 @@
 
 ## Synchronization Metadata
 
-**Last Synchronization:** Not yet synchronized
-**Session ID:** Not yet assigned
-**Evidence Snapshot:** Not yet assigned
+**Last Synchronization:** Not yet generated
+**Session ID:** Not recorded
+**Evidence Snapshot:** governance/snapshots/forge-session-20260711-234450.json
+**Renderer Version:** Not recorded
+**Mode:** shadow-only
 
 <!-- FORGE:SYNC:synchronization_metadata:END -->
 
@@ -28,9 +30,9 @@
 
 ## Active Phase
 
-**Phase:** Not yet synchronized
-**Title:** Not yet synchronized
-**Status:** Not yet synchronized
+**Phase:** REVIEW_REQUIRED
+**Title:** REVIEW_REQUIRED
+**Status:** incomplete
 
 <!-- FORGE:SYNC:active_phase:END -->
 
@@ -40,7 +42,7 @@
 
 ## Current Objective
 
-Not yet synchronized.
+REVIEW_REQUIRED.
 
 <!-- FORGE:SYNC:current_objective:END -->
 
@@ -50,7 +52,7 @@ Not yet synchronized.
 
 ## Last Completed Work
 
-Not yet synchronized.
+None recorded.
 
 <!-- FORGE:SYNC:last_completed_work:END -->
 
@@ -60,15 +62,15 @@ Not yet synchronized.
 
 ## Repository Health
 
-| Check            | Result               |
-| ---------------- | -------------------- |
-| Branch           | Not yet synchronized |
-| HEAD             | Not yet synchronized |
-| origin/main      | Not yet synchronized |
-| Working tree     | Not yet synchronized |
-| Focused tests    | Not yet synchronized |
-| Full tests       | Not yet synchronized |
-| Production build | Not yet synchronized |
+| Check            | Result |
+| ---------------- | ------ |
+| Branch           | main |
+| HEAD             | 96072872754bf157923f32115fc28292e5710e8c |
+| origin/main      | 96072872754bf157923f32115fc28292e5710e8c |
+| Working tree     | dirty |
+| Focused tests    | not-run |
+| Full tests       | not-run |
+| Production build | not-run |
 
 <!-- FORGE:SYNC:repository_health:END -->
 
@@ -78,7 +80,7 @@ Not yet synchronized.
 
 ## Known Warnings
 
-Not yet synchronized.
+None recorded.
 
 <!-- FORGE:SYNC:known_warnings:END -->
 
@@ -88,7 +90,7 @@ Not yet synchronized.
 
 ## Starting Inspection
 
-Not yet synchronized.
+REVIEW_REQUIRED.
 
 <!-- FORGE:SYNC:starting_inspection:END -->
 

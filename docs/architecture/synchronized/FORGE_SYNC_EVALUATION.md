@@ -16,9 +16,11 @@
 
 ## Synchronization Metadata
 
-**Last Evaluation Update:** Not yet synchronized
-**Last Session ID:** Not yet assigned
-**Last Evidence Snapshot:** Not yet assigned
+**Last Evaluation Update:** Not yet generated
+**Last Session ID:** Not recorded
+**Last Evidence Snapshot:** governance/snapshots/forge-session-20260711-234450.json
+**Renderer Version:** Not recorded
+**Mode:** shadow-only
 
 <!-- FORGE:SYNC:synchronization_metadata:END -->
 
