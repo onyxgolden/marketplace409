@@ -46,18 +46,18 @@ The repository—not memory, documentation, or prior conversation—is the singl
 ### Repository State
 
 * Current Branch: main
-* Latest Commit: 56e3522 — Introduce investor composition suite
-* Repository Status: Investor Composition Foundation implementation completed. Governance synchronization in progress.
-* Repository Clean: No (expected Investor Composition governance updates only)
-* Repository synchronized with origin/main through commit 56e3522.
+* Latest Verified Commit: 8436d7e — Complete financial import composition
+* Repository Status: Financial Import Composition Completion implementation completed. Governance synchronization in progress.
+* Repository Clean: No (expected Phase 14.4 governance changes only)
+* Repository synchronized with origin/main through commit 8436d7e.
 
 ### Current Architectural Objective
 
-Perform a repository-first inspection to identify the next cohesive architectural objective from verified repository evidence and roadmap priorities.
+Synchronize governance documentation for Financial Import Composition Completion.
 
-Evaluate verified repository capability gaps.
+Commit and push the verified Phase 14.4 implementation and governance synchronization.
 
-Select the next architectural milestone only after repository inspection establishes a meaningful engineering need.
+Confirm the repository is clean and synchronized with origin/main.
 
 Continue expanding architectural capabilities only where repository inspection demonstrates that need.
 
@@ -65,13 +65,13 @@ Do not introduce abstractions solely for architectural symmetry.
 
 ### Current Architectural Phase
 
-Phase 14.3 — Investor Composition Foundation — Complete
+Phase 14.4 — Financial Import Composition Completion — Complete
 
 ### Current Repository State
 
 Application-layer consolidation remains complete across financial, business, investor, marketplace, favorites, listings, administrator authorization, and transaction review workflows.
 
-Composition ownership now includes:
+Composition ownership includes:
 
 * `createFinancialApplicationSuite`
 * `createTransactionReviewApplicationSuite`
@@ -80,9 +80,20 @@ Composition ownership now includes:
 * `createBusinessApplicationSuite`
 * `createInvestorApplicationSuite`
 
-The repository now includes dedicated composition ownership for Financial, Transaction Review, Connection Platform, Marketplace, Business, and Investor workflows.
+The repository includes dedicated composition ownership for Financial, Transaction Review, Connection Platform, Marketplace, Business, and Investor workflows.
 
-The Investor composition root now owns dependency assembly for:
+The Financial composition root now additionally owns construction of:
+
+* `FinancialImportApplication`
+* `TransactionReviewApplication`
+
+`FinancialImportTool` now consumes both applications through `createFinancialApplicationSuite`.
+
+Direct construction of `FinancialImportApplication` and `TransactionReviewApplication` has been removed from the Financial Import presentation boundary.
+
+The existing standalone `createTransactionReviewApplicationSuite` remains unchanged.
+
+The Investor composition root continues owning dependency assembly for:
 
 * InvestorPropertyApplication
 * InvestorCashBuyerApplication
@@ -90,20 +101,22 @@ The Investor composition root now owns dependency assembly for:
 * Shared Supabase dependency
 * Shared image uploader dependency
 
-Investor delivery boundaries now consume the composition root while preserving existing production behavior.
+Investor delivery boundaries continue consuming the composition root while preserving existing production behavior.
 
-Composition ownership continues expanding while application services remain focused exclusively on workflow orchestration.
+Composition ownership continues expanding only where repository evidence demonstrates meaningful dependency construction or orchestration ownership.
 
 ### Verification Status
 
-* Composition suites passed: 6 composition suites.
-* Focused Investor and composition validation passed: 9 test files and 45 tests.
-* Full Vitest suite passed: 183 test files and 691 tests.
+* Composition suites present: 6 composition suites.
+* Focused Financial composition and application validation passed: 3 test files and 32 tests.
+* Financial composition suite passed: 16 tests.
+* Financial Import application passed: 6 tests.
+* Transaction Review application passed: 10 tests.
+* Full Vitest suite passed: 183 test files and 695 tests.
 * Production build passed.
-* Mutation Firewall passed (expected legacy business "claimed" warning only).
-* Investor Composition Foundation implementation is complete.
+* Financial Import Composition Completion implementation is complete.
 * Governance synchronization is in progress.
-* Repository implementation commit is synchronized with origin/main through commit 56e3522.
+* Repository remains synchronized with origin/main through the latest verified commit 8436d7e.
 
 ### Current Risk
 
@@ -125,11 +138,11 @@ None.
 
 ### Documentation Status
 
-Investor Composition Foundation implementation completed.
+Financial Import Composition Completion implementation completed.
 
 Governance synchronization in progress.
 
-Repository implementation synchronized with origin/main through commit 56e3522.
+Repository synchronized with origin/main through the latest verified commit 8436d7e.
 
 ---
 
@@ -151,9 +164,9 @@ Documentation is corrected.
 
 ## Active
 
-* [ ] Synchronize governance documentation for Investor Composition.
-* [ ] Commit Investor Composition governance synchronization.
-* [ ] Push governance synchronization to origin/main.
+* [ ] Synchronize governance documentation for Financial Import Composition Completion.
+* [ ] Commit Phase 14.4 implementation and governance synchronization.
+* [ ] Push Phase 14.4 synchronization to origin/main.
 * [ ] Verify clean repository.
 
 ## Next
@@ -178,6 +191,11 @@ Documentation is corrected.
 * [x] Complete Investor composition.
 * [x] Complete Phase 14.2 — Business Composition Foundation.
 * [x] Complete Phase 14.3 — Investor Composition Foundation.
+* [x] Complete Phase 14.4 — Financial Import Composition Completion.
+* [x] Extend `createFinancialApplicationSuite` with Financial Import and Transaction Review applications.
+* [x] Migrate `FinancialImportTool` to consume the Financial composition suite.
+* [x] Verify focused validation: 3 test files and 32 tests.
+* [x] Verify full repository validation: 183 test files and 695 tests.
 * [x] Commit and push Investor Composition Foundation.
 * [x] Verify repository synchronization through commit 56e3522.
 * [x] Verify 183 test files and 691 tests passed.

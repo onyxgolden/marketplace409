@@ -3,7 +3,7 @@
 **Version:** 4.0
 **Status:** Active
 **Last Updated:** 2026-07-11
-**Latest Commit:** 564347a — Introduce connection platform composition suite
+**Latest Commit:** 8436d7e — Complete financial import composition
 
 ---
 
@@ -34,37 +34,36 @@ Historical milestones remain recorded below.
 
 ## Active Phase
 
-Phase 14.3 — Investor Composition Foundation — Complete
+Phase 14.4 — Financial Import Composition Completion — Complete
 
 ## Current Objective
 
-Perform repository-first inspection to identify the next cohesive architectural objective from verified repository evidence and roadmap priorities.
+Synchronize governance documentation for Financial Import Composition Completion.
 
-Evaluate verified repository capability gaps.
+Commit and push the verified Phase 14.4 implementation and governance synchronization.
 
-Select the next architectural milestone only after repository inspection establishes a meaningful engineering need.
+Confirm the repository is clean and synchronized with `origin/main`.
 
 Future implementation must continue extending meaningful architectural capabilities rather than introducing application services, composition roots, or other abstractions solely for symmetry.
 
 ## Repository Health
 
 - Branch: `main`
-- Latest commit: `56e3522`
-- Investor Composition Foundation implementation completed
+- Latest verified commit: `8436d7e`
+- Financial Import Composition Completion implementation completed in the working tree
 - Governance synchronization in progress
-- Repository implementation synchronized with `origin/main`
-- Working tree contains only intended Investor Composition governance updates
-- Mutation Firewall passed
-- Expected legacy business `"claimed"` warning only
-- Full Vitest suite passing: **183 test files / 691 tests**
-- Composition suites passing: **6 composition suites**
+- Repository synchronized with `origin/main` through commit `8436d7e`
+- Working tree contains only intended Phase 14.4 governance changes
+- Full Vitest suite passing: **183 test files / 695 tests**
+- Focused Financial composition and application validation passing: **3 test files / 32 tests**
+- Composition suites present: **6 composition suites**
 - Production build passing
 
 ## Current Architectural State
 
 Application-layer consolidation remains complete.
 
-The repository now includes six dedicated composition roots:
+The repository includes six dedicated composition roots:
 
 - `createFinancialApplicationSuite`
 - `createTransactionReviewApplicationSuite`
@@ -73,7 +72,18 @@ The repository now includes six dedicated composition roots:
 - `createBusinessApplicationSuite`
 - `createInvestorApplicationSuite`
 
-The Investor composition root centralizes dependency construction for:
+The Financial composition root now additionally composes:
+
+- `FinancialImportApplication`
+- `TransactionReviewApplication`
+
+`FinancialImportTool` now consumes these applications through `createFinancialApplicationSuite`.
+
+Direct construction of `FinancialImportApplication` and `TransactionReviewApplication` has been removed from the Financial Import presentation boundary.
+
+The existing standalone `createTransactionReviewApplicationSuite` remains unchanged.
+
+The Investor composition root continues centralizing dependency construction for:
 
 - `InvestorPropertyApplication`
 - `InvestorCashBuyerApplication`
@@ -81,7 +91,7 @@ The Investor composition root centralizes dependency construction for:
 - Shared Supabase dependency
 - Shared image uploader dependency
 
-Investor delivery boundaries now consume the composition root while existing application workflow ownership and production behavior remain preserved.
+Investor delivery boundaries continue consuming the composition root while existing application workflow ownership and production behavior remain preserved.
 
 Composition roots own:
 
@@ -182,6 +192,74 @@ Confirm Clean Repository
 ```
 
 ---
+
+## Phase 14.4 — Financial Import Composition Completion
+
+### Status
+
+Complete
+
+### Delivered
+
+- Extended `createFinancialApplicationSuite`
+- Composed `FinancialImportApplication`
+- Composed `TransactionReviewApplication`
+- Preserved dependency injection for both applications
+- Updated `FinancialImportTool` to consume the Financial composition suite
+- Removed direct `FinancialImportApplication` construction from presentation code
+- Removed direct `TransactionReviewApplication` construction from presentation code
+- Reused the composed applications across Financial Import initialization, import, assignment, and bulk-assignment workflows
+- Extended dedicated Financial composition tests
+- Preserved existing Financial Import and Transaction Review behavior
+- ✓ Focused Financial composition and application validation passed: 3 test files and 32 tests
+- ✓ Full Vitest suite passed: 183 test files and 695 tests
+- ✓ Production build passed
+
+### Validation
+
+- ✓ Financial composition suite passed: 16 tests
+- ✓ Financial Import application passed: 6 tests
+- ✓ Transaction Review application passed: 10 tests
+- ✓ Focused validation passed: 3 test files and 32 tests
+- ✓ Full Vitest suite passed: 183 test files and 695 tests
+- ✓ Production build passed
+
+---
+
+## Phase 14.3 — Investor Composition Foundation
+
+### Status
+
+Complete
+
+### Delivered
+
+- Introduced `createInvestorApplicationSuite`
+- Centralized Investor dependency construction
+- Composed `InvestorPropertyApplication`
+- Composed `InvestorCashBuyerApplication`
+- Composed `InvestorWholesalerApplication`
+- Centralized the shared Supabase dependency
+- Centralized the shared image uploader dependency
+- Exported the suite through `src/infrastructure/composition/index.js`
+- Added dedicated Investor composition tests
+- Migrated Investor delivery boundaries to consume the composition root
+- Preserved production behavior
+- ✓ Focused Investor and composition validation passed: 9 test files and 45 tests
+- ✓ Full Vitest suite passed: 183 test files and 691 tests
+- ✓ Production build passed
+- ✓ Implementation committed as `56e3522`
+- ✓ Governance synchronized as part of the Investor Composition synchronization commit `380192a`
+
+### Validation
+
+- ✓ Focused Investor and composition validation passed: 9 test files and 45 tests
+- ✓ Full Vitest suite passed: 183 test files and 691 tests
+- ✓ Production build passed
+- ✓ Repository synchronized with `origin/main` through commit `380192a`
+
+---
+
 
 ## Phase 14.2 — Business Composition Foundation
 
