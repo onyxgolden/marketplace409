@@ -18,7 +18,7 @@
 
 **Last Synchronization:** Not yet generated
 **Session ID:** Not recorded
-**Evidence Snapshot:** governance/snapshots/forge-session-20260711-234450.json
+**Evidence Snapshot:** governance/snapshots/forge-session-20260712-035106.json
 **Renderer Version:** Not recorded
 **Mode:** shadow-only
 

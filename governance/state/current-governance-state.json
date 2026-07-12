@@ -2,14 +2,14 @@
   "schemaVersion": "1.0",
   "repository": {
     "branch": "main",
-    "head": "96072872754bf157923f32115fc28292e5710e8c",
-    "originMain": "96072872754bf157923f32115fc28292e5710e8c",
+    "head": "58b4b4246ea3d71034e9419aedf6893cf5478d7e",
+    "originMain": "58b4b4246ea3d71034e9419aedf6893cf5478d7e",
     "workingTreeClean": false,
     "headMatchesOriginMain": true
   },
   "session": {
-    "latestSnapshot": "governance/snapshots/forge-session-20260711-234450.json",
-    "lastUpdated": "2026-07-12T04:44:50.902Z"
+    "latestSnapshot": "governance/snapshots/forge-session-20260712-035106.json",
+    "lastUpdated": "2026-07-12T08:51:06.714Z"
   },
   "state": {
     "activePhase": {
@@ -56,7 +56,7 @@
   "synchronization": {
     "mode": "shadow-only",
     "stateGeneratedAt": null,
-    "sourceSnapshot": "governance/snapshots/forge-session-20260711-234450.json",
+    "sourceSnapshot": "governance/snapshots/forge-session-20260712-035106.json",
     "rendererVersion": null
   }
 }

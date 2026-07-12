@@ -15,7 +15,7 @@ function runGit(args, { allowFailure = false } = {}) {
       cwd: repositoryRoot,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
+    }).trimEnd();
   } catch (error) {
     if (allowFailure) {
       return null;
