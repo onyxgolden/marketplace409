@@ -4,10 +4,12 @@ import { createFinancialSnapshotRepository } from "./createFinancialSnapshotRepo
 import {
   FinancialDashboardIntelligenceApplication,
   FinancialExplainabilityApplication,
+  FinancialImportApplication,
   FinancialIntelligenceApplication,
   FinancialOperationsApplication,
   FinancialReportingApplication,
   FinancialReadModelApplication,
+  TransactionReviewApplication,
 } from "../../application/financial";
 
 import {
@@ -123,6 +125,14 @@ export async function createFinancialApplicationSuite(deps = {}) {
       netWorthService: deps.netWorthService || NetWorthService,
     });
 
+  const financialImportApplication =
+    deps.financialImportApplication ||
+    new FinancialImportApplication();
+
+  const transactionReviewApplication =
+    deps.transactionReviewApplication ||
+    new TransactionReviewApplication();
+
   return {
     snapshotApplication,
     reportingApplication,
@@ -132,6 +142,8 @@ export async function createFinancialApplicationSuite(deps = {}) {
     financialOperationsService,
     explainabilityApplication,
     dashboardIntelligenceApplication,
+    financialImportApplication,
+    transactionReviewApplication,
     snapshotRepository,
     engine,
     dashboardService,

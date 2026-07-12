@@ -2,8 +2,10 @@ import { createFinancialApplicationSuite } from "../createFinancialApplicationSu
 import {
   FinancialDashboardIntelligenceApplication,
   FinancialExplainabilityApplication,
+  FinancialImportApplication,
   FinancialIntelligenceApplication,
   FinancialOperationsApplication,
+  TransactionReviewApplication,
 } from "../../../application/financial";
 
 import { FinancialOperationsService } from "../../../domains/financial-operations";
@@ -192,6 +194,65 @@ describe("createFinancialApplicationSuite", () => {
       financialOperationsApplication,
     );
   });
+
+  test("wires financial import application into the suite", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(suite.financialImportApplication).toBeInstanceOf(
+      FinancialImportApplication,
+    );
+  });
+
+  test("allows financial import application injection", async () => {
+    const financialImportApplication = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      financialImportApplication,
+    });
+
+    expect(suite.financialImportApplication).toBe(
+      financialImportApplication,
+    );
+  });
+
+  test("wires transaction review application into the suite", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(suite.transactionReviewApplication).toBeInstanceOf(
+      TransactionReviewApplication,
+    );
+  });
+
+  test("allows transaction review application injection", async () => {
+    const transactionReviewApplication = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      transactionReviewApplication,
+    });
+
+    expect(suite.transactionReviewApplication).toBe(
+      transactionReviewApplication,
+    );
+  });
+
   test("builds default applications with usable financial data", async () => {
     const suite = await createFinancialApplicationSuite();
 

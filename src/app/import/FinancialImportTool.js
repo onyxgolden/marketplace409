@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Money } from "@/platform";
-import { FinancialImportApplication } from "@/application/financial/FinancialImportApplication";
-import { TransactionReviewApplication } from "@/application/financial/TransactionReviewApplication";
+import { createFinancialApplicationSuite } from "@/infrastructure/composition";
 
 function formatCurrency(value) {
   return new Money(Math.round(Number(value || 0) * 100)).toString();
@@ -49,16 +48,20 @@ export default function FinancialImportTool() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [ownerId, setOwnerId] = useState(null);
+  const [applications, setApplications] = useState(null);
   const [properties, setProperties] = useState([]);
   const [selectedProperties, setSelectedProperties] = useState({});
   const [selectedReviewItems, setSelectedReviewItems] = useState({});
   const [assignmentStatus, setAssignmentStatus] = useState({});
 
   useEffect(() => {
-    const importApplication = new FinancialImportApplication();
-
     async function initializeImportTool() {
-      const initialized = await importApplication.initialize();
+      const suite = await createFinancialApplicationSuite();
+
+      setApplications(suite);
+
+      const initialized =
+        await suite.financialImportApplication.initialize();
 
       setOwnerId(initialized.ownerId);
       setProperties(initialized.properties);
@@ -77,7 +80,10 @@ export default function FinancialImportTool() {
     setSelectedReviewItems({});
     setAssignmentStatus({});
 
-    const importApplication = new FinancialImportApplication();
+    if (!applications) return;
+
+    const importApplication =
+      applications.financialImportApplication;
 
     const importResponse = await importApplication.importFile({
       file,
@@ -96,7 +102,10 @@ export default function FinancialImportTool() {
   }
 
   function applyAssignmentResult(assignmentResult) {
-    const reviewApplication = new TransactionReviewApplication();
+    if (!applications) return;
+
+    const reviewApplication =
+      applications.transactionReviewApplication;
 
     const nextState = reviewApplication.applyAssignmentResult({
       currentResult: result,
@@ -111,7 +120,10 @@ export default function FinancialImportTool() {
   }
 
   async function assignProperty(reviewItem, index) {
-    const reviewApplication = new TransactionReviewApplication();
+    if (!applications) return;
+
+    const reviewApplication =
+      applications.transactionReviewApplication;
 
     const assignmentResult = await reviewApplication.assignProperty({
       reviewItem,
@@ -125,7 +137,10 @@ export default function FinancialImportTool() {
   }
 
   async function assignSelectedProperties() {
-    const reviewApplication = new TransactionReviewApplication();
+    if (!applications) return;
+
+    const reviewApplication =
+      applications.transactionReviewApplication;
 
     const assignmentResult = await reviewApplication.assignSelectedProperties({
       reviews: result?.transactionReview || [],
