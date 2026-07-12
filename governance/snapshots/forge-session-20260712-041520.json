@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "1.0",
+  "sessionId": "forge-session-20260712-041520",
+  "sessionDate": "2026-07-12",
+  "phase": {
+    "identifier": "REVIEW_REQUIRED",
+    "title": "REVIEW_REQUIRED",
+    "status": "incomplete"
+  },
+  "objective": {
+    "startingObjective": "REVIEW_REQUIRED",
+    "endingObjective": "REVIEW_REQUIRED"
+  },
+  "repository": {
+    "head": "f526d5f56cc8c124c89629c937114072a5ad9ad6",
+    "originMain": "f526d5f56cc8c124c89629c937114072a5ad9ad6",
+    "branch": "main",
+    "workingTreeClean": false,
+    "implementationCommit": null,
+    "governanceCommit": null
+  },
+  "work": {
+    "delivered": [],
+    "modifiedFiles": [
+      "docs/architecture/synchronized/FORGE_SYNC_CONTROL_CENTER.md",
+      "docs/architecture/synchronized/FORGE_SYNC_EVALUATION.md",
+      "docs/architecture/synchronized/FORGE_SYNC_ROADMAP.md",
+      "docs/architecture/synchronized/FORGE_SYNC_SESSION.md",
+      "docs/architecture/synchronized/FORGE_SYNC_STATUS.md",
+      "governance/state/current-governance-state.json",
+      "governance/snapshots/forge-session-20260712-041251.json",
+      "governance/snapshots/forge-session-20260712-041349.json",
+      "scripts/governance/runShadowGovernancePipeline.mjs"
+    ],
+    "knownWarnings": []
+  },
+  "validation": {
+    "focusedTests": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    },
+    "fullTests": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    },
+    "productionBuild": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    }
+  },
+  "completion": {
+    "workComplete": false,
+    "supportedByEvidence": false,
+    "incompleteReason": "The repository evidence collector does not infer session completion. Human review is required."
+  },
+  "nextSession": {
+    "objective": "REVIEW_REQUIRED",
+    "startingInspection": "REVIEW_REQUIRED"
+  },
+  "evidence": {
+    "capturedAt": "2026-07-12T09:15:20.558Z",
+    "latestCommit": {
+      "hash": "f526d5f56cc8c124c89629c937114072a5ad9ad6",
+      "subject": "Generate canonical governance state from session evidence",
+      "committedAt": "2026-07-12T03:57:02-05:00"
+    },
+    "headMatchesOriginMain": true,
+    "gitStatus": [
+      " M docs/architecture/synchronized/FORGE_SYNC_CONTROL_CENTER.md",
+      " M docs/architecture/synchronized/FORGE_SYNC_EVALUATION.md",
+      " M docs/architecture/synchronized/FORGE_SYNC_ROADMAP.md",
+      " M docs/architecture/synchronized/FORGE_SYNC_SESSION.md",
+      " M docs/architecture/synchronized/FORGE_SYNC_STATUS.md",
+      " M governance/state/current-governance-state.json",
+      "?? governance/snapshots/forge-session-20260712-041251.json",
+      "?? governance/snapshots/forge-session-20260712-041349.json",
+      "?? scripts/governance/runShadowGovernancePipeline.mjs"
+    ]
+  }
+}
