@@ -15,7 +15,8 @@
 "work",
 "validation",
 "completion",
-"nextSession"
+"nextSession",
+"evidence"
 ],
 "properties": {
 "schemaVersion": {
@@ -207,6 +208,63 @@
 "startingInspection": {
 "type": "string",
 "minLength": 1
+}
+}
+},
+"evidence": {
+"type": "object",
+"additionalProperties": false,
+"required": [
+"capturedAt",
+"latestCommit",
+"headMatchesOriginMain",
+"gitStatus"
+],
+"properties": {
+"capturedAt": {
+"type": "string",
+"format": "date-time"
+},
+"latestCommit": {
+"type": "object",
+"additionalProperties": false,
+"required": [
+"hash",
+"subject",
+"committedAt"
+],
+"properties": {
+"hash": {
+"type": [
+"string",
+"null"
+],
+"pattern": "^[0-9a-f]{7,40}$"
+},
+"subject": {
+"type": [
+"string",
+"null"
+]
+},
+"committedAt": {
+"type": [
+"string",
+"null"
+],
+"format": "date-time"
+}
+}
+},
+"headMatchesOriginMain": {
+"type": "boolean"
+},
+"gitStatus": {
+"type": "array",
+"items": {
+"type": "string",
+"minLength": 1
+}
 }
 }
 }

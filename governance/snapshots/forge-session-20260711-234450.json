@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "1.0",
+  "sessionId": "forge-session-20260711-234450",
+  "sessionDate": "2026-07-11",
+  "phase": {
+    "identifier": "REVIEW_REQUIRED",
+    "title": "REVIEW_REQUIRED",
+    "status": "incomplete"
+  },
+  "objective": {
+    "startingObjective": "REVIEW_REQUIRED",
+    "endingObjective": "REVIEW_REQUIRED"
+  },
+  "repository": {
+    "head": "2f3b1c7ec0022d5f08f2dc716143eb911b95a5be",
+    "originMain": "2f3b1c7ec0022d5f08f2dc716143eb911b95a5be",
+    "branch": "main",
+    "workingTreeClean": false,
+    "implementationCommit": null,
+    "governanceCommit": null
+  },
+  "work": {
+    "delivered": [],
+    "modifiedFiles": [
+      "scripts/governance/collectSessionEvidence.mjs"
+    ],
+    "knownWarnings": []
+  },
+  "validation": {
+    "focusedTests": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    },
+    "fullTests": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    },
+    "productionBuild": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    }
+  },
+  "completion": {
+    "workComplete": false,
+    "supportedByEvidence": false,
+    "incompleteReason": "The repository evidence collector does not infer session completion. Human review is required."
+  },
+  "nextSession": {
+    "objective": "REVIEW_REQUIRED",
+    "startingInspection": "REVIEW_REQUIRED"
+  },
+  "evidence": {
+    "capturedAt": "2026-07-12T04:44:50.902Z",
+    "latestCommit": {
+      "hash": "2f3b1c7ec0022d5f08f2dc716143eb911b95a5be",
+      "subject": "Establish shadow governance synchronization foundation",
+      "committedAt": "2026-07-11T23:37:29-05:00"
+    },
+    "headMatchesOriginMain": true,
+    "gitStatus": [
+      "?? scripts/governance/collectSessionEvidence.mjs"
+    ]
+  }
+}
