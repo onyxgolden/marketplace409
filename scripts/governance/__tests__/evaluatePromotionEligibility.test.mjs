@@ -209,6 +209,67 @@ describe(
     );
 
     test(
+      "blocks promotion using injected repository and validation evidence",
+      () => {
+        const result =
+          evaluatePromotionEligibility({
+            promotionPolicy:
+              createPolicy(),
+            promotionState:
+              createPromotionState({
+                trialCount: 3,
+                successfulTrials: 3,
+              }),
+            governanceState:
+              createGovernanceState({
+                complete: true,
+                validationStatus:
+                  "passed",
+                reviewRequired: false,
+              }),
+            repositoryEvidence:
+              createRepositoryEvidence({
+                workingTreeClean: false,
+                headMatchesOriginMain:
+                  false,
+              }),
+            validationEvidence:
+              createValidationEvidence(
+                "not-run",
+              ),
+            evaluationEvidence:
+              createSuccessfulEvidence(),
+          });
+
+        expect(
+          result.summary
+            .eligibleSectionCount,
+        ).toBe(0);
+
+        const repositoryState =
+          result.documents[0]
+            .sections.find(
+              (section) =>
+                section.sectionName ===
+                "repository_state",
+            );
+
+        expect(
+          repositoryState.reasons.map(
+            (reason) =>
+              reason.code,
+          ),
+        ).toEqual(
+          expect.arrayContaining([
+            "working-tree-not-clean",
+            "head-does-not-match-origin-main",
+            "validation-not-passed",
+          ]),
+        );
+      },
+    );
+
+    test(
       "recommends only eligible shadow sections",
       () => {
         const result =

@@ -115,6 +115,8 @@ function collectEvidenceReasons(
   promotionPolicy,
   promotionState,
   governanceState,
+  repositoryEvidence,
+  validationEvidence,
   evaluationEvidence,
   successfulTrials,
 ) {
@@ -193,17 +195,37 @@ function collectEvidenceReasons(
     });
   }
 
+  assertObject(
+    repositoryEvidence,
+    "repositoryEvidence",
+  );
+
+  if (
+    repositoryEvidence.workingTreeClean !==
+    true
+  ) {
+    reasons.push({
+      code: "working-tree-not-clean",
+      message:
+        "The repository working tree is not clean.",
+    });
+  }
+
+  if (
+    repositoryEvidence.headMatchesOriginMain !==
+    true
+  ) {
+    reasons.push({
+      code:
+        "head-does-not-match-origin-main",
+      message:
+        "Repository HEAD does not match origin/main.",
+    });
+  }
+
   if (
     !validationPassed(
-      governanceState.validation,
-      {
-        location:
-          "governanceState.validation",
-        acceptedStatuses: [
-          "pass",
-          "passed",
-        ],
-      },
+      validationEvidence,
     )
   ) {
     reasons.push({
@@ -376,6 +398,8 @@ export function evaluatePromotionEligibility({
             promotionPolicy,
             promotionState,
             governanceState,
+            repositoryEvidence,
+            validationEvidence,
             evaluationEvidence,
             documentState.successfulTrials,
           );
