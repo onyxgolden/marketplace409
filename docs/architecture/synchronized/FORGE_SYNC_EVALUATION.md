@@ -18,7 +18,7 @@
 
 **Last Evaluation Update:** Not yet generated
 **Last Session ID:** Not recorded
-**Last Evidence Snapshot:** governance/snapshots/forge-session-20260712-195727.json
+**Last Evidence Snapshot:** governance/snapshots/forge-session-20260712-224650.json
 **Renderer Version:** Not recorded
 **Mode:** shadow-only
 
@@ -86,7 +86,7 @@ Recommendations do not modify authority. Only the owner may approve promotion.
 
 ### Objective Recommendations
 
-No objective recommendations have been made.
+- **Phase 15.2 — Deterministic Objective Recommendation Engine:** Generate advisory next-objective recommendations from deterministic governance, repository, validation, architectural-progress, and roadmap evidence. Confidence: `high`; owner approval remains required.
 
 Recommendations do not select or commit objectives. Human approval remains required.
 

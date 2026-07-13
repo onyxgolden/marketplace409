@@ -1,29 +1,28 @@
 {
   "schemaVersion": "1.0",
+  "sessionId": "forge-session-20260712-224650",
+  "sessionDate": "2026-07-12",
+  "phase": {
+    "identifier": "REVIEW_REQUIRED",
+    "title": "REVIEW_REQUIRED",
+    "status": "incomplete"
+  },
+  "objective": {
+    "startingObjective": "REVIEW_REQUIRED",
+    "endingObjective": "REVIEW_REQUIRED"
+  },
   "repository": {
-    "branch": "main",
     "head": "9f8c7092e1c2fdfaa2ef90c134ed23f326adbdc0",
     "originMain": "9f8c7092e1c2fdfaa2ef90c134ed23f326adbdc0",
+    "branch": "main",
     "workingTreeClean": true,
-    "headMatchesOriginMain": true
+    "implementationCommit": null,
+    "governanceCommit": null
   },
-  "session": {
-    "latestSnapshot": "governance/snapshots/forge-session-20260712-224650.json",
-    "lastUpdated": "2026-07-13T03:46:50.256Z"
-  },
-  "state": {
-    "activePhase": {
-      "identifier": "REVIEW_REQUIRED",
-      "title": "REVIEW_REQUIRED",
-      "status": "incomplete"
-    },
-    "currentObjective": "REVIEW_REQUIRED",
-    "completedWork": [],
-    "knownWarnings": [],
-    "nextSession": {
-      "objective": "REVIEW_REQUIRED",
-      "startingInspection": "REVIEW_REQUIRED"
-    }
+  "work": {
+    "delivered": [],
+    "modifiedFiles": [],
+    "knownWarnings": []
   },
   "validation": {
     "focusedTests": {
@@ -45,18 +44,26 @@
   "completion": {
     "workComplete": false,
     "supportedByEvidence": false,
-    "incompleteReason": "The canonical governance state does not infer phase, objective, completion, or next-session direction. Human review is required."
+    "incompleteReason": "The repository evidence collector does not infer session completion. Human review is required."
   },
-  "authority": {
-    "defaultAuthority": "human",
-    "promotionStateVersion": "1.0",
-    "capabilitiesVersion": "1.0",
-    "editableSectionsVersion": "1.0"
+  "nextSession": {
+    "objective": "REVIEW_REQUIRED",
+    "startingInspection": "REVIEW_REQUIRED"
   },
-  "synchronization": {
-    "mode": "shadow-only",
-    "stateGeneratedAt": null,
-    "sourceSnapshot": "governance/snapshots/forge-session-20260712-224650.json",
-    "rendererVersion": null
+  "evidence": {
+    "capturedAt": "2026-07-13T03:46:50.256Z",
+    "latestCommit": {
+      "hash": "9f8c7092e1c2fdfaa2ef90c134ed23f326adbdc0",
+      "subject": "Normalize validation evidence summaries",
+      "committedAt": "2026-07-12T22:38:38-05:00"
+    },
+    "headMatchesOriginMain": true,
+    "gitStatus": [],
+    "selectedValidationArtifact": {
+      "path": "governance/validation/forge-validation-20260713-034620.json",
+      "validationId": "forge-validation-20260713-034620",
+      "completedAt": "2026-07-13T03:46:50.016Z",
+      "repositoryHead": "9f8c7092e1c2fdfaa2ef90c134ed23f326adbdc0"
+    }
   }
 }
