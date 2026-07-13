@@ -403,12 +403,25 @@ function createCommandDefinitions({
 function boundedSummary(
   output,
 ) {
+  const ansiEscapePattern =
+    /\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+
   const normalized =
     output
       .replace(
-        /\r\n/g,
+        /\r\n?/g,
         "\n",
       )
+      .replace(
+        ansiEscapePattern,
+        "",
+      )
+      .split("\n")
+      .map(
+        (line) =>
+          line.trimEnd(),
+      )
+      .join("\n")
       .trim();
 
   if (

@@ -295,7 +295,7 @@ function createFixture({
     ),
     [
       "#!/bin/sh",
-      'echo "FAKE NPX: $*"',
+      'printf "\\033[32mFAKE NPX: %s\\033[0m   \\n" "$*"',
       mutateDuringNpx
         ? 'echo "mutation" > generated-by-validation.txt'
         : "",
@@ -311,7 +311,7 @@ function createFixture({
     ),
     [
       "#!/bin/sh",
-      'echo "FAKE NPM: $*"',
+      'printf "\\033[32mFAKE NPM: %s\\033[0m   \\n" "$*"',
       `exit ${npmExitCode}`,
       "",
     ].join("\n"),
@@ -509,6 +509,28 @@ describe(
         ).toEqual(
           artifact.repository.after,
         );
+
+        for (
+          const command
+          of artifact.commands
+        ) {
+          expect(
+            command.summary,
+          ).not.toContain(
+            "\u001b",
+          );
+
+          expect(
+            command.summary
+              .split("\n")
+              .some(
+                (line) =>
+                  /[ \t]+$/.test(
+                    line,
+                  ),
+              ),
+          ).toBe(false);
+        }
       },
     );
 
