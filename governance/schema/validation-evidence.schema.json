@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "forge-validation-evidence.schema.json",
+  "title": "FORGE Validation Evidence",
+  "description": "Immutable, repository-bound evidence produced from executed FORGE validation commands.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "validationId",
+    "capturedAt",
+    "startedAt",
+    "completedAt",
+    "repository",
+    "commands",
+    "results"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "validationId": {
+      "type": "string",
+      "pattern": "^forge-validation-[0-9]{8}-[0-9]{6}$"
+    },
+    "capturedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "before",
+        "after"
+      ],
+      "properties": {
+        "before": {
+          "$ref": "#/$defs/repositoryState"
+        },
+        "after": {
+          "$ref": "#/$defs/repositoryState"
+        }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/commandEvidence"
+      }
+    },
+    "results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "focusedTests",
+        "fullTests",
+        "productionBuild"
+      ],
+      "properties": {
+        "focusedTests": {
+          "$ref": "#/$defs/validationResult"
+        },
+        "fullTests": {
+          "$ref": "#/$defs/validationResult"
+        },
+        "productionBuild": {
+          "$ref": "#/$defs/validationResult"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "repositoryState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "branch",
+        "head",
+        "originMain",
+        "headMatchesOriginMain",
+        "workingTreeClean",
+        "gitStatus"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "originMain": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "headMatchesOriginMain": {
+          "type": "boolean"
+        },
+        "workingTreeClean": {
+          "type": "boolean"
+        },
+        "gitStatus": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "commandEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "command",
+        "args",
+        "workingDirectory",
+        "startedAt",
+        "completedAt",
+        "exitCode",
+        "status",
+        "summary"
+      ],
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "focusedTests",
+            "fullTests",
+            "productionBuild"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "workingDirectory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "exitCode": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passing",
+            "failing"
+          ]
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "validationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "commandIndexes",
+        "summary"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not-run",
+            "passing",
+            "failing"
+          ]
+        },
+        "commandIndexes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}
