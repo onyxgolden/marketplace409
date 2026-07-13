@@ -5,6 +5,10 @@ import {
 } from "./evaluatePromotionEligibility.mjs";
 
 import {
+  evaluateObjectiveRecommendations,
+} from "./evaluateObjectiveRecommendations.mjs";
+
+import {
   buildComparisonResults,
   buildCorrectionsRequired,
   buildObservedFailures,
@@ -56,6 +60,12 @@ const promotionStatePath =
 
 const promotionPolicyPath =
   "governance/policies/promotion-policy.json";
+
+const objectivePolicyPath =
+  "governance/policies/objective-policy.json";
+
+const capabilitiesPolicyPath =
+  "governance/policies/capabilities.json";
 
 const documentNames = [
   "FORGE_SYNC_CONTROL_CENTER.md",
@@ -282,6 +292,7 @@ function buildEvaluationSections(
   governanceState,
   promotionState,
   promotionEvaluation,
+  objectiveEvaluation,
 ) {
   return {
     trial_history:
@@ -310,6 +321,7 @@ function buildEvaluationSections(
     promotion_recommendations:
       buildPromotionRecommendations(
         promotionEvaluation,
+        objectiveEvaluation,
       ),
 
     synchronization_metadata:
@@ -326,6 +338,7 @@ function buildSectionMapForDocument(
   governanceState,
   promotionState,
   promotionEvaluation,
+  objectiveEvaluation,
 ) {
   switch (documentName) {
     case "FORGE_SYNC_CONTROL_CENTER.md":
@@ -353,6 +366,7 @@ function buildSectionMapForDocument(
         governanceState,
         promotionState,
         promotionEvaluation,
+        objectiveEvaluation,
       );
 
     default:
@@ -371,6 +385,12 @@ export function renderShadowDocumentContent(
     recommendations: [],
     authorityBoundary:
       "Recommendations do not modify authority. Only the owner may approve promotion.",
+  },
+  objectiveEvaluation = {
+    recommendations: [],
+    selectedObjective: null,
+    authorityBoundary:
+      "Recommendations do not select or commit objectives. Human approval remains required.",
   },
 ) {
   if (
@@ -404,6 +424,7 @@ export function renderShadowDocumentContent(
       governanceState,
       promotionState,
       promotionEvaluation,
+      objectiveEvaluation,
     );
 
   return applySectionMap(
@@ -453,6 +474,65 @@ export function renderAllShadowDocuments({
       governanceState,
     });
 
+  const objectivePolicy = readJsonFile(
+    repositoryRoot,
+    objectivePolicyPath,
+    "Objective policy",
+  );
+
+  const capabilitiesPolicy = readJsonFile(
+    repositoryRoot,
+    capabilitiesPolicyPath,
+    "Capabilities policy",
+  );
+
+  const completedPhaseIdentifiers =
+    objectivePolicy.phases
+      .filter(
+        (phase) =>
+          phase.status === "complete",
+      )
+      .map(
+        (phase) =>
+          phase.identifier,
+      );
+
+  const candidateObjectives =
+    objectivePolicy.phases
+      .filter(
+        (phase) =>
+          phase.status !== "complete",
+      )
+      .map(
+        (phase) => ({
+          phaseIdentifier:
+            phase.identifier,
+          title:
+            phase.title,
+          objective:
+            phase.objective,
+          prerequisites: [
+            ...phase.prerequisites,
+          ],
+        }),
+      );
+
+  const objectiveEvaluation =
+    evaluateObjectiveRecommendations({
+      governanceState,
+      repositoryEvidence:
+        governanceState.repository,
+      validationEvidence:
+        governanceState.validation,
+      architecturalProgress: {
+        completedPhaseIdentifiers,
+      },
+      roadmapPosition:
+        objectivePolicy.roadmapPosition,
+      capabilitiesPolicy,
+      candidateObjectives,
+    });
+
   return Object.fromEntries(
     documentNames.map((documentName) => {
       const originalContent =
@@ -468,6 +548,7 @@ export function renderAllShadowDocuments({
           governanceState,
           promotionState,
           promotionEvaluation,
+          objectiveEvaluation,
         );
 
       return [

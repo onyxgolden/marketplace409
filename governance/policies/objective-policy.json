@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "description": "Human-authored architectural phase and objective candidates used by the FORGE Governance Synchronizer to generate advisory next-objective recommendations.",
+  "defaultAuthority": "human",
+  "recommendationMode": "advisory-only",
+  "selectionAllowed": false,
+  "roadmapPosition": {
+    "nextPhaseIdentifier": "15.2"
+  },
+  "phases": [
+    {
+      "identifier": "15.1",
+      "title": "Deterministic Promotion Evaluation Engine",
+      "status": "complete",
+      "objective": "Evaluate shadow-governance promotion eligibility deterministically while preserving human authority.",
+      "prerequisites": []
+    },
+    {
+      "identifier": "15.2",
+      "title": "Deterministic Objective Recommendation Engine",
+      "status": "planned",
+      "objective": "Generate advisory next-objective recommendations from deterministic governance, repository, validation, architectural-progress, and roadmap evidence.",
+      "prerequisites": [
+        "15.1"
+      ]
+    }
+  ],
+  "rules": [
+    "Objective recommendations are advisory only.",
+    "The synchronizer may recommend an objective but may not select, commit, approve, or begin it automatically.",
+    "Only human-approved phase definitions and objective candidates may appear in this policy.",
+    "Every prerequisite must identify another phase defined in this policy.",
+    "A candidate may be recommended only when all listed prerequisites are complete.",
+    "The roadmap position remains human-authored.",
+    "Changing this policy does not grant the synchronizer authority to change governance policy.",
+    "Human approval remains authoritative."
+  ]
+}

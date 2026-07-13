@@ -183,10 +183,21 @@ export function buildCorrectionsRequired(
 
 export function buildPromotionRecommendations(
   promotionEvaluation,
+  objectiveEvaluation = {
+    recommendations: [],
+    selectedObjective: null,
+    authorityBoundary:
+      "Recommendations do not select or commit objectives. Human approval remains required.",
+  },
 ) {
   assertObject(
     promotionEvaluation,
     "promotionEvaluation",
+  );
+
+  assertObject(
+    objectiveEvaluation,
+    "objectiveEvaluation",
   );
 
   if (
@@ -199,7 +210,26 @@ export function buildPromotionRecommendations(
     );
   }
 
-  const recommendations =
+  if (
+    !Array.isArray(
+      objectiveEvaluation.recommendations,
+    )
+  ) {
+    throw new TypeError(
+      "objectiveEvaluation.recommendations must be an array",
+    );
+  }
+
+  if (
+    objectiveEvaluation.selectedObjective !==
+      null
+  ) {
+    throw new TypeError(
+      "objectiveEvaluation.selectedObjective must remain null",
+    );
+  }
+
+  const promotionRecommendations =
     promotionEvaluation.recommendations.map(
       (
         recommendation,
@@ -259,13 +289,74 @@ export function buildPromotionRecommendations(
       },
     );
 
+  const objectiveRecommendations =
+    objectiveEvaluation.recommendations.map(
+      (
+        recommendation,
+        index,
+      ) => {
+        assertObject(
+          recommendation,
+          `objectiveEvaluation.recommendations[${index}]`,
+        );
+
+        const {
+          phaseIdentifier,
+          title,
+          objective,
+          confidence,
+          requiresOwnerApproval,
+        } = recommendation;
+
+        for (
+          const [fieldName, value]
+          of Object.entries({
+            phaseIdentifier,
+            title,
+            objective,
+            confidence,
+          })
+        ) {
+          if (
+            typeof value !== "string" ||
+            value.length === 0
+          ) {
+            throw new TypeError(
+              `objectiveEvaluation.recommendations[${index}].${fieldName} must be a non-empty string`,
+            );
+          }
+        }
+
+        if (
+          requiresOwnerApproval !== true
+        ) {
+          throw new TypeError(
+            `objectiveEvaluation.recommendations[${index}].requiresOwnerApproval must be true`,
+          );
+        }
+
+        return [
+          `- **Phase ${phaseIdentifier} — ${title}:**`,
+          `${objective} Confidence: \`${confidence}\`; owner approval remains required.`,
+        ].join(" ");
+      },
+    );
+
   return [
     "## Promotion Recommendations",
     "",
-    recommendations.length === 0
+    promotionRecommendations.length === 0
       ? "No promotion recommendations have been made."
-      : recommendations.join("\n"),
+      : promotionRecommendations.join("\n"),
     "",
     promotionEvaluation.authorityBoundary,
+    "",
+    "### Objective Recommendations",
+    "",
+    objectiveRecommendations.length === 0
+      ? "No objective recommendations have been made."
+      : objectiveRecommendations.join("\n"),
+    "",
+    objectiveEvaluation.authorityBoundary,
   ].join("\n");
 }

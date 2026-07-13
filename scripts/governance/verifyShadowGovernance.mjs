@@ -21,6 +21,7 @@ const requiredPolicyFiles = [
   "capabilities.json",
   "editable-sections.json",
   "immutable-sections.json",
+  "objective-policy.json",
   "promotion-policy.json",
   "validation-rules.json",
 ];
