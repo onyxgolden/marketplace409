@@ -108,6 +108,32 @@ function createGovernanceState({
   };
 }
 
+function createRepositoryEvidence({
+  workingTreeClean = true,
+  headMatchesOriginMain = true,
+} = {}) {
+  return {
+    workingTreeClean,
+    headMatchesOriginMain,
+  };
+}
+
+function createValidationEvidence(
+  status = "passed",
+) {
+  return {
+    focusedTests: {
+      status,
+    },
+    fullTests: {
+      status,
+    },
+    productionBuild: {
+      status,
+    },
+  };
+}
+
 function createSuccessfulEvidence() {
   return {
     trialTypes: [
@@ -138,6 +164,12 @@ describe(
               createPromotionState(),
             governanceState:
               createGovernanceState(),
+            repositoryEvidence:
+              createRepositoryEvidence(),
+            validationEvidence:
+              createValidationEvidence(
+                "not-run",
+              ),
           });
 
         expect(
@@ -195,6 +227,10 @@ describe(
                   "passed",
                 reviewRequired: false,
               }),
+            repositoryEvidence:
+              createRepositoryEvidence(),
+            validationEvidence:
+              createValidationEvidence(),
             evaluationEvidence:
               createSuccessfulEvidence(),
           });
@@ -270,6 +306,10 @@ describe(
                   "passed",
                 reviewRequired: false,
               }),
+            repositoryEvidence:
+              createRepositoryEvidence(),
+            validationEvidence:
+              createValidationEvidence(),
             evaluationEvidence:
               evidence,
           });
@@ -323,6 +363,12 @@ describe(
             reviewRequired: false,
           });
 
+        const repositoryEvidence =
+          createRepositoryEvidence();
+
+        const validationEvidence =
+          createValidationEvidence();
+
         const evaluationEvidence =
           createSuccessfulEvidence();
 
@@ -331,6 +377,8 @@ describe(
             promotionPolicy,
             promotionState,
             governanceState,
+            repositoryEvidence,
+            validationEvidence,
             evaluationEvidence,
           });
 
@@ -338,6 +386,8 @@ describe(
           promotionPolicy,
           promotionState,
           governanceState,
+          repositoryEvidence,
+          validationEvidence,
           evaluationEvidence,
         });
 
@@ -346,6 +396,8 @@ describe(
             promotionPolicy,
             promotionState,
             governanceState,
+            repositoryEvidence,
+            validationEvidence,
             evaluationEvidence,
           }),
         ).toBe(before);

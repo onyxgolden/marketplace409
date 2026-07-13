@@ -309,6 +309,8 @@ export function evaluatePromotionEligibility({
   promotionPolicy,
   promotionState,
   governanceState,
+  repositoryEvidence,
+  validationEvidence,
   evaluationEvidence = {},
 }) {
   assertObject(
@@ -324,6 +326,16 @@ export function evaluatePromotionEligibility({
   assertObject(
     governanceState,
     "governanceState",
+  );
+
+  assertObject(
+    repositoryEvidence,
+    "repositoryEvidence",
+  );
+
+  assertObject(
+    validationEvidence,
+    "validationEvidence",
   );
 
   assertObject(

@@ -472,6 +472,10 @@ export function renderAllShadowDocuments({
       promotionPolicy,
       promotionState,
       governanceState,
+      repositoryEvidence:
+        governanceState.repository,
+      validationEvidence:
+        governanceState.validation,
     });
 
   const objectivePolicy = readJsonFile(
