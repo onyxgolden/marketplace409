@@ -18,7 +18,7 @@
 
 **Last Evaluation Update:** Not yet generated
 **Last Session ID:** Not recorded
-**Last Evidence Snapshot:** governance/snapshots/forge-session-20260712-191617.json
+**Last Evidence Snapshot:** governance/snapshots/forge-session-20260712-195727.json
 **Renderer Version:** Not recorded
 **Mode:** shadow-only
 
@@ -83,6 +83,12 @@ None recorded.
 No promotion recommendations have been made.
 
 Recommendations do not modify authority. Only the owner may approve promotion.
+
+### Objective Recommendations
+
+No objective recommendations have been made.
+
+Recommendations do not select or commit objectives. Human approval remains required.
 
 <!-- FORGE:SYNC:promotion_recommendations:END -->
 
