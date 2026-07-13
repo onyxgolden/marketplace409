@@ -1844,6 +1844,378 @@ User Import and Review Workflow
 
 ---
 
+### Phase 15.1 — Shadow Governance Synchronization Foundation
+
+#### Purpose
+
+Establish an experimental shadow-governance system that records verified engineering reality without modifying authoritative human-controlled governance or independently choosing architectural direction.
+
+#### Delivered
+
+* Established the synchronized shadow-governance document set:
+
+  * `FORGE_SYNC_CONTROL_CENTER.md`
+  * `FORGE_SYNC_STATUS.md`
+  * `FORGE_SYNC_SESSION.md`
+  * `FORGE_SYNC_ROADMAP.md`
+  * `FORGE_SYNC_EVALUATION.md`
+* Added the synchronized governance directory and evaluation-period operating rules.
+* Introduced governance policies for:
+
+  * synchronized capabilities
+  * editable sections
+  * immutable sections
+  * validation rules
+  * promotion eligibility
+* Introduced the session-summary schema.
+* Introduced promotion-state persistence.
+* Added deterministic verification of shadow-governance structure, policy files, protected sections, and synchronized document boundaries.
+* Added repository session-evidence collection.
+* Added deterministic session-snapshot validation.
+* Preserved explicit `REVIEW_REQUIRED` values for human-controlled phase, objective, completion, delivered-work, and next-session fields.
+* Established the rule that repository evidence may describe engineering reality but may not independently define architectural direction.
+
+#### Protected Rule
+
+Authoritative governance remains human-controlled.
+
+The shadow synchronizer may record, compare, validate, and render repository evidence only within explicitly delegated synchronized sections.
+
+The synchronizer may not create, rename, reorder, merge, split, complete, or reinterpret architectural phases.
+
+The synchronizer may not select authoritative objectives or future architectural direction.
+
+Protected authoritative documents remain unchanged during shadow-governance execution.
+
+Repository evidence informs governance review.
+
+It does not replace owner authority.
+
+#### Validation
+
+* ✓ Shadow-governance document foundation created.
+* ✓ Governance policies and schemas introduced.
+* ✓ Deterministic shadow-governance verification introduced.
+* ✓ Session evidence collection and snapshot validation introduced.
+* ✓ Human-controlled fields preserved behind `REVIEW_REQUIRED`.
+* ✓ Authoritative governance mutation prohibited.
+* ✓ Commit `2f3b1c7` established the shadow-governance synchronization foundation.
+* ✓ Commit `9607287` added governance session-evidence collection.
+* ✓ Commit `58b4b42` completed deterministic shadow-governance synchronization.
+
+**Status:** Complete
+
+---
+
+### Phase 15.2 — Deterministic Governance State and Pipeline
+
+#### Purpose
+
+Create a deterministic governance pipeline that transforms validated session evidence into canonical governance state, synchronizes delegated shadow-document sections, verifies all outputs, and rolls back generated changes when any stage fails.
+
+#### Delivered
+
+* Introduced the canonical governance-state schema.
+* Introduced `current-governance-state.json` as the normalized evidence source consumed by shadow rendering and governance evaluation.
+* Added deterministic generation of canonical governance state from a validated session snapshot.
+* Added strict canonical governance-state validation.
+* Added reusable builders for:
+
+  * synchronization metadata
+  * repository state
+  * repository health
+  * active phase and current objective
+  * completed work
+  * known warnings
+  * validation evidence
+  * evaluation sections
+* Added deterministic synchronized-section replacement.
+* Added shadow-document rendering from canonical governance state.
+* Added synchronization orchestration for the complete shadow-governance document set.
+* Added the end-to-end shadow-governance pipeline.
+* Required the pipeline to:
+
+  * collect exactly one new session snapshot
+  * validate the selected snapshot
+  * generate canonical governance state
+  * validate canonical governance state
+  * synchronize shadow governance
+  * validate final state and snapshot
+  * verify synchronized documents
+  * prove authoritative governance remained unchanged
+* Added transactional rollback for:
+
+  * canonical governance state
+  * synchronized shadow documents
+  * newly created snapshots
+  * temporary files
+* Added integration tests that execute the real pipeline inside representative disposable Git repositories.
+* Added late-stage failure coverage proving generated state is restored after verification failure.
+* Strengthened the Production-First Principle and Fixture Fidelity Principle.
+* Added the repository conversation-continuity workflow and FORGE boot protocol.
+
+#### Protected Rule
+
+The canonical governance state is generated only from validated session evidence.
+
+Shadow rendering consumes normalized canonical governance state.
+
+Renderers do not independently inspect Git state or validation artifacts.
+
+Pipeline stages execute in a deterministic order.
+
+A failed pipeline may not leave partially generated governance state, modified synchronized documents, temporary artifacts, or untracked session snapshots.
+
+Integration tests exercise real production behavior using representative disposable repositories.
+
+Production architecture is never weakened for test convenience.
+
+Authoritative governance documents remain immutable during shadow-pipeline execution.
+
+#### Current Architecture
+
+```text
+Repository and Validation Evidence
+        ↓
+Session Evidence Collector
+        ↓
+Validated Session Snapshot
+        ↓
+Canonical Governance-State Generator
+        ↓
+Validated Canonical Governance State
+        ↓
+Shadow Document Renderer
+        ↓
+Synchronized Shadow Governance
+        ↓
+Final Verification
+        ↓
+Commit or Transactional Rollback
+```
+
+#### Validation
+
+* ✓ Canonical governance-state generation introduced.
+* ✓ Canonical governance-state validation introduced.
+* ✓ Deterministic shadow rendering introduced.
+* ✓ Full pipeline orchestration introduced.
+* ✓ Exactly-one-snapshot selection enforced.
+* ✓ Authoritative governance immutability verified.
+* ✓ Temporary-file and generated-artifact cleanup enforced.
+* ✓ Real disposable Git repository integration tests passed.
+* ✓ Late-stage rollback behavior verified.
+* ✓ Conversation-continuity workflow documented.
+* ✓ Commit `f526d5f` generated canonical governance state from session evidence.
+* ✓ Commit `52730fd` added the pipeline orchestrator.
+* ✓ Commit `a8b08d5` strengthened integration-testing principles.
+* ✓ Commit `20e6eb9` added shadow-pipeline integration tests.
+* ✓ Commit `0bf7c03` added repository conversation continuity.
+
+**Status:** Complete
+
+---
+
+### Phase 15.3 — Repository-Backed Validation Evidence
+
+#### Purpose
+
+Introduce deterministic, auditable validation evidence so governance decisions depend on verified repository artifacts rather than manually entered test, build, or completion claims.
+
+#### Delivered
+
+* Introduced the validation-evidence schema.
+* Added the validation-evidence specification.
+* Added deterministic validation-artifact generation.
+* Added strict validation-artifact validation.
+* Added atomic validated-artifact writing.
+* Added validation-evidence eligibility selection.
+* Added repository-state stability checks before and after validation execution.
+* Added support for recorded evidence covering:
+
+  * focused tests
+  * full repository tests
+  * production build
+  * repository identity
+  * branch
+  * HEAD
+  * `origin/main`
+  * working-tree state
+  * command execution results
+  * timestamps
+* Added safeguards against:
+
+  * malformed artifacts
+  * stale artifacts
+  * repository mismatches
+  * branch mismatches
+  * HEAD mismatches
+  * dirty repository transitions
+  * incomplete command evidence
+  * unvalidated artifact writes
+* Integrated eligible validation evidence into session collection.
+* Added normalized validation summaries for canonical governance state and synchronized documents.
+* Preserved explicit separation between:
+
+  * generating validation evidence
+  * validating evidence
+  * selecting eligible evidence
+  * collecting session evidence
+  * rendering governance output
+* Ensured the evidence collector consumes eligible validated artifacts without independently executing or interpreting validation commands.
+
+#### Protected Rule
+
+Validation evidence must be deterministic, repository-backed, schema-valid, and traceable to the repository state it claims to verify.
+
+Governance may consume only eligible validated evidence.
+
+Session collectors do not invent validation results.
+
+Renderers do not inspect raw validation artifacts independently.
+
+Recommendation engines do not execute tests, builds, or Git commands.
+
+Validation commands and execution policy remain explicit and controlled.
+
+A validation artifact is evidence of a specific repository state.
+
+It may not be reused as proof for a different HEAD, branch, repository, or working-tree state.
+
+#### Current Architecture
+
+```text
+Approved Validation Commands
+        ↓
+Validation Evidence Generator
+        ↓
+Repository Stability Verification
+        ↓
+Validated Evidence Artifact
+        ↓
+Eligibility Selector
+        ↓
+Session Evidence Collector
+        ↓
+Canonical Governance State
+        ↓
+Shadow Governance and Recommendations
+```
+
+#### Validation
+
+* ✓ Validation-evidence schema introduced.
+* ✓ Validation-evidence specification documented.
+* ✓ Atomic validated-artifact writing introduced.
+* ✓ Explicit validation-evidence generation introduced.
+* ✓ Repository stability checks enforced.
+* ✓ Eligibility selection introduced.
+* ✓ Stale and mismatched evidence rejected.
+* ✓ Eligible validation evidence integrated into session collection.
+* ✓ Validation summaries normalized.
+* ✓ Focused governance validation passed.
+* ✓ Full Vitest suite passed: 195 test files and 757 tests.
+* ✓ Production build passed.
+* ✓ Mutation Firewall passed.
+* ✓ Governance validation passed.
+* ✓ Shadow governance verification passed.
+* ✓ Commit `3e5ae59` added the validation-evidence foundation.
+* ✓ Commit `7ddc971` added explicit evidence generation.
+* ✓ Commit `9cd5474` added validation-evidence eligibility selection.
+* ✓ Commit `c513e50` integrated validation evidence into session collection.
+* ✓ Commit `9f8c709` normalized validation summaries.
+* ✓ Commit `8f1a179` synchronized repository-backed validation evidence.
+
+**Status:** Complete
+
+---
+
+### Phase 15.4 — Repository-Backed Governance Recommendations
+
+#### Purpose
+
+Complete the governance evaluation architecture by producing deterministic, evidence-backed promotion and objective recommendations while preserving the advisory-only boundary between governance automation and human architectural authority.
+
+#### Delivered
+
+* Introduced deterministic promotion-eligibility evaluation.
+* Introduced deterministic objective-recommendation evaluation.
+* Introduced shared recommendation-evidence predicates consumed by all recommendation engines.
+* Introduced repository-backed recommendation evidence.
+* Introduced canonical validation-evidence gating for recommendations.
+* Aligned promotion evaluation with the shared evidence model.
+* Required recommendation engines to consume normalized canonical governance state.
+* Prevented recommendation engines from independently inspecting:
+
+  * Git state
+  * validation artifacts
+  * repository commands
+* Added rendering support for deterministic promotion recommendations.
+* Added rendering support for deterministic objective recommendations.
+* Added recommendation-engine validation and integration tests.
+* Preserved advisory-only governance boundaries throughout the recommendation pipeline.
+
+#### Protected Rule
+
+Recommendation engines consume normalized governance evidence only.
+
+Recommendation engines do not independently inspect Git state.
+
+Recommendation engines do not independently inspect validation artifacts.
+
+Recommendation engines do not execute repository commands.
+
+Recommendations remain advisory.
+
+Authoritative architectural decisions remain human-controlled.
+
+Repository evidence supports governance recommendations but does not replace engineering judgment.
+
+#### Current Architecture
+
+```text
+Repository Evidence
+        ↓
+Validated Session Evidence
+        ↓
+Canonical Governance State
+        ↓
+Shared Recommendation Evidence
+        ↓
+Promotion Eligibility Evaluation
+        ↓
+Objective Recommendation Evaluation
+        ↓
+Rendered Governance Recommendations
+        ↓
+Human Architectural Decision
+```
+
+#### Validation
+
+* ✓ Deterministic promotion evaluation introduced.
+* ✓ Deterministic objective recommendation evaluation introduced.
+* ✓ Shared recommendation-evidence predicates introduced.
+* ✓ Promotion evaluator aligned with canonical evidence.
+* ✓ Repository-backed recommendation evidence introduced.
+* ✓ Canonical validation-evidence gating introduced.
+* ✓ Recommendation engines restricted to normalized governance evidence.
+* ✓ Advisory-only governance boundary preserved.
+* ✓ Full Vitest suite passed: 195 test files and 757 tests.
+* ✓ Production build passed.
+* ✓ Mutation Firewall passed.
+* ✓ Governance validation passed.
+* ✓ Shadow governance verification passed.
+* ✓ Commit `4752132` introduced deterministic promotion eligibility.
+* ✓ Commit `ca5dafa` introduced deterministic objective recommendations.
+* ✓ Commit `a12fe1f` extracted shared recommendation evidence.
+* ✓ Commit `dab3443` aligned recommendation evaluation with the shared evidence model.
+* ✓ Commit `8384bd3` completed repository-backed promotion recommendations.
+
+**Status:** Complete
+
+---
+
 # Relationship to the Platform Roadmap
 
 The Architecture Roadmap changes infrequently.
