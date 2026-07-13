@@ -1,3 +1,8 @@
+import {
+  includesReviewRequired,
+  validationPassed,
+} from "./evaluateRecommendationEvidence.mjs";
+
 function assertObject(value, location) {
   if (
     typeof value !== "object" ||
@@ -38,54 +43,6 @@ function assertStringArray(
       `${location} must be an array of non-empty strings`,
     );
   }
-}
-
-function includesReviewRequired(value) {
-  if (value === "REVIEW_REQUIRED") {
-    return true;
-  }
-
-  if (Array.isArray(value)) {
-    return value.some(includesReviewRequired);
-  }
-
-  if (
-    typeof value === "object" &&
-    value !== null
-  ) {
-    return Object.values(value).some(
-      includesReviewRequired,
-    );
-  }
-
-  return false;
-}
-
-function validationPassed(validation) {
-  assertObject(
-    validation,
-    "governanceState.validation",
-  );
-
-  const validationEntries = [
-    validation.focusedTests,
-    validation.fullTests,
-    validation.productionBuild,
-  ];
-
-  return validationEntries.every(
-    (entry) => {
-      assertObject(
-        entry,
-        "governanceState validation entry",
-      );
-
-      return [
-        "pass",
-        "passed",
-      ].includes(entry.status);
-    },
-  );
 }
 
 function collectFailureReasons(
@@ -239,6 +196,14 @@ function collectEvidenceReasons(
   if (
     !validationPassed(
       governanceState.validation,
+      {
+        location:
+          "governanceState.validation",
+        acceptedStatuses: [
+          "pass",
+          "passed",
+        ],
+      },
     )
   ) {
     reasons.push({

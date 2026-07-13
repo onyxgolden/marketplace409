@@ -1,3 +1,8 @@
+import {
+  includesReviewRequired,
+  validationPassed,
+} from "./evaluateRecommendationEvidence.mjs";
+
 function assertObject(value, location) {
   if (
     typeof value !== "object" ||
@@ -40,59 +45,6 @@ function assertStringArray(
       `${location} must be an array of non-empty strings`,
     );
   }
-}
-
-function includesReviewRequired(value) {
-  if (value === "REVIEW_REQUIRED") {
-    return true;
-  }
-
-  if (Array.isArray(value)) {
-    return value.some(
-      includesReviewRequired,
-    );
-  }
-
-  if (
-    typeof value === "object" &&
-    value !== null
-  ) {
-    return Object.values(value).some(
-      includesReviewRequired,
-    );
-  }
-
-  return false;
-}
-
-function validationPassed(
-  validationEvidence,
-) {
-  assertObject(
-    validationEvidence,
-    "validationEvidence",
-  );
-
-  const validationEntries = [
-    validationEvidence.focusedTests,
-    validationEvidence.fullTests,
-    validationEvidence.productionBuild,
-  ];
-
-  return validationEntries.every(
-    (entry, index) => {
-      assertObject(
-        entry,
-        `validationEvidence entry ${index}`,
-      );
-
-      return [
-        "pass",
-        "passed",
-        "passing",
-      ].includes(entry.status);
-    },
-  );
 }
 
 function collectSharedReasons({
