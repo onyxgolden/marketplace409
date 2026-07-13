@@ -18,7 +18,7 @@
 
 **Last Evaluation Update:** Not yet generated
 **Last Session ID:** Not recorded
-**Last Evidence Snapshot:** governance/snapshots/forge-session-20260712-041520.json
+**Last Evidence Snapshot:** governance/snapshots/forge-session-20260712-191617.json
 **Renderer Version:** Not recorded
 **Mode:** shadow-only
 
@@ -82,7 +82,7 @@ None recorded.
 
 No promotion recommendations have been made.
 
-The synchronizer may recommend promotion but may not approve it.
+Recommendations do not modify authority. Only the owner may approve promotion.
 
 <!-- FORGE:SYNC:promotion_recommendations:END -->
 

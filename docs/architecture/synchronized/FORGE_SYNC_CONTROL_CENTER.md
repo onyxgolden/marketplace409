@@ -18,7 +18,7 @@
 
 **Last Synchronization:** Not yet generated
 **Session ID:** Not recorded
-**Evidence Snapshot:** governance/snapshots/forge-session-20260712-041520.json
+**Evidence Snapshot:** governance/snapshots/forge-session-20260712-191617.json
 **Renderer Version:** Not recorded
 **Mode:** shadow-only
 
@@ -33,9 +33,9 @@
 | Check                 | Result       |
 | --------------------- | ------------ |
 | Branch                | main |
-| HEAD                  | f526d5f56cc8c124c89629c937114072a5ad9ad6 |
-| origin/main           | f526d5f56cc8c124c89629c937114072a5ad9ad6 |
-| Working tree          | dirty |
+| HEAD                  | b01a050c3cbb9a69d4cdec6f73c90cc4b3659847 |
+| origin/main           | b01a050c3cbb9a69d4cdec6f73c90cc4b3659847 |
+| Working tree          | clean |
 | Implementation commit | Not recorded |
 | Governance commit     | Not recorded |
 
