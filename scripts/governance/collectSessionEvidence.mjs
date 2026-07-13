@@ -2,6 +2,10 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import {
+  buildSessionValidationEvidence,
+} from "./buildSessionValidationEvidence.mjs";
+
 const repositoryRoot = process.cwd();
 const snapshotDirectory = path.join(
   repositoryRoot,
@@ -85,6 +89,11 @@ const modifiedFiles = statusLines.map((line) =>
   line.length > 3 ? line.slice(3) : line,
 );
 
+const sessionValidationEvidence =
+  buildSessionValidationEvidence({
+    repositoryRoot,
+  });
+
 const snapshot = {
   schemaVersion: "1.0",
   sessionId,
@@ -116,23 +125,8 @@ const snapshot = {
     knownWarnings: [],
   },
 
-  validation: {
-    focusedTests: {
-      status: "not-run",
-      command: null,
-      summary: null,
-    },
-    fullTests: {
-      status: "not-run",
-      command: null,
-      summary: null,
-    },
-    productionBuild: {
-      status: "not-run",
-      command: null,
-      summary: null,
-    },
-  },
+  validation:
+    sessionValidationEvidence.validation,
 
   completion: {
     workComplete: false,
@@ -155,6 +149,8 @@ const snapshot = {
     },
     headMatchesOriginMain: head === originMain,
     gitStatus: statusLines,
+    selectedValidationArtifact:
+      sessionValidationEvidence.selectedArtifact,
   },
 };
 
@@ -191,6 +187,13 @@ console.log(
 );
 console.log(
   `HEAD matches origin/main: ${head === originMain ? "yes" : "no"}`,
+);
+console.log(
+  `Validation evidence: ${
+    sessionValidationEvidence.selectedArtifact
+      ? sessionValidationEvidence.selectedArtifact.path
+      : "none eligible"
+  }`,
 );
 console.log("");
 console.log(

@@ -384,6 +384,7 @@ assertExactKeys(
     "latestCommit",
     "headMatchesOriginMain",
     "gitStatus",
+    "selectedValidationArtifact",
   ],
   "snapshot.evidence",
 );
@@ -431,6 +432,77 @@ assertStringArray(
   snapshot.evidence.gitStatus,
   "snapshot.evidence.gitStatus",
 );
+
+const selectedValidationArtifact =
+  snapshot.evidence
+    .selectedValidationArtifact;
+
+assert(
+  selectedValidationArtifact === null ||
+    isObject(
+      selectedValidationArtifact,
+    ),
+  "snapshot.evidence.selectedValidationArtifact must be null or an object",
+);
+
+if (
+  selectedValidationArtifact !== null
+) {
+  assertExactKeys(
+    selectedValidationArtifact,
+    [
+      "path",
+      "validationId",
+      "completedAt",
+      "repositoryHead",
+    ],
+    "snapshot.evidence.selectedValidationArtifact",
+  );
+
+  assertString(
+    selectedValidationArtifact.path,
+    "snapshot.evidence.selectedValidationArtifact.path",
+  );
+
+  assert(
+    /^forge-validation-\d{8}-\d{6}$/.test(
+      selectedValidationArtifact
+        .validationId,
+    ),
+    "snapshot.evidence.selectedValidationArtifact.validationId is invalid",
+  );
+
+  assert(
+    typeof selectedValidationArtifact
+      .completedAt === "string" &&
+      dateTimePattern.test(
+        selectedValidationArtifact
+          .completedAt,
+      ),
+    "snapshot.evidence.selectedValidationArtifact.completedAt must be an ISO-8601 timestamp",
+  );
+
+  assert(
+    commitPattern.test(
+      selectedValidationArtifact
+        .repositoryHead,
+    ),
+    "snapshot.evidence.selectedValidationArtifact.repositoryHead must be a Git commit hash",
+  );
+
+  assert(
+    selectedValidationArtifact
+      .repositoryHead ===
+      snapshot.repository.head,
+    "snapshot.evidence.selectedValidationArtifact.repositoryHead must match snapshot.repository.head",
+  );
+
+  assert(
+    selectedValidationArtifact.path ===
+      `governance/validation/${selectedValidationArtifact.validationId}.json`,
+    "snapshot.evidence.selectedValidationArtifact.path must match its validationId",
+  );
+}
 
 assert(
   snapshot.evidence.headMatchesOriginMain ===

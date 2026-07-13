@@ -218,7 +218,8 @@
 "capturedAt",
 "latestCommit",
 "headMatchesOriginMain",
-"gitStatus"
+"gitStatus",
+"selectedValidationArtifact"
 ],
 "properties": {
 "capturedAt": {
@@ -265,11 +266,49 @@
 "type": "string",
 "minLength": 1
 }
+},
+"selectedValidationArtifact": {
+"oneOf": [
+{
+"type": "null"
+},
+{
+"$ref": "#/$defs/selectedValidationArtifact"
+}
+]
 }
 }
 }
 },
 "$defs": {
+"selectedValidationArtifact": {
+"type": "object",
+"additionalProperties": false,
+"required": [
+"path",
+"validationId",
+"completedAt",
+"repositoryHead"
+],
+"properties": {
+"path": {
+"type": "string",
+"minLength": 1
+},
+"validationId": {
+"type": "string",
+"pattern": "^forge-validation-[0-9]{8}-[0-9]{6}$"
+},
+"completedAt": {
+"type": "string",
+"format": "date-time"
+},
+"repositoryHead": {
+"type": "string",
+"pattern": "^[0-9a-f]{7,40}$"
+}
+}
+},
 "validationResult": {
 "type": "object",
 "additionalProperties": false,
