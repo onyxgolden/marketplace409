@@ -1556,6 +1556,294 @@ Connection APIs
 
 ---
 
+### Phase 14.1 — Marketplace Composition Foundation
+
+#### Purpose
+
+Centralize dependency construction for marketplace workflows so presentation components consume consistently assembled application services while preserving existing domain, persistence, storage, and user-facing behavior.
+
+#### Delivered
+
+* Introduced `createMarketplaceApplicationSuite`.
+* Centralized construction and dependency injection for:
+
+  * `ListingApplication`
+  * `MyListingsApplication`
+  * `FavoriteApplication`
+  * `SavedListingsApplication`
+  * `JobApplication`
+  * `PetApplication`
+  * `PetVotingApplication`
+* Centralized the shared Supabase dependency.
+* Centralized the shared image-uploader dependency.
+* Exported the marketplace composition suite through `src/infrastructure/composition/index.js`.
+* Migrated marketplace delivery boundaries to consume the shared composition root.
+* Removed repeated dependency construction from marketplace pages and components.
+* Preserved production APIs, persistence behavior, storage behavior, routing behavior, and user-facing behavior.
+
+#### Protected Rule
+
+Composition roots construct infrastructure dependencies and application services.
+
+Application services orchestrate marketplace workflows.
+
+Domain services own business behavior.
+
+React presentation owns rendering, lifecycle, transient UI state, user interaction, notifications, and navigation.
+
+Presentation components do not construct dependency graphs when a shared composition root already owns that responsibility.
+
+Architectural symmetry alone is not sufficient justification for introducing additional abstractions.
+
+#### Current Architecture
+
+```text
+Supabase Infrastructure
+        ↓
+Shared Image Uploader
+        ↓
+Marketplace Application Services
+        ↓
+createMarketplaceApplicationSuite
+        ↓
+Marketplace Pages and Components
+        ↓
+User Interaction
+```
+
+#### Validation
+
+* ✓ Marketplace composition suite introduced and exported.
+* ✓ Marketplace delivery boundaries migrated to the shared composition root.
+* ✓ Focused composition validation passed: 4 composition suites and 21 tests.
+* ✓ Full Vitest suite passed: 181 test files and 685 tests.
+* ✓ Production build passed.
+* ✓ Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
+* ✓ Production behavior preserved.
+
+**Status:** Complete
+
+---
+
+### Phase 14.2 — Business Composition Foundation
+
+#### Purpose
+
+Centralize dependency construction for business workflows so presentation boundaries consume consistently assembled application services while preserving authentication, authorization, persistence, storage, routing, and user-facing behavior.
+
+#### Delivered
+
+* Introduced `createBusinessApplicationSuite`.
+* Centralized construction and dependency injection for:
+  * `AdminAuthorizationApplication`
+  * `BusinessCreateApplication`
+  * `BusinessEditApplication`
+  * `BusinessDeleteApplication`
+  * `BusinessClaimApplication`
+  * `BusinessClaimService`
+  * `BusinessClaimRepository`
+* Centralized the shared Supabase dependency.
+* Centralized the shared image-uploader dependency.
+* Exported the business composition suite through `src/infrastructure/composition/index.js`.
+* Migrated business delivery boundaries and administrative controls to consume the shared composition root.
+* Removed repeated dependency construction from business pages and components.
+* Preserved production authentication, authorization, persistence, storage, routing, and user-facing behavior.
+
+#### Protected Rule
+
+Composition roots construct repositories, infrastructure adapters, domain services, and application services.
+
+Application services coordinate business workflows, authentication, authorization, persistence, response normalization, and redirect decisions.
+
+Domain services own business rules.
+
+React presentation owns rendering, lifecycle, transient UI state, user interaction, notifications, and navigation.
+
+Administrative authorization decisions remain behind application and domain boundaries.
+
+Production architecture takes precedence over test convenience or architectural symmetry.
+
+#### Current Architecture
+
+```text
+Supabase Infrastructure
+        ↓
+BusinessClaimRepository
+        ↓
+BusinessClaimService
+        ↓
+Business Application Services
+        ↓
+createBusinessApplicationSuite
+        ↓
+Business Pages and Administrative Controls
+        ↓
+User and Administrator Interaction
+```
+
+#### Validation
+
+- ✓ Business composition suite introduced and exported.
+- ✓ Business delivery boundaries migrated to the shared composition root.
+- ✓ Five composition suites present after completion.
+- ✓ Full Vitest suite passed: 182 test files and 688 tests.
+- ✓ Production build passed.
+- ✓ Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
+- ✓ Production behavior preserved.
+- ✓ Commit `66fcd90` recorded the Business Composition Foundation.
+
+**Status:** Complete
+
+---
+
+### Phase 14.3 — Investor Composition Foundation
+
+#### Purpose
+
+Centralize dependency construction for investor workflows so investor presentation boundaries consume consistently assembled application services while preserving persistence, storage, routing, and user-facing behavior.
+
+#### Delivered
+
+* Introduced `createInvestorApplicationSuite`.
+* Centralized construction and dependency injection for:
+
+  * `InvestorPropertyApplication`
+  * `InvestorCashBuyerApplication`
+  * `InvestorWholesalerApplication`
+* Centralized the shared Supabase dependency.
+* Centralized the shared image-uploader dependency.
+* Exported the investor composition suite through `src/infrastructure/composition/index.js`.
+* Migrated investor property, cash-buyer, and wholesaler delivery boundaries to consume the shared composition root.
+* Migrated `DeleteWholesalerButton` to consume the investor composition suite.
+* Removed repeated dependency construction from investor pages and components.
+* Preserved production persistence, storage, routing, and user-facing behavior.
+
+#### Protected Rule
+
+Composition roots construct infrastructure dependencies and application services.
+
+Application services coordinate investor workflows.
+
+Domain services own business behavior.
+
+React presentation owns rendering, lifecycle, transient UI state, user interaction, notifications, and navigation.
+
+Investor delivery boundaries consume shared composition rather than constructing application dependencies directly.
+
+Production behavior remains unchanged while dependency ownership becomes explicit.
+
+#### Current Architecture
+
+```text
+Supabase Infrastructure
+        ↓
+Shared Image Uploader
+        ↓
+Investor Application Services
+        ↓
+createInvestorApplicationSuite
+        ↓
+Investor Property, Cash-Buyer, and Wholesaler Pages
+        ↓
+User Interaction
+```
+
+#### Validation
+
+* ✓ Investor composition suite introduced and exported.
+* ✓ Investor delivery boundaries migrated to the shared composition root.
+* ✓ Focused validation passed: 9 test files and 45 tests.
+* ✓ Full Vitest suite passed: 183 test files and 691 tests.
+* ✓ Production build passed.
+* ✓ Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
+* ✓ Production behavior preserved.
+* ✓ Commit `56e3522` introduced the Investor Composition Foundation.
+* ✓ Commit `380192a` synchronized governance after completion.
+
+**Status:** Complete
+
+---
+
+### Phase 14.4 — Financial Import Composition Completion
+
+#### Purpose
+
+Complete composition ownership for the Financial Import workflow by moving construction of `FinancialImportApplication` and `TransactionReviewApplication` into the Financial application suite and removing direct application construction from the presentation boundary.
+
+#### Delivered
+
+* Extended `createFinancialApplicationSuite` to construct:
+
+  * `FinancialImportApplication`
+  * `TransactionReviewApplication`
+* Preserved the existing Financial suite responsibilities for:
+
+  * reporting
+  * read models
+  * intelligence
+  * operations
+  * explainability
+  * snapshots
+* Migrated `FinancialImportTool` to call `createFinancialApplicationSuite`.
+* Updated `FinancialImportTool` to consume:
+
+  * `financialImportApplication`
+  * `transactionReviewApplication`
+* Removed direct construction of `FinancialImportApplication` from the Financial Import presentation boundary.
+* Removed direct construction of `TransactionReviewApplication` from the Financial Import presentation boundary.
+* Preserved the standalone `createTransactionReviewApplicationSuite` without modification.
+* Preserved production import behavior, transaction-review behavior, property-assignment behavior, persistence behavior, API contracts, and user-facing behavior.
+
+#### Protected Rule
+
+Composition roots construct application dependencies.
+
+Application services orchestrate financial import and transaction-review workflows.
+
+Domain services own financial and assignment behavior.
+
+React presentation owns rendering, lifecycle, transient UI state, event handling, notifications, navigation, and presentation formatting.
+
+Presentation boundaries consume composed applications rather than constructing them directly.
+
+Existing composition roots remain independent when they serve distinct delivery boundaries.
+
+Production architecture takes precedence over architectural symmetry or test convenience.
+
+#### Current Architecture
+
+```text
+Financial Infrastructure and Domain Services
+        ↓
+FinancialImportApplication
+        ↓
+TransactionReviewApplication
+        ↓
+createFinancialApplicationSuite
+        ↓
+FinancialImportTool
+        ↓
+User Import and Review Workflow
+```
+
+#### Validation
+
+* ✓ `createFinancialApplicationSuite` constructs Financial Import and Transaction Review applications.
+* ✓ `FinancialImportTool` consumes both applications through the Financial composition suite.
+* ✓ Direct presentation-layer construction was removed.
+* ✓ Standalone Transaction Review composition remained unchanged.
+* ✓ Focused validation passed: 3 test files and 32 tests.
+* ✓ Full Vitest suite passed: 183 test files and 695 tests.
+* ✓ Production build passed.
+* ✓ Mutation Firewall passed with the expected legacy business `"claimed"` warning only.
+* ✓ Production behavior preserved.
+* ✓ Commit `8436d7e` completed the Financial Import composition implementation.
+* ✓ Commit `4acd175` synchronized authoritative governance after completion.
+
+**Status:** Complete
+
+---
+
 # Relationship to the Platform Roadmap
 
 The Architecture Roadmap changes infrequently.
