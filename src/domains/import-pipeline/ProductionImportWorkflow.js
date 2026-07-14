@@ -212,13 +212,17 @@ export class ProductionImportWorkflow {
       );
     }
 
-    const reports = this.pipeline.buildReports({
+    const {
+      financialEvents,
+      reports,
+    } = this.pipeline.buildImportArtifacts({
       records,
       chartOfAccounts,
     });
 
     return new ImportResult({
       records,
+      financialEvents,
       summary: this.summaryBuilder(records),
       reports,
       transactionReview: buildTransactionReview(

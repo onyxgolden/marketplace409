@@ -11,11 +11,14 @@ describe("ProductionImportWorkflow", () => {
     };
 
     const pipeline = {
-      buildReports({ records }) {
+      buildImportArtifacts({ records }) {
         return {
-          balanceSheet: { recordCount: records.length },
-          incomeStatement: { recordCount: records.length },
-          trialBalance: { recordCount: records.length },
+          financialEvents: [],
+          reports: {
+            balanceSheet: { recordCount: records.length },
+            incomeStatement: { recordCount: records.length },
+            trialBalance: { recordCount: records.length },
+          },
         };
       },
     };
@@ -77,11 +80,14 @@ describe("ProductionImportWorkflow", () => {
     };
 
     const pipeline = {
-      buildReports() {
+      buildImportArtifacts() {
         return {
-          balanceSheet: {},
-          incomeStatement: {},
-          trialBalance: {},
+          financialEvents: [],
+          reports: {
+            balanceSheet: {},
+            incomeStatement: {},
+            trialBalance: {},
+          },
         };
       },
     };
@@ -117,11 +123,14 @@ describe("ProductionImportWorkflow", () => {
     };
 
     const pipeline = {
-      buildReports() {
+      buildImportArtifacts() {
         return {
-          balanceSheet: {},
-          incomeStatement: {},
-          trialBalance: {},
+          financialEvents: [],
+          reports: {
+            balanceSheet: {},
+            incomeStatement: {},
+            trialBalance: {},
+          },
         };
       },
     };
@@ -174,11 +183,14 @@ describe("ProductionImportWorkflow", () => {
     };
 
     const pipeline = {
-      buildReports() {
+      buildImportArtifacts() {
         return {
-          balanceSheet: {},
-          incomeStatement: {},
-          trialBalance: {},
+          financialEvents: [],
+          reports: {
+            balanceSheet: {},
+            incomeStatement: {},
+            trialBalance: {},
+          },
         };
       },
     };

@@ -3,6 +3,7 @@ import { ImportWarning } from "./ImportWarning";
 export class ImportResult {
   constructor({
     records = [],
+    financialEvents = [],
     summary,
     reports,
     warnings = [],
@@ -10,6 +11,10 @@ export class ImportResult {
   }) {
     if (!Array.isArray(records)) {
       throw new Error("ImportResult records must be an array");
+    }
+
+    if (!Array.isArray(financialEvents)) {
+      throw new Error("ImportResult financialEvents must be an array");
     }
 
     if (!summary) {
@@ -35,6 +40,7 @@ export class ImportResult {
     }
 
     this.records = Object.freeze([...records]);
+    this.financialEvents = Object.freeze([...financialEvents]);
     this.summary = summary;
     this.reports = reports;
     this.warnings = Object.freeze([...warnings]);
@@ -45,6 +51,10 @@ export class ImportResult {
 
   get recordCount() {
     return this.records.length;
+  }
+
+  get financialEventCount() {
+    return this.financialEvents.length;
   }
 
   get warningCount() {
@@ -58,9 +68,11 @@ export class ImportResult {
   toJSON() {
     return {
       recordCount: this.recordCount,
+      financialEventCount: this.financialEventCount,
       warningCount: this.warningCount,
       transactionReviewCount: this.transactionReviewCount,
       records: this.records,
+      financialEvents: this.financialEvents,
       summary: this.summary,
       reports: this.reports,
       warnings: this.warnings,

@@ -25,6 +25,13 @@ export class ImportPipeline {
   }
 
   buildReports({ records, chartOfAccounts }) {
+    return this.buildImportArtifacts({
+      records,
+      chartOfAccounts,
+    }).reports;
+  }
+
+  buildImportArtifacts({ records, chartOfAccounts }) {
     const financialEvents = this.toFinancialEvents(records);
     const journalEntries = this.toJournalEntries(financialEvents);
     const ledgerEntries = this.toLedgerEntries(journalEntries);
@@ -35,7 +42,10 @@ export class ImportPipeline {
       chartOfAccounts,
     });
 
-    return engine.buildReports();
+    return Object.freeze({
+      financialEvents: Object.freeze([...financialEvents]),
+      reports: engine.buildReports(),
+    });
   }
 
   toFinancialEvents(records) {

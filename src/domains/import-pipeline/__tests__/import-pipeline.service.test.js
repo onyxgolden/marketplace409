@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 
 import { Account, AccountType, ChartOfAccounts } from "../../ledger/accounts";
-import { ImportPipeline } from "../ImportPipeline";
 import { rentecSemanticResolver } from "../../rentec-import";
+import { ImportPipeline } from "../ImportPipeline";
 
 function buildChartOfAccounts() {
   return new ChartOfAccounts([
@@ -74,40 +74,79 @@ function buildChartOfAccounts() {
   ]);
 }
 
-describe("ImportPipeline", () => {
-  test("builds financial reports from Rentec records", () => {
-    const records = [
-      {
-        date: "2026-01-01",
-        property: "123 Main St",
-        description: "Rental Income",
-        sourceCategory: "Income",
-        amount: 1500,
-        type: "income",
-        rawRow: {},
-      },
-      {
-        date: "2026-01-02",
-        property: "123 Main St",
-        description: "Repairs",
-        sourceCategory: "Expense",
-        amount: 200,
-        type: "expense",
-        rawRow: {},
-      },
-    ];
+function buildRecords() {
+  return [
+    {
+      date: "2026-01-01",
+      property: "123 Main St",
+      description: "Rental Income",
+      sourceCategory: "Income",
+      amount: 1500,
+      type: "income",
+      rawRow: {},
+    },
+    {
+      date: "2026-01-02",
+      property: "123 Main St",
+      description: "Repairs",
+      sourceCategory: "Expense",
+      amount: 200,
+      type: "expense",
+      rawRow: {},
+    },
+  ];
+}
 
+describe("ImportPipeline", () => {
+  test("preserves the financial report interface", () => {
     const pipeline = new ImportPipeline({
       semanticResolver: rentecSemanticResolver,
+      ownerId: "owner-1",
     });
 
     const reports = pipeline.buildReports({
-      records,
+      records: buildRecords(),
       chartOfAccounts: buildChartOfAccounts(),
     });
 
     expect(reports.balanceSheet).toBeDefined();
     expect(reports.incomeStatement).toBeDefined();
     expect(reports.trialBalance).toBeDefined();
+  });
+
+  test("builds immutable financial events and reports as import artifacts", () => {
+    const pipeline = new ImportPipeline({
+      semanticResolver: rentecSemanticResolver,
+      ownerId: "owner-1",
+    });
+
+    const result = pipeline.buildImportArtifacts({
+      records: buildRecords(),
+      chartOfAccounts: buildChartOfAccounts(),
+    });
+
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.financialEvents)).toBe(true);
+
+    expect(result.financialEvents).toHaveLength(2);
+    expect(result.financialEvents[0]).toMatchObject({
+      owner_id: "owner-1",
+      event_date: "2026-01-01",
+      description: "Rental Income",
+      amount: 1500,
+      source_system: "rentec",
+    });
+
+    expect(result.financialEvents[1]).toMatchObject({
+      owner_id: "owner-1",
+      event_date: "2026-01-02",
+      description: "Repairs",
+      amount: 200,
+      source_system: "rentec",
+    });
+
+    expect(result.reports.balanceSheet).toBeDefined();
+    expect(result.reports.incomeStatement).toBeDefined();
+    expect(result.reports.trialBalance).toBeDefined();
   });
 });
