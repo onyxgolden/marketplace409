@@ -31,14 +31,26 @@ class FinancialImportServiceImpl {
     return service;
   }
 
-  importCsv({ source, csv, chartOfAccounts }) {
-    return this.resolveImportService(source).importCsv({
+  async persistFinancialEvents(result) {
+    if (!this.financialEventRepository) {
+      return result;
+    }
+
+    await this.financialEventRepository.saveMany(result.financialEvents);
+
+    return result;
+  }
+
+  async importCsv({ source, csv, chartOfAccounts }) {
+    const result = await this.resolveImportService(source).importCsv({
       csv,
       chartOfAccounts,
     });
+
+    return this.persistFinancialEvents(result);
   }
 
-  importRows({ source, rows, chartOfAccounts }) {
+  async importRows({ source, rows, chartOfAccounts }) {
     const service = this.resolveImportService(source);
 
     if (typeof service.importRows !== "function") {
@@ -47,10 +59,12 @@ class FinancialImportServiceImpl {
       );
     }
 
-    return service.importRows({
+    const result = await service.importRows({
       rows,
       chartOfAccounts,
     });
+
+    return this.persistFinancialEvents(result);
   }
 }
 

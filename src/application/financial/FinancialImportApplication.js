@@ -113,7 +113,7 @@ export class FinancialImportApplication {
         financialEventRepository: this.financialEventRepository,
       });
 
-      const result = importService.importCsv({
+      const result = await importService.importCsv({
         source,
         csv,
         chartOfAccounts: this.chartOfAccountsFactory(),
