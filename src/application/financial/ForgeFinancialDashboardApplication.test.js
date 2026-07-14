@@ -12,8 +12,8 @@ describe("ForgeFinancialDashboardApplication", () => {
       detail: "Financial dashboard data is loading.",
     });
     expect(result.statusItems[0]).toEqual({
-      label: "Financial Engine",
-      detail: "Reports are generated through the ledger domain engine.",
+      label: "Financial Workspace",
+      detail: "Repository-backed financial workspace read model is active.",
       value: "loading",
     });
   });
@@ -27,11 +27,11 @@ describe("ForgeFinancialDashboardApplication", () => {
           detail: "Financial position is stable.",
         },
         metadata: {
-          provider: "demo",
-          snapshotStatus: "current",
-          phase: "13.3",
+          provider: "financial-events",
+          snapshotStatus: "repository-backed",
+          phase: "16.2",
         },
-        balanceSheetLines: [{ accountId: "1000", amount: 100000 }],
+        balanceSheetLines: [],
       },
       operationsPlan: {
         focus: "Protect cash",
@@ -43,37 +43,45 @@ describe("ForgeFinancialDashboardApplication", () => {
     expect(result.operationsPlan).toEqual({ focus: "Protect cash" });
     expect(result.statusItems).toEqual([
       {
-        label: "Financial Engine",
-        detail: "Reports are generated through the ledger domain engine.",
+        label: "Financial Workspace",
+        detail: "Repository-backed financial workspace read model is active.",
         value: "online",
       },
       {
         label: "Data Provider",
         detail: "Provider abstraction is active for Phase 7.3.",
-        value: "demo",
+        value: "financial-events",
       },
       {
         label: "Snapshot Status",
         detail: "Live persistence and sync history are deferred.",
-        value: "current",
+        value: "repository-backed",
       },
     ]);
     expect(result.activities[1]).toMatchObject({
       id: "provider-active",
-      timestamp: "Phase 13.3",
+      timestamp: "Phase 16.2",
     });
   });
 
-  it("loads snapshot and operations through an injected fetcher", async () => {
+  it("loads the repository-backed financial read model and operations through an injected fetcher", async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce({
         json: async () => ({
           success: true,
           data: {
-            dashboard: {
-              kpis: { cash: 280000 },
-              metadata: { provider: "fixture" },
+            financial: {
+              type: "financial-dashboard",
+              dashboard: {
+                kpis: { cash: null, profit: 280000 },
+                metadata: {
+                  provider: "financial-events",
+                  snapshotStatus: "repository-backed",
+                  phase: "16.2",
+                },
+                balanceSheetLines: [],
+              },
             },
           },
         }),
@@ -90,10 +98,17 @@ describe("ForgeFinancialDashboardApplication", () => {
 
     const result = await ForgeFinancialDashboardApplication.load({ fetcher });
 
-    expect(fetcher).toHaveBeenNthCalledWith(1, "/api/financial/snapshot");
-    expect(fetcher).toHaveBeenNthCalledWith(2, "/api/financial/operations");
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "/api/financial/read-models?financial=true",
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "/api/financial/operations",
+    );
     expect(result.loadState).toBe("ready");
-    expect(result.kpis.cash).toBe(280000);
+    expect(result.kpis.profit).toBe(280000);
+    expect(result.kpis.cash).toBeNull();
     expect(result.operationsPlan.focus).toBe("Keep monitoring");
   });
 
@@ -101,14 +116,14 @@ describe("ForgeFinancialDashboardApplication", () => {
     const fetcher = vi.fn().mockResolvedValueOnce({
       json: async () => ({
         success: false,
-        error: "Snapshot unavailable.",
+        error: "Read model unavailable.",
       }),
     });
 
     const result = await ForgeFinancialDashboardApplication.load({ fetcher });
 
     expect(result.loadState).toBe("error");
-    expect(result.error).toBe("Snapshot unavailable.");
+    expect(result.error).toBe("Read model unavailable.");
     expect(result.statusItems[0].value).toBe("error");
   });
 });

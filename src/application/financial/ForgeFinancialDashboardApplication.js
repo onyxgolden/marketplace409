@@ -68,10 +68,10 @@ export class ForgeFinancialDashboardApplication {
 
   static async load({ fetcher = fetch } = {}) {
     try {
-      const snapshotPayload = await this.fetchJson({
+      const readModelPayload = await this.fetchJson({
         fetcher,
-        url: "/api/financial/snapshot",
-        fallbackMessage: "Financial snapshot failed.",
+        url: "/api/financial/read-models?financial=true",
+        fallbackMessage: "Financial read model failed.",
       });
 
       const operationsPayload = await this.fetchJson({
@@ -81,7 +81,7 @@ export class ForgeFinancialDashboardApplication {
       });
 
       return this.buildReadyModel({
-        dashboard: snapshotPayload.data?.dashboard || null,
+        dashboard: readModelPayload.data?.financial?.dashboard || null,
         operationsPlan: operationsPayload.data || null,
       });
     } catch (error) {
@@ -103,8 +103,8 @@ export class ForgeFinancialDashboardApplication {
   static buildStatusItems({ loadState, metadata }) {
     return [
       {
-        label: "Financial Engine",
-        detail: "Reports are generated through the ledger domain engine.",
+        label: "Financial Workspace",
+        detail: "Repository-backed financial workspace read model is active.",
         value: loadState === "ready" ? "online" : loadState,
       },
       {
