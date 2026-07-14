@@ -13,6 +13,17 @@ describe("CategoryNormalizer", () => {
     expect(result.affectsNOI).toBe(true);
   });
 
+  test("normalizes late fee income as rental income", () => {
+    const result = categoryNormalizer.normalize(
+      "Late Fee Income (Tenant Payment)"
+    );
+
+    expect(result.normalizedCategory).toBe("rental_income");
+    expect(result.transactionKind).toBe("income");
+    expect(result.affectsNOI).toBe(true);
+    expect(result.taxDeductible).toBe(false);
+  });
+
   test("normalizes repairs", () => {
     const result = categoryNormalizer.normalize(
       "Repairs (Capital Plumbing)"

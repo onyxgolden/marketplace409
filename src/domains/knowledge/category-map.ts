@@ -19,6 +19,15 @@ export const CATEGORY_MAP: Record<string, KnowledgeRecord> = {
     capitalized: false,
   },
 
+  "Late Fee Income": {
+    rawCategory: "Late Fee Income",
+    normalizedCategory: "rental_income",
+    transactionKind: "income",
+    taxDeductible: false,
+    affectsNOI: true,
+    capitalized: false,
+  },
+
   "Tenant Deposit": {
     rawCategory: "Tenant Deposit",
     normalizedCategory: "tenant_deposit",

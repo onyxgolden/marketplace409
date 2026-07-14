@@ -17,14 +17,26 @@ function propertyLabel(property) {
 }
 
 function recordIncome(record) {
-  if (Number(record.income || 0) > 0) return record.income;
-  if (Number(record.amount || 0) > 0) return record.amount;
+  if (record.type === "income") {
+    return Math.abs(Number(record.amount || 0));
+  }
+
+  if (Number(record.income || 0) > 0) {
+    return record.income;
+  }
+
   return 0;
 }
 
 function recordExpense(record) {
-  if (Number(record.expense || 0) > 0) return record.expense;
-  if (Number(record.amount || 0) < 0) return Math.abs(record.amount);
+  if (record.type === "expense" || record.type === "asset_purchase") {
+    return Math.abs(Number(record.amount || 0));
+  }
+
+  if (Number(record.expense || 0) > 0) {
+    return record.expense;
+  }
+
   return 0;
 }
 

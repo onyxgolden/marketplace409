@@ -29,6 +29,31 @@ describe("FinancialEventPostingAdapter", () => {
     expect(entry.postings[1].accountId).toBe("4000");
   });
 
+  test("posts late fee income to cash and rental income", () => {
+    const event = {
+      id: "evt-late-fee",
+      event_date: "2026-01-05",
+      description: "Late Fee Income",
+      amount: 35,
+      transaction_kind: "income",
+      normalized_category: "rental_income",
+      tax_deductible: false,
+      affects_noi: true,
+      capitalized: false,
+    };
+
+    const entry = financialEventPostingAdapter.toJournalEntry(event);
+
+    expect(entry.getDebitTotal().amount).toBe(3500);
+    expect(entry.getCreditTotal().amount).toBe(3500);
+
+    expect(entry.postings[0].accountId).toBe("1000");
+    expect(entry.postings[1].accountId).toBe("4000");
+    expect(entry.postings.map((posting) => posting.accountId)).not.toContain(
+      "5999"
+    );
+  });
+
   test("creates a balanced journal entry for a real estate purchase", () => {
     const event = {
       id: "evt-2",
