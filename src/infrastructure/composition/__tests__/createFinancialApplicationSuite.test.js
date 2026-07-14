@@ -5,6 +5,7 @@ import {
   FinancialImportApplication,
   FinancialIntelligenceApplication,
   FinancialOperationsApplication,
+  FinancialSnapshotViewApplication,
   TransactionReviewApplication,
 } from "../../../application/financial";
 
@@ -192,6 +193,35 @@ describe("createFinancialApplicationSuite", () => {
 
     expect(suite.financialOperationsApplication).toBe(
       financialOperationsApplication,
+    );
+  });
+
+  test("wires financial snapshot view application into the suite", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(suite.financialSnapshotViewApplication).toBeInstanceOf(
+      FinancialSnapshotViewApplication,
+    );
+  });
+
+  test("allows financial snapshot view application injection", async () => {
+    const financialSnapshotViewApplication = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      financialSnapshotViewApplication,
+    });
+
+    expect(suite.financialSnapshotViewApplication).toBe(
+      financialSnapshotViewApplication,
     );
   });
 

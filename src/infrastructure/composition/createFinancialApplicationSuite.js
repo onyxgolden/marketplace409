@@ -9,6 +9,7 @@ import {
   FinancialOperationsApplication,
   FinancialReportingApplication,
   FinancialReadModelApplication,
+  FinancialSnapshotViewApplication,
   TransactionReviewApplication,
 } from "../../application/financial";
 
@@ -125,6 +126,10 @@ export async function createFinancialApplicationSuite(deps = {}) {
       netWorthService: deps.netWorthService || NetWorthService,
     });
 
+  const financialSnapshotViewApplication =
+    deps.financialSnapshotViewApplication ||
+    new FinancialSnapshotViewApplication();
+
   const financialImportApplication =
     deps.financialImportApplication ||
     new FinancialImportApplication();
@@ -142,6 +147,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     financialOperationsService,
     explainabilityApplication,
     dashboardIntelligenceApplication,
+    financialSnapshotViewApplication,
     financialImportApplication,
     transactionReviewApplication,
     snapshotRepository,

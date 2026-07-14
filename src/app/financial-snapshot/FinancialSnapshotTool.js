@@ -24,7 +24,7 @@ export default function FinancialSnapshotTool() {
 
     createFinancialApplicationSuite().then((suite) => {
       if (active) {
-        setSnapshotApplication(suite.snapshotApplication);
+        setSnapshotApplication(suite.financialSnapshotViewApplication);
       }
     });
 
