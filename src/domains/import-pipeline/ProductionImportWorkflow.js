@@ -1,4 +1,5 @@
 import { TransactionReviewItem } from "../transaction-review/transaction-review-item";
+import { PropertyRecommendationService } from "../transaction-review/property-recommendation.service";
 import { ImportPipeline } from "./ImportPipeline";
 import { ImportResult } from "./ImportResult";
 
@@ -45,20 +46,50 @@ function buildReviewTransaction(record, index, sourceName) {
   });
 }
 
-function buildTransactionReview(records, sourceName) {
+function buildTransactionReview(
+  records,
+  sourceName,
+  properties,
+  recommendationService,
+) {
   return records.map((record, index) => {
     const resolvedProperty = record.resolvedProperty ?? {
       name: record.property ?? "Unknown Property",
     };
 
+    const needsAssignment =
+      !record.property ||
+      record.property === "Unknown Property" ||
+      resolvedProperty?.name === "Unknown Property";
+
+    const transaction = buildReviewTransaction(
+      record,
+      index,
+      sourceName,
+    );
+
+    const recommendation = needsAssignment
+      ? recommendationService.recommend({
+          transaction,
+          properties,
+        })
+      : {
+          suggestedProperties: [],
+          confidence: 0,
+        };
+
     return new TransactionReviewItem({
       record,
-      transaction: buildReviewTransaction(record, index, sourceName),
+      transaction,
       resolvedProperty,
-      needsAssignment:
-        !record.property ||
-        record.property === "Unknown Property" ||
-        resolvedProperty?.name === "Unknown Property",
+      needsAssignment,
+      confidence: recommendation.confidence,
+      suggestedProperties: recommendation.suggestedProperties,
+      assignmentStatus:
+        needsAssignment &&
+        recommendation.suggestedProperties.length > 0
+          ? "suggested"
+          : undefined,
     });
   });
 }
@@ -71,6 +102,7 @@ export class ProductionImportWorkflow {
     ownerId = null,
     summaryBuilder = buildDefaultSummary,
     sourceName = "Import",
+    recommendationService = new PropertyRecommendationService(),
   } = {}) {
     if (!parser) {
       throw new Error("ProductionImportWorkflow requires a parser");
@@ -88,6 +120,12 @@ export class ProductionImportWorkflow {
       );
     }
 
+    if (typeof recommendationService?.recommend !== "function") {
+      throw new Error(
+        "ProductionImportWorkflow requires a recommendation service",
+      );
+    }
+
     this.parser = parser;
     this.ownerId = ownerId;
 
@@ -100,11 +138,16 @@ export class ProductionImportWorkflow {
 
     this.summaryBuilder = summaryBuilder;
     this.sourceName = sourceName;
+    this.recommendationService = recommendationService;
 
     Object.freeze(this);
   }
 
-  importCsv({ csv, chartOfAccounts }) {
+  importCsv({
+    csv,
+    chartOfAccounts,
+    properties = [],
+  }) {
     if (typeof csv !== "string") {
       throw new Error(`${this.sourceName} CSV is required`);
     }
@@ -120,10 +163,15 @@ export class ProductionImportWorkflow {
     return this.importRecords({
       records: this.parser.parseCsv(csv),
       chartOfAccounts,
+      properties,
     });
   }
 
-  importRows({ rows, chartOfAccounts }) {
+  importRows({
+    rows,
+    chartOfAccounts,
+    properties = [],
+  }) {
     if (!Array.isArray(rows)) {
       throw new Error(`${this.sourceName} rows are required`);
     }
@@ -139,16 +187,27 @@ export class ProductionImportWorkflow {
     return this.importRecords({
       records: this.parser.parse(rows),
       chartOfAccounts,
+      properties,
     });
   }
 
-  importRecords({ records, chartOfAccounts }) {
+  importRecords({
+    records,
+    chartOfAccounts,
+    properties = [],
+  }) {
     if (!Array.isArray(records)) {
       throw new Error(`${this.sourceName} records are required`);
     }
 
     if (!chartOfAccounts) {
       throw new Error("ChartOfAccounts is required");
+    }
+
+    if (!Array.isArray(properties)) {
+      throw new Error(
+        "ProductionImportWorkflow properties must be an array",
+      );
     }
 
     const reports = this.pipeline.buildReports({
@@ -160,7 +219,12 @@ export class ProductionImportWorkflow {
       records,
       summary: this.summaryBuilder(records),
       reports,
-      transactionReview: buildTransactionReview(records, this.sourceName),
+      transactionReview: buildTransactionReview(
+        records,
+        this.sourceName,
+        properties,
+        this.recommendationService,
+      ),
     });
   }
 }

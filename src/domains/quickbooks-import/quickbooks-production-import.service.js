@@ -46,17 +46,19 @@ class QuickBooksProductionImportServiceImpl {
     Object.freeze(this);
   }
 
-  importCsv({ csv, chartOfAccounts }) {
+  importCsv({ csv, chartOfAccounts, properties = [] }) {
     return this.workflow.importCsv({
       csv,
       chartOfAccounts,
+      properties,
     });
   }
 
-  importRows({ rows, chartOfAccounts }) {
+  importRows({ rows, chartOfAccounts, properties = [] }) {
     return this.workflow.importRows({
       rows,
       chartOfAccounts,
+      properties,
     });
   }
 }

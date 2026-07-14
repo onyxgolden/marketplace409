@@ -2,8 +2,8 @@
 
 **Version:** 4.0
 **Status:** Active
-**Last Updated:** 2026-07-12
-**Latest Commit:** d8724a1 — Document governance architecture roadmap phases
+**Last Updated:** 2026-07-13
+**Latest Commit:** b355ff6 — Synchronize authoritative governance documentation
 
 ---
 
@@ -34,36 +34,44 @@ Historical milestones remain recorded below.
 
 ## Active Phase
 
-Phase 15.4 — Repository-Backed Governance Recommendations — Complete
+Transaction Review Intelligence Expansion — Property Recommendation Engine
 
 ## Current Objective
 
-Finish synchronizing the remaining authoritative governance documents with the completed Phase 14 and Phase 15 repository state.
+Synchronize the authoritative engineering documentation with the completed Property Recommendation implementation.
 
-Verify that the Engineering Control Center, Status, Session, and Architecture Roadmap consistently represent Phase 15.4 completion.
+Update:
 
-Run required repository and governance validation.
+- `FORGE_ENGINEERING_CONTROL_CENTER.md`
+- `FORGE_STATUS.md`
+- `FORGE_SESSION.md`
 
-Commit and push the authoritative documentation synchronization.
+Update `FORGE_ROADMAP.md` only if repository evidence establishes that the Property Recommendation milestone should be recorded as an architectural milestone.
 
-After synchronization is complete, perform repository-first inspection to identify the next production feature or architectural milestone.
+Run documentation verification.
 
-Do not continue Phase 15.4 by default.
+Run Mutation Firewall.
 
-The deferred Promotion renderer `Blocking Evidence` summary remains an optional observability enhancement and is not an architectural dependency.
+Commit the validated implementation and synchronized documentation.
+
+Push and confirm:
+
+- `HEAD == origin/main`
+- Working tree clean
+
+Do not resume governance work.
+
+Do not redesign the Property Recommendation Engine.
 
 ## Repository Health
 
 - Branch: `main`
-- Latest synchronized commit before current edits: `d8724a1`
-- Repository synchronized with `origin/main` through commit `d8724a1` before current documentation edits
-- Working tree contains only intended authoritative governance documentation changes
-- Full Vitest suite passing: **195 test files / 757 tests**
+- Latest synchronized commit before current edits: `b355ff6`
+- Repository synchronized with `origin/main` through commit `b355ff6` before the current implementation changes
+- Working tree contains only the validated Property Recommendation implementation and pending documentation synchronization
+- Full Vitest suite passing: **197 test files / 769 tests**
 - Production build passing
-- Mutation Firewall passing
-- Governance state validation passing
-- Shadow governance verification passing
-- Architecture Roadmap synchronized through Phase 15.4
+- Mutation Firewall pending final execution after documentation synchronization
 - Composition suites present: **6 composition suites**
 
 ## Current Architectural State
@@ -79,45 +87,32 @@ The repository includes six dedicated composition roots:
 - `createBusinessApplicationSuite`
 - `createInvestorApplicationSuite`
 
-Completed Phase 14 architecture includes:
+Transaction Review intelligence now includes:
 
-- Phase 14.1 — Marketplace Composition Foundation
-- Phase 14.2 — Business Composition Foundation
-- Phase 14.3 — Investor Composition Foundation
-- Phase 14.4 — Financial Import Composition Completion
+- `PropertyRecommendationService`
+- Deterministic advisory recommendation generation
+- Immutable recommendation results
+- Ranked property suggestions
+- Confidence scoring
+- Explanation generation
 
-Completed Phase 15 governance architecture includes:
+Production import orchestration integrates recommendations through `ProductionImportWorkflow`.
 
-- Phase 15.1 — Shadow Governance Synchronization Foundation
-- Phase 15.2 — Deterministic Governance State and Pipeline
-- Phase 15.3 — Repository-Backed Validation Evidence
-- Phase 15.4 — Repository-Backed Governance Recommendations
+This provides one provider-neutral recommendation integration point for:
 
-The governance system now includes:
+- Rentec
+- QuickBooks
+- Future import providers
 
-- Deterministic governance state
-- Validated session snapshots
-- Shadow governance document rendering
-- Repository-backed Git evidence
-- Repository-backed validation evidence
-- Shared recommendation evidence predicates
-- Promotion eligibility evaluation
-- Evidence-aware governance recommendations
-- Advisory-only promotion recommendations
+Property recommendations remain advisory only.
 
-Recommendation engines consume normalized governance evidence.
+`ManualPropertyAssignmentService` remains the exclusive authority for property assignment.
 
-Recommendation engines do not independently inspect Git state or validation artifacts.
+Property Resolution continues owning canonical property resolution.
 
-Evidence collectors observe repository facts.
+Recommendation generation belongs to the Transaction Review domain.
 
-Normalizers construct canonical governance evidence.
-
-Evaluators consume normalized governance evidence.
-
-Renderers present advisory conclusions.
-
-Human-controlled workflows retain promotion authority.
+Provider services do not own recommendation logic.
 
 Composition roots continue owning:
 
@@ -216,6 +211,49 @@ Push
     ↓
 Confirm Clean Repository
 ```
+
+---
+
+## Transaction Review Intelligence Expansion — Property Recommendation Engine
+
+### Status
+
+Complete
+
+### Delivered
+
+- Added `PropertyRecommendationService`
+- Added deterministic advisory property recommendation generation
+- Added immutable recommendation results
+- Added ranked property suggestions
+- Added confidence scoring
+- Added recommendation explanations
+- Integrated recommendations through `ProductionImportWorkflow`
+- Established one provider-neutral recommendation integration point
+- Extended Rentec and QuickBooks provider APIs with optional property candidates
+- Preserved backward compatibility for existing callers
+- Preserved `ManualPropertyAssignmentService` as the exclusive property-assignment authority
+- Preserved Property Resolution ownership of canonical property resolution
+
+### Architectural Boundary
+
+Property recommendations are advisory only.
+
+Recommendation generation belongs to Transaction Review.
+
+`ProductionImportWorkflow` owns recommendation orchestration.
+
+Provider implementations consume the shared orchestration boundary.
+
+`ManualPropertyAssignmentService` retains exclusive assignment authority.
+
+### Validation
+
+- ✓ Targeted Property Recommendation tests passed
+- ✓ ProductionImportWorkflow integration tests passed
+- ✓ Full Vitest suite passed: 197 test files and 769 tests
+- ✓ Production build passed
+- ✓ No regression introduced
 
 ---
 

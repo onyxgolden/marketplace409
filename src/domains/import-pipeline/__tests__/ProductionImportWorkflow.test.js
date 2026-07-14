@@ -109,6 +109,109 @@ describe("ProductionImportWorkflow", () => {
     });
   });
 
+  test("adds deterministic advisory property suggestions to unresolved review items", () => {
+    const parser = {
+      parse(rows) {
+        return rows;
+      },
+    };
+
+    const pipeline = {
+      buildReports() {
+        return {
+          balanceSheet: {},
+          incomeStatement: {},
+          trialBalance: {},
+        };
+      },
+    };
+
+    const workflow = new ProductionImportWorkflow({
+      parser,
+      pipeline,
+      sourceName: "Test",
+    });
+
+    const property = {
+      id: "property-1",
+      name: "Kent Avenue Duplex",
+      address: "4800 Kent Ave",
+    };
+
+    const result = workflow.importRows({
+      rows: [
+        {
+          id: "record-1",
+          description: "Plumbing repair at 4800 Kent Ave",
+          property: "Unknown Property",
+        },
+      ],
+      chartOfAccounts: {},
+      properties: [property],
+    });
+
+    expect(result.transactionReview[0]).toMatchObject({
+      needsAssignment: true,
+      confidence: 1,
+      suggestedProperties: [property],
+      assignmentStatus: "suggested",
+      reviewState: "pending",
+    });
+  });
+
+  test("preserves assigned review behavior when a record already has a property", () => {
+    const parser = {
+      parse(rows) {
+        return rows;
+      },
+    };
+
+    const pipeline = {
+      buildReports() {
+        return {
+          balanceSheet: {},
+          incomeStatement: {},
+          trialBalance: {},
+        };
+      },
+    };
+
+    const workflow = new ProductionImportWorkflow({
+      parser,
+      pipeline,
+      sourceName: "Test",
+    });
+
+    const result = workflow.importRows({
+      rows: [
+        {
+          id: "record-1",
+          description: "Expense at 4800 Kent Ave",
+          property: "Existing Property",
+          resolvedProperty: {
+            id: "existing-property",
+            name: "Existing Property",
+          },
+        },
+      ],
+      chartOfAccounts: {},
+      properties: [
+        {
+          id: "candidate-property",
+          name: "Candidate Property",
+          address: "4800 Kent Ave",
+        },
+      ],
+    });
+
+    expect(result.transactionReview[0]).toMatchObject({
+      needsAssignment: false,
+      confidence: 0,
+      suggestedProperties: [],
+      assignmentStatus: "assigned",
+    });
+  });
+
   test("requires a parser", () => {
     expect(() => new ProductionImportWorkflow()).toThrow(
       "ProductionImportWorkflow requires a parser",

@@ -41,19 +41,18 @@ The repository—not memory, documentation, or prior conversation—is the singl
 
 ## Last Verified
 
-**Verified:** 2026-07-12
+**Verified:** 2026-07-13
 
 ### Repository State
 
 * Current Branch: main
-* Latest Verified Commit: d8724a1 — Document governance architecture roadmap phases
-* Repository Status: Phase 15.4 repository-backed governance recommendations completed and authoritative Architecture Roadmap synchronization committed.
-* Repository Clean: Yes at the start of this documentation synchronization session.
-* Repository synchronized with origin/main through commit d8724a1.
+* Latest Verified Commit: b355ff6 — Synchronize authoritative governance documentation
+* Repository Status: Property Recommendation Engine implementation completed. Authoritative documentation synchronization in progress.
+* Repository synchronized with origin/main through commit b355ff6 before the current implementation session.
 
 ### Current Architectural Objective
 
-Synchronize the remaining authoritative governance documents with the completed Phase 14 and Phase 15 repository state.
+Synchronize the authoritative engineering documentation with the completed Property Recommendation implementation.
 
 Complete synchronization of:
 
@@ -61,13 +60,9 @@ Complete synchronization of:
 * `FORGE_STATUS.md`
 * `FORGE_SESSION.md`
 
-After synchronization is committed, perform repository-first inspection to identify the next production feature or architectural milestone.
+Update `FORGE_ROADMAP.md` only if repository evidence establishes that the Property Recommendation milestone should be recorded as an architectural milestone.
 
-Do not continue Phase 15.4 unless repository evidence identifies a concrete defect or the deferred renderer observability enhancement is explicitly prioritized.
-
-### Current Architectural Phase
-
-Phase 15.4 — Repository-Backed Governance Recommendations — Complete
+After documentation synchronization is committed, perform repository validation, commit, push, and confirm repository synchronization.
 
 ### Current Repository State
 
@@ -82,69 +77,64 @@ The repository includes six dedicated composition roots:
 * `createBusinessApplicationSuite`
 * `createInvestorApplicationSuite`
 
-Completed Phase 14 architecture includes:
+Transaction Review intelligence now includes:
 
-* Phase 14.1 — Marketplace Composition Foundation
-* Phase 14.2 — Business Composition Foundation
-* Phase 14.3 — Investor Composition Foundation
-* Phase 14.4 — Financial Import Composition Completion
+* `PropertyRecommendationService`
+* Deterministic advisory property recommendation generation
+* Ranked property recommendations
+* Confidence scoring
+* Explanation generation
+* Immutable recommendation model
 
-Completed Phase 15 governance architecture includes:
+Production import orchestration now integrates property recommendations through a single provider-neutral boundary.
 
-* Phase 15.1 — Shadow Governance Synchronization Foundation
-* Phase 15.2 — Deterministic Governance State and Pipeline
-* Phase 15.3 — Repository-Backed Validation Evidence
-* Phase 15.4 — Repository-Backed Governance Recommendations
+The canonical recommendation flow is:
 
-The governance system now includes:
+Transaction Review
 
-* Deterministic governance state
-* Validated session snapshots
-* Shadow governance document rendering
-* Repository-backed Git evidence
-* Repository-backed validation evidence
-* Shared recommendation evidence predicates
-* Promotion eligibility evaluation
-* Evidence-aware governance recommendations
-* Advisory-only promotion recommendations
+↓
 
-Recommendation engines consume normalized governance evidence.
+PropertyRecommendationService
 
-Recommendation engines do not independently inspect Git state or validation artifacts.
+↓
 
-Promotion recommendations remain advisory and do not mutate repository state or governance authority.
+ProductionImportWorkflow
+
+↓
+
+Provider Import Services
+
+↓
+
+ManualPropertyAssignmentService
+
+Property recommendations remain advisory only.
+
+`ManualPropertyAssignmentService` remains the exclusive authority for property assignment.
+
+Recommendation generation belongs to the Transaction Review domain.
+
+Property resolution continues owning canonical property resolution responsibilities.
 
 ### Verification Status
 
-* Full Vitest suite passed: 195 test files and 757 tests.
+* Full Vitest suite passed: 197 test files and 769 tests.
 * Production build passed.
-* Mutation Firewall passed.
-* Governance state validation passed.
-* Shadow governance verification passed.
-* Repository-backed recommendation evidence tests passed.
-* Phase 15.4 implementation completed.
-* Architecture Roadmap synchronized through Phase 15.4.
-* Repository synchronized with origin/main through commit d8724a1.
+* Property Recommendation integration validated.
+* Backward compatibility preserved for existing provider integrations.
 
 ### Current Risk
 
-Do not allow recommendation engines to become independent repository inspectors.
+Do not allow recommendation services to perform automatic property assignment.
 
-Do not duplicate Git-state interpretation, validation-artifact interpretation, or evidence normalization inside recommendation renderers or evaluators.
+Preserve the architectural boundary:
 
-Preserve the boundary:
+* Recommendation services generate advisory recommendations.
+* ProductionImportWorkflow orchestrates recommendation delivery.
+* ManualPropertyAssignmentService remains the exclusive assignment authority.
+* Property Resolution remains responsible for canonical property resolution.
 
-* Evidence collectors observe repository facts.
-* Normalizers create canonical governance evidence.
-* Evaluators consume normalized evidence.
-* Renderers present advisory conclusions.
-* Human-controlled workflows retain promotion authority.
-
-Do not extend governance automation merely for architectural symmetry.
-
-Do not continue governance work when repository-first inspection identifies a higher-value production milestone.
-
-The deferred Promotion renderer `Blocking Evidence` summary is an observability enhancement only and is not an architectural dependency.
+Avoid duplicating recommendation orchestration or assignment logic across provider implementations.
 
 ### Blocking Issues
 
@@ -152,13 +142,9 @@ None.
 
 ### Documentation Status
 
-Architecture Roadmap synchronization is complete through Phase 15.4.
+Engineering documentation synchronization for the Property Recommendation implementation is in progress.
 
-Engineering Control Center synchronization is in progress.
-
-Status and Session synchronization remain pending.
-
-Repository was synchronized with origin/main through commit d8724a1 before the current documentation edits began.
+The Engineering Control Center, Status, and Session documents are being synchronized with verified repository evidence before commit.
 
 ---
 
@@ -183,9 +169,11 @@ Documentation is corrected.
 * [ ] Synchronize `FORGE_ENGINEERING_CONTROL_CENTER.md`.
 * [ ] Synchronize `FORGE_STATUS.md`.
 * [ ] Synchronize `FORGE_SESSION.md`.
-* [ ] Verify authoritative governance documents agree on Phase 15.4 completion.
-* [ ] Run required repository and governance validation.
-* [ ] Commit and push authoritative governance synchronization.
+* [ ] Update `FORGE_ROADMAP.md` only if repository evidence establishes the Property Recommendation milestone as an architectural milestone.
+* [ ] Verify documentation consistency.
+* [ ] Run Mutation Firewall.
+* [ ] Commit implementation and documentation.
+* [ ] Push.
 * [ ] Confirm HEAD equals origin/main and the working tree is clean.
 
 ## Next

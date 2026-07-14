@@ -20,10 +20,11 @@ class RentecProductionImportServiceImpl {
     Object.freeze(this);
   }
 
-  importCsv({ csv, chartOfAccounts }) {
+  importCsv({ csv, chartOfAccounts, properties = [] }) {
     return this.workflow.importCsv({
       csv,
       chartOfAccounts,
+      properties,
     });
   }
 }
