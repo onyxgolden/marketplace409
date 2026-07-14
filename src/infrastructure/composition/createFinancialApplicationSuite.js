@@ -10,6 +10,7 @@ import {
   FinancialOperationsApplication,
   FinancialReportingApplication,
   FinancialReadModelApplication,
+  FinancialWorkspaceQueryService,
   FinancialSnapshotViewApplication,
   TransactionReviewApplication,
 } from "../../application/financial";
@@ -21,6 +22,10 @@ import {
   FinancialScenarioModelingService,
   FinancialTrendAnalysisService,
 } from "../../domains/financial-intelligence";
+
+import {
+  financialEventAggregationService,
+} from "../../domains/financial-workspace";
 
 import { DemoFinancialDataProvider } from "../../domains/ledger";
 
@@ -77,6 +82,17 @@ export async function createFinancialApplicationSuite(deps = {}) {
       reportingApplication,
     });
 
+
+  const financialWorkspaceQueryService =
+    deps.financialWorkspaceQueryService ||
+    new FinancialWorkspaceQueryService({
+      financialEventRepository,
+      aggregationService:
+        deps.aggregationService ||
+        financialEventAggregationService,
+    });
+
+
   const trendAnalysisService =
     deps.trendAnalysisService || new FinancialTrendAnalysisService();
 
@@ -96,6 +112,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     deps.financialIntelligenceApplication ||
     new FinancialIntelligenceApplication({
       readModelApplication,
+    financialWorkspaceQueryService,
       trendAnalysisService,
       scenarioModelingService,
       forecastService,
@@ -149,6 +166,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     snapshotApplication,
     reportingApplication,
     readModelApplication,
+    financialWorkspaceQueryService,
     financialIntelligenceApplication,
     financialOperationsApplication,
     financialOperationsService,
