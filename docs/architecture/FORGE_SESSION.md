@@ -2,8 +2,8 @@
 
 **Version:** 4.0
 **Status:** Active
-**Last Updated:** 2026-07-11
-**Latest Commit:** 8436d7e — Complete financial import composition
+**Last Updated:** 2026-07-12
+**Latest Commit:** d8724a1 — Document governance architecture roadmap phases
 
 ---
 
@@ -34,30 +34,37 @@ Historical milestones remain recorded below.
 
 ## Active Phase
 
-Phase 14.4 — Financial Import Composition Completion — Complete
+Phase 15.4 — Repository-Backed Governance Recommendations — Complete
 
 ## Current Objective
 
-Synchronize governance documentation for Financial Import Composition Completion.
+Finish synchronizing the remaining authoritative governance documents with the completed Phase 14 and Phase 15 repository state.
 
-Commit and push the verified Phase 14.4 implementation and governance synchronization.
+Verify that the Engineering Control Center, Status, Session, and Architecture Roadmap consistently represent Phase 15.4 completion.
 
-Confirm the repository is clean and synchronized with `origin/main`.
+Run required repository and governance validation.
 
-Future implementation must continue extending meaningful architectural capabilities rather than introducing application services, composition roots, or other abstractions solely for symmetry.
+Commit and push the authoritative documentation synchronization.
+
+After synchronization is complete, perform repository-first inspection to identify the next production feature or architectural milestone.
+
+Do not continue Phase 15.4 by default.
+
+The deferred Promotion renderer `Blocking Evidence` summary remains an optional observability enhancement and is not an architectural dependency.
 
 ## Repository Health
 
 - Branch: `main`
-- Latest verified commit: `8436d7e`
-- Financial Import Composition Completion implementation completed in the working tree
-- Governance synchronization in progress
-- Repository synchronized with `origin/main` through commit `8436d7e`
-- Working tree contains only intended Phase 14.4 governance changes
-- Full Vitest suite passing: **183 test files / 695 tests**
-- Focused Financial composition and application validation passing: **3 test files / 32 tests**
-- Composition suites present: **6 composition suites**
+- Latest synchronized commit before current edits: `d8724a1`
+- Repository synchronized with `origin/main` through commit `d8724a1` before current documentation edits
+- Working tree contains only intended authoritative governance documentation changes
+- Full Vitest suite passing: **195 test files / 757 tests**
 - Production build passing
+- Mutation Firewall passing
+- Governance state validation passing
+- Shadow governance verification passing
+- Architecture Roadmap synchronized through Phase 15.4
+- Composition suites present: **6 composition suites**
 
 ## Current Architectural State
 
@@ -72,28 +79,47 @@ The repository includes six dedicated composition roots:
 - `createBusinessApplicationSuite`
 - `createInvestorApplicationSuite`
 
-The Financial composition root now additionally composes:
+Completed Phase 14 architecture includes:
 
-- `FinancialImportApplication`
-- `TransactionReviewApplication`
+- Phase 14.1 — Marketplace Composition Foundation
+- Phase 14.2 — Business Composition Foundation
+- Phase 14.3 — Investor Composition Foundation
+- Phase 14.4 — Financial Import Composition Completion
 
-`FinancialImportTool` now consumes these applications through `createFinancialApplicationSuite`.
+Completed Phase 15 governance architecture includes:
 
-Direct construction of `FinancialImportApplication` and `TransactionReviewApplication` has been removed from the Financial Import presentation boundary.
+- Phase 15.1 — Shadow Governance Synchronization Foundation
+- Phase 15.2 — Deterministic Governance State and Pipeline
+- Phase 15.3 — Repository-Backed Validation Evidence
+- Phase 15.4 — Repository-Backed Governance Recommendations
 
-The existing standalone `createTransactionReviewApplicationSuite` remains unchanged.
+The governance system now includes:
 
-The Investor composition root continues centralizing dependency construction for:
+- Deterministic governance state
+- Validated session snapshots
+- Shadow governance document rendering
+- Repository-backed Git evidence
+- Repository-backed validation evidence
+- Shared recommendation evidence predicates
+- Promotion eligibility evaluation
+- Evidence-aware governance recommendations
+- Advisory-only promotion recommendations
 
-- `InvestorPropertyApplication`
-- `InvestorCashBuyerApplication`
-- `InvestorWholesalerApplication`
-- Shared Supabase dependency
-- Shared image uploader dependency
+Recommendation engines consume normalized governance evidence.
 
-Investor delivery boundaries continue consuming the composition root while existing application workflow ownership and production behavior remain preserved.
+Recommendation engines do not independently inspect Git state or validation artifacts.
 
-Composition roots own:
+Evidence collectors observe repository facts.
+
+Normalizers construct canonical governance evidence.
+
+Evaluators consume normalized governance evidence.
+
+Renderers present advisory conclusions.
+
+Human-controlled workflows retain promotion authority.
+
+Composition roots continue owning:
 
 - Dependency construction
 - Repository selection
@@ -105,7 +131,7 @@ Composition roots own:
 - Service-graph assembly
 - Dependency injection
 
-Application services own:
+Application services continue owning:
 
 - Authentication
 - Authorization
@@ -190,6 +216,115 @@ Push
     ↓
 Confirm Clean Repository
 ```
+
+---
+
+## Phase 15.4 — Repository-Backed Governance Recommendations
+
+### Status
+
+Complete
+
+### Delivered
+
+- Added shared recommendation evidence predicates
+- Aligned promotion eligibility evaluation with canonical governance evidence
+- Added repository-backed recommendation evidence gating
+- Added canonical validation evidence gating
+- Preserved advisory-only recommendation authority
+- Prevented recommendation engines from independently inspecting Git state or validation artifacts
+- Established normalized governance evidence as the recommendation-engine boundary
+- Preserved human-controlled promotion authority
+- Deferred the Promotion renderer `Blocking Evidence` summary as an optional observability enhancement
+
+### Validation
+
+- ✓ Full Vitest suite passed: 195 test files and 757 tests
+- ✓ Production build passed
+- ✓ Mutation Firewall passed
+- ✓ Governance validation passed
+- ✓ Shadow governance verification passed
+- ✓ Implementation committed through `8384bd3`
+- ✓ Architecture Roadmap synchronization committed through `d8724a1`
+
+---
+
+## Phase 15.3 — Repository-Backed Validation Evidence
+
+### Status
+
+Complete
+
+### Delivered
+
+- Added repository-backed validation evidence collection
+- Normalized validation evidence into canonical governance state
+- Added verified validation evidence rendering
+- Added evidence gating for governance conclusions
+- Preserved deterministic governance-state generation
+- Prevented unverified validation claims from being treated as authoritative
+
+### Validation
+
+- ✓ Governance validation passed
+- ✓ Shadow governance verification passed
+- ✓ Repository-backed validation evidence tests passed
+- ✓ Production build passed
+- ✓ Mutation Firewall passed
+
+---
+
+## Phase 15.2 — Deterministic Governance State and Pipeline
+
+### Status
+
+Complete
+
+### Delivered
+
+- Added deterministic governance state
+- Added validated session snapshots
+- Added governance-state and session-snapshot schemas
+- Added session evidence collection
+- Added promotion eligibility evaluation
+- Added objective recommendation generation
+- Added deterministic shadow governance orchestration
+- Added integration coverage using representative disposable fixtures
+
+### Validation
+
+- ✓ Governance-state validation passed
+- ✓ Session-snapshot validation passed
+- ✓ Shadow governance pipeline tests passed
+- ✓ Full repository validation passed
+- ✓ Production build passed
+- ✓ Mutation Firewall passed
+
+---
+
+## Phase 15.1 — Shadow Governance Synchronization Foundation
+
+### Status
+
+Complete
+
+### Delivered
+
+- Added shadow governance document rendering
+- Added synchronization metadata
+- Added immutable and editable section definitions
+- Added capability and promotion-policy configuration
+- Added shadow governance verification
+- Established advisory shadow documents without replacing authoritative governance documents
+- Preserved repository authority and human-controlled promotion
+
+### Validation
+
+- ✓ Shadow governance verification passed
+- ✓ Governance configuration validation passed
+- ✓ Full repository validation passed
+- ✓ Production build passed
+- ✓ Mutation Firewall passed
 
 ---
 
@@ -288,7 +423,7 @@ Complete
 - ✓ Focused composition suites passed: 6 test files and 28 tests
 - ✓ Full Vitest suite passed: 181 test files and 685 tests
 - ✓ Production build passed
-- Governance synchronization, commit, and push remain
+- ✓ Governance synchronization, commit, and push completed
 
 ### Validation
 

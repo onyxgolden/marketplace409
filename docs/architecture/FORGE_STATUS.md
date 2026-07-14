@@ -2,7 +2,7 @@
 
 **Version:** 2.0
 **Status:** Active
-**Last Updated:** 2026-07-11
+**Last Updated:** 2026-07-12
 
 ---
 
@@ -29,19 +29,21 @@ main
 
 ## Latest Green Commit
 
-8436d7e — Complete financial import composition
+d8724a1 — Document governance architecture roadmap phases
 
 ## Repository
 
-Financial Import Composition Completion implementation completed in the working tree.
+Phase 15.4 — Repository-Backed Governance Recommendations is complete.
 
-Governance synchronization in progress.
+The authoritative Architecture Roadmap is synchronized through Phases 14.1–14.4 and 15.1–15.4.
 
-Repository synchronized with `origin/main` through commit `8436d7e`.
+The remaining authoritative governance documentation synchronization is in progress.
+
+The repository was synchronized with `origin/main` through commit `d8724a1` before the current documentation edits began.
 
 ## Working Tree
 
-Contains only intended Phase 14.4 governance changes.
+Contains only intended authoritative governance documentation changes.
 
 ## Production Build
 
@@ -49,15 +51,21 @@ PASS
 
 ## Test Status
 
-183 test files passing
+195 test files passing
 
-695 tests passing
+757 tests passing
 
 ## Mutation Firewall
 
 PASS
 
-Expected legacy business `"claimed"` warning only.
+## Governance Validation
+
+PASS
+
+## Shadow Governance
+
+PASS
 
 ---
 
@@ -65,15 +73,25 @@ Expected legacy business `"claimed"` warning only.
 
 ## Phase
 
-Phase 14.4 — Financial Import Composition Completion — Complete
+Phase 15.4 — Repository-Backed Governance Recommendations — Complete
 
 ## Immediate Objective
 
-Synchronize governance documentation for Financial Import Composition Completion.
+Finish synchronizing:
 
-Commit and push the verified Phase 14.4 implementation and governance synchronization.
+- `FORGE_ENGINEERING_CONTROL_CENTER.md`
+- `FORGE_STATUS.md`
+- `FORGE_SESSION.md`
 
-Confirm the repository is clean and synchronized with `origin/main`.
+Verify the authoritative documents agree on Phase 15.4 completion.
+
+Run required repository and governance validation.
+
+Commit and push the documentation synchronization.
+
+Then perform repository-first inspection to select the next production feature or architectural milestone.
+
+Do not continue Phase 15.4 by default.
 
 ---
 
@@ -251,7 +269,7 @@ Confirm the repository is clean and synchronized with `origin/main`.
 
 Application-layer consolidation remains complete across financial, business, investor, marketplace, listings, favorites, saved listings, user listings, pet voting, administrator authorization, and transaction review workflows.
 
-The repository now includes six dedicated composition roots:
+The repository includes six dedicated composition roots:
 
 - `createFinancialApplicationSuite`
 - `createTransactionReviewApplicationSuite`
@@ -260,63 +278,107 @@ The repository now includes six dedicated composition roots:
 - `createBusinessApplicationSuite`
 - `createInvestorApplicationSuite`
 
-Connection Platform dependency construction has been centralized without introducing an unnecessary application service.
+Completed composition architecture includes:
 
-Marketplace dependency construction has been centralized while preserving existing application workflow ownership and production behavior.
+- Phase 14.1 — Marketplace Composition Foundation
+- Phase 14.2 — Business Composition Foundation
+- Phase 14.3 — Investor Composition Foundation
+- Phase 14.4 — Financial Import Composition Completion
 
-Business dependency construction has been centralized while preserving existing application workflow ownership and production behavior.
+Completed governance architecture includes:
 
-Investor dependency construction has been centralized while preserving existing application workflow ownership and production behavior.
+- Phase 15.1 — Shadow Governance Synchronization Foundation
+- Phase 15.2 — Deterministic Governance State and Pipeline
+- Phase 15.3 — Repository-Backed Validation Evidence
+- Phase 15.4 — Repository-Backed Governance Recommendations
 
-Composition roots continue owning dependency construction.
+The governance system now provides:
 
-Application services continue owning workflow orchestration.
+- Deterministic governance state
+- Validated session snapshots
+- Shadow governance rendering and verification
+- Repository-backed Git evidence
+- Repository-backed validation evidence
+- Shared recommendation evidence predicates
+- Promotion eligibility evaluation
+- Evidence-aware promotion recommendations
+- Advisory-only recommendation output
 
-Domain services continue owning business behavior.
+Recommendation engines consume normalized governance evidence.
 
-Infrastructure continues providing concrete implementations.
+They do not independently inspect Git state or validation artifacts.
 
-Production behavior remains unchanged.
+Evidence collectors observe repository facts.
+
+Normalizers construct canonical governance evidence.
+
+Evaluators consume normalized evidence.
+
+Renderers present advisory conclusions.
+
+Human-controlled workflows retain promotion authority.
+
+The deferred Promotion renderer `Blocking Evidence` summary remains an optional observability enhancement and is not an architectural dependency.
 
 ---
 
 # Immediate Next Milestone
 
-Perform repository-first inspection to identify the next cohesive architectural objective.
+Complete authoritative governance documentation synchronization.
 
-Evaluate verified repository capability gaps.
+Run repository and governance validation.
 
-Select the next architectural milestone from repository evidence.
+Commit and push the synchronized documents.
+
+Confirm:
+
+- HEAD equals `origin/main`
+- Working tree is clean
+- Phase 15.4 is consistently represented
+- Stale commit and validation references are removed
+
+After synchronization, perform repository-first inspection to identify the next cohesive production feature or architectural milestone.
 
 ---
 
-### 2026-07-11
+# Recent Completed Milestones
 
-Commit `56e3522`
+### 2026-07-12
 
-Completed Phase 14.3 — Investor Composition Foundation.
+Commit `d8724a1`
 
-Introduced `createInvestorApplicationSuite`, centralized Investor dependency construction, migrated Investor delivery boundaries to consume the composition root, preserved production behavior, and completed full repository validation.
+Documented completed governance architecture roadmap phases through Phase 15.4.
 
-Governance synchronization in progress.
+Repository synchronized with `origin/main`.
 
-Repository implementation synchronized with `origin/main` through commit `56e3522`.
+Full validation remained green: 195 test files and 757 tests.
 
-Full validation passed: 183 test files and 691 tests.
+Production build, Mutation Firewall, governance validation, and shadow governance verification passed.
+
+---
+
+### 2026-07-12
+
+Commit `8384bd3`
+
+Completed Phase 15.4 — Repository-Backed Governance Recommendations.
+
+Aligned recommendation evaluation with canonical repository and validation evidence.
+
+Preserved advisory-only recommendation authority.
+
+Full validation passed: 195 test files and 757 tests.
 
 Production build passed.
 
----
+Mutation Firewall passed.
 
-### 2026-07-11
+Governance validation passed.
 
-Commit `564347a`
-
-Completed Phase 13.5 — Connection Platform Composition Foundation.
-
-Introduced `createConnectionPlatformSuite`, centralized Connection Platform dependency construction, synchronized governance documentation, and completed the milestone with a clean repository synchronized to `origin/main`.
+Shadow governance verification passed.
 
 ---
+
 
 # Session Boot Checklist
 
