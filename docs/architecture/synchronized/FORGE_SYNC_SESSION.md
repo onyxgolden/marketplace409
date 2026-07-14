@@ -18,7 +18,7 @@
 
 **Last Synchronization:** Not yet generated
 **Session ID:** Not recorded
-**Evidence Snapshot:** governance/snapshots/forge-session-20260712-224650.json
+**Evidence Snapshot:** governance/snapshots/forge-session-20260713-231818.json
 **Renderer Version:** Not recorded
 **Mode:** shadow-only
 
@@ -65,75 +65,69 @@ None recorded.
 | Check            | Result |
 | ---------------- | ------ |
 | Branch           | main |
-| HEAD             | 9f8c7092e1c2fdfaa2ef90c134ed23f326adbdc0 |
-| origin/main      | 9f8c7092e1c2fdfaa2ef90c134ed23f326adbdc0 |
+| HEAD             | 35d10b475e76186049caec7d308caf3170dbb61b |
+| origin/main      | 35d10b475e76186049caec7d308caf3170dbb61b |
 | Working tree     | clean |
 | Focused tests    | passing — RUN  v4.1.9 /home/jason/USMarketplace/marketplace409
 
- ✓ scripts/governance/__tests__/buildSessionValidationEvidence.test.mjs (7 tests) 10ms
- ✓ scripts/governance/__tests__/writeValidatedArtifact.test.mjs (7 tests) 18ms
- ✓ scripts/governance/__tests__/collectSessionEvidence.test.mjs (3 tests) 571ms
- ✓ scripts/governance/__tests__/selectEligibleValidationEvidence.test.mjs (6 tests) 589ms
- ✓ scripts/governance/__tests__/generateValidationEvidence.test.mjs (6 tests) 666ms
- ✓ scripts/governance/__tests__/validateValidationEvidence.test.mjs (14 tests) 668ms
- ✓ scripts/governance/__tests__/runShadowGovernancePipeline.test.mjs (2 tests) 1322ms
-     ✓ executes the real pipeline successfully in a disposable Git repository  856ms
-     ✓ rolls back generated state after a late-stage verifier failure  465ms
+ ✓ src/domains/financial-import/__tests__/financial-import.service.test.js (8 tests) 16ms
+ ✓ src/application/financial/FinancialImportApplication.test.js (6 tests) 12ms
+ ✓ src/infrastructure/composition/__tests__/createFinancialApplicationSuite.test.js (18 tests) 25ms
 
- Test Files  7 passed (7)
-      Tests  45 passed (45)
-   Start at  22:46:21
-   Duration  1.62s (transform 412ms, setup 0ms, import 592ms, tests 3.84s, environment 1ms) |
+ Test Files  3 passed (3)
+      Tests  32 passed (32)
+   Start at  23:16:54
+   Duration  900ms (transform 1.10s, setup 0ms, import 1.49s, tests 52ms, environment 0ms) |
 | Full tests       | passing — [output truncated]
-.provider.test.ts (6 tests) 10ms
- ✓ src/platform/value-objects/__tests__/Money.test.js (2 tests) 4ms
- ✓ src/application/business/BusinessDeleteApplication.test.js (3 tests) 9ms
- ✓ src/infrastructure/composition/__tests__/createTransactionReviewApplicationSuite.test.js (3 tests) 11ms
- ✓ src/domains/connection/__tests__/credential-reference.types.test.ts (3 tests) 8ms
- ✓ src/infrastructure/composition/__tests__/createInvestorApplicationSuite.test.js (3 tests) 8ms
- ✓ src/domains/financial-insights/__tests__/financial-insights.service.test.ts (3 tests) 9ms
- ✓ src/domains/plaid-adapter/__tests__/plaid-financial-account.mapper.test.ts (2 tests) 7ms
- ✓ src/domains/connection/__tests__/connection.repository.test.ts (5 tests) 9ms
- ✓ src/domains/connection/__tests__/connection-provisioning.service.test.ts (3 tests) 14ms
- ✓ src/domains/financial-account/__tests__/financial-account-import.types.test.ts (1 test) 16ms
- ✓ src/domains/risk/__tests__/risk-snapshot.repository.test.ts (4 tests) 11ms
- ✓ src/domains/ledger/trace/__tests__/TraceIntelligenceService.test.js (2 tests) 8ms
- ✓ src/domains/financial-account/__tests__/financial-account-import.service.test.ts (1 test) 11ms
- ✓ src/domains/financial-account/__tests__/financial-account.repository.test.ts (3 tests) 8ms
- ✓ src/domains/ledger/calculators/__tests__/BalanceCalculatorMoney.test.js (1 test) 7ms
- ✓ src/domains/ledger/entities/__tests__/GeneralLedgerFindByAccount.test.js (1 test) 5ms
- ✓ src/domains/financial-account/__tests__/financial-account.mapper.test.ts (1 test) 6ms
- ✓ src/domains/ledger/reports/__tests__/CashFlowStatement.test.js (1 test) 9ms
- ✓ scripts/governance/__tests__/buildSessionValidationEvidence.test.mjs (7 tests) 14ms
- ✓ src/domains/ledger/accounts/__tests__/AccountClassification.test.js (2 tests) 7ms
- ✓ src/domains/connection/__tests__/connection-summary.types.test.ts (2 tests) 8ms
- ✓ src/domains/ledger/services/__tests__/AccountRollupService.test.js (1 test) 8ms
- ✓ src/domains/account-balance/__tests__/account-balance.types.test.ts (2 tests) 6ms
- ✓ src/domains/plaid-adapter/__tests__/plaid-connection.mapper.test.ts (1 test) 6ms
- ✓ src/domains/property/__tests__/property-resolver.service.test.ts (4 tests) 8ms
- ✓ src/domains/risk/__tests__/risk-executive-report.service.test.ts (1 test) 6ms
- ✓ src/domains/financial-intelligence/__tests__/FinancialPlanningService.test.js (3 tests) 5ms
- ✓ src/domains/ledger/entities/__tests__/GeneralLedger.test.js (2 tests) 8ms
- ✓ src/domains/financial-event/__tests__/financial-event-import.types.test.ts (1 test) 6ms
- ✓ src/domains/ledger/providers/__tests__/DemoFinancialDataProvider.test.js (1 test) 8ms
- ✓ src/domains/ledger/providers/__tests__/ProductionFinancialDataProvider.test.js (1 test) 8ms
- ✓ src/domains/connection/__tests__/account-import.types.test.ts (1 test) 6ms
- ✓ src/domains/ledger/repositories/__tests__/InMemoryAccountingPeriodRepositorySave.test.js (1 test) 6ms
- ✓ src/domains/ledger/accounts/__tests__/AccountType.test.js (2 tests) 7ms
- ✓ src/domains/connection/__tests__/connection-persistence.types.test.ts (1 test) 6ms
- ✓ src/domains/ledger/repositories/__tests__/InMemoryAccountingPeriodRepository.test.js (2 tests) 7ms
+ns/risk/__tests__/risk-aggregation.service.test.ts (4 tests) 12ms
+ ✓ src/domains/ledger/trace/__tests__/TraceExplorerService.test.js (1 test) 11ms
+ ✓ src/domains/risk/__tests__/risk-engine.service.test.ts (2 tests) 10ms
+ ✓ src/domains/financial-event/__tests__/financial-event-posting.adapter.test.js (2 tests) 13ms
+ ✓ src/domains/ledger/snapshots/__tests__/SnapshotHistoryService.test.js (2 tests) 11ms
+ ✓ src/domains/ledger/snapshots/__tests__/FinancialSnapshotRepository.test.js (2 tests) 11ms
+ ✓ src/domains/ledger/reports/builders/__tests__/ReportSectionBuilder.test.js (2 tests) 18ms
+ ✓ src/domains/connection/__tests__/institution-reference.repository.test.ts (5 tests) 14ms
+ ✓ src/domains/ledger/services/__tests__/AccountRollupSnapshotBuilder.test.js (1 test) 10ms
+ ✓ src/domains/risk/__tests__/risk-executive-report.service.test.ts (1 test) 9ms
+ ✓ src/domains/transaction/__tests__/transaction.repository.test.ts (3 tests) 12ms
+ ✓ src/infrastructure/composition/__tests__/createMarketplaceApplicationSuite.test.js (3 tests) 22ms
+ ✓ src/domains/ledger/providers/__tests__/ProductionFinancialDataProvider.test.js (1 test) 7ms
+ ✓ src/domains/knowledge/__tests__/category-normalizer.test.ts (5 tests) 10ms
+ ✓ src/domains/financial-intelligence/__tests__/FinancialPlanningService.test.js (3 tests) 12ms
+ ✓ src/domains/connection/__tests__/account-import.types.test.ts (1 test) 9ms
+ ✓ src/domains/property/__tests__/property-rule-management.service.test.ts (3 tests) 11ms
+ ✓ src/domains/ledger/snapshots/__tests__/FinancialSnapshot.test.js (2 tests) 13ms
+ ✓ src/domains/ledger/repositories/__tests__/InMemoryAccountingPeriodRepository.test.js (2 tests) 8ms
+ ✓ src/domains/ledger/entities/__tests__/GeneralLedger.test.js (2 tests) 11ms
+ ✓ src/domains/business/__tests__/business.mapper.test.ts (2 tests) 9ms
+ ✓ src/domains/ledger/services/__tests__/AccountRollupService.test.js (1 test) 11ms
+ ✓ src/domains/ledger/reports/sections/__tests__/BalanceSheetSection.test.js (1 test) 8ms
+ ✓ src/domains/ledger/entities/__tests__/GeneralLedgerFindByAccount.test.js (1 test) 8ms
+ ✓ src/domains/ledger/accounts/__tests__/AccountType.test.js (2 tests) 30ms
+ ✓ src/infrastructure/composition/__tests__/createInvestorApplicationSuite.test.js (3 tests) 10ms
+ ✓ src/domains/financial-account/__tests__/financial-account.types.test.ts (2 tests) 16ms
+ ✓ src/domains/networth/__tests__/networth.service.test.ts (2 tests) 8ms
+ ✓ src/domains/financial-account/__tests__/financial-account.mapper.test.ts (1 test) 9ms
+ ✓ src/domains/connection/__tests__/connection-provisioning.types.test.ts (1 test) 7ms
+ ✓ src/domains/plaid-adapter/__tests__/plaid-financial-account.mapper.test.ts (2 tests) 8ms
+ ✓ src/domains/ledger/providers/__tests__/DemoFinancialDataProvider.test.js (1 test) 10ms
+ ✓ src/domains/risk/__tests__/risk-scoring.service.test.ts (3 tests) 9ms
+ ✓ src/domains/plaid-adapter/__tests__/plaid-connection.mapper.test.ts (1 test) 8ms
  ✓ src/domains/ledger/repositories/__tests__/InMemoryGeneralLedgerRepositorySave.test.js (1 test) 6ms
- ✓ src/domains/connection/__tests__/connection-provisioning.types.test.ts (1 test) 6ms
- ✓ src/domains/ledger/repositories/__tests__/InMemoryGeneralLedgerRepository.test.js (1 test) 4ms
- ✓ src/domains/connection/__tests__/connection-import-orchestrator.types.test.ts (2 tests) 6ms
+ ✓ src/domains/financial-event/__tests__/financial-event-import.types.test.ts (1 test) 7ms
+ ✓ src/platform/value-objects/__tests__/Money.test.js (2 tests) 8ms
+ ✓ src/domains/connection/__tests__/connection-persistence.types.test.ts (1 test) 7ms
+ ✓ src/domains/plaid-adapter/__tests__/plaid-adapter.types.test.ts (1 test) 7ms
+ ✓ src/domains/ledger/repositories/__tests__/InMemoryGeneralLedgerRepository.test.js (1 test) 6ms
+ ✓ src/domains/account-balance/__tests__/account-balance.types.test.ts (2 tests) 5ms
  ✓ src/domains/plaid-adapter/__tests__/plaid-account-balance.mapper.test.ts (2 tests) 5ms
- ✓ src/domains/plaid-adapter/__tests__/plaid-adapter.types.test.ts (1 test) 3ms
- ✓ src/domains/ledger/entities/__tests__/AccountingPeriodPublicExport.test.js (1 test) 3ms
+ ✓ src/domains/ledger/repositories/__tests__/InMemoryAccountingPeriodRepositorySave.test.js (1 test) 4ms
+ ✓ src/domains/ledger/entities/__tests__/AccountingPeriodPublicExport.test.js (1 test) 4ms
 
- Test Files  195 passed (195)
-      Tests  757 passed (757)
-   Start at  22:46:23
-   Duration  9.61s (transform 5.67s, setup 0ms, import 15.23s, tests 7.46s, environment 35ms) |
+ Test Files  199 passed (199)
+      Tests  791 passed (791)
+   Start at  23:16:56
+   Duration  14.36s (transform 8.21s, setup 0ms, import 21.75s, tests 12.75s, environment 61ms) |
 | Production build | passing — > marketplace409@0.1.0 build
 > next build
 
@@ -141,15 +135,15 @@ None recorded.
 - Environments: .env.local
 
   Creating an optimized production build ...
-✓ Compiled successfully in 9.0s
+✓ Compiled successfully in 8.2s
   Running TypeScript ...
-  Finished TypeScript in 4.7s ...
+  Finished TypeScript in 5.7s ...
   Collecting page data using 7 workers ...
   Generating static pages using 7 workers (0/33) ...
   Generating static pages using 7 workers (8/33)
   Generating static pages using 7 workers (16/33)
   Generating static pages using 7 workers (24/33)
-✓ Generating static pages using 7 workers (33/33) in 527ms
+✓ Generating static pages using 7 workers (33/33) in 472ms
   Finalizing page optimization ...
 
 Route (app)

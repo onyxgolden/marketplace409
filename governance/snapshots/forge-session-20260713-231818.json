@@ -1,29 +1,28 @@
 {
   "schemaVersion": "1.0",
+  "sessionId": "forge-session-20260713-231818",
+  "sessionDate": "2026-07-13",
+  "phase": {
+    "identifier": "REVIEW_REQUIRED",
+    "title": "REVIEW_REQUIRED",
+    "status": "incomplete"
+  },
+  "objective": {
+    "startingObjective": "REVIEW_REQUIRED",
+    "endingObjective": "REVIEW_REQUIRED"
+  },
   "repository": {
-    "branch": "main",
     "head": "35d10b475e76186049caec7d308caf3170dbb61b",
     "originMain": "35d10b475e76186049caec7d308caf3170dbb61b",
+    "branch": "main",
     "workingTreeClean": true,
-    "headMatchesOriginMain": true
+    "implementationCommit": null,
+    "governanceCommit": null
   },
-  "session": {
-    "latestSnapshot": "governance/snapshots/forge-session-20260713-231818.json",
-    "lastUpdated": "2026-07-14T04:18:18.916Z"
-  },
-  "state": {
-    "activePhase": {
-      "identifier": "REVIEW_REQUIRED",
-      "title": "REVIEW_REQUIRED",
-      "status": "incomplete"
-    },
-    "currentObjective": "REVIEW_REQUIRED",
-    "completedWork": [],
-    "knownWarnings": [],
-    "nextSession": {
-      "objective": "REVIEW_REQUIRED",
-      "startingInspection": "REVIEW_REQUIRED"
-    }
+  "work": {
+    "delivered": [],
+    "modifiedFiles": [],
+    "knownWarnings": []
   },
   "validation": {
     "focusedTests": {
@@ -45,18 +44,26 @@
   "completion": {
     "workComplete": false,
     "supportedByEvidence": false,
-    "incompleteReason": "The canonical governance state does not infer phase, objective, completion, or next-session direction. Human review is required."
+    "incompleteReason": "The repository evidence collector does not infer session completion. Human review is required."
   },
-  "authority": {
-    "defaultAuthority": "human",
-    "promotionStateVersion": "1.0",
-    "capabilitiesVersion": "1.0",
-    "editableSectionsVersion": "1.0"
+  "nextSession": {
+    "objective": "REVIEW_REQUIRED",
+    "startingInspection": "REVIEW_REQUIRED"
   },
-  "synchronization": {
-    "mode": "shadow-only",
-    "stateGeneratedAt": null,
-    "sourceSnapshot": "governance/snapshots/forge-session-20260713-231818.json",
-    "rendererVersion": null
+  "evidence": {
+    "capturedAt": "2026-07-14T04:18:18.916Z",
+    "latestCommit": {
+      "hash": "35d10b475e76186049caec7d308caf3170dbb61b",
+      "subject": "Persist imported financial events",
+      "committedAt": "2026-07-13T23:10:58-05:00"
+    },
+    "headMatchesOriginMain": true,
+    "gitStatus": [],
+    "selectedValidationArtifact": {
+      "path": "governance/validation/forge-validation-20260714-041653.json",
+      "validationId": "forge-validation-20260714-041653",
+      "completedAt": "2026-07-14T04:17:27.754Z",
+      "repositoryHead": "35d10b475e76186049caec7d308caf3170dbb61b"
+    }
   }
 }
