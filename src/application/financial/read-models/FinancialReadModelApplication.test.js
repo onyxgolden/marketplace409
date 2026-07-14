@@ -19,7 +19,7 @@ function buildWorkspace() {
   });
 }
 
-function buildDashboard() {
+function buildActivityDashboard() {
   return Object.freeze({
     kpis: Object.freeze({
       revenue: 1500,
@@ -27,29 +27,94 @@ function buildDashboard() {
       profit: 1250,
       margin: 1250 / 1500,
       cashFlow: 1250,
+      noi: 1250,
+      transactionCount: 2,
+      cash: null,
+      receivables: null,
+      debt: null,
       assets: null,
       liabilities: null,
+      equity: null,
     }),
     health: Object.freeze({
       label: "Healthy",
       detail: "Profit, margin, and cash flow are currently positive.",
     }),
+    balanceSheetLines: Object.freeze([]),
     metadata: Object.freeze({
       provider: "financial-events",
       snapshotStatus: "repository-backed",
+      phase: "16.2",
+      balanceSheetStatus: "unavailable-from-event-activity",
+    }),
+  });
+}
+
+function buildPosition() {
+  return Object.freeze({
+    assets: Object.freeze([]),
+    liabilities: Object.freeze([]),
+    accountBalances: Object.freeze([]),
+    netWorth: Object.freeze({
+      totalAssets: 425000,
+      totalLiabilities: 200000,
+      netWorth: 225000,
+      debtToAssetRatio: 200000 / 425000,
+    }),
+    metrics: null,
+    insights: Object.freeze([]),
+    metadata: Object.freeze({
+      accountBalancesStatus:
+        "unavailable-without-owner-wide-balance-query",
+    }),
+  });
+}
+
+function buildPositionProjection() {
+  return Object.freeze({
+    kpis: Object.freeze({
+      cash: 125000,
+      receivables: null,
+      debt: 200000,
+      assets: 425000,
+      liabilities: 200000,
+      equity: 225000,
+    }),
+    balanceSheetLines: Object.freeze([
+      Object.freeze({
+        accountId: "asset:asset-1",
+        accountName: "Operating Cash",
+        amount: 125000,
+      }),
+      Object.freeze({
+        accountId: "liability:liability-1",
+        accountName: "Rental Mortgage",
+        amount: 200000,
+      }),
+    ]),
+    metadata: Object.freeze({
+      provider: "financial-position",
+      snapshotStatus: "repository-backed",
+      phase: "16.3",
+      balanceSheetStatus:
+        "repository-backed-assets-liabilities",
+      receivablesStatus:
+        "unavailable-without-receivables-source",
     }),
   });
 }
 
 function buildApplication(overrides = {}) {
   const workspace = buildWorkspace();
-  const dashboard = buildDashboard();
+  const activityDashboard = buildActivityDashboard();
   const reports = Object.freeze({
     portfolio: workspace.portfolio,
     properties: workspace.properties,
     categories: workspace.categories,
     transactions: workspace.transactions,
   });
+  const position = buildPosition();
+  const positionProjection = buildPositionProjection();
 
   const financialWorkspaceQueryService =
     overrides.financialWorkspaceQueryService || {
@@ -57,26 +122,64 @@ function buildApplication(overrides = {}) {
     };
 
   const readModelAdapter = overrides.readModelAdapter || {
-    buildDashboard: vi.fn(() => dashboard),
+    buildDashboard: vi.fn(() => activityDashboard),
     buildReports: vi.fn(() => reports),
   };
 
+  const financialPositionQueryService =
+    Object.prototype.hasOwnProperty.call(
+      overrides,
+      "financialPositionQueryService",
+    )
+      ? overrides.financialPositionQueryService
+      : null;
+
+  const financialPositionReadModelAdapter =
+    Object.prototype.hasOwnProperty.call(
+      overrides,
+      "financialPositionReadModelAdapter",
+    )
+      ? overrides.financialPositionReadModelAdapter
+      : null;
+
   const currentOwnerId =
-    overrides.currentOwnerId || vi.fn(async () => "owner-1");
+    overrides.currentOwnerId ||
+    vi.fn(async () => "owner-1");
 
   return {
     application: new FinancialReadModelApplication({
       financialWorkspaceQueryService,
       readModelAdapter,
+      financialPositionQueryService,
+      financialPositionReadModelAdapter,
       currentOwnerId,
     }),
     financialWorkspaceQueryService,
     readModelAdapter,
+    financialPositionQueryService,
+    financialPositionReadModelAdapter,
     currentOwnerId,
     workspace,
-    dashboard,
+    activityDashboard,
     reports,
+    position,
+    positionProjection,
   };
+}
+
+function buildComposedApplication(overrides = {}) {
+  const position = buildPosition();
+  const positionProjection = buildPositionProjection();
+
+  return buildApplication({
+    financialPositionQueryService: {
+      buildPosition: vi.fn(async () => position),
+    },
+    financialPositionReadModelAdapter: {
+      buildPosition: vi.fn(() => positionProjection),
+    },
+    ...overrides,
+  });
 }
 
 describe("FinancialReadModelApplication", () => {
@@ -106,6 +209,82 @@ describe("FinancialReadModelApplication", () => {
         }),
     ).toThrow(
       "FinancialReadModelApplication requires a financial workspace read model adapter.",
+    );
+  });
+
+  test("requires both financial position dependencies together", () => {
+    const base = {
+      financialWorkspaceQueryService: {
+        buildWorkspace: vi.fn(),
+      },
+      readModelAdapter: {
+        buildDashboard: vi.fn(),
+        buildReports: vi.fn(),
+      },
+      currentOwnerId: vi.fn(),
+    };
+
+    expect(
+      () =>
+        new FinancialReadModelApplication({
+          ...base,
+          financialPositionQueryService: {
+            buildPosition: vi.fn(),
+          },
+        }),
+    ).toThrow(
+      "FinancialReadModelApplication requires both financial position dependencies.",
+    );
+
+    expect(
+      () =>
+        new FinancialReadModelApplication({
+          ...base,
+          financialPositionReadModelAdapter: {
+            buildPosition: vi.fn(),
+          },
+        }),
+    ).toThrow(
+      "FinancialReadModelApplication requires both financial position dependencies.",
+    );
+  });
+
+  test("requires valid financial position dependency contracts", () => {
+    const base = {
+      financialWorkspaceQueryService: {
+        buildWorkspace: vi.fn(),
+      },
+      readModelAdapter: {
+        buildDashboard: vi.fn(),
+        buildReports: vi.fn(),
+      },
+      currentOwnerId: vi.fn(),
+    };
+
+    expect(
+      () =>
+        new FinancialReadModelApplication({
+          ...base,
+          financialPositionQueryService: {},
+          financialPositionReadModelAdapter: {
+            buildPosition: vi.fn(),
+          },
+        }),
+    ).toThrow(
+      "FinancialReadModelApplication requires a financial position query service.",
+    );
+
+    expect(
+      () =>
+        new FinancialReadModelApplication({
+          ...base,
+          financialPositionQueryService: {
+            buildPosition: vi.fn(),
+          },
+          financialPositionReadModelAdapter: {},
+        }),
+    ).toThrow(
+      "FinancialReadModelApplication requires a financial position read model adapter.",
     );
   });
 
@@ -157,99 +336,173 @@ describe("FinancialReadModelApplication", () => {
     ).not.toHaveBeenCalled();
   });
 
-  test("builds the repository-backed financial dashboard DTO", async () => {
+  test("preserves activity-only dashboard behavior before position composition is wired", async () => {
     const {
       application,
-      readModelAdapter,
-      workspace,
-      dashboard,
+      activityDashboard,
     } = buildApplication();
 
-    const result = await application.buildFinancialDashboard();
+    const result =
+      await application.buildFinancialDashboard();
 
-    expect(readModelAdapter.buildDashboard).toHaveBeenCalledWith(workspace);
-    expect(readModelAdapter.buildReports).not.toHaveBeenCalled();
     expect(result).toEqual({
       type: "financial-dashboard",
-      dashboard,
+      dashboard: activityDashboard,
     });
-    expect(Object.isFrozen(result)).toBe(true);
   });
 
-  test("builds the preserved business dashboard DTO", async () => {
+  test("composes activity and financial position into the dashboard DTO", async () => {
     const {
       application,
-      readModelAdapter,
-      workspace,
-      reports,
-      dashboard,
-    } = buildApplication();
+      financialPositionQueryService,
+      financialPositionReadModelAdapter,
+      position,
+      positionProjection,
+    } = buildComposedApplication();
 
-    const result = await application.buildBusinessDashboard();
+    const result =
+      await application.buildFinancialDashboard();
 
-    expect(readModelAdapter.buildReports).toHaveBeenCalledWith(workspace);
-    expect(readModelAdapter.buildDashboard).toHaveBeenCalledWith(workspace);
-    expect(result).toEqual({
-      type: "business-dashboard",
-      reports,
-      dashboard,
-    });
-    expect(Object.isFrozen(result)).toBe(true);
-  });
+    expect(
+      financialPositionQueryService.buildPosition,
+    ).toHaveBeenCalledOnce();
 
-  test("builds the preserved investor dashboard DTO", async () => {
-    const { application, dashboard } = buildApplication();
-
-    const result = await application.buildInvestorDashboard();
+    expect(
+      financialPositionReadModelAdapter.buildPosition,
+    ).toHaveBeenCalledWith(position);
 
     expect(result).toEqual({
-      type: "investor-dashboard",
-      kpis: dashboard.kpis,
-      health: dashboard.health,
-      metadata: dashboard.metadata,
-    });
-    expect(Object.isFrozen(result)).toBe(true);
-  });
-
-  test("builds the preserved KPI model DTO", async () => {
-    const { application, dashboard } = buildApplication();
-
-    const result = await application.buildKPIModel();
-
-    expect(result).toEqual({
-      type: "kpi-model",
-      kpis: dashboard.kpis,
-    });
-    expect(Object.isFrozen(result)).toBe(true);
-  });
-
-  test("builds the preserved executive summary DTO", async () => {
-    const { application, dashboard } = buildApplication();
-
-    const result = await application.buildExecutiveSummary();
-
-    expect(result).toEqual({
-      type: "executive-summary",
-      health: dashboard.health,
-      kpis: dashboard.kpis,
-    });
-    expect(Object.isFrozen(result)).toBe(true);
-  });
-
-  test("propagates repository query failures", async () => {
-    const repositoryError = new Error("Repository query failed");
-
-    const { application } = buildApplication({
-      financialWorkspaceQueryService: {
-        buildWorkspace: vi.fn(async () => {
-          throw repositoryError;
-        }),
+      type: "financial-dashboard",
+      dashboard: {
+        kpis: {
+          revenue: 1500,
+          expenses: 250,
+          profit: 1250,
+          margin: 1250 / 1500,
+          cashFlow: 1250,
+          noi: 1250,
+          transactionCount: 2,
+          cash: 125000,
+          receivables: null,
+          debt: 200000,
+          assets: 425000,
+          liabilities: 200000,
+          equity: 225000,
+        },
+        health: {
+          label: "Healthy",
+          detail:
+            "Profit, margin, and cash flow are currently positive.",
+        },
+        balanceSheetLines:
+          positionProjection.balanceSheetLines,
+        metadata: {
+          provider:
+            "financial-events+financial-position",
+          snapshotStatus: "repository-backed",
+          phase: "16.3",
+          balanceSheetStatus:
+            "repository-backed-assets-liabilities",
+          receivablesStatus:
+            "unavailable-without-receivables-source",
+        },
       },
     });
 
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.dashboard)).toBe(true);
+    expect(
+      Object.isFrozen(result.dashboard.kpis),
+    ).toBe(true);
+    expect(
+      Object.isFrozen(result.dashboard.metadata),
+    ).toBe(true);
+  });
+
+  test("preserves activity health while position owns balance-sheet fields", async () => {
+    const { application, activityDashboard } =
+      buildComposedApplication();
+
+    const result =
+      await application.buildFinancialDashboard();
+
+    expect(result.dashboard.health).toBe(
+      activityDashboard.health,
+    );
+    expect(result.dashboard.kpis.revenue).toBe(1500);
+    expect(result.dashboard.kpis.assets).toBe(425000);
+    expect(result.dashboard.balanceSheetLines).toHaveLength(2);
+  });
+
+  test("builds the preserved business dashboard DTO from the composed dashboard", async () => {
+    const {
+      application,
+      readModelAdapter,
+      workspace,
+      reports,
+    } = buildComposedApplication();
+
+    const result =
+      await application.buildBusinessDashboard();
+
+    expect(
+      readModelAdapter.buildReports,
+    ).toHaveBeenCalledWith(workspace);
+
+    expect(result.type).toBe("business-dashboard");
+    expect(result.reports).toBe(reports);
+    expect(result.dashboard.kpis.assets).toBe(425000);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  test("builds preserved investor, KPI, and executive DTOs from composed data", async () => {
+    const { application } =
+      buildComposedApplication();
+
+    const investor =
+      await application.buildInvestorDashboard();
+    const kpi = await application.buildKPIModel();
+    const executive =
+      await application.buildExecutiveSummary();
+
+    expect(investor.kpis.equity).toBe(225000);
+    expect(kpi.kpis.cash).toBe(125000);
+    expect(executive.kpis.liabilities).toBe(200000);
+    expect(executive.health.label).toBe("Healthy");
+  });
+
+  test("propagates activity and position query failures", async () => {
+    const activityError =
+      new Error("Activity repository query failed");
+
+    const { application: activityApplication } =
+      buildApplication({
+        financialWorkspaceQueryService: {
+          buildWorkspace: vi.fn(async () => {
+            throw activityError;
+          }),
+        },
+      });
+
     await expect(
-      application.buildBusinessDashboard(),
-    ).rejects.toBe(repositoryError);
+      activityApplication.buildBusinessDashboard(),
+    ).rejects.toBe(activityError);
+
+    const positionError =
+      new Error("Position repository query failed");
+
+    const { application: positionApplication } =
+      buildComposedApplication({
+        financialPositionQueryService: {
+          buildPosition: vi.fn(async () => {
+            throw positionError;
+          }),
+        },
+      });
+
+    await expect(
+      positionApplication.buildFinancialDashboard(),
+    ).rejects.toBe(positionError);
   });
 
   test("freezes the application instance", () => {
