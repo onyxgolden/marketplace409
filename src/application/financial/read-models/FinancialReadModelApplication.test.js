@@ -157,6 +157,25 @@ describe("FinancialReadModelApplication", () => {
     ).not.toHaveBeenCalled();
   });
 
+  test("builds the repository-backed financial dashboard DTO", async () => {
+    const {
+      application,
+      readModelAdapter,
+      workspace,
+      dashboard,
+    } = buildApplication();
+
+    const result = await application.buildFinancialDashboard();
+
+    expect(readModelAdapter.buildDashboard).toHaveBeenCalledWith(workspace);
+    expect(readModelAdapter.buildReports).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      type: "financial-dashboard",
+      dashboard,
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
   test("builds the preserved business dashboard DTO", async () => {
     const {
       application,

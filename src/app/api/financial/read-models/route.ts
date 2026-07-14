@@ -9,24 +9,29 @@ export async function GET(request: Request) {
     const { readModelApplication } =
       await createFinancialApplicationSuite();
 
-    const [business, investor, kpi, executive] = await Promise.all([
-      searchParams.get("business") === "true"
-        ? readModelApplication.buildBusinessDashboard()
-        : Promise.resolve(null),
-      searchParams.get("investor") === "true"
-        ? readModelApplication.buildInvestorDashboard()
-        : Promise.resolve(null),
-      searchParams.get("kpi") === "true"
-        ? readModelApplication.buildKPIModel()
-        : Promise.resolve(null),
-      searchParams.get("executive") === "true"
-        ? readModelApplication.buildExecutiveSummary()
-        : Promise.resolve(null),
-    ]);
+    const [financial, business, investor, kpi, executive] =
+      await Promise.all([
+        searchParams.get("financial") === "true"
+          ? readModelApplication.buildFinancialDashboard()
+          : Promise.resolve(null),
+        searchParams.get("business") === "true"
+          ? readModelApplication.buildBusinessDashboard()
+          : Promise.resolve(null),
+        searchParams.get("investor") === "true"
+          ? readModelApplication.buildInvestorDashboard()
+          : Promise.resolve(null),
+        searchParams.get("kpi") === "true"
+          ? readModelApplication.buildKPIModel()
+          : Promise.resolve(null),
+        searchParams.get("executive") === "true"
+          ? readModelApplication.buildExecutiveSummary()
+          : Promise.resolve(null),
+      ]);
 
     return NextResponse.json({
       success: true,
       data: {
+        financial,
         business,
         investor,
         kpi,

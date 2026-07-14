@@ -68,6 +68,16 @@ export class FinancialReadModelApplication {
     return this.financialWorkspaceQueryService.buildWorkspace(ownerId);
   }
 
+  async buildFinancialDashboard() {
+    const workspace = await this.buildWorkspace();
+    const dashboard = this.readModelAdapter.buildDashboard(workspace);
+
+    return Object.freeze({
+      type: "financial-dashboard",
+      dashboard,
+    });
+  }
+
   async buildBusinessDashboard() {
     const workspace = await this.buildWorkspace();
     const reports = this.readModelAdapter.buildReports(workspace);
