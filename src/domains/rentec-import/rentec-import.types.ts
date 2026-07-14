@@ -11,6 +11,8 @@ export type RentecImportRecord = {
 
   amount: number;
 
+  sourceRecordId: string;
+
   sourceCategory?: string | null;
 
   rawRow: Record<string, unknown>;

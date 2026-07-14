@@ -10,12 +10,12 @@ export class RentecImportParser {
   parse(rows: RentecCsvRow[]): RentecImportRecord[] {
     const records: RentecImportRecord[] = [];
 
-    for (const row of rows) {
+    rows.forEach((row, rowIndex) => {
       const property = (row.PROPERTY ?? "").trim();
       const description = (row.DESCRIPTION ?? "").trim();
 
       if (!property || property === "Totals") {
-        continue;
+        return;
       }
 
       const income = this.parseMoney(row.INCOME);
@@ -29,6 +29,11 @@ export class RentecImportParser {
           description,
           type: "income",
           amount: income,
+          sourceRecordId: this.buildSourceRecordId({
+            transactionDate,
+            rowIndex,
+            recordKind: "income",
+          }),
           sourceCategory: description,
           rawRow: row,
         });
@@ -41,13 +46,30 @@ export class RentecImportParser {
           description,
           type: this.inferExpenseType(description),
           amount: expense,
+          sourceRecordId: this.buildSourceRecordId({
+            transactionDate,
+            rowIndex,
+            recordKind: "expense",
+          }),
           sourceCategory: description,
           rawRow: row,
         });
       }
-    }
+    });
 
     return records;
+  }
+
+  private buildSourceRecordId({
+    transactionDate,
+    rowIndex,
+    recordKind,
+  }: {
+    transactionDate: string;
+    rowIndex: number;
+    recordKind: "income" | "expense";
+  }): string {
+    return `rentec-${transactionDate}-${rowIndex}-${recordKind}`;
   }
 
   private parseCsvRows(csv: string): RentecCsvRow[] {
@@ -116,7 +138,7 @@ export class RentecImportParser {
 
     return `${year.padStart(4, "0")}-${month.padStart(2, "0")}-${day.padStart(
       2,
-      "0"
+      "0",
     )}`;
   }
 

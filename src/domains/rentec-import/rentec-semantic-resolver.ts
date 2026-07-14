@@ -19,7 +19,7 @@ export class RentecSemanticResolver {
       resolvedProperty,
       knowledge: categoryNormalizer.normalize(record.description),
       sourceSystem: "rentec",
-      sourceRecordId: null,
+      sourceRecordId: record.sourceRecordId,
       metadata: {
         property: record.property,
         propertyName: resolvedProperty.name,

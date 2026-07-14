@@ -56,7 +56,7 @@ describe("RentecProductionImportService", () => {
         property: "170 John",
       },
       transaction: {
-        id: "review-transaction:Rentec:rentec-2026-01-01-0",
+        id: "review-transaction:Rentec:rentec-2026-01-01-0-income",
         provider: "rentec",
         description: "Rental Income",
         amountCents: 150000,
@@ -66,6 +66,17 @@ describe("RentecProductionImportService", () => {
       },
       needsAssignment: false,
     });
+
+    const repeatedResult = RentecProductionImportService.importCsv({
+      csv,
+      chartOfAccounts: buildChartOfAccounts(),
+    });
+
+    expect(
+      repeatedResult.financialEvents.map((event) => event.source_record_id),
+    ).toEqual(
+      result.financialEvents.map((event) => event.source_record_id),
+    );
 
     expect(result.warnings).toEqual([]);
     expect(result.warningCount).toBe(0);

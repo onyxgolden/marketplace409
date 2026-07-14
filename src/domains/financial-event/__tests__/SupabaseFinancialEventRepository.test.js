@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { SupabaseFinancialEventRepository } from "../SupabaseFinancialEventRepository";
 
 const query = {
-  insert: vi.fn(),
+  upsert: vi.fn(),
   select: vi.fn(),
   eq: vi.fn(),
   order: vi.fn(),
@@ -58,12 +58,12 @@ function buildRow(overrides = {}) {
 
 describe("SupabaseFinancialEventRepository", () => {
   beforeEach(() => {
-    query.insert.mockReset();
+    query.upsert.mockReset();
     query.select.mockReset();
     query.eq.mockReset();
     query.order.mockReset();
 
-    query.insert.mockReturnValue(query);
+    query.upsert.mockReturnValue(query);
     query.select.mockReturnValue(query);
     query.eq.mockReturnValue(query);
   });
@@ -77,8 +77,9 @@ describe("SupabaseFinancialEventRepository", () => {
     const repository = new SupabaseFinancialEventRepository();
     const result = await repository.saveMany([buildEvent()]);
 
-    expect(query.insert).toHaveBeenCalledWith([
-      {
+    expect(query.upsert).toHaveBeenCalledWith(
+      [
+        {
         owner_id: "owner-1",
         organization_id: null,
         property_id: "170-john",
@@ -102,9 +103,14 @@ describe("SupabaseFinancialEventRepository", () => {
         created_by: null,
         updated_by: null,
         created_at: "2026-07-14T00:00:00.000Z",
-        updated_at: "2026-07-14T00:00:00.000Z",
+          updated_at: "2026-07-14T00:00:00.000Z",
+        },
+      ],
+      {
+        onConflict: "owner_id,source_system,source_record_id",
+        ignoreDuplicates: true,
       },
-    ]);
+    );
 
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result[0])).toBe(true);
@@ -128,7 +134,7 @@ describe("SupabaseFinancialEventRepository", () => {
 
     await repository.saveMany([buildEvent({ id: "" })]);
 
-    expect(query.insert.mock.calls[0][0][0]).not.toHaveProperty("id");
+    expect(query.upsert.mock.calls[0][0][0]).not.toHaveProperty("id");
   });
 
   test("preserves explicit event ids", async () => {
@@ -145,7 +151,7 @@ describe("SupabaseFinancialEventRepository", () => {
       }),
     ]);
 
-    expect(query.insert.mock.calls[0][0][0]).toMatchObject({
+    expect(query.upsert.mock.calls[0][0][0]).toMatchObject({
       id: "event-explicit",
     });
   });
@@ -156,7 +162,7 @@ describe("SupabaseFinancialEventRepository", () => {
 
     expect(result).toEqual([]);
     expect(Object.isFrozen(result)).toBe(true);
-    expect(query.insert).not.toHaveBeenCalled();
+    expect(query.upsert).not.toHaveBeenCalled();
   });
 
   test("finds immutable financial events by owner id", async () => {

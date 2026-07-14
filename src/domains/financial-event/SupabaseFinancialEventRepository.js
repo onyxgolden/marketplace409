@@ -14,7 +14,10 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
 
     const { data, error } = await supabase
       .from("financial_events")
-      .insert(events.map((event) => this.toRow(event)))
+      .upsert(events.map((event) => this.toRow(event)), {
+        onConflict: "owner_id,source_system,source_record_id",
+        ignoreDuplicates: true,
+      })
       .select("*");
 
     if (error) {
