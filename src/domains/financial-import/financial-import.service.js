@@ -11,9 +11,11 @@ function buildDefaultImporters({ ownerId = null } = {}) {
 class FinancialImportServiceImpl {
   constructor({
     ownerId = null,
+    financialEventRepository = null,
     importers = buildDefaultImporters({ ownerId }),
   } = {}) {
     this.ownerId = ownerId;
+    this.financialEventRepository = financialEventRepository;
     this.importers = importers;
 
     Object.freeze(this);

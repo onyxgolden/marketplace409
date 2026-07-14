@@ -105,12 +105,14 @@ describe("FinancialImportApplication", () => {
     });
   });
 
-  it("resolves the owner when the current owner is not loaded", async () => {
+  it("resolves the owner and passes the financial event repository", async () => {
+    const financialEventRepository = {};
     const importServiceFactory = vi.fn(() => ({
       importCsv: vi.fn(() => ({ summary: { importedRows: 1 } })),
     }));
 
     const application = new FinancialImportApplication({
+      financialEventRepository,
       importServiceFactory,
       chartOfAccountsFactory: vi.fn(() => "chart"),
     });
@@ -124,6 +126,7 @@ describe("FinancialImportApplication", () => {
 
     expect(importServiceFactory).toHaveBeenCalledWith({
       ownerId: "owner-2",
+      financialEventRepository,
     });
     expect(result.ownerId).toBe("owner-2");
   });

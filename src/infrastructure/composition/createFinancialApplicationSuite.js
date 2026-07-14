@@ -1,5 +1,6 @@
 import { createFinancialSnapshotApplication } from "./createFinancialSnapshotApplication.js";
 import { createFinancialSnapshotRepository } from "./createFinancialSnapshotRepository.js";
+import { createFinancialEventRepository } from "./createFinancialEventRepository.js";
 
 import {
   FinancialDashboardIntelligenceApplication,
@@ -36,6 +37,10 @@ import { RiskDashboardService } from "../../domains/risk";
 export async function createFinancialApplicationSuite(deps = {}) {
   const snapshotRepository =
     deps.snapshotRepository || createFinancialSnapshotRepository();
+
+  const financialEventRepository =
+    deps.financialEventRepository ||
+    (await createFinancialEventRepository());
 
   const snapshotSuite =
     deps.snapshotSuite ||
@@ -132,7 +137,9 @@ export async function createFinancialApplicationSuite(deps = {}) {
 
   const financialImportApplication =
     deps.financialImportApplication ||
-    new FinancialImportApplication();
+    new FinancialImportApplication({
+      financialEventRepository,
+    });
 
   const transactionReviewApplication =
     deps.transactionReviewApplication ||
@@ -151,6 +158,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     financialImportApplication,
     transactionReviewApplication,
     snapshotRepository,
+    financialEventRepository,
     engine,
     dashboardService,
   };

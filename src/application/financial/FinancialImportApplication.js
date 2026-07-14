@@ -47,13 +47,18 @@ async function defaultLoadProperties({ supabaseClient = defaultSupabaseClient } 
 
 export class FinancialImportApplication {
   constructor({
-    importServiceFactory = ({ ownerId }) =>
-      new FinancialImportServiceImpl({ ownerId }),
+    financialEventRepository = null,
+    importServiceFactory = ({ ownerId, financialEventRepository }) =>
+      new FinancialImportServiceImpl({
+        ownerId,
+        financialEventRepository,
+      }),
     chartOfAccountsFactory = buildProductionChartOfAccounts,
     supabaseClient = defaultSupabaseClient,
     currentOwnerId = () => defaultCurrentOwnerId({ supabaseClient }),
     loadProperties = () => defaultLoadProperties({ supabaseClient }),
   } = {}) {
+    this.financialEventRepository = financialEventRepository;
     this.importServiceFactory = importServiceFactory;
     this.chartOfAccountsFactory = chartOfAccountsFactory;
     this.currentOwnerId = currentOwnerId;
@@ -105,6 +110,7 @@ export class FinancialImportApplication {
 
       const importService = this.importServiceFactory({
         ownerId: resolvedOwnerId,
+        financialEventRepository: this.financialEventRepository,
       });
 
       const result = importService.importCsv({
