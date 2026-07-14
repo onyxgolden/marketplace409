@@ -5,6 +5,7 @@ import {
   FinancialImportApplication,
   FinancialIntelligenceApplication,
   FinancialOperationsApplication,
+  FinancialReadModelApplication,
   FinancialSnapshotViewApplication,
   TransactionReviewApplication,
 } from "../../../application/financial";
@@ -68,6 +69,59 @@ describe("createFinancialApplicationSuite", () => {
     expect(suite.dashboardIntelligenceApplication).toBe(
       dashboardIntelligenceApplication,
     );
+  });
+
+  test("wires repository-backed financial read models into the suite", async () => {
+    const financialWorkspaceQueryService = {
+      buildWorkspace: vi.fn(),
+    };
+
+    const financialWorkspaceReadModelAdapter = {
+      buildDashboard: vi.fn(),
+      buildReports: vi.fn(),
+    };
+
+    const currentOwnerId = vi.fn(async () => "owner-1");
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      financialWorkspaceQueryService,
+      financialWorkspaceReadModelAdapter,
+      currentOwnerId,
+    });
+
+    expect(suite.readModelApplication).toBeInstanceOf(
+      FinancialReadModelApplication,
+    );
+    expect(
+      suite.readModelApplication.financialWorkspaceQueryService,
+    ).toBe(financialWorkspaceQueryService);
+    expect(suite.readModelApplication.readModelAdapter).toBe(
+      financialWorkspaceReadModelAdapter,
+    );
+    expect(suite.readModelApplication.currentOwnerId).toBe(
+      currentOwnerId,
+    );
+    expect(suite.financialWorkspaceReadModelAdapter).toBe(
+      financialWorkspaceReadModelAdapter,
+    );
+  });
+
+  test("allows financial read model application injection", async () => {
+    const readModelApplication = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      readModelApplication,
+    });
+
+    expect(suite.readModelApplication).toBe(readModelApplication);
   });
 
   test("wires financial intelligence application into the suite", async () => {
@@ -284,13 +338,18 @@ describe("createFinancialApplicationSuite", () => {
   });
 
   test("builds default applications with usable financial data", async () => {
-    const suite = await createFinancialApplicationSuite();
+    const suite = await createFinancialApplicationSuite({
+      financialEventRepository: {
+        findByOwnerId: vi.fn(async () => []),
+      },
+      currentOwnerId: vi.fn(async () => "owner-test"),
+    });
 
     const snapshot =
       await suite.snapshotApplication.captureDashboardSnapshot();
 
     const operations =
-      suite.financialOperationsApplication.buildFinancialOperations();
+      await suite.financialOperationsApplication.buildFinancialOperations();
 
     expect(snapshot.dashboard).toBeDefined();
     expect(operations.type).toBe("financial-operations");

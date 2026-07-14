@@ -67,7 +67,7 @@ describe("FinancialIntelligenceApplication", () => {
     };
   }
 
-  test("builds deterministic financial intelligence from injected read models and services", () => {
+  test("builds deterministic financial intelligence from injected read models and services", async () => {
     const readModelApplication = buildReadModelApplication();
     const services = buildServices();
 
@@ -76,11 +76,11 @@ describe("FinancialIntelligenceApplication", () => {
       ...services,
     });
 
-    const result = application.buildFinancialIntelligence();
+    const result = await application.buildFinancialIntelligence();
 
     expect(result.type).toBe("financial-intelligence");
     expect(result.source).toEqual({
-      authority: "financial-engine-derived-read-models",
+      authority: "financial-event-repository-backed-read-models",
       mutableLedgerState: false,
       aiGenerated: false,
     });

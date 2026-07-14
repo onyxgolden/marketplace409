@@ -51,10 +51,11 @@ export class FinancialIntelligenceApplication {
     this.planningService = planningService;
   }
 
-  buildFinancialIntelligence() {
-    const executiveSummary =
-      this.readModelApplication.buildExecutiveSummary();
-    const kpiModel = this.readModelApplication.buildKPIModel();
+  async buildFinancialIntelligence() {
+    const [executiveSummary, kpiModel] = await Promise.all([
+      this.readModelApplication.buildExecutiveSummary(),
+      this.readModelApplication.buildKPIModel(),
+    ]);
 
     const kpis = kpiModel.kpis || {};
     const health = executiveSummary.health || {};
@@ -67,7 +68,7 @@ export class FinancialIntelligenceApplication {
       recommendations: this.recommendationService.recommend(kpis, health),
       planningAssistance: this.planningService.buildPlan(kpis, health),
       source: Object.freeze({
-        authority: "financial-engine-derived-read-models",
+        authority: "financial-event-repository-backed-read-models",
         mutableLedgerState: false,
         aiGenerated: false,
       }),

@@ -8,7 +8,7 @@ export async function GET() {
       await createFinancialApplicationSuite();
 
     const operations =
-      financialOperationsApplication.buildFinancialOperations();
+      await financialOperationsApplication.buildFinancialOperations();
 
     return NextResponse.json({
       success: true,

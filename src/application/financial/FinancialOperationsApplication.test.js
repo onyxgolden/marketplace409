@@ -26,7 +26,7 @@ describe("FinancialOperationsApplication", () => {
           summary: "Optimize operating performance.",
         },
         source: {
-          authority: "financial-engine-derived-read-models",
+          authority: "financial-event-repository-backed-read-models",
           mutableLedgerState: false,
           aiGenerated: false,
         },
@@ -34,7 +34,7 @@ describe("FinancialOperationsApplication", () => {
     };
   }
 
-  test("builds deterministic financial operations from financial intelligence", () => {
+  test("builds deterministic financial operations from financial intelligence", async () => {
     const financialIntelligenceApplication =
       buildFinancialIntelligenceApplication();
 
@@ -64,7 +64,7 @@ describe("FinancialOperationsApplication", () => {
             },
           ],
           source: {
-            authority: "financial-engine-derived-read-models",
+            authority: "financial-event-repository-backed-read-models",
             mutableLedgerState: false,
             aiGenerated: false,
             derivedFrom: "financial-intelligence",
@@ -78,7 +78,7 @@ describe("FinancialOperationsApplication", () => {
       financialOperationsService,
     });
 
-    const result = application.buildFinancialOperations();
+    const result = await application.buildFinancialOperations();
 
     expect(result.type).toBe("financial-operations");
     expect(result.priority).toBe("optimize");
@@ -105,7 +105,7 @@ describe("FinancialOperationsApplication", () => {
     ]);
 
     expect(result.source).toEqual({
-      authority: "financial-engine-derived-read-models",
+      authority: "financial-event-repository-backed-read-models",
       mutableLedgerState: false,
       aiGenerated: false,
       derivedFrom: "financial-intelligence",

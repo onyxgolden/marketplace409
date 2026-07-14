@@ -16,6 +16,10 @@ import {
 } from "../../application/financial";
 
 import {
+  financialWorkspaceReadModelAdapter,
+} from "../../application/financial/read-models/FinancialWorkspaceReadModelAdapter.js";
+
+import {
   FinancialForecastService,
   FinancialPlanningService,
   FinancialRecommendationService,
@@ -76,13 +80,6 @@ export async function createFinancialApplicationSuite(deps = {}) {
       dashboardService,
     });
 
-  const readModelApplication =
-    deps.readModelApplication ||
-    new FinancialReadModelApplication({
-      reportingApplication,
-    });
-
-
   const financialWorkspaceQueryService =
     deps.financialWorkspaceQueryService ||
     new FinancialWorkspaceQueryService({
@@ -90,6 +87,18 @@ export async function createFinancialApplicationSuite(deps = {}) {
       aggregationService:
         deps.aggregationService ||
         financialEventAggregationService,
+    });
+
+  const readModelAdapter =
+    deps.financialWorkspaceReadModelAdapter ||
+    financialWorkspaceReadModelAdapter;
+
+  const readModelApplication =
+    deps.readModelApplication ||
+    new FinancialReadModelApplication({
+      financialWorkspaceQueryService,
+      readModelAdapter,
+      currentOwnerId: deps.currentOwnerId,
     });
 
 
@@ -112,7 +121,6 @@ export async function createFinancialApplicationSuite(deps = {}) {
     deps.financialIntelligenceApplication ||
     new FinancialIntelligenceApplication({
       readModelApplication,
-    financialWorkspaceQueryService,
       trendAnalysisService,
       scenarioModelingService,
       forecastService,
@@ -167,6 +175,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     reportingApplication,
     readModelApplication,
     financialWorkspaceQueryService,
+    financialWorkspaceReadModelAdapter: readModelAdapter,
     financialIntelligenceApplication,
     financialOperationsApplication,
     financialOperationsService,

@@ -15,13 +15,14 @@ export class FinancialOperationsApplication {
       );
     }
 
-    this.financialIntelligenceApplication = financialIntelligenceApplication;
+    this.financialIntelligenceApplication =
+      financialIntelligenceApplication;
     this.financialOperationsService = financialOperationsService;
   }
 
-  buildFinancialOperations() {
+  async buildFinancialOperations() {
     const intelligence =
-      this.financialIntelligenceApplication.buildFinancialIntelligence();
+      await this.financialIntelligenceApplication.buildFinancialIntelligence();
 
     const plan =
       this.financialOperationsService.buildOperationPlan(intelligence);
