@@ -74,6 +74,7 @@ function buildTransactionReview(
           properties,
         })
       : {
+          recommendations: [],
           suggestedProperties: [],
           confidence: 0,
         };
@@ -84,6 +85,7 @@ function buildTransactionReview(
       resolvedProperty,
       needsAssignment,
       confidence: recommendation.confidence,
+      recommendations: recommendation.recommendations ?? [],
       suggestedProperties: recommendation.suggestedProperties,
       assignmentStatus:
         needsAssignment &&

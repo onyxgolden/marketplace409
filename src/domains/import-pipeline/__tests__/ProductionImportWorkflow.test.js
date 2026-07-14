@@ -153,6 +153,13 @@ describe("ProductionImportWorkflow", () => {
     expect(result.transactionReview[0]).toMatchObject({
       needsAssignment: true,
       confidence: 1,
+      recommendations: [
+        {
+          property,
+          score: 1,
+          explanation: "Transaction context contains the property address.",
+        },
+      ],
       suggestedProperties: [property],
       assignmentStatus: "suggested",
       reviewState: "pending",

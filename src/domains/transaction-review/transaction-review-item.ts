@@ -5,12 +5,19 @@ export type TransactionReviewAssignmentStatus =
 
 export type TransactionReviewState = "pending" | "reviewed" | "ignored";
 
+export type TransactionReviewRecommendation = Readonly<{
+  property: unknown;
+  score: number;
+  explanation: string;
+}>;
+
 export type TransactionReviewItemInput = Readonly<{
   record: unknown;
   transaction: unknown;
   resolvedProperty: unknown;
   needsAssignment: boolean;
   confidence?: number;
+  recommendations?: readonly TransactionReviewRecommendation[];
   suggestedProperties?: readonly unknown[];
   assignmentStatus?: TransactionReviewAssignmentStatus;
   reviewState?: TransactionReviewState;
@@ -36,6 +43,7 @@ export class TransactionReviewItem {
   readonly resolvedProperty: unknown;
   readonly needsAssignment: boolean;
   readonly confidence: number;
+  readonly recommendations: readonly TransactionReviewRecommendation[];
   readonly suggestedProperties: readonly unknown[];
   readonly assignmentStatus: TransactionReviewAssignmentStatus;
   readonly reviewState: TransactionReviewState;
@@ -46,6 +54,7 @@ export class TransactionReviewItem {
     resolvedProperty,
     needsAssignment,
     confidence = 0,
+    recommendations = [],
     suggestedProperties = [],
     assignmentStatus = buildDefaultAssignmentStatus(needsAssignment),
     reviewState = "pending",
@@ -56,6 +65,12 @@ export class TransactionReviewItem {
 
     if (typeof confidence !== "number" || Number.isNaN(confidence)) {
       throw new Error("TransactionReviewItem confidence must be a number");
+    }
+
+    if (!Array.isArray(recommendations)) {
+      throw new Error(
+        "TransactionReviewItem recommendations must be an array",
+      );
     }
 
     if (!Array.isArray(suggestedProperties)) {
@@ -79,6 +94,7 @@ export class TransactionReviewItem {
     this.resolvedProperty = resolvedProperty;
     this.needsAssignment = needsAssignment;
     this.confidence = confidence;
+    this.recommendations = Object.freeze([...recommendations]);
     this.suggestedProperties = Object.freeze([...suggestedProperties]);
     this.assignmentStatus = assignmentStatus;
     this.reviewState = reviewState;
@@ -93,6 +109,7 @@ export class TransactionReviewItem {
       resolvedProperty: this.resolvedProperty,
       needsAssignment: this.needsAssignment,
       confidence: this.confidence,
+      recommendations: this.recommendations,
       suggestedProperties: this.suggestedProperties,
       assignmentStatus: this.assignmentStatus,
       reviewState: this.reviewState,

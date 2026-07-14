@@ -92,8 +92,23 @@ export default function FinancialImportTool() {
       resolveOwnerId: importApplication.currentOwnerId,
     });
 
+    const recommendedSelections = {};
+
+    (importResponse.result?.transactionReview || []).forEach(
+      (review, index) => {
+        const recommendedPropertyId =
+          review.recommendations?.[0]?.property?.id ??
+          review.suggestedProperties?.[0]?.id;
+
+        if (review.needsAssignment && recommendedPropertyId) {
+          recommendedSelections[index] = recommendedPropertyId;
+        }
+      },
+    );
+
     setFileName(importResponse.fileName);
     setResult(importResponse.result);
+    setSelectedProperties(recommendedSelections);
     setError(importResponse.error);
 
     if (importResponse.ownerId !== ownerId) {
@@ -371,6 +386,8 @@ function TransactionReview({
         <div className="space-y-4">
           {reviews.map((review, index) => {
             const status = assignmentStatus[index];
+            const recommendations = review.recommendations || [];
+            const topRecommendation = recommendations[0];
 
             return (
               <div
@@ -441,6 +458,46 @@ function TransactionReview({
                     {status?.type === "saving" ? "Assigning..." : "Assign"}
                   </button>
                 </div>
+
+                {review.needsAssignment && topRecommendation && (
+                  <div className="mt-4 rounded-2xl border bg-white p-4">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                          Forge Recommendation
+                        </p>
+                        <p className="mt-1 font-bold">
+                          {propertyLabel(topRecommendation.property)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border bg-gray-50 px-4 py-2 font-bold">
+                        {Math.round((review.confidence || 0) * 100)}% confidence
+                      </div>
+                    </div>
+
+                    <p className="mt-3 text-sm text-gray-700">
+                      {topRecommendation.explanation}
+                    </p>
+
+                    {recommendations.length > 1 && (
+                      <div className="mt-3">
+                        <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                          Other matches
+                        </p>
+
+                        <ul className="mt-2 space-y-1 text-sm text-gray-700">
+                          {recommendations.slice(1).map((recommendation) => (
+                            <li key={recommendation.property.id}>
+                              {propertyLabel(recommendation.property)} ·{" "}
+                              {Math.round(recommendation.score * 100)}%
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {status && (
                   <p

@@ -40,6 +40,7 @@ describe("TransactionReviewItem", () => {
       resolvedProperty: { name: "Property A" },
       needsAssignment: false,
       confidence: 0,
+      recommendations: [],
       suggestedProperties: [],
       assignmentStatus: "assigned",
       reviewState: "pending",
