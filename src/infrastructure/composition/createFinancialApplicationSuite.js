@@ -20,6 +20,10 @@ import {
 } from "../../application/financial/read-models/FinancialWorkspaceReadModelAdapter.js";
 
 import {
+  financialPositionReadModelAdapter,
+} from "../../application/financial/read-models/FinancialPositionReadModelAdapter.js";
+
+import {
   FinancialForecastService,
   FinancialPlanningService,
   FinancialRecommendationService,
@@ -30,6 +34,10 @@ import {
 import {
   financialEventAggregationService,
 } from "../../domains/financial-workspace";
+
+import {
+  FinancialPositionQueryService,
+} from "../../domains/financial-position";
 
 import { DemoFinancialDataProvider } from "../../domains/ledger";
 
@@ -42,6 +50,28 @@ import { traceExplorerService } from "../../domains/ledger/trace/TraceExplorerSe
 import { traceQueryService } from "../../domains/ledger/trace/TraceQueryService.js";
 import { NetWorthService } from "../../domains/networth";
 import { RiskDashboardService } from "../../domains/risk";
+
+function createLazyAssetRepository() {
+  return Object.freeze({
+    async getAll() {
+      const { AssetRepository } =
+        await import("../../domains/asset");
+
+      return AssetRepository.getAll();
+    },
+  });
+}
+
+function createLazyLiabilityRepository() {
+  return Object.freeze({
+    async getAll() {
+      const { LiabilityRepository } =
+        await import("../../domains/liability");
+
+      return LiabilityRepository.getAll();
+    },
+  });
+}
 
 export async function createFinancialApplicationSuite(deps = {}) {
   const snapshotRepository =
@@ -93,11 +123,35 @@ export async function createFinancialApplicationSuite(deps = {}) {
     deps.financialWorkspaceReadModelAdapter ||
     financialWorkspaceReadModelAdapter;
 
+  const assetRepository =
+    deps.assetRepository ||
+    createLazyAssetRepository();
+
+  const liabilityRepository =
+    deps.liabilityRepository ||
+    createLazyLiabilityRepository();
+
+  const financialPositionQueryService =
+    deps.financialPositionQueryService ||
+    new FinancialPositionQueryService({
+      assetRepository,
+      liabilityRepository,
+      netWorthService:
+        deps.positionNetWorthService || NetWorthService,
+    });
+
+  const positionReadModelAdapter =
+    deps.financialPositionReadModelAdapter ||
+    financialPositionReadModelAdapter;
+
   const readModelApplication =
     deps.readModelApplication ||
     new FinancialReadModelApplication({
       financialWorkspaceQueryService,
       readModelAdapter,
+      financialPositionQueryService,
+      financialPositionReadModelAdapter:
+        positionReadModelAdapter,
       currentOwnerId: deps.currentOwnerId,
     });
 
@@ -176,6 +230,11 @@ export async function createFinancialApplicationSuite(deps = {}) {
     readModelApplication,
     financialWorkspaceQueryService,
     financialWorkspaceReadModelAdapter: readModelAdapter,
+    financialPositionQueryService,
+    financialPositionReadModelAdapter:
+      positionReadModelAdapter,
+    assetRepository,
+    liabilityRepository,
     financialIntelligenceApplication,
     financialOperationsApplication,
     financialOperationsService,

@@ -110,6 +110,118 @@ describe("createFinancialApplicationSuite", () => {
     );
   });
 
+  test("wires repository-backed financial position into the read model application", async () => {
+    const financialWorkspaceQueryService = {
+      buildWorkspace: vi.fn(),
+    };
+
+    const financialWorkspaceReadModelAdapter = {
+      buildDashboard: vi.fn(),
+      buildReports: vi.fn(),
+    };
+
+    const assetRepository = {
+      getAll: vi.fn(),
+    };
+
+    const liabilityRepository = {
+      getAll: vi.fn(),
+    };
+
+    const financialPositionQueryService = {
+      buildPosition: vi.fn(),
+    };
+
+    const financialPositionReadModelAdapter = {
+      buildPosition: vi.fn(),
+    };
+
+    const currentOwnerId = vi.fn(async () => "owner-1");
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      financialWorkspaceQueryService,
+      financialWorkspaceReadModelAdapter,
+      assetRepository,
+      liabilityRepository,
+      financialPositionQueryService,
+      financialPositionReadModelAdapter,
+      currentOwnerId,
+    });
+
+    expect(suite.readModelApplication).toBeInstanceOf(
+      FinancialReadModelApplication,
+    );
+
+    expect(
+      suite.readModelApplication.financialPositionQueryService,
+    ).toBe(financialPositionQueryService);
+
+    expect(
+      suite.readModelApplication.financialPositionReadModelAdapter,
+    ).toBe(financialPositionReadModelAdapter);
+
+    expect(suite.financialPositionQueryService).toBe(
+      financialPositionQueryService,
+    );
+
+    expect(suite.financialPositionReadModelAdapter).toBe(
+      financialPositionReadModelAdapter,
+    );
+
+    expect(suite.assetRepository).toBe(assetRepository);
+    expect(suite.liabilityRepository).toBe(
+      liabilityRepository,
+    );
+  });
+
+  test("constructs the financial position query service from injected repositories", async () => {
+    const assetRepository = {
+      getAll: vi.fn(),
+    };
+
+    const liabilityRepository = {
+      getAll: vi.fn(),
+    };
+
+    const positionNetWorthService = {
+      calculate: vi.fn(),
+    };
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      assetRepository,
+      liabilityRepository,
+      positionNetWorthService,
+    });
+
+    expect(suite.financialPositionQueryService.assetRepository).toBe(
+      assetRepository,
+    );
+
+    expect(
+      suite.financialPositionQueryService.liabilityRepository,
+    ).toBe(liabilityRepository);
+
+    expect(
+      suite.financialPositionQueryService.netWorthService,
+    ).toBe(positionNetWorthService);
+
+    expect(
+      suite.readModelApplication.financialPositionQueryService,
+    ).toBe(suite.financialPositionQueryService);
+
+    expect(
+      suite.readModelApplication.financialPositionReadModelAdapter,
+    ).toBe(suite.financialPositionReadModelAdapter);
+  });
+
   test("allows financial read model application injection", async () => {
     const readModelApplication = {};
 
@@ -341,6 +453,12 @@ describe("createFinancialApplicationSuite", () => {
     const suite = await createFinancialApplicationSuite({
       financialEventRepository: {
         findByOwnerId: vi.fn(async () => []),
+      },
+      assetRepository: {
+        getAll: vi.fn(async () => []),
+      },
+      liabilityRepository: {
+        getAll: vi.fn(async () => []),
       },
       currentOwnerId: vi.fn(async () => "owner-test"),
     });
