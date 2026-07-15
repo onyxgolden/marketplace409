@@ -1,4 +1,10 @@
 import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+
+import {
   CREDENTIAL_REFERENCE_STATUSES,
   type CredentialReference,
 } from "../credential-reference.types";

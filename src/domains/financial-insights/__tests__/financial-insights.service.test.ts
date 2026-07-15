@@ -11,8 +11,15 @@ describe("FinancialInsightsService", () => {
       revenue: 20000,
       expenses: 12000,
       netIncome: 8000,
+      workingCapital: 70000,
+      currentRatio: 2.5,
+      quickRatio: 2,
+      grossProfit: 12000,
       profitMargin: 0.4,
       debtToAssetRatio: 0.3,
+      debtToEquityRatio: 30000 / 70000,
+      returnOnAssets: 0.08,
+      returnOnEquity: 8000 / 70000,
     };
 
     const summary = FinancialInsightsService.analyze(metrics);
@@ -44,8 +51,15 @@ describe("FinancialInsightsService", () => {
       revenue: 20000,
       expenses: 19000,
       netIncome: 1000,
+      workingCapital: 70000,
+      currentRatio: 2.5,
+      quickRatio: 2,
+      grossProfit: 5000,
       profitMargin: 0.05,
       debtToAssetRatio: 0.3,
+      debtToEquityRatio: 30000 / 70000,
+      returnOnAssets: 0.01,
+      returnOnEquity: 1000 / 70000,
     };
 
     const summary = FinancialInsightsService.analyze(metrics);
@@ -67,8 +81,15 @@ describe("FinancialInsightsService", () => {
       revenue: 10000,
       expenses: 15000,
       netIncome: -5000,
+      workingCapital: -20000,
+      currentRatio: 0.5,
+      quickRatio: 0.4,
+      grossProfit: -1000,
       profitMargin: -0.5,
       debtToAssetRatio: 1.2,
+      debtToEquityRatio: -6,
+      returnOnAssets: -0.05,
+      returnOnEquity: 0.25,
     };
 
     const summary = FinancialInsightsService.analyze(metrics);

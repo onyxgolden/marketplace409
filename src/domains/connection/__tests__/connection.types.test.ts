@@ -1,4 +1,10 @@
 import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+
+import {
   CONNECTION_STATUSES,
   CONNECTION_TYPES,
   type Connection,

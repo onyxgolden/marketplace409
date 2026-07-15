@@ -56,16 +56,52 @@ describe("RiskExecutiveReportService", () => {
       recurringRisks: [
         {
           id: "risk-1",
+          finding: {
+            id: "risk-1",
+            sourceType: "executive_test",
+            sourceFindingType: "CONTROL_WEAKNESS",
+            severity: "high",
+            score: 75,
+            confidence: 1,
+            explanation:
+              "Control weakness remains unresolved.",
+            recommendedAction:
+              "Review control weakness.",
+          },
           occurrences: 2,
-          latestSeverity: "high",
-          latestScore: 75,
+          firstSeen:
+            "2026-06-29T00:00:00.000Z",
+          lastSeen:
+            "2026-06-30T00:00:00.000Z",
+          ageInSnapshots: 2,
+          persistenceScore: 1,
+          status: "recurring",
         },
       ],
       newlyIntroducedRisks: [],
       resolvedRisks: [
         {
           id: "risk-2",
-          lastSeenSnapshotId: "snapshot-1",
+          finding: {
+            id: "risk-2",
+            sourceType: "executive_test",
+            sourceFindingType: "RESOLVED_CONTROL",
+            severity: "medium",
+            score: 45,
+            confidence: 1,
+            explanation:
+              "Previously identified risk is no longer present.",
+            recommendedAction:
+              "Continue routine monitoring.",
+          },
+          occurrences: 1,
+          firstSeen:
+            "2026-06-29T00:00:00.000Z",
+          lastSeen:
+            "2026-06-29T00:00:00.000Z",
+          ageInSnapshots: 1,
+          persistenceScore: 0.5,
+          status: "resolved",
         },
       ],
       agingRisks: [],

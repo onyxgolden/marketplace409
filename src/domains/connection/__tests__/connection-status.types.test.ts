@@ -1,4 +1,10 @@
 import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+
+import {
   CONNECTION_STATUS_DETAILS,
   getConnectionStatusDetails,
 } from "../connection-status.types";

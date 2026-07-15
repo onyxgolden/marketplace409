@@ -13,6 +13,7 @@ describe("FinancialEventFactory", () => {
       type: "income",
       amount: 1500,
       sourceCategory: "Rental Income (Rentec EasyPay)",
+      sourceRecordId: "rentec-record-rental-income-1",
       rawRow: {
         PROPERTY: "170 John",
       },
@@ -33,7 +34,7 @@ describe("FinancialEventFactory", () => {
       affects_noi: true,
       capitalized: false,
       source_system: "rentec",
-      source_record_id: null,
+      source_record_id: "rentec-record-rental-income-1",
       metadata: {
         property: "170 John",
         propertyName: "170 John",
@@ -50,6 +51,7 @@ describe("FinancialEventFactory", () => {
       type: "asset_purchase",
       amount: 25256.89,
       sourceCategory: "Commissions (Purchase Price)",
+      sourceRecordId: "rentec-record-asset-purchase-1",
       rawRow: {
         PROPERTY: "335 BUTLER",
       },
@@ -70,7 +72,7 @@ describe("FinancialEventFactory", () => {
       affects_noi: false,
       capitalized: true,
       source_system: "rentec",
-      source_record_id: null,
+      source_record_id: "rentec-record-asset-purchase-1",
     });
   });
 });

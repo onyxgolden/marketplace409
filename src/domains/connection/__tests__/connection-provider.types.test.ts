@@ -1,4 +1,10 @@
 import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+
+import {
   CONNECTION_PROVIDER_OPERATIONS,
   CONNECTION_PROVIDER_STATUSES,
   type ConnectionProvider,
@@ -142,7 +148,7 @@ describe("ConnectionProvider", () => {
       reportHealth: async () => ({
         connectionId: "connection_001",
         state: "healthy",
-        severity: "info",
+        severity: "healthy",
         label: "Healthy",
         allowsImport: true,
         requiresUserAction: false,

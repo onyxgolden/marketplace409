@@ -1,4 +1,10 @@
 import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+
+import {
   createConnectionCollection,
   type ConnectionCollection,
   type ConnectionSummary,
@@ -25,7 +31,8 @@ function makeConnectionSummary(
       status: "connected",
       label: "Connected",
       severity: "healthy",
-      description: "Connection is active.",
+      requiresUserAction: false,
+      allowsImport: true,
     },
     capabilities: {
       connectionId: id,

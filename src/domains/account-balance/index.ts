@@ -7,8 +7,17 @@ export {
 } from "./account-balance.types";
 
 export type {
+  AccountBalancePersistenceContext,
   AccountBalanceRepository,
 } from "./account-balance.repository";
+
+export type {
+  AccountBalanceRow,
+} from "./account-balance.mapper";
+
+export {
+  mapAccountBalanceRowToAccountBalance,
+} from "./account-balance.mapper";
 
 export {
   InMemoryAccountBalanceRepository,

@@ -73,17 +73,20 @@ function makeProvider(
       occurredAt: "2026-07-01T05:05:00.000Z",
     })),
 
-    reportHealth: overrides.reportHealth ?? (async () => ({
-      connectionId: "connection_001",
-      state: "healthy",
-      severity: "info",
-      label: "Healthy",
-      allowsImport: true,
-      requiresUserAction: false,
-      issueCount: 0,
-      warningCount: 0,
-      checkedAt: "2026-07-01T05:06:00.000Z",
-    })),
+    reportHealth:
+      overrides.reportHealth ??
+      (async (_connection) => ({
+        connectionId: "connection_001",
+        state: "healthy",
+        severity: "healthy",
+        label: "Healthy",
+        allowsImport: true,
+        requiresUserAction: false,
+        issueCount: 0,
+        warningCount: 0,
+        checkedAt:
+          "2026-07-01T05:06:00.000Z",
+      })),
 
     providerHealth: overrides.providerHealth ?? (async () => ({
       provider: providerName,

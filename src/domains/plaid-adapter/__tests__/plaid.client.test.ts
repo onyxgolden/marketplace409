@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  CountryCode,
+  Products,
+} from "plaid";
+
+import {
   createPlaidLinkToken,
   exchangePlaidPublicToken,
 } from "../plaid.client";
@@ -19,8 +24,8 @@ describe("createPlaidLinkToken", () => {
       userId: "user_1",
       clientName: "FORGE",
       language: "en",
-      countryCodes: ["US"],
-      products: ["transactions"],
+      countryCodes: [CountryCode.Us],
+      products: [Products.Transactions],
     });
 
     expect(token).toBe("link-sandbox-123");

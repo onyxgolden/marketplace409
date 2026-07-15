@@ -1,3 +1,9 @@
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+
 import type { Connection } from "../connection.types";
 import type { ConnectionCapabilities } from "../connection-capabilities.types";
 import type { ConnectionHealth } from "../connection-health.types";

@@ -301,4 +301,44 @@ expect(
   Object.isFrozen(suite.financialAccountRepository),
 ).toBe(true);
 });
+
+it("lazily composes the Supabase account balance repository without making the suite asynchronous", () => {
+const suite = createConnectionPlatformSuite({
+  accountBalanceRepositoryStorage: "supabase",
+});
+
+expect(suite.accountBalanceRepository).not.toBeInstanceOf(
+  InMemoryAccountBalanceRepository,
+);
+
+expect(
+  typeof suite.accountBalanceRepository.save,
+).toBe("function");
+
+expect(
+  typeof suite.accountBalanceRepository.saveMany,
+).toBe("function");
+
+expect(
+  typeof suite.accountBalanceRepository
+    .findByFinancialAccount,
+).toBe("function");
+
+expect(
+  typeof suite.accountBalanceRepository
+    .findLatestByFinancialAccount,
+).toBe("function");
+
+expect(
+  typeof suite.accountBalanceRepository
+    .findByConnection,
+).toBe("function");
+
+expect(Object.isFrozen(suite)).toBe(true);
+
+expect(
+  Object.isFrozen(suite.accountBalanceRepository),
+).toBe(true);
+});
+
 });

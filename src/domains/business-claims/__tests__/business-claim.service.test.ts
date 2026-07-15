@@ -15,6 +15,8 @@ describe("BusinessClaimService", () => {
       rejectClaim: rejectMock,
       createClaim: vi.fn(),
       getAllClaims: vi.fn(),
+      approveClaimRecord: vi.fn(),
+      updateClaimedBusiness: vi.fn(),
     };
 
     service = new BusinessClaimService(fakeRepo);

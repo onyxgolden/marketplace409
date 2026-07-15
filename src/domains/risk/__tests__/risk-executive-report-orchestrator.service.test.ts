@@ -11,8 +11,11 @@ describe("RiskExecutiveReportOrchestrator", () => {
           id: "risk-new",
           finding: {
             id: "risk-new",
+            sourceType: "executive_test",
+            sourceFindingType: "TEST_RISK",
             severity: "medium",
             score: 55,
+            confidence: 1,
             explanation: "New risk entered the watchlist.",
             recommendedAction: "Review new risk.",
           },
@@ -29,8 +32,11 @@ describe("RiskExecutiveReportOrchestrator", () => {
           id: "risk-critical",
           finding: {
             id: "risk-critical",
+            sourceType: "executive_test",
+            sourceFindingType: "TEST_RISK",
             severity: "critical",
             score: 95,
+            confidence: 1,
             explanation: "Critical risk remains unresolved.",
             recommendedAction: "Assign executive owner.",
           },

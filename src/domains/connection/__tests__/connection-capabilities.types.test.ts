@@ -1,4 +1,10 @@
 import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+
+import {
   CONNECTION_CAPABILITY_KEYS,
   hasConnectionCapability,
   type ConnectionCapabilities,

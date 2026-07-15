@@ -2,13 +2,19 @@ import type {
   AccountBalance,
 } from "./account-balance.types";
 
+export type AccountBalancePersistenceContext = Readonly<{
+  ownerId: string;
+}>;
+
 export interface AccountBalanceRepository {
   save(
     balance: AccountBalance,
+    context?: AccountBalancePersistenceContext,
   ): Promise<AccountBalance>;
 
   saveMany(
     balances: readonly AccountBalance[],
+    context?: AccountBalancePersistenceContext,
   ): Promise<readonly AccountBalance[]>;
 
   findByFinancialAccount(

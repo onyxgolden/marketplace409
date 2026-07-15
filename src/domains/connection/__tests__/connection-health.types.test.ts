@@ -1,4 +1,10 @@
 import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+
+import {
   CONNECTION_HEALTH_STATES,
   type ConnectionHealth,
 } from "../connection-health.types";

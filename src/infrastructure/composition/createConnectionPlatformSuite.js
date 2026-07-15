@@ -25,6 +25,11 @@ FinancialAccountRepositoryStorage,
 } from "./createFinancialAccountRepository.js";
 
 import {
+AccountBalanceRepositoryStorage,
+createLazyAccountBalanceRepository,
+} from "./createAccountBalanceRepository.js";
+
+import {
 InMemoryTransactionRepository,
 TransactionImportService,
 } from "../../domains/transaction";
@@ -76,9 +81,22 @@ FinancialAccountRepositoryStorage.SUPABASE
   : new InMemoryFinancialAccountRepository()
 );
 
+const accountBalanceRepositoryStorage =
+deps.accountBalanceRepositoryStorage ||
+process.env.ACCOUNT_BALANCE_REPOSITORY ||
+AccountBalanceRepositoryStorage.MEMORY;
+
 const accountBalanceRepository =
 deps.accountBalanceRepository ||
-new InMemoryAccountBalanceRepository();
+(
+accountBalanceRepositoryStorage ===
+AccountBalanceRepositoryStorage.SUPABASE
+  ? createLazyAccountBalanceRepository({
+      storage:
+        AccountBalanceRepositoryStorage.SUPABASE,
+    })
+  : new InMemoryAccountBalanceRepository()
+);
 
 const transactionRepository =
 deps.transactionRepository ||
