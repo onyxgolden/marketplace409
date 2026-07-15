@@ -28,6 +28,13 @@ export default function HomeForgeLaunch() {
                 Launch FORGE →
               </Link>
 
+              <Link
+                href="/import"
+                className="inline-flex items-center justify-center rounded-2xl border border-amber-400 bg-amber-50 px-6 py-3 text-sm font-black uppercase tracking-wide text-amber-800 shadow-sm transition hover:bg-amber-100"
+              >
+                Financial Import →
+              </Link>
+
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3 text-sm font-bold text-slate-600">
                 Preview workspace · Under active development
               </div>
