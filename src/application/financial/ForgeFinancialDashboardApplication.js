@@ -20,6 +20,10 @@ export class ForgeFinancialDashboardApplication {
       health: DEFAULT_HEALTH,
       metadata: DEFAULT_METADATA,
       balanceSheetLines: [],
+      portfolio: null,
+      properties: [],
+      categories: [],
+      transactions: [],
       statusItems: this.buildStatusItems({
         loadState: "loading",
         metadata: DEFAULT_METADATA,
@@ -28,9 +32,16 @@ export class ForgeFinancialDashboardApplication {
     };
   }
 
-  static buildReadyModel({ dashboard, operationsPlan }) {
+  static buildReadyModel({
+    dashboard,
+    reports,
+    operationsPlan,
+  }) {
     const normalizedDashboard = dashboard || null;
-    const metadata = normalizedDashboard?.metadata || DEFAULT_METADATA;
+    const normalizedReports = reports || null;
+    const metadata =
+      normalizedDashboard?.metadata ||
+      DEFAULT_METADATA;
 
     return {
       dashboard: normalizedDashboard,
@@ -40,7 +51,21 @@ export class ForgeFinancialDashboardApplication {
       kpis: normalizedDashboard?.kpis || {},
       health: normalizedDashboard?.health || DEFAULT_HEALTH,
       metadata,
-      balanceSheetLines: normalizedDashboard?.balanceSheetLines || [],
+      balanceSheetLines:
+        normalizedDashboard?.balanceSheetLines ||
+        [],
+      portfolio:
+        normalizedReports?.portfolio ||
+        null,
+      properties:
+        normalizedReports?.properties ||
+        [],
+      categories:
+        normalizedReports?.categories ||
+        [],
+      transactions:
+        normalizedReports?.transactions ||
+        [],
       statusItems: this.buildStatusItems({
         loadState: "ready",
         metadata,
@@ -70,7 +95,8 @@ export class ForgeFinancialDashboardApplication {
     try {
       const readModelPayload = await this.fetchJson({
         fetcher,
-        url: "/api/financial/read-models?financial=true",
+        url:
+          "/api/financial/read-models?financial=true&business=true",
         fallbackMessage: "Financial read model failed.",
       });
 
@@ -81,8 +107,15 @@ export class ForgeFinancialDashboardApplication {
       });
 
       return this.buildReadyModel({
-        dashboard: readModelPayload.data?.financial?.dashboard || null,
-        operationsPlan: operationsPayload.data || null,
+        dashboard:
+          readModelPayload.data?.financial?.dashboard ||
+          null,
+        reports:
+          readModelPayload.data?.business?.reports ||
+          null,
+        operationsPlan:
+          operationsPayload.data ||
+          null,
       });
     } catch (error) {
       return this.buildErrorModel(error);

@@ -11,6 +11,11 @@ describe("ForgeFinancialDashboardApplication", () => {
       label: "Loading",
       detail: "Financial dashboard data is loading.",
     });
+    expect(result.portfolio).toBeNull();
+    expect(result.properties).toEqual([]);
+    expect(result.categories).toEqual([]);
+    expect(result.transactions).toEqual([]);
+
     expect(result.statusItems[0]).toEqual({
       label: "Financial Workspace",
       detail: "Repository-backed financial workspace read model is active.",
@@ -33,6 +38,46 @@ describe("ForgeFinancialDashboardApplication", () => {
         },
         balanceSheetLines: [],
       },
+      reports: {
+        portfolio: {
+          income: 1500,
+          expenses: 250,
+          noi: 1250,
+          cashFlow: 1250,
+          transactionCount: 2,
+        },
+        properties: [
+          {
+            propertyId: "170-john",
+            income: 1500,
+            expenses: 250,
+            noi: 1250,
+            cashFlow: 1250,
+            transactionCount: 2,
+          },
+        ],
+        categories: [
+          {
+            category: "rental_income",
+            income: 1500,
+            expenses: 0,
+            netAmount: 1500,
+            transactionCount: 1,
+          },
+        ],
+        transactions: [
+          {
+            id: "event-1",
+            propertyId: "170-john",
+            eventDate: "2026-01-01",
+            description: "January Rent",
+            amount: 1500,
+            transactionKind: "income",
+            category: "rental_income",
+            sourceSystem: "rentec",
+          },
+        ],
+      },
       operationsPlan: {
         focus: "Protect cash",
       },
@@ -40,7 +85,23 @@ describe("ForgeFinancialDashboardApplication", () => {
 
     expect(result.loadState).toBe("ready");
     expect(result.kpis).toEqual({ equity: 100000 });
-    expect(result.operationsPlan).toEqual({ focus: "Protect cash" });
+    expect(result.operationsPlan).toEqual({
+      focus: "Protect cash",
+    });
+    expect(result.portfolio).toEqual({
+      income: 1500,
+      expenses: 250,
+      noi: 1250,
+      cashFlow: 1250,
+      transactionCount: 2,
+    });
+    expect(result.properties).toHaveLength(1);
+    expect(result.properties[0].propertyId).toBe(
+      "170-john",
+    );
+    expect(result.categories).toHaveLength(1);
+    expect(result.transactions).toHaveLength(1);
+
     expect(result.statusItems).toEqual([
       {
         label: "Financial Workspace",
@@ -74,13 +135,41 @@ describe("ForgeFinancialDashboardApplication", () => {
             financial: {
               type: "financial-dashboard",
               dashboard: {
-                kpis: { cash: null, profit: 280000 },
+                kpis: {
+                  cash: null,
+                  profit: 280000,
+                },
                 metadata: {
                   provider: "financial-events",
-                  snapshotStatus: "repository-backed",
+                  snapshotStatus:
+                    "repository-backed",
                   phase: "16.2",
                 },
                 balanceSheetLines: [],
+              },
+            },
+            business: {
+              type: "business-dashboard",
+              reports: {
+                portfolio: {
+                  income: 300000,
+                  expenses: 20000,
+                  noi: 280000,
+                  cashFlow: 280000,
+                  transactionCount: 12,
+                },
+                properties: [
+                  {
+                    propertyId: "170-john",
+                    income: 300000,
+                    expenses: 20000,
+                    noi: 280000,
+                    cashFlow: 280000,
+                    transactionCount: 12,
+                  },
+                ],
+                categories: [],
+                transactions: [],
               },
             },
           },
@@ -100,7 +189,7 @@ describe("ForgeFinancialDashboardApplication", () => {
 
     expect(fetcher).toHaveBeenNthCalledWith(
       1,
-      "/api/financial/read-models?financial=true",
+      "/api/financial/read-models?financial=true&business=true",
     );
     expect(fetcher).toHaveBeenNthCalledWith(
       2,
@@ -109,7 +198,11 @@ describe("ForgeFinancialDashboardApplication", () => {
     expect(result.loadState).toBe("ready");
     expect(result.kpis.profit).toBe(280000);
     expect(result.kpis.cash).toBeNull();
-    expect(result.operationsPlan.focus).toBe("Keep monitoring");
+    expect(result.portfolio.noi).toBe(280000);
+    expect(result.properties).toHaveLength(1);
+    expect(result.operationsPlan.focus).toBe(
+      "Keep monitoring",
+    );
   });
 
   it("builds an error model when loading fails", async () => {
