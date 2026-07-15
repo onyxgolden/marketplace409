@@ -21,6 +21,7 @@ InMemoryFinancialAccountRepository,
 } from "../../../domains/financial-account";
 
 import {
+AccountBalanceImportService,
 InMemoryAccountBalanceRepository,
 } from "../../../domains/account-balance";
 
@@ -96,6 +97,9 @@ expect(suite.accountImportService).toBeInstanceOf(
 );
 expect(suite.financialAccountImportService).toBeInstanceOf(
   FinancialAccountImportService,
+);
+expect(suite.accountBalanceImportService).toBeInstanceOf(
+  AccountBalanceImportService,
 );
 expect(suite.financialAccountService).toBeInstanceOf(
   FinancialAccountService,

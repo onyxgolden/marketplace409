@@ -16,6 +16,7 @@ InMemoryFinancialAccountRepository,
 } from "../../domains/financial-account";
 
 import {
+AccountBalanceImportService,
 InMemoryAccountBalanceRepository,
 } from "../../domains/account-balance";
 
@@ -149,6 +150,13 @@ new FinancialAccountService(
 financialAccountRepository,
 );
 
+const accountBalanceImportService =
+deps.accountBalanceImportService ||
+new AccountBalanceImportService(
+accountBalanceRepository,
+accountBalanceMapper,
+);
+
 const transactionImportService =
 deps.transactionImportService ||
 new TransactionImportService(
@@ -175,6 +183,7 @@ connectionImportOrchestrator,
 accountImportService,
 financialAccountImportService,
 financialAccountService,
+accountBalanceImportService,
 transactionImportService,
 });
 }
