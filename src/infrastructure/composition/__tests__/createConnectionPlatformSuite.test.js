@@ -257,4 +257,48 @@ expect(suite.transactionImportService).toBe(
 
 
 });
+
+it("lazily composes the Supabase financial account repository without making the suite asynchronous", () => {
+const suite = createConnectionPlatformSuite({
+  financialAccountRepositoryStorage: "supabase",
+});
+
+expect(suite.financialAccountRepository).not.toBeInstanceOf(
+  InMemoryFinancialAccountRepository,
+);
+
+expect(
+  typeof suite.financialAccountRepository.save,
+).toBe("function");
+
+expect(
+  typeof suite.financialAccountRepository.saveMany,
+).toBe("function");
+
+expect(
+  typeof suite.financialAccountRepository.findById,
+).toBe("function");
+
+expect(
+  typeof suite.financialAccountRepository.findByConnection,
+).toBe("function");
+
+expect(
+  typeof suite.financialAccountRepository
+    .findByProviderAccountId,
+).toBe("function");
+
+expect(
+  suite.financialAccountImportService.repository,
+).toBe(suite.financialAccountRepository);
+
+expect(
+  suite.financialAccountService.repository,
+).toBe(suite.financialAccountRepository);
+
+expect(Object.isFrozen(suite)).toBe(true);
+expect(
+  Object.isFrozen(suite.financialAccountRepository),
+).toBe(true);
+});
 });

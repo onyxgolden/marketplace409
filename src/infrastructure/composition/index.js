@@ -1,4 +1,10 @@
 export {
+  createFinancialAccountRepository,
+  createLazyFinancialAccountRepository,
+  FinancialAccountRepositoryStorage,
+} from "./createFinancialAccountRepository.js";
+
+export {
   createFinancialSnapshotRepository,
   FinancialSnapshotRepositoryStorage,
 } from "./createFinancialSnapshotRepository.js";

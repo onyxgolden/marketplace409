@@ -39,7 +39,12 @@ export class FinancialAccountImportService<TProviderAccount = unknown> {
     );
 
     const persistedFinancialAccounts =
-      await this.repository.saveMany(financialAccounts);
+      await this.repository.saveMany(
+        financialAccounts,
+        {
+          ownerId: input.connection.userId,
+        },
+      );
 
     return Object.freeze(
       toFinancialAccountImportResult(

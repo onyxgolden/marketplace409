@@ -2,13 +2,19 @@ import type {
   FinancialAccount,
 } from "./financial-account.types";
 
+export type FinancialAccountPersistenceContext = Readonly<{
+  ownerId: string;
+}>;
+
 export interface FinancialAccountRepository {
   save(
     account: FinancialAccount,
+    context?: FinancialAccountPersistenceContext,
   ): Promise<FinancialAccount>;
 
   saveMany(
     accounts: readonly FinancialAccount[],
+    context?: FinancialAccountPersistenceContext,
   ): Promise<readonly FinancialAccount[]>;
 
   findById(
