@@ -406,6 +406,15 @@ function runShadowGovernancePipeline() {
     throw error;
   }
 }
+function runHybridGovernancePipeline() {
+  console.log(
+    "Hybrid governance pipeline initialized. Delegated synchronization is not implemented yet.",
+  );
+
+  throw new Error(
+    'Governance mode "hybrid" is recognized but delegated synchronization has not been implemented yet.',
+  );
+}
 
 export function runGovernancePipeline(
   {
@@ -437,11 +446,13 @@ export function runGovernancePipeline(
       return;
 
     case "hybrid":
+      runHybridGovernancePipeline();
+      return;
+
     case "authoritative":
       throw new Error(
         `Governance mode "${activeMode}" is recognized but not implemented by the pipeline yet.`,
       );
-
     default:
       throw new Error(
         `Unsupported governance mode: ${activeMode}`,

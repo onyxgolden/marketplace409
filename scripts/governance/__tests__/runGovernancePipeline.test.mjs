@@ -95,12 +95,9 @@ describe(
       },
     );
 
-    test.each([
-      "hybrid",
-      "authoritative",
-    ])(
-      "%s mode fails explicitly until implemented",
-      (mode) => {
+    test(
+      "hybrid mode dispatches through the hybrid pipeline",
+      () => {
         const logSpy =
           vi.spyOn(
             console,
@@ -111,16 +108,49 @@ describe(
 
         expect(() =>
           runGovernancePipeline({
-            mode,
+            mode: "hybrid",
           }),
         ).toThrow(
-          `Governance mode "${mode}" is recognized but not implemented by the pipeline yet.`,
+          'Governance mode "hybrid" is recognized but delegated synchronization has not been implemented yet.',
         );
 
         expect(
           logSpy,
         ).toHaveBeenCalledWith(
-          `FORGE governance mode: ${mode}`,
+          "FORGE governance mode: hybrid",
+        );
+
+        expect(
+          logSpy,
+        ).toHaveBeenCalledWith(
+          "Hybrid governance pipeline initialized. Delegated synchronization is not implemented yet.",
+        );
+      },
+    );
+
+    test(
+      "authoritative mode remains explicitly unsupported",
+      () => {
+        const logSpy =
+          vi.spyOn(
+            console,
+            "log",
+          ).mockImplementation(
+            () => {},
+          );
+
+        expect(() =>
+          runGovernancePipeline({
+            mode: "authoritative",
+          }),
+        ).toThrow(
+          'Governance mode "authoritative" is recognized but not implemented by the pipeline yet.',
+        );
+
+        expect(
+          logSpy,
+        ).toHaveBeenCalledWith(
+          "FORGE governance mode: authoritative",
         );
       },
     );
