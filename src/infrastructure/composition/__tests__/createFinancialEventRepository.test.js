@@ -55,8 +55,13 @@ describe("createFinancialEventRepository", () => {
   });
 
   it("creates a Supabase repository when explicitly selected", async () => {
+    const supabaseClient = {
+      from: vi.fn(),
+    };
+
     const repository = await createFinancialEventRepository({
       storage: FinancialEventRepositoryStorage.SUPABASE,
+      supabaseClient,
     });
 
     expect(repository).toBeInstanceOf(

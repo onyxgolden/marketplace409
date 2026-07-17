@@ -7,6 +7,10 @@ import {
   loadGovernanceMode,
 } from "./loadGovernanceMode.mjs";
 
+import {
+  synchronizeAuthoritativeGovernance,
+} from "./synchronizeAuthoritativeGovernance.mjs";
+
 const repositoryRoot = process.cwd();
 
 const snapshotDirectory = path.join(
@@ -247,6 +251,22 @@ function removeCreatedSnapshots(
   }
 }
 
+function validatePipelineDependency(
+  dependency,
+  dependencyName,
+) {
+  if (
+    typeof dependency !==
+    "function"
+  ) {
+    throw new Error(
+      `${dependencyName} must be a function`,
+    );
+  }
+
+  return dependency;
+}
+
 function runShadowGovernancePipeline() {
   const snapshotsBefore =
     listSnapshotNames();
@@ -406,23 +426,56 @@ function runShadowGovernancePipeline() {
     throw error;
   }
 }
-function runHybridGovernancePipeline() {
+function runHybridGovernancePipeline({
+  runShadowPipeline,
+  synchronizeAuthoritative,
+} = {}) {
+  runShadowPipeline =
+    runShadowPipeline ??
+    runShadowGovernancePipeline;
+
+  synchronizeAuthoritative =
+    synchronizeAuthoritative ??
+    synchronizeAuthoritativeGovernance;
   console.log(
     "Hybrid governance pipeline initialized.",
   );
 
-  runShadowGovernancePipeline();
+  runShadowPipeline();
+
+  const authoritativeResult =
+    synchronizeAuthoritative({
+      mode: "hybrid",
+    });
 
   console.log(
-    "Hybrid governance completed shadow synchronization. Delegated authoritative synchronization is pending implementation.",
+    "Hybrid governance completed shadow synchronization and delegated authoritative synchronization.",
   );
+
+  return authoritativeResult;
 }
 
 export function runGovernancePipeline(
   {
     mode,
+    runShadowPipeline =
+      runShadowGovernancePipeline,
+    synchronizeAuthoritative =
+      synchronizeAuthoritativeGovernance,
   } = {},
 ) {
+  runShadowPipeline =
+    validatePipelineDependency(
+      runShadowPipeline,
+      "runShadowPipeline",
+    );
+
+  synchronizeAuthoritative =
+    validatePipelineDependency(
+      synchronizeAuthoritative,
+      "synchronizeAuthoritative",
+    );
+
   const activeMode =
     mode ??
     loadGovernanceMode(
@@ -438,8 +491,7 @@ export function runGovernancePipeline(
 
   switch (activeMode) {
     case "shadow":
-      runShadowGovernancePipeline();
-      return;
+      return runShadowPipeline();
 
     case "locked":
       console.log(
@@ -448,13 +500,16 @@ export function runGovernancePipeline(
       return;
 
     case "hybrid":
-      runHybridGovernancePipeline();
-      return;
+      return runHybridGovernancePipeline({
+        runShadowPipeline,
+        synchronizeAuthoritative,
+      });
 
     case "authoritative":
-      throw new Error(
-        `Governance mode "${activeMode}" is recognized but not implemented by the pipeline yet.`,
-      );
+      return synchronizeAuthoritative({
+        mode: "authoritative",
+      });
+
     default:
       throw new Error(
         `Unsupported governance mode: ${activeMode}`,
