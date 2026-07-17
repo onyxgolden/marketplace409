@@ -234,7 +234,12 @@
       "properties": {
         "mode": {
           "type": "string",
-          "const": "shadow-only"
+          "enum": [
+            "locked",
+            "shadow",
+            "hybrid",
+            "authoritative"
+          ]
         },
         "stateGeneratedAt": {
           "type": [

@@ -2,6 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+import {
+  loadGovernanceMode,
+} from "./loadGovernanceMode.mjs";
+
 const repositoryRoot = process.cwd();
 
 const governanceStatePath =
@@ -175,6 +179,14 @@ function generateGovernanceState(
     "Editable-sections policy",
   );
 
+  const governanceMode =
+    loadGovernanceMode(
+      undefined,
+      {
+        repositoryRoot,
+      },
+    );
+
   const generatedState = {
     schemaVersion: "1.0",
 
@@ -218,7 +230,8 @@ function generateGovernanceState(
     },
 
     synchronization: {
-      mode: "shadow-only",
+      mode:
+        governanceMode.mode,
       stateGeneratedAt: null,
       sourceSnapshot:
         normalizedSnapshotPath,
@@ -266,6 +279,10 @@ function generateGovernanceState(
 
   console.log(
     "PASS: Canonical governance state generated successfully.",
+  );
+
+  console.log(
+    `Governance mode: ${governanceMode.mode}`,
   );
 
   console.log(

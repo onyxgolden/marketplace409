@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "mode": "shadow",
+  "allowedModes": [
+    "locked",
+    "shadow",
+    "hybrid",
+    "authoritative"
+  ],
+  "description": "Controls the active FORGE Governance Synchronizer operating mode.",
+  "rules": [
+    "Locked mode permits repository inspection and validation but prohibits governance document writes.",
+    "Shadow mode permits updates only to experimental synchronized governance documents.",
+    "Hybrid mode permits shadow updates and explicitly delegated authoritative section updates.",
+    "Authoritative mode permits all explicitly delegated authoritative section updates while preserving immutable and protected content.",
+    "Changing the operating mode does not expand the maximum capabilities granted by governance policy.",
+    "All modes remain subject to repository evidence, validation, protected-content preservation, and transactional rollback."
+  ]
+}

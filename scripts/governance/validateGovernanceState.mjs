@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import {
+  GOVERNANCE_MODES,
+} from "./loadGovernanceMode.mjs";
+
 const repositoryRoot = process.cwd();
 
 const commitPattern = /^[0-9a-f]{7,40}$/;
@@ -464,8 +468,10 @@ assertExactKeys(
 );
 
 assert(
-  governanceState.synchronization.mode === "shadow-only",
-  "governanceState.synchronization.mode must equal shadow-only",
+  GOVERNANCE_MODES.includes(
+    governanceState.synchronization.mode,
+  ),
+  "governanceState.synchronization.mode must be a supported governance mode",
 );
 
 assertNullableDateTime(
