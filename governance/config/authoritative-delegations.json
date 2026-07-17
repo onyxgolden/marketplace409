@@ -1,0 +1,42 @@
+{
+  "version": "1.0",
+  "description": "Defines owner-approved section-level authority for synchronizing shadow governance content into authoritative FORGE governance documents.",
+  "defaultAuthority": "human",
+  "delegationScope": "section",
+  "automaticPromotion": false,
+  "documents": [
+    {
+      "documentName": "FORGE_ENGINEERING_CONTROL_CENTER.md",
+      "relativePath": "docs/architecture/FORGE_ENGINEERING_CONTROL_CENTER.md",
+      "sourceDocumentName": "FORGE_SYNC_CONTROL_CENTER.md",
+      "delegatedSections": []
+    },
+    {
+      "documentName": "FORGE_STATUS.md",
+      "relativePath": "docs/architecture/FORGE_STATUS.md",
+      "sourceDocumentName": "FORGE_SYNC_STATUS.md",
+      "delegatedSections": []
+    },
+    {
+      "documentName": "FORGE_SESSION.md",
+      "relativePath": "docs/architecture/FORGE_SESSION.md",
+      "sourceDocumentName": "FORGE_SYNC_SESSION.md",
+      "delegatedSections": []
+    },
+    {
+      "documentName": "FORGE_ROADMAP.md",
+      "relativePath": "docs/architecture/FORGE_ROADMAP.md",
+      "sourceDocumentName": "FORGE_SYNC_ROADMAP.md",
+      "delegatedSections": []
+    }
+  ],
+  "rules": [
+    "Authority remains human unless a section is explicitly delegated.",
+    "Delegation applies only to the exact document and section identifier listed.",
+    "Each active delegation requires explicit owner approval.",
+    "Delegation does not override immutable-section, protected-content, capability, validation, or promotion policies.",
+    "Automatic promotion is prohibited.",
+    "An empty delegatedSections array grants no authoritative write authority.",
+    "The synchronizer must stop before writing when a requested section is not explicitly delegated."
+  ]
+}
