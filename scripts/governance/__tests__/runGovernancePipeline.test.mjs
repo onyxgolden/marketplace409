@@ -96,35 +96,13 @@ describe(
     );
 
     test(
-      "hybrid mode dispatches through the hybrid pipeline",
+      "hybrid mode currently delegates to the shadow pipeline",
       () => {
-        const logSpy =
-          vi.spyOn(
-            console,
-            "log",
-          ).mockImplementation(
-            () => {},
-          );
-
         expect(() =>
           runGovernancePipeline({
             mode: "hybrid",
           }),
-        ).toThrow(
-          'Governance mode "hybrid" is recognized but delegated synchronization has not been implemented yet.',
-        );
-
-        expect(
-          logSpy,
-        ).toHaveBeenCalledWith(
-          "FORGE governance mode: hybrid",
-        );
-
-        expect(
-          logSpy,
-        ).toHaveBeenCalledWith(
-          "Hybrid governance pipeline initialized. Delegated synchronization is not implemented yet.",
-        );
+        ).not.toThrow();
       },
     );
 

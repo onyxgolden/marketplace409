@@ -408,11 +408,13 @@ function runShadowGovernancePipeline() {
 }
 function runHybridGovernancePipeline() {
   console.log(
-    "Hybrid governance pipeline initialized. Delegated synchronization is not implemented yet.",
+    "Hybrid governance pipeline initialized.",
   );
 
-  throw new Error(
-    'Governance mode "hybrid" is recognized but delegated synchronization has not been implemented yet.',
+  runShadowGovernancePipeline();
+
+  console.log(
+    "Hybrid governance completed shadow synchronization. Delegated authoritative synchronization is pending implementation.",
   );
 }
 
