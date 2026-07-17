@@ -1,9 +1,11 @@
-import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 import { renderAllShadowDocuments } from "./renderShadowDocuments.mjs";
 import { loadGovernanceState } from "./loadGovernanceState.mjs";
+import {
+  synchronizeGovernanceDocuments,
+} from "./synchronizeGovernanceDocuments.mjs";
 
 const repositoryRoot = process.cwd();
 
@@ -14,105 +16,75 @@ const synchronizedDirectory = path.join(
   "synchronized",
 );
 
-function atomicWrite(filePath, content) {
-  const tempPath = `${filePath}.tmp`;
-
-  fs.writeFileSync(tempPath, content, "utf8");
-  fs.renameSync(tempPath, filePath);
-}
-
-function runNodeScript(relativePath, args = []) {
-  const result = spawnSync(
-    process.execPath,
-    [path.join(repositoryRoot, relativePath), ...args],
-    {
-      cwd: repositoryRoot,
-      stdio: "inherit",
-    },
-  );
-
-  if (result.status !== 0) {
-    throw new Error(
-      `Validation failed: ${relativePath}`,
-    );
-  }
-}
-
-function synchronizeShadowGovernance() {
+export function synchronizeShadowGovernance() {
   const renderedDocuments =
     renderAllShadowDocuments({
       repositoryRoot,
     });
 
-  const originals = new Map();
-
-  for (const [documentName] of Object.entries(renderedDocuments)) {
-    const filePath = path.join(
+  synchronizeGovernanceDocuments({
+    repositoryRoot,
+    targetDirectory:
       synchronizedDirectory,
-      documentName,
-    );
+    renderedDocuments,
+    createValidationSteps() {
+      const governanceState =
+        loadGovernanceState(
+          "governance/state/current-governance-state.json",
+          {
+            repositoryRoot,
+          },
+        );
 
-    originals.set(
-      filePath,
-      fs.readFileSync(filePath, "utf8"),
-    );
-  }
-
-  try {
-    for (const [documentName, content] of Object.entries(
-      renderedDocuments,
-    )) {
-      atomicWrite(
-        path.join(
-          synchronizedDirectory,
-          documentName,
-        ),
-        content,
-      );
-    }
-
-    const governanceState =
-      loadGovernanceState(
-        "governance/state/current-governance-state.json",
+      return [
         {
-          repositoryRoot,
+          relativePath:
+            "scripts/governance/validateGovernanceState.mjs",
         },
-      );
-
-    runNodeScript(
-      "scripts/governance/validateGovernanceState.mjs",
-    );
-
-    runNodeScript(
-      "scripts/governance/validateSessionSnapshot.mjs",
-      [
-        governanceState.session.latestSnapshot,
-      ],
-    );
-
-    runNodeScript(
-      "scripts/governance/verifyShadowGovernance.mjs",
-    );
-
-    console.log(
+        {
+          relativePath:
+            "scripts/governance/validateSessionSnapshot.mjs",
+          args: [
+            governanceState.session.latestSnapshot,
+          ],
+        },
+        {
+          relativePath:
+            "scripts/governance/verifyShadowGovernance.mjs",
+        },
+      ];
+    },
+    successMessage:
       "PASS: Shadow governance synchronized successfully.",
-    );
-  } catch (error) {
-    console.error(
+    rollbackMessage:
       "Synchronization failed. Restoring original shadow documents...",
-    );
-
-    for (const [filePath, original] of originals) {
-      atomicWrite(filePath, original);
-    }
-
-    throw error;
-  }
+  });
 }
 
-try {
-  synchronizeShadowGovernance();
-} catch (error) {
-  console.error(error.message);
-  process.exit(1);
+function isDirectExecution() {
+  const invokedScriptPath =
+    process.argv[1];
+
+  if (!invokedScriptPath) {
+    return false;
+  }
+
+  return import.meta.url ===
+    pathToFileURL(
+      path.resolve(
+        invokedScriptPath,
+      ),
+    ).href;
+}
+
+if (isDirectExecution()) {
+  try {
+    synchronizeShadowGovernance();
+  } catch (error) {
+    console.error(
+      error.message,
+    );
+
+    process.exit(1);
+  }
 }
