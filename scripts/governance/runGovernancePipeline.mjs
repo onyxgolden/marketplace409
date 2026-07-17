@@ -431,6 +431,11 @@ export function runGovernancePipeline(
       return;
 
     case "locked":
+      console.log(
+        "Governance pipeline is locked. No snapshots, state, or governance documents were written.",
+      );
+      return;
+
     case "hybrid":
     case "authoritative":
       throw new Error(
