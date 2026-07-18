@@ -34,6 +34,9 @@ const promotionStateRelativePath =
 const snapshotDirectoryRelativePath =
   "governance/snapshots";
 
+const validationDirectoryRelativePath =
+  "governance/validation";
+
 const authoritativeGovernancePaths = [
   "docs/architecture/FORGE_ENGINEERING_CONTROL_CENTER.md",
   "docs/architecture/FORGE_STATUS.md",
@@ -56,6 +59,9 @@ const fixtureDirectoryPaths = [
 ];
 
 const fixtureFilePaths = [
+  ".gitignore",
+  "docs/architecture/FORGE_GOVERNANCE_SPECIFICATION.md",
+  "docs/architecture/FORGE_GOVERNANCE_TRACEABILITY.md",
   ...authoritativeGovernancePaths,
 ];
 
@@ -250,6 +256,215 @@ function initializeGitRepository(
   }
 }
 
+function createEligibleValidationEvidence(
+  temporaryRepositoryRoot,
+) {
+  const head = runProcess(
+    "git",
+    [
+      "rev-parse",
+      "HEAD",
+    ],
+    {
+      cwd: temporaryRepositoryRoot,
+    },
+  ).stdout.trim();
+
+  const validationDirectory = path.join(
+    temporaryRepositoryRoot,
+    validationDirectoryRelativePath,
+  );
+
+  fs.rmSync(
+    validationDirectory,
+    {
+      recursive: true,
+      force: true,
+    },
+  );
+
+  fs.mkdirSync(
+    validationDirectory,
+    {
+      recursive: true,
+    },
+  );
+
+  const timestamp =
+    "2026-01-01T00:00:00.000Z";
+
+  const repositoryState = {
+    branch: "main",
+    head,
+    originMain: head,
+    headMatchesOriginMain: true,
+    workingTreeClean: true,
+    gitStatus: [],
+  };
+
+  const commands = [
+    {
+      category:
+        "focusedTests",
+      command:
+        "fixture-validation",
+      args: [
+        "focusedTests",
+      ],
+      workingDirectory:
+        ".",
+      startedAt:
+        timestamp,
+      completedAt:
+        timestamp,
+      exitCode:
+        0,
+      status:
+        "passing",
+      summary:
+        "Fixture focused validation passed.",
+    },
+    {
+      category:
+        "fullTests",
+      command:
+        "fixture-validation",
+      args: [
+        "fullTests",
+      ],
+      workingDirectory:
+        ".",
+      startedAt:
+        timestamp,
+      completedAt:
+        timestamp,
+      exitCode:
+        0,
+      status:
+        "passing",
+      summary:
+        "Fixture full validation passed.",
+    },
+    {
+      category:
+        "productionBuild",
+      command:
+        "fixture-validation",
+      args: [
+        "productionBuild",
+      ],
+      workingDirectory:
+        ".",
+      startedAt:
+        timestamp,
+      completedAt:
+        timestamp,
+      exitCode:
+        0,
+      status:
+        "passing",
+      summary:
+        "Fixture production build validation passed.",
+    },
+  ];
+
+  const artifact = {
+    schemaVersion:
+      "1.0",
+    validationId:
+      "forge-validation-20260101-000000",
+    capturedAt:
+      timestamp,
+    startedAt:
+      timestamp,
+    completedAt:
+      timestamp,
+
+    repository: {
+      before: {
+        ...repositoryState,
+      },
+
+      after: {
+        ...repositoryState,
+      },
+    },
+
+    commands,
+
+    results: {
+      focusedTests: {
+        status:
+          "passing",
+        commandIndexes: [
+          0,
+        ],
+        summary:
+          commands[0].summary,
+      },
+
+      fullTests: {
+        status:
+          "passing",
+        commandIndexes: [
+          1,
+        ],
+        summary:
+          commands[1].summary,
+      },
+
+      productionBuild: {
+        status:
+          "passing",
+        commandIndexes: [
+          2,
+        ],
+        summary:
+          commands[2].summary,
+      },
+    },
+  };
+
+  const artifactPath = path.join(
+    validationDirectory,
+    `${artifact.validationId}.json`,
+  );
+
+  fs.writeFileSync(
+    artifactPath,
+    `${JSON.stringify(
+      artifact,
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  const validation = runProcess(
+    process.execPath,
+    [
+      path.join(
+        temporaryRepositoryRoot,
+        "scripts/governance/validateValidationEvidence.mjs",
+      ),
+      artifactPath,
+    ],
+    {
+      cwd: temporaryRepositoryRoot,
+      allowFailure: true,
+    },
+  );
+
+  if (validation.status !== 0) {
+    throw new Error(
+      [
+        "Fixture validation evidence is invalid.",
+        validation.combinedOutput,
+      ].join("\n"),
+    );
+  }
+}
+
 function createGovernanceFixture() {
   const temporaryRepositoryRoot =
     fs.mkdtempSync(
@@ -284,6 +499,10 @@ function createGovernanceFixture() {
   }
 
   initializeGitRepository(
+    temporaryRepositoryRoot,
+  );
+
+  createEligibleValidationEvidence(
     temporaryRepositoryRoot,
   );
 
@@ -726,6 +945,48 @@ describe.sequential(
         fs.renameSync(
           verifierPath,
           unavailableVerifierPath,
+        );
+
+        runProcess(
+          "git",
+          [
+            "add",
+            "-A",
+          ],
+          {
+            cwd:
+              temporaryRepositoryRoot,
+          },
+        );
+
+        runProcess(
+          "git",
+          [
+            "commit",
+            "-m",
+            "Make verifier unavailable for rollback test",
+          ],
+          {
+            cwd:
+              temporaryRepositoryRoot,
+          },
+        );
+
+        runProcess(
+          "git",
+          [
+            "update-ref",
+            "refs/remotes/origin/main",
+            "HEAD",
+          ],
+          {
+            cwd:
+              temporaryRepositoryRoot,
+          },
+        );
+
+        createEligibleValidationEvidence(
+          temporaryRepositoryRoot,
         );
 
         let result;
