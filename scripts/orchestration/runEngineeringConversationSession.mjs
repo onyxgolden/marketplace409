@@ -1,3 +1,8 @@
+import path from "node:path";
+import {
+  pathToFileURL,
+} from "node:url";
+
 import {
   runEngineeringSession,
 } from "../governance/runEngineeringSession.mjs";
@@ -151,4 +156,65 @@ export function runEngineeringConversationSession({
 
     renderedBootstrap,
   });
+}
+
+function isDirectExecution() {
+  const invokedScriptPath =
+    process.argv[1];
+
+  if (!invokedScriptPath) {
+    return false;
+  }
+
+  return (
+    import.meta.url ===
+    pathToFileURL(
+      path.resolve(
+        invokedScriptPath,
+      ),
+    ).href
+  );
+}
+
+if (isDirectExecution()) {
+  try {
+    const validationEvidencePath =
+      process.argv[2];
+
+    if (!validationEvidencePath) {
+      throw new Error(
+        "Usage: npm run forge:session -- <validation-evidence-path>",
+      );
+    }
+
+    const result =
+      runEngineeringConversationSession({
+        engineeringSessionOptions: {
+          governancePipelineOptions: {
+            validationEvidencePath,
+          },
+        },
+
+        writeOutputFn:
+          console.log,
+      });
+
+    console.log(
+      "FORGE ENGINEERING CONVERSATION SESSION COMPLETED",
+    );
+
+    console.log(
+      `Version: ${result.version}`,
+    );
+
+    console.log(
+      `Execution order: ${result.executionOrder.join(" -> ")}`,
+    );
+  } catch (error) {
+    console.error(
+      `FORGE ENGINEERING CONVERSATION SESSION FAILED: ${error.message}`,
+    );
+
+    process.exitCode = 1;
+  }
 }

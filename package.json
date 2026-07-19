@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest",
     "test:watch": "vitest --watch",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "forge:session": "node scripts/orchestration/runEngineeringConversationSession.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.2",

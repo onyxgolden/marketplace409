@@ -1,4 +1,13 @@
 import {
+  spawnSync,
+} from "node:child_process";
+
+import path from "node:path";
+import {
+  fileURLToPath,
+} from "node:url";
+
+import {
   describe,
   expect,
   test,
@@ -34,6 +43,19 @@ function createEngineeringSession() {
     },
   };
 }
+
+const testDirectory =
+  path.dirname(
+    fileURLToPath(
+      import.meta.url,
+    ),
+  );
+
+const orchestratorPath =
+  path.resolve(
+    testDirectory,
+    "../runEngineeringConversationSession.mjs",
+  );
 
 describe(
   "runEngineeringConversationSession",
@@ -477,6 +499,38 @@ describe(
             }),
         ).toThrow(
           "renderedBootstrap must be a non-empty string",
+        );
+      },
+    );
+    test(
+      "direct execution requires a validation evidence path",
+      () => {
+        const result =
+          spawnSync(
+            process.execPath,
+            [
+              orchestratorPath,
+            ],
+            {
+              encoding:
+                "utf8",
+            },
+          );
+
+        expect(
+          result.status,
+        ).toBe(1);
+
+        expect(
+          result.stderr,
+        ).toContain(
+          "Usage: npm run forge:session -- <validation-evidence-path>",
+        );
+
+        expect(
+          result.stderr,
+        ).toContain(
+          "FORGE ENGINEERING CONVERSATION SESSION FAILED",
         );
       },
     );
