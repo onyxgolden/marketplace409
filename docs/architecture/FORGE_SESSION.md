@@ -34,34 +34,36 @@ Historical milestones remain recorded below.
 
 ## Active Phase
 
-Transaction Review Intelligence Expansion — Property Recommendation Engine
+FORGE Governance Execution and Engineering Session Automation
 
 ## Current Objective
 
-Synchronize the authoritative engineering documentation with the completed Property Recommendation implementation.
+Continue authoritative alignment of the engineering system with the completed Phase 15 architecture.
 
-Update:
+Current verified capabilities:
 
-- `FORGE_ENGINEERING_CONTROL_CENTER.md`
-- `FORGE_STATUS.md`
-- `FORGE_SESSION.md`
+- Governance modes and authoritative synchronization.
+- Governance validation and enforcement pipeline.
+- Deterministic governance state generation.
+- Engineering-session orchestration.
+- Automatic promotion evaluation context.
+- Engineering-session conversation integration.
+- Chat-ready conversation bootstrap generation.
+- Engineering conversation session CLI execution.
 
-Update `FORGE_ROADMAP.md` only if repository evidence establishes that the Property Recommendation milestone should be recorded as an architectural milestone.
+Next actions:
 
-Run documentation verification.
+- Synchronize authoritative engineering documents.
+- Validate documentation consistency.
+- Preserve repository-first execution.
+- Run required validation.
+- Commit and push synchronized documentation.
 
-Run Mutation Firewall.
+Do not redesign completed governance architecture.
 
-Commit the validated implementation and synchronized documentation.
+Do not bypass validation evidence.
 
-Push and confirm:
-
-- `HEAD == origin/main`
-- Working tree clean
-
-Do not resume governance work.
-
-Do not redesign the Property Recommendation Engine.
+Do not allow automation to replace human architectural authority.
 
 ## Repository Health
 

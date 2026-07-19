@@ -2216,6 +2216,739 @@ Human Architectural Decision
 
 ---
 
+### Phase 15.5 — Governance Modes and Authoritative Synchronization
+
+#### Purpose
+
+Extend deterministic governance from shadow-only synchronization into an explicitly configured governance-mode architecture supporting locked, shadow, hybrid, and authoritative execution while preserving human authority and repository safety.
+
+#### Delivered
+
+* Introduced canonical governance-mode configuration.
+* Added deterministic governance-mode loading and validation.
+* Added mode-aware governance pipeline dispatch.
+* Implemented locked-mode behavior.
+* Implemented shadow-mode execution through the canonical pipeline.
+* Implemented hybrid-mode dispatch through the shadow pipeline.
+* Extracted a reusable governance synchronization engine.
+* Added authoritative synchronization planning.
+* Added section-scoped authoritative delegation configuration.
+* Added transactional authoritative synchronization execution.
+* Added stale-plan detection, repository-boundary enforcement, atomic writes, verification, and rollback.
+* Added authoritative governance pipeline integration.
+* Added real disposable-repository integration testing.
+
+#### Protected Rule
+
+Governance mode is explicit.
+
+Unsupported or malformed modes fail closed.
+
+Authoritative mutation requires explicit delegation and owner-approved authority.
+
+Planning remains read-only.
+
+Execution remains transactional.
+
+Lower governance layers may not redefine higher governance authority.
+
+#### Current Architecture
+
+```text
+Governance Mode Configuration
+        ↓
+Mode Loader and Validator
+        ↓
+Governance Dispatcher
+        ↓
+Locked | Shadow | Hybrid | Authoritative
+        ↓
+Synchronization Planner
+        ↓
+Transactional Executor
+        ↓
+Verification or Rollback
+```
+
+#### Validation
+
+* ✓ Governance-mode foundation introduced.
+* ✓ Locked, shadow, hybrid, and authoritative paths implemented.
+* ✓ Delegation contract introduced.
+* ✓ Authoritative planner and executor implemented.
+* ✓ Transactional rollback verified.
+* ✓ Repository-boundary and stale-plan protections verified.
+* ✓ Integration pipeline verified in disposable Git repositories.
+* ✓ Commit `f2b1f39` added the governance synchronization mode foundation.
+* ✓ Commit `702da79` added the mode-aware governance entry point.
+* ✓ Commit `a458313` implemented locked governance mode.
+* ✓ Commit `cac0b47` added hybrid governance dispatch.
+* ✓ Commit `bfbc2b0` executed the shadow pipeline from hybrid mode.
+* ✓ Commit `fd6b4fc` extracted the reusable synchronization engine.
+* ✓ Commit `813610c` added the authoritative delegation contract.
+* ✓ Commit `f1046dd` integrated the authoritative governance dispatcher.
+
+**Status:** Complete
+
+---
+
+### Phase 15.6 — Conversation Intelligence
+
+#### Purpose
+
+Create a deterministic conversation-preparation layer that converts repository and governance evidence into structured continuation context for future engineering sessions.
+
+#### Delivered
+
+* Added canonical conversation-state construction.
+* Added normalized repository summaries.
+* Added deterministic bootstrap-prompt construction.
+* Added compressed machine-readable context.
+* Added evidence-backed prompt recommendations.
+* Added the conversation-preparation orchestrator.
+* Preserved immutable outputs and deterministic ordering.
+* Added validation for malformed or contradictory repository summaries.
+* Kept conversation preparation separate from repository mutation.
+
+#### Protected Rule
+
+Conversation intelligence consumes normalized repository and governance evidence.
+
+It does not invent repository state.
+
+It does not execute governance decisions.
+
+It prepares continuation context but does not replace repository inspection.
+
+#### Current Architecture
+
+```text
+Repository and Governance Evidence
+        ↓
+Conversation State
+        ↓
+Repository Summary
+        ↓
+Bootstrap Prompt
+        ↓
+Context Compression
+        ↓
+Prompt Recommendations
+        ↓
+Conversation Preparation Package
+```
+
+#### Validation
+
+* ✓ Conversation-state builder introduced.
+* ✓ Repository-summary builder introduced.
+* ✓ Bootstrap-prompt builder introduced.
+* ✓ Context-compression builder introduced.
+* ✓ Prompt-recommendation builder introduced.
+* ✓ Conversation-preparation pipeline introduced.
+* ✓ Deterministic and immutable results verified.
+* ✓ Commit `7247e47` added the conversation preparation pipeline.
+
+**Status:** Complete
+
+---
+
+### Phase 15.7 — Conversation Bootstrap Foundation
+
+#### Purpose
+
+Transform deterministic conversation preparation into a reusable bootstrap artifact suitable for continuing FORGE engineering in a new conversation without reconstructing repository context manually.
+
+#### Delivered
+
+* Added the canonical conversation bootstrap generator.
+* Added bootstrap rendering from prepared conversation state.
+* Added continuation instructions.
+* Added recommended-action rendering.
+* Added warning-summary rendering.
+* Embedded compressed machine context and prompt guidance.
+* Preserved deterministic formatting and immutable source data.
+* Added validation for malformed preparation packages.
+
+#### Protected Rule
+
+The bootstrap reflects prepared repository evidence.
+
+It does not claim that documentation overrides live repository inspection.
+
+Every continued session must still begin by verifying repository reality.
+
+#### Current Architecture
+
+```text
+Conversation Preparation
+        ↓
+Bootstrap Renderer
+        ↓
+Continuation Instructions
+        ↓
+Recommended Action and Warnings
+        ↓
+Compressed Machine Context
+        ↓
+Chat Continuation Package
+```
+
+#### Validation
+
+* ✓ Canonical bootstrap generator introduced.
+* ✓ Deterministic rendering verified.
+* ✓ Warning and recommendation rendering verified.
+* ✓ Machine-readable context embedded.
+* ✓ Commit `51f180e` added the conversation bootstrap generator.
+
+**Status:** Complete
+
+---
+
+### Phase 15.8 — Chat-Ready Conversation Bootstrap
+
+#### Purpose
+
+Complete the conversation bootstrap as a directly usable chat package with deterministic continuation guidance, warning summaries, recommended actions, and machine-readable context.
+
+#### Delivered
+
+* Added chat-ready bootstrap rendering.
+* Added shared conversation-preparation validation.
+* Added deterministic continuation instructions.
+* Added recommended-action formatting.
+* Added warning-summary formatting.
+* Added prompt-guidance serialization.
+* Verified repeatable output from identical repository evidence.
+* Preserved the repository-first continuation requirement.
+
+#### Protected Rule
+
+Chat-ready output is a continuation aid.
+
+It is not authoritative repository state.
+
+The receiving engineering session must inspect the live repository before implementation.
+
+#### Current Architecture
+
+```text
+Prepared Conversation State
+        ↓
+Chat Bootstrap Renderer
+        ↓
+Human-Readable Continuation Package
+        +
+Machine-Readable Context
+```
+
+#### Validation
+
+* ✓ Chat-ready output introduced.
+* ✓ Deterministic output verified.
+* ✓ Shared validation enforced.
+* ✓ Continuation and warning guidance verified.
+* ✓ Conversation subsystem regression suite passed.
+
+**Status:** Complete
+
+---
+
+open
+### Phase 15.9 — Deterministic Governance State Builder
+
+#### Purpose
+
+Extract canonical governance-state construction into a deterministic, reusable builder so governance generation and conversation intelligence consume the same normalized state boundaries.
+
+#### Delivered
+
+* Added the canonical governance-state builder.
+* Refactored governance-state generation to use the builder.
+* Preserved schema-valid output.
+* Preserved deterministic ordering.
+* Preserved immutable builder results.
+* Reduced duplicated state-construction behavior.
+* Revalidated conversation integration against the canonical state model.
+
+#### Protected Rule
+
+Canonical governance state is built from validated normalized evidence.
+
+Generators orchestrate builders.
+
+Renderers consume canonical state and do not reconstruct it independently.
+
+#### Current Architecture
+
+```text
+Validated Session Evidence
+        ↓
+Canonical Governance-State Builder
+        ↓
+Governance-State Generator
+        ↓
+Governance Evaluation and Rendering
+        +
+Conversation Intelligence
+```
+
+#### Validation
+
+* ✓ Reusable governance-state builder introduced.
+* ✓ Existing generator migrated to the builder.
+* ✓ Schema and deterministic behavior preserved.
+* ✓ Conversation subsystem compatibility verified.
+
+**Status:** Complete
+
+---
+
+### Phase 15.10 — Governance Specification and Evolution
+
+#### Purpose
+
+Establish the canonical governance specification, taxonomy, authority relationships, traceability model, and evolution rules required for executable governance to remain aligned with engineering intent.
+
+#### Delivered
+
+* Completed the canonical governance specification.
+* Defined governance taxonomy and canonical ownership.
+* Defined truth ownership and governance layers.
+* Defined authority relationships between engineering law, specification, policy, and execution.
+* Defined AI participation boundaries.
+* Defined validation and synchronization responsibilities.
+* Defined governance evolution rules.
+* Added governance traceability across documents, policies, implementation, tests, and validation.
+* Preserved human authority over architectural intent.
+* Added safeguards against wording drift that could unintentionally change implementation direction.
+
+#### Protected Rule
+
+```text
+Engineering Law
+        ↓
+Governance Specification
+        ↓
+Governance Policy
+        ↓
+Governance Execution
+```
+
+Lower layers implement higher layers.
+
+Lower layers never redefine higher layers.
+
+Repository-backed evidence may reveal that governance needs revision, but governance changes remain deliberate and reviewable.
+
+#### Validation
+
+* ✓ Canonical governance specification completed.
+* ✓ Governance taxonomy formalized.
+* ✓ Authority hierarchy documented.
+* ✓ Governance traceability established.
+* ✓ AI participation boundaries documented.
+* ✓ Evolution and wording-drift safeguards established.
+
+**Status:** Complete
+
+---
+
+### Phase 15.11 — Governance Validation Foundation
+
+#### Purpose
+
+Transition governance from documentation to executable enforcement by introducing deterministic validators that automatically verify governance architecture and relationships before governance execution proceeds.
+
+#### Delivered
+
+* Added the Governance Architecture Validator.
+* Added the Governance Relationship Validator.
+* Validated required governance documents.
+* Validated required repository structure.
+* Validated canonical ownership.
+* Validated authority relationships.
+* Validated repository boundaries.
+* Detected duplicate governance nodes, labels, and owners.
+* Detected authority-cycle violations.
+* Produced deterministic validation ordering.
+* Introduced immutable validation results.
+* Added CLI validation support.
+* Added comprehensive automated test coverage.
+
+#### Protected Rule
+
+Governance intent is not assumed.
+
+Every governance execution begins with deterministic validation of the canonical governance architecture and authority model.
+
+Execution proceeds only after governance integrity has been verified.
+
+#### Current Architecture
+
+```text
+Governance Documents
+        ↓
+Architecture Validation
+        ↓
+Relationship Validation
+        ↓
+Validated Governance Model
+        ↓
+Governance Execution
+```
+
+#### Validation
+
+* ✓ Governance architecture validator implemented.
+* ✓ Governance relationship validator implemented.
+* ✓ Deterministic validation ordering verified.
+* ✓ Immutable validation results verified.
+* ✓ CLI validation verified.
+* ✓ Comprehensive automated test coverage completed.
+
+**Status:** Complete
+
+---
+
+### Phase 15.12 — Governance Enforcement Pipeline
+
+#### Purpose
+
+Compose governance validators and execution stages into a deterministic enforcement pipeline that prevents governance execution unless architecture, relationships, evidence, and execution context are valid.
+
+#### Delivered
+
+* Added the canonical governance enforcement pipeline.
+* Added deterministic governance-stage execution.
+* Added the shadow governance transaction pipeline.
+* Integrated enforcement into the production shadow pipeline.
+* Required eligible validation evidence before execution.
+* Added automatic eligible-artifact selection.
+* Added deterministic execution order.
+* Added dependency injection for isolated testing.
+* Added failure propagation.
+* Added transactional rollback after late-stage failures.
+* Added shared governance test fixtures.
+* Added real disposable Git repository integration tests.
+* Completed the governance enforcement architecture.
+
+#### Protected Rule
+
+Governance enforcement executes before governance mutation.
+
+Any failed stage prevents downstream execution.
+
+Late-stage failure triggers rollback.
+
+No stage may silently downgrade or reinterpret an earlier failure.
+
+#### Current Architecture
+
+```text
+Governance Architecture Validation
+        ↓
+Governance Relationship Validation
+        ↓
+Eligible Validation Evidence
+        ↓
+Deterministic Governance Stages
+        ↓
+Transactional Governance Execution
+        ↓
+Verification
+        ↓
+Commit or Rollback
+```
+
+#### Validation
+
+* ✓ Enforcement pipeline introduced.
+* ✓ Deterministic stage executor introduced.
+* ✓ Shadow transaction pipeline introduced.
+* ✓ Production shadow pipeline integration completed.
+* ✓ Eligible validation-evidence gating enforced.
+* ✓ Failure propagation verified.
+* ✓ Rollback verified in disposable repositories.
+* ✓ Shared fixtures introduced.
+* ✓ Commit `f14e5d3` added the governance enforcement pipeline.
+* ✓ Commit `a94ae1a` integrated enforcement into the shadow pipeline.
+* ✓ Commit `0c43b2a` completed the governance enforcement architecture.
+
+**Status:** Complete
+
+---
+
+### Phase 15.13 — Engineering Session Orchestration
+
+#### Purpose
+
+Create a canonical engineering-session orchestrator that composes repository inspection, governance enforcement, session evidence, promotion evaluation, and conversation preparation into one deterministic execution flow.
+
+#### Delivered
+
+* Added the engineering session orchestrator.
+* Required repository inspection before governance execution.
+* Integrated governance pipeline execution.
+* Integrated session-evidence collection.
+* Added deterministic stage ordering.
+* Added dependency injection.
+* Added immutable session results.
+* Added failure propagation across the complete session.
+* Established one canonical engineering-session result for downstream consumers.
+
+#### Protected Rule
+
+Repository inspection is the first engineering-session operation.
+
+Conversation preparation consumes the resulting session state.
+
+No downstream stage may independently reconstruct or contradict earlier session evidence.
+
+#### Current Architecture
+
+```text
+Repository Inspection
+        ↓
+Governance Pipeline
+        ↓
+Session Evidence
+        ↓
+Promotion Evaluation
+        ↓
+Conversation Preparation
+        ↓
+Engineering Session Result
+```
+
+#### Validation
+
+* ✓ Engineering-session orchestrator introduced.
+* ✓ Deterministic execution order verified.
+* ✓ Dependency injection verified.
+* ✓ Immutable session results verified.
+* ✓ Failure propagation verified.
+* ✓ Commit `c96477c` added the engineering session orchestrator foundation.
+
+**Status:** Complete
+
+---
+
+### Phase 15.14 — Automatic Promotion Evaluation Context
+
+#### Purpose
+
+Integrate promotion evaluation into the engineering session architecture by producing deterministic evaluation context from validated session evidence without allowing governance automation to replace human architectural authority.
+
+#### Delivered
+
+* Added automatic promotion evaluation context construction.
+* Integrated promotion evaluation inputs with engineering sessions.
+* Preserved evidence-backed eligibility evaluation.
+* Connected governance recommendations to canonical session results.
+* Maintained advisory-only promotion boundaries.
+* Prevented promotion evaluation from independently inspecting repository state.
+* Preserved human approval as the final authority.
+
+#### Protected Rule
+
+Promotion evaluation provides recommendations.
+
+Promotion evaluation does not approve architectural promotion.
+
+Promotion eligibility is derived from validated evidence.
+
+Human architectural authority remains final.
+
+#### Current Architecture
+
+```text
+Engineering Session Result
+        ↓
+Validated Evidence Context
+        ↓
+Promotion Evaluation Context
+        ↓
+Eligibility Recommendation
+        ↓
+Human Architectural Decision
+```
+
+#### Validation
+
+* ✓ Promotion evaluation context builder introduced.
+* ✓ Engineering-session integration completed.
+* ✓ Evidence boundaries preserved.
+* ✓ Advisory-only promotion behavior verified.
+* ✓ Commit `164bb0b` added automatic promotion evaluation context.
+
+**Status:** Complete
+
+---
+
+### Phase 15.15 — Engineering Session Conversation Integration
+
+#### Purpose
+
+Connect engineering-session execution with conversation continuity so every new engineering session can receive a complete repository-backed continuation package.
+
+#### Delivered
+
+* Integrated engineering sessions with conversation state.
+* Passed canonical engineering-session results into conversation preparation.
+* Reused validated session evidence for bootstrap generation.
+* Prevented duplicate conversation preparation execution.
+* Preserved deterministic session ordering.
+* Added conversation continuity across engineering sessions.
+
+#### Protected Rule
+
+Conversation continuity is derived from engineering-session evidence.
+
+It does not replace repository inspection.
+
+It does not create independent architectural authority.
+
+#### Current Architecture
+
+```text
+Engineering Session
+        ↓
+Canonical Session Result
+        ↓
+Conversation Preparation
+        ↓
+Bootstrap Generation
+        ↓
+New Engineering Session Context
+```
+
+#### Validation
+
+* ✓ Engineering session integrated with conversation state.
+* ✓ Bootstrap generation receives canonical session context.
+* ✓ Duplicate execution prevented.
+* ✓ Deterministic continuation verified.
+* ✓ Commit `bfa18c1` integrated engineering session with conversation state.
+* ✓ Commit `11ffa38` integrated engineering-session conversation bootstrap.
+
+**Status:** Complete
+
+---
+
+### Phase 15.16 — Engineering Conversation Session CLI
+
+#### Purpose
+
+Expose the complete engineering conversation workflow through a deterministic command-line entry point for repeatable FORGE engineering sessions.
+
+#### Delivered
+
+* Added engineering conversation session orchestration.
+* Combined engineering session execution and conversation bootstrap generation.
+* Added CLI execution support.
+* Added validation-evidence path requirements.
+* Added deterministic execution reporting.
+* Added package command:
+
+```text
+npm run forge:session
+```
+
+* Added direct execution validation.
+* Preserved governance-first execution boundaries.
+
+#### Protected Rule
+
+The CLI is an execution entry point.
+
+It does not bypass governance.
+
+It does not bypass validation.
+
+It does not replace repository inspection.
+
+#### Current Architecture
+
+```text
+CLI Entry Point
+        ↓
+Engineering Conversation Session
+        ↓
+Engineering Session Orchestrator
+        ↓
+Governance Enforcement
+        ↓
+Conversation Bootstrap
+        ↓
+Engineering Continuation Package
+```
+
+#### Validation
+
+* ✓ Engineering conversation session orchestrator introduced.
+* ✓ CLI execution exposed.
+* ✓ Validation requirements enforced.
+* ✓ Deterministic execution verified.
+* ✓ Conversation bootstrap integration verified.
+* ✓ Commit `0e42858` added engineering conversation session orchestration.
+* ✓ Commit `88b9afd` exposed the engineering conversation session CLI.
+
+**Status:** Complete
+
+---
+
+### Phase 15.17 — Governance Evolution Readiness
+
+#### Purpose
+
+Establish the next evolution boundary where FORGE transitions from governance construction into continuous engineering-system improvement.
+
+#### Delivered
+
+* Completed the initial executable governance architecture.
+* Completed repository-backed conversation continuity.
+* Completed engineering-session automation foundations.
+* Established deterministic validation before execution.
+* Established human-controlled architectural authority.
+* Established a foundation for future engineering agents and automation.
+
+#### Protected Rule
+
+Automation expands capability without removing engineering judgment.
+
+Future agents operate through validated governance boundaries.
+
+Repository truth remains authoritative.
+
+Human architectural authority remains preserved.
+
+#### Current Architecture
+
+```text
+Repository Truth
+        ↓
+Governance Enforcement
+        ↓
+Engineering Session Automation
+        ↓
+Conversation Continuity
+        ↓
+Future Engineering Agents
+```
+
+#### Validation
+
+* ✓ Governance execution foundation complete.
+* ✓ Conversation continuity foundation complete.
+* ✓ Engineering-session automation foundation complete.
+* ✓ Future automation boundaries established.
+
+**Status:** Complete
+
+---
+
 # Relationship to the Platform Roadmap
 
 The Architecture Roadmap changes infrequently.

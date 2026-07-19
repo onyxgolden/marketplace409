@@ -65,30 +65,39 @@ Pending final validation after documentation synchronization.
 
 ## Phase
 
-Transaction Review Intelligence Expansion — Property Recommendation Engine
+FORGE Governance Execution and Engineering Session Automation
 
 ## Immediate Objective
 
-Synchronize:
+Complete authoritative documentation alignment with the verified Phase 15 governance and engineering-session architecture.
+
+Update:
 
 - `FORGE_ENGINEERING_CONTROL_CENTER.md`
 - `FORGE_STATUS.md`
 - `FORGE_SESSION.md`
 
-Update `FORGE_ROADMAP.md` only if repository evidence establishes that the Property Recommendation milestone should be recorded as an architectural milestone.
+Verify:
 
-Run documentation verification.
+- Governance architecture documentation matches implemented repository capabilities.
+- Engineering-session orchestration is accurately recorded.
+- Conversation bootstrap continuity is accurately recorded.
+- Repository evidence remains the source of truth.
 
-Run Mutation Firewall.
+Run documentation validation.
 
-Commit.
+Run required test validation.
 
-Push.
+Commit synchronized authoritative documentation.
 
-Confirm:
+Push and confirm:
 
 - `HEAD == origin/main`
 - Working tree clean.
+
+Do not modify completed governance architecture without repository evidence.
+
+Do not bypass governance validation boundaries.
 
 ---
 
