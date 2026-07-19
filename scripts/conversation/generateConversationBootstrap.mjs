@@ -47,15 +47,7 @@ function assertFunction(
   }
 }
 
-function formatJson(value) {
-  return JSON.stringify(
-    value,
-    null,
-    2,
-  );
-}
-
-export function renderConversationBootstrap(
+function validateConversationPreparation(
   conversationPreparation,
 ) {
   assertPlainObject(
@@ -80,13 +72,182 @@ export function renderConversationBootstrap(
       .promptRecommendations,
     "conversationPreparation.promptRecommendations",
   );
+}
+
+function formatJson(value) {
+  return JSON.stringify(
+    value,
+    null,
+    2,
+  );
+}
+
+function formatWarningSummary(
+  promptRecommendations,
+) {
+  const warnings =
+    promptRecommendations.warnings;
+
+  if (
+    !Array.isArray(warnings) ||
+    warnings.length === 0
+  ) {
+    return [
+      "Warnings",
+      "None recorded.",
+    ];
+  }
+
+  return [
+    "Warnings",
+    ...warnings.map(
+      (warning) => {
+        if (
+          typeof warning === "object" &&
+          warning !== null &&
+          typeof warning.message ===
+            "string"
+        ) {
+          return `- ${warning.message}`;
+        }
+
+        return `- ${String(warning)}`;
+      },
+    ),
+  ];
+}
+
+function formatRecommendedAction(
+  promptRecommendations,
+) {
+  const recommendation =
+    promptRecommendations
+      .authoritativeRecommendation;
+
+  if (
+    typeof recommendation !==
+      "object" ||
+    recommendation === null ||
+    Array.isArray(recommendation)
+  ) {
+    return [
+      "Recommended First Action",
+      "Review the supplied FORGE bootstrap and continue from the recorded objective.",
+    ];
+  }
+
+  const code =
+    typeof recommendation.code ===
+      "string" &&
+    recommendation.code.trim().length >
+      0
+      ? recommendation.code
+      : "review-bootstrap";
+
+  const summary =
+    typeof recommendation.summary ===
+      "string" &&
+    recommendation.summary.trim()
+      .length > 0
+      ? recommendation.summary
+      : "Review the supplied FORGE bootstrap before continuing implementation.";
+
+  return [
+    "Recommended First Action",
+    `Code: ${code}`,
+    summary,
+  ];
+}
+
+function formatContinuationInstructions() {
+  return [
+    "Continuation Instructions",
+    "- Treat this package as the authoritative starting context for the new conversation.",
+    "- Inspect current repository files before recommending edits.",
+    "- Preserve unrelated modified and untracked work.",
+    "- Continue from the recorded current and next objectives.",
+    "- Prefer deterministic builders and repository-native tooling.",
+    "- Do not introduce filesystem writes unless explicitly required by the orchestration layer.",
+    "- Run focused validation before broader subsystem validation.",
+    "- Do not commit until the active phase is fully validated.",
+  ];
+}
+
+export function renderChatBootstrap(
+  conversationPreparation,
+) {
+  validateConversationPreparation(
+    conversationPreparation,
+  );
+
+  const {
+    bootstrapPrompt,
+    contextCompression,
+    promptRecommendations,
+  } = conversationPreparation;
+
+  return [
+    "FORGE NEW CONVERSATION PACKAGE",
+    "",
+    "Purpose",
+    "Continue FORGE development from the live repository and governance state captured below.",
+    "",
+    ...formatContinuationInstructions(),
+    "",
+    "Authoritative Bootstrap",
+    "",
+    bootstrapPrompt,
+    "",
+    ...formatRecommendedAction(
+      promptRecommendations,
+    ),
+    "",
+    ...formatWarningSummary(
+      promptRecommendations,
+    ),
+    "",
+    "Compressed Machine Context",
+    "",
+    "```json",
+    formatJson(
+      contextCompression,
+    ),
+    "```",
+    "",
+    "Prompt Guidance",
+    "",
+    "```json",
+    formatJson(
+      promptRecommendations,
+    ),
+    "```",
+    "",
+    "First Response Requirement",
+    "Begin by confirming the repository baseline, identifying the active objective, and requesting or performing only the inspections needed for the next safe implementation decision.",
+  ].join("\n");
+}
+
+export function renderConversationBootstrap(
+  conversationPreparation,
+) {
+  validateConversationPreparation(
+    conversationPreparation,
+  );
 
   const separator =
     "================================================";
 
   return [
     separator,
-    "FORGE Conversation Bootstrap",
+    "FORGE Chat-Ready Conversation Package",
+    separator,
+    "",
+    renderChatBootstrap(
+      conversationPreparation,
+    ),
+    "",
+    separator,
+    "Full Conversation Bootstrap",
     separator,
     "",
     conversationPreparation
@@ -113,6 +274,7 @@ export function renderConversationBootstrap(
 }
 
 export function generateConversationBootstrap({
+  engineeringSession,
   conversationPreparationOptions = {},
   runConversationPreparationFn =
     runConversationPreparation,
@@ -134,10 +296,24 @@ export function generateConversationBootstrap({
     "writeOutputFn",
   );
 
-  const conversationPreparation =
-    runConversationPreparationFn(
-      conversationPreparationOptions,
+  if (engineeringSession !== undefined) {
+    assertPlainObject(
+      engineeringSession,
+      "engineeringSession",
     );
+
+    assertPlainObject(
+      engineeringSession.conversation,
+      "engineeringSession.conversation",
+    );
+  }
+
+  const conversationPreparation =
+    engineeringSession === undefined
+      ? runConversationPreparationFn(
+          conversationPreparationOptions,
+        )
+      : engineeringSession.conversation;
 
   const renderedBootstrap =
     renderConversationBootstrap(
