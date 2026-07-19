@@ -426,9 +426,15 @@ describe(
         expect(
           dependencies
             .runConversationPreparationFn,
-        ).toHaveBeenCalledWith(
-          conversationPreparationOptions,
-        );
+        ).toHaveBeenCalledWith({
+          ...conversationPreparationOptions,
+
+          engineeringState: {
+            repository:
+              dependencies.results
+                .repositoryResult,
+          },
+        });
       },
     );
 

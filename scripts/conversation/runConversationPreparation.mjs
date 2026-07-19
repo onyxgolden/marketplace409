@@ -44,6 +44,7 @@ function deepFreeze(value) {
 
 export function runConversationPreparation({
   conversationStateOptions = {},
+  engineeringState,
   buildConversationStateFn =
     buildConversationState,
   buildRepositorySummaryFn =
@@ -80,9 +81,17 @@ export function runConversationPreparation({
     "buildPromptRecommendationsFn",
   );
 
+  const resolvedConversationStateOptions =
+    engineeringState === undefined
+      ? conversationStateOptions
+      : {
+          ...conversationStateOptions,
+          engineeringState,
+        };
+
   const conversationState =
     buildConversationStateFn(
-      conversationStateOptions,
+      resolvedConversationStateOptions,
     );
 
   const repositorySummary =

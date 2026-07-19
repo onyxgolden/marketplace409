@@ -474,5 +474,43 @@ describe(
         );
       },
     );
+
+    it(
+      "reuses supplied engineering repository evidence without invoking Git",
+      () => {
+        const dependencies =
+          createDependencies();
+
+        const engineeringState = {
+          repository: {
+            branch: "engineering",
+            head: "deadbeef",
+            originMain: "deadbeef",
+            headMatchesOriginMain: true,
+            workingTreeClean: true,
+            statusLines: [],
+            modifiedFiles: [],
+          },
+        };
+
+        const result =
+          buildConversationState({
+            engineeringState,
+            ...dependencies,
+          });
+
+        expect(
+          dependencies.runGit,
+        ).not.toHaveBeenCalled();
+
+        expect(
+          result.repository.branch,
+        ).toBe("engineering");
+
+        expect(
+          result.repository.head,
+        ).toBe("deadbeef");
+      },
+    );
   },
 );

@@ -436,6 +436,10 @@ export function runEngineeringSession({
   const conversation =
     runConversationPreparationFn({
       ...conversationPreparationOptions,
+
+      engineeringState: {
+        repository,
+      },
     });
 
   return deepFreeze({

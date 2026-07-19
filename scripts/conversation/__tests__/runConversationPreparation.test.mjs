@@ -415,5 +415,73 @@ describe(
         ).toEqual(original);
       },
     );
+
+    it(
+      "forwards engineering state without mutating conversation state options",
+      () => {
+        const conversationStateOptions = {
+          repositoryRoot:
+            "/repository",
+
+          custom: {
+            value: "preserve",
+          },
+        };
+
+        const originalOptions =
+          structuredClone(
+            conversationStateOptions,
+          );
+
+        const engineeringState = {
+          repository: {
+            branch: "main",
+            head: "abc123",
+            originMain: "abc123",
+            headMatchesOriginMain: true,
+            workingTreeClean: true,
+            modifiedFiles: [],
+            gitStatus: [],
+          },
+        };
+
+        const buildConversationStateFn =
+          vi.fn(
+            () => ({
+              generatedAt:
+                "2026-07-17T18:30:00.000Z",
+            }),
+          );
+
+        runConversationPreparation({
+          conversationStateOptions,
+          engineeringState,
+          buildConversationStateFn,
+
+          buildRepositorySummaryFn:
+            () => ({}),
+
+          buildBootstrapPromptFn:
+            () => "",
+
+          buildContextCompressionFn:
+            () => ({}),
+
+          buildPromptRecommendationsFn:
+            () => ({}),
+        });
+
+        expect(
+          buildConversationStateFn,
+        ).toHaveBeenCalledWith({
+          ...conversationStateOptions,
+          engineeringState,
+        });
+
+        expect(
+          conversationStateOptions,
+        ).toEqual(originalOptions);
+      },
+    );
   },
 );

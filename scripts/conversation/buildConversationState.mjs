@@ -299,6 +299,7 @@ function buildRecommendedAction({
 
 export function buildConversationState({
   repositoryRoot = process.cwd(),
+  engineeringState,
   now = () => new Date(),
   loadState = loadGovernanceState,
   loadMode = loadGovernanceMode,
@@ -313,6 +314,18 @@ export function buildConversationState({
   assertFunction(loadState, "loadState");
   assertFunction(loadMode, "loadMode");
   assertFunction(runGit, "runGit");
+
+  if (engineeringState !== undefined) {
+    assertPlainObject(
+      engineeringState,
+      "engineeringState",
+    );
+
+    assertPlainObject(
+      engineeringState.repository,
+      "engineeringState.repository",
+    );
+  }
 
   const governanceState =
     loadState(
@@ -392,10 +405,45 @@ export function buildConversationState({
   }
 
   const liveRepository =
-    buildLiveRepositoryState({
-      repositoryRoot,
-      runGit,
-    });
+    engineeringState === undefined
+      ? buildLiveRepositoryState({
+          repositoryRoot,
+          runGit,
+        })
+      : {
+          branch:
+            engineeringState.repository.branch,
+
+          head:
+            engineeringState.repository.head,
+
+          originMain:
+            engineeringState.repository
+              .originMain,
+
+          workingTreeClean:
+            engineeringState.repository
+              .workingTreeClean,
+
+          headMatchesOriginMain:
+            engineeringState.repository
+              .headMatchesOriginMain,
+
+          statusLines: [
+            ...(
+              engineeringState.repository
+                .statusLines ??
+              engineeringState.repository
+                .gitStatus ??
+              []
+            ),
+          ],
+
+          modifiedFiles: [
+            ...engineeringState.repository
+              .modifiedFiles,
+          ],
+        };
 
   const validationStatus =
     summarizeValidation(
