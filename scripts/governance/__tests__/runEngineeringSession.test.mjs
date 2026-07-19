@@ -80,6 +80,11 @@ function createDependencies({
     reasons: [],
   };
 
+  const evolutionReviewContextResult = {
+    status:
+      "review-ready",
+  };
+
   const conversationResult = {
     schemaVersion:
       "1.0",
@@ -95,6 +100,7 @@ function createDependencies({
       evidenceResult,
       promotionResult,
       evolutionReadinessResult,
+      evolutionReviewContextResult,
       conversationResult,
     },
 
@@ -175,6 +181,17 @@ function createDependencies({
         },
       ),
 
+    buildEvolutionReviewContextFn:
+      vi.fn(
+        () => {
+          executionOrder.push(
+            "evolutionReviewContext",
+          );
+
+          return evolutionReviewContextResult;
+        },
+      ),
+
     runConversationPreparationFn:
       vi.fn(
         () => {
@@ -252,6 +269,10 @@ describe(
             evaluateGovernanceEvolutionReadinessFn:
               dependencies
                 .evaluateGovernanceEvolutionReadinessFn,
+
+            buildEvolutionReviewContextFn:
+              dependencies
+                .buildEvolutionReviewContextFn,
 
             runConversationPreparationFn:
               dependencies
@@ -386,6 +407,10 @@ describe(
             dependencies
               .evaluateGovernanceEvolutionReadinessFn,
 
+          buildEvolutionReviewContextFn:
+            dependencies
+              .buildEvolutionReviewContextFn,
+
           runConversationPreparationFn:
             dependencies
               .runConversationPreparationFn,
@@ -471,6 +496,10 @@ describe(
             evolutionReadiness:
               dependencies.results
                 .evolutionReadinessResult,
+
+            evolutionReviewContext:
+              dependencies.results
+                .evolutionReviewContextResult,
           },
         });
       },
@@ -514,6 +543,10 @@ describe(
             evaluateGovernanceEvolutionReadinessFn:
               dependencies
                 .evaluateGovernanceEvolutionReadinessFn,
+
+            buildEvolutionReviewContextFn:
+              dependencies
+                .buildEvolutionReviewContextFn,
 
             runConversationPreparationFn:
               dependencies
@@ -675,6 +708,10 @@ describe(
             evaluateGovernanceEvolutionReadinessFn:
               dependencies
                 .evaluateGovernanceEvolutionReadinessFn,
+
+            buildEvolutionReviewContextFn:
+              dependencies
+                .buildEvolutionReviewContextFn,
 
             runConversationPreparationFn:
               dependencies

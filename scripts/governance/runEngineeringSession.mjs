@@ -21,6 +21,10 @@ import {
 } from "./evaluateGovernanceEvolutionReadiness.mjs";
 
 import {
+  buildEvolutionReviewContext,
+} from "./buildEvolutionReviewContext.mjs";
+
+import {
   buildPromotionEvaluationContext,
 } from "./buildPromotionEvaluationContext.mjs";
 
@@ -38,6 +42,7 @@ export const ENGINEERING_SESSION_ORDER =
     "sessionEvidence",
     "promotionEvaluation",
     "evolutionReadiness",
+    "evolutionReviewContext",
     "conversationPreparation",
   ]);
 
@@ -360,6 +365,9 @@ export function runEngineeringSession({
   evaluateGovernanceEvolutionReadinessFn =
     evaluateGovernanceEvolutionReadiness,
 
+  buildEvolutionReviewContextFn =
+    buildEvolutionReviewContext,
+
   runConversationPreparationFn =
     runConversationPreparation,
 } = {}) {
@@ -401,6 +409,11 @@ export function runEngineeringSession({
   assertFunction(
     evaluateGovernanceEvolutionReadinessFn,
     "evaluateGovernanceEvolutionReadinessFn",
+  );
+
+  assertFunction(
+    buildEvolutionReviewContextFn,
+    "buildEvolutionReviewContextFn",
   );
 
   assertFunction(
@@ -454,6 +467,23 @@ export function runEngineeringSession({
       promotion,
     });
 
+  const evolutionReviewContext =
+    buildEvolutionReviewContextFn({
+      repositoryEvidence:
+        repository,
+
+      governanceState:
+        governance,
+
+      validationEvidence:
+        evidence,
+
+      promotionEvaluation:
+        promotion,
+
+      evolutionReadiness,
+    });
+
   const conversation =
     runConversationPreparationFn({
       ...conversationPreparationOptions,
@@ -461,6 +491,7 @@ export function runEngineeringSession({
       engineeringState: {
         repository,
         evolutionReadiness,
+        evolutionReviewContext,
       },
     });
 
