@@ -16,6 +16,11 @@ afterEach(() => {
 
 function createPipelineDependencies() {
   return {
+    enforce:
+      vi.fn(() => ({
+        valid:
+          true,
+      })),
     runShadowPipeline:
       vi.fn(),
     synchronizeAuthoritative:
@@ -53,11 +58,12 @@ describe(
     test(
       "locked mode exits without running either synchronization pipeline",
       () => {
-        const {
-          runShadowPipeline,
-          synchronizeAuthoritative,
-        } =
-          createPipelineDependencies();
+const {
+  enforce,
+  runShadowPipeline,
+  synchronizeAuthoritative,
+} =
+  createPipelineDependencies();
 
         const logSpy =
           vi.spyOn(
@@ -75,7 +81,9 @@ describe(
             synchronizeAuthoritative,
           });
 
-        expect(result).toBeUndefined();
+expect(
+  enforce,
+).not.toHaveBeenCalled();
 
         expect(
           runShadowPipeline,
@@ -103,6 +111,7 @@ describe(
       "shadow mode runs only the shadow governance pipeline",
       () => {
         const {
+          enforce,
           runShadowPipeline,
           synchronizeAuthoritative,
         } =
@@ -111,9 +120,16 @@ describe(
         runGovernancePipeline({
           mode:
             "shadow",
+          validationEvidencePath:
+            "governance/validation/test-evidence.json",
+          enforce,
           runShadowPipeline,
           synchronizeAuthoritative,
         });
+
+        expect(
+          enforce,
+        ).toHaveBeenCalledTimes(1);
 
         expect(
           runShadowPipeline,
@@ -129,6 +145,18 @@ describe(
       "hybrid mode runs shadow synchronization before delegated authoritative synchronization",
       () => {
         const executionOrder = [];
+
+        const enforce =
+          vi.fn(() => {
+            executionOrder.push(
+              "enforce",
+            );
+
+            return {
+              valid:
+                true,
+            };
+          });
 
         const runShadowPipeline =
           vi.fn(() => {
@@ -176,6 +204,9 @@ describe(
           runGovernancePipeline({
             mode:
               "hybrid",
+            validationEvidencePath:
+              "governance/validation/test-evidence.json",
+            enforce,
             runShadowPipeline,
             synchronizeAuthoritative,
           });
@@ -183,9 +214,14 @@ describe(
         expect(
           executionOrder,
         ).toEqual([
+          "enforce",
           "shadow",
           "authoritative",
         ]);
+
+        expect(
+          enforce,
+        ).toHaveBeenCalledTimes(1);
 
         expect(
           runShadowPipeline,
@@ -205,6 +241,7 @@ describe(
       "authoritative mode runs authoritative synchronization without running shadow synchronization",
       () => {
         const {
+          enforce,
           runShadowPipeline,
           synchronizeAuthoritative,
         } =
@@ -245,9 +282,16 @@ describe(
           runGovernancePipeline({
             mode:
               "authoritative",
+            validationEvidencePath:
+              "governance/validation/test-evidence.json",
+            enforce,
             runShadowPipeline,
             synchronizeAuthoritative,
           });
+
+        expect(
+          enforce,
+        ).toHaveBeenCalledTimes(1);
 
         expect(
           runShadowPipeline,
@@ -267,6 +311,7 @@ describe(
       "propagates shadow pipeline failures without attempting authoritative synchronization",
       () => {
         const {
+          enforce,
           runShadowPipeline,
           synchronizeAuthoritative,
         } =
@@ -289,12 +334,19 @@ describe(
             runGovernancePipeline({
               mode:
                 "hybrid",
+              validationEvidencePath:
+                "governance/validation/test-evidence.json",
+              enforce,
               runShadowPipeline,
               synchronizeAuthoritative,
             }),
         ).toThrow(
           shadowFailure,
         );
+
+        expect(
+          enforce,
+        ).toHaveBeenCalledTimes(1);
 
         expect(
           synchronizeAuthoritative,
@@ -306,6 +358,7 @@ describe(
       "propagates authoritative synchronization failures",
       () => {
         const {
+          enforce,
           runShadowPipeline,
           synchronizeAuthoritative,
         } =
@@ -328,12 +381,19 @@ describe(
             runGovernancePipeline({
               mode:
                 "hybrid",
+              validationEvidencePath:
+                "governance/validation/test-evidence.json",
+              enforce,
               runShadowPipeline,
               synchronizeAuthoritative,
             }),
         ).toThrow(
           authoritativeFailure,
         );
+
+        expect(
+          enforce,
+        ).toHaveBeenCalledTimes(1);
 
         expect(
           runShadowPipeline,
@@ -346,9 +406,60 @@ describe(
     );
 
     test(
+      "propagates enforcement failures without running either pipeline",
+      () => {
+        const {
+          enforce,
+          runShadowPipeline,
+          synchronizeAuthoritative,
+        } =
+          createPipelineDependencies();
+
+        const enforcementFailure =
+          new Error(
+            "Governance enforcement failed.",
+          );
+
+        enforce.mockImplementation(
+          () => {
+            throw enforcementFailure;
+          },
+        );
+
+        expect(
+          () =>
+            runGovernancePipeline({
+              mode:
+                "hybrid",
+              validationEvidencePath:
+                "governance/validation/test-evidence.json",
+              enforce,
+              runShadowPipeline,
+              synchronizeAuthoritative,
+            }),
+        ).toThrow(
+          enforcementFailure,
+        );
+
+        expect(
+          enforce,
+        ).toHaveBeenCalledTimes(1);
+
+        expect(
+          runShadowPipeline,
+        ).not.toHaveBeenCalled();
+
+        expect(
+          synchronizeAuthoritative,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    test(
       "rejects unsupported modes before running either pipeline",
       () => {
         const {
+          enforce,
           runShadowPipeline,
           synchronizeAuthoritative,
         } =
@@ -366,12 +477,17 @@ describe(
             runGovernancePipeline({
               mode:
                 "unsafe",
+              enforce,
               runShadowPipeline,
               synchronizeAuthoritative,
             }),
         ).toThrow(
           "Unsupported governance mode: unsafe",
         );
+
+        expect(
+          enforce,
+        ).not.toHaveBeenCalled();
 
         expect(
           runShadowPipeline,
@@ -384,6 +500,14 @@ describe(
     );
 
     test.each([
+      [
+        "enforce",
+        {
+          enforce:
+            null,
+        },
+        "enforce must be a function",
+      ],
       [
         "runShadowPipeline",
         {

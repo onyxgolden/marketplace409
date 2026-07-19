@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const repositoryRoot = process.cwd();
 
@@ -87,7 +88,7 @@ function readJson(
   }
 }
 
-function validateObjectivePolicy(
+export function validateObjectivePolicy(
   objectivePolicy,
   capabilitiesPolicy,
 ) {
@@ -331,48 +332,68 @@ function validateObjectivePolicy(
   };
 }
 
-const suppliedPolicyPath =
-  process.argv[2] ??
-  defaultPolicyPath;
+function isDirectExecution() {
+  const suppliedScriptPath =
+    process.argv[1];
 
-try {
-  const objectivePolicy =
-    readJson(
-      suppliedPolicyPath,
-      "Objective policy",
+  if (!suppliedScriptPath) {
+    return false;
+  }
+
+  return (
+    import.meta.url ===
+    pathToFileURL(
+      path.resolve(
+        suppliedScriptPath,
+      ),
+    ).href
+  );
+}
+
+if (isDirectExecution()) {
+  const suppliedPolicyPath =
+    process.argv[2] ??
+    defaultPolicyPath;
+
+  try {
+    const objectivePolicy =
+      readJson(
+        suppliedPolicyPath,
+        "Objective policy",
+      );
+
+    const capabilitiesPolicy =
+      readJson(
+        capabilitiesPath,
+        "Capabilities policy",
+      );
+
+    const result =
+      validateObjectivePolicy(
+        objectivePolicy,
+        capabilitiesPolicy,
+      );
+
+    console.log(
+      `VALID OBJECTIVE POLICY: ${suppliedPolicyPath}`,
     );
 
-  const capabilitiesPolicy =
-    readJson(
-      capabilitiesPath,
-      "Capabilities policy",
+    console.log(
+      `Version: ${result.version}`,
     );
 
-  const result =
-    validateObjectivePolicy(
-      objectivePolicy,
-      capabilitiesPolicy,
+    console.log(
+      `Phases: ${result.phaseCount}`,
     );
 
-  console.log(
-    `VALID OBJECTIVE POLICY: ${suppliedPolicyPath}`,
-  );
+    console.log(
+      `Next phase: ${result.nextPhaseIdentifier}`,
+    );
+  } catch (error) {
+    console.error(
+      `INVALID OBJECTIVE POLICY: ${error.message}`,
+    );
 
-  console.log(
-    `Version: ${result.version}`,
-  );
-
-  console.log(
-    `Phases: ${result.phaseCount}`,
-  );
-
-  console.log(
-    `Next phase: ${result.nextPhaseIdentifier}`,
-  );
-} catch (error) {
-  console.error(
-    `INVALID OBJECTIVE POLICY: ${error.message}`,
-  );
-
-  process.exit(1);
+    process.exitCode = 1;
+  }
 }

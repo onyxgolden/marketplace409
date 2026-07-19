@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const repositoryRoot = process.cwd();
 
@@ -29,8 +30,7 @@ const commandStatuses = new Set([
 ]);
 
 function fail(message) {
-  console.error(`FAIL: ${message}`);
-  process.exit(1);
+  throw new Error(message);
 }
 
 function assert(condition, message) {
@@ -474,230 +474,275 @@ function validateResult(
   }
 }
 
-const suppliedPath =
-  process.argv[2];
-
-if (!suppliedPath) {
-  fail(
-    "Usage: node scripts/governance/validateValidationEvidence.mjs <validation-evidence-path>",
-  );
-}
-
-const artifactPath =
-  path.resolve(
-    repositoryRoot,
-    suppliedPath,
-  );
-
-const relativeArtifactPath =
-  path.relative(
-    repositoryRoot,
-    artifactPath,
-  );
-
-assert(
-  relativeArtifactPath !== ".." &&
-    !relativeArtifactPath.startsWith(
-      `..${path.sep}`,
-    ) &&
-    !path.isAbsolute(
-      relativeArtifactPath,
-    ),
-  "Validation evidence path must remain inside the repository",
-);
-
-assert(
-  fs.existsSync(
-    artifactPath,
-  ),
-  `Validation evidence does not exist: ${relativeArtifactPath}`,
-);
-
-let artifact;
-
-try {
-  artifact =
-    JSON.parse(
-      fs.readFileSync(
-        artifactPath,
-        "utf8",
-      ),
-    );
-} catch (error) {
-  fail(
-    `Validation evidence is not valid JSON: ${error.message}`,
-  );
-}
-
-assertExactKeys(
+export function validateValidationEvidence(
   artifact,
-  [
-    "schemaVersion",
-    "validationId",
-    "capturedAt",
-    "startedAt",
-    "completedAt",
-    "repository",
-    "commands",
-    "results",
-  ],
-  "artifact",
-);
-
-assert(
-  artifact.schemaVersion === "1.0",
-  "artifact.schemaVersion must equal 1.0",
-);
-
-assert(
-  typeof artifact.validationId ===
-    "string" &&
-    validationIdPattern.test(
-      artifact.validationId,
-    ),
-  "artifact.validationId must use forge-validation-YYYYMMDD-HHMMSS",
-);
-
-assertDateTime(
-  artifact.capturedAt,
-  "artifact.capturedAt",
-);
-
-assertDateTime(
-  artifact.startedAt,
-  "artifact.startedAt",
-);
-
-assertDateTime(
-  artifact.completedAt,
-  "artifact.completedAt",
-);
-
-assertTimestampOrder(
-  artifact.startedAt,
-  artifact.completedAt,
-  "artifact",
-);
-
-assert(
-  Date.parse(
-    artifact.capturedAt,
-  ) >=
-    Date.parse(
-      artifact.completedAt,
-    ),
-  "artifact.capturedAt must not precede completedAt",
-);
-
-assertExactKeys(
-  artifact.repository,
-  [
-    "before",
-    "after",
-  ],
-  "artifact.repository",
-);
-
-validateRepositoryState(
-  artifact.repository.before,
-  "artifact.repository.before",
-);
-
-validateRepositoryState(
-  artifact.repository.after,
-  "artifact.repository.after",
-);
-
-assert(
-  artifact.repository.before.branch ===
-    artifact.repository.after.branch,
-  "Repository branch changed during validation",
-);
-
-assert(
-  artifact.repository.before.head ===
-    artifact.repository.after.head,
-  "Repository HEAD changed during validation",
-);
-
-assert(
-  artifact.repository.before.originMain ===
-    artifact.repository.after.originMain,
-  "Repository origin/main changed during validation",
-);
-
-assert(
-  Array.isArray(
-    artifact.commands,
-  ),
-  "artifact.commands must be an array",
-);
-
-for (
-  const [index, command]
-  of artifact.commands.entries()
 ) {
-  validateCommandEvidence(
-    command,
-    index,
+  assertExactKeys(
+    artifact,
+    [
+      "schemaVersion",
+      "validationId",
+      "capturedAt",
+      "startedAt",
+      "completedAt",
+      "repository",
+      "commands",
+      "results",
+    ],
+    "artifact",
   );
 
   assert(
-    Date.parse(
-      command.startedAt,
-    ) >=
-      Date.parse(
-        artifact.startedAt,
+    artifact.schemaVersion === "1.0",
+    "artifact.schemaVersion must equal 1.0",
+  );
+
+  assert(
+    typeof artifact.validationId ===
+      "string" &&
+      validationIdPattern.test(
+        artifact.validationId,
       ),
-    `artifact.commands[${index}].startedAt precedes artifact.startedAt`,
+    "artifact.validationId must use forge-validation-YYYYMMDD-HHMMSS",
+  );
+
+  assertDateTime(
+    artifact.capturedAt,
+    "artifact.capturedAt",
+  );
+
+  assertDateTime(
+    artifact.startedAt,
+    "artifact.startedAt",
+  );
+
+  assertDateTime(
+    artifact.completedAt,
+    "artifact.completedAt",
+  );
+
+  assertTimestampOrder(
+    artifact.startedAt,
+    artifact.completedAt,
+    "artifact",
   );
 
   assert(
     Date.parse(
-      command.completedAt,
-    ) <=
+      artifact.capturedAt,
+    ) >=
       Date.parse(
         artifact.completedAt,
       ),
-    `artifact.commands[${index}].completedAt exceeds artifact.completedAt`,
+    "artifact.capturedAt must not precede completedAt",
+  );
+
+  assertExactKeys(
+    artifact.repository,
+    [
+      "before",
+      "after",
+    ],
+    "artifact.repository",
+  );
+
+  validateRepositoryState(
+    artifact.repository.before,
+    "artifact.repository.before",
+  );
+
+  validateRepositoryState(
+    artifact.repository.after,
+    "artifact.repository.after",
+  );
+
+  assert(
+    artifact.repository.before.branch ===
+      artifact.repository.after.branch,
+    "Repository branch changed during validation",
+  );
+
+  assert(
+    artifact.repository.before.head ===
+      artifact.repository.after.head,
+    "Repository HEAD changed during validation",
+  );
+
+  assert(
+    artifact.repository.before.originMain ===
+      artifact.repository.after.originMain,
+    "Repository origin/main changed during validation",
+  );
+
+  assert(
+    Array.isArray(
+      artifact.commands,
+    ),
+    "artifact.commands must be an array",
+  );
+
+  for (
+    const [index, command]
+    of artifact.commands.entries()
+  ) {
+    validateCommandEvidence(
+      command,
+      index,
+    );
+
+    assert(
+      Date.parse(
+        command.startedAt,
+      ) >=
+        Date.parse(
+          artifact.startedAt,
+        ),
+      `artifact.commands[${index}].startedAt precedes artifact.startedAt`,
+    );
+
+    assert(
+      Date.parse(
+        command.completedAt,
+      ) <=
+        Date.parse(
+          artifact.completedAt,
+        ),
+      `artifact.commands[${index}].completedAt exceeds artifact.completedAt`,
+    );
+  }
+
+  assertExactKeys(
+    artifact.results,
+    validationCategories,
+    "artifact.results",
+  );
+
+  const referencedIndexes =
+    new Set();
+
+  for (
+    const category
+    of validationCategories
+  ) {
+    validateResult(
+      artifact.results[category],
+      category,
+      artifact.commands,
+      referencedIndexes,
+    );
+  }
+
+  assert(
+    referencedIndexes.size ===
+      artifact.commands.length,
+    "Every command must be referenced by exactly one validation result",
+  );
+
+  return Object.freeze({
+    validationId:
+      artifact.validationId,
+
+    repositoryHead:
+      artifact.repository.before.head,
+  });
+}
+
+function isDirectExecution() {
+  const suppliedScriptPath =
+    process.argv[1];
+
+  if (!suppliedScriptPath) {
+    return false;
+  }
+
+  return (
+    import.meta.url ===
+    pathToFileURL(
+      path.resolve(
+        suppliedScriptPath,
+      ),
+    ).href
   );
 }
 
-assertExactKeys(
-  artifact.results,
-  validationCategories,
-  "artifact.results",
-);
+if (isDirectExecution()) {
+  const suppliedPath =
+    process.argv[2];
 
-const referencedIndexes =
-  new Set();
+  try {
+    if (!suppliedPath) {
+      fail(
+        "Usage: node scripts/governance/validateValidationEvidence.mjs <validation-evidence-path>",
+      );
+    }
 
-for (
-  const category
-  of validationCategories
-) {
-  validateResult(
-    artifact.results[category],
-    category,
-    artifact.commands,
-    referencedIndexes,
-  );
+    const artifactPath =
+      path.resolve(
+        repositoryRoot,
+        suppliedPath,
+      );
+
+    const relativeArtifactPath =
+      path.relative(
+        repositoryRoot,
+        artifactPath,
+      );
+
+    assert(
+      relativeArtifactPath !== ".." &&
+        !relativeArtifactPath.startsWith(
+          `..${path.sep}`,
+        ) &&
+        !path.isAbsolute(
+          relativeArtifactPath,
+        ),
+      "Validation evidence path must remain inside the repository",
+    );
+
+    assert(
+      fs.existsSync(
+        artifactPath,
+      ),
+      `Validation evidence does not exist: ${relativeArtifactPath}`,
+    );
+
+    let artifact;
+
+    try {
+      artifact =
+        JSON.parse(
+          fs.readFileSync(
+            artifactPath,
+            "utf8",
+          ),
+        );
+    } catch (error) {
+      fail(
+        `Validation evidence is not valid JSON: ${error.message}`,
+      );
+    }
+
+    const result =
+      validateValidationEvidence(
+        artifact,
+      );
+
+    console.log(
+      `VALID VALIDATION EVIDENCE: ${relativeArtifactPath}`,
+    );
+
+    console.log(
+      `Validation ID: ${result.validationId}`,
+    );
+
+    console.log(
+      `Repository HEAD: ${result.repositoryHead}`,
+    );
+  } catch (error) {
+    console.error(
+      `FAIL: ${error.message}`,
+    );
+
+    process.exitCode = 1;
+  }
 }
-
-assert(
-  referencedIndexes.size ===
-    artifact.commands.length,
-  "Every command must be referenced by exactly one validation result",
-);
-
-console.log(
-  `VALID VALIDATION EVIDENCE: ${relativeArtifactPath}`,
-);
-
-console.log(
-  `Validation ID: ${artifact.validationId}`,
-);
-
-console.log(
-  `Repository HEAD: ${artifact.repository.before.head}`,
-);

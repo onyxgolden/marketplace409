@@ -3,6 +3,10 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import {
+  buildGovernanceState,
+} from "./buildGovernanceState.mjs";
+
+import {
   loadGovernanceMode,
 } from "./loadGovernanceMode.mjs";
 
@@ -210,7 +214,9 @@ function generateGovernanceState(
     },
 
     state:
-      currentGovernanceState.state,
+      buildGovernanceState({
+        currentGovernanceState,
+      }),
 
     validation:
       snapshot.validation,
