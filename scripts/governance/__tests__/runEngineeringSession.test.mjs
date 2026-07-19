@@ -67,6 +67,19 @@ function createDependencies({
     recommendations: [],
   };
 
+  const evolutionReadinessResult = {
+    status:
+      "review-required",
+
+    eligible:
+      false,
+
+    requiresHumanApproval:
+      true,
+
+    reasons: [],
+  };
+
   const conversationResult = {
     schemaVersion:
       "1.0",
@@ -150,6 +163,17 @@ function createDependencies({
         },
       ),
 
+    evaluateGovernanceEvolutionReadinessFn:
+      vi.fn(
+        () => {
+          executionOrder.push(
+            "evolutionReadiness",
+          );
+
+          return evolutionReadinessResult;
+        },
+      ),
+
     runConversationPreparationFn:
       vi.fn(
         () => {
@@ -224,6 +248,10 @@ describe(
               dependencies
                 .evaluatePromotionEligibilityFn,
 
+            evaluateGovernanceEvolutionReadinessFn:
+              dependencies
+                .evaluateGovernanceEvolutionReadinessFn,
+
             runConversationPreparationFn:
               dependencies
                 .runConversationPreparationFn,
@@ -280,6 +308,7 @@ describe(
           dependencies.results
             .promotionResult,
         );
+
 
         expect(
           result.conversation,
@@ -473,6 +502,10 @@ describe(
               dependencies
                 .evaluatePromotionEligibilityFn,
 
+            evaluateGovernanceEvolutionReadinessFn:
+              dependencies
+                .evaluateGovernanceEvolutionReadinessFn,
+
             runConversationPreparationFn:
               dependencies
                 .runConversationPreparationFn,
@@ -510,6 +543,7 @@ describe(
           dependencies.results
             .promotionResult,
         );
+
       },
     );
 
@@ -628,6 +662,10 @@ describe(
             evaluatePromotionEligibilityFn:
               dependencies
                 .evaluatePromotionEligibilityFn,
+
+            evaluateGovernanceEvolutionReadinessFn:
+              dependencies
+                .evaluateGovernanceEvolutionReadinessFn,
 
             runConversationPreparationFn:
               dependencies

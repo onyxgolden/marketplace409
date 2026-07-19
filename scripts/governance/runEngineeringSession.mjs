@@ -17,6 +17,10 @@ import {
 } from "./evaluatePromotionEligibility.mjs";
 
 import {
+  evaluateGovernanceEvolutionReadiness,
+} from "./evaluateGovernanceEvolutionReadiness.mjs";
+
+import {
   buildPromotionEvaluationContext,
 } from "./buildPromotionEvaluationContext.mjs";
 
@@ -33,6 +37,7 @@ export const ENGINEERING_SESSION_ORDER =
     "governancePipeline",
     "sessionEvidence",
     "promotionEvaluation",
+    "evolutionReadiness",
     "conversationPreparation",
   ]);
 
@@ -352,6 +357,9 @@ export function runEngineeringSession({
   evaluatePromotionEligibilityFn =
     evaluatePromotionEligibility,
 
+  evaluateGovernanceEvolutionReadinessFn =
+    evaluateGovernanceEvolutionReadiness,
+
   runConversationPreparationFn =
     runConversationPreparation,
 } = {}) {
@@ -388,6 +396,11 @@ export function runEngineeringSession({
   assertFunction(
     evaluatePromotionEligibilityFn,
     "evaluatePromotionEligibilityFn",
+  );
+
+  assertFunction(
+    evaluateGovernanceEvolutionReadinessFn,
+    "evaluateGovernanceEvolutionReadinessFn",
   );
 
   assertFunction(
@@ -433,6 +446,14 @@ export function runEngineeringSession({
       evaluatePromotionEligibilityFn,
     });
 
+  const evolutionReadiness =
+    evaluateGovernanceEvolutionReadinessFn({
+      repository,
+      governance,
+      evidence,
+      promotion,
+    });
+
   const conversation =
     runConversationPreparationFn({
       ...conversationPreparationOptions,
@@ -460,6 +481,7 @@ export function runEngineeringSession({
     governance,
     evidence,
     promotion,
+    evolutionReadiness,
     conversation,
   });
 }
