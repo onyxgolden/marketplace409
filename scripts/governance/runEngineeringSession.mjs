@@ -17,6 +17,10 @@ import {
 } from "./evaluatePromotionEligibility.mjs";
 
 import {
+  buildPromotionEvaluationContext,
+} from "./buildPromotionEvaluationContext.mjs";
+
+import {
   runConversationPreparation,
 } from "../conversation/runConversationPreparation.mjs";
 
@@ -300,29 +304,26 @@ export function collectEngineeringSessionEvidence({
 }
 
 function runPromotionEvaluation({
-  promotionEvaluationOptions,
+  repositoryRoot,
+  repositoryEvidence,
+  evaluationEvidence,
+  buildPromotionEvaluationContextFn,
   evaluatePromotionEligibilityFn,
 }) {
-  if (
-    promotionEvaluationOptions ===
-    undefined
-  ) {
-    return deepFreeze({
-      status:
-        "not-evaluated",
-
-      reason:
-        "promotionEvaluationOptions were not supplied",
+  const promotionEvaluationContext =
+    buildPromotionEvaluationContextFn({
+      repositoryRoot,
+      repositoryEvidence,
+      evaluationEvidence,
     });
-  }
 
   assertPlainObject(
-    promotionEvaluationOptions,
-    "promotionEvaluationOptions",
+    promotionEvaluationContext,
+    "promotionEvaluationContext",
   );
 
   return evaluatePromotionEligibilityFn(
-    promotionEvaluationOptions,
+    promotionEvaluationContext,
   );
 }
 
@@ -334,7 +335,7 @@ export function runEngineeringSession({
 
   conversationPreparationOptions = {},
 
-  promotionEvaluationOptions,
+  promotionEvaluationEvidence,
 
   inspectRepositoryFn =
     inspectEngineeringRepository,
@@ -344,6 +345,9 @@ export function runEngineeringSession({
 
   collectSessionEvidenceFn =
     collectEngineeringSessionEvidence,
+
+  buildPromotionEvaluationContextFn =
+    buildPromotionEvaluationContext,
 
   evaluatePromotionEligibilityFn =
     evaluatePromotionEligibility,
@@ -415,7 +419,17 @@ export function runEngineeringSession({
 
   const promotion =
     runPromotionEvaluation({
-      promotionEvaluationOptions,
+      repositoryRoot:
+        normalizedRepositoryRoot,
+
+      repositoryEvidence:
+        repository,
+
+      evaluationEvidence:
+        promotionEvaluationEvidence,
+
+      buildPromotionEvaluationContextFn,
+
       evaluatePromotionEligibilityFn,
     });
 

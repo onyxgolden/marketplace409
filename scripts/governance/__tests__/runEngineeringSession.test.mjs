@@ -117,6 +117,28 @@ function createDependencies({
         },
       ),
 
+    buildPromotionEvaluationContextFn:
+      vi.fn(
+        ({
+          repositoryEvidence,
+          evaluationEvidence,
+        }) => ({
+          promotionPolicy: {
+            version: "1.0",
+          },
+
+          promotionState: {},
+
+          governanceState: {},
+
+          repositoryEvidence,
+
+          validationEvidence: {},
+
+          evaluationEvidence,
+        }),
+      ),
+
     evaluatePromotionEligibilityFn:
       vi.fn(
         () => {
@@ -167,7 +189,7 @@ describe(
                 "governance/validation/evidence.json",
             },
 
-            promotionEvaluationOptions: {
+            promotionEvaluationEvidence: {
               promotionPolicy: {},
               promotionState: {},
               governanceState: {},
@@ -193,6 +215,10 @@ describe(
             collectSessionEvidenceFn:
               dependencies
                 .collectSessionEvidenceFn,
+
+            buildPromotionEvaluationContextFn:
+              dependencies
+                .buildPromotionEvaluationContextFn,
 
             evaluatePromotionEligibilityFn:
               dependencies
@@ -318,6 +344,10 @@ describe(
             dependencies
               .collectSessionEvidenceFn,
 
+          buildPromotionEvaluationContextFn:
+            dependencies
+              .buildPromotionEvaluationContextFn,
+
           evaluatePromotionEligibilityFn:
             dependencies
               .evaluatePromotionEligibilityFn,
@@ -357,10 +387,41 @@ describe(
 
         expect(
           dependencies
+            .buildPromotionEvaluationContextFn,
+        ).toHaveBeenCalledWith({
+          repositoryRoot:
+            normalizedRepositoryRoot,
+
+          repositoryEvidence:
+            dependencies.results
+              .repositoryResult,
+
+          evaluationEvidence:
+            undefined,
+        });
+
+        expect(
+          dependencies
             .evaluatePromotionEligibilityFn,
-        ).toHaveBeenCalledWith(
-          promotionEvaluationOptions,
-        );
+        ).toHaveBeenCalledWith({
+          promotionPolicy: {
+            version:
+              "1.0",
+          },
+
+          promotionState: {},
+
+          governanceState: {},
+
+          repositoryEvidence:
+            dependencies.results
+              .repositoryResult,
+
+          validationEvidence: {},
+
+          evaluationEvidence:
+            undefined,
+        });
 
         expect(
           dependencies
@@ -372,7 +433,7 @@ describe(
     );
 
     test(
-      "returns an explicit not-evaluated promotion result when promotion options are absent",
+      "automatically assembles and evaluates promotion context when evaluation evidence is absent",
       () => {
         const executionOrder = [];
 
@@ -398,6 +459,10 @@ describe(
               dependencies
                 .collectSessionEvidenceFn,
 
+            buildPromotionEvaluationContextFn:
+              dependencies
+                .buildPromotionEvaluationContextFn,
+
             evaluatePromotionEligibilityFn:
               dependencies
                 .evaluatePromotionEligibilityFn,
@@ -409,27 +474,36 @@ describe(
 
         expect(
           dependencies
+            .buildPromotionEvaluationContextFn,
+        ).toHaveBeenCalledWith({
+          repositoryRoot:
+            "/tmp/forge-repository",
+
+          repositoryEvidence:
+            dependencies.results
+              .repositoryResult,
+
+          evaluationEvidence:
+            undefined,
+        });
+
+        expect(
+          dependencies
             .evaluatePromotionEligibilityFn,
-        ).not.toHaveBeenCalled();
+        ).toHaveBeenCalled();
 
         expect(
           executionOrder,
-        ).toEqual([
-          "repositoryInspection",
-          "governancePipeline",
-          "sessionEvidence",
-          "conversationPreparation",
-        ]);
+        ).toEqual(
+          ENGINEERING_SESSION_ORDER,
+        );
 
         expect(
           result.promotion,
-        ).toEqual({
-          status:
-            "not-evaluated",
-
-          reason:
-            "promotionEvaluationOptions were not supplied",
-        });
+        ).toBe(
+          dependencies.results
+            .promotionResult,
+        );
       },
     );
 
@@ -477,6 +551,10 @@ describe(
               collectSessionEvidenceFn:
                 dependencies
                   .collectSessionEvidenceFn,
+
+              buildPromotionEvaluationContextFn:
+                dependencies
+                  .buildPromotionEvaluationContextFn,
 
               evaluatePromotionEligibilityFn:
                 dependencies
@@ -536,6 +614,10 @@ describe(
             collectSessionEvidenceFn:
               dependencies
                 .collectSessionEvidenceFn,
+
+            buildPromotionEvaluationContextFn:
+              dependencies
+                .buildPromotionEvaluationContextFn,
 
             evaluatePromotionEligibilityFn:
               dependencies
@@ -648,6 +730,10 @@ describe(
               collectSessionEvidenceFn:
                 dependencies
                   .collectSessionEvidenceFn,
+
+              buildPromotionEvaluationContextFn:
+                dependencies
+                  .buildPromotionEvaluationContextFn,
 
               evaluatePromotionEligibilityFn:
                 dependencies
