@@ -460,6 +460,7 @@ export function runEngineeringSession({
 
       engineeringState: {
         repository,
+        evolutionReadiness,
       },
     });
 

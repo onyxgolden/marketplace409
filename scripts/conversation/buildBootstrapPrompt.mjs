@@ -225,6 +225,18 @@ function validateRepositorySummary(
     "repositorySummary.review",
   );
 
+  if (
+    repositorySummary.evolutionReadiness !==
+    null &&
+    repositorySummary.evolutionReadiness !==
+    undefined
+  ) {
+    assertPlainObject(
+      repositorySummary.evolutionReadiness,
+      "repositorySummary.evolutionReadiness",
+    );
+  }
+
   assertBoolean(
     repositorySummary.review
       .humanReviewRequired,
@@ -331,6 +343,12 @@ export function buildBootstrapPrompt(
     "Human Review",
     `Required: ${formatBoolean(review.humanReviewRequired)}`,
     "",
+
+    "Governance Evolution Readiness",
+    repositorySummary.evolutionReadiness
+      ? `Status: ${repositorySummary.evolutionReadiness.status}`
+      : "Status: unavailable",
+
     "Recommended Action",
     `Code: ${recommendation.code}`,
     recommendation.summary,

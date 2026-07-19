@@ -94,6 +94,7 @@ function createDependencies({
       governanceResult,
       evidenceResult,
       promotionResult,
+      evolutionReadinessResult,
       conversationResult,
     },
 
@@ -381,6 +382,10 @@ describe(
             dependencies
               .evaluatePromotionEligibilityFn,
 
+          evaluateGovernanceEvolutionReadinessFn:
+            dependencies
+              .evaluateGovernanceEvolutionReadinessFn,
+
           runConversationPreparationFn:
             dependencies
               .runConversationPreparationFn,
@@ -462,6 +467,10 @@ describe(
             repository:
               dependencies.results
                 .repositoryResult,
+
+            evolutionReadiness:
+              dependencies.results
+                .evolutionReadinessResult,
           },
         });
       },

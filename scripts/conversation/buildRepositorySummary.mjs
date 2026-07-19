@@ -203,6 +203,18 @@ function validateConversationState(
     "conversationState.insights.recommendedAction",
   );
 
+  if (
+    conversationState.evolutionReadiness !==
+    null &&
+    conversationState.evolutionReadiness !==
+    undefined
+  ) {
+    assertPlainObject(
+      conversationState.evolutionReadiness,
+      "conversationState.evolutionReadiness",
+    );
+  }
+
   assertNonEmptyString(
     conversationState.insights
       .recommendedAction.code,
@@ -304,6 +316,10 @@ export function buildRepositorySummary(
       humanReviewRequired:
         insights.humanReviewRequired,
     },
+
+    evolutionReadiness:
+      conversationState
+        .evolutionReadiness,
 
     recommendation: {
       code:

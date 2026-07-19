@@ -91,6 +91,13 @@ function createRepositorySummary({
       humanReviewRequired,
     },
 
+    evolutionReadiness: {
+      status: "review-required",
+      eligible: false,
+      requiresHumanApproval: true,
+      reasons: [],
+    },
+
     recommendation: {
       code:
         recommendationCode,
@@ -146,6 +153,10 @@ describe(
             "Human Review",
             "Required: no",
             "",
+
+            "Governance Evolution Readiness",
+            "Status: review-required",
+
             "Recommended Action",
             "Code: continue-current-objective",
             "The repository is ready to continue the current recorded engineering objective.",

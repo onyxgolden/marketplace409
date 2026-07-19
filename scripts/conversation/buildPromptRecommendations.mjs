@@ -233,6 +233,16 @@ function validateRepositorySummary(
     "repositorySummary.review",
   );
 
+  if (
+    repositorySummary.evolutionReadiness !== null &&
+    repositorySummary.evolutionReadiness !== undefined
+  ) {
+    assertPlainObject(
+      repositorySummary.evolutionReadiness,
+      "repositorySummary.evolutionReadiness",
+    );
+  }
+
   assertBoolean(
     repositorySummary.review
       .humanReviewRequired,
@@ -426,6 +436,9 @@ export function buildPromptRecommendations(
       warningCount:
         warnings.length,
     },
+
+    evolutionReadiness:
+      repositorySummary.evolutionReadiness,
 
     authoritativeRecommendation: {
       code:

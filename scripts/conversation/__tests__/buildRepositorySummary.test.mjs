@@ -71,6 +71,13 @@ function createConversationState({
       },
     },
 
+    evolutionReadiness: {
+      status: "review-required",
+      eligible: false,
+      requiresHumanApproval: true,
+      reasons: [],
+    },
+
     insights: {
       workingTree:
         workingTreeClean
@@ -168,6 +175,13 @@ describe(
           review: {
             humanReviewRequired:
               false,
+          },
+
+          evolutionReadiness: {
+            status: "review-required",
+            eligible: false,
+            requiresHumanApproval: true,
+            reasons: [],
           },
 
           recommendation: {

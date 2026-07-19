@@ -325,6 +325,16 @@ export function buildConversationState({
       engineeringState.repository,
       "engineeringState.repository",
     );
+
+    if (
+      engineeringState.evolutionReadiness !==
+      undefined
+    ) {
+      assertPlainObject(
+        engineeringState.evolutionReadiness,
+        "engineeringState.evolutionReadiness",
+      );
+    }
   }
 
   const governanceState =
@@ -509,6 +519,11 @@ export function buildConversationState({
           liveRepository.workingTreeClean,
       },
     },
+
+    evolutionReadiness:
+      engineeringState
+        ?.evolutionReadiness ??
+      null,
 
     governance: {
       mode:

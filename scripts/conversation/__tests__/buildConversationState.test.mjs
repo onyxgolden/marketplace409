@@ -491,6 +491,13 @@ describe(
             statusLines: [],
             modifiedFiles: [],
           },
+
+          evolutionReadiness: {
+            status: "review-required",
+            eligible: false,
+            requiresHumanApproval: true,
+            reasons: [],
+          },
         };
 
         const result =
@@ -510,6 +517,13 @@ describe(
         expect(
           result.repository.head,
         ).toBe("deadbeef");
+
+        expect(
+          result.evolutionReadiness,
+        ).toEqual(
+          engineeringState
+            .evolutionReadiness,
+        );
       },
     );
   },

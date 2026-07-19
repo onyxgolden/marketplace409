@@ -91,6 +91,13 @@ function createRepositorySummary({
       humanReviewRequired,
     },
 
+    evolutionReadiness: {
+      status: "review-required",
+      eligible: false,
+      requiresHumanApproval: true,
+      reasons: [],
+    },
+
     recommendation: {
       code:
         recommendationCode,
@@ -121,6 +128,13 @@ describe(
           readiness: {
             readyToContinue: true,
             warningCount: 0,
+          },
+
+          evolutionReadiness: {
+            status: "review-required",
+            eligible: false,
+            requiresHumanApproval: true,
+            reasons: [],
           },
 
           authoritativeRecommendation: {
