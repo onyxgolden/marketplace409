@@ -37,6 +37,14 @@ function createInputs() {
       requiresHumanApproval: true,
       reasons: [],
     },
+
+    evolutionDecision: {
+      decision: "READY_FOR_REVIEW",
+      eligible: true,
+      requiresHumanApproval: true,
+      blockers: [],
+      requiredActions: [],
+    },
   };
 }
 

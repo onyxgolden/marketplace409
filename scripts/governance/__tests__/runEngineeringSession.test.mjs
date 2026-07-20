@@ -80,6 +80,21 @@ function createDependencies({
     reasons: [],
   };
 
+  const evolutionDecisionResult = {
+    decision:
+      "EVOLUTION_BLOCKED",
+
+    eligible:
+      false,
+
+    requiresHumanApproval:
+      true,
+
+    blockers: [],
+
+    requiredActions: [],
+  };
+
   const evolutionReviewContextResult = {
     status:
       "review-ready",
@@ -100,6 +115,7 @@ function createDependencies({
       evidenceResult,
       promotionResult,
       evolutionReadinessResult,
+      evolutionDecisionResult,
       evolutionReviewContextResult,
       conversationResult,
     },
@@ -178,6 +194,17 @@ function createDependencies({
           );
 
           return evolutionReadinessResult;
+        },
+      ),
+
+    evaluateGovernanceEvolutionDecisionFn:
+      vi.fn(
+        () => {
+          executionOrder.push(
+            "evolutionDecision",
+          );
+
+          return evolutionDecisionResult;
         },
       ),
 
@@ -270,6 +297,10 @@ describe(
               dependencies
                 .evaluateGovernanceEvolutionReadinessFn,
 
+            evaluateGovernanceEvolutionDecisionFn:
+              dependencies
+                .evaluateGovernanceEvolutionDecisionFn,
+
             buildEvolutionReviewContextFn:
               dependencies
                 .buildEvolutionReviewContextFn,
@@ -331,6 +362,19 @@ describe(
             .promotionResult,
         );
 
+        expect(
+          result.evolutionReadiness,
+        ).toBe(
+          dependencies.results
+            .evolutionReadinessResult,
+        );
+
+        expect(
+          result.evolutionReviewContext,
+        ).toBe(
+          dependencies.results
+            .evolutionReviewContextResult,
+        );
 
         expect(
           result.conversation,
@@ -406,6 +450,10 @@ describe(
           evaluateGovernanceEvolutionReadinessFn:
             dependencies
               .evaluateGovernanceEvolutionReadinessFn,
+
+          evaluateGovernanceEvolutionDecisionFn:
+            dependencies
+              .evaluateGovernanceEvolutionDecisionFn,
 
           buildEvolutionReviewContextFn:
             dependencies
@@ -543,6 +591,10 @@ describe(
             evaluateGovernanceEvolutionReadinessFn:
               dependencies
                 .evaluateGovernanceEvolutionReadinessFn,
+
+            evaluateGovernanceEvolutionDecisionFn:
+              dependencies
+                .evaluateGovernanceEvolutionDecisionFn,
 
             buildEvolutionReviewContextFn:
               dependencies

@@ -43,6 +43,7 @@ export function buildEvolutionReviewContext({
   validationEvidence,
   promotionEvaluation,
   evolutionReadiness,
+  evolutionDecision,
 } = {}) {
   assertPlainObject(
     repositoryEvidence,
@@ -69,12 +70,18 @@ export function buildEvolutionReviewContext({
     "evolutionReadiness",
   );
 
+  assertPlainObject(
+    evolutionDecision,
+    "evolutionDecision",
+  );
+
   return deepFreeze({
     repositoryEvidence,
     governanceState,
     validationEvidence,
     promotionEvaluation,
     evolutionReadiness,
+    evolutionDecision,
 
     humanDecision: {
       status: "pending",
