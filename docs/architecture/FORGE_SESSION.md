@@ -3,7 +3,7 @@
 **Version:** 4.0
 **Status:** Active
 **Last Updated:** 2026-07-13
-**Latest Commit:** b355ff6 — Synchronize authoritative governance documentation
+**Latest Commit:** aca23e9 — Integrate evolution review context into engineering session
 
 ---
 
@@ -50,6 +50,9 @@ Current verified capabilities:
 - Engineering-session conversation integration.
 - Chat-ready conversation bootstrap generation.
 - Engineering conversation session CLI execution.
+- Governance evolution readiness evaluation.
+- Repository-backed evolution review context construction.
+- Engineering-session evolution review integration.
 
 Next actions:
 
