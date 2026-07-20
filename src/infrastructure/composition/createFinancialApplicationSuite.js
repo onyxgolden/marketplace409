@@ -30,6 +30,10 @@ import {
 } from "../../application/financial/read-models/FinancialPositionReadModelAdapter.js";
 
 import {
+  DecisionOutcomeReadModelAdapter,
+} from "../../application/financial/read-models/DecisionOutcomeReadModelAdapter.js";
+
+import {
   FinancialForecastService,
   FinancialPlanningService,
   FinancialRecommendationService,
@@ -150,6 +154,10 @@ export async function createFinancialApplicationSuite(deps = {}) {
     deps.financialPositionReadModelAdapter ||
     financialPositionReadModelAdapter;
 
+  const decisionOutcomeReadModelAdapter =
+    deps.decisionOutcomeReadModelAdapter ||
+    new DecisionOutcomeReadModelAdapter();
+
   const readModelApplication =
     deps.readModelApplication ||
     new FinancialReadModelApplication({
@@ -266,6 +274,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     financialPositionQueryService,
     financialPositionReadModelAdapter:
       positionReadModelAdapter,
+    decisionOutcomeReadModelAdapter,
     assetRepository,
     liabilityRepository,
     financialIntelligenceApplication,

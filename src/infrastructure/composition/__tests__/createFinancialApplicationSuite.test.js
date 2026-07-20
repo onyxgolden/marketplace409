@@ -14,6 +14,9 @@ import {
 } from "../../../application/financial";
 
 import { FinancialOperationsService } from "../../../domains/financial-operations";
+import {
+  DecisionOutcomeReadModelAdapter,
+} from "../../../application/financial/read-models/DecisionOutcomeReadModelAdapter.js";
 
 describe("createFinancialApplicationSuite", () => {
   test("wires financial explainability application into the suite", async () => {
@@ -237,6 +240,39 @@ describe("createFinancialApplicationSuite", () => {
     });
 
     expect(suite.readModelApplication).toBe(readModelApplication);
+  });
+
+  test("wires decision outcome read model adapter into the suite", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(
+      suite.decisionOutcomeReadModelAdapter,
+    ).toBeInstanceOf(
+      DecisionOutcomeReadModelAdapter,
+    );
+  });
+
+  test("allows decision outcome read model adapter injection", async () => {
+    const decisionOutcomeReadModelAdapter = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      decisionOutcomeReadModelAdapter,
+    });
+
+    expect(
+      suite.decisionOutcomeReadModelAdapter,
+    ).toBe(
+      decisionOutcomeReadModelAdapter,
+    );
   });
 
   test("wires financial intelligence application into the suite", async () => {
