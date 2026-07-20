@@ -58,6 +58,42 @@ function readJson(relativePath, label) {
   }
 }
 
+function projectGovernanceState(
+  snapshot,
+) {
+  return {
+    state: {
+      activePhase: {
+        identifier:
+          snapshot.phase.identifier,
+
+        title:
+          snapshot.phase.title,
+
+        status:
+          snapshot.phase.status,
+      },
+
+      currentObjective:
+        snapshot.objective.endingObjective,
+
+      completedWork:
+        [...snapshot.work.delivered],
+
+      knownWarnings:
+        [...snapshot.work.knownWarnings],
+
+      nextSession: {
+        objective:
+          snapshot.nextSession.objective,
+
+        startingInspection:
+          snapshot.nextSession.startingInspection,
+      },
+    },
+  };
+}
+
 function normalizeRepositoryPath(
   suppliedPath,
   label,
@@ -215,14 +251,15 @@ function generateGovernanceState(
 
     state:
       buildGovernanceState({
-        currentGovernanceState,
+        currentGovernanceState:
+          projectGovernanceState(snapshot),
       }),
 
     validation:
       snapshot.validation,
 
     completion:
-      currentGovernanceState.completion,
+      snapshot.completion,
 
     authority: {
       defaultAuthority:
