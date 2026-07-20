@@ -7,6 +7,7 @@ import { DecisionApplication } from "../../application/decision";
 import {
   FinancialDashboardIntelligenceApplication,
   FinancialDecisionApplication,
+  FinancialDecisionOperationsApplication,
   FinancialExplainabilityApplication,
   FinancialImportApplication,
   FinancialIntelligenceApplication,
@@ -206,6 +207,12 @@ export async function createFinancialApplicationSuite(deps = {}) {
       financialOperationsService,
     });
 
+  const financialDecisionOperationsApplication =
+    deps.financialDecisionOperationsApplication ||
+    new FinancialDecisionOperationsApplication({
+      financialOperationsApplication,
+    });
+
   const explainabilityApplication =
     deps.explainabilityApplication ||
     new FinancialExplainabilityApplication({
@@ -250,7 +257,9 @@ export async function createFinancialApplicationSuite(deps = {}) {
     assetRepository,
     liabilityRepository,
     financialIntelligenceApplication,
+    financialDecisionApplication,
     financialOperationsApplication,
+    financialDecisionOperationsApplication,
     financialOperationsService,
     explainabilityApplication,
     dashboardIntelligenceApplication,
