@@ -3,6 +3,7 @@ import {
   FinancialDashboardIntelligenceApplication,
   FinancialDecisionApplication,
   FinancialDecisionOperationsApplication,
+  FinancialDecisionOutcomeApplication,
   FinancialExplainabilityApplication,
   FinancialImportApplication,
   FinancialIntelligenceApplication,
@@ -313,6 +314,39 @@ describe("createFinancialApplicationSuite", () => {
 
     expect(suite.financialDecisionApplication).toBe(
       financialDecisionApplication,
+    );
+  });
+
+  test("wires financial decision outcome application into the suite", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(
+      suite.financialDecisionOutcomeApplication,
+    ).toBeInstanceOf(
+      FinancialDecisionOutcomeApplication,
+    );
+  });
+
+  test("allows financial decision outcome application injection", async () => {
+    const financialDecisionOutcomeApplication = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      financialDecisionOutcomeApplication,
+    });
+
+    expect(
+      suite.financialDecisionOutcomeApplication,
+    ).toBe(
+      financialDecisionOutcomeApplication,
     );
   });
 

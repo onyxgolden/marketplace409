@@ -3,11 +3,13 @@ import { createFinancialSnapshotRepository } from "./createFinancialSnapshotRepo
 import { createFinancialEventRepository } from "./createFinancialEventRepository.js";
 
 import { DecisionApplication } from "../../application/decision";
+import { DecisionOutcomeEvaluator } from "../../domains/decision";
 
 import {
   FinancialDashboardIntelligenceApplication,
   FinancialDecisionApplication,
   FinancialDecisionOperationsApplication,
+  FinancialDecisionOutcomeApplication,
   FinancialExplainabilityApplication,
   FinancialImportApplication,
   FinancialIntelligenceApplication,
@@ -197,6 +199,16 @@ export async function createFinancialApplicationSuite(deps = {}) {
       decisionApplication,
     });
 
+  const decisionOutcomeEvaluator =
+    deps.decisionOutcomeEvaluator ||
+    new DecisionOutcomeEvaluator();
+
+  const financialDecisionOutcomeApplication =
+    deps.financialDecisionOutcomeApplication ||
+    new FinancialDecisionOutcomeApplication({
+      decisionOutcomeEvaluator,
+    });
+
   const financialOperationsService =
     deps.financialOperationsService || new FinancialOperationsService();
 
@@ -258,6 +270,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     liabilityRepository,
     financialIntelligenceApplication,
     financialDecisionApplication,
+    financialDecisionOutcomeApplication,
     financialOperationsApplication,
     financialDecisionOperationsApplication,
     financialOperationsService,

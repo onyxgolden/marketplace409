@@ -15,3 +15,11 @@ export {
 export {
   DecisionWorkflowService,
 } from "./decision-workflow.service";
+
+export {
+  DecisionOutcomeEvaluator,
+} from "./decision-outcome-evaluator";
+
+export type {
+  DecisionOutcomeEvaluation,
+} from "./decision-outcome-evaluator";

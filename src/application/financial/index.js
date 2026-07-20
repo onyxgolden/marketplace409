@@ -5,6 +5,7 @@ export { FinancialDashboardIntelligenceApplication } from "./FinancialDashboardI
 export { FinancialReadModelApplication } from "./read-models/FinancialReadModelApplication.js";
 export { FinancialDecisionApplication } from "./FinancialDecisionApplication.js";
 export { FinancialDecisionOperationsApplication } from "./FinancialDecisionOperationsApplication.js";
+export { FinancialDecisionOutcomeApplication } from "./FinancialDecisionOutcomeApplication.js";
 export { FinancialIntelligenceApplication } from "./FinancialIntelligenceApplication.js";
 export { FinancialOperationsApplication } from "./FinancialOperationsApplication.js";
 export { FinancialImportApplication } from "./FinancialImportApplication.js";
