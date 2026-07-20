@@ -1,6 +1,7 @@
 import { createFinancialApplicationSuite } from "../createFinancialApplicationSuite.js";
 import {
   FinancialDashboardIntelligenceApplication,
+  FinancialDecisionApplication,
   FinancialExplainabilityApplication,
   FinancialImportApplication,
   FinancialIntelligenceApplication,
@@ -282,6 +283,35 @@ describe("createFinancialApplicationSuite", () => {
     );
     expect(suite.financialIntelligenceApplication.planningService).toBe(
       planningService,
+    );
+  });
+
+  test("wires financial decision application into the suite", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(suite.financialDecisionApplication).toBeInstanceOf(
+      FinancialDecisionApplication,
+    );
+  });
+
+  test("allows financial decision application injection", async () => {
+    const financialDecisionApplication = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      financialDecisionApplication,
+    });
+
+    expect(suite.financialDecisionApplication).toBe(
+      financialDecisionApplication,
     );
   });
 

@@ -2,8 +2,11 @@ import { createFinancialSnapshotApplication } from "./createFinancialSnapshotApp
 import { createFinancialSnapshotRepository } from "./createFinancialSnapshotRepository.js";
 import { createFinancialEventRepository } from "./createFinancialEventRepository.js";
 
+import { DecisionApplication } from "../../application/decision";
+
 import {
   FinancialDashboardIntelligenceApplication,
+  FinancialDecisionApplication,
   FinancialExplainabilityApplication,
   FinancialImportApplication,
   FinancialIntelligenceApplication,
@@ -180,6 +183,17 @@ export async function createFinancialApplicationSuite(deps = {}) {
       forecastService,
       recommendationService,
       planningService,
+    });
+
+  const decisionApplication =
+    deps.decisionApplication ||
+    new DecisionApplication();
+
+  const financialDecisionApplication =
+    deps.financialDecisionApplication ||
+    new FinancialDecisionApplication({
+      financialIntelligenceApplication,
+      decisionApplication,
     });
 
   const financialOperationsService =
