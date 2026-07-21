@@ -237,6 +237,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     deps.financialDecisionOutcomeApplication ||
     new FinancialDecisionOutcomeApplication({
       decisionOutcomeEvaluator,
+      decisionOutcomeRepository,
     });
 
   const financialOperationsService =

@@ -453,6 +453,26 @@ describe("createFinancialApplicationSuite", () => {
     );
   });
 
+  test("injects the decision outcome repository into the outcome application", async () => {
+    const decisionOutcomeRepository = {
+      save: vi.fn(),
+      findByDecisionId: vi.fn(),
+    };
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      decisionOutcomeRepository,
+    });
+
+    expect(
+      suite.financialDecisionOutcomeApplication
+        .decisionOutcomeRepository,
+    ).toBe(decisionOutcomeRepository);
+  });
+
   test("allows financial decision outcome application injection", async () => {
     const financialDecisionOutcomeApplication = {};
 
