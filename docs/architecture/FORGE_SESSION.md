@@ -92,134 +92,7 @@ The repository includes six dedicated composition roots:
 - `createBusinessApplicationSuite`
 - `createInvestorApplicationSuite`
 
-Transaction Review intelligence now includes:
-
-- `PropertyRecommendationService`
-- Deterministic advisory recommendation generation
-- Immutable recommendation results
-- Ranked property suggestions
-- Confidence scoring
-- Explanation generation
-
-Production import orchestration integrates recommendations through `ProductionImportWorkflow`.
-
-This provides one provider-neutral recommendation integration point for:
-
-- Rentec
-- QuickBooks
-- Future import providers
-
-Property recommendations remain advisory only.
-
-`ManualPropertyAssignmentService` remains the exclusive authority for property assignment.
-
-Property Resolution continues owning canonical property resolution.
-
-Recommendation generation belongs to the Transaction Review domain.
-
-Provider services do not own recommendation logic.
-
-Composition roots continue owning:
-
-- Dependency construction
-- Repository selection
-- Provider selection
-- Infrastructure selection
-- Mapper construction
-- Domain-service construction
-- Application-service construction
-- Service-graph assembly
-- Dependency injection
-
-Application services continue owning:
-
-- Authentication
-- Authorization
-- Workflow orchestration
-- Persistence coordination
-- External-service coordination
-- Payload construction
-- Redirect decisions
-- Response normalization
-- Error normalization
-- Immutable result construction
-
-Domain services own business behavior.
-
-Infrastructure provides concrete implementations.
-
-Presentation components continue owning:
-
-- Rendering
-- React lifecycle
-- Local UI state
-- User interaction
-- Notifications
-- Navigation
-- Presentation formatting
-
-Read-only server-rendered query pages remain unchanged unless repository evidence establishes meaningful orchestration.
-
----
-
-# Session Boot
-
-Every FORGE engineering session begins by:
-
-1. Loading `FORGE_ENGINEERING_CONTROL_CENTER.md`.
-2. Loading `FORGE_WORKFLOW.md`.
-3. Loading `FORGE_STATUS.md`.
-4. Reviewing the applicable roadmap section.
-5. Inspecting Git status and recent commits.
-6. Performing combined repository inspection before planning implementation.
-7. Reconciling documentation with repository evidence.
-8. Selecting one cohesive objective.
-9. Performing a proportional compliance review.
-10. Beginning implementation only after repository reality is established.
-
-No implementation plan may be based solely on memory, documentation, or prior conversation.
-
----
-
-# Repository-First Engineering Loop
-
-Every engineering objective follows this sequence:
-
-```text
-Inspect
-    ↓
-Verify
-    ↓
-Evaluate
-    ↓
-Determine Repository Reality
-    ↓
-Identify Exact Gap
-    ↓
-Plan
-    ↓
-Implement
-    ↓
-Verify
-    ↓
-Run Targeted Tests
-    ↓
-Run Full Test Suite
-    ↓
-Run Production Build
-    ↓
-Synchronize Documentation
-    ↓
-Commit
-    ↓
-Push
-    ↓
-Confirm Clean Repository
-```
-
----
-
-## Transaction Review Intelligence Expansion — Property Recommendation Engine
+## Decision Platform Engineering — Phases 17A through 18B
 
 ### Status
 
@@ -227,37 +100,63 @@ Complete
 
 ### Delivered
 
-- Added `PropertyRecommendationService`
-- Added deterministic advisory property recommendation generation
-- Added immutable recommendation results
-- Added ranked property suggestions
-- Added confidence scoring
-- Added recommendation explanations
-- Integrated recommendations through `ProductionImportWorkflow`
-- Established one provider-neutral recommendation integration point
-- Extended Rentec and QuickBooks provider APIs with optional property candidates
-- Preserved backward compatibility for existing callers
-- Preserved `ManualPropertyAssignmentService` as the exclusive property-assignment authority
-- Preserved Property Resolution ownership of canonical property resolution
+- Added the Decision domain and lifecycle foundation
+- Added `DecisionWorkflowService`
+- Added the canonical decision application boundary
+- Added `FinancialDecisionApplication`
+- Added `FinancialDecisionOperationsApplication`
+- Added `DecisionOutcomeEvaluator`
+- Added `FinancialDecisionOutcomeApplication`
+- Added immutable decision outcome projections
+- Added `DecisionOutcomeReadModelAdapter`
+- Added `DecisionOutcomeQueryService`
+- Added `InMemoryDecisionOutcomeRepository`
+- Added `SupabaseDecisionOutcomeRepository`
+- Added repository-backed decision outcome persistence
+- Added decision outcome read-model API integration
+- Added financial composition ownership for decision workflows
+- Preserved separation between decision evaluation, persistence, queries, and delivery
 
 ### Architectural Boundary
 
-Property recommendations are advisory only.
+Decision intelligence is advisory.
 
-Recommendation generation belongs to Transaction Review.
+Decision outcomes do not replace accounting truth.
 
-`ProductionImportWorkflow` owns recommendation orchestration.
+The Financial Engine remains the accounting authority.
 
-Provider implementations consume the shared orchestration boundary.
+The Ledger remains the canonical immutable accounting record.
 
-`ManualPropertyAssignmentService` retains exclusive assignment authority.
+Decision evaluation belongs behind explicit application boundaries.
+
+Decision outcome persistence belongs behind repository abstractions.
+
+Decision outcome queries remain separate from evaluation and persistence.
+
+Composition owns infrastructure selection.
+
+### Completed Phase Chain
+
+- Phase 17A — Decision Intelligence Foundation
+- Phase 17B — Financial Decision Application Boundary
+- Phase 17C — Financial Decision Operations Boundary
+- Phase 17D — Decision Outcome Evaluation Boundary
+- Phase 17E — Decision Outcome Read Model Adapter
+- Phase 17F — Decision Outcome Query Foundation
+- Phase 17G — Decision Outcome API Integration
+- Phase 17H — Decision Outcome Composition Integration
+- Phase 18A — Decision Outcome Persistence Foundation
+- Phase 18B — Persist Decision Outcome Evaluations
 
 ### Validation
 
-- ✓ Targeted Property Recommendation tests passed
-- ✓ ProductionImportWorkflow integration tests passed
-- ✓ Full Vitest suite passed: 197 test files and 769 tests
-- ✓ Production build passed
+- ✓ Decision Platform targeted tests passed
+- ✓ Composition tests passed
+- ✓ API integration tests passed
+- ✓ Repository persistence tests passed
+- ✓ Full Vitest suite passed: 255 test files and 1,297 tests
+- ✓ Latest implementation commit: `b155816`
+- ✓ Repository synchronized with `origin/main`
 - ✓ No regression introduced
 
 ---

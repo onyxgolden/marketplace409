@@ -167,54 +167,43 @@ The platform can now import financial data, resolve semantic property ownership,
 
 # Current Development
 
-## Phase 9 — Transaction Review & Property Intelligence
+## Phase 18C — Repository Documentation Synchronization
 
-### Recently Completed
+### Current Objective
 
-* Provider-neutral connection platform
-* FinancialAccount import pipeline
-* AccountBalance import pipeline
-* Transaction import pipeline
-* FinancialEvent import pipeline
-* PropertyResolverService
-* Persistent PropertyRuleRepository
-* ManualPropertyAssignmentService
-* Transaction property assignment API
-* Transaction Review UI
-* Persistent property learning feedback loop
+Synchronize the authoritative platform documentation with the completed Decision Platform implementation through Phase 18B.
 
-**Status:** Complete
+Completed implementation phases:
 
----
+* Phase 17A — Decision Intelligence Foundation
+* Phase 17B — Financial Decision Application Boundary
+* Phase 17C — Financial Decision Operations Boundary
+* Phase 17D — Decision Outcome Evaluation Boundary
+* Phase 17E — Decision Outcome Read Model Adapter
+* Phase 17F — Decision Outcome Query Foundation
+* Phase 17G — Decision Outcome API Integration
+* Phase 17H — Decision Outcome Composition Integration
+* Phase 18A — Decision Outcome Persistence Foundation
+* Phase 18B — Persist Decision Outcome Evaluations
 
-## Current Objective
+Current documentation work:
 
-Elevate Transaction Review into a first-class domain.
+* Synchronize platform capability descriptions.
+* Preserve completed Transaction Review and Property Intelligence history.
+* Record Decision Platform capabilities as verified production foundations.
+* Verify consistency across authoritative engineering documents.
+* Run required validation.
+* Commit and push only the intended documentation changes.
 
-Candidate object:
+### Next Candidate
 
-```text
-TransactionReviewItem
-    transaction
-    resolvedProperty
-    suggestedProperties
-    confidence
-    needsAssignment
-    assignmentStatus
-    reviewState
-```
+After Phase 18C is committed and pushed, perform repository-first inspection to determine the next platform objective.
 
-Responsibilities:
+Potential candidates include deterministic documentation generation and other repository-supported priorities.
 
-* Represent review state independently of imports
-* Support confidence scoring
-* Support multiple suggested properties
-* Support bulk assignment
-* Support similar transaction learning
-* Support future AI recommendations
-* Keep provider adapters independent
-* Keep PropertyResolverService read-only
-* Keep ManualPropertyAssignmentService command-side only
+Repository inspection determines the next implementation objective.
+
+**Status:** In Progress
 
 ---
 

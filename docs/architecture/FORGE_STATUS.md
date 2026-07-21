@@ -29,35 +29,58 @@ main
 
 ## Latest Green Commit
 
-aca23e9 — Integrate evolution review context into engineering session
+b155816 — Persist decision outcome evaluations
 
 ## Repository
 
-Governance evolution readiness and engineering-session evolution integration are complete.
+The Decision Platform implementation is complete through Phase 18B.
 
-Transaction Review intelligence now includes deterministic advisory property recommendations integrated through the canonical ProductionImportWorkflow orchestration boundary.
+Completed capabilities include:
 
-Authoritative engineering documentation reflects the completed Phase 15 governance evolution architecture.
+- Decision lifecycle foundation
+- Decision workflow orchestration
+- Financial decision application boundaries
+- Decision outcome evaluation
+- Immutable decision outcome read models
+- Canonical decision outcome queries
+- In-memory decision outcome persistence
+- Supabase decision outcome persistence
+- Decision outcome API integration
+- Financial composition ownership
 
-The repository is synchronized with `origin/main` through commit `aca23e9` for the completed Phase 15 evolution integration.
+The repository is synchronized with `origin/main` through commit `b155816`.
 
 ## Working Tree
 
-Contains intentional in-progress financial platform, Supabase migration, import integration, governance documentation, and generated evidence work.
+Contains intentional unrelated active development, including:
+
+- Financial platform enhancements
+- Financial import API development
+- Financial read-model changes
+- Supabase repositories and migrations
+- Authentication and proxy work
+- Generated governance evidence
+- Synchronized governance documents
+- Package dependency updates
+
+This work must not be reset, cleaned, discarded, overwritten, or accidentally staged.
 
 ## Production Build
 
-PASS
+PASS at the latest verified implementation checkpoint.
 
 ## Test Status
 
-197 test files passing
+Latest verified full-suite result:
 
-769 tests passing
+- 255 test files passing
+- 1,297 tests passing
+
+The filesystem count of files beneath `__tests__` is not equivalent to the verified Vitest test-file total.
 
 ## Mutation Firewall
 
-Pending final validation after documentation synchronization.
+Pending Phase 18C documentation synchronization validation.
 
 ---
 
@@ -65,39 +88,41 @@ Pending final validation after documentation synchronization.
 
 ## Phase
 
-FORGE Governance Execution and Engineering Session Automation
+Phase 18C — Repository Documentation Synchronization
 
 ## Immediate Objective
 
-Maintain authoritative alignment with the completed Phase 15 governance evolution architecture.
+Synchronize authoritative engineering documentation with the completed Decision Platform implementation.
 
 Update:
 
-- `FORGE_ENGINEERING_CONTROL_CENTER.md`
 - `FORGE_STATUS.md`
 - `FORGE_SESSION.md`
+- `FORGE_ENGINEERING_CONTROL_CENTER.md`
+- `FORGE_PLATFORM_ROADMAP.md`
 
-Verify:
+Review:
 
-- Governance architecture documentation matches implemented repository capabilities.
-- Engineering-session orchestration is accurately recorded.
-- Conversation bootstrap continuity is accurately recorded.
-- Repository evidence remains the source of truth.
+- `FORGE_ROADMAP.md`
 
-Run documentation validation.
+Update the architecture roadmap only if repository evidence confirms the Decision Platform changed FORGE's major architectural structure rather than extending platform capability.
 
-Run required test validation.
+After authoritative documentation is updated:
 
-Commit synchronized authoritative documentation.
+- Run the canonical governance synchronization process.
+- Regenerate synchronized governance documents.
+- Run documentation and governance validation.
+- Run required repository validation.
+- Run the Mutation Firewall when required by the completion workflow.
+- Review the final diff.
+- Commit only intended Phase 18C changes.
+- Push and confirm `HEAD == origin/main`.
 
-Push and confirm:
+Do not modify completed Decision Platform implementation during Phase 18C.
 
-- `HEAD == origin/main`
-- Working tree clean.
+Do not modify unrelated active development.
 
-Do not modify completed governance architecture without repository evidence.
-
-Do not bypass governance validation boundaries.
+Do not treat synchronized governance documents as authoritative sources.
 
 ---
 
@@ -119,15 +144,43 @@ Do not bypass governance validation boundaries.
 
 ✅ FinancialIntelligenceApplication
 
-✅ FinancialDashboardIntelligenceApplication
+✅ FinancialDecisionApplication
 
-✅ FinancialReadModelApplication
+✅ FinancialDecisionOperationsApplication
 
-✅ FinancialSnapshotViewApplication
+✅ FinancialDecisionOutcomeApplication
 
-✅ ForgeDashboardApplication
+## Decision Platform
 
-✅ ForgeFinancialDashboardApplication
+✅ Decision domain
+
+✅ Decision lifecycle
+
+✅ DecisionWorkflowService
+
+✅ Decision application boundary
+
+✅ Financial decision application boundary
+
+✅ Financial decision operations boundary
+
+✅ DecisionOutcomeEvaluator
+
+✅ FinancialDecisionOutcomeApplication
+
+✅ DecisionOutcomeReadModelAdapter
+
+✅ DecisionOutcomeQueryService
+
+✅ InMemoryDecisionOutcomeRepository
+
+✅ SupabaseDecisionOutcomeRepository
+
+✅ Decision outcome persistence
+
+✅ Decision outcome API integration
+
+✅ Financial composition integration
 
 ## Business
 
@@ -175,11 +228,20 @@ Do not bypass governance validation boundaries.
 
 ✅ TransactionReviewApplication composition ownership
 
+✅ Financial decision composition ownership
+
+✅ Decision outcome evaluator composition ownership
+
+✅ Decision outcome repository composition ownership
+
+✅ Decision outcome query composition ownership
+
 ✅ FinancialImportTool consumes the Financial composition suite
 
 ✅ Direct FinancialImportApplication construction removed from presentation code
 
 ✅ Direct TransactionReviewApplication construction removed from presentation code
+
 
 ### Transaction Review Composition
 

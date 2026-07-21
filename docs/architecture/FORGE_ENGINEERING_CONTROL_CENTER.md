@@ -41,100 +41,137 @@ The repository—not memory, documentation, or prior conversation—is the singl
 
 ## Last Verified
 
-**Verified:** 2026-07-13
+**Verified:** 2026-07-21
 
 ### Repository State
 
 * Current Branch: main
-* Latest Verified Commit: b355ff6 — Synchronize authoritative governance documentation
-* Repository Status: Property Recommendation Engine implementation completed. Authoritative documentation synchronization in progress.
-* Repository synchronized with origin/main through commit b355ff6 before the current implementation session.
+* Latest Verified Commit: `b155816` — Persist decision outcome evaluations
+* Repository Status: Decision Platform implementation through Phase 18B is complete. Phase 18C authoritative documentation synchronization is in progress.
+* Repository synchronized with `origin/main` through commit `b155816` before the current documentation edits.
+* Working tree contains intentional unrelated active development that must be preserved.
 
 ### Current Architectural Objective
 
-Synchronize the authoritative engineering documentation with the completed Property Recommendation implementation.
+Complete Phase 18C — Repository Documentation Synchronization.
 
-Complete synchronization of:
+Synchronize the authoritative engineering documentation with the completed Decision Platform implementation:
 
-* `FORGE_ENGINEERING_CONTROL_CENTER.md`
 * `FORGE_STATUS.md`
 * `FORGE_SESSION.md`
+* `FORGE_ENGINEERING_CONTROL_CENTER.md`
+* `FORGE_PLATFORM_ROADMAP.md`
 
-Update `FORGE_ROADMAP.md` only if repository evidence establishes that the Property Recommendation milestone should be recorded as an architectural milestone.
+Update `FORGE_ROADMAP.md` only if repository evidence establishes a true architectural phase change.
 
-After documentation synchronization is committed, perform repository validation, commit, push, and confirm repository synchronization.
+After documentation synchronization:
+
+* Verify documentation consistency.
+* Run required validation.
+* Commit only the intended documentation changes.
+* Push.
+* Confirm `HEAD` equals `origin/main`.
+* Preserve unrelated active working-tree changes.
 
 ### Current Repository State
 
 Application-layer consolidation and composition ownership remain complete across Financial, Transaction Review, Connection Platform, Marketplace, Business, and Investor workflows.
 
-The repository includes six dedicated composition roots:
+The Financial composition boundary now also owns Decision Platform construction and infrastructure selection.
 
-* `createFinancialApplicationSuite`
-* `createTransactionReviewApplicationSuite`
-* `createConnectionPlatformSuite`
-* `createMarketplaceApplicationSuite`
-* `createBusinessApplicationSuite`
-* `createInvestorApplicationSuite`
+Decision Platform capabilities include:
 
-Transaction Review intelligence now includes:
+* Decision domain and lifecycle foundation
+* `DecisionWorkflowService`
+* `FinancialDecisionApplication`
+* `FinancialDecisionOperationsApplication`
+* `DecisionOutcomeEvaluator`
+* `FinancialDecisionOutcomeApplication`
+* Immutable decision outcome projections
+* `DecisionOutcomeReadModelAdapter`
+* `DecisionOutcomeQueryService`
+* `InMemoryDecisionOutcomeRepository`
+* `SupabaseDecisionOutcomeRepository`
+* Repository-backed decision outcome persistence
+* Decision outcome read-model API integration
+* Decision outcome composition integration
 
-* `PropertyRecommendationService`
-* Deterministic advisory property recommendation generation
-* Ranked property recommendations
-* Confidence scoring
-* Explanation generation
-* Immutable recommendation model
+The canonical decision outcome flow is:
 
-Production import orchestration now integrates property recommendations through a single provider-neutral boundary.
-
-The canonical recommendation flow is:
-
-Transaction Review
-
-↓
-
-PropertyRecommendationService
+Decision
 
 ↓
 
-ProductionImportWorkflow
+DecisionWorkflowService
 
 ↓
 
-Provider Import Services
+FinancialDecisionApplication
 
 ↓
 
-ManualPropertyAssignmentService
+FinancialDecisionOperationsApplication
 
-Property recommendations remain advisory only.
+↓
 
-`ManualPropertyAssignmentService` remains the exclusive authority for property assignment.
+DecisionOutcomeEvaluator
 
-Recommendation generation belongs to the Transaction Review domain.
+↓
 
-Property resolution continues owning canonical property resolution responsibilities.
+FinancialDecisionOutcomeApplication
+
+↓
+
+Decision Outcome Repository
+
+↓
+
+DecisionOutcomeQueryService
+
+↓
+
+DecisionOutcomeReadModelAdapter
+
+↓
+
+Financial Read-Model API
+
+Decision intelligence remains advisory.
+
+Decision outcomes do not replace accounting truth.
+
+The Financial Engine remains the accounting authority.
+
+The Ledger remains the canonical immutable accounting record.
+
+Evaluation, persistence, queries, read-model projection, and delivery remain separated behind explicit boundaries.
 
 ### Verification Status
 
-* Full Vitest suite passed: 197 test files and 769 tests.
-* Production build passed.
-* Property Recommendation integration validated.
-* Backward compatibility preserved for existing provider integrations.
+* Decision Platform targeted tests passed.
+* Composition tests passed.
+* API integration tests passed.
+* Repository persistence tests passed.
+* Full Vitest suite passed: 255 test files and 1,297 tests.
+* Latest implementation committed as `b155816`.
+* Repository synchronized with `origin/main` before documentation edits.
+* Mutation Firewall remains pending for the completed documentation synchronization.
 
 ### Current Risk
 
-Do not allow recommendation services to perform automatic property assignment.
+Do not allow decision intelligence to become an accounting authority.
 
-Preserve the architectural boundary:
+Preserve these architectural boundaries:
 
-* Recommendation services generate advisory recommendations.
-* ProductionImportWorkflow orchestrates recommendation delivery.
-* ManualPropertyAssignmentService remains the exclusive assignment authority.
-* Property Resolution remains responsible for canonical property resolution.
+* The Ledger remains canonical accounting truth.
+* The Financial Engine remains the accounting calculation authority.
+* Decision evaluation remains advisory.
+* Persistence remains behind repository abstractions.
+* Queries remain separate from evaluation and persistence.
+* Read-model adapters remain delivery projections.
+* Composition remains responsible for infrastructure selection.
 
-Avoid duplicating recommendation orchestration or assignment logic across provider implementations.
+Do not reset, clean, discard, overwrite, or accidentally stage unrelated active development.
 
 ### Blocking Issues
 
@@ -142,9 +179,11 @@ None.
 
 ### Documentation Status
 
-Engineering documentation synchronization for the Property Recommendation implementation is in progress.
+Phase 18C documentation synchronization is in progress.
 
-The Engineering Control Center, Status, and Session documents are being synchronized with verified repository evidence before commit.
+`FORGE_STATUS.md` and `FORGE_SESSION.md` have been updated with the completed Decision Platform phase chain.
+
+`FORGE_ENGINEERING_CONTROL_CENTER.md` and `FORGE_PLATFORM_ROADMAP.md` remain to be completed and verified before validation and commit.
 
 ---
 
@@ -166,52 +205,50 @@ Documentation is corrected.
 
 ## Active
 
-* [ ] Synchronize `FORGE_ENGINEERING_CONTROL_CENTER.md`.
-* [ ] Synchronize `FORGE_STATUS.md`.
-* [ ] Synchronize `FORGE_SESSION.md`.
-* [ ] Update `FORGE_ROADMAP.md` only if repository evidence establishes the Property Recommendation milestone as an architectural milestone.
+* [x] Synchronize `FORGE_STATUS.md`.
+* [x] Synchronize `FORGE_SESSION.md`.
+* [x] Synchronize the Repository Health section of `FORGE_ENGINEERING_CONTROL_CENTER.md`.
+* [x] Synchronize the Session Handoff section of `FORGE_ENGINEERING_CONTROL_CENTER.md`.
+* [x] Synchronize `FORGE_PLATFORM_ROADMAP.md`.
+* [ ] Update `FORGE_ROADMAP.md` only if repository evidence establishes a true architectural phase change.
 * [ ] Verify documentation consistency.
 * [ ] Run Mutation Firewall.
-* [ ] Commit implementation and documentation.
+* [ ] Review the complete documentation diff.
+* [ ] Stage only the intended Phase 18C documentation files.
+* [ ] Commit Phase 18C documentation synchronization.
 * [ ] Push.
-* [ ] Confirm HEAD equals origin/main and the working tree is clean.
+* [ ] Confirm `HEAD` equals `origin/main`.
+* [ ] Confirm unrelated active working-tree changes remain preserved.
 
 ## Next
 
-* [ ] Perform repository-first inspection after documentation synchronization.
-* [ ] Evaluate current production capability gaps.
-* [ ] Select one cohesive next production feature or architectural milestone.
-* [ ] Begin implementation only after repository evidence establishes the objective.
+* [ ] Perform repository-first inspection after Phase 18C is committed and pushed.
+* [ ] Confirm the next architectural milestone from repository evidence.
+* [ ] Evaluate deterministic documentation generation as the leading Phase 19 candidate.
+* [ ] Begin implementation only after the Phase 19 objective is confirmed from a clean documentation baseline.
 
 ## Future
 
-* [ ] Continue production capability development according to verified repository priorities.
+* [ ] Build a canonical Repository Reality model.
+* [ ] Generate authoritative engineering documents deterministically.
+* [ ] Add documentation consistency validation.
+* [ ] Integrate documentation generation into the engineering pipeline.
 * [ ] Preserve normalized governance evidence boundaries.
-* [ ] Consider the Promotion renderer `Blocking Evidence` summary only if explicitly prioritized as an observability enhancement.
-* [ ] Extend governance automation only when repository evidence demonstrates a meaningful operational need.
+* [ ] Preserve the Ledger and Financial Engine as accounting authorities.
+* [ ] Preserve Decision Platform outputs as advisory intelligence.
 
 ## Completed
 
-* [x] Complete Phase 14.1 — Marketplace Composition Foundation.
-* [x] Complete Phase 14.2 — Business Composition Foundation.
-* [x] Complete Phase 14.3 — Investor Composition Foundation.
-* [x] Complete Phase 14.4 — Financial Import Composition Completion.
-* [x] Complete Phase 15.1 — Shadow Governance Synchronization Foundation.
-* [x] Complete Phase 15.2 — Deterministic Governance State and Pipeline.
-* [x] Complete Phase 15.3 — Repository-Backed Validation Evidence.
-* [x] Complete Phase 15.4 — Repository-Backed Governance Recommendations.
-* [x] Add shared recommendation evidence predicates.
-* [x] Align promotion eligibility evaluation with canonical evidence.
-* [x] Add repository-backed recommendation evidence gating.
-* [x] Add canonical validation evidence gating.
-* [x] Preserve advisory-only recommendation authority.
-* [x] Verify 195 test files and 757 tests passing.
-* [x] Verify production build passing.
-* [x] Verify Mutation Firewall passing.
-* [x] Verify governance validation passing.
-* [x] Verify shadow governance passing.
-* [x] Synchronize the Architecture Roadmap through Phase 15.4.
-* [x] Commit Architecture Roadmap synchronization as `d8724a1`.
+* [x] Complete Phase 14 application composition milestones.
+* [x] Complete Phase 15 governance architecture and automation milestones.
+* [x] Complete Phase 16 Financial Platform foundation.
+* [x] Complete Phase 17A through Phase 17H Decision Platform integration.
+* [x] Complete Phase 18A Decision Outcome Persistence Foundation.
+* [x] Complete Phase 18B Persist Decision Outcome Evaluations.
+* [x] Verify 255 test files and 1,297 tests passing.
+* [x] Commit Decision Outcome persistence as `b155816`.
+* [x] Synchronize `FORGE_STATUS.md` for Phase 18C.
+* [x] Synchronize `FORGE_SESSION.md` for Phase 18C.
 
 ---
 
@@ -534,76 +571,91 @@ A FORGE engineering session concludes only after confirming:
 
 ## Current Objective
 
-Complete authoritative alignment with the verified Phase 15 governance and engineering-session architecture.
+Complete Phase 18C — Repository Documentation Synchronization.
 
-Current verified capabilities:
+Synchronize the authoritative engineering documentation with the completed Decision Platform implementation through Phase 18B.
 
-* Governance modes and authoritative synchronization.
-* Governance validation and enforcement pipeline.
-* Deterministic governance state generation.
-* Engineering-session orchestration.
-* Automatic promotion evaluation context.
-* Engineering-session conversation integration.
-* Chat-ready conversation bootstrap generation.
-* Engineering conversation session CLI execution.
+Current verified capabilities include:
+
+* Governance architecture, validation, enforcement, and synchronization.
+* Engineering-session orchestration and conversation continuity.
+* Financial Platform foundation and repository-backed read models.
+* Decision domain and lifecycle foundation.
+* Decision workflow and financial application boundaries.
+* Decision outcome evaluation.
+* Immutable decision outcome projections.
+* Decision outcome query services.
+* In-memory and Supabase decision outcome repositories.
+* Repository-backed decision outcome persistence.
+* Decision outcome API integration.
+* Decision Platform composition integration.
 
 ## Active
 
-* [x] Synchronize authoritative engineering documentation.
+* [x] Synchronize `FORGE_STATUS.md`.
+* [x] Synchronize `FORGE_SESSION.md`.
+* [x] Synchronize the Repository Health section of `FORGE_ENGINEERING_CONTROL_CENTER.md`.
+* [x] Synchronize the Active Execution Queue of `FORGE_ENGINEERING_CONTROL_CENTER.md`.
+* [x] Synchronize the Session Handoff section of `FORGE_ENGINEERING_CONTROL_CENTER.md`.
+* [x] Inspect and synchronize `FORGE_PLATFORM_ROADMAP.md`.
+* [ ] Update `FORGE_ROADMAP.md` only if repository evidence establishes a true architectural phase change.
 * [ ] Verify documentation consistency.
 * [ ] Run required validation.
-* [ ] Commit and push synchronized documentation.
+* [ ] Review the complete documentation diff.
+* [ ] Stage only the intended Phase 18C documentation files.
+* [ ] Commit and push Phase 18C documentation synchronization.
 
 ## Next
 
-* [ ] Execute repository-first inspection for the next production or architectural objective.
-* [ ] Select the next cohesive engineering objective.
-* [ ] Begin implementation only after repository evidence confirms direction.
-
-## Next
-
-* [ ] Inspect repository capability gaps and roadmap priorities.
-* [ ] Select one cohesive production objective.
-* [ ] Begin implementation only after repository reality is established.
+* [ ] Confirm `HEAD` equals `origin/main` after the Phase 18C push.
+* [ ] Confirm unrelated active working-tree changes remain preserved.
+* [ ] Perform a fresh repository-first inspection.
+* [ ] Determine the next architectural objective from repository evidence.
+* [ ] Evaluate deterministic documentation generation as the leading Phase 19 candidate.
 
 ## Future
 
-* [ ] Preserve completed Phase 14 composition boundaries.
-* [ ] Preserve completed Phase 15 governance evidence boundaries.
-* [ ] Keep recommendation output advisory.
-* [ ] Pursue the deferred Promotion renderer observability enhancement only if explicitly prioritized.
+* [ ] Build a canonical Repository Reality model.
+* [ ] Generate authoritative engineering documents deterministically.
+* [ ] Add documentation consistency validation.
+* [ ] Integrate documentation generation into the engineering pipeline.
+* [ ] Preserve completed governance and composition boundaries.
+* [ ] Preserve the Ledger and Financial Engine as accounting authorities.
+* [ ] Preserve Decision Platform output as advisory intelligence.
 
 ## Completed
 
-* [x] Complete application-layer consolidation.
-* [x] Complete six dedicated composition roots.
-* [x] Complete Phases 14.1 through 14.4.
-* [x] Complete Phases 15.1 through 15.4.
-* [x] Add deterministic governance state and validated session snapshots.
-* [x] Add repository-backed Git and validation evidence.
-* [x] Add evidence-aware promotion eligibility and recommendations.
-* [x] Preserve normalized governance evidence consumption.
-* [x] Preserve human-controlled promotion authority.
-* [x] Verify 195 test files and 757 tests passing.
-* [x] Verify production build passing.
-* [x] Verify Mutation Firewall passing.
-* [x] Verify governance validation passing.
-* [x] Verify shadow governance passing.
-* [x] Synchronize the Architecture Roadmap through Phase 15.4.
-* [x] Push commit `d8724a1`.
+* [x] Complete Phase 14 application composition milestones.
+* [x] Complete Phase 15 governance architecture and automation milestones.
+* [x] Complete Phase 16 Financial Platform foundation.
+* [x] Complete Phase 17A through Phase 17H Decision Platform integration.
+* [x] Complete Phase 18A Decision Outcome Persistence Foundation.
+* [x] Complete Phase 18B Persist Decision Outcome Evaluations.
+* [x] Add `DecisionWorkflowService`.
+* [x] Add financial decision application and operations boundaries.
+* [x] Add `DecisionOutcomeEvaluator`.
+* [x] Add `FinancialDecisionOutcomeApplication`.
+* [x] Add immutable decision outcome read-model projections.
+* [x] Add `DecisionOutcomeQueryService`.
+* [x] Add in-memory and Supabase decision outcome repositories.
+* [x] Add repository-backed decision outcome persistence.
+* [x] Add decision outcome API and composition integration.
+* [x] Verify 255 test files and 1,297 tests passing.
+* [x] Commit completed Decision Outcome persistence as `b155816`.
 
 ## Repository State
 
-* Branch: main
-* Latest synchronized commit before current edits: `d8724a1` — Document governance architecture roadmap phases
-* Remote state before current edits: HEAD matched origin/main
-* Working tree before current edits: clean
-* Current working tree: authoritative governance documentation edits in progress
-* Mutation Firewall: passing
-* Full test suite: 195 test files and 757 tests passing
-* Production build: passing
-* Governance validation: passing
-* Shadow governance verification: passing
+* Branch: `main`
+* Latest synchronized implementation commit before current documentation edits: `b155816` — Persist decision outcome evaluations
+* Remote state before current documentation edits: `HEAD` matched `origin/main`
+* Current working tree: Phase 18C documentation edits plus intentional unrelated active development
+* Full test suite: 255 test files and 1,297 tests passing
+* Decision Platform targeted validation: passing
+* Composition validation: passing
+* API integration validation: passing
+* Repository persistence validation: passing
+* Mutation Firewall: pending after documentation synchronization
+* Production build status: retain the most recent repository-verified result; rerun if required by Phase 18C validation
 
 ## Known Blockers
 
@@ -611,11 +663,11 @@ None.
 
 ## Starting Point
 
-After this documentation synchronization is committed and pushed, begin with repository-first inspection.
+Complete the remaining `FORGE_PLATFORM_ROADMAP.md` inspection and synchronization.
 
-Do not resume Phase 15.4 by default.
+Then verify the complete documentation diff, run required validation, stage only the intended documentation files, commit, push, and confirm repository synchronization.
 
-Select the next objective from verified production capability gaps, roadmap priorities, and repository evidence.
+Do not begin Phase 19 implementation until Phase 18C is committed and pushed.
 
 ---
 
