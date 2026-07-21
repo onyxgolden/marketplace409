@@ -6,27 +6,62 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
 
+    const decisionOutcomeRequested =
+      searchParams.get("decisionOutcome") === "true";
+
+    const decisionId =
+      searchParams.get("decisionId");
+
+    if (
+      decisionOutcomeRequested &&
+      (
+        typeof decisionId !== "string" ||
+        decisionId.trim().length === 0
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Decision id is required when decisionOutcome=true.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
     const { readModelApplication } =
       await createFinancialApplicationSuite();
 
-    const [financial, business, investor, kpi, executive] =
-      await Promise.all([
-        searchParams.get("financial") === "true"
-          ? readModelApplication.buildFinancialDashboard()
-          : Promise.resolve(null),
-        searchParams.get("business") === "true"
-          ? readModelApplication.buildBusinessDashboard()
-          : Promise.resolve(null),
-        searchParams.get("investor") === "true"
-          ? readModelApplication.buildInvestorDashboard()
-          : Promise.resolve(null),
-        searchParams.get("kpi") === "true"
-          ? readModelApplication.buildKPIModel()
-          : Promise.resolve(null),
-        searchParams.get("executive") === "true"
-          ? readModelApplication.buildExecutiveSummary()
-          : Promise.resolve(null),
-      ]);
+    const [
+      financial,
+      business,
+      investor,
+      kpi,
+      executive,
+      decisionOutcome,
+    ] = await Promise.all([
+      searchParams.get("financial") === "true"
+        ? readModelApplication.buildFinancialDashboard()
+        : Promise.resolve(null),
+      searchParams.get("business") === "true"
+        ? readModelApplication.buildBusinessDashboard()
+        : Promise.resolve(null),
+      searchParams.get("investor") === "true"
+        ? readModelApplication.buildInvestorDashboard()
+        : Promise.resolve(null),
+      searchParams.get("kpi") === "true"
+        ? readModelApplication.buildKPIModel()
+        : Promise.resolve(null),
+      searchParams.get("executive") === "true"
+        ? readModelApplication.buildExecutiveSummary()
+        : Promise.resolve(null),
+      decisionOutcomeRequested
+        ? readModelApplication.buildDecisionOutcome(
+            decisionId.trim(),
+          )
+        : Promise.resolve(null),
+    ]);
 
     return NextResponse.json({
       success: true,
@@ -36,6 +71,7 @@ export async function GET(request: Request) {
         investor,
         kpi,
         executive,
+        decisionOutcome,
       },
     });
   } catch (error) {

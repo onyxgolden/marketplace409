@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { Decision } from "../decision";
+import {
+  Decision,
+  type DecisionStatus,
+} from "../decision";
 import { DecisionWorkflowService } from "../decision-workflow.service";
 
-function createDecision(status = "open") {
+function createDecision(
+  status: DecisionStatus = "open",
+) {
   return new Decision({
     id: "decision-1",
     context: {

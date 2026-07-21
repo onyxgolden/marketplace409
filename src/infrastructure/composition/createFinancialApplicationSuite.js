@@ -1,6 +1,7 @@
 import { createFinancialSnapshotApplication } from "./createFinancialSnapshotApplication.js";
 import { createFinancialSnapshotRepository } from "./createFinancialSnapshotRepository.js";
 import { createFinancialEventRepository } from "./createFinancialEventRepository.js";
+import { createDecisionOutcomeRepository } from "./createDecisionOutcomeRepository.js";
 
 import { DecisionApplication } from "../../application/decision";
 import { DecisionOutcomeEvaluator } from "../../domains/decision";
