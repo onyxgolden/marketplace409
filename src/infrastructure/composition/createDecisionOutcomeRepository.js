@@ -23,9 +23,17 @@ export async function createDecisionOutcomeRepository(
   }
 
   if (storage === SUPABASE_STORAGE) {
-    throw new Error(
-      "Supabase decision outcome repository is not implemented",
+    const {
+      SupabaseDecisionOutcomeRepository,
+    } = await import(
+      "../../domains/decision/" +
+      "SupabaseDecisionOutcomeRepository.js"
     );
+
+    return new SupabaseDecisionOutcomeRepository({
+      supabaseClient: options.supabaseClient,
+      ownerId: options.ownerId,
+    });
   }
 
   throw new Error(

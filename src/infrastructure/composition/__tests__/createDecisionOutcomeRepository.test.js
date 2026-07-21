@@ -86,15 +86,50 @@ describe(
       ).toBe(evaluation);
     });
 
-    it("rejects Supabase storage until implemented", async () => {
+    it("creates a Supabase repository when selected", async () => {
+      const supabaseClient = {
+        from() {},
+      };
+
+      const repository =
+        await createDecisionOutcomeRepository({
+          storage:
+            DecisionOutcomeRepositoryStorage
+              .SUPABASE,
+          supabaseClient,
+          ownerId: "owner-1",
+        });
+
+      const {
+        SupabaseDecisionOutcomeRepository,
+      } = await import(
+        "../../../domains/decision/" +
+        "SupabaseDecisionOutcomeRepository.js"
+      );
+
+      expect(repository).toBeInstanceOf(
+        SupabaseDecisionOutcomeRepository,
+      );
+      expect(repository.supabaseClient).toBe(
+        supabaseClient,
+      );
+      expect(repository.ownerId).toBe(
+        "owner-1",
+      );
+    });
+
+    it("requires owner context for Supabase storage", async () => {
       await expect(
         createDecisionOutcomeRepository({
           storage:
             DecisionOutcomeRepositoryStorage
               .SUPABASE,
+          supabaseClient: {
+            from() {},
+          },
         }),
       ).rejects.toThrow(
-        "Supabase decision outcome repository is not implemented",
+        "SupabaseDecisionOutcomeRepository requires an owner id.",
       );
     });
 

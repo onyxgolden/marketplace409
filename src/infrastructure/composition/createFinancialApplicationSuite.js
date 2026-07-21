@@ -100,7 +100,10 @@ export async function createFinancialApplicationSuite(deps = {}) {
 
   const decisionOutcomeRepository =
     deps.decisionOutcomeRepository ||
-    (await createDecisionOutcomeRepository());
+    (await createDecisionOutcomeRepository({
+      supabaseClient: deps.supabaseClient,
+      ownerId: deps.ownerId,
+    }));
 
   const snapshotSuite =
     deps.snapshotSuite ||
