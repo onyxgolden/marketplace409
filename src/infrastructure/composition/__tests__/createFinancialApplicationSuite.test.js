@@ -17,6 +17,12 @@ import { FinancialOperationsService } from "../../../domains/financial-operation
 import {
   DecisionOutcomeReadModelAdapter,
 } from "../../../application/financial/read-models/DecisionOutcomeReadModelAdapter.js";
+import {
+  DecisionOutcomeQueryService,
+} from "../../../application/financial/read-models/DecisionOutcomeQueryService.js";
+import {
+  InMemoryDecisionOutcomeRepository,
+} from "../../../domains/decision/InMemoryDecisionOutcomeRepository.js";
 
 describe("createFinancialApplicationSuite", () => {
   test("wires financial explainability application into the suite", async () => {
@@ -242,6 +248,83 @@ describe("createFinancialApplicationSuite", () => {
     expect(suite.readModelApplication).toBe(readModelApplication);
   });
 
+  test("wires the default decision outcome query path into the read model application", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(suite.decisionOutcomeRepository).toBeInstanceOf(
+      InMemoryDecisionOutcomeRepository,
+    );
+
+    expect(suite.decisionOutcomeQueryService).toBeInstanceOf(
+      DecisionOutcomeQueryService,
+    );
+
+    expect(
+      suite.decisionOutcomeQueryService.decisionOutcomeRepository,
+    ).toBe(suite.decisionOutcomeRepository);
+
+    expect(
+      suite.readModelApplication.decisionOutcomeQueryService,
+    ).toBe(suite.decisionOutcomeQueryService);
+
+    expect(
+      suite.readModelApplication.decisionOutcomeReadModelAdapter,
+    ).toBe(suite.decisionOutcomeReadModelAdapter);
+  });
+
+  test("constructs the decision outcome query service from an injected repository", async () => {
+    const decisionOutcomeRepository = {
+      findByDecisionId: vi.fn(),
+    };
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      decisionOutcomeRepository,
+    });
+
+    expect(suite.decisionOutcomeRepository).toBe(
+      decisionOutcomeRepository,
+    );
+
+    expect(
+      suite.decisionOutcomeQueryService.decisionOutcomeRepository,
+    ).toBe(decisionOutcomeRepository);
+
+    expect(
+      suite.readModelApplication.decisionOutcomeQueryService,
+    ).toBe(suite.decisionOutcomeQueryService);
+  });
+
+  test("allows decision outcome query service injection", async () => {
+    const decisionOutcomeQueryService = {
+      findByDecisionId: vi.fn(),
+    };
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      decisionOutcomeQueryService,
+    });
+
+    expect(suite.decisionOutcomeQueryService).toBe(
+      decisionOutcomeQueryService,
+    );
+
+    expect(
+      suite.readModelApplication.decisionOutcomeQueryService,
+    ).toBe(decisionOutcomeQueryService);
+  });
+
   test("wires decision outcome read model adapter into the suite", async () => {
     const suite = await createFinancialApplicationSuite({
       engine: {},
@@ -258,7 +341,9 @@ describe("createFinancialApplicationSuite", () => {
   });
 
   test("allows decision outcome read model adapter injection", async () => {
-    const decisionOutcomeReadModelAdapter = {};
+    const decisionOutcomeReadModelAdapter = {
+      buildOutcome() {},
+    };
 
     const suite = await createFinancialApplicationSuite({
       engine: {},

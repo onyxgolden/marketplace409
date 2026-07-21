@@ -34,6 +34,10 @@ import {
 } from "../../application/financial/read-models/DecisionOutcomeReadModelAdapter.js";
 
 import {
+  DecisionOutcomeQueryService,
+} from "../../application/financial/read-models/DecisionOutcomeQueryService.js";
+
+import {
   FinancialForecastService,
   FinancialPlanningService,
   FinancialRecommendationService,
@@ -89,7 +93,13 @@ export async function createFinancialApplicationSuite(deps = {}) {
 
   const financialEventRepository =
     deps.financialEventRepository ||
-    (await createFinancialEventRepository());
+    (await createFinancialEventRepository({
+      supabaseClient: deps.supabaseClient,
+    }));
+
+  const decisionOutcomeRepository =
+    deps.decisionOutcomeRepository ||
+    (await createDecisionOutcomeRepository());
 
   const snapshotSuite =
     deps.snapshotSuite ||
@@ -154,6 +164,12 @@ export async function createFinancialApplicationSuite(deps = {}) {
     deps.financialPositionReadModelAdapter ||
     financialPositionReadModelAdapter;
 
+  const decisionOutcomeQueryService =
+    deps.decisionOutcomeQueryService ||
+    new DecisionOutcomeQueryService({
+      decisionOutcomeRepository,
+    });
+
   const decisionOutcomeReadModelAdapter =
     deps.decisionOutcomeReadModelAdapter ||
     new DecisionOutcomeReadModelAdapter();
@@ -166,6 +182,8 @@ export async function createFinancialApplicationSuite(deps = {}) {
       financialPositionQueryService,
       financialPositionReadModelAdapter:
         positionReadModelAdapter,
+      decisionOutcomeQueryService,
+      decisionOutcomeReadModelAdapter,
       currentOwnerId: deps.currentOwnerId,
     });
 
@@ -274,6 +292,8 @@ export async function createFinancialApplicationSuite(deps = {}) {
     financialPositionQueryService,
     financialPositionReadModelAdapter:
       positionReadModelAdapter,
+    decisionOutcomeRepository,
+    decisionOutcomeQueryService,
     decisionOutcomeReadModelAdapter,
     assetRepository,
     liabilityRepository,

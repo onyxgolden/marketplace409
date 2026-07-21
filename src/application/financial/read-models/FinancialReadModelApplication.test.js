@@ -142,6 +142,22 @@ function buildApplication(overrides = {}) {
       ? overrides.financialPositionReadModelAdapter
       : null;
 
+  const decisionOutcomeQueryService =
+    Object.prototype.hasOwnProperty.call(
+      overrides,
+      "decisionOutcomeQueryService",
+    )
+      ? overrides.decisionOutcomeQueryService
+      : null;
+
+  const decisionOutcomeReadModelAdapter =
+    Object.prototype.hasOwnProperty.call(
+      overrides,
+      "decisionOutcomeReadModelAdapter",
+    )
+      ? overrides.decisionOutcomeReadModelAdapter
+      : null;
+
   const currentOwnerId =
     overrides.currentOwnerId ||
     vi.fn(async () => "owner-1");
@@ -152,12 +168,16 @@ function buildApplication(overrides = {}) {
       readModelAdapter,
       financialPositionQueryService,
       financialPositionReadModelAdapter,
+      decisionOutcomeQueryService,
+      decisionOutcomeReadModelAdapter,
       currentOwnerId,
     }),
     financialWorkspaceQueryService,
     readModelAdapter,
     financialPositionQueryService,
     financialPositionReadModelAdapter,
+    decisionOutcomeQueryService,
+    decisionOutcomeReadModelAdapter,
     currentOwnerId,
     workspace,
     activityDashboard,
@@ -503,6 +523,174 @@ describe("FinancialReadModelApplication", () => {
     await expect(
       positionApplication.buildFinancialDashboard(),
     ).rejects.toBe(positionError);
+  });
+
+  test("requires both decision outcome dependencies together", () => {
+    expect(() =>
+      buildApplication({
+        decisionOutcomeQueryService: {
+          findByDecisionId: vi.fn(),
+        },
+      }),
+    ).toThrow(
+      "FinancialReadModelApplication requires both decision outcome dependencies.",
+    );
+
+    expect(() =>
+      buildApplication({
+        decisionOutcomeReadModelAdapter: {
+          buildOutcome: vi.fn(),
+        },
+      }),
+    ).toThrow(
+      "FinancialReadModelApplication requires both decision outcome dependencies.",
+    );
+  });
+
+  test("requires valid decision outcome dependency contracts", () => {
+    expect(() =>
+      buildApplication({
+        decisionOutcomeQueryService: {},
+        decisionOutcomeReadModelAdapter: {
+          buildOutcome: vi.fn(),
+        },
+      }),
+    ).toThrow(
+      "FinancialReadModelApplication requires a decision outcome query service.",
+    );
+
+    expect(() =>
+      buildApplication({
+        decisionOutcomeQueryService: {
+          findByDecisionId: vi.fn(),
+        },
+        decisionOutcomeReadModelAdapter: {},
+      }),
+    ).toThrow(
+      "FinancialReadModelApplication requires a decision outcome read model adapter.",
+    );
+  });
+
+  test("rejects decision outcome reads when unavailable", async () => {
+    const { application } = buildApplication();
+
+    await expect(
+      application.buildDecisionOutcome("decision-1"),
+    ).rejects.toThrow(
+      "Decision outcome read model is unavailable.",
+    );
+  });
+
+  test("queries and projects a decision outcome read model", async () => {
+    const evaluation = Object.freeze({
+      decisionId: "decision-1",
+      status: "completed",
+      evaluation: Object.freeze({
+        result: "recorded",
+      }),
+      outcome: Object.freeze({
+        result: "approved",
+      }),
+    });
+
+    const projection = Object.freeze({
+      type: "decision-outcome",
+      decisionId: "decision-1",
+    });
+
+    const findByDecisionId =
+      vi.fn(async () => evaluation);
+    const buildOutcome =
+      vi.fn(() => projection);
+
+    const { application } = buildApplication({
+      decisionOutcomeQueryService: {
+        findByDecisionId,
+      },
+      decisionOutcomeReadModelAdapter: {
+        buildOutcome,
+      },
+    });
+
+    const result =
+      await application.buildDecisionOutcome(
+        "decision-1",
+      );
+
+    expect(findByDecisionId).toHaveBeenCalledWith(
+      "decision-1",
+    );
+    expect(buildOutcome).toHaveBeenCalledWith(
+      evaluation,
+    );
+    expect(result).toBe(projection);
+  });
+
+  test("returns null when no decision outcome exists", async () => {
+    const buildOutcome = vi.fn();
+
+    const { application } = buildApplication({
+      decisionOutcomeQueryService: {
+        findByDecisionId: vi.fn(async () => null),
+      },
+      decisionOutcomeReadModelAdapter: {
+        buildOutcome,
+      },
+    });
+
+    await expect(
+      application.buildDecisionOutcome(
+        "decision-missing",
+      ),
+    ).resolves.toBeNull();
+
+    expect(buildOutcome).not.toHaveBeenCalled();
+  });
+
+  test("propagates decision outcome failures", async () => {
+    const queryError =
+      new Error("Decision outcome query failed");
+
+    const { application: queryApplication } =
+      buildApplication({
+        decisionOutcomeQueryService: {
+          findByDecisionId: vi.fn(async () => {
+            throw queryError;
+          }),
+        },
+        decisionOutcomeReadModelAdapter: {
+          buildOutcome: vi.fn(),
+        },
+      });
+
+    await expect(
+      queryApplication.buildDecisionOutcome(
+        "decision-1",
+      ),
+    ).rejects.toBe(queryError);
+
+    const projectionError =
+      new Error("Decision outcome projection failed");
+
+    const { application: projectionApplication } =
+      buildApplication({
+        decisionOutcomeQueryService: {
+          findByDecisionId: vi.fn(async () => ({
+            decisionId: "decision-1",
+          })),
+        },
+        decisionOutcomeReadModelAdapter: {
+          buildOutcome: vi.fn(() => {
+            throw projectionError;
+          }),
+        },
+      });
+
+    await expect(
+      projectionApplication.buildDecisionOutcome(
+        "decision-1",
+      ),
+    ).rejects.toBe(projectionError);
   });
 
   test("freezes the application instance", () => {

@@ -54,6 +54,8 @@ export class FinancialReadModelApplication {
     readModelAdapter,
     financialPositionQueryService = null,
     financialPositionReadModelAdapter = null,
+    decisionOutcomeQueryService = null,
+    decisionOutcomeReadModelAdapter = null,
     supabaseClient = defaultSupabaseClient,
     currentOwnerId = () =>
       defaultCurrentOwnerId({ supabaseClient }),
@@ -106,6 +108,40 @@ export class FinancialReadModelApplication {
       );
     }
 
+    const hasDecisionOutcomeQueryService =
+      decisionOutcomeQueryService !== null;
+    const hasDecisionOutcomeReadModelAdapter =
+      decisionOutcomeReadModelAdapter !== null;
+
+    if (
+      hasDecisionOutcomeQueryService !==
+      hasDecisionOutcomeReadModelAdapter
+    ) {
+      throw new Error(
+        "FinancialReadModelApplication requires both decision outcome dependencies.",
+      );
+    }
+
+    if (
+      hasDecisionOutcomeQueryService &&
+      typeof decisionOutcomeQueryService.findByDecisionId !==
+        "function"
+    ) {
+      throw new Error(
+        "FinancialReadModelApplication requires a decision outcome query service.",
+      );
+    }
+
+    if (
+      hasDecisionOutcomeReadModelAdapter &&
+      typeof decisionOutcomeReadModelAdapter.buildOutcome !==
+        "function"
+    ) {
+      throw new Error(
+        "FinancialReadModelApplication requires a decision outcome read model adapter.",
+      );
+    }
+
     if (typeof currentOwnerId !== "function") {
       throw new Error(
         "FinancialReadModelApplication requires a current owner id resolver.",
@@ -122,9 +158,34 @@ export class FinancialReadModelApplication {
       financialPositionQueryService;
     this.financialPositionReadModelAdapter =
       financialPositionReadModelAdapter;
+    this.decisionOutcomeQueryService =
+      decisionOutcomeQueryService;
+    this.decisionOutcomeReadModelAdapter =
+      decisionOutcomeReadModelAdapter;
     this.currentOwnerId = currentOwnerId;
 
     Object.freeze(this);
+  }
+
+  async buildDecisionOutcome(decisionId) {
+    if (!this.decisionOutcomeQueryService) {
+      throw new Error(
+        "Decision outcome read model is unavailable.",
+      );
+    }
+
+    const evaluation =
+      await this.decisionOutcomeQueryService.findByDecisionId(
+        decisionId,
+      );
+
+    if (evaluation === null) {
+      return null;
+    }
+
+    return this.decisionOutcomeReadModelAdapter.buildOutcome(
+      evaluation,
+    );
   }
 
   async buildWorkspace() {
