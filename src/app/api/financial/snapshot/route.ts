@@ -1,8 +1,16 @@
-import { createFinancialApplicationSuite } from "@/infrastructure/composition";
+import { createAuthenticatedFinancialApplication } from "@/lib/supabase/createAuthenticatedFinancialApplication";
 
 export async function GET() {
   try {
-    const { snapshotApplication } = await createFinancialApplicationSuite();
+    const authenticatedApplication =
+      await createAuthenticatedFinancialApplication();
+
+    if (authenticatedApplication.response) {
+      return authenticatedApplication.response;
+    }
+
+    const { snapshotApplication } =
+      await authenticatedApplication.getFinancialApplicationSuite();
 
     const { reports, dashboard } =
       await snapshotApplication.captureDashboardSnapshot();

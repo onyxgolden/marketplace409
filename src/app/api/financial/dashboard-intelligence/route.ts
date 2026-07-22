@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { createFinancialApplicationSuite } from "@/infrastructure/composition";
+import { createAuthenticatedFinancialApplication } from "@/lib/supabase/createAuthenticatedFinancialApplication";
 
 type DashboardIntelligenceRequestBody = Readonly<{
   ledgerContext?: unknown;
@@ -12,8 +12,15 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as DashboardIntelligenceRequestBody;
 
+    const authenticatedApplication =
+      await createAuthenticatedFinancialApplication();
+
+    if (authenticatedApplication.response) {
+      return authenticatedApplication.response;
+    }
+
     const { dashboardIntelligenceApplication } =
-      await createFinancialApplicationSuite();
+      await authenticatedApplication.getFinancialApplicationSuite();
 
     const intelligence =
       dashboardIntelligenceApplication.buildDashboardIntelligence({

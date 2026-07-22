@@ -3,43 +3,22 @@ import {
 } from "next/server";
 
 import {
-  createFinancialApplicationSuite,
-} from "@/infrastructure/composition";
-
-import {
-  createClient,
-} from "@/lib/supabase/server";
+  createAuthenticatedFinancialApplication,
+} from "@/lib/supabase/createAuthenticatedFinancialApplication";
 
 export async function GET() {
   try {
-    const supabase = await createClient();
+    const authenticatedApplication =
+      await createAuthenticatedFinancialApplication();
 
-    const {
-      data: {
-        user,
-      },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user?.id) {
-      return NextResponse.json(
-        {
-          error:
-            "Authenticated owner id is required.",
-        },
-        {
-          status: 401,
-        },
-      );
+    if (authenticatedApplication.response) {
+      return authenticatedApplication.response;
     }
 
     const {
       financialOperationsApplication,
-    } = await createFinancialApplicationSuite({
-      supabaseClient: supabase,
-      currentOwnerId:
-        async () => user.id,
-    });
+    } = await authenticatedApplication
+      .getFinancialApplicationSuite();
 
     const operations =
       await financialOperationsApplication

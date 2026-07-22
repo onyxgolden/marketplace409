@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { createFinancialApplicationSuite } from "@/infrastructure/composition";
+import { createAuthenticatedFinancialApplication } from "@/lib/supabase/createAuthenticatedFinancialApplication";
 
 type TraceRequestBody = Readonly<{
   reportLine?: unknown;
@@ -18,8 +18,15 @@ export async function POST(request: Request) {
       );
     }
 
+    const authenticatedApplication =
+      await createAuthenticatedFinancialApplication();
+
+    if (authenticatedApplication.response) {
+      return authenticatedApplication.response;
+    }
+
     const { explainabilityApplication } =
-      await createFinancialApplicationSuite();
+      await authenticatedApplication.getFinancialApplicationSuite();
 
     const trace = explainabilityApplication.traceReportLine(
       body.reportLine,
