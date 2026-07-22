@@ -3,21 +3,35 @@ import {
 } from "next/server";
 
 import {
-  createPlaidAdapter,
   mapPlaidExchangeToConnection,
 } from "@/domains/plaid-adapter";
 
+import {
+  createConnectionPlatformSuite,
+} from "@/infrastructure/composition";
+
+import {
+  createAuthenticatedFinancialApplication,
+} from "@/lib/supabase/createAuthenticatedFinancialApplication";
+
+const connectionPlatformSuite =
+  createConnectionPlatformSuite();
+
 export async function POST(request: Request) {
   try {
+    const authenticatedApplication =
+      await createAuthenticatedFinancialApplication();
+
+    if (authenticatedApplication.response) {
+      return authenticatedApplication.response;
+    }
+
     const body = await request.json();
 
-    const publicToken = typeof body?.publicToken === "string"
-      ? body.publicToken
-      : "";
-
-    const userId = typeof body?.userId === "string" && body.userId.trim()
-      ? body.userId
-      : "demo_user";
+    const publicToken =
+      typeof body?.publicToken === "string"
+        ? body.publicToken.trim()
+        : "";
 
     if (!publicToken) {
       return NextResponse.json(
@@ -30,22 +44,43 @@ export async function POST(request: Request) {
       );
     }
 
-    const adapter = createPlaidAdapter();
-    const exchange = await adapter.exchangePublicToken({
-      publicToken,
-    });
+    const ownerId =
+      await authenticatedApplication.currentOwnerId();
 
-    const mappedConnection = mapPlaidExchangeToConnection({
-      userId,
-      exchange,
-    });
+    const exchange =
+      await connectionPlatformSuite.plaidProvider
+        .exchangePublicToken({
+          publicToken,
+        });
+
+    const mappedConnection =
+      mapPlaidExchangeToConnection({
+        userId: ownerId,
+        exchange,
+      });
+
+    const provisioningResult =
+      connectionPlatformSuite.provisioningService
+        .provision(mappedConnection);
+
+    const persistenceResult =
+      connectionPlatformSuite.persistenceService
+        .persist(provisioningResult);
 
     return NextResponse.json({
       success: true,
       itemId: exchange.itemId,
-      connection: mappedConnection.connection,
-      credentialReference: mappedConnection.credentialReference,
-      institutionReference: mappedConnection.institutionReference,
+      connection: persistenceResult.connection,
+      credentialReference:
+        persistenceResult.credentialReference,
+      institutionReference:
+        persistenceResult.institutionReference,
+      provisionedAt:
+        persistenceResult.provisionedAt,
+      persistedAt:
+        persistenceResult.persistedAt,
+      readyForImport:
+        persistenceResult.readyForImport,
     });
   } catch (error) {
     const plaidError = error as {
@@ -56,20 +91,25 @@ export async function POST(request: Request) {
       message?: string;
     };
 
-    console.error("Plaid Token Exchange error", {
-      status: plaidError.response?.status,
-      data: plaidError.response?.data,
-      message: plaidError.message,
-    });
+    console.error(
+      "Plaid Token Exchange error",
+      {
+        status: plaidError.response?.status,
+        data: plaidError.response?.data,
+        message: plaidError.message,
+      },
+    );
 
-    const message = error instanceof Error
-      ? error.message
-      : "Unable to exchange Plaid public token.";
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unable to exchange Plaid public token.";
 
     return NextResponse.json(
       {
         error: message,
-        details: plaidError.response?.data ?? null,
+        details:
+          plaidError.response?.data ?? null,
       },
       {
         status: 500,
