@@ -43,6 +43,7 @@ export async function createAuthenticatedFinancialApplication() {
       financialApplicationSuite =
         await createFinancialApplicationSuite({
           supabaseClient,
+          ownerId: user.id,
           currentOwnerId,
         });
     }

@@ -85,6 +85,7 @@ describe("GET /api/financial/operations", () => {
       mocks.createFinancialApplicationSuite,
     ).toHaveBeenCalledWith({
       supabaseClient,
+      ownerId: "owner-1",
       currentOwnerId: expect.any(Function),
     });
 

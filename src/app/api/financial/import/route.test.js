@@ -103,6 +103,7 @@ describe("POST /api/financial/import", () => {
       mocks.createFinancialApplicationSuite,
     ).toHaveBeenCalledWith({
       supabaseClient,
+      ownerId: "owner-1",
       currentOwnerId: expect.any(Function),
     });
 

@@ -135,6 +135,7 @@ describe("GET /api/financial/read-models", () => {
       mocks.createFinancialApplicationSuite,
     ).toHaveBeenCalledWith({
       supabaseClient,
+      ownerId: "owner-1",
       currentOwnerId: expect.any(Function),
     });
 
