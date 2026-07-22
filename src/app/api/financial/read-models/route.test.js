@@ -7,6 +7,7 @@ import {
 } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  createClient: vi.fn(),
   createFinancialApplicationSuite: vi.fn(),
   buildFinancialDashboard: vi.fn(),
   buildBusinessDashboard: vi.fn(),
@@ -14,6 +15,10 @@ const mocks = vi.hoisted(() => ({
   buildKPIModel: vi.fn(),
   buildExecutiveSummary: vi.fn(),
   buildDecisionOutcome: vi.fn(),
+}));
+
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: mocks.createClient,
 }));
 
 vi.mock("@/infrastructure/composition", () => ({
@@ -31,7 +36,24 @@ function createRequest(query = "") {
   );
 }
 
-function configureApplication() {
+function configureAuthenticatedRequest({
+  userId = "owner-1",
+} = {}) {
+  const supabaseClient = {
+    auth: {
+      getUser: vi.fn().mockResolvedValue({
+        data: {
+          user: {
+            id: userId,
+          },
+        },
+        error: null,
+      }),
+    },
+  };
+
+  mocks.createClient.mockResolvedValue(supabaseClient);
+
   mocks.createFinancialApplicationSuite.mockResolvedValue({
     readModelApplication: {
       buildFinancialDashboard:
@@ -48,6 +70,8 @@ function configureApplication() {
         mocks.buildDecisionOutcome,
     },
   });
+
+  return supabaseClient;
 }
 
 describe("GET /api/financial/read-models", () => {
@@ -60,11 +84,12 @@ describe("GET /api/financial/read-models", () => {
     mocks.buildKPIModel.mockResolvedValue(null);
     mocks.buildExecutiveSummary.mockResolvedValue(null);
     mocks.buildDecisionOutcome.mockResolvedValue(null);
-
-    configureApplication();
   });
 
   it("returns a projected decision outcome", async () => {
+    const supabaseClient =
+      configureAuthenticatedRequest();
+
     const decisionOutcome = Object.freeze({
       type: "decision-outcome",
       decisionId: "decision-1",
@@ -107,11 +132,32 @@ describe("GET /api/financial/read-models", () => {
     });
 
     expect(
+      mocks.createFinancialApplicationSuite,
+    ).toHaveBeenCalledWith({
+      supabaseClient,
+      currentOwnerId: expect.any(Function),
+    });
+
+    const {
+      currentOwnerId,
+    } = mocks.createFinancialApplicationSuite.mock.calls[0][0];
+
+    await expect(currentOwnerId()).resolves.toBe(
+      "owner-1",
+    );
+
+    expect(
+      mocks.buildDecisionOutcome,
+    ).toHaveBeenCalledTimes(1);
+
+    expect(
       mocks.buildDecisionOutcome,
     ).toHaveBeenCalledWith("decision-1");
   });
 
-  it("returns 400 when the decision id is missing", async () => {
+  it("returns 400 when decision outcome is requested without a decision id", async () => {
+    configureAuthenticatedRequest();
+
     const response = await GET(
       createRequest("?decisionOutcome=true"),
     );
@@ -126,9 +172,17 @@ describe("GET /api/financial/read-models", () => {
     expect(
       mocks.createFinancialApplicationSuite,
     ).not.toHaveBeenCalled();
+
+    expect(
+      mocks.buildDecisionOutcome,
+    ).not.toHaveBeenCalled();
   });
 
   it("returns null when no decision outcome exists", async () => {
+    configureAuthenticatedRequest();
+
+    mocks.buildDecisionOutcome.mockResolvedValue(null);
+
     const response = await GET(
       createRequest(
         "?decisionOutcome=true&decisionId=unknown-decision",
@@ -148,19 +202,37 @@ describe("GET /api/financial/read-models", () => {
         decisionOutcome: null,
       },
     });
+
+    expect(
+      mocks.buildDecisionOutcome,
+    ).toHaveBeenCalledWith(
+      "unknown-decision",
+    );
   });
 
   it("preserves existing dashboard projections", async () => {
+    configureAuthenticatedRequest();
+
     const financial = {
       type: "financial-dashboard",
+    };
+
+    const business = {
+      type: "business-dashboard",
     };
 
     mocks.buildFinancialDashboard.mockResolvedValue(
       financial,
     );
 
+    mocks.buildBusinessDashboard.mockResolvedValue(
+      business,
+    );
+
     const response = await GET(
-      createRequest("?financial=true"),
+      createRequest(
+        "?financial=true&business=true",
+      ),
     );
 
     expect(response.status).toBe(200);
@@ -169,7 +241,7 @@ describe("GET /api/financial/read-models", () => {
       success: true,
       data: {
         financial,
-        business: null,
+        business,
         investor: null,
         kpi: null,
         executive: null,
@@ -179,6 +251,36 @@ describe("GET /api/financial/read-models", () => {
 
     expect(
       mocks.buildDecisionOutcome,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 when no authenticated owner exists", async () => {
+    mocks.createClient.mockResolvedValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: {
+            user: null,
+          },
+          error: null,
+        }),
+      },
+    });
+
+    const response = await GET(
+      createRequest(
+        "?decisionOutcome=true&decisionId=decision-1",
+      ),
+    );
+
+    expect(response.status).toBe(401);
+
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "Authenticated owner id is required.",
+    });
+
+    expect(
+      mocks.createFinancialApplicationSuite,
     ).not.toHaveBeenCalled();
   });
 });

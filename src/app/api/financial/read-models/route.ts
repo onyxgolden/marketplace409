@@ -1,13 +1,45 @@
-import { NextResponse } from "next/server";
+import {
+  NextResponse,
+} from "next/server";
 
-import { createFinancialApplicationSuite } from "@/infrastructure/composition";
+import {
+  createFinancialApplicationSuite,
+} from "@/infrastructure/composition";
+
+import {
+  createClient,
+} from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
+    const supabase = await createClient();
+
+    const {
+      data: {
+        user,
+      },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user?.id) {
+      return NextResponse.json(
+        {
+          error:
+            "Authenticated owner id is required.",
+        },
+        {
+          status: 401,
+        },
+      );
+    }
+
+    const {
+      searchParams,
+    } = new URL(request.url);
 
     const decisionOutcomeRequested =
-      searchParams.get("decisionOutcome") === "true";
+      searchParams.get("decisionOutcome") ===
+      "true";
 
     const decisionId =
       searchParams.get("decisionId");
@@ -30,8 +62,13 @@ export async function GET(request: Request) {
       );
     }
 
-    const { readModelApplication } =
-      await createFinancialApplicationSuite();
+    const {
+      readModelApplication,
+    } = await createFinancialApplicationSuite({
+      supabaseClient: supabase,
+      currentOwnerId:
+        async () => user.id,
+    });
 
     const [
       financial,
@@ -41,25 +78,40 @@ export async function GET(request: Request) {
       executive,
       decisionOutcome,
     ] = await Promise.all([
-      searchParams.get("financial") === "true"
-        ? readModelApplication.buildFinancialDashboard()
+      searchParams.get("financial") ===
+      "true"
+        ? readModelApplication
+            .buildFinancialDashboard()
         : Promise.resolve(null),
-      searchParams.get("business") === "true"
-        ? readModelApplication.buildBusinessDashboard()
+
+      searchParams.get("business") ===
+      "true"
+        ? readModelApplication
+            .buildBusinessDashboard()
         : Promise.resolve(null),
-      searchParams.get("investor") === "true"
-        ? readModelApplication.buildInvestorDashboard()
+
+      searchParams.get("investor") ===
+      "true"
+        ? readModelApplication
+            .buildInvestorDashboard()
         : Promise.resolve(null),
+
       searchParams.get("kpi") === "true"
-        ? readModelApplication.buildKPIModel()
+        ? readModelApplication
+            .buildKPIModel()
         : Promise.resolve(null),
-      searchParams.get("executive") === "true"
-        ? readModelApplication.buildExecutiveSummary()
+
+      searchParams.get("executive") ===
+      "true"
+        ? readModelApplication
+            .buildExecutiveSummary()
         : Promise.resolve(null),
+
       decisionOutcomeRequested
-        ? readModelApplication.buildDecisionOutcome(
-            decisionId.trim(),
-          )
+        ? readModelApplication
+            .buildDecisionOutcome(
+              decisionId.trim(),
+            )
         : Promise.resolve(null),
     ]);
 
@@ -82,6 +134,9 @@ export async function GET(request: Request) {
         ? error.message
         : "Unable to build financial read models.";
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: message },
+      { status: 500 },
+    );
   }
 }
