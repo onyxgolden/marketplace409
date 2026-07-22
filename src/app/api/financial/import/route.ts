@@ -10,7 +10,7 @@ import {
   createClient,
 } from "@/lib/supabase/server";
 
-export async function GET() {
+export async function POST(request: Request) {
   try {
     const supabase = await createClient();
 
@@ -33,32 +33,73 @@ export async function GET() {
       );
     }
 
+    const body = await request.json();
+
+    const source = body?.source;
+    const csv = body?.csv;
+    const fileName =
+      body?.fileName || "financial-import.csv";
+
+    if (
+      typeof source !== "string" ||
+      typeof csv !== "string"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Financial import source and CSV content are required.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
     const {
-      financialOperationsApplication,
+      financialImportApplication,
     } = await createFinancialApplicationSuite({
       supabaseClient: supabase,
       currentOwnerId:
         async () => user.id,
     });
 
-    const operations =
-      await financialOperationsApplication
-        .buildFinancialOperations();
+    const result =
+      await financialImportApplication.importFile({
+        file: {
+          name: fileName,
+          async text() {
+            return csv;
+          },
+        },
+        source,
+        ownerId: user.id,
+      });
+
+    if (result.error) {
+      return NextResponse.json(
+        {
+          error: result.error,
+        },
+        {
+          status: 400,
+        },
+      );
+    }
 
     return NextResponse.json({
       success: true,
-      data: operations,
+      data: result,
     });
   } catch (error) {
     console.error(
-      "Financial operations error",
+      "Financial import error",
       error,
     );
 
     const message =
       error instanceof Error
         ? error.message
-        : "Unable to build financial operations.";
+        : "Unable to import financial CSV.";
 
     return NextResponse.json(
       {
