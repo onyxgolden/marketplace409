@@ -5,6 +5,24 @@ export {
 } from "./createFinancialAccountRepository.js";
 
 export {
+  createConnectionRepository,
+  createLazyConnectionRepository,
+  ConnectionRepositoryStorage,
+} from "./createConnectionRepository.js";
+
+export {
+  createCredentialReferenceRepository,
+  createLazyCredentialReferenceRepository,
+  CredentialReferenceRepositoryStorage,
+} from "./createCredentialReferenceRepository.js";
+
+export {
+  createInstitutionReferenceRepository,
+  createLazyInstitutionReferenceRepository,
+  InstitutionReferenceRepositoryStorage,
+} from "./createInstitutionReferenceRepository.js";
+
+export {
   createFinancialSnapshotRepository,
   FinancialSnapshotRepositoryStorage,
 } from "./createFinancialSnapshotRepository.js";

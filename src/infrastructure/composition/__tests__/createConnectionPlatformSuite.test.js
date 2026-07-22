@@ -345,4 +345,110 @@ expect(
 ).toBe(true);
 });
 
+
+it("lazily composes the Supabase connection repository without making the suite asynchronous", () => {
+const suite = createConnectionPlatformSuite({
+  connectionRepositoryStorage: "supabase",
+});
+
+expect(suite.connectionRepository).not.toBeInstanceOf(
+  InMemoryConnectionRepository,
+);
+
+expect(
+  typeof suite.connectionRepository.save,
+).toBe("function");
+
+expect(
+  typeof suite.connectionRepository.getById,
+).toBe("function");
+
+expect(
+  typeof suite.connectionRepository.getAll,
+).toBe("function");
+
+expect(
+  suite.persistenceService.connectionRepository,
+).toBe(suite.connectionRepository);
+
+expect(Object.isFrozen(suite)).toBe(true);
+
+expect(
+  Object.isFrozen(suite.connectionRepository),
+).toBe(true);
+});
+
+it("lazily composes the Supabase credential reference repository without making the suite asynchronous", () => {
+const suite = createConnectionPlatformSuite({
+  credentialReferenceRepositoryStorage: "supabase",
+});
+
+expect(
+  suite.credentialReferenceRepository,
+).not.toBeInstanceOf(
+  InMemoryCredentialReferenceRepository,
+);
+
+expect(
+  typeof suite.credentialReferenceRepository.save,
+).toBe("function");
+
+expect(
+  typeof suite.credentialReferenceRepository.getById,
+).toBe("function");
+
+expect(
+  typeof suite.credentialReferenceRepository.getAll,
+).toBe("function");
+
+expect(
+  suite.persistenceService.credentialReferenceRepository,
+).toBe(suite.credentialReferenceRepository);
+
+expect(Object.isFrozen(suite)).toBe(true);
+
+expect(
+  Object.isFrozen(
+    suite.credentialReferenceRepository,
+  ),
+).toBe(true);
+});
+
+it("lazily composes the Supabase institution reference repository without making the suite asynchronous", () => {
+const suite = createConnectionPlatformSuite({
+  institutionReferenceRepositoryStorage: "supabase",
+});
+
+expect(
+  suite.institutionReferenceRepository,
+).not.toBeInstanceOf(
+  InMemoryInstitutionReferenceRepository,
+);
+
+expect(
+  typeof suite.institutionReferenceRepository.save,
+).toBe("function");
+
+expect(
+  typeof suite.institutionReferenceRepository.getById,
+).toBe("function");
+
+expect(
+  typeof suite.institutionReferenceRepository.getAll,
+).toBe("function");
+
+expect(
+  suite.persistenceService.institutionReferenceRepository,
+).toBe(suite.institutionReferenceRepository);
+
+expect(Object.isFrozen(suite)).toBe(true);
+
+expect(
+  Object.isFrozen(
+    suite.institutionReferenceRepository,
+  ),
+).toBe(true);
+});
+
+
 });

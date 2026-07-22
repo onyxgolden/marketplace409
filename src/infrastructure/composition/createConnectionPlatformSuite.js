@@ -21,6 +21,21 @@ InMemoryAccountBalanceRepository,
 } from "../../domains/account-balance";
 
 import {
+ConnectionRepositoryStorage,
+createLazyConnectionRepository,
+} from "./createConnectionRepository.js";
+
+import {
+CredentialReferenceRepositoryStorage,
+createLazyCredentialReferenceRepository,
+} from "./createCredentialReferenceRepository.js";
+
+import {
+InstitutionReferenceRepositoryStorage,
+createLazyInstitutionReferenceRepository,
+} from "./createInstitutionReferenceRepository.js";
+
+import {
 createLazyFinancialAccountRepository,
 FinancialAccountRepositoryStorage,
 } from "./createFinancialAccountRepository.js";
@@ -53,17 +68,56 @@ const providerRegistry =
 deps.providerRegistry ||
 createConnectionProviderRegistry(providers);
 
+const connectionRepositoryStorage =
+deps.connectionRepositoryStorage ||
+process.env.CONNECTION_REPOSITORY ||
+ConnectionRepositoryStorage.MEMORY;
+
 const connectionRepository =
 deps.connectionRepository ||
-new InMemoryConnectionRepository();
+(
+connectionRepositoryStorage ===
+ConnectionRepositoryStorage.SUPABASE
+  ? createLazyConnectionRepository({
+      storage:
+        ConnectionRepositoryStorage.SUPABASE,
+    })
+  : new InMemoryConnectionRepository()
+);
+
+const credentialReferenceRepositoryStorage =
+deps.credentialReferenceRepositoryStorage ||
+process.env.CREDENTIAL_REFERENCE_REPOSITORY ||
+CredentialReferenceRepositoryStorage.MEMORY;
 
 const credentialReferenceRepository =
 deps.credentialReferenceRepository ||
-new InMemoryCredentialReferenceRepository();
+(
+credentialReferenceRepositoryStorage ===
+CredentialReferenceRepositoryStorage.SUPABASE
+  ? createLazyCredentialReferenceRepository({
+      storage:
+        CredentialReferenceRepositoryStorage.SUPABASE,
+    })
+  : new InMemoryCredentialReferenceRepository()
+);
+
+const institutionReferenceRepositoryStorage =
+deps.institutionReferenceRepositoryStorage ||
+process.env.INSTITUTION_REFERENCE_REPOSITORY ||
+InstitutionReferenceRepositoryStorage.MEMORY;
 
 const institutionReferenceRepository =
 deps.institutionReferenceRepository ||
-new InMemoryInstitutionReferenceRepository();
+(
+institutionReferenceRepositoryStorage ===
+InstitutionReferenceRepositoryStorage.SUPABASE
+  ? createLazyInstitutionReferenceRepository({
+      storage:
+        InstitutionReferenceRepositoryStorage.SUPABASE,
+    })
+  : new InMemoryInstitutionReferenceRepository()
+);
 
 const financialAccountRepositoryStorage =
 deps.financialAccountRepositoryStorage ||
