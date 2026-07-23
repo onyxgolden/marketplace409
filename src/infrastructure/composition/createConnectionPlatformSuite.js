@@ -57,6 +57,13 @@ PlaidTransactionMapper,
 createPlaidAdapter,
 } from "../../domains/plaid-adapter";
 
+import {
+ConnectionQueryService,
+ConnectionSummaryQueryService,
+ConnectionReadModelAdapter,
+ConnectionReadModelApplication,
+} from "../../application/connection/index.js";
+
 export function createConnectionPlatformSuite(deps = {}) {
 const plaidProvider =
 deps.plaidProvider || createPlaidAdapter();
@@ -221,6 +228,33 @@ transactionRepository,
 transactionMapper,
 );
 
+const connectionQueryService =
+deps.connectionQueryService ||
+new ConnectionQueryService({
+connectionRepository,
+});
+
+const connectionSummaryQueryService =
+deps.connectionSummaryQueryService ||
+new ConnectionSummaryQueryService({
+connectionQueryService,
+institutionReferenceRepository,
+providerRegistry,
+});
+
+const connectionReadModelAdapter =
+deps.connectionReadModelAdapter ||
+new ConnectionReadModelAdapter();
+
+const connectionReadModelApplication =
+deps.connectionReadModelApplication ||
+new ConnectionReadModelApplication({
+connectionSummaryQueryService,
+readModelAdapter:
+connectionReadModelAdapter,
+currentOwnerId: deps.currentOwnerId,
+});
+
 return Object.freeze({
 providers,
 plaidProvider,
@@ -242,5 +276,9 @@ financialAccountImportService,
 financialAccountService,
 accountBalanceImportService,
 transactionImportService,
+connectionQueryService,
+connectionSummaryQueryService,
+connectionReadModelAdapter,
+connectionReadModelApplication,
 });
 }

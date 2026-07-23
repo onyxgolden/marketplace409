@@ -291,6 +291,7 @@ describe(
           mocks.createConnectionPlatformSuite,
         ).toHaveBeenCalledWith({
           supabaseClient,
+          currentOwnerId,
         });
 
         expect(

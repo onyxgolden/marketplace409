@@ -114,9 +114,13 @@ expect(Object.isFrozen(suite)).toBe(true);
 });
 
 it("injects repositories and mappers through the service graph", () => {
-const connectionRepository = {};
+const connectionRepository = {
+getAll: vi.fn(),
+};
 const credentialReferenceRepository = {};
-const institutionReferenceRepository = {};
+const institutionReferenceRepository = {
+getAll: vi.fn(),
+};
 const financialAccountRepository = {};
 const accountBalanceRepository = {};
 const transactionRepository = {};
@@ -217,6 +221,10 @@ const accountImportService = {};
 const financialAccountImportService = {};
 const financialAccountService = {};
 const transactionImportService = {};
+const connectionQueryService = {};
+const connectionSummaryQueryService = {};
+const connectionReadModelAdapter = {};
+const connectionReadModelApplication = {};
 
 
 const suite = createConnectionPlatformSuite({
@@ -230,6 +238,10 @@ const suite = createConnectionPlatformSuite({
   financialAccountImportService,
   financialAccountService,
   transactionImportService,
+  connectionQueryService,
+  connectionSummaryQueryService,
+  connectionReadModelAdapter,
+  connectionReadModelApplication,
 });
 
 expect(suite.plaidProvider).toBe(plaidProvider);
@@ -257,6 +269,22 @@ expect(suite.financialAccountService).toBe(
 );
 expect(suite.transactionImportService).toBe(
   transactionImportService,
+);
+
+expect(suite.connectionQueryService).toBe(
+  connectionQueryService,
+);
+
+expect(suite.connectionSummaryQueryService).toBe(
+  connectionSummaryQueryService,
+);
+
+expect(suite.connectionReadModelAdapter).toBe(
+  connectionReadModelAdapter,
+);
+
+expect(suite.connectionReadModelApplication).toBe(
+  connectionReadModelApplication,
 );
 
 

@@ -48,6 +48,8 @@ export async function POST(request: Request) {
       createConnectionPlatformSuite({
         supabaseClient:
           authenticatedApplication.supabaseClient,
+        currentOwnerId:
+          authenticatedApplication.currentOwnerId,
       });
 
     const exchange =
