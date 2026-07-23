@@ -14,3 +14,7 @@ export {
 export {
   ConnectionReadModelApplication,
 } from "./ConnectionReadModelApplication.js";
+
+export {
+  ForgeConnectionDashboardApplication,
+} from "./ForgeConnectionDashboardApplication.js";
