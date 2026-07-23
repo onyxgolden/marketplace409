@@ -17,53 +17,54 @@ const institutionReference = (
 });
 
 describe("InMemoryInstitutionReferenceRepository", () => {
-  it("saves and retrieves an institution reference by id", () => {
+  it("saves and retrieves an institution reference by id", async () => {
     const repository = new InMemoryInstitutionReferenceRepository();
     const savedReference = institutionReference();
 
-    repository.save(savedReference);
+    await repository.save(savedReference);
 
-    expect(repository.getById(savedReference.id)).toEqual(savedReference);
+    expect(await repository.getById(savedReference.id)).toEqual(savedReference);
   });
 
-  it("returns null when an institution reference does not exist", () => {
+  it("returns null when an institution reference does not exist", async () => {
     const repository = new InMemoryInstitutionReferenceRepository();
 
-    expect(repository.getById("missing")).toBeNull();
+    expect(await repository.getById("missing")).toBeNull();
   });
 
-  it("returns all institution references in insertion order", () => {
+  it("returns all institution references in insertion order", async () => {
     const repository = new InMemoryInstitutionReferenceRepository();
     const first = institutionReference({ id: "institution_1" });
     const second = institutionReference({ id: "institution_2" });
 
-    repository.save(first);
-    repository.save(second);
+    await repository.save(first);
+    await repository.save(second);
 
-    expect(repository.getAll()).toEqual([first, second]);
+    expect(await repository.getAll()).toEqual([first, second]);
   });
 
-  it("returns a copy of all institution references", () => {
+  it("returns a copy of all institution references", async () => {
     const repository = new InMemoryInstitutionReferenceRepository();
     const savedReference = institutionReference();
 
-    repository.save(savedReference);
+    await repository.save(savedReference);
 
-    const allReferences = repository.getAll();
+    const allReferences =
+      (await repository.getAll()) as InstitutionReference[];
     allReferences.push(institutionReference({ id: "institution_2" }));
 
-    expect(repository.getAll()).toEqual([savedReference]);
+    expect(await repository.getAll()).toEqual([savedReference]);
   });
 
-  it("replaces an institution reference with the same id", () => {
+  it("replaces an institution reference with the same id", async () => {
     const repository = new InMemoryInstitutionReferenceRepository();
     const original = institutionReference({ name: "Original Bank" });
     const replacement = institutionReference({ name: "Replacement Bank" });
 
-    repository.save(original);
-    repository.save(replacement);
+    await repository.save(original);
+    await repository.save(replacement);
 
-    expect(repository.getById(original.id)).toEqual(replacement);
-    expect(repository.getAll()).toEqual([replacement]);
+    expect(await repository.getById(original.id)).toEqual(replacement);
+    expect(await repository.getAll()).toEqual([replacement]);
   });
 });

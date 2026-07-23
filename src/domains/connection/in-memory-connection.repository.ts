@@ -1,18 +1,30 @@
-import type { ConnectionRepository } from "./connection.repository";
+import type {
+  ConnectionPersistenceContext,
+  ConnectionRepository,
+} from "./connection.repository";
 import type { Connection } from "./connection.types";
 
 export class InMemoryConnectionRepository implements ConnectionRepository {
   private readonly connections = new Map<string, Connection>();
 
-  save(connection: Connection): void {
+  async save(
+    connection: Connection,
+    _context?: ConnectionPersistenceContext,
+  ): Promise<Connection> {
     this.connections.set(connection.id, connection);
+    return connection;
   }
 
-  getById(id: string): Connection | null {
+  async getById(
+    id: string,
+    _context?: ConnectionPersistenceContext,
+  ): Promise<Connection | null> {
     return this.connections.get(id) ?? null;
   }
 
-  getAll(): Connection[] {
+  async getAll(
+    _context?: ConnectionPersistenceContext,
+  ): Promise<readonly Connection[]> {
     return [...this.connections.values()];
   }
 }

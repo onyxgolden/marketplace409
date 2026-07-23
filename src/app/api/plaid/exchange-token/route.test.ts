@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
     vi.fn(),
   persist:
     vi.fn(),
+  createConnectionPlatformSuite:
+    vi.fn(),
 }));
 
 vi.mock(
@@ -62,7 +64,8 @@ vi.mock(
   "@/infrastructure/composition",
   () => ({
     createConnectionPlatformSuite:
-      () => ({
+      mocks.createConnectionPlatformSuite.mockImplementation(
+        () => ({
         plaidProvider: {
           exchangePublicToken:
             mocks.exchangePublicToken,
@@ -76,6 +79,7 @@ vi.mock(
             mocks.persist,
         },
       }),
+      ),
   }),
 );
 
@@ -234,11 +238,15 @@ describe(
             true,
         };
 
+        const supabaseClient = {};
+
         mocks
           .createAuthenticatedFinancialApplication
           .mockResolvedValue({
+            supabaseClient,
             currentOwnerId,
           });
+
 
         mocks
           .exchangePublicToken
@@ -280,6 +288,12 @@ describe(
         expect(response.status).toBe(200);
 
         expect(
+          mocks.createConnectionPlatformSuite,
+        ).toHaveBeenCalledWith({
+          supabaseClient,
+        });
+
+        expect(
           currentOwnerId,
         ).toHaveBeenCalledOnce();
 
@@ -317,6 +331,10 @@ describe(
           mocks.persist,
         ).toHaveBeenCalledWith(
           provisioningResult,
+          {
+            ownerId:
+              "owner-123",
+          },
         );
 
         await expect(

@@ -73,14 +73,36 @@ describe("createCredentialReferenceRepository", () => {
   });
 
   it("creates a Supabase repository when selected", async () => {
+    const supabaseClient = {};
+
     const repository =
       await createCredentialReferenceRepository({
         storage:
           CredentialReferenceRepositoryStorage.SUPABASE,
+        supabaseClient,
       });
 
     expect(repository).toBeInstanceOf(
       SupabaseCredentialReferenceRepository,
+    );
+  });
+
+  it("injects the supplied Supabase client", async () => {
+    const supabaseClient = {};
+
+    const repository =
+      await createCredentialReferenceRepository({
+        storage:
+          CredentialReferenceRepositoryStorage.SUPABASE,
+        supabaseClient,
+      });
+
+    expect(repository).toBeInstanceOf(
+      SupabaseCredentialReferenceRepository,
+    );
+
+    expect(repository.supabaseClient).toBe(
+      supabaseClient,
     );
   });
 

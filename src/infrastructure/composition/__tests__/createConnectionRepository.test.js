@@ -73,14 +73,36 @@ describe("createConnectionRepository", () => {
   });
 
   it("creates a Supabase repository when selected", async () => {
+    const supabaseClient = {};
+
     const repository =
       await createConnectionRepository({
         storage:
           ConnectionRepositoryStorage.SUPABASE,
+        supabaseClient,
       });
 
     expect(repository).toBeInstanceOf(
       SupabaseConnectionRepository,
+    );
+  });
+
+  it("injects the supplied Supabase client", async () => {
+    const supabaseClient = {};
+
+    const repository =
+      await createConnectionRepository({
+        storage:
+          ConnectionRepositoryStorage.SUPABASE,
+        supabaseClient,
+      });
+
+    expect(repository).toBeInstanceOf(
+      SupabaseConnectionRepository,
+    );
+
+    expect(repository.supabaseClient).toBe(
+      supabaseClient,
     );
   });
 

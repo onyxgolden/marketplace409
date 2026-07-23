@@ -16,53 +16,54 @@ const credentialReference = (
 });
 
 describe("InMemoryCredentialReferenceRepository", () => {
-  it("saves and retrieves a credential reference by id", () => {
+  it("saves and retrieves a credential reference by id", async () => {
     const repository = new InMemoryCredentialReferenceRepository();
     const savedReference = credentialReference();
 
-    repository.save(savedReference);
+    await repository.save(savedReference);
 
-    expect(repository.getById(savedReference.id)).toEqual(savedReference);
+    expect(await repository.getById(savedReference.id)).toEqual(savedReference);
   });
 
-  it("returns null when a credential reference does not exist", () => {
+  it("returns null when a credential reference does not exist", async () => {
     const repository = new InMemoryCredentialReferenceRepository();
 
-    expect(repository.getById("missing")).toBeNull();
+    expect(await repository.getById("missing")).toBeNull();
   });
 
-  it("returns all credential references in insertion order", () => {
+  it("returns all credential references in insertion order", async () => {
     const repository = new InMemoryCredentialReferenceRepository();
     const first = credentialReference({ id: "credential_1" });
     const second = credentialReference({ id: "credential_2" });
 
-    repository.save(first);
-    repository.save(second);
+    await repository.save(first);
+    await repository.save(second);
 
-    expect(repository.getAll()).toEqual([first, second]);
+    expect(await repository.getAll()).toEqual([first, second]);
   });
 
-  it("returns a copy of all credential references", () => {
+  it("returns a copy of all credential references", async () => {
     const repository = new InMemoryCredentialReferenceRepository();
     const savedReference = credentialReference();
 
-    repository.save(savedReference);
+    await repository.save(savedReference);
 
-    const allReferences = repository.getAll();
+    const allReferences =
+      (await repository.getAll()) as CredentialReference[];
     allReferences.push(credentialReference({ id: "credential_2" }));
 
-    expect(repository.getAll()).toEqual([savedReference]);
+    expect(await repository.getAll()).toEqual([savedReference]);
   });
 
-  it("replaces a credential reference with the same id", () => {
+  it("replaces a credential reference with the same id", async () => {
     const repository = new InMemoryCredentialReferenceRepository();
     const original = credentialReference({ status: "pending_validation" });
     const replacement = credentialReference({ status: "active" });
 
-    repository.save(original);
-    repository.save(replacement);
+    await repository.save(original);
+    await repository.save(replacement);
 
-    expect(repository.getById(original.id)).toEqual(replacement);
-    expect(repository.getAll()).toEqual([replacement]);
+    expect(await repository.getById(original.id)).toEqual(replacement);
+    expect(await repository.getAll()).toEqual([replacement]);
   });
 });

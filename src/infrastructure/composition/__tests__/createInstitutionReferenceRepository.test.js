@@ -73,14 +73,36 @@ describe("createInstitutionReferenceRepository", () => {
   });
 
   it("creates a Supabase repository when selected", async () => {
+    const supabaseClient = {};
+
     const repository =
       await createInstitutionReferenceRepository({
         storage:
           InstitutionReferenceRepositoryStorage.SUPABASE,
+        supabaseClient,
       });
 
     expect(repository).toBeInstanceOf(
       SupabaseInstitutionReferenceRepository,
+    );
+  });
+
+  it("injects the supplied Supabase client", async () => {
+    const supabaseClient = {};
+
+    const repository =
+      await createInstitutionReferenceRepository({
+        storage:
+          InstitutionReferenceRepositoryStorage.SUPABASE,
+        supabaseClient,
+      });
+
+    expect(repository).toBeInstanceOf(
+      SupabaseInstitutionReferenceRepository,
+    );
+
+    expect(repository.supabaseClient).toBe(
+      supabaseClient,
     );
   });
 

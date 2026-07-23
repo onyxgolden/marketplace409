@@ -1,4 +1,7 @@
-import type { InstitutionReferenceRepository } from "./institution-reference.repository";
+import type {
+  InstitutionReferencePersistenceContext,
+  InstitutionReferenceRepository,
+} from "./institution-reference.repository";
 import type { InstitutionReference } from "./institution-reference.types";
 
 export class InMemoryInstitutionReferenceRepository
@@ -7,18 +10,27 @@ export class InMemoryInstitutionReferenceRepository
   private readonly institutionReferences =
     new Map<string, InstitutionReference>();
 
-  save(institutionReference: InstitutionReference): void {
+  async save(
+    institutionReference: InstitutionReference,
+    _context?: InstitutionReferencePersistenceContext,
+  ): Promise<InstitutionReference> {
     this.institutionReferences.set(
       institutionReference.id,
       institutionReference,
     );
+
+    return institutionReference;
   }
 
-  getById(id: string): InstitutionReference | null {
+  async getById(
+    id: string,
+  ): Promise<InstitutionReference | null> {
     return this.institutionReferences.get(id) ?? null;
   }
 
-  getAll(): InstitutionReference[] {
+  async getAll(
+    _context?: InstitutionReferencePersistenceContext,
+  ): Promise<readonly InstitutionReference[]> {
     return [...this.institutionReferences.values()];
   }
 }

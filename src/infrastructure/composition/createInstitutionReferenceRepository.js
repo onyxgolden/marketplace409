@@ -28,7 +28,9 @@ export async function createInstitutionReferenceRepository(
       "SupabaseInstitutionReferenceRepository.js"
     );
 
-    return new SupabaseInstitutionReferenceRepository();
+    return new SupabaseInstitutionReferenceRepository({
+      supabaseClient: options.supabaseClient,
+    });
   }
 
   throw new Error(

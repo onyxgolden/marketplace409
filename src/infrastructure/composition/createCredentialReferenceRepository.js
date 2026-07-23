@@ -28,7 +28,9 @@ export async function createCredentialReferenceRepository(
       "SupabaseCredentialReferenceRepository.js"
     );
 
-    return new SupabaseCredentialReferenceRepository();
+    return new SupabaseCredentialReferenceRepository({
+      supabaseClient: options.supabaseClient,
+    });
   }
 
   throw new Error(

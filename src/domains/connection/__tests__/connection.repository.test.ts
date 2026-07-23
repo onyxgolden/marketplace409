@@ -16,39 +16,40 @@ const connection = (overrides: Partial<Connection> = {}): Connection => ({
 });
 
 describe("InMemoryConnectionRepository", () => {
-  it("saves and retrieves a connection by id", () => {
+  it("saves and retrieves a connection by id", async () => {
     const repository = new InMemoryConnectionRepository();
     const savedConnection = connection();
 
-    repository.save(savedConnection);
+    await repository.save(savedConnection);
 
-    expect(repository.getById(savedConnection.id)).toEqual(savedConnection);
+    expect(await repository.getById(savedConnection.id)).toEqual(savedConnection);
   });
 
-  it("returns null when a connection does not exist", () => {
+  it("returns null when a connection does not exist", async () => {
     const repository = new InMemoryConnectionRepository();
 
-    expect(repository.getById("missing")).toBeNull();
+    expect(await repository.getById("missing")).toBeNull();
   });
 
-  it("returns all connections in insertion order", () => {
+  it("returns all connections in insertion order", async () => {
     const repository = new InMemoryConnectionRepository();
     const first = connection({ id: "connection_1", name: "First Bank" });
     const second = connection({ id: "connection_2", name: "Second Bank" });
 
-    repository.save(first);
-    repository.save(second);
+    await repository.save(first);
+    await repository.save(second);
 
-    expect(repository.getAll()).toEqual([first, second]);
+    expect(await repository.getAll()).toEqual([first, second]);
   });
 
-  it("returns a copy of all connections", () => {
+  it("returns a copy of all connections", async () => {
     const repository = new InMemoryConnectionRepository();
     const savedConnection = connection();
 
-    repository.save(savedConnection);
+    await repository.save(savedConnection);
 
-    const allConnections = repository.getAll();
+    const allConnections =
+      (await repository.getAll()) as Connection[];
     allConnections.push(
       connection({
         id: "connection_2",
@@ -56,18 +57,18 @@ describe("InMemoryConnectionRepository", () => {
       }),
     );
 
-    expect(repository.getAll()).toEqual([savedConnection]);
+    expect(await repository.getAll()).toEqual([savedConnection]);
   });
 
-  it("replaces a connection with the same id", () => {
+  it("replaces a connection with the same id", async () => {
     const repository = new InMemoryConnectionRepository();
     const original = connection({ name: "Original Bank" });
     const replacement = connection({ name: "Replacement Bank" });
 
-    repository.save(original);
-    repository.save(replacement);
+    await repository.save(original);
+    await repository.save(replacement);
 
-    expect(repository.getById(original.id)).toEqual(replacement);
-    expect(repository.getAll()).toEqual([replacement]);
+    expect(await repository.getById(original.id)).toEqual(replacement);
+    expect(await repository.getAll()).toEqual([replacement]);
   });
 });

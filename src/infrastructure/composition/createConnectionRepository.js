@@ -28,7 +28,9 @@ export async function createConnectionRepository(
       "SupabaseConnectionRepository.js"
     );
 
-    return new SupabaseConnectionRepository();
+    return new SupabaseConnectionRepository({
+      supabaseClient: options.supabaseClient,
+    });
   }
 
   throw new Error(

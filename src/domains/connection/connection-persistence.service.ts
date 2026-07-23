@@ -1,4 +1,5 @@
 import type {
+  ConnectionPersistenceContext,
   ConnectionRepository,
 } from "./connection.repository";
 
@@ -26,17 +27,23 @@ export class ConnectionPersistenceService {
     private readonly institutionReferenceRepository: InstitutionReferenceRepository,
   ) {}
 
-  persist(
+  async persist(
     input: ConnectionPersistenceInput,
-  ): ConnectionPersistenceResult {
-    this.connectionRepository.save(input.connection);
-
-    this.credentialReferenceRepository.save(
+    context?: ConnectionPersistenceContext,
+  ): Promise<ConnectionPersistenceResult> {
+    await this.credentialReferenceRepository.save(
       input.credentialReference,
+      context,
     );
 
-    this.institutionReferenceRepository.save(
+    await this.connectionRepository.save(
+      input.connection,
+      context,
+    );
+
+    await this.institutionReferenceRepository.save(
       input.institutionReference,
+      context,
     );
 
     return toConnectionPersistenceResult(input);

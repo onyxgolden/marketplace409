@@ -81,6 +81,7 @@ ConnectionRepositoryStorage.SUPABASE
   ? createLazyConnectionRepository({
       storage:
         ConnectionRepositoryStorage.SUPABASE,
+      supabaseClient: deps.supabaseClient,
     })
   : new InMemoryConnectionRepository()
 );
@@ -98,6 +99,7 @@ CredentialReferenceRepositoryStorage.SUPABASE
   ? createLazyCredentialReferenceRepository({
       storage:
         CredentialReferenceRepositoryStorage.SUPABASE,
+      supabaseClient: deps.supabaseClient,
     })
   : new InMemoryCredentialReferenceRepository()
 );
@@ -115,6 +117,7 @@ InstitutionReferenceRepositoryStorage.SUPABASE
   ? createLazyInstitutionReferenceRepository({
       storage:
         InstitutionReferenceRepositoryStorage.SUPABASE,
+      supabaseClient: deps.supabaseClient,
     })
   : new InMemoryInstitutionReferenceRepository()
 );

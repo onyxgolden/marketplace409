@@ -346,6 +346,95 @@ expect(
 });
 
 
+it("propagates the supplied Supabase client into lazy connection repositories", async () => {
+const injectedError =
+  new Error("Injected Supabase client reached.");
+
+const single = vi.fn().mockResolvedValue({
+  data: null,
+  error: injectedError,
+});
+
+const select = vi.fn(() => ({
+  single,
+}));
+
+const upsert = vi.fn(() => ({
+  select,
+}));
+
+const from = vi.fn(() => ({
+  upsert,
+}));
+
+const supabaseClient = {
+  from,
+};
+
+const suite = createConnectionPlatformSuite({
+  supabaseClient,
+  connectionRepositoryStorage: "supabase",
+  credentialReferenceRepositoryStorage:
+    "supabase",
+  institutionReferenceRepositoryStorage:
+    "supabase",
+});
+
+await expect(
+  suite.connectionRepository.save(
+    {
+      id: "connection-123",
+    },
+    {
+      ownerId: "owner-123",
+    },
+  ),
+).rejects.toThrow(
+  "Injected Supabase client reached.",
+);
+
+await expect(
+  suite.credentialReferenceRepository.save(
+    {
+      id: "credential-123",
+    },
+    {
+      ownerId: "owner-123",
+    },
+  ),
+).rejects.toThrow(
+  "Injected Supabase client reached.",
+);
+
+await expect(
+  suite.institutionReferenceRepository.save(
+    {
+      id: "institution-123",
+    },
+    {
+      ownerId: "owner-123",
+    },
+  ),
+).rejects.toThrow(
+  "Injected Supabase client reached.",
+);
+
+expect(from).toHaveBeenNthCalledWith(
+  1,
+  "connections",
+);
+
+expect(from).toHaveBeenNthCalledWith(
+  2,
+  "credential_references",
+);
+
+expect(from).toHaveBeenNthCalledWith(
+  3,
+  "institution_references",
+);
+});
+
 it("lazily composes the Supabase connection repository without making the suite asynchronous", () => {
 const suite = createConnectionPlatformSuite({
   connectionRepositoryStorage: "supabase",

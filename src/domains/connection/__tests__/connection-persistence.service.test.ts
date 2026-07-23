@@ -75,7 +75,7 @@ const buildProvisioningResult = (
 describe(
   "ConnectionPersistenceService",
   () => {
-    it("persists a provisioned connection through repository contracts", () => {
+    it("persists a provisioned connection through repository contracts", async () => {
       const connectionRepository =
         new InMemoryConnectionRepository();
 
@@ -95,12 +95,15 @@ describe(
       const provisionedConnection =
         buildProvisioningResult();
 
-      const result = service.persist(
+      const result = await service.persist(
         provisionedConnection,
+        {
+          ownerId: "user-1",
+        },
       );
 
       expect(
-        connectionRepository.getById(
+        await connectionRepository.getById(
           "connection-1",
         ),
       ).toEqual(
@@ -108,7 +111,7 @@ describe(
       );
 
       expect(
-        credentialReferenceRepository.getById(
+        await credentialReferenceRepository.getById(
           "credential-1",
         ),
       ).toEqual(
@@ -117,7 +120,7 @@ describe(
       );
 
       expect(
-        institutionReferenceRepository.getById(
+        await institutionReferenceRepository.getById(
           "institution-1",
         ),
       ).toEqual(
@@ -156,7 +159,7 @@ describe(
       );
     });
 
-    it("does not require provider-specific repository implementations", () => {
+    it("does not require provider-specific repository implementations", async () => {
       const connectionRepository =
         new InMemoryConnectionRepository();
 
@@ -173,7 +176,7 @@ describe(
           institutionReferenceRepository,
         );
 
-      const result = service.persist(
+      const result = await service.persist(
         buildProvisioningResult({
           connection: {
             id: "connection-2",
@@ -217,6 +220,9 @@ describe(
               "2026-07-02T00:00:00.000Z",
           },
         }),
+        {
+          ownerId: "user-1",
+        },
       );
 
       expect(

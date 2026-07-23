@@ -14,9 +14,6 @@ import {
   createAuthenticatedFinancialApplication,
 } from "@/lib/supabase/createAuthenticatedFinancialApplication";
 
-const connectionPlatformSuite =
-  createConnectionPlatformSuite();
-
 export async function POST(request: Request) {
   try {
     const authenticatedApplication =
@@ -47,6 +44,12 @@ export async function POST(request: Request) {
     const ownerId =
       await authenticatedApplication.currentOwnerId();
 
+    const connectionPlatformSuite =
+      createConnectionPlatformSuite({
+        supabaseClient:
+          authenticatedApplication.supabaseClient,
+      });
+
     const exchange =
       await connectionPlatformSuite.plaidProvider
         .exchangePublicToken({
@@ -64,8 +67,13 @@ export async function POST(request: Request) {
         .provision(mappedConnection);
 
     const persistenceResult =
-      connectionPlatformSuite.persistenceService
-        .persist(provisioningResult);
+      await connectionPlatformSuite.persistenceService
+        .persist(
+          provisioningResult,
+          {
+            ownerId,
+          },
+        );
 
     return NextResponse.json({
       success: true,
