@@ -1,6 +1,10 @@
 export class ConnectionOperationsApplication {
   constructor({
     connectionReadModelApplication,
+    connectionImportOrchestrator = null,
+    transactionImportService = null,
+    financialAccountImportService = null,
+    accountBalanceImportService = null,
   }) {
     if (!connectionReadModelApplication) {
       throw new Error(
@@ -10,6 +14,18 @@ export class ConnectionOperationsApplication {
 
     this.connectionReadModelApplication =
       connectionReadModelApplication;
+
+    this.connectionImportOrchestrator =
+      connectionImportOrchestrator;
+
+    this.transactionImportService =
+      transactionImportService;
+
+    this.financialAccountImportService =
+      financialAccountImportService;
+
+    this.accountBalanceImportService =
+      accountBalanceImportService;
   }
 
   getDashboardProjection(dashboard) {
