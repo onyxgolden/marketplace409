@@ -273,10 +273,7 @@ const connectionOperationsApplication =
 deps.connectionOperationsApplication ||
 new ConnectionOperationsApplication({
 connectionReadModelApplication,
-connectionImportOrchestrator,
-transactionImportService,
-financialAccountImportService,
-accountBalanceImportService,
+connectionImportExecutionCoordinator,
 });
 
 return Object.freeze({

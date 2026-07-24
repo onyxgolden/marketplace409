@@ -1,10 +1,7 @@
 export class ConnectionOperationsApplication {
   constructor({
     connectionReadModelApplication,
-    connectionImportOrchestrator = null,
-    transactionImportService = null,
-    financialAccountImportService = null,
-    accountBalanceImportService = null,
+    connectionImportExecutionCoordinator = null,
   }) {
     if (!connectionReadModelApplication) {
       throw new Error(
@@ -15,17 +12,8 @@ export class ConnectionOperationsApplication {
     this.connectionReadModelApplication =
       connectionReadModelApplication;
 
-    this.connectionImportOrchestrator =
-      connectionImportOrchestrator;
-
-    this.transactionImportService =
-      transactionImportService;
-
-    this.financialAccountImportService =
-      financialAccountImportService;
-
-    this.accountBalanceImportService =
-      accountBalanceImportService;
+    this.connectionImportExecutionCoordinator =
+      connectionImportExecutionCoordinator;
   }
 
   getDashboardProjection(dashboard) {
@@ -491,7 +479,6 @@ export class ConnectionOperationsApplication {
     switch (operation) {
       case "repair-connection":
       case "review-connection":
-      case "import-transactions":
         return Object.freeze({
           type:
             "connection-operation-execution",
@@ -503,6 +490,22 @@ export class ConnectionOperationsApplication {
             ...options,
           }),
         });
+
+      case "import-transactions":
+        if (
+          !this.connectionImportExecutionCoordinator
+        ) {
+          throw new Error(
+            "Connection import execution coordinator is required.",
+          );
+        }
+
+        return this
+          .connectionImportExecutionCoordinator
+          .executeImport({
+            connectionId,
+            ownerId,
+          });
 
       default:
         throw new Error(

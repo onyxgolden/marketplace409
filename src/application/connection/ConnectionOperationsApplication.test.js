@@ -63,7 +63,16 @@ function createConnectionSummary({
   });
 }
 
-function createApplication(dashboard) {
+function createApplication(
+  dashboard,
+  {
+    connectionImportExecutionCoordinator =
+      {
+        executeImport:
+          vi.fn(),
+      },
+  } = {},
+) {
   const connectionReadModelApplication = {
     buildConnectionDashboard:
       vi.fn().mockResolvedValue(
@@ -75,8 +84,10 @@ function createApplication(dashboard) {
     application:
       new ConnectionOperationsApplication({
         connectionReadModelApplication,
+        connectionImportExecutionCoordinator,
       }),
     connectionReadModelApplication,
+    connectionImportExecutionCoordinator,
   };
 }
 
@@ -510,13 +521,40 @@ describe(
     );
 
     it(
-      "returns a deterministic result for supported operations",
+      "executes transaction imports through the canonical coordinator",
       async () => {
         const dashboard = createDashboard();
 
+        const importResult =
+          Object.freeze({
+            provider: "plaid",
+            connectionId:
+              "connection-1",
+            success: true,
+            financialAccountsImported: 2,
+            accountBalancesImported: 2,
+            transactionsImported: 10,
+            failedRecordCount: 0,
+            occurredAt:
+              "2026-07-24T01:00:00.000Z",
+          });
+
+        const connectionImportExecutionCoordinator =
+          {
+            executeImport:
+              vi.fn().mockResolvedValue(
+                importResult,
+              ),
+          };
+
         const {
           application,
-        } = createApplication(dashboard);
+        } = createApplication(
+          dashboard,
+          {
+            connectionImportExecutionCoordinator,
+          },
+        );
 
         const result =
           await application.executeOperation({
@@ -530,27 +568,21 @@ describe(
             },
           });
 
-        expect(result).toEqual({
-          type:
-            "connection-operation-execution",
-          status: "not_implemented",
-          operation:
-            "import-transactions",
+        expect(result).toBe(importResult);
+
+        expect(
+          connectionImportExecutionCoordinator
+            .executeImport,
+        ).toHaveBeenCalledOnce();
+
+        expect(
+          connectionImportExecutionCoordinator
+            .executeImport,
+        ).toHaveBeenCalledWith({
           connectionId:
             "connection-1",
           ownerId: "owner-1",
-          options: {
-            source: "workflow-card",
-          },
         });
-
-        expect(
-          Object.isFrozen(result),
-        ).toBe(true);
-
-        expect(
-          Object.isFrozen(result.options),
-        ).toBe(true);
       },
     );
 
