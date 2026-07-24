@@ -49,3 +49,58 @@ export async function GET() {
     );
   }
 }
+
+export async function POST(request: Request) {
+  try {
+    const authenticatedApplication =
+      await createAuthenticatedConnectionApplication();
+
+    if (authenticatedApplication.response) {
+      return authenticatedApplication.response;
+    }
+
+    const {
+      operation,
+      connectionId,
+      options = {},
+    } = await request.json();
+
+    const connectionPlatformSuite =
+      await authenticatedApplication
+        .getConnectionPlatformSuite();
+
+    const result =
+      await connectionPlatformSuite
+        .connectionOperationsApplication
+        .executeOperation({
+          operation,
+          connectionId,
+          ownerId: authenticatedApplication.user.id,
+          options,
+        });
+
+    return NextResponse.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error(
+      "Connection operation execution error",
+      error,
+    );
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unable to execute connection operation.";
+
+    return NextResponse.json(
+      {
+        error: message,
+      },
+      {
+        status: 500,
+      },
+    );
+  }
+}
