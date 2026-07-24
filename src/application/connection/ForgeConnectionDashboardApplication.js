@@ -14,6 +14,10 @@ export class ForgeConnectionDashboardApplication {
       summary: {},
       connections: [],
       metadata: DEFAULT_METADATA,
+      health: null,
+      recommendations: [],
+      intelligence: null,
+      workflow: null,
       statusItems: this.buildStatusItems({
         loadState: "loading",
         metadata: DEFAULT_METADATA,
@@ -27,6 +31,10 @@ export class ForgeConnectionDashboardApplication {
   static buildReadyModel({
     dashboard,
     reports,
+    health = null,
+    recommendations = [],
+    intelligence = null,
+    workflow = null,
   }) {
     const normalizedDashboard =
       dashboard || null;
@@ -51,6 +59,10 @@ export class ForgeConnectionDashboardApplication {
         normalizedReports?.connections ||
         [],
       metadata,
+      health,
+      recommendations,
+      intelligence,
+      workflow,
       statusItems: this.buildStatusItems({
         loadState: "ready",
         metadata,
@@ -91,11 +103,22 @@ export class ForgeConnectionDashboardApplication {
             "Connection operations failed.",
         });
 
+      const operations =
+        payload.data || {};
+
       return this.buildReadyModel({
         dashboard:
-          payload.data?.dashboard?.dashboard ||
+          operations.dashboard?.dashboard ||
           null,
         reports: null,
+        health:
+          operations.health || null,
+        recommendations:
+          operations.recommendations || [],
+        intelligence:
+          operations.intelligence || null,
+        workflow:
+          operations.workflow || null,
       });
     } catch (error) {
       return this.buildErrorModel(error);

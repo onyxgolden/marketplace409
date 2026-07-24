@@ -139,6 +139,96 @@ describe(
               type:
                 "connection-operations",
               status: "ready",
+              summary: {
+                totalConnections: 2,
+                readyForImportConnections: 1,
+              },
+              health: {
+                overall: "needs_attention",
+                score: 70,
+                issueCount: 1,
+                warningCount: 0,
+              },
+              recommendations: [
+                {
+                  type: "repair-connection",
+                  priority: "high",
+                  connectionId: "connection-1",
+                  message:
+                    "Repair this connection before attempting another import.",
+                },
+              ],
+              intelligence: {
+                readyConnectionIds: [
+                  "connection-2",
+                ],
+                attentionConnectionIds: [
+                  "connection-1",
+                ],
+                degradedConnectionIds: [
+                  "connection-1",
+                ],
+                lastUpdatedAt:
+                  "2026-07-23T21:00:00.000Z",
+              },
+              workflow: {
+                queue: [
+                  {
+                    id:
+                      "repair-connection:connection-1",
+                    type:
+                      "repair-connection",
+                    priority: "high",
+                    priorityRank: 1,
+                    connectionId:
+                      "connection-1",
+                    stage: "attention",
+                    readiness: "ready",
+                    message:
+                      "Repair this connection before attempting another import.",
+                  },
+                ],
+                stages: [
+                  {
+                    id: "attention",
+                    label: "Attention",
+                    status: "ready",
+                    operationCount: 1,
+                  },
+                ],
+                cards: [
+                  {
+                    id:
+                      "repair-connection:connection-1",
+                    title:
+                      "Repair connection",
+                    detail:
+                      "Repair this connection before attempting another import.",
+                    action:
+                      "repair-connection",
+                    priority: "high",
+                    stage: "attention",
+                    connectionId:
+                      "connection-1",
+                    readiness: "ready",
+                  },
+                ],
+                executionReadiness: {
+                  status: "ready",
+                  totalOperations: 1,
+                  readyOperations: 1,
+                  blockedOperations: 0,
+                  nextOperationId:
+                    "repair-connection:connection-1",
+                },
+                metadata: {
+                  generatedAt:
+                    "2026-07-23T21:00:00.000Z",
+                  readOnly: true,
+                  deterministic: true,
+                  highestPriority: "high",
+                },
+              },
               dashboard: {
                 type:
                   "connection-dashboard",
@@ -191,6 +281,45 @@ describe(
       expect(
         result.connections,
       ).toHaveLength(2);
+
+      expect(result.health).toEqual({
+        overall: "needs_attention",
+        score: 70,
+        issueCount: 1,
+        warningCount: 0,
+      });
+
+      expect(
+        result.recommendations,
+      ).toHaveLength(1);
+
+      expect(
+        result.intelligence
+          .attentionConnectionIds,
+      ).toEqual([
+        "connection-1",
+      ]);
+
+      expect(
+        result.workflow
+          .executionReadiness,
+      ).toEqual({
+        status: "ready",
+        totalOperations: 1,
+        readyOperations: 1,
+        blockedOperations: 0,
+        nextOperationId:
+          "repair-connection:connection-1",
+      });
+
+      expect(
+        result.workflow.cards[0],
+      ).toMatchObject({
+        title: "Repair connection",
+        priority: "high",
+        stage: "attention",
+        readiness: "ready",
+      });
     });
 
     it("builds an error model when loading fails", async () => {

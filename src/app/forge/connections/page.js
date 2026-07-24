@@ -31,7 +31,20 @@ export default function ConnectionPage() {
     statusItems,
     activities,
     metadata,
+    health,
+    recommendations,
+    intelligence,
+    workflow,
   } = viewModel;
+
+  const workflowStages =
+    workflow?.stages || [];
+
+  const workflowCards =
+    workflow?.cards || [];
+
+  const executionReadiness =
+    workflow?.executionReadiness || null;
 
   return (
     <div className={forgeTheme.page}>
@@ -54,11 +67,13 @@ export default function ConnectionPage() {
                 Platform State
               </div>
               <div className="mt-1 text-2xl font-black text-amber-950">
-                {summary?.health?.label || loadState}
+                {health?.overall ||
+                  loadState}
               </div>
               <div className="mt-1 max-w-xs text-sm text-amber-800">
-                {summary?.health?.detail ||
-                  "Loading connection platform status."}
+                {health
+                  ? `Health score ${health.score}. ${health.issueCount} issues and ${health.warningCount} warnings.`
+                  : "Loading connection platform status."}
               </div>
             </div>
           </div>
@@ -70,7 +85,9 @@ export default function ConnectionPage() {
               Connection Dashboard Error
             </div>
             <div className="mt-2 text-lg font-bold text-red-950">
-              {error.message || String(error)}
+              {error instanceof Error
+                ? error.message
+                : String(error)}
             </div>
           </section>
         ) : null}
@@ -78,24 +95,211 @@ export default function ConnectionPage() {
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <ForgeDashboardCard
             label="Connections"
-            value={summary?.connectionCount ?? connections.length}
+            value={
+              summary?.totalConnections ??
+              connections.length
+            }
             detail="Authenticated provider connections"
           />
           <ForgeDashboardCard
-            label="Institutions"
-            value={summary?.institutionCount ?? 0}
-            detail="Referenced financial institutions"
+            label="Healthy"
+            value={
+              summary?.healthyConnections ??
+              0
+            }
+            detail="Connections operating normally"
           />
           <ForgeDashboardCard
             label="Ready for Import"
-            value={summary?.readyForImportCount ?? 0}
+            value={
+              summary?.readyForImportConnections ??
+              0
+            }
             detail="Connections available for financial import"
           />
           <ForgeDashboardCard
-            label="Provider"
-            value={summary?.provider || metadata?.provider || "Not available"}
-            detail="Active connection provider"
+            label="Needs Attention"
+            value={
+              summary?.requiringAttentionConnections ??
+              0
+            }
+            detail="Connections requiring user action"
           />
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-[0.7fr_1.3fr]">
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className={forgeTheme.labelSmall}>
+              Execution Readiness
+            </div>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">
+              Deterministic Workflow
+            </h2>
+
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+              <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+                Workflow State
+              </div>
+              <div className="mt-2 text-3xl font-black text-slate-950">
+                {executionReadiness?.status ||
+                  "loading"}
+              </div>
+              <div className="mt-3 text-sm text-slate-600">
+                {executionReadiness
+                  ? `${executionReadiness.readyOperations} of ${executionReadiness.totalOperations} operations are ready.`
+                  : "Preparing the connection operations workflow."}
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+                  Ready
+                </div>
+                <div className="mt-1 text-2xl font-black text-slate-950">
+                  {executionReadiness?.readyOperations ??
+                    0}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+                  Blocked
+                </div>
+                <div className="mt-1 text-2xl font-black text-slate-950">
+                  {executionReadiness?.blockedOperations ??
+                    0}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 text-xs text-slate-500">
+              Read-only:{" "}
+              {workflow?.metadata?.readOnly
+                ? "yes"
+                : "no"}
+              {" · "}
+              Deterministic:{" "}
+              {workflow?.metadata?.deterministic
+                ? "yes"
+                : "no"}
+            </div>
+          </div>
+
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className={forgeTheme.labelSmall}>
+              Workflow Stages
+            </div>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">
+              Connection Operations Pipeline
+            </h2>
+
+            <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {workflowStages.map((stage) => (
+                <article
+                  key={stage.id}
+                  className="rounded-2xl border border-slate-200 p-5"
+                >
+                  <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+                    {stage.status}
+                  </div>
+                  <h3 className="mt-2 text-lg font-black text-slate-950">
+                    {stage.label}
+                  </h3>
+                  <div className="mt-3 text-3xl font-black text-slate-950">
+                    {stage.operationCount}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    Operations
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className={forgeTheme.labelSmall}>
+            Priority Actions
+          </div>
+          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
+            <div>
+              <h2 className="mt-2 text-2xl font-black text-slate-950">
+                Connection Operation Queue
+              </h2>
+              <p className="mt-2 text-sm text-slate-600">
+                Prioritized, deterministic next steps generated from connection health and import readiness.
+              </p>
+            </div>
+
+            <div className="text-sm font-bold text-slate-600">
+              {recommendations?.length || 0} recommendations
+            </div>
+          </div>
+
+          <div className="mt-6 space-y-4">
+            {workflowCards.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-600">
+                No connection operations are currently queued.
+              </div>
+            ) : (
+              workflowCards.map((card, index) => (
+                <article
+                  key={card.id}
+                  className="rounded-2xl border border-slate-200 p-5"
+                >
+                  <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+                    <div>
+                      <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+                        Priority {index + 1} · {card.priority} · {card.stage}
+                      </div>
+                      <h3 className="mt-2 text-xl font-black text-slate-950">
+                        {card.title}
+                      </h3>
+                      <p className="mt-2 text-sm text-slate-600">
+                        {card.detail}
+                      </p>
+                      {card.connectionId ? (
+                        <div className="mt-3 text-xs font-bold text-slate-500">
+                          Connection: {card.connectionId}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-800">
+                      {card.readiness}
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+
+          {intelligence ? (
+            <div className="mt-6 grid gap-3 md:grid-cols-3">
+              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+                Ready connections:{" "}
+                <strong>
+                  {intelligence.readyConnectionIds?.length ||
+                    0}
+                </strong>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+                Attention connections:{" "}
+                <strong>
+                  {intelligence.attentionConnectionIds?.length ||
+                    0}
+                </strong>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+                Degraded connections:{" "}
+                <strong>
+                  {intelligence.degradedConnectionIds?.length ||
+                    0}
+                </strong>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
