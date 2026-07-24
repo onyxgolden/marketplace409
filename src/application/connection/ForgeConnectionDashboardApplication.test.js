@@ -130,12 +130,15 @@ describe(
       });
     });
 
-    it("loads dashboard and reports through an injected fetcher", async () => {
+    it("loads the dashboard through the authenticated operations endpoint", async () => {
       const fetcher =
         vi.fn().mockResolvedValue({
           json: async () => ({
             success: true,
             data: {
+              type:
+                "connection-operations",
+              status: "ready",
               dashboard: {
                 type:
                   "connection-dashboard",
@@ -159,24 +162,8 @@ describe(
                       "connection-platform",
                     snapshotStatus:
                       "repository-backed",
-                    phase: "20C",
+                    phase: "20G",
                   },
-                },
-              },
-              reports: {
-                type:
-                  "connection-reports",
-                reports: {
-                  connections: [
-                    {
-                      connectionId:
-                        "connection-1",
-                    },
-                    {
-                      connectionId:
-                        "connection-2",
-                    },
-                  ],
                 },
               },
             },
@@ -190,7 +177,7 @@ describe(
           });
 
       expect(fetcher).toHaveBeenCalledWith(
-        "/api/connection/read-models?dashboard=true&reports=true",
+        "/api/connection/operations",
       );
 
       expect(result.loadState).toBe(
@@ -211,7 +198,7 @@ describe(
         vi.fn().mockResolvedValue({
           json: async () => ({
             error:
-              "Connection read model unavailable.",
+              "Connection operations unavailable.",
           }),
         });
 
@@ -226,7 +213,7 @@ describe(
       );
 
       expect(result.error).toBe(
-        "Connection read model unavailable.",
+        "Connection operations unavailable.",
       );
 
       expect(

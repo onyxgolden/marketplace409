@@ -86,18 +86,16 @@ export class ForgeConnectionDashboardApplication {
         await this.fetchJson({
           fetcher,
           url:
-            "/api/connection/read-models?dashboard=true&reports=true",
+            "/api/connection/operations",
           fallbackMessage:
-            "Connection read model failed.",
+            "Connection operations failed.",
         });
 
       return this.buildReadyModel({
         dashboard:
           payload.data?.dashboard?.dashboard ||
           null,
-        reports:
-          payload.data?.reports?.reports ||
-          null,
+        reports: null,
       });
     } catch (error) {
       return this.buildErrorModel(error);
