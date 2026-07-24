@@ -62,6 +62,7 @@ ConnectionQueryService,
 ConnectionSummaryQueryService,
 ConnectionReadModelAdapter,
 ConnectionReadModelApplication,
+ConnectionOperationsApplication,
 } from "../../application/connection/index.js";
 
 export function createConnectionPlatformSuite(deps = {}) {
@@ -255,6 +256,12 @@ connectionReadModelAdapter,
 currentOwnerId: deps.currentOwnerId,
 });
 
+const connectionOperationsApplication =
+deps.connectionOperationsApplication ||
+new ConnectionOperationsApplication({
+connectionReadModelApplication,
+});
+
 return Object.freeze({
 providers,
 plaidProvider,
@@ -280,5 +287,6 @@ connectionQueryService,
 connectionSummaryQueryService,
 connectionReadModelAdapter,
 connectionReadModelApplication,
+connectionOperationsApplication,
 });
 }

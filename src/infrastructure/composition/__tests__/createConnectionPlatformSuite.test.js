@@ -568,4 +568,27 @@ expect(
 });
 
 
+
+it("composes connection operations with the connection read model application", () => {
+const connectionReadModelApplication = {
+  buildConnectionDashboard: vi.fn(),
+};
+
+const suite = createConnectionPlatformSuite({
+  connectionReadModelApplication,
+});
+
+expect(
+  typeof suite.connectionOperationsApplication
+    .buildConnectionOperations,
+).toBe("function");
+
+expect(
+  suite.connectionOperationsApplication
+    .connectionReadModelApplication,
+).toBe(connectionReadModelApplication);
+
+expect(Object.isFrozen(suite)).toBe(true);
+});
+
 });

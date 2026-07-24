@@ -18,3 +18,7 @@ export {
 export {
   ForgeConnectionDashboardApplication,
 } from "./ForgeConnectionDashboardApplication.js";
+
+export {
+  ConnectionOperationsApplication,
+} from "./ConnectionOperationsApplication.js";
