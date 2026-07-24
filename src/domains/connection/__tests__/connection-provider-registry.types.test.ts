@@ -73,6 +73,17 @@ function makeProvider(
       occurredAt: "2026-07-01T05:05:00.000Z",
     })),
 
+    importDataPayload:
+      overrides.importDataPayload ??
+      (async () => ({
+        provider: providerName,
+        connectionId: "connection_001",
+        accounts: [],
+        balances: [],
+        transactions: [],
+        occurredAt: "2026-07-01T05:05:00.000Z",
+      })),
+
     reportHealth:
       overrides.reportHealth ??
       (async (_connection) => ({

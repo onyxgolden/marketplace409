@@ -15,6 +15,10 @@ import type {
   ConnectionHealth,
 } from "./connection-health.types";
 
+import type {
+  ConnectionImportPayload,
+} from "./connection-import-payload.types";
+
 export const CONNECTION_PROVIDER_STATUSES = [
   "available",
   "degraded",
@@ -55,6 +59,9 @@ export type ConnectionProviderImportResult = Readonly<{
   occurredAt: string;
 }>;
 
+export type ConnectionProviderImportPayload =
+  ConnectionImportPayload;
+
 export type ConnectionProviderHealth = Readonly<{
   provider: string;
   status: ConnectionProviderStatus;
@@ -91,6 +98,10 @@ export type ConnectionProvider = Readonly<{
   importData(
     connection: Connection,
   ): Promise<ConnectionProviderImportResult>;
+
+  importDataPayload(
+    connection: Connection,
+  ): Promise<ConnectionProviderImportPayload>;
 
   reportHealth(
     connection: Connection,

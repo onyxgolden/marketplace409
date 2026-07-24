@@ -128,6 +128,18 @@ function makeProvider(
           "2026-07-02T03:00:00.000Z",
       })),
 
+    importDataPayload:
+      overrides.importDataPayload ??
+      (async (connection) => ({
+        provider: providerName,
+        connectionId: connection.id,
+        accounts: [],
+        balances: [],
+        transactions: [],
+        occurredAt:
+          "2026-07-02T03:00:00.000Z",
+      })),
+
     reportHealth:
       overrides.reportHealth ??
       (async () => ({
@@ -176,6 +188,15 @@ describe("AccountImportService", () => {
       "connection-1",
     );
     expect(result.success).toBe(true);
+    expect(result.payload).toEqual({
+      provider: "plaid",
+      connectionId: "connection-1",
+      accounts: [],
+      balances: [],
+      transactions: [],
+      occurredAt:
+        "2026-07-02T03:00:00.000Z",
+    });
     expect(
       result.importedAccountCount,
     ).toBe(2);

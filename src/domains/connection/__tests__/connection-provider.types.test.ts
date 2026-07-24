@@ -145,6 +145,15 @@ describe("ConnectionProvider", () => {
         occurredAt: "2026-07-01T04:45:00.000Z",
       }),
 
+      importDataPayload: async () => ({
+        provider: "generic_provider",
+        connectionId: "connection_001",
+        accounts: [],
+        balances: [],
+        transactions: [],
+        occurredAt: "2026-07-01T04:45:00.000Z",
+      }),
+
       reportHealth: async () => ({
         connectionId: "connection_001",
         state: "healthy",

@@ -44,8 +44,20 @@ export class AccountImportService {
       throw new Error("Connection provider does not support account import.");
     }
 
-    const providerResult = await provider.importData(input.connection);
+    const providerResult =
+      await provider.importData(
+        input.connection,
+      );
 
-    return toAccountImportResult(input, providerResult);
+    const providerPayload =
+      await provider.importDataPayload(
+        input.connection,
+      );
+
+    return toAccountImportResult(
+      input,
+      providerResult,
+      providerPayload,
+    );
   }
 }

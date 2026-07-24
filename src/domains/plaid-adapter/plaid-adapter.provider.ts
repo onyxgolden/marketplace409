@@ -111,6 +111,19 @@ export function createPlaidAdapter(): PlaidAdapter {
       };
     },
 
+    async importDataPayload(
+      connection: Connection,
+    ) {
+      return {
+        provider: "plaid",
+        connectionId: connection.id,
+        accounts: [],
+        balances: [],
+        transactions: [],
+        occurredAt: new Date().toISOString(),
+      };
+    },
+
     async reportHealth(
       connection: Connection,
     ): Promise<ConnectionHealth> {

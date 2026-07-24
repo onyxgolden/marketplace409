@@ -83,10 +83,15 @@ export type {
   ConnectionProvider,
   ConnectionProviderHealth,
   ConnectionProviderImportResult,
+  ConnectionProviderImportPayload,
   ConnectionProviderOperation,
   ConnectionProviderResult,
   ConnectionProviderStatus,
 } from "./connection-provider.types";
+
+export type {
+  ConnectionImportPayload,
+} from "./connection-import-payload.types";
 
 export {
   CONNECTION_PROVIDER_OPERATIONS,

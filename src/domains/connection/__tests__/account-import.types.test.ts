@@ -66,6 +66,15 @@ describe("AccountImportResult", () => {
         failedRecordCount: 0,
         occurredAt:
           "2026-07-02T03:00:00.000Z",
+      },
+      {
+        provider: "plaid",
+        connectionId: "connection-1",
+        accounts: [],
+        balances: [],
+        transactions: [],
+        occurredAt:
+          "2026-07-02T03:00:00.000Z",
       });
 
     expect(result.provider).toBe("plaid");

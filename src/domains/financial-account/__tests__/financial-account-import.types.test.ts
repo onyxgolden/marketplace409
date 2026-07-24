@@ -66,6 +66,15 @@ describe("toFinancialAccountImportResult", () => {
         },
         provider: "plaid",
         connectionId: "connection_1",
+        payload: {
+          provider: "plaid",
+          connectionId: "connection_1",
+          accounts: [],
+          balances: [],
+          transactions: [],
+          occurredAt:
+            "2026-07-02T03:00:00.000Z",
+        },
         success: true,
         importedAccountCount: 1,
         skippedAccountCount: 0,

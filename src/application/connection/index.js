@@ -22,3 +22,7 @@ export {
 export {
   ConnectionOperationsApplication,
 } from "./ConnectionOperationsApplication.js";
+
+export {
+  ConnectionImportExecutionCoordinator,
+} from "./ConnectionImportExecutionCoordinator.js";

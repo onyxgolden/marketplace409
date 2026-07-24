@@ -3,6 +3,7 @@ import type {
 } from "./connection-persistence.types";
 
 import type {
+  ConnectionProviderImportPayload,
   ConnectionProviderImportResult,
 } from "./connection-provider.types";
 
@@ -18,6 +19,7 @@ export type AccountImportResult = Readonly<{
   institutionReference: InstitutionReference;
   provider: string;
   connectionId: string;
+  payload: ConnectionProviderImportPayload;
   success: boolean;
   importedAccountCount: number;
   skippedAccountCount: number;
@@ -31,6 +33,7 @@ export type AccountImportResult = Readonly<{
 export function toAccountImportResult(
   input: AccountImportInput,
   providerResult: ConnectionProviderImportResult,
+  providerPayload: ConnectionProviderImportPayload,
 ): AccountImportResult {
   return {
     connection: input.connection,
@@ -38,6 +41,7 @@ export function toAccountImportResult(
     institutionReference: input.institutionReference,
     provider: providerResult.provider,
     connectionId: providerResult.connectionId,
+    payload: providerPayload,
     success: providerResult.failedRecordCount === 0,
     importedAccountCount: providerResult.importedRecordCount,
     skippedAccountCount: providerResult.skippedRecordCount,

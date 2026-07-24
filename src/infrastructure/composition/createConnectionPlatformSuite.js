@@ -63,6 +63,7 @@ ConnectionSummaryQueryService,
 ConnectionReadModelAdapter,
 ConnectionReadModelApplication,
 ConnectionOperationsApplication,
+ConnectionImportExecutionCoordinator,
 } from "../../application/connection/index.js";
 
 export function createConnectionPlatformSuite(deps = {}) {
@@ -229,6 +230,18 @@ transactionRepository,
 transactionMapper,
 );
 
+const connectionImportExecutionCoordinator =
+deps.connectionImportExecutionCoordinator ||
+new ConnectionImportExecutionCoordinator({
+connectionRepository,
+credentialReferenceRepository,
+institutionReferenceRepository,
+accountImportService,
+financialAccountImportService,
+accountBalanceImportService,
+transactionImportService,
+});
+
 const connectionQueryService =
 deps.connectionQueryService ||
 new ConnectionQueryService({
@@ -287,6 +300,7 @@ financialAccountImportService,
 financialAccountService,
 accountBalanceImportService,
 transactionImportService,
+connectionImportExecutionCoordinator,
 connectionQueryService,
 connectionSummaryQueryService,
 connectionReadModelAdapter,
