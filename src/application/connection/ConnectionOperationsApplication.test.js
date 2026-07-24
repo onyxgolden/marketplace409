@@ -510,6 +510,102 @@ describe(
     );
 
     it(
+      "returns a deterministic result for supported operations",
+      async () => {
+        const dashboard = createDashboard();
+
+        const {
+          application,
+        } = createApplication(dashboard);
+
+        const result =
+          await application.executeOperation({
+            operation:
+              "import-transactions",
+            connectionId:
+              "connection-1",
+            ownerId: "owner-1",
+            options: {
+              source: "workflow-card",
+            },
+          });
+
+        expect(result).toEqual({
+          type:
+            "connection-operation-execution",
+          status: "not_implemented",
+          operation:
+            "import-transactions",
+          connectionId:
+            "connection-1",
+          ownerId: "owner-1",
+          options: {
+            source: "workflow-card",
+          },
+        });
+
+        expect(
+          Object.isFrozen(result),
+        ).toBe(true);
+
+        expect(
+          Object.isFrozen(result.options),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      "rejects unsupported connection operations",
+      async () => {
+        const dashboard = createDashboard();
+
+        const {
+          application,
+        } = createApplication(dashboard);
+
+        await expect(
+          application.executeOperation({
+            operation:
+              "delete-connection",
+            connectionId:
+              "connection-1",
+          }),
+        ).rejects.toThrow(
+          "Unsupported connection operation: delete-connection",
+        );
+      },
+    );
+
+    it(
+      "requires operation execution identifiers",
+      async () => {
+        const dashboard = createDashboard();
+
+        const {
+          application,
+        } = createApplication(dashboard);
+
+        await expect(
+          application.executeOperation({
+            connectionId:
+              "connection-1",
+          }),
+        ).rejects.toThrow(
+          "Connection operation is required.",
+        );
+
+        await expect(
+          application.executeOperation({
+            operation:
+              "import-transactions",
+          }),
+        ).rejects.toThrow(
+          "Connection id is required.",
+        );
+      },
+    );
+
+    it(
       "requires a connection read model application",
       () => {
         expect(

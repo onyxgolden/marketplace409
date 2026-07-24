@@ -464,6 +464,53 @@ export class ConnectionOperationsApplication {
     });
   }
 
+  async executeOperation({
+    operation,
+    connectionId,
+    ownerId = null,
+    options = {},
+  } = {}) {
+    if (
+      typeof operation !== "string" ||
+      operation.length === 0
+    ) {
+      throw new Error(
+        "Connection operation is required.",
+      );
+    }
+
+    if (
+      typeof connectionId !== "string" ||
+      connectionId.length === 0
+    ) {
+      throw new Error(
+        "Connection id is required.",
+      );
+    }
+
+    switch (operation) {
+      case "repair-connection":
+      case "review-connection":
+      case "import-transactions":
+        return Object.freeze({
+          type:
+            "connection-operation-execution",
+          status: "not_implemented",
+          operation,
+          connectionId,
+          ownerId,
+          options: Object.freeze({
+            ...options,
+          }),
+        });
+
+      default:
+        throw new Error(
+          `Unsupported connection operation: ${operation}`,
+        );
+    }
+  }
+
   async buildConnectionOperations() {
     const dashboard =
       await this.connectionReadModelApplication
