@@ -110,7 +110,7 @@ describe(
           await application
             .buildConnectionOperations();
 
-        expect(result).toEqual({
+        expect(result).toMatchObject({
           type: "connection-operations",
           status: "ready",
           dashboard,
@@ -324,6 +324,188 @@ describe(
               "Connect a financial institution to begin importing financial data.",
           },
         ]);
+      },
+    );
+
+    it(
+      "builds a prioritized deterministic operations workflow",
+      async () => {
+        const dashboard = createDashboard({
+          summary: {
+            totalConnections: 3,
+            healthyConnections: 1,
+            staleConnections: 1,
+            criticalConnections: 1,
+          },
+          connections: [
+            createConnectionSummary({
+              id: "healthy-connection",
+            }),
+            createConnectionSummary({
+              id: "stale-connection",
+              severity: "warning",
+              allowsImport: false,
+              warningCount: 1,
+            }),
+            createConnectionSummary({
+              id: "critical-connection",
+              severity: "critical",
+              allowsImport: false,
+              requiresUserAction: true,
+              issueCount: 1,
+            }),
+          ],
+        });
+
+        const {
+          application,
+        } = createApplication(dashboard);
+
+        const result =
+          await application
+            .buildConnectionOperations();
+
+        expect(result.workflow).toEqual({
+          queue: [
+            {
+              id:
+                "repair-connection:critical-connection",
+              type: "repair-connection",
+              priority: "critical",
+              priorityRank: 0,
+              connectionId:
+                "critical-connection",
+              stage: "attention",
+              readiness: "ready",
+              message:
+                "Repair this connection before attempting another import.",
+            },
+            {
+              id:
+                "review-connection:stale-connection",
+              type: "review-connection",
+              priority: "medium",
+              priorityRank: 2,
+              connectionId:
+                "stale-connection",
+              stage: "review",
+              readiness: "ready",
+              message:
+                "Review this connection because it is not currently ready for import.",
+            },
+            {
+              id:
+                "import-transactions:healthy-connection",
+              type: "import-transactions",
+              priority: "normal",
+              priorityRank: 3,
+              connectionId:
+                "healthy-connection",
+              stage: "import",
+              readiness: "ready",
+              message:
+                "This connection is ready to import financial data.",
+            },
+          ],
+          stages: [
+            {
+              id: "setup",
+              label: "Setup",
+              status: "empty",
+              operationCount: 0,
+            },
+            {
+              id: "attention",
+              label: "Attention",
+              status: "ready",
+              operationCount: 1,
+            },
+            {
+              id: "review",
+              label: "Review",
+              status: "ready",
+              operationCount: 1,
+            },
+            {
+              id: "import",
+              label: "Import",
+              status: "ready",
+              operationCount: 1,
+            },
+          ],
+          cards: [
+            {
+              id:
+                "repair-connection:critical-connection",
+              title: "Repair connection",
+              detail:
+                "Repair this connection before attempting another import.",
+              action: "repair-connection",
+              priority: "critical",
+              stage: "attention",
+              connectionId:
+                "critical-connection",
+              readiness: "ready",
+            },
+            {
+              id:
+                "review-connection:stale-connection",
+              title: "Review connection",
+              detail:
+                "Review this connection because it is not currently ready for import.",
+              action: "review-connection",
+              priority: "medium",
+              stage: "review",
+              connectionId:
+                "stale-connection",
+              readiness: "ready",
+            },
+            {
+              id:
+                "import-transactions:healthy-connection",
+              title: "Import transactions",
+              detail:
+                "This connection is ready to import financial data.",
+              action: "import-transactions",
+              priority: "normal",
+              stage: "import",
+              connectionId:
+                "healthy-connection",
+              readiness: "ready",
+            },
+          ],
+          executionReadiness: {
+            status: "ready",
+            totalOperations: 3,
+            readyOperations: 3,
+            blockedOperations: 0,
+            nextOperationId:
+              "repair-connection:critical-connection",
+          },
+          metadata: {
+            generatedAt:
+              "2026-07-24T01:00:00.000Z",
+            readOnly: true,
+            deterministic: true,
+            highestPriority: "critical",
+          },
+        });
+
+        expect(
+          Object.isFrozen(result.workflow),
+        ).toBe(true);
+
+        expect(
+          Object.isFrozen(
+            result.workflow.queue,
+          ),
+        ).toBe(true);
+
+        expect(
+          Object.isFrozen(
+            result.workflow.cards,
+          ),
+        ).toBe(true);
       },
     );
 
