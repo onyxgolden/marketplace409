@@ -76,6 +76,11 @@ function createApplication(
         executeImport:
           vi.fn(),
       },
+    connectionRepairExecutionCoordinator =
+      {
+        executeRepair:
+          vi.fn(),
+      },
   } = {},
 ) {
   const connectionReadModelApplication = {
@@ -91,10 +96,12 @@ function createApplication(
         connectionReadModelApplication,
         connectionReviewExecutionCoordinator,
         connectionImportExecutionCoordinator,
+        connectionRepairExecutionCoordinator,
       }),
     connectionReadModelApplication,
     connectionReviewExecutionCoordinator,
     connectionImportExecutionCoordinator,
+    connectionRepairExecutionCoordinator,
   };
 }
 
@@ -587,6 +594,80 @@ describe(
         expect(
           connectionReviewExecutionCoordinator
             .executeReview,
+        ).toHaveBeenCalledWith({
+          connectionId:
+            "connection-1",
+          ownerId: "owner-1",
+        });
+      },
+    );
+
+    it(
+      "executes connection repairs through the canonical coordinator",
+      async () => {
+        const dashboard = createDashboard();
+
+        const repairResult =
+          Object.freeze({
+            type:
+              "connection-repair-execution",
+            connectionId:
+              "connection-1",
+            ownerId: "owner-1",
+            provider: "plaid",
+            previousStatus:
+              "needs_attention",
+            status: "connected",
+            credentialValid: true,
+            synchronized: true,
+            repaired: true,
+            allowsImport: true,
+            requiresUserAction: false,
+            recommendedOperation:
+              "import-transactions",
+            occurredAt:
+              "2026-07-24T01:00:00.000Z",
+          });
+
+        const connectionRepairExecutionCoordinator =
+          {
+            executeRepair:
+              vi.fn().mockResolvedValue(
+                repairResult,
+              ),
+          };
+
+        const {
+          application,
+        } = createApplication(
+          dashboard,
+          {
+            connectionRepairExecutionCoordinator,
+          },
+        );
+
+        const result =
+          await application.executeOperation({
+            operation:
+              "repair-connection",
+            connectionId:
+              "connection-1",
+            ownerId: "owner-1",
+            options: {
+              source: "workflow-card",
+            },
+          });
+
+        expect(result).toBe(repairResult);
+
+        expect(
+          connectionRepairExecutionCoordinator
+            .executeRepair,
+        ).toHaveBeenCalledOnce();
+
+        expect(
+          connectionRepairExecutionCoordinator
+            .executeRepair,
         ).toHaveBeenCalledWith({
           connectionId:
             "connection-1",

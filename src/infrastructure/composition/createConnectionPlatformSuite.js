@@ -65,6 +65,7 @@ ConnectionReadModelApplication,
 ConnectionOperationsApplication,
 ConnectionImportExecutionCoordinator,
 ConnectionReviewExecutionCoordinator,
+ConnectionRepairExecutionCoordinator,
 } from "../../application/connection/index.js";
 
 export function createConnectionPlatformSuite(deps = {}) {
@@ -251,6 +252,15 @@ credentialReferenceRepository,
 institutionReferenceRepository,
 });
 
+const connectionRepairExecutionCoordinator =
+deps.connectionRepairExecutionCoordinator ||
+new ConnectionRepairExecutionCoordinator({
+connectionRepository,
+credentialReferenceRepository,
+institutionReferenceRepository,
+providerRegistry,
+});
+
 const connectionQueryService =
 deps.connectionQueryService ||
 new ConnectionQueryService({
@@ -283,6 +293,7 @@ deps.connectionOperationsApplication ||
 new ConnectionOperationsApplication({
 connectionReadModelApplication,
 connectionReviewExecutionCoordinator,
+connectionRepairExecutionCoordinator,
 connectionImportExecutionCoordinator,
 });
 
@@ -309,6 +320,7 @@ accountBalanceImportService,
 transactionImportService,
 connectionImportExecutionCoordinator,
 connectionReviewExecutionCoordinator,
+connectionRepairExecutionCoordinator,
 connectionQueryService,
 connectionSummaryQueryService,
 connectionReadModelAdapter,

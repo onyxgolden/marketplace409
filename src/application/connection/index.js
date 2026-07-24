@@ -30,3 +30,7 @@ export {
 export {
   ConnectionReviewExecutionCoordinator,
 } from "./ConnectionReviewExecutionCoordinator.js";
+
+export {
+  ConnectionRepairExecutionCoordinator,
+} from "./ConnectionRepairExecutionCoordinator.js";
