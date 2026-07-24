@@ -3,17 +3,13 @@ import {
 } from "next/server";
 
 import {
-  createConnectionPlatformSuite,
-} from "@/infrastructure/composition";
-
-import {
-  createAuthenticatedFinancialApplication,
-} from "@/lib/supabase/createAuthenticatedFinancialApplication";
+  createAuthenticatedConnectionApplication,
+} from "@/lib/supabase/createAuthenticatedConnectionApplication";
 
 export async function GET(request: Request) {
   try {
     const authenticatedApplication =
-      await createAuthenticatedFinancialApplication();
+      await createAuthenticatedConnectionApplication();
 
     if (authenticatedApplication.response) {
       return authenticatedApplication.response;
@@ -24,14 +20,7 @@ export async function GET(request: Request) {
     } = new URL(request.url);
 
     const connectionPlatformSuite =
-      await createConnectionPlatformSuite({
-        supabaseClient:
-          authenticatedApplication.supabaseClient,
-        ownerId:
-          authenticatedApplication.user.id,
-        currentOwnerId:
-          authenticatedApplication.currentOwnerId,
-      });
+      await authenticatedApplication.getConnectionPlatformSuite();
 
     const [
       dashboard,

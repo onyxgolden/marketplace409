@@ -7,9 +7,7 @@ import {
 } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  createAuthenticatedFinancialApplication:
-    vi.fn(),
-  createConnectionPlatformSuite:
+  createAuthenticatedConnectionApplication:
     vi.fn(),
   buildConnectionDashboard:
     vi.fn(),
@@ -41,18 +39,10 @@ vi.mock(
 );
 
 vi.mock(
-  "@/lib/supabase/createAuthenticatedFinancialApplication",
+  "@/lib/supabase/createAuthenticatedConnectionApplication",
   () => ({
-    createAuthenticatedFinancialApplication:
-      mocks.createAuthenticatedFinancialApplication,
-  }),
-);
-
-vi.mock(
-  "@/infrastructure/composition",
-  () => ({
-    createConnectionPlatformSuite:
-      mocks.createConnectionPlatformSuite,
+    createAuthenticatedConnectionApplication:
+      mocks.createAuthenticatedConnectionApplication,
   }),
 );
 
@@ -74,19 +64,8 @@ function configureAuthenticatedRequest({
   const currentOwnerId =
     vi.fn(async () => ownerId);
 
-  mocks
-    .createAuthenticatedFinancialApplication
-    .mockResolvedValue({
-      supabaseClient,
-      user: {
-        id: ownerId,
-      },
-      currentOwnerId,
-    });
-
-  mocks
-    .createConnectionPlatformSuite
-    .mockResolvedValue({
+  const getConnectionPlatformSuite =
+    vi.fn().mockResolvedValue({
       connectionReadModelApplication: {
         buildConnectionDashboard:
           mocks.buildConnectionDashboard,
@@ -95,9 +74,21 @@ function configureAuthenticatedRequest({
       },
     });
 
+  mocks
+    .createAuthenticatedConnectionApplication
+    .mockResolvedValue({
+      supabaseClient,
+      user: {
+        id: ownerId,
+      },
+      currentOwnerId,
+      getConnectionPlatformSuite,
+    });
+
   return {
     supabaseClient,
     currentOwnerId,
+    getConnectionPlatformSuite,
   };
 }
 
@@ -135,7 +126,7 @@ describe(
           );
 
         mocks
-          .createAuthenticatedFinancialApplication
+          .createAuthenticatedConnectionApplication
           .mockResolvedValue({
             response:
               unauthorizedResponse,
@@ -158,10 +149,6 @@ describe(
         });
 
         expect(
-          mocks.createConnectionPlatformSuite,
-        ).not.toHaveBeenCalled();
-
-        expect(
           mocks.buildConnectionDashboard,
         ).not.toHaveBeenCalled();
       },
@@ -171,8 +158,7 @@ describe(
       "returns an authenticated connection dashboard",
       async () => {
         const {
-          supabaseClient,
-          currentOwnerId,
+          getConnectionPlatformSuite,
         } = configureAuthenticatedRequest();
 
         const dashboard = {
@@ -201,13 +187,8 @@ describe(
         expect(response.status).toBe(200);
 
         expect(
-          mocks.createConnectionPlatformSuite,
-        ).toHaveBeenCalledWith({
-          supabaseClient,
-          ownerId:
-            "owner-1",
-          currentOwnerId,
-        });
+          getConnectionPlatformSuite,
+        ).toHaveBeenCalledOnce();
 
         expect(
           mocks.buildConnectionDashboard,
