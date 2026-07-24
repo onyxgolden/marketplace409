@@ -66,6 +66,11 @@ function createConnectionSummary({
 function createApplication(
   dashboard,
   {
+    connectionReviewExecutionCoordinator =
+      {
+        executeReview:
+          vi.fn(),
+      },
     connectionImportExecutionCoordinator =
       {
         executeImport:
@@ -84,9 +89,11 @@ function createApplication(
     application:
       new ConnectionOperationsApplication({
         connectionReadModelApplication,
+        connectionReviewExecutionCoordinator,
         connectionImportExecutionCoordinator,
       }),
     connectionReadModelApplication,
+    connectionReviewExecutionCoordinator,
     connectionImportExecutionCoordinator,
   };
 }
@@ -517,6 +524,74 @@ describe(
             result.workflow.cards,
           ),
         ).toBe(true);
+      },
+    );
+
+    it(
+      "executes connection reviews through the canonical coordinator",
+      async () => {
+        const dashboard = createDashboard();
+
+        const reviewResult =
+          Object.freeze({
+            type:
+              "connection-review-execution",
+            connectionId:
+              "connection-1",
+            ownerId: "owner-1",
+            provider: "plaid",
+            status: "connected",
+            severity: "healthy",
+            allowsImport: true,
+            requiresUserAction: false,
+            recommendedOperation:
+              "import-transactions",
+          });
+
+        const connectionReviewExecutionCoordinator =
+          {
+            executeReview:
+              vi.fn().mockResolvedValue(
+                reviewResult,
+              ),
+          };
+
+        const {
+          application,
+        } = createApplication(
+          dashboard,
+          {
+            connectionReviewExecutionCoordinator,
+          },
+        );
+
+        const result =
+          await application.executeOperation({
+            operation:
+              "review-connection",
+            connectionId:
+              "connection-1",
+            ownerId: "owner-1",
+            options: {
+              source: "workflow-card",
+            },
+          });
+
+        expect(result).toBe(reviewResult);
+
+        expect(
+          connectionReviewExecutionCoordinator
+            .executeReview,
+        ).toHaveBeenCalledOnce();
+
+        expect(
+          connectionReviewExecutionCoordinator
+            .executeReview,
+        ).toHaveBeenCalledWith({
+          connectionId:
+            "connection-1",
+          ownerId: "owner-1",
+        });
       },
     );
 

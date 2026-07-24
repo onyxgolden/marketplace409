@@ -26,3 +26,7 @@ export {
 export {
   ConnectionImportExecutionCoordinator,
 } from "./ConnectionImportExecutionCoordinator.js";
+
+export {
+  ConnectionReviewExecutionCoordinator,
+} from "./ConnectionReviewExecutionCoordinator.js";

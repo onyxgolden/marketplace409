@@ -1,6 +1,7 @@
 export class ConnectionOperationsApplication {
   constructor({
     connectionReadModelApplication,
+    connectionReviewExecutionCoordinator = null,
     connectionImportExecutionCoordinator = null,
   }) {
     if (!connectionReadModelApplication) {
@@ -11,6 +12,9 @@ export class ConnectionOperationsApplication {
 
     this.connectionReadModelApplication =
       connectionReadModelApplication;
+
+    this.connectionReviewExecutionCoordinator =
+      connectionReviewExecutionCoordinator;
 
     this.connectionImportExecutionCoordinator =
       connectionImportExecutionCoordinator;
@@ -478,7 +482,6 @@ export class ConnectionOperationsApplication {
 
     switch (operation) {
       case "repair-connection":
-      case "review-connection":
         return Object.freeze({
           type:
             "connection-operation-execution",
@@ -490,6 +493,22 @@ export class ConnectionOperationsApplication {
             ...options,
           }),
         });
+
+      case "review-connection":
+        if (
+          !this.connectionReviewExecutionCoordinator
+        ) {
+          throw new Error(
+            "Connection review execution coordinator is required.",
+          );
+        }
+
+        return this
+          .connectionReviewExecutionCoordinator
+          .executeReview({
+            connectionId,
+            ownerId,
+          });
 
       case "import-transactions":
         if (
