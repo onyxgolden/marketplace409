@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Money } from "@/platform";
-import { createFinancialApplicationSuite } from "@/infrastructure/composition";
 
 function formatCurrency(value) {
   return new Money(Math.round(Number(value || 0) * 100)).toString();
@@ -54,13 +53,15 @@ function reportSections(report) {
   }));
 }
 
-export default function FinancialImportTool() {
+export default function FinancialImportTool({
+  financialImportApplication,
+  transactionReviewApplication,
+}) {
   const [source, setSource] = useState("rentec");
   const [fileName, setFileName] = useState("");
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [ownerId, setOwnerId] = useState(null);
-  const [applications, setApplications] = useState(null);
   const [properties, setProperties] = useState([]);
   const [selectedProperties, setSelectedProperties] = useState({});
   const [selectedReviewItems, setSelectedReviewItems] = useState({});
@@ -68,12 +69,8 @@ export default function FinancialImportTool() {
 
   useEffect(() => {
     async function initializeImportTool() {
-      const suite = await createFinancialApplicationSuite();
-
-      setApplications(suite);
-
       const initialized =
-        await suite.financialImportApplication.initialize();
+        await financialImportApplication.initialize();
 
       setOwnerId(initialized.ownerId);
       setProperties(initialized.properties);
@@ -81,7 +78,7 @@ export default function FinancialImportTool() {
     }
 
     initializeImportTool();
-  }, []);
+  }, [financialImportApplication]);
 
   async function handleFileChange(event) {
     const file = event.target.files?.[0];
@@ -92,17 +89,38 @@ export default function FinancialImportTool() {
     setSelectedReviewItems({});
     setAssignmentStatus({});
 
-    if (!applications) return;
 
-    const importApplication =
-      applications.financialImportApplication;
+    const csv = await file.text();
 
-    const importResponse = await importApplication.importFile({
-      file,
-      source,
-      ownerId,
-      resolveOwnerId: importApplication.currentOwnerId,
-    });
+    const response = await fetch(
+      "/api/financial/import",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          source,
+          csv,
+          fileName: file.name,
+        }),
+      },
+    );
+
+    const payload = await response.json();
+
+    const importResponse =
+      payload.success
+        ? payload.data
+        : {
+            fileName: file.name,
+            result: null,
+            error:
+              payload.error ||
+              "Unable to import financial CSV.",
+            ownerId,
+            hasFile: true,
+          };
 
     const recommendedSelections = {};
 
@@ -129,10 +147,9 @@ export default function FinancialImportTool() {
   }
 
   function applyAssignmentResult(assignmentResult) {
-    if (!applications) return;
 
     const reviewApplication =
-      applications.transactionReviewApplication;
+      transactionReviewApplication;
 
     const nextState = reviewApplication.applyAssignmentResult({
       currentResult: result,
@@ -147,10 +164,9 @@ export default function FinancialImportTool() {
   }
 
   async function assignProperty(reviewItem, index) {
-    if (!applications) return;
 
     const reviewApplication =
-      applications.transactionReviewApplication;
+      transactionReviewApplication;
 
     const assignmentResult = await reviewApplication.assignProperty({
       reviewItem,
@@ -164,10 +180,9 @@ export default function FinancialImportTool() {
   }
 
   async function assignSelectedProperties() {
-    if (!applications) return;
 
     const reviewApplication =
-      applications.transactionReviewApplication;
+      transactionReviewApplication;
 
     const assignmentResult = await reviewApplication.assignSelectedProperties({
       reviews: result?.transactionReview || [],
