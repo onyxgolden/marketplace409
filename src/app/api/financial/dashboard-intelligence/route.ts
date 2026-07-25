@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { createAuthenticatedFinancialApplication } from "@/lib/supabase/createAuthenticatedFinancialApplication";
+import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 
 type DashboardIntelligenceRequestBody = Readonly<{
   ledgerContext?: unknown;
@@ -13,20 +13,18 @@ export async function POST(request: Request) {
     const body = (await request.json()) as DashboardIntelligenceRequestBody;
 
     const authenticatedApplication =
-      await createAuthenticatedFinancialApplication();
+      await createAuthenticatedForgeApplication();
 
     if (authenticatedApplication.response) {
       return authenticatedApplication.response;
     }
 
-    const { dashboardIntelligenceApplication } =
-      await authenticatedApplication.getFinancialApplicationSuite();
+    const { canonicalIntelligenceContextBuilder } =
+      await authenticatedApplication.getForgeApplicationSuite();
 
     const intelligence =
-      dashboardIntelligenceApplication.buildDashboardIntelligence({
-        ledgerContext: isRecord(body.ledgerContext) ? body.ledgerContext : {},
-        assets: Array.isArray(body.assets) ? body.assets : [],
-        liabilities: Array.isArray(body.liabilities) ? body.liabilities : [],
+      await canonicalIntelligenceContextBuilder.build({
+        ownerId: authenticatedApplication.user.id,
       });
 
     return NextResponse.json({

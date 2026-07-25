@@ -1,26 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  createAuthenticatedFinancialApplication: vi.fn(),
-  buildDashboardIntelligence: vi.fn(),
+  createAuthenticatedForgeApplication: vi.fn(),
+  buildCanonicalIntelligenceContext: vi.fn(),
 }));
 
 vi.mock(
-  "@/lib/supabase/createAuthenticatedFinancialApplication",
+  "@/lib/supabase/createAuthenticatedForgeApplication",
   () => ({
-    createAuthenticatedFinancialApplication:
-      mocks.createAuthenticatedFinancialApplication,
+    createAuthenticatedForgeApplication:
+      mocks.createAuthenticatedForgeApplication,
   }),
 );
 
 import { POST } from "./route";
 
 function configureAuthenticatedRequest() {
-  mocks.createAuthenticatedFinancialApplication.mockResolvedValue({
-    getFinancialApplicationSuite: vi.fn().mockResolvedValue({
-      dashboardIntelligenceApplication: {
-        buildDashboardIntelligence:
-          mocks.buildDashboardIntelligence,
+  mocks.createAuthenticatedForgeApplication.mockResolvedValue({
+    user: {
+      id: "owner-1",
+    },
+    getForgeApplicationSuite: vi.fn().mockResolvedValue({
+      canonicalIntelligenceContextBuilder: {
+        build:
+          mocks.buildCanonicalIntelligenceContext,
       },
     }),
   });
@@ -29,8 +32,10 @@ function configureAuthenticatedRequest() {
 describe("POST /api/financial/dashboard-intelligence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.buildDashboardIntelligence.mockReturnValue({
-      status: "ready",
+    mocks.buildCanonicalIntelligenceContext.mockResolvedValue({
+      financial: {},
+      connections: {},
+      provenance: {},
     });
   });
 
@@ -51,13 +56,15 @@ describe("POST /api/financial/dashboard-intelligence", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       success: true,
-      data: { status: "ready" },
+      data: {
+        financial: {},
+        connections: {},
+        provenance: {},
+      },
     });
 
-    expect(mocks.buildDashboardIntelligence).toHaveBeenCalledWith({
-      ledgerContext: { period: "current" },
-      assets: [{ id: "asset-1" }],
-      liabilities: [{ id: "liability-1" }],
+    expect(mocks.buildCanonicalIntelligenceContext).toHaveBeenCalledWith({
+      ownerId: "owner-1",
     });
   });
 
@@ -67,7 +74,7 @@ describe("POST /api/financial/dashboard-intelligence", () => {
       { status: 401 },
     );
 
-    mocks.createAuthenticatedFinancialApplication.mockResolvedValue({
+    mocks.createAuthenticatedForgeApplication.mockResolvedValue({
       response,
     });
 
@@ -79,6 +86,6 @@ describe("POST /api/financial/dashboard-intelligence", () => {
     );
 
     expect(result).toBe(response);
-    expect(mocks.buildDashboardIntelligence).not.toHaveBeenCalled();
+    expect(mocks.buildCanonicalIntelligenceContext).not.toHaveBeenCalled();
   });
 });
