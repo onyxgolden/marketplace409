@@ -23,17 +23,31 @@ export default function AuthPage() {
   }
 
   async function signIn() {
-    const { error } = await supabase.auth.signInWithPassword({
+    const result = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    if (error) {
-      alert(error.message);
-    } else {
-      alert("Signed in!");
-      window.location.href = "/post";
+    console.log("SIGN IN RESULT", result);
+
+    if (result.error) {
+      alert(result.error.message);
+      return;
     }
+
+    const session = result.data?.session;
+    const user = result.data?.user;
+
+    console.log("SESSION", session);
+    console.log("USER", user);
+
+    alert(
+      `Signed in\nSession: ${session ? "YES" : "NO"}\nUser: ${
+        user?.id ?? "NONE"
+      }`,
+    );
+
+    window.location.href = "/forge/financial";
   }
 
   async function signOut() {

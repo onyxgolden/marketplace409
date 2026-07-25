@@ -29,6 +29,13 @@ export default function HomeForgeLaunch() {
               </Link>
 
               <Link
+                href="/forge/financial"
+                className="inline-flex items-center justify-center rounded-2xl border border-slate-950 bg-white px-6 py-3 text-sm font-black uppercase tracking-wide text-slate-950 shadow-sm transition hover:bg-slate-100"
+              >
+                Executive KPI Dashboard →
+              </Link>
+
+              <Link
                 href="/import"
                 className="inline-flex items-center justify-center rounded-2xl border border-amber-400 bg-amber-50 px-6 py-3 text-sm font-black uppercase tracking-wide text-amber-800 shadow-sm transition hover:bg-amber-100"
               >

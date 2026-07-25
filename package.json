@@ -13,6 +13,7 @@
     "forge:session": "node scripts/orchestration/runEngineeringConversationSession.mjs"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.106.2",
     "next": "16.2.6",
     "plaid": "^43.0.0",
