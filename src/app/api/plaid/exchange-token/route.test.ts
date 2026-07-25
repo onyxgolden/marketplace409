@@ -7,7 +7,9 @@ import {
 } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  createAuthenticatedFinancialApplication:
+  createAuthenticatedConnectionApplication:
+    vi.fn(),
+  getConnectionPlatformSuite:
     vi.fn(),
   exchangePublicToken:
     vi.fn(),
@@ -16,8 +18,6 @@ const mocks = vi.hoisted(() => ({
   provision:
     vi.fn(),
   persist:
-    vi.fn(),
-  createConnectionPlatformSuite:
     vi.fn(),
 }));
 
@@ -45,10 +45,10 @@ vi.mock(
 );
 
 vi.mock(
-  "@/lib/supabase/createAuthenticatedFinancialApplication",
+  "@/lib/supabase/createAuthenticatedConnectionApplication",
   () => ({
-    createAuthenticatedFinancialApplication:
-      mocks.createAuthenticatedFinancialApplication,
+    createAuthenticatedConnectionApplication:
+      mocks.createAuthenticatedConnectionApplication,
   }),
 );
 
@@ -60,28 +60,6 @@ vi.mock(
   }),
 );
 
-vi.mock(
-  "@/infrastructure/composition",
-  () => ({
-    createConnectionPlatformSuite:
-      mocks.createConnectionPlatformSuite.mockImplementation(
-        () => ({
-        plaidProvider: {
-          exchangePublicToken:
-            mocks.exchangePublicToken,
-        },
-        provisioningService: {
-          provision:
-            mocks.provision,
-        },
-        persistenceService: {
-          persist:
-            mocks.persist,
-        },
-      }),
-      ),
-  }),
-);
 
 import {
   POST,
@@ -113,7 +91,7 @@ describe(
           );
 
         mocks
-          .createAuthenticatedFinancialApplication
+          .createAuthenticatedConnectionApplication
           .mockResolvedValue({
             response:
               unauthorizedResponse,
@@ -151,7 +129,7 @@ describe(
       "rejects a missing public token",
       async () => {
         mocks
-          .createAuthenticatedFinancialApplication
+          .createAuthenticatedConnectionApplication
           .mockResolvedValue({
             currentOwnerId:
               vi.fn()
@@ -238,13 +216,33 @@ describe(
             true,
         };
 
-        const supabaseClient = {};
+        const connectionPlatformSuite = {
+          plaidProvider: {
+            exchangePublicToken:
+              mocks.exchangePublicToken,
+          },
+          provisioningService: {
+            provision:
+              mocks.provision,
+          },
+          persistenceService: {
+            persist:
+              mocks.persist,
+          },
+        };
 
         mocks
-          .createAuthenticatedFinancialApplication
+          .getConnectionPlatformSuite
+          .mockResolvedValue(
+            connectionPlatformSuite,
+          );
+
+        mocks
+          .createAuthenticatedConnectionApplication
           .mockResolvedValue({
-            supabaseClient,
             currentOwnerId,
+            getConnectionPlatformSuite:
+              mocks.getConnectionPlatformSuite,
           });
 
 
@@ -288,11 +286,8 @@ describe(
         expect(response.status).toBe(200);
 
         expect(
-          mocks.createConnectionPlatformSuite,
-        ).toHaveBeenCalledWith({
-          supabaseClient,
-          currentOwnerId,
-        });
+          mocks.getConnectionPlatformSuite,
+        ).toHaveBeenCalledOnce();
 
         expect(
           currentOwnerId,
@@ -366,14 +361,37 @@ describe(
     it(
       "returns a server error when provisioning fails",
       async () => {
+        const connectionPlatformSuite = {
+          plaidProvider: {
+            exchangePublicToken:
+              mocks.exchangePublicToken,
+          },
+          provisioningService: {
+            provision:
+              mocks.provision,
+          },
+          persistenceService: {
+            persist:
+              mocks.persist,
+          },
+        };
+
         mocks
-          .createAuthenticatedFinancialApplication
+          .getConnectionPlatformSuite
+          .mockResolvedValue(
+            connectionPlatformSuite,
+          );
+
+        mocks
+          .createAuthenticatedConnectionApplication
           .mockResolvedValue({
             currentOwnerId:
               vi.fn()
                 .mockResolvedValue(
                   "owner-123",
                 ),
+            getConnectionPlatformSuite:
+              mocks.getConnectionPlatformSuite,
           });
 
         mocks

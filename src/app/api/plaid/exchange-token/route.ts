@@ -7,17 +7,13 @@ import {
 } from "@/domains/plaid-adapter";
 
 import {
-  createConnectionPlatformSuite,
-} from "@/infrastructure/composition";
-
-import {
-  createAuthenticatedFinancialApplication,
-} from "@/lib/supabase/createAuthenticatedFinancialApplication";
+  createAuthenticatedConnectionApplication,
+} from "@/lib/supabase/createAuthenticatedConnectionApplication";
 
 export async function POST(request: Request) {
   try {
     const authenticatedApplication =
-      await createAuthenticatedFinancialApplication();
+      await createAuthenticatedConnectionApplication();
 
     if (authenticatedApplication.response) {
       return authenticatedApplication.response;
@@ -45,12 +41,8 @@ export async function POST(request: Request) {
       await authenticatedApplication.currentOwnerId();
 
     const connectionPlatformSuite =
-      createConnectionPlatformSuite({
-        supabaseClient:
-          authenticatedApplication.supabaseClient,
-        currentOwnerId:
-          authenticatedApplication.currentOwnerId,
-      });
+      await authenticatedApplication
+        .getConnectionPlatformSuite();
 
     const exchange =
       await connectionPlatformSuite.plaidProvider
