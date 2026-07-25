@@ -1,0 +1,148 @@
+{
+  "schemaVersion": "1.0",
+  "sessionId": "forge-session-20260716-213930",
+  "sessionDate": "2026-07-16",
+  "phase": {
+    "identifier": "REVIEW_REQUIRED",
+    "title": "REVIEW_REQUIRED",
+    "status": "incomplete"
+  },
+  "objective": {
+    "startingObjective": "REVIEW_REQUIRED",
+    "endingObjective": "REVIEW_REQUIRED"
+  },
+  "repository": {
+    "head": "bfbc2b0b5fff56747599b42346045004f29eadde",
+    "originMain": "bfbc2b0b5fff56747599b42346045004f29eadde",
+    "branch": "main",
+    "workingTreeClean": false,
+    "implementationCommit": null,
+    "governanceCommit": null
+  },
+  "work": {
+    "delivered": [],
+    "modifiedFiles": [
+      "docs/architecture/synchronized/FORGE_SYNC_CONTROL_CENTER.md",
+      "docs/architecture/synchronized/FORGE_SYNC_EVALUATION.md",
+      "docs/architecture/synchronized/FORGE_SYNC_ROADMAP.md",
+      "docs/architecture/synchronized/FORGE_SYNC_SESSION.md",
+      "docs/architecture/synchronized/FORGE_SYNC_STATUS.md",
+      "governance/state/current-governance-state.json",
+      "package-lock.json",
+      "package.json",
+      "scripts/governance/synchronizeShadowGovernance.mjs",
+      "src/app/api/financial/operations/route.ts",
+      "src/app/api/financial/read-models/route.ts",
+      "src/app/forge/page.js",
+      "src/app/import/FinancialImportTool.js",
+      "src/app/import/page.js",
+      "src/application/financial/read-models/FinancialReadModelApplication.js",
+      "src/application/financial/read-models/FinancialReadModelApplication.test.js",
+      "src/components/home/HomeForgeLaunch.js",
+      "src/domains/financial-event/SupabaseFinancialEventRepository.js",
+      "src/domains/financial-event/__tests__/SupabaseFinancialEventRepository.test.js",
+      "src/domains/financial-import/financial-import.service.js",
+      "src/domains/financial-workspace/FinancialEventAggregationService.js",
+      "src/domains/financial-workspace/__tests__/FinancialEventAggregationService.test.js",
+      "src/infrastructure/composition/createFinancialApplicationSuite.js",
+      "src/infrastructure/composition/createFinancialEventRepository.js",
+      "src/lib/supabase.js",
+      "supabase/migrations/20260714_replace_financial_event_idempotency_index.sql",
+      "supabase/migrations/20260715_create_account_balances.sql",
+      "supabase/migrations/20260715_create_financial_accounts.sql",
+      "governance/snapshots/forge-session-20260716-201847.json",
+      "governance/snapshots/forge-session-20260716-205527.json",
+      "governance/snapshots/forge-session-20260716-212520.json",
+      "governance/snapshots/forge-session-20260716-212655.json",
+      "scripts/governance/__tests__/synchronizeGovernanceDocuments.test.mjs",
+      "scripts/governance/synchronizeGovernanceDocuments.mjs",
+      "src/app/api/financial/import/",
+      "src/lib/supabase/",
+      "src/proxy.js",
+      "supabase/.temp/",
+      "supabase/migrations/20260716_replace_financial_event_idempotency_index.sql",
+      "supabase/migrations/20260717_create_financial_accounts.sql",
+      "supabase/migrations/20260718_create_account_balances.sql"
+    ],
+    "knownWarnings": []
+  },
+  "validation": {
+    "focusedTests": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    },
+    "fullTests": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    },
+    "productionBuild": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    }
+  },
+  "completion": {
+    "workComplete": false,
+    "supportedByEvidence": false,
+    "incompleteReason": "The repository evidence collector does not infer session completion. Human review is required."
+  },
+  "nextSession": {
+    "objective": "REVIEW_REQUIRED",
+    "startingInspection": "REVIEW_REQUIRED"
+  },
+  "evidence": {
+    "capturedAt": "2026-07-17T02:39:30.257Z",
+    "latestCommit": {
+      "hash": "bfbc2b0b5fff56747599b42346045004f29eadde",
+      "subject": "Execute shadow pipeline from hybrid governance mode",
+      "committedAt": "2026-07-16T20:55:55-05:00"
+    },
+    "headMatchesOriginMain": true,
+    "gitStatus": [
+      " M docs/architecture/synchronized/FORGE_SYNC_CONTROL_CENTER.md",
+      " M docs/architecture/synchronized/FORGE_SYNC_EVALUATION.md",
+      " M docs/architecture/synchronized/FORGE_SYNC_ROADMAP.md",
+      " M docs/architecture/synchronized/FORGE_SYNC_SESSION.md",
+      " M docs/architecture/synchronized/FORGE_SYNC_STATUS.md",
+      " M governance/state/current-governance-state.json",
+      " M package-lock.json",
+      " M package.json",
+      " M scripts/governance/synchronizeShadowGovernance.mjs",
+      " M src/app/api/financial/operations/route.ts",
+      " M src/app/api/financial/read-models/route.ts",
+      " M src/app/forge/page.js",
+      " M src/app/import/FinancialImportTool.js",
+      " M src/app/import/page.js",
+      " M src/application/financial/read-models/FinancialReadModelApplication.js",
+      " M src/application/financial/read-models/FinancialReadModelApplication.test.js",
+      " M src/components/home/HomeForgeLaunch.js",
+      " M src/domains/financial-event/SupabaseFinancialEventRepository.js",
+      " M src/domains/financial-event/__tests__/SupabaseFinancialEventRepository.test.js",
+      " M src/domains/financial-import/financial-import.service.js",
+      " M src/domains/financial-workspace/FinancialEventAggregationService.js",
+      " M src/domains/financial-workspace/__tests__/FinancialEventAggregationService.test.js",
+      " M src/infrastructure/composition/createFinancialApplicationSuite.js",
+      " M src/infrastructure/composition/createFinancialEventRepository.js",
+      " M src/lib/supabase.js",
+      " D supabase/migrations/20260714_replace_financial_event_idempotency_index.sql",
+      " D supabase/migrations/20260715_create_account_balances.sql",
+      " D supabase/migrations/20260715_create_financial_accounts.sql",
+      "?? governance/snapshots/forge-session-20260716-201847.json",
+      "?? governance/snapshots/forge-session-20260716-205527.json",
+      "?? governance/snapshots/forge-session-20260716-212520.json",
+      "?? governance/snapshots/forge-session-20260716-212655.json",
+      "?? scripts/governance/__tests__/synchronizeGovernanceDocuments.test.mjs",
+      "?? scripts/governance/synchronizeGovernanceDocuments.mjs",
+      "?? src/app/api/financial/import/",
+      "?? src/lib/supabase/",
+      "?? src/proxy.js",
+      "?? supabase/.temp/",
+      "?? supabase/migrations/20260716_replace_financial_event_idempotency_index.sql",
+      "?? supabase/migrations/20260717_create_financial_accounts.sql",
+      "?? supabase/migrations/20260718_create_account_balances.sql"
+    ],
+    "selectedValidationArtifact": null
+  }
+}
