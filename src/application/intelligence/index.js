@@ -5,3 +5,7 @@ export {
 export {
   CanonicalIntelligenceContextBuilder,
 } from "./CanonicalIntelligenceContextBuilder.js";
+
+export {
+  CanonicalDashboardProjection,
+} from "./CanonicalDashboardProjection.js";

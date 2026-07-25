@@ -14,6 +14,7 @@ export {
 export {
   CanonicalIntelligenceContext,
   CanonicalIntelligenceContextBuilder,
+  CanonicalDashboardProjection,
 } from "./intelligence/index.js";
 
 export {

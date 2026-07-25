@@ -1,4 +1,8 @@
 import {
+  CanonicalDashboardProjection,
+} from "../intelligence/index.js";
+
+import {
   buildDashboardIntelligenceFallback,
   buildDashboardIntelligenceResponse,
 } from "./dashboardIntelligenceContract.js";
@@ -53,6 +57,14 @@ export class ForgeDashboardApplication {
   }
 
   static normalizeDashboardIntelligence(input) {
+    if (
+      input?.type === "canonical-intelligence-context"
+    ) {
+      return buildDashboardIntelligenceResponse(
+        CanonicalDashboardProjection.project(input),
+      );
+    }
+
     return buildDashboardIntelligenceResponse(input);
   }
 
