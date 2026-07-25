@@ -420,6 +420,10 @@ describe("FinancialReadModelApplication", () => {
         },
         balanceSheetLines:
           positionProjection.balanceSheetLines,
+        assets:
+          positionProjection.assets || [],
+        liabilities:
+          positionProjection.liabilities || [],
         metadata: {
           provider:
             "financial-events+financial-position",

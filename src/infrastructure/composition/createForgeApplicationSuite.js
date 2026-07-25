@@ -1,4 +1,8 @@
 import {
+  CanonicalIntelligenceContextBuilder,
+} from "@/application";
+
+import {
   createConnectionPlatformSuite,
   createFinancialApplicationSuite,
 } from "@/infrastructure/composition";
@@ -28,6 +32,16 @@ export async function createForgeApplicationSuite(
         deps.currentOwnerId,
     });
 
+  const canonicalIntelligenceContextBuilder =
+    deps.canonicalIntelligenceContextBuilder ||
+    new CanonicalIntelligenceContextBuilder({
+      financialReadModelApplication:
+        financialApplicationSuite.readModelApplication,
+
+      connectionOperationsApplication:
+        connectionPlatformSuite.connectionOperationsApplication,
+    });
+
   return Object.freeze({
     connectionPlatformSuite,
     financialApplicationSuite,
@@ -40,6 +54,8 @@ export async function createForgeApplicationSuite(
 
     financialReadModelApplication:
       financialApplicationSuite.readModelApplication,
+
+    canonicalIntelligenceContextBuilder,
 
     forgeDashboardApplication:
       financialApplicationSuite.forgeDashboardApplication,

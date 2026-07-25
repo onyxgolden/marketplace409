@@ -37,6 +37,8 @@ function mergeDashboardProjections({
       ...positionProjection.kpis,
     }),
     health: activityDashboard.health,
+    assets: positionProjection.assets || [],
+    liabilities: positionProjection.liabilities || [],
     balanceSheetLines: positionProjection.balanceSheetLines,
     metadata: freezeObject({
       ...activityDashboard.metadata,

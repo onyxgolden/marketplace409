@@ -41,6 +41,8 @@ describe("createForgeApplicationSuite", () => {
       readModelApplication: {},
     };
 
+    const canonicalIntelligenceContextBuilder = {};
+
     mocks.createConnectionPlatformSuite.mockResolvedValue(
       connectionPlatformSuite,
     );
@@ -57,6 +59,7 @@ describe("createForgeApplicationSuite", () => {
         supabaseClient,
         ownerId: "owner-1",
         currentOwnerId,
+        canonicalIntelligenceContextBuilder,
       });
 
     expect(suite).toEqual({
@@ -68,6 +71,7 @@ describe("createForgeApplicationSuite", () => {
         connectionPlatformSuite.connectionReadModelApplication,
       financialReadModelApplication:
         financialApplicationSuite.readModelApplication,
+      canonicalIntelligenceContextBuilder,
     });
 
     expect(
@@ -97,6 +101,7 @@ describe("createForgeApplicationSuite", () => {
       await createForgeApplicationSuite({
         connectionPlatformSuite,
         financialApplicationSuite,
+        canonicalIntelligenceContextBuilder: {},
       });
 
     expect(suite.connectionPlatformSuite)

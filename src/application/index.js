@@ -12,6 +12,11 @@ export {
 } from "./favorites/index.js";
 
 export {
+  CanonicalIntelligenceContext,
+  CanonicalIntelligenceContextBuilder,
+} from "./intelligence/index.js";
+
+export {
   FinancialReportingApplication,
   FinancialSnapshotApplication,
   FinancialExplainabilityApplication,
