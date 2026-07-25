@@ -188,3 +188,24 @@ export {
 export {
   InMemoryInstitutionReferenceRepository,
 } from "./in-memory-institution-reference.repository";
+
+export type {
+  CredentialVaultRepository,
+} from "./credential-vault.repository";
+
+export type {
+  CredentialVaultStorageInput,
+  CredentialVaultStorageResult,
+} from "./credential-vault.types";
+
+export {
+  toCredentialVaultStorageResult,
+} from "./credential-vault.types";
+
+export {
+  CredentialVaultService,
+} from "./credential-vault.service";
+
+export {
+  InMemoryCredentialVaultRepository,
+} from "./in-memory-credential-vault.repository";

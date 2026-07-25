@@ -9,8 +9,10 @@ AccountImportService,
 ConnectionImportOrchestrator,
 ConnectionPersistenceService,
 ConnectionProvisioningService,
+CredentialVaultService,
 InMemoryConnectionRepository,
 InMemoryCredentialReferenceRepository,
+InMemoryCredentialVaultRepository,
 InMemoryInstitutionReferenceRepository,
 } from "../../../domains/connection";
 
@@ -59,6 +61,15 @@ expect(suite.connectionRepository).toBeInstanceOf(
 );
 expect(suite.credentialReferenceRepository).toBeInstanceOf(
   InMemoryCredentialReferenceRepository,
+);
+expect(suite.credentialVault).toBeInstanceOf(
+  InMemoryCredentialVaultRepository,
+);
+expect(suite.credentialVaultService).toBeInstanceOf(
+  CredentialVaultService,
+);
+expect(suite.credentialVaultService.repository).toBe(
+  suite.credentialVault,
 );
 expect(suite.institutionReferenceRepository).toBeInstanceOf(
   InMemoryInstitutionReferenceRepository,
@@ -118,6 +129,7 @@ const connectionRepository = {
 getAll: vi.fn(),
 };
 const credentialReferenceRepository = {};
+const credentialVault = {};
 const institutionReferenceRepository = {
 getAll: vi.fn(),
 };
@@ -132,6 +144,7 @@ const transactionMapper = {};
 const suite = createConnectionPlatformSuite({
   connectionRepository,
   credentialReferenceRepository,
+  credentialVault,
   institutionReferenceRepository,
   financialAccountRepository,
   accountBalanceRepository,
@@ -146,6 +159,12 @@ expect(suite.connectionRepository).toBe(
 );
 expect(suite.credentialReferenceRepository).toBe(
   credentialReferenceRepository,
+);
+expect(suite.credentialVault).toBe(
+  credentialVault,
+);
+expect(suite.credentialVaultService.repository).toBe(
+  credentialVault,
 );
 expect(suite.institutionReferenceRepository).toBe(
   institutionReferenceRepository,
@@ -216,6 +235,7 @@ plaidProvider,
 const providerRegistry = {};
 const provisioningService = {};
 const persistenceService = {};
+const credentialVaultService = {};
 const connectionImportOrchestrator = {};
 const accountImportService = {};
 const financialAccountImportService = {};
@@ -233,6 +253,7 @@ const suite = createConnectionPlatformSuite({
   providerRegistry,
   provisioningService,
   persistenceService,
+  credentialVaultService,
   connectionImportOrchestrator,
   accountImportService,
   financialAccountImportService,
@@ -254,6 +275,9 @@ expect(suite.provisioningService).toBe(
 );
 expect(suite.persistenceService).toBe(
   persistenceService,
+);
+expect(suite.credentialVaultService).toBe(
+  credentialVaultService,
 );
 expect(suite.connectionImportOrchestrator).toBe(
   connectionImportOrchestrator,

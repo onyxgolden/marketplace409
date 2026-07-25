@@ -3,8 +3,10 @@ AccountImportService,
 ConnectionImportOrchestrator,
 ConnectionPersistenceService,
 ConnectionProvisioningService,
+CredentialVaultService,
 InMemoryConnectionRepository,
 InMemoryCredentialReferenceRepository,
+InMemoryCredentialVaultRepository,
 InMemoryInstitutionReferenceRepository,
 createConnectionProviderRegistry,
 } from "../../domains/connection";
@@ -114,6 +116,14 @@ CredentialReferenceRepositoryStorage.SUPABASE
     })
   : new InMemoryCredentialReferenceRepository()
 );
+
+const credentialVault =
+deps.credentialVault ||
+new InMemoryCredentialVaultRepository();
+
+const credentialVaultService =
+deps.credentialVaultService ||
+new CredentialVaultService(credentialVault);
 
 const institutionReferenceRepositoryStorage =
 deps.institutionReferenceRepositoryStorage ||
@@ -303,6 +313,8 @@ plaidProvider,
 providerRegistry,
 connectionRepository,
 credentialReferenceRepository,
+credentialVault,
+credentialVaultService,
 institutionReferenceRepository,
 financialAccountRepository,
 accountBalanceRepository,
