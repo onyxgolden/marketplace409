@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { createFinancialApplicationSuite } from "@/infrastructure/composition/createFinancialApplicationSuite.js";
+import { useMemo, useState } from "react";
 import { Money } from "@/platform";
 
 function formatCurrency(cents) {
   return new Money(cents).toString();
 }
 
-export default function FinancialSnapshotTool() {
-  const [snapshotApplication, setSnapshotApplication] = useState(null);
+export default function FinancialSnapshotTool({
+  snapshotApplication,
+}) {
 
   const [form, setForm] = useState({
     cash: "10000",
@@ -18,20 +18,6 @@ export default function FinancialSnapshotTool() {
     revenue: "12000",
     expenses: "8500",
   });
-
-  useEffect(() => {
-    let active = true;
-
-    createFinancialApplicationSuite().then((suite) => {
-      if (active) {
-        setSnapshotApplication(suite.financialSnapshotViewApplication);
-      }
-    });
-
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const snapshot = useMemo(
     () => snapshotApplication?.buildSnapshot(form) ?? null,
