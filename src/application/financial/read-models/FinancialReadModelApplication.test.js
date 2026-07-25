@@ -388,6 +388,10 @@ describe("FinancialReadModelApplication", () => {
     ).toHaveBeenCalledOnce();
 
     expect(
+      financialPositionQueryService.buildPosition,
+    ).toHaveBeenCalledWith("owner-1");
+
+    expect(
       financialPositionReadModelAdapter.buildPosition,
     ).toHaveBeenCalledWith(position);
 

@@ -3,6 +3,16 @@ import { createFinancialSnapshotRepository } from "./createFinancialSnapshotRepo
 import { createFinancialEventRepository } from "./createFinancialEventRepository.js";
 import { createDecisionOutcomeRepository } from "./createDecisionOutcomeRepository.js";
 
+import {
+  createLazyFinancialAccountRepository,
+  FinancialAccountRepositoryStorage,
+} from "./createFinancialAccountRepository.js";
+
+import {
+  AccountBalanceRepositoryStorage,
+  createLazyAccountBalanceRepository,
+} from "./createAccountBalanceRepository.js";
+
 import { DecisionApplication } from "../../application/decision";
 import { DecisionOutcomeEvaluator } from "../../domains/decision";
 
@@ -54,6 +64,14 @@ import {
   FinancialPositionQueryService,
 } from "../../domains/financial-position";
 
+import {
+  InMemoryFinancialAccountRepository,
+} from "../../domains/financial-account";
+
+import {
+  InMemoryAccountBalanceRepository,
+} from "../../domains/account-balance";
+
 import { DemoFinancialDataProvider } from "../../domains/ledger";
 
 import { FinancialOperationsService } from "../../domains/financial-operations";
@@ -65,28 +83,6 @@ import { traceExplorerService } from "../../domains/ledger/trace/TraceExplorerSe
 import { traceQueryService } from "../../domains/ledger/trace/TraceQueryService.js";
 import { NetWorthService } from "../../domains/networth";
 import { RiskDashboardService } from "../../domains/risk";
-
-function createLazyAssetRepository() {
-  return Object.freeze({
-    async getAll() {
-      const { AssetRepository } =
-        await import("../../domains/asset");
-
-      return AssetRepository.getAll();
-    },
-  });
-}
-
-function createLazyLiabilityRepository() {
-  return Object.freeze({
-    async getAll() {
-      const { LiabilityRepository } =
-        await import("../../domains/liability");
-
-      return LiabilityRepository.getAll();
-    },
-  });
-}
 
 export async function createFinancialApplicationSuite(deps = {}) {
   const snapshotRepository =
@@ -147,19 +143,45 @@ export async function createFinancialApplicationSuite(deps = {}) {
     deps.financialWorkspaceReadModelAdapter ||
     financialWorkspaceReadModelAdapter;
 
-  const assetRepository =
-    deps.assetRepository ||
-    createLazyAssetRepository();
+  const financialAccountRepositoryStorage =
+    deps.financialAccountRepositoryStorage ||
+    process.env.FINANCIAL_ACCOUNT_REPOSITORY ||
+    FinancialAccountRepositoryStorage.MEMORY;
 
-  const liabilityRepository =
-    deps.liabilityRepository ||
-    createLazyLiabilityRepository();
+  const financialAccountRepository =
+    deps.financialAccountRepository ||
+    (
+      financialAccountRepositoryStorage ===
+      FinancialAccountRepositoryStorage.SUPABASE
+        ? createLazyFinancialAccountRepository({
+            storage:
+              FinancialAccountRepositoryStorage.SUPABASE,
+          })
+        : new InMemoryFinancialAccountRepository()
+    );
+
+  const accountBalanceRepositoryStorage =
+    deps.accountBalanceRepositoryStorage ||
+    process.env.ACCOUNT_BALANCE_REPOSITORY ||
+    AccountBalanceRepositoryStorage.MEMORY;
+
+  const accountBalanceRepository =
+    deps.accountBalanceRepository ||
+    (
+      accountBalanceRepositoryStorage ===
+      AccountBalanceRepositoryStorage.SUPABASE
+        ? createLazyAccountBalanceRepository({
+            storage:
+              AccountBalanceRepositoryStorage.SUPABASE,
+          })
+        : new InMemoryAccountBalanceRepository()
+    );
 
   const financialPositionQueryService =
     deps.financialPositionQueryService ||
     new FinancialPositionQueryService({
-      assetRepository,
-      liabilityRepository,
+      financialAccountRepository,
+      accountBalanceRepository,
       netWorthService:
         deps.positionNetWorthService || NetWorthService,
     });
@@ -300,8 +322,8 @@ export async function createFinancialApplicationSuite(deps = {}) {
     decisionOutcomeRepository,
     decisionOutcomeQueryService,
     decisionOutcomeReadModelAdapter,
-    assetRepository,
-    liabilityRepository,
+    financialAccountRepository,
+    accountBalanceRepository,
     financialIntelligenceApplication,
     financialDecisionApplication,
     financialDecisionOutcomeApplication,

@@ -188,18 +188,28 @@ export class FinancialReadModelApplication {
     );
   }
 
-  async buildWorkspace() {
+  async resolveOwnerId() {
     const ownerId = await this.currentOwnerId();
 
     if (!ownerId) {
       throw new Error("Authenticated owner id is required.");
     }
 
-    return this.financialWorkspaceQueryService.buildWorkspace(ownerId);
+    return ownerId;
+  }
+
+  async buildWorkspace(ownerId = null) {
+    const resolvedOwnerId =
+      ownerId || await this.resolveOwnerId();
+
+    return this.financialWorkspaceQueryService.buildWorkspace(
+      resolvedOwnerId,
+    );
   }
 
   async buildDashboard() {
-    const workspace = await this.buildWorkspace();
+    const ownerId = await this.resolveOwnerId();
+    const workspace = await this.buildWorkspace(ownerId);
     const activityDashboard =
       this.readModelAdapter.buildDashboard(workspace);
 
@@ -211,7 +221,9 @@ export class FinancialReadModelApplication {
     }
 
     const position =
-      await this.financialPositionQueryService.buildPosition();
+      await this.financialPositionQueryService.buildPosition(
+        ownerId,
+      );
 
     const positionProjection =
       this.financialPositionReadModelAdapter.buildPosition(position);

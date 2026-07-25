@@ -132,12 +132,12 @@ describe("createFinancialApplicationSuite", () => {
       buildReports: vi.fn(),
     };
 
-    const assetRepository = {
-      getAll: vi.fn(),
+    const financialAccountRepository = {
+      findByOwnerId: vi.fn(),
     };
 
-    const liabilityRepository = {
-      getAll: vi.fn(),
+    const accountBalanceRepository = {
+      findLatestByOwnerId: vi.fn(),
     };
 
     const financialPositionQueryService = {
@@ -157,8 +157,8 @@ describe("createFinancialApplicationSuite", () => {
       snapshotRepository: {},
       financialWorkspaceQueryService,
       financialWorkspaceReadModelAdapter,
-      assetRepository,
-      liabilityRepository,
+      financialAccountRepository,
+      accountBalanceRepository,
       financialPositionQueryService,
       financialPositionReadModelAdapter,
       currentOwnerId,
@@ -184,19 +184,19 @@ describe("createFinancialApplicationSuite", () => {
       financialPositionReadModelAdapter,
     );
 
-    expect(suite.assetRepository).toBe(assetRepository);
-    expect(suite.liabilityRepository).toBe(
-      liabilityRepository,
+    expect(suite.financialAccountRepository).toBe(financialAccountRepository);
+    expect(suite.accountBalanceRepository).toBe(
+      accountBalanceRepository,
     );
   });
 
   test("constructs the financial position query service from injected repositories", async () => {
-    const assetRepository = {
-      getAll: vi.fn(),
+    const financialAccountRepository = {
+      findByOwnerId: vi.fn(),
     };
 
-    const liabilityRepository = {
-      getAll: vi.fn(),
+    const accountBalanceRepository = {
+      findLatestByOwnerId: vi.fn(),
     };
 
     const positionNetWorthService = {
@@ -208,18 +208,18 @@ describe("createFinancialApplicationSuite", () => {
       dashboardService: {},
       snapshotApplication: {},
       snapshotRepository: {},
-      assetRepository,
-      liabilityRepository,
+      financialAccountRepository,
+      accountBalanceRepository,
       positionNetWorthService,
     });
 
-    expect(suite.financialPositionQueryService.assetRepository).toBe(
-      assetRepository,
+    expect(suite.financialPositionQueryService.financialAccountRepository).toBe(
+      financialAccountRepository,
     );
 
     expect(
-      suite.financialPositionQueryService.liabilityRepository,
-    ).toBe(liabilityRepository);
+      suite.financialPositionQueryService.accountBalanceRepository,
+    ).toBe(accountBalanceRepository);
 
     expect(
       suite.financialPositionQueryService.netWorthService,
@@ -693,11 +693,11 @@ describe("createFinancialApplicationSuite", () => {
       financialEventRepository: {
         findByOwnerId: vi.fn(async () => []),
       },
-      assetRepository: {
-        getAll: vi.fn(async () => []),
+      financialAccountRepository: {
+        findByOwnerId: vi.fn(async () => []),
       },
-      liabilityRepository: {
-        getAll: vi.fn(async () => []),
+      accountBalanceRepository: {
+        findLatestByOwnerId: vi.fn(async () => []),
       },
       currentOwnerId: vi.fn(async () => "owner-test"),
     });

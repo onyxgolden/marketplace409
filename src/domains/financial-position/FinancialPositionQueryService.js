@@ -1,9 +1,77 @@
 import { NetWorthService } from "../networth/networth.service";
 
+const ASSET_ACCOUNT_TYPES = Object.freeze(
+  new Set(["depository", "investment"]),
+);
+
+const LIABILITY_ACCOUNT_TYPES = Object.freeze(
+  new Set(["credit", "loan"]),
+);
+
 function freezeItems(items) {
   return Object.freeze(
     items.map((item) => Object.freeze({ ...item })),
   );
+}
+
+function centsToDollars(cents) {
+  return Number(cents) / 100;
+}
+
+function buildBalanceByAccountId(accountBalances) {
+  return new Map(
+    accountBalances.map((balance) => [
+      balance.financialAccountId,
+      balance,
+    ]),
+  );
+}
+
+function projectAssets(financialAccounts, balanceByAccountId) {
+  return financialAccounts
+    .filter((account) => ASSET_ACCOUNT_TYPES.has(account.type))
+    .flatMap((account) => {
+      const balance = balanceByAccountId.get(account.id);
+
+      if (!balance) {
+        return [];
+      }
+
+      return [{
+        id: account.id,
+        name: account.name,
+        category: account.subtype || account.type,
+        current_value: centsToDollars(
+          balance.currentBalanceCents,
+        ),
+      }];
+    });
+}
+
+function projectLiabilities(
+  financialAccounts,
+  balanceByAccountId,
+) {
+  return financialAccounts
+    .filter((account) =>
+      LIABILITY_ACCOUNT_TYPES.has(account.type),
+    )
+    .flatMap((account) => {
+      const balance = balanceByAccountId.get(account.id);
+
+      if (!balance) {
+        return [];
+      }
+
+      return [{
+        id: account.id,
+        name: account.name,
+        category: account.subtype || account.type,
+        current_balance: centsToDollars(
+          balance.currentBalanceCents,
+        ),
+      }];
+    });
 }
 
 function mapAssetsForNetWorth(assets) {
@@ -26,25 +94,27 @@ function mapLiabilitiesForNetWorth(liabilities) {
 
 export class FinancialPositionQueryService {
   constructor({
-    assetRepository,
-    liabilityRepository,
+    financialAccountRepository,
+    accountBalanceRepository,
     netWorthService = NetWorthService,
   } = {}) {
     if (
-      !assetRepository ||
-      typeof assetRepository.getAll !== "function"
+      !financialAccountRepository ||
+      typeof financialAccountRepository.findByOwnerId !==
+        "function"
     ) {
       throw new Error(
-        "FinancialPositionQueryService requires an asset repository.",
+        "FinancialPositionQueryService requires a financial account repository.",
       );
     }
 
     if (
-      !liabilityRepository ||
-      typeof liabilityRepository.getAll !== "function"
+      !accountBalanceRepository ||
+      typeof accountBalanceRepository.findLatestByOwnerId !==
+        "function"
     ) {
       throw new Error(
-        "FinancialPositionQueryService requires a liability repository.",
+        "FinancialPositionQueryService requires an account balance repository.",
       );
     }
 
@@ -57,39 +127,72 @@ export class FinancialPositionQueryService {
       );
     }
 
-    this.assetRepository = assetRepository;
-    this.liabilityRepository = liabilityRepository;
+    this.financialAccountRepository =
+      financialAccountRepository;
+    this.accountBalanceRepository =
+      accountBalanceRepository;
     this.netWorthService = netWorthService;
 
     Object.freeze(this);
   }
 
-  async buildPosition() {
-    const [assets, liabilities] = await Promise.all([
-      this.assetRepository.getAll(),
-      this.liabilityRepository.getAll(),
-    ]);
+  async buildPosition(ownerId) {
+    if (!ownerId) {
+      throw new Error(
+        "FinancialPositionQueryService requires an owner id.",
+      );
+    }
 
-    const immutableAssets = freezeItems(assets);
-    const immutableLiabilities = freezeItems(liabilities);
+    const [financialAccounts, accountBalances] =
+      await Promise.all([
+        this.financialAccountRepository.findByOwnerId(
+          ownerId,
+        ),
+        this.accountBalanceRepository.findLatestByOwnerId(
+          ownerId,
+        ),
+      ]);
+
+    const immutableAccountBalances =
+      freezeItems(accountBalances);
+
+    const balanceByAccountId =
+      buildBalanceByAccountId(
+        immutableAccountBalances,
+      );
+
+    const immutableAssets = freezeItems(
+      projectAssets(
+        financialAccounts,
+        balanceByAccountId,
+      ),
+    );
+
+    const immutableLiabilities = freezeItems(
+      projectLiabilities(
+        financialAccounts,
+        balanceByAccountId,
+      ),
+    );
 
     const netWorth = Object.freeze(
       this.netWorthService.calculate(
         mapAssetsForNetWorth(immutableAssets),
-        mapLiabilitiesForNetWorth(immutableLiabilities),
+        mapLiabilitiesForNetWorth(
+          immutableLiabilities,
+        ),
       ),
     );
 
     return Object.freeze({
       assets: immutableAssets,
       liabilities: immutableLiabilities,
-      accountBalances: Object.freeze([]),
+      accountBalances: immutableAccountBalances,
       netWorth,
       metrics: null,
       insights: Object.freeze([]),
       metadata: Object.freeze({
-        accountBalancesStatus:
-          "unavailable-without-owner-wide-balance-query",
+        accountBalancesStatus: "repository-backed",
         metricsStatus:
           "unavailable-without-canonical-ledger-position",
         insightsStatus:

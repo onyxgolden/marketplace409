@@ -6,29 +6,82 @@ import {
 
 function createDependencies() {
   return {
-    assetRepository: {
-      getAll: vi.fn().mockResolvedValue([
+    financialAccountRepository: {
+      findByOwnerId: vi.fn().mockResolvedValue([
         {
-          id: "asset-1",
+          id: "account-cash",
           name: "Operating Cash",
-          category: "cash",
-          current_value: 125000,
+          type: "depository",
+          subtype: "checking",
         },
         {
-          id: "asset-2",
-          name: "Rental Property",
-          category: "real_estate",
-          current_value: 300000,
+          id: "account-investment",
+          name: "Brokerage",
+          type: "investment",
+          subtype: "brokerage",
+        },
+        {
+          id: "account-credit",
+          name: "Business Credit Card",
+          type: "credit",
+          subtype: "credit_card",
+        },
+        {
+          id: "account-loan",
+          name: "Rental Mortgage",
+          type: "loan",
+          subtype: "mortgage",
+        },
+        {
+          id: "account-other",
+          name: "Unsupported Account",
+          type: "other",
+          subtype: "other",
+        },
+        {
+          id: "account-unbalanced",
+          name: "Missing Balance",
+          type: "depository",
+          subtype: "checking",
         },
       ]),
     },
-    liabilityRepository: {
-      getAll: vi.fn().mockResolvedValue([
+    accountBalanceRepository: {
+      findLatestByOwnerId: vi.fn().mockResolvedValue([
         {
-          id: "liability-1",
-          name: "Rental Mortgage",
-          category: "mortgage",
-          current_balance: 200000,
+          id: "balance-cash",
+          financialAccountId: "account-cash",
+          currentBalanceCents: 12500000,
+          availableBalanceCents: 12000000,
+          asOf: "2026-07-24T00:00:00.000Z",
+        },
+        {
+          id: "balance-investment",
+          financialAccountId: "account-investment",
+          currentBalanceCents: 30000000,
+          availableBalanceCents: null,
+          asOf: "2026-07-24T00:00:00.000Z",
+        },
+        {
+          id: "balance-credit",
+          financialAccountId: "account-credit",
+          currentBalanceCents: 500000,
+          availableBalanceCents: null,
+          asOf: "2026-07-24T00:00:00.000Z",
+        },
+        {
+          id: "balance-loan",
+          financialAccountId: "account-loan",
+          currentBalanceCents: 19500000,
+          availableBalanceCents: null,
+          asOf: "2026-07-24T00:00:00.000Z",
+        },
+        {
+          id: "balance-other",
+          financialAccountId: "account-other",
+          currentBalanceCents: 999900,
+          availableBalanceCents: null,
+          asOf: "2026-07-24T00:00:00.000Z",
         },
       ]),
     },
@@ -36,14 +89,53 @@ function createDependencies() {
 }
 
 describe("FinancialPositionQueryService", () => {
-  test("builds an immutable financial position from repository data", async () => {
+  test("builds an immutable owner-scoped position from canonical repositories", async () => {
     const dependencies = createDependencies();
-    const service = new FinancialPositionQueryService(dependencies);
+    const service =
+      new FinancialPositionQueryService(dependencies);
 
-    const position = await service.buildPosition();
+    const position =
+      await service.buildPosition("owner-1");
 
-    expect(dependencies.assetRepository.getAll).toHaveBeenCalledOnce();
-    expect(dependencies.liabilityRepository.getAll).toHaveBeenCalledOnce();
+    expect(
+      dependencies.financialAccountRepository
+        .findByOwnerId,
+    ).toHaveBeenCalledWith("owner-1");
+
+    expect(
+      dependencies.accountBalanceRepository
+        .findLatestByOwnerId,
+    ).toHaveBeenCalledWith("owner-1");
+
+    expect(position.assets).toEqual([
+      {
+        id: "account-cash",
+        name: "Operating Cash",
+        category: "checking",
+        current_value: 125000,
+      },
+      {
+        id: "account-investment",
+        name: "Brokerage",
+        category: "brokerage",
+        current_value: 300000,
+      },
+    ]);
+
+    expect(position.liabilities).toEqual([
+      {
+        id: "account-credit",
+        name: "Business Credit Card",
+        category: "credit_card",
+        current_balance: 5000,
+      },
+      {
+        id: "account-loan",
+        name: "Rental Mortgage",
+        category: "mortgage",
+        current_balance: 195000,
+      },
+    ]);
 
     expect(position.netWorth).toEqual({
       totalAssets: 425000,
@@ -52,31 +144,58 @@ describe("FinancialPositionQueryService", () => {
       debtToAssetRatio: 200000 / 425000,
     });
 
-    expect(position.assets).toHaveLength(2);
-    expect(position.liabilities).toHaveLength(1);
+    expect(position.accountBalances).toHaveLength(5);
 
     expect(Object.isFrozen(position)).toBe(true);
     expect(Object.isFrozen(position.assets)).toBe(true);
     expect(Object.isFrozen(position.assets[0])).toBe(true);
     expect(Object.isFrozen(position.liabilities)).toBe(true);
+    expect(Object.isFrozen(position.accountBalances)).toBe(
+      true,
+    );
+    expect(
+      Object.isFrozen(position.accountBalances[0]),
+    ).toBe(true);
     expect(Object.isFrozen(position.netWorth)).toBe(true);
     expect(Object.isFrozen(position.metadata)).toBe(true);
   });
 
-  test("does not fabricate account balances, metrics, or insights", async () => {
-    const service = new FinancialPositionQueryService(
-      createDependencies(),
-    );
+  test("skips unsupported accounts and accounts without balances", async () => {
+    const service =
+      new FinancialPositionQueryService(
+        createDependencies(),
+      );
 
-    const position = await service.buildPosition();
+    const position =
+      await service.buildPosition("owner-1");
 
-    expect(position.accountBalances).toEqual([]);
+    expect(
+      position.assets.some(
+        (asset) => asset.id === "account-unbalanced",
+      ),
+    ).toBe(false);
+
+    expect(
+      [...position.assets, ...position.liabilities].some(
+        (item) => item.id === "account-other",
+      ),
+    ).toBe(false);
+  });
+
+  test("reports canonical account balances without fabricating metrics or insights", async () => {
+    const service =
+      new FinancialPositionQueryService(
+        createDependencies(),
+      );
+
+    const position =
+      await service.buildPosition("owner-1");
+
     expect(position.metrics).toBeNull();
     expect(position.insights).toEqual([]);
 
     expect(position.metadata).toEqual({
-      accountBalancesStatus:
-        "unavailable-without-owner-wide-balance-query",
+      accountBalancesStatus: "repository-backed",
       metricsStatus:
         "unavailable-without-canonical-ledger-position",
       insightsStatus:
@@ -85,16 +204,23 @@ describe("FinancialPositionQueryService", () => {
   });
 
   test("returns a valid empty position when repositories contain no records", async () => {
-    const service = new FinancialPositionQueryService({
-      assetRepository: {
-        getAll: vi.fn().mockResolvedValue([]),
-      },
-      liabilityRepository: {
-        getAll: vi.fn().mockResolvedValue([]),
-      },
-    });
+    const service =
+      new FinancialPositionQueryService({
+        financialAccountRepository: {
+          findByOwnerId: vi.fn().mockResolvedValue([]),
+        },
+        accountBalanceRepository: {
+          findLatestByOwnerId:
+            vi.fn().mockResolvedValue([]),
+        },
+      });
 
-    const position = await service.buildPosition();
+    const position =
+      await service.buildPosition("owner-1");
+
+    expect(position.assets).toEqual([]);
+    expect(position.liabilities).toEqual([]);
+    expect(position.accountBalances).toEqual([]);
 
     expect(position.netWorth).toEqual({
       totalAssets: 0,
@@ -104,23 +230,49 @@ describe("FinancialPositionQueryService", () => {
     });
   });
 
-  test("requires all repository dependencies", () => {
+  test("requires an authenticated owner id", async () => {
+    const dependencies = createDependencies();
+    const service =
+      new FinancialPositionQueryService(dependencies);
+
+    await expect(
+      service.buildPosition(),
+    ).rejects.toThrow(
+      "FinancialPositionQueryService requires an owner id.",
+    );
+
+    expect(
+      dependencies.financialAccountRepository
+        .findByOwnerId,
+    ).not.toHaveBeenCalled();
+
+    expect(
+      dependencies.accountBalanceRepository
+        .findLatestByOwnerId,
+    ).not.toHaveBeenCalled();
+  });
+
+  test("requires all canonical repository dependencies", () => {
     expect(
       () =>
         new FinancialPositionQueryService({
-          liabilityRepository: { getAll: vi.fn() },
+          accountBalanceRepository: {
+            findLatestByOwnerId: vi.fn(),
+          },
         }),
     ).toThrow(
-      "FinancialPositionQueryService requires an asset repository.",
+      "FinancialPositionQueryService requires a financial account repository.",
     );
 
     expect(
       () =>
         new FinancialPositionQueryService({
-          assetRepository: { getAll: vi.fn() },
+          financialAccountRepository: {
+            findByOwnerId: vi.fn(),
+          },
         }),
     ).toThrow(
-      "FinancialPositionQueryService requires a liability repository.",
+      "FinancialPositionQueryService requires an account balance repository.",
     );
   });
 });
