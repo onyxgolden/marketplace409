@@ -1,10 +1,20 @@
 import Link from "next/link";
 
 import ForgeDashboardClient from "@/components/forge/ForgeDashboardClient";
+import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 
 export const dynamic = "force-dynamic";
 
-export default function ForgePage() {
+export default async function ForgePage() {
+  const forgeApplication =
+    await createAuthenticatedForgeApplication();
+
+  if (forgeApplication.response) {
+    return forgeApplication.response;
+  }
+
+  const forgeApplicationSuite =
+    await forgeApplication.getForgeApplicationSuite();
   return (
     <div>
       <section className="mx-auto max-w-[1600px] px-4 pt-4 lg:px-8 lg:pt-6">
@@ -32,7 +42,11 @@ export default function ForgePage() {
         </div>
       </section>
 
-      <ForgeDashboardClient />
+      <ForgeDashboardClient
+        forgeDashboardApplication={
+          forgeApplicationSuite.forgeDashboardApplication
+        }
+      />
     </div>
   );
 }

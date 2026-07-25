@@ -3,19 +3,20 @@
 import { useEffect, useMemo, useState } from "react";
 
 import ForgeDashboardShell from "@/components/forge/ForgeDashboardShell";
-import { ForgeDashboardApplication } from "@/application/financial";
 
 function formatCurrency(value) {
   if (value == null) return "$0";
   return `$${Number(value).toLocaleString()}`;
 }
 
-export default function ForgeDashboardClient() {
+export default function ForgeDashboardClient({
+  forgeDashboardApplication,
+}) {
   const [view, setView] = useState("networth");
 
   const [dashboardIntelligence, setDashboardIntelligence] =
     useState(() =>
-      ForgeDashboardApplication.buildLoadingDashboardIntelligence(),
+      forgeDashboardApplication.buildLoadingDashboardIntelligence(),
     );
 
   const [readModels, setReadModels] = useState(null);
@@ -23,13 +24,13 @@ export default function ForgeDashboardClient() {
   useEffect(() => {
     let isMounted = true;
 
-    ForgeDashboardApplication.loadDashboardIntelligence().then((result) => {
+    forgeDashboardApplication.loadDashboardIntelligence().then((result) => {
       if (isMounted) {
         setDashboardIntelligence(result);
       }
     });
 
-    ForgeDashboardApplication.loadReadModels().then((result) => {
+    forgeDashboardApplication.loadReadModels().then((result) => {
       if (isMounted && result) {
         setReadModels(result);
       }
@@ -41,7 +42,7 @@ export default function ForgeDashboardClient() {
   }, []);
 
   const dashboardViewModel = useMemo(
-    () => ForgeDashboardApplication.buildViewModel(dashboardIntelligence),
+    () => forgeDashboardApplication.buildViewModel(dashboardIntelligence),
     [dashboardIntelligence],
   );
 

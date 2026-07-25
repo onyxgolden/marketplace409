@@ -40,5 +40,8 @@ export async function createForgeApplicationSuite(
 
     financialReadModelApplication:
       financialApplicationSuite.readModelApplication,
+
+    forgeDashboardApplication:
+      financialApplicationSuite.forgeDashboardApplication,
   });
 }
