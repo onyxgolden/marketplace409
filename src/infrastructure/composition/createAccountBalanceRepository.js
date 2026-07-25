@@ -28,7 +28,9 @@ export async function createAccountBalanceRepository(
       "SupabaseAccountBalanceRepository.js"
     );
 
-    return new SupabaseAccountBalanceRepository();
+    return new SupabaseAccountBalanceRepository({
+      supabaseClient: options.supabaseClient,
+    });
   }
 
   throw new Error(
@@ -66,6 +68,15 @@ export function createLazyAccountBalanceRepository(
       return repository.saveMany(
         balances,
         context,
+      );
+    },
+
+    async findLatestByOwnerId(ownerId) {
+      const repository =
+        await resolveRepository();
+
+      return repository.findLatestByOwnerId(
+        ownerId,
       );
     },
 

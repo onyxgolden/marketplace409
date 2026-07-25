@@ -33,6 +33,12 @@ export class InMemoryFinancialAccountRepository
     return this.accountsById.get(id) ?? null;
   }
 
+  async findByOwnerId(
+    _ownerId: string,
+  ): Promise<readonly FinancialAccount[]> {
+    return Array.from(this.accountsById.values());
+  }
+
   async findByConnection(
     connectionId: string,
   ): Promise<readonly FinancialAccount[]> {

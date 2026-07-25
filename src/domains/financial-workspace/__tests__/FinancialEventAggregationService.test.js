@@ -280,6 +280,32 @@ describe("FinancialEventAggregationService", () => {
     ]);
   });
 
+  test("supports asset purchases without affecting operating KPIs", () => {
+    const service = new FinancialEventAggregationService();
+
+    const result = service.aggregate([
+      buildEvent({
+        transaction_kind: "asset_purchase",
+        normalized_category: "capital_improvement",
+        amount: 2500,
+        affects_noi: false,
+        capitalized: true,
+      }),
+    ]);
+
+    expect(result.portfolio).toEqual({
+      income: 0,
+      expenses: 0,
+      noi: 0,
+      cashFlow: 0,
+      transactionCount: 1,
+    });
+
+    expect(result.transactions[0].transactionKind).toBe(
+      "asset_purchase",
+    );
+  });
+
   test("rejects unsupported transaction kinds", () => {
     const service = new FinancialEventAggregationService();
 

@@ -21,6 +21,10 @@ export interface FinancialAccountRepository {
     id: string,
   ): Promise<FinancialAccount | null>;
 
+  findByOwnerId(
+    ownerId: string,
+  ): Promise<readonly FinancialAccount[]>;
+
   findByConnection(
     connectionId: string,
   ): Promise<readonly FinancialAccount[]>;

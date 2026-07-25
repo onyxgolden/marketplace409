@@ -1,10 +1,15 @@
-import { supabase } from "@/lib/supabase";
+import { supabase as defaultSupabase } from "@/lib/supabase";
 
 import {
   mapAccountBalanceRowToAccountBalance,
 } from "./account-balance.mapper";
 
 export class SupabaseAccountBalanceRepository {
+  constructor(options = {}) {
+    this.supabase =
+      options.supabaseClient || defaultSupabase;
+  }
+
   async save(balance, context) {
     const saved = await this.saveMany(
       [balance],
@@ -27,7 +32,7 @@ export class SupabaseAccountBalanceRepository {
 
     const ownerId = this.requireOwnerId(context);
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from("account_balances")
       .upsert(
         balances.map((balance) =>
@@ -47,6 +52,50 @@ export class SupabaseAccountBalanceRepository {
     return this.mapRows(data);
   }
 
+  async findLatestByOwnerId(ownerId) {
+    this.requireIdentifier(
+      ownerId,
+      "Account balance owner id is required",
+    );
+
+    const { data, error } = await this.supabase
+      .from("account_balances")
+      .select("*")
+      .eq("owner_id", ownerId)
+      .order("financial_account_id", {
+        ascending: true,
+      })
+      .order("as_of", {
+        ascending: false,
+      })
+      .order("id", {
+        ascending: true,
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    const latestByAccount = new Map();
+
+    for (const balance of this.mapRows(data)) {
+      if (
+        !latestByAccount.has(
+          balance.financialAccountId,
+        )
+      ) {
+        latestByAccount.set(
+          balance.financialAccountId,
+          balance,
+        );
+      }
+    }
+
+    return Object.freeze(
+      Array.from(latestByAccount.values()),
+    );
+  }
+
   async findByFinancialAccount(
     financialAccountId,
   ) {
@@ -55,7 +104,7 @@ export class SupabaseAccountBalanceRepository {
       "Financial account id is required",
     );
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from("account_balances")
       .select("*")
       .eq(
@@ -81,7 +130,7 @@ export class SupabaseAccountBalanceRepository {
       "Financial account id is required",
     );
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from("account_balances")
       .select("*")
       .eq(
@@ -111,7 +160,7 @@ export class SupabaseAccountBalanceRepository {
       "Connection id is required",
     );
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from("account_balances")
       .select("*")
       .eq("connection_id", connectionId)

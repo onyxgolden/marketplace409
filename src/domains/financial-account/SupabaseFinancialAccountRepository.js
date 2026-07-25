@@ -1,10 +1,15 @@
-import { supabase } from "@/lib/supabase";
+import { supabase as defaultSupabase } from "@/lib/supabase";
 
 import {
   mapFinancialAccountRowToFinancialAccount,
 } from "./financial-account.mapper";
 
 export class SupabaseFinancialAccountRepository {
+  constructor(options = {}) {
+    this.supabase =
+      options.supabaseClient || defaultSupabase;
+  }
+
   async save(account, context) {
     const saved = await this.saveMany([account], context);
     return saved[0];
@@ -21,7 +26,7 @@ export class SupabaseFinancialAccountRepository {
 
     const ownerId = this.requireOwnerId(context);
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from("financial_accounts")
       .upsert(
         accounts.map((account) =>
@@ -38,13 +43,7 @@ export class SupabaseFinancialAccountRepository {
       throw error;
     }
 
-    return Object.freeze(
-      (data || []).map((row) =>
-        Object.freeze(
-          mapFinancialAccountRowToFinancialAccount(row),
-        ),
-      ),
-    );
+    return this.mapRows(data);
   }
 
   async findById(id) {
@@ -52,7 +51,7 @@ export class SupabaseFinancialAccountRepository {
       throw new Error("Financial account id is required");
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from("financial_accounts")
       .select("*")
       .eq("id", id)
@@ -69,12 +68,36 @@ export class SupabaseFinancialAccountRepository {
       : null;
   }
 
+  async findByOwnerId(ownerId) {
+    this.requireIdentifier(
+      ownerId,
+      "Financial account owner id is required",
+    );
+
+    const { data, error } = await this.supabase
+      .from("financial_accounts")
+      .select("*")
+      .eq("owner_id", ownerId)
+      .order("name", {
+        ascending: true,
+      })
+      .order("id", {
+        ascending: true,
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    return this.mapRows(data);
+  }
+
   async findByConnection(connectionId) {
     if (!connectionId) {
       throw new Error("Connection id is required");
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from("financial_accounts")
       .select("*")
       .eq("connection_id", connectionId)
@@ -86,13 +109,7 @@ export class SupabaseFinancialAccountRepository {
       throw error;
     }
 
-    return Object.freeze(
-      (data || []).map((row) =>
-        Object.freeze(
-          mapFinancialAccountRowToFinancialAccount(row),
-        ),
-      ),
-    );
+    return this.mapRows(data);
   }
 
   async findByProviderAccountId(
@@ -107,7 +124,7 @@ export class SupabaseFinancialAccountRepository {
       throw new Error("Provider account id is required");
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabase
       .from("financial_accounts")
       .select("*")
       .eq("provider", provider)
@@ -123,6 +140,25 @@ export class SupabaseFinancialAccountRepository {
           mapFinancialAccountRowToFinancialAccount(data),
         )
       : null;
+  }
+
+  requireIdentifier(value, message) {
+    if (
+      typeof value !== "string" ||
+      value.trim() === ""
+    ) {
+      throw new Error(message);
+    }
+  }
+
+  mapRows(rows) {
+    return Object.freeze(
+      (rows || []).map((row) =>
+        Object.freeze(
+          mapFinancialAccountRowToFinancialAccount(row),
+        ),
+      ),
+    );
   }
 
   requireOwnerId(context) {

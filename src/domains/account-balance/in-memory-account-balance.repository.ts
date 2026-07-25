@@ -27,6 +27,45 @@ export class InMemoryAccountBalanceRepository
     return balances;
   }
 
+  async findLatestByOwnerId(
+    _ownerId: string,
+  ): Promise<readonly AccountBalance[]> {
+    const latestByAccount =
+      new Map<string, AccountBalance>();
+
+    const balances = Array.from(
+      this.balancesById.values(),
+    ).sort((left, right) => {
+      const accountOrder =
+        left.financialAccountId.localeCompare(
+          right.financialAccountId,
+        );
+
+      if (accountOrder !== 0) {
+        return accountOrder;
+      }
+
+      return right.asOf.localeCompare(left.asOf);
+    });
+
+    for (const balance of balances) {
+      if (
+        !latestByAccount.has(
+          balance.financialAccountId,
+        )
+      ) {
+        latestByAccount.set(
+          balance.financialAccountId,
+          balance,
+        );
+      }
+    }
+
+    return Object.freeze(
+      Array.from(latestByAccount.values()),
+    );
+  }
+
   async findByFinancialAccount(
     financialAccountId: string,
   ): Promise<readonly AccountBalance[]> {

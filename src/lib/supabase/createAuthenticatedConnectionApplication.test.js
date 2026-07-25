@@ -16,6 +16,15 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 vi.mock("@/infrastructure/composition", () => ({
+  ConnectionRepositoryStorage: {
+    SUPABASE: "supabase",
+  },
+  CredentialReferenceRepositoryStorage: {
+    SUPABASE: "supabase",
+  },
+  InstitutionReferenceRepositoryStorage: {
+    SUPABASE: "supabase",
+  },
   createConnectionPlatformSuite:
     mocks.createConnectionPlatformSuite,
 }));
@@ -85,6 +94,12 @@ describe("createAuthenticatedConnectionApplication", () => {
       supabaseClient,
       ownerId: "owner-1",
       currentOwnerId: expect.any(Function),
+      connectionRepositoryStorage:
+        "supabase",
+      credentialReferenceRepositoryStorage:
+        "supabase",
+      institutionReferenceRepositoryStorage:
+        "supabase",
     });
 
     await expect(

@@ -28,7 +28,9 @@ export async function createFinancialAccountRepository(
       "SupabaseFinancialAccountRepository.js"
     );
 
-    return new SupabaseFinancialAccountRepository();
+    return new SupabaseFinancialAccountRepository({
+      supabaseClient: options.supabaseClient,
+    });
   }
 
   throw new Error(
@@ -65,6 +67,11 @@ export function createLazyFinancialAccountRepository(
     async findById(id) {
       const repository = await resolveRepository();
       return repository.findById(id);
+    },
+
+    async findByOwnerId(ownerId) {
+      const repository = await resolveRepository();
+      return repository.findByOwnerId(ownerId);
     },
 
     async findByConnection(connectionId) {

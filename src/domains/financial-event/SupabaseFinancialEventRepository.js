@@ -3,6 +3,23 @@ import { supabase } from "@/lib/supabase";
 import { FinancialEventRepository } from "./FinancialEventRepository";
 
 export class SupabaseFinancialEventRepository extends FinancialEventRepository {
+  constructor({
+    supabaseClient = supabase,
+  } = {}) {
+    super();
+
+    if (
+      !supabaseClient ||
+      typeof supabaseClient.from !== "function"
+    ) {
+      throw new Error(
+        "SupabaseFinancialEventRepository requires a Supabase client.",
+      );
+    }
+
+    this.supabaseClient = supabaseClient;
+  }
+
   async saveMany(events) {
     if (!Array.isArray(events)) {
       throw new Error("Financial events must be an array");
@@ -12,7 +29,7 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
       return Object.freeze([]);
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabaseClient
       .from("financial_events")
       .upsert(events.map((event) => this.toRow(event)), {
         onConflict: "owner_id,source_system,source_record_id",
@@ -34,18 +51,34 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
       throw new Error("Owner id is required");
     }
 
-    const { data, error } = await supabase
-      .from("financial_events")
-      .select("*")
-      .eq("owner_id", ownerId)
-      .order("event_date", { ascending: true });
+    const pageSize = 1000;
+    let offset = 0;
+    const rows = [];
 
-    if (error) {
-      throw error;
+    while (true) {
+      const { data, error } = await this.supabaseClient
+        .from("financial_events")
+        .select("*")
+        .eq("owner_id", ownerId)
+        .order("event_date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) {
+        throw error;
+      }
+
+      rows.push(...(data ?? []));
+
+      if (!data || data.length < pageSize) {
+        break;
+      }
+
+      offset += pageSize;
     }
 
     return Object.freeze(
-      (data || []).map((row) => Object.freeze(this.toFinancialEvent(row))),
+      rows.map((row) => Object.freeze(this.toFinancialEvent(row))),
     );
   }
 
@@ -54,7 +87,7 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
       throw new Error("Owner id is required");
     }
 
-    const { count, error } = await supabase
+    const { count, error } = await this.supabaseClient
       .from("financial_events")
       .select("*", {
         count: "exact",

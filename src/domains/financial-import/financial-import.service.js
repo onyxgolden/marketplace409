@@ -36,7 +36,9 @@ class FinancialImportServiceImpl {
       return result;
     }
 
-    await this.financialEventRepository.saveMany(result.financialEvents);
+    await this.financialEventRepository.saveMany(
+      result.financialEvents,
+    );
 
     return result;
   }

@@ -42,31 +42,38 @@ function createTotals() {
 
 function applyEventToTotals(totals, event) {
   const amount = toAmount(event);
-  const isIncome = event.transaction_kind === "income";
-  const isExpense = event.transaction_kind === "expense";
 
-  if (!isIncome && !isExpense) {
-    throw new Error(
-      `Unsupported financial event transaction kind: ${event.transaction_kind}`,
-    );
-  }
+  switch (event.transaction_kind) {
+    case "income":
+      totals.income += amount;
+      totals.cashFlow += amount;
 
-  if (isIncome) {
-    totals.income += amount;
-    totals.cashFlow += amount;
+      if (event.affects_noi === true) {
+        totals.noi += amount;
+      }
 
-    if (event.affects_noi === true) {
-      totals.noi += amount;
-    }
-  }
+      break;
 
-  if (isExpense) {
-    totals.expenses += amount;
-    totals.cashFlow -= amount;
+    case "expense":
+      totals.expenses += amount;
+      totals.cashFlow -= amount;
 
-    if (event.affects_noi === true) {
-      totals.noi -= amount;
-    }
+      if (event.affects_noi === true) {
+        totals.noi -= amount;
+      }
+
+      break;
+
+    case "asset_purchase":
+      // Capital acquisition.
+      // Count as activity but do not classify as operating
+      // revenue, operating expense, or NOI.
+      break;
+
+    default:
+      throw new Error(
+        `Unsupported financial event transaction kind: ${event.transaction_kind}`,
+      );
   }
 
   totals.transactionCount += 1;
@@ -136,6 +143,9 @@ export class FinancialEventAggregationService {
       } else if (event.transaction_kind === "expense") {
         categorySummary.expenses += amount;
         categorySummary.netAmount -= amount;
+      } else if (event.transaction_kind === "asset_purchase") {
+        // Preserve category visibility without affecting
+        // operating totals.
       } else {
         throw new Error(
           `Unsupported financial event transaction kind: ${event.transaction_kind}`,

@@ -17,6 +17,10 @@ export interface AccountBalanceRepository {
     context?: AccountBalancePersistenceContext,
   ): Promise<readonly AccountBalance[]>;
 
+  findLatestByOwnerId(
+    ownerId: string,
+  ): Promise<readonly AccountBalance[]>;
+
   findByFinancialAccount(
     financialAccountId: string,
   ): Promise<readonly AccountBalance[]>;

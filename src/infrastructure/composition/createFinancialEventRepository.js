@@ -20,7 +20,9 @@ export async function createFinancialEventRepository(options = {}) {
       "../../domains/financial-event/SupabaseFinancialEventRepository.js"
     );
 
-    return new SupabaseFinancialEventRepository();
+    return new SupabaseFinancialEventRepository({
+      supabaseClient: options.supabaseClient,
+    });
   }
 
   throw new Error(

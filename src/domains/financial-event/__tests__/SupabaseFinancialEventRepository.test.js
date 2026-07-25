@@ -7,6 +7,7 @@ const query = {
   select: vi.fn(),
   eq: vi.fn(),
   order: vi.fn(),
+  range: vi.fn(),
 };
 
 vi.mock("@/lib/supabase", () => ({
@@ -62,12 +63,13 @@ describe("SupabaseFinancialEventRepository", () => {
     query.select.mockReset();
     query.eq.mockReset();
     query.order.mockReset();
+    query.range.mockReset();
 
     query.upsert.mockReturnValue(query);
     query.select.mockReturnValue(query);
     query.eq.mockReturnValue(query);
+    query.order.mockReturnValue(query);
   });
-
   test("persists canonical financial events", async () => {
     query.select.mockResolvedValue({
       data: [buildRow()],
@@ -166,7 +168,7 @@ describe("SupabaseFinancialEventRepository", () => {
   });
 
   test("finds immutable financial events by owner id", async () => {
-    query.order.mockResolvedValue({
+    query.range.mockResolvedValue({
       data: [
         buildRow({
           id: "event-1",
@@ -188,12 +190,66 @@ describe("SupabaseFinancialEventRepository", () => {
     expect(query.order).toHaveBeenCalledWith("event_date", {
       ascending: true,
     });
+    expect(query.range).toHaveBeenCalledOnce();
+    expect(query.range).toHaveBeenCalledWith(0, 999);
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result[0])).toBe(true);
     expect(result.map((event) => event.id)).toEqual([
       "event-1",
       "event-2",
     ]);
+  });
+
+  test("retrieves every page of owner financial events", async () => {
+    const firstPage = Array.from(
+      {
+        length: 1000,
+      },
+      (_, index) =>
+        buildRow({
+          id: `event-${index + 1}`,
+          owner_id: "owner-1",
+          source_record_id: `rentec-${index + 1}`,
+        }),
+    );
+
+    const secondPage = [
+      buildRow({
+        id: "event-1001",
+        owner_id: "owner-1",
+        source_record_id: "rentec-1001",
+      }),
+      buildRow({
+        id: "event-1002",
+        owner_id: "owner-1",
+        source_record_id: "rentec-1002",
+      }),
+    ];
+
+    query.range
+      .mockResolvedValueOnce({
+        data: firstPage,
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: secondPage,
+        error: null,
+      });
+
+    const repository = new SupabaseFinancialEventRepository();
+    const result = await repository.findByOwnerId("owner-1");
+
+    expect(query.range).toHaveBeenNthCalledWith(1, 0, 999);
+    expect(query.range).toHaveBeenNthCalledWith(2, 1000, 1999);
+    expect(query.range).toHaveBeenCalledTimes(2);
+
+    expect(result).toHaveLength(1002);
+    expect(result[0].id).toBe("event-1");
+    expect(result[999].id).toBe("event-1000");
+    expect(result[1000].id).toBe("event-1001");
+    expect(result[1001].id).toBe("event-1002");
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result[1001])).toBe(true);
   });
 
   test("counts financial events within the owner boundary", async () => {

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { createConnectionPlatformSuite } from "@/infrastructure/composition";
+import {
+  ConnectionRepositoryStorage,
+  CredentialReferenceRepositoryStorage,
+  InstitutionReferenceRepositoryStorage,
+  createConnectionPlatformSuite,
+} from "@/infrastructure/composition";
 
 import { createClient } from "@/lib/supabase/server";
 
@@ -36,6 +41,12 @@ export async function createAuthenticatedConnectionApplication() {
           supabaseClient,
           ownerId: user.id,
           currentOwnerId,
+          connectionRepositoryStorage:
+            ConnectionRepositoryStorage.SUPABASE,
+          credentialReferenceRepositoryStorage:
+            CredentialReferenceRepositoryStorage.SUPABASE,
+          institutionReferenceRepositoryStorage:
+            InstitutionReferenceRepositoryStorage.SUPABASE,
         });
     }
 
