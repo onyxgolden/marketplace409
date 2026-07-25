@@ -81,6 +81,8 @@ function createApplication(
         executeRepair:
           vi.fn(),
       },
+    connectionExecutionIntelligenceBuilder =
+      null,
   } = {},
 ) {
   const connectionReadModelApplication = {
@@ -97,6 +99,7 @@ function createApplication(
         connectionReviewExecutionCoordinator,
         connectionImportExecutionCoordinator,
         connectionRepairExecutionCoordinator,
+        connectionExecutionIntelligenceBuilder,
       }),
     connectionReadModelApplication,
     connectionReviewExecutionCoordinator,
@@ -806,5 +809,68 @@ describe(
         );
       },
     );
+    it(
+      "builds execution intelligence through the injected builder",
+      () => {
+        const builder =
+          {
+            build:
+              vi.fn()
+                .mockReturnValue({
+                  status: "successful",
+                }),
+          };
+
+        const {
+          application,
+        } = createApplication(
+          createDashboard(),
+          {
+            connectionExecutionIntelligenceBuilder:
+              builder,
+          },
+        );
+
+        const executionResult = {
+          success: true,
+          connectionId:
+            "connection-1",
+        };
+
+        const result =
+          application.buildExecutionIntelligence(
+            executionResult,
+          );
+
+        expect(
+          builder.build,
+        ).toHaveBeenCalledWith(
+          executionResult,
+        );
+
+        expect(result)
+          .toEqual({
+            status: "successful",
+          });
+      },
+    );
+
+    it(
+      "returns null when execution intelligence builder is unavailable",
+      () => {
+        const {
+          application,
+        } = createApplication(
+          createDashboard(),
+        );
+
+        expect(
+          application.buildExecutionIntelligence({
+            success: true,
+          }),
+        ).toBeNull();
+      },
+    );
+
   },
 );

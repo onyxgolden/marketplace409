@@ -224,6 +224,13 @@ describe(
         connectionId: "connection-1",
         ownerId: "owner-1",
         options: {},
+        intelligence: {
+          status: "successful",
+          health: {
+            state: "healthy",
+            score: 100,
+          },
+        },
       });
     });
 
@@ -291,6 +298,13 @@ describe(
               "connection-1",
             ownerId: "owner-1",
             options: {},
+            intelligence: {
+              status: "successful",
+              health: {
+                state: "healthy",
+                score: 100,
+              },
+            },
           },
         });
       },

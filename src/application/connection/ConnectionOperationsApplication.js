@@ -4,6 +4,7 @@ export class ConnectionOperationsApplication {
     connectionReviewExecutionCoordinator = null,
     connectionRepairExecutionCoordinator = null,
     connectionImportExecutionCoordinator = null,
+    connectionExecutionIntelligenceBuilder = null,
   }) {
     if (!connectionReadModelApplication) {
       throw new Error(
@@ -22,6 +23,9 @@ export class ConnectionOperationsApplication {
 
     this.connectionImportExecutionCoordinator =
       connectionImportExecutionCoordinator;
+
+    this.connectionExecutionIntelligenceBuilder =
+      connectionExecutionIntelligenceBuilder;
   }
 
   getDashboardProjection(dashboard) {
@@ -460,6 +464,33 @@ export class ConnectionOperationsApplication {
     });
   }
 
+  buildExecutionIntelligence(executionResult) {
+    if (
+      !this.connectionExecutionIntelligenceBuilder
+    ) {
+      return null;
+    }
+
+    return this.connectionExecutionIntelligenceBuilder
+      .build(executionResult);
+  }
+
+  withExecutionIntelligence(executionResult) {
+    if (
+      !this.connectionExecutionIntelligenceBuilder
+    ) {
+      return executionResult;
+    }
+
+    return Object.freeze({
+      ...executionResult,
+      intelligence:
+        this.buildExecutionIntelligence(
+          executionResult,
+        ),
+    });
+  }
+
   async executeOperation({
     operation,
     connectionId,
@@ -494,12 +525,14 @@ export class ConnectionOperationsApplication {
           );
         }
 
-        return this
-          .connectionRepairExecutionCoordinator
-          .executeRepair({
-            connectionId,
-            ownerId,
-          });
+        return this.withExecutionIntelligence(
+          await this
+            .connectionRepairExecutionCoordinator
+            .executeRepair({
+              connectionId,
+              ownerId,
+            }),
+        );
 
       case "review-connection":
         if (
@@ -510,12 +543,14 @@ export class ConnectionOperationsApplication {
           );
         }
 
-        return this
-          .connectionReviewExecutionCoordinator
-          .executeReview({
-            connectionId,
-            ownerId,
-          });
+        return this.withExecutionIntelligence(
+          await this
+            .connectionReviewExecutionCoordinator
+            .executeReview({
+              connectionId,
+              ownerId,
+            }),
+        );
 
       case "import-transactions":
         if (
@@ -526,12 +561,14 @@ export class ConnectionOperationsApplication {
           );
         }
 
-        return this
-          .connectionImportExecutionCoordinator
-          .executeImport({
-            connectionId,
-            ownerId,
-          });
+        return this.withExecutionIntelligence(
+          await this
+            .connectionImportExecutionCoordinator
+            .executeImport({
+              connectionId,
+              ownerId,
+            }),
+        );
 
       default:
         throw new Error(

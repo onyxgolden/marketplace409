@@ -3,14 +3,57 @@
 import { useEffect, useState } from "react";
 import { ForgeConnectionDashboardApplication } from "@/application/connection";
 import ForgeDashboardCard from "@/components/forge/ForgeDashboardCard";
+import PlaidConnectButton from "@/components/forge/PlaidConnectButton";
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
+import ConnectionExecutionResultCard from "@/components/forge/ConnectionExecutionResultCard";
 import { forgeTheme } from "@/components/forge/theme";
 
 export default function ConnectionPage() {
   const [viewModel, setViewModel] = useState(
     ForgeConnectionDashboardApplication.buildLoadingModel(),
   );
+
+  const [executionResult, setExecutionResult] =
+    useState(null);
+
+  const [isExecuting, setIsExecuting] =
+    useState(false);
+
+
+  async function executeConnectionOperation(card) {
+    setIsExecuting(true);
+
+    try {
+      const response =
+        await fetch("/api/connection/operations", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            operation: card.action,
+            connectionId: card.connectionId,
+          }),
+        });
+
+      const payload =
+        await response.json();
+
+      if (!payload.success) {
+        throw new Error(
+          payload.error ||
+            "Operation failed.",
+        );
+      }
+
+      setExecutionResult(
+        payload.data,
+      );
+    } finally {
+      setIsExecuting(false);
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -75,6 +118,27 @@ export default function ConnectionPage() {
                   ? `Health score ${health.score}. ${health.issueCount} issues and ${health.warningCount} warnings.`
                   : "Loading connection platform status."}
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
+          <PlaidConnectButton />
+
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className={forgeTheme.labelSmall}>
+              Secure Connection Setup
+            </div>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">
+              Connect your financial institution
+            </h2>
+            <p className="mt-3 text-sm text-slate-600">
+              Plaid securely handles your bank sign-in. FORGE receives a
+              connection token rather than your banking username and password.
+            </p>
+            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              After the connection succeeds, refresh this dashboard to display
+              the new institution and its import readiness.
             </div>
           </div>
         </section>
@@ -269,6 +333,22 @@ export default function ConnectionPage() {
                     <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-800">
                       {card.readiness}
                     </div>
+
+                    <button
+                      type="button"
+                      disabled={
+                        isExecuting ||
+                        !card.connectionId
+                      }
+                      onClick={() =>
+                        executeConnectionOperation(card)
+                      }
+                      className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
+                    >
+                      {isExecuting
+                        ? "Executing..."
+                        : "Execute"}
+                    </button>
                   </div>
                 </article>
               ))
@@ -298,6 +378,16 @@ export default function ConnectionPage() {
                     0}
                 </strong>
               </div>
+            </div>
+          ) : null}
+
+          {executionResult?.intelligence ? (
+            <div className="mt-6">
+              <ConnectionExecutionResultCard
+                execution={
+                  executionResult.intelligence
+                }
+              />
             </div>
           ) : null}
         </section>

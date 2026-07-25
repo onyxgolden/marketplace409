@@ -24,6 +24,10 @@ export {
 } from "./ConnectionOperationsApplication.js";
 
 export {
+  ConnectionExecutionIntelligenceBuilder,
+} from "./ConnectionExecutionIntelligenceBuilder.js";
+
+export {
   ConnectionImportExecutionCoordinator,
 } from "./ConnectionImportExecutionCoordinator.js";
 
