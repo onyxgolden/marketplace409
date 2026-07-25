@@ -48,6 +48,11 @@ createLazyAccountBalanceRepository,
 } from "./createAccountBalanceRepository.js";
 
 import {
+ConnectionExecutionHistoryRepositoryStorage,
+createLazyConnectionExecutionHistoryRepository,
+} from "./createConnectionExecutionHistoryRepository.js";
+
+import {
 InMemoryTransactionRepository,
 TransactionImportService,
 } from "../../domains/transaction";
@@ -176,6 +181,20 @@ AccountBalanceRepositoryStorage.SUPABASE
     })
   : new InMemoryAccountBalanceRepository()
 );
+
+const connectionExecutionHistoryRepositoryStorage =
+deps.connectionExecutionHistoryRepositoryStorage ||
+process.env.CONNECTION_EXECUTION_HISTORY_REPOSITORY ||
+ConnectionExecutionHistoryRepositoryStorage.MEMORY;
+
+const connectionExecutionHistoryRepository =
+deps.connectionExecutionHistoryRepository ||
+createLazyConnectionExecutionHistoryRepository({
+storage:
+  connectionExecutionHistoryRepositoryStorage,
+supabaseClient:
+  deps.supabaseClient,
+});
 
 const transactionRepository =
 deps.transactionRepository ||
@@ -318,6 +337,7 @@ credentialVaultService,
 institutionReferenceRepository,
 financialAccountRepository,
 accountBalanceRepository,
+connectionExecutionHistoryRepository,
 transactionRepository,
 financialAccountMapper,
 accountBalanceMapper,

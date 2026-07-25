@@ -5,6 +5,9 @@ export class ConnectionOperationsApplication {
     connectionRepairExecutionCoordinator = null,
     connectionImportExecutionCoordinator = null,
     connectionExecutionIntelligenceBuilder = null,
+    connectionExecutionHistoryRecorder = null,
+    connectionExecutionHistoryQueryService = null,
+    connectionExecutionHistoryIntelligenceBuilder = null,
   }) {
     if (!connectionReadModelApplication) {
       throw new Error(
@@ -26,11 +29,45 @@ export class ConnectionOperationsApplication {
 
     this.connectionExecutionIntelligenceBuilder =
       connectionExecutionIntelligenceBuilder;
+
+    this.connectionExecutionHistoryRecorder =
+      connectionExecutionHistoryRecorder;
+
+    this.connectionExecutionHistoryQueryService =
+      connectionExecutionHistoryQueryService;
+
+    this.connectionExecutionHistoryIntelligenceBuilder =
+      connectionExecutionHistoryIntelligenceBuilder;
   }
 
   getDashboardProjection(dashboard) {
     return dashboard?.dashboard || {};
   }
+
+  async getExecutionHistoryIntelligence({
+    ownerId,
+    connectionId,
+  }) {
+    if (
+      !this.connectionExecutionHistoryQueryService ||
+      !this.connectionExecutionHistoryIntelligenceBuilder
+    ) {
+      throw new Error(
+        "Connection execution history intelligence is not configured.",
+      );
+    }
+
+    const history =
+      await this.connectionExecutionHistoryQueryService
+        .findByConnectionId(
+          ownerId,
+          connectionId,
+        );
+
+    return this.connectionExecutionHistoryIntelligenceBuilder
+      .build(history);
+  }
+
 
   buildOperationalSummary(dashboard) {
     const projection =
@@ -491,6 +528,25 @@ export class ConnectionOperationsApplication {
     });
   }
 
+  async recordExecutionHistory({
+    operation,
+    ownerId,
+    executionResult,
+  }) {
+    if (
+      !this.connectionExecutionHistoryRecorder
+    ) {
+      return;
+    }
+
+    await this.connectionExecutionHistoryRecorder
+      .recordExecution({
+        operation,
+        ownerId,
+        executionResult,
+      });
+  }
+
   async executeOperation({
     operation,
     connectionId,
@@ -516,7 +572,7 @@ export class ConnectionOperationsApplication {
     }
 
     switch (operation) {
-      case "repair-connection":
+      case "repair-connection": {
         if (
           !this.connectionRepairExecutionCoordinator
         ) {
@@ -525,16 +581,26 @@ export class ConnectionOperationsApplication {
           );
         }
 
-        return this.withExecutionIntelligence(
+        const executionResult =
           await this
             .connectionRepairExecutionCoordinator
             .executeRepair({
               connectionId,
               ownerId,
-            }),
-        );
+            });
 
-      case "review-connection":
+        await this.recordExecutionHistory({
+          operation,
+          ownerId,
+          executionResult,
+        });
+
+        return this.withExecutionIntelligence(
+          executionResult,
+        );
+      }
+
+      case "review-connection": {
         if (
           !this.connectionReviewExecutionCoordinator
         ) {
@@ -543,16 +609,26 @@ export class ConnectionOperationsApplication {
           );
         }
 
-        return this.withExecutionIntelligence(
+        const executionResult =
           await this
             .connectionReviewExecutionCoordinator
             .executeReview({
               connectionId,
               ownerId,
-            }),
-        );
+            });
 
-      case "import-transactions":
+        await this.recordExecutionHistory({
+          operation,
+          ownerId,
+          executionResult,
+        });
+
+        return this.withExecutionIntelligence(
+          executionResult,
+        );
+      }
+
+      case "import-transactions": {
         if (
           !this.connectionImportExecutionCoordinator
         ) {
@@ -561,14 +637,24 @@ export class ConnectionOperationsApplication {
           );
         }
 
-        return this.withExecutionIntelligence(
+        const executionResult =
           await this
             .connectionImportExecutionCoordinator
             .executeImport({
               connectionId,
               ownerId,
-            }),
+            });
+
+        await this.recordExecutionHistory({
+          operation,
+          ownerId,
+          executionResult,
+        });
+
+        return this.withExecutionIntelligence(
+          executionResult,
         );
+      }
 
       default:
         throw new Error(

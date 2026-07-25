@@ -38,3 +38,11 @@ export {
 export {
   ConnectionRepairExecutionCoordinator,
 } from "./ConnectionRepairExecutionCoordinator.js";
+
+export {
+  ConnectionExecutionHistoryQueryService,
+} from "./ConnectionExecutionHistoryQueryService.js";
+
+export {
+  ConnectionExecutionHistoryIntelligenceBuilder,
+} from "./ConnectionExecutionHistoryIntelligenceBuilder.js";

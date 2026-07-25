@@ -83,6 +83,12 @@ function createApplication(
       },
     connectionExecutionIntelligenceBuilder =
       null,
+    connectionExecutionHistoryRecorder =
+      null,
+    connectionExecutionHistoryQueryService =
+      null,
+    connectionExecutionHistoryIntelligenceBuilder =
+      null,
   } = {},
 ) {
   const connectionReadModelApplication = {
@@ -100,6 +106,9 @@ function createApplication(
         connectionImportExecutionCoordinator,
         connectionRepairExecutionCoordinator,
         connectionExecutionIntelligenceBuilder,
+        connectionExecutionHistoryRecorder,
+        connectionExecutionHistoryQueryService,
+        connectionExecutionHistoryIntelligenceBuilder,
       }),
     connectionReadModelApplication,
     connectionReviewExecutionCoordinator,
@@ -872,5 +881,167 @@ describe(
       },
     );
 
+    it(
+      "records execution history after importing transactions",
+      async () => {
+        const dashboard = createDashboard();
+
+        const executionResult =
+          Object.freeze({
+            type:
+              "connection-import-execution",
+            status: "completed",
+          });
+
+        const connectionExecutionHistoryRecorder =
+          {
+            recordExecution:
+              vi.fn()
+                .mockResolvedValue(
+                  undefined,
+                ),
+          };
+
+        const connectionImportExecutionCoordinator =
+          {
+            executeImport:
+              vi.fn()
+                .mockResolvedValue(
+                  executionResult,
+                ),
+          };
+
+        const {
+          application,
+        } = createApplication(
+          dashboard,
+          {
+            connectionImportExecutionCoordinator,
+            connectionExecutionHistoryRecorder,
+          },
+        );
+
+        const result =
+          await application.executeOperation({
+            operation:
+              "import-transactions",
+            connectionId:
+              "connection-1",
+            ownerId: "owner-1",
+          });
+
+        expect(result).toBe(
+          executionResult,
+        );
+
+        expect(
+          connectionExecutionHistoryRecorder
+            .recordExecution,
+        ).toHaveBeenCalledOnce();
+
+        expect(
+          connectionExecutionHistoryRecorder
+            .recordExecution,
+        ).toHaveBeenCalledWith({
+          operation:
+            "import-transactions",
+          ownerId: "owner-1",
+          executionResult,
+        });
+      },
+    );
+
+
+  },
+);
+
+
+describe(
+  "execution history intelligence",
+  () => {
+    it(
+      "requires historical intelligence dependencies",
+      async () => {
+        const {
+          application,
+        } = createApplication(
+          createDashboard(),
+        );
+
+        await expect(
+          application.getExecutionHistoryIntelligence({
+            ownerId: "owner-1",
+            connectionId: "connection-1",
+          }),
+        ).rejects.toThrow(
+          "Connection execution history intelligence is not configured.",
+        );
+      },
+    );
+
+    it(
+      "builds historical execution intelligence",
+      async () => {
+        const history = [
+          {
+            id: "execution-1",
+            status: "success",
+          },
+        ];
+
+        const queryService = {
+          findByConnectionId:
+            vi.fn()
+              .mockResolvedValue(history),
+        };
+
+        const builder = {
+          build:
+            vi.fn()
+              .mockReturnValue(
+                Object.freeze({
+                  totalExecutions: 1,
+                }),
+              ),
+        };
+
+        const {
+          application,
+        } = createApplication(
+          createDashboard(),
+          {
+            connectionExecutionHistoryQueryService:
+              queryService,
+            connectionExecutionHistoryIntelligenceBuilder:
+              builder,
+          },
+        );
+
+        const result =
+          await application
+            .getExecutionHistoryIntelligence({
+              ownerId: "owner-1",
+              connectionId: "connection-1",
+            });
+
+        expect(
+          queryService.findByConnectionId,
+        ).toHaveBeenCalledWith(
+          "owner-1",
+          "connection-1",
+        );
+
+        expect(
+          builder.build,
+        ).toHaveBeenCalledWith(
+          history,
+        );
+
+        expect(result)
+          .toEqual({
+            totalExecutions: 1,
+          });
+      },
+    );
   },
 );
