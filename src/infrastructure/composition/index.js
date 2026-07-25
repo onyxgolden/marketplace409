@@ -40,3 +40,7 @@ export { createMarketplaceApplicationSuite } from "./createMarketplaceApplicatio
 export { createBusinessApplicationSuite } from "./createBusinessApplicationSuite.js";
 
 export { createInvestorApplicationSuite } from "./createInvestorApplicationSuite.js";
+
+export {
+  createForgeApplicationSuite,
+} from "./createForgeApplicationSuite.js";

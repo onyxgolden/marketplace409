@@ -1,89 +1,38 @@
-"use client";
+import Link from "next/link";
 
-import React, { useEffect, useMemo, useState } from "react";
-import ForgeDashboardShell from "@/components/forge/ForgeDashboardShell";
-import { ForgeDashboardApplication } from "@/application/financial";
+import ForgeDashboardClient from "@/components/forge/ForgeDashboardClient";
 
 export const dynamic = "force-dynamic";
 
-function formatCurrency(value) {
-  if (value == null) return "$0";
-  return `$${Number(value).toLocaleString()}`;
-}
-
 export default function ForgePage() {
-  const [view, setView] = useState("networth");
-  const [dashboardIntelligence, setDashboardIntelligence] = useState(() =>
-    ForgeDashboardApplication.buildLoadingDashboardIntelligence(),
-  );
-  const [readModels, setReadModels] = useState(null);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    ForgeDashboardApplication.loadDashboardIntelligence().then((result) => {
-      if (isMounted) {
-        setDashboardIntelligence(result);
-      }
-    });
-
-    ForgeDashboardApplication.loadReadModels().then((result) => {
-      if (isMounted && result) {
-        setReadModels(result);
-      }
-    });
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  const dashboardViewModel = useMemo(
-    () => ForgeDashboardApplication.buildViewModel(dashboardIntelligence),
-    [dashboardIntelligence],
-  );
-
   return (
     <div>
-      <ForgeDashboardShell
-        view={view}
-        setView={setView}
-        netWorth={dashboardViewModel.netWorth}
-        riskSummary={dashboardViewModel.riskSummary}
-        riskAssessment={dashboardViewModel.riskAssessment}
-        executiveBriefing={dashboardViewModel.executiveBriefing}
-        auditFindings={dashboardViewModel.auditFindings}
-        alertItems={dashboardViewModel.alertItems}
-        insightItems={dashboardViewModel.insightItems}
-        portfolioSummaryItems={dashboardViewModel.portfolioSummaryItems}
-        systemHealthItems={dashboardViewModel.systemHealthItems}
-        systemStatusItems={dashboardViewModel.systemStatusItems}
-        recentActivities={dashboardViewModel.recentActivities}
-        formatCurrency={formatCurrency}
-      />
+      <section className="mx-auto max-w-[1600px] px-4 pt-4 lg:px-8 lg:pt-6">
+        <div className="flex flex-wrap gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+          <Link
+            href="/forge/financial"
+            className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black uppercase tracking-wide text-white transition hover:bg-slate-800"
+          >
+            Executive KPI Dashboard →
+          </Link>
 
-      {readModels && (
-        <section className="mt-8 rounded-3xl border border-slate-200 bg-white p-6">
-          <div className="text-xs font-black uppercase tracking-wide text-slate-500">
-            Read Model Shadow Layer (Phase 10)
-          </div>
+          <Link
+            href="/import"
+            className="inline-flex items-center justify-center rounded-2xl border border-amber-400 bg-amber-50 px-5 py-3 text-sm font-black uppercase tracking-wide text-amber-800 transition hover:bg-amber-100"
+          >
+            Financial Import →
+          </Link>
 
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <pre className="overflow-auto text-xs">
-              {JSON.stringify(readModels.businessDashboard, null, 2)}
-            </pre>
-            <pre className="overflow-auto text-xs">
-              {JSON.stringify(readModels.investorDashboard, null, 2)}
-            </pre>
-            <pre className="overflow-auto text-xs">
-              {JSON.stringify(readModels.kpiModel, null, 2)}
-            </pre>
-            <pre className="overflow-auto text-xs">
-              {JSON.stringify(readModels.executiveSummary, null, 2)}
-            </pre>
-          </div>
-        </section>
-      )}
+          <Link
+            href="/"
+            className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-black uppercase tracking-wide text-slate-700 transition hover:bg-slate-50"
+          >
+            ← Home
+          </Link>
+        </div>
+      </section>
+
+      <ForgeDashboardClient />
     </div>
   );
 }
