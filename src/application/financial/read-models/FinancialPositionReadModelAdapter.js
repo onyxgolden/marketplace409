@@ -97,7 +97,7 @@ export class FinancialPositionReadModelAdapter {
         snapshotStatus: "repository-backed",
         phase: "16.3",
         balanceSheetStatus:
-          "repository-backed-assets-liabilities",
+          "repository-backed-financial-accounts",
         accountBalancesStatus:
           position.metadata?.accountBalancesStatus ??
           "unavailable",

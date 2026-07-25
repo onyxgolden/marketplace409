@@ -97,7 +97,7 @@ function buildPositionProjection() {
       snapshotStatus: "repository-backed",
       phase: "16.3",
       balanceSheetStatus:
-        "repository-backed-assets-liabilities",
+        "repository-backed-financial-accounts",
       receivablesStatus:
         "unavailable-without-receivables-source",
     }),
@@ -426,7 +426,7 @@ describe("FinancialReadModelApplication", () => {
           snapshotStatus: "repository-backed",
           phase: "16.3",
           balanceSheetStatus:
-            "repository-backed-assets-liabilities",
+            "repository-backed-financial-accounts",
           receivablesStatus:
             "unavailable-without-receivables-source",
         },

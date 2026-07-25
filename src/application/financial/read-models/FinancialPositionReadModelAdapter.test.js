@@ -113,7 +113,7 @@ describe("FinancialPositionReadModelAdapter", () => {
       snapshotStatus: "repository-backed",
       phase: "16.3",
       balanceSheetStatus:
-        "repository-backed-assets-liabilities",
+        "repository-backed-financial-accounts",
       accountBalancesStatus:
         "unavailable-without-owner-wide-balance-query",
       receivablesStatus:
