@@ -26,7 +26,7 @@ function configureAuthenticatedRequest() {
   mocks.createAuthenticatedFinancialApplication.mockResolvedValue({
     getFinancialApplicationSuite: vi.fn().mockResolvedValue({
       explainabilityApplication: {
-        traceReportLine: mocks.traceReportLine,
+        traceCanonicalReportLine: mocks.traceReportLine,
       },
     }),
   });

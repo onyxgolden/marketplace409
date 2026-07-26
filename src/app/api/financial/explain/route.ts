@@ -36,11 +36,11 @@ export async function POST(request: Request) {
     const { explainabilityApplication } =
       await authenticatedApplication.getFinancialApplicationSuite();
 
-    const explanation = explainabilityApplication.explainReportLine(
-      body.query,
-      body.reportLine,
-      isRecord(body.ledgerContext) ? body.ledgerContext : {},
-    );
+    const explanation =
+      explainabilityApplication.explainCanonicalReportLine(
+        body.query,
+        body.reportLine,
+      );
 
     return NextResponse.json({
       success: true,

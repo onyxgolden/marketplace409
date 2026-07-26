@@ -9,3 +9,7 @@ export {
 export {
   CanonicalDashboardProjection,
 } from "./CanonicalDashboardProjection.js";
+
+export {
+  CanonicalExplainabilityProjection,
+} from "./CanonicalExplainabilityProjection.js";

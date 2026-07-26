@@ -78,6 +78,10 @@ import { FinancialOperationsService } from "../../domains/financial-operations";
 
 import { autonomousAuditAgent } from "../../domains/audit/AutonomousAuditAgent.js";
 import { FinancialEngine } from "../../domains/ledger/engines/FinancialEngine.js";
+
+import {
+  CanonicalExplainabilityProjection,
+} from "../../application/intelligence";
 import { FinancialDashboardService } from "../../domains/ledger/dashboard/FinancialDashboardService.js";
 import { traceExplorerService } from "../../domains/ledger/trace/TraceExplorerService.js";
 import { traceQueryService } from "../../domains/ledger/trace/TraceQueryService.js";
@@ -278,6 +282,10 @@ export async function createFinancialApplicationSuite(deps = {}) {
       financialOperationsApplication,
     });
 
+  const canonicalExplainabilityProjection =
+    deps.canonicalExplainabilityProjection ||
+    CanonicalExplainabilityProjection;
+
   const explainabilityApplication =
     deps.explainabilityApplication ||
     new FinancialExplainabilityApplication({
@@ -285,6 +293,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
         deps.traceExplorerService || traceExplorerService,
       traceQueryService:
         deps.traceQueryService || traceQueryService,
+      canonicalExplainabilityProjection,
     });
 
   const dashboardIntelligenceApplication =
@@ -331,6 +340,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     financialDecisionOperationsApplication,
     financialOperationsService,
     explainabilityApplication,
+    canonicalExplainabilityProjection,
     dashboardIntelligenceApplication,
     financialSnapshotViewApplication,
     financialImportApplication,

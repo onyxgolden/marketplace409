@@ -28,10 +28,10 @@ export async function POST(request: Request) {
     const { explainabilityApplication } =
       await authenticatedApplication.getFinancialApplicationSuite();
 
-    const trace = explainabilityApplication.traceReportLine(
-      body.reportLine,
-      isRecord(body.ledgerContext) ? body.ledgerContext : {},
-    );
+    const trace =
+      explainabilityApplication.traceCanonicalReportLine(
+        body.reportLine,
+      );
 
     return NextResponse.json({
       success: true,

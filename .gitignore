@@ -44,3 +44,6 @@ data/
 # FORGE generated validation evidence
 /governance/validation/*.json
 /governance/validation/*.tmp
+
+# Supabase local CLI metadata
+supabase/.temp/
