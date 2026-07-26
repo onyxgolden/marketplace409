@@ -12,32 +12,7 @@ function formatCurrency(value) {
   return `$${Number(value).toLocaleString()}`;
 }
 
-const DEFAULT_LEDGER_CONTEXT = Object.freeze({
-  accounts: Object.freeze([
-    Object.freeze({ id: "1000", name: "Cash", balance: 280000 }),
-    Object.freeze({ id: "1100", name: "Accounts Receivable", balance: 120000 }),
-    Object.freeze({ id: "2000", name: "Debt", balance: -40000 }),
-  ]),
-  postings: Object.freeze([]),
-});
-
-const DEFAULT_ASSETS = Object.freeze([
-  Object.freeze({ id: "cash", name: "Cash", category: "bank", value: 280000 }),
-]);
-
-const DEFAULT_LIABILITIES = Object.freeze([
-  Object.freeze({ id: "debt", name: "Debt", category: "loan", balance: 0 }),
-]);
-
 export class ForgeDashboardApplication {
-  static buildDashboardRequestInput() {
-    return {
-      ledgerContext: DEFAULT_LEDGER_CONTEXT,
-      assets: DEFAULT_ASSETS,
-      liabilities: DEFAULT_LIABILITIES,
-    };
-  }
-
   static buildLoadingDashboardIntelligence() {
     return buildDashboardIntelligenceFallback({
       status: "Loading",
@@ -75,7 +50,7 @@ export class ForgeDashboardApplication {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(this.buildDashboardRequestInput()),
+        body: JSON.stringify({}),
       });
 
       const payload = await response.json();

@@ -1,25 +1,6 @@
 import { ForgeDashboardApplication } from "./ForgeDashboardApplication.js";
 
 describe("ForgeDashboardApplication", () => {
-  test("builds immutable dashboard request input", () => {
-    const result = ForgeDashboardApplication.buildDashboardRequestInput();
-
-    expect(result).toMatchObject({
-      ledgerContext: {
-        accounts: [
-          { id: "1000", name: "Cash", balance: 280000 },
-          { id: "1100", name: "Accounts Receivable", balance: 120000 },
-          { id: "2000", name: "Debt", balance: -40000 },
-        ],
-        postings: [],
-      },
-      assets: [{ id: "cash", name: "Cash", category: "bank", value: 280000 }],
-      liabilities: [
-        { id: "debt", name: "Debt", category: "loan", balance: 0 },
-      ],
-    });
-  });
-
   test("builds loading dashboard intelligence", () => {
     const result = ForgeDashboardApplication.buildLoadingDashboardIntelligence();
 
