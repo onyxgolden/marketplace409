@@ -2,16 +2,8 @@ import { NextResponse } from "next/server";
 
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 
-type DashboardIntelligenceRequestBody = Readonly<{
-  ledgerContext?: unknown;
-  assets?: unknown;
-  liabilities?: unknown;
-}>;
-
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as DashboardIntelligenceRequestBody;
-
     const authenticatedApplication =
       await createAuthenticatedForgeApplication();
 

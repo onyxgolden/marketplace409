@@ -45,11 +45,7 @@ describe("POST /api/financial/dashboard-intelligence", () => {
     const response = await POST(
       new Request("http://localhost/api/financial/dashboard-intelligence", {
         method: "POST",
-        body: JSON.stringify({
-          ledgerContext: { period: "current" },
-          assets: [{ id: "asset-1" }],
-          liabilities: [{ id: "liability-1" }],
-        }),
+        body: JSON.stringify({}),
       }),
     );
 
