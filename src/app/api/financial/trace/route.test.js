@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   createAuthenticatedFinancialApplication: vi.fn(),
-  traceReportLine: vi.fn(),
+  traceCanonicalReportLine: vi.fn(),
 }));
 
 vi.mock(
@@ -26,7 +26,7 @@ function configureAuthenticatedRequest() {
   mocks.createAuthenticatedFinancialApplication.mockResolvedValue({
     getFinancialApplicationSuite: vi.fn().mockResolvedValue({
       explainabilityApplication: {
-        traceCanonicalReportLine: mocks.traceReportLine,
+        traceCanonicalReportLine: mocks.traceCanonicalReportLine,
       },
     }),
   });
@@ -35,7 +35,7 @@ function configureAuthenticatedRequest() {
 describe("POST /api/financial/trace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.traceReportLine.mockReturnValue({
+    mocks.traceCanonicalReportLine.mockReturnValue({
       source: "ledger",
     });
   });
@@ -81,6 +81,6 @@ describe("POST /api/financial/trace", () => {
     }));
 
     expect(result).toBe(response);
-    expect(mocks.traceReportLine).not.toHaveBeenCalled();
+    expect(mocks.traceCanonicalReportLine).not.toHaveBeenCalled();
   });
 });

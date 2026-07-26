@@ -31,6 +31,20 @@ describe("CanonicalIntelligenceContextBuilder", () => {
       }),
     };
 
+    const financialIntelligenceApplication = {
+      buildFinancialIntelligence: vi.fn().mockResolvedValue({
+        type: "financial-intelligence",
+        recommendations: [
+          "Review operating performance.",
+        ],
+        planningAssistance: {
+          priority: "optimize",
+          suggestedFocus: "controlled growth",
+          summary: "Optimize operations.",
+        },
+      }),
+    };
+
     const connectionOperationsApplication = {
       buildExecutionIntelligence: vi.fn().mockReturnValue({
         status: "successful",
@@ -44,6 +58,7 @@ describe("CanonicalIntelligenceContextBuilder", () => {
     const builder =
       new CanonicalIntelligenceContextBuilder({
         financialReadModelApplication,
+        financialIntelligenceApplication,
         connectionOperationsApplication,
       });
 
@@ -89,6 +104,10 @@ describe("CanonicalIntelligenceContextBuilder", () => {
         value: 100,
       },
     ]);
+
+    expect(
+      context.financial.intelligence.type,
+    ).toBe("financial-intelligence");
 
     expect(
       context.connections.execution.status,

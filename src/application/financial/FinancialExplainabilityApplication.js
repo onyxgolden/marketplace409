@@ -63,17 +63,6 @@ export class FinancialExplainabilityApplication {
       canonicalContext.ledgerContext,
     );
   }
-
-  traceReportLine(reportLine, ledgerContext = {}) {
-    return this.traceExplorerService.exploreReportLine(
-      reportLine,
-      ledgerContext,
-    );
-  }
-
-  explainReportLine(query, reportLine, ledgerContext = {}) {
-    return this.traceQueryService.ask(query, reportLine, ledgerContext);
-  }
 }
 
 Object.freeze(FinancialExplainabilityApplication);

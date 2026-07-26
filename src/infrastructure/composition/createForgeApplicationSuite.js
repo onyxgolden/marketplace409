@@ -38,6 +38,9 @@ export async function createForgeApplicationSuite(
       financialReadModelApplication:
         financialApplicationSuite.readModelApplication,
 
+      financialIntelligenceApplication:
+        financialApplicationSuite.financialIntelligenceApplication,
+
       connectionOperationsApplication:
         connectionPlatformSuite.connectionOperationsApplication,
     });

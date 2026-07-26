@@ -3,11 +3,18 @@ import { CanonicalIntelligenceContext } from "./CanonicalIntelligenceContext.js"
 export class CanonicalIntelligenceContextBuilder {
   constructor({
     financialReadModelApplication,
+    financialIntelligenceApplication,
     connectionOperationsApplication,
   } = {}) {
     if (!financialReadModelApplication) {
       throw new Error(
         "CanonicalIntelligenceContextBuilder requires a financial read model application.",
+      );
+    }
+
+    if (!financialIntelligenceApplication) {
+      throw new Error(
+        "CanonicalIntelligenceContextBuilder requires a financial intelligence application.",
       );
     }
 
@@ -19,6 +26,9 @@ export class CanonicalIntelligenceContextBuilder {
 
     this.financialReadModelApplication =
       financialReadModelApplication;
+
+    this.financialIntelligenceApplication =
+      financialIntelligenceApplication;
 
     this.connectionOperationsApplication =
       connectionOperationsApplication;
@@ -34,10 +44,15 @@ export class CanonicalIntelligenceContextBuilder {
     const dashboard =
       await this.financialReadModelApplication.buildDashboard();
 
+    const intelligence =
+      await this.financialIntelligenceApplication
+        .buildFinancialIntelligence();
+
     const financial =
       Object.freeze({
         workspace: dashboard.workspace || null,
         dashboard: dashboard.dashboard || null,
+        intelligence,
         position: Object.freeze({
           assets:
             dashboard.dashboard?.assets || [],
