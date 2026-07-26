@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import ForgeDashboardShell from "@/components/forge/ForgeDashboardShell";
+import { ForgeDashboardApplication } from "@/application";
 
 function formatCurrency(value) {
   if (value == null) return "$0";
@@ -10,39 +11,21 @@ function formatCurrency(value) {
 }
 
 export default function ForgeDashboardClient({
-  forgeDashboardApplication,
+  initialDashboardIntelligence,
+  initialReadModels,
 }) {
   const [view, setView] = useState("networth");
 
   const [dashboardIntelligence, setDashboardIntelligence] =
-    useState(() =>
-      forgeDashboardApplication.buildLoadingDashboardIntelligence(),
-    );
+    useState(initialDashboardIntelligence);
 
-  const [readModels, setReadModels] = useState(null);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    forgeDashboardApplication.loadDashboardIntelligence().then((result) => {
-      if (isMounted) {
-        setDashboardIntelligence(result);
-      }
-    });
-
-    forgeDashboardApplication.loadReadModels().then((result) => {
-      if (isMounted && result) {
-        setReadModels(result);
-      }
-    });
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+  const [readModels, setReadModels] =
+    useState(initialReadModels);
 
   const dashboardViewModel = useMemo(
-    () => forgeDashboardApplication.buildViewModel(dashboardIntelligence),
+    () => ForgeDashboardApplication.buildViewModel(
+      dashboardIntelligence,
+    ),
     [dashboardIntelligence],
   );
 

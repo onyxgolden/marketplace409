@@ -43,8 +43,13 @@ export default async function ForgePage() {
       </section>
 
       <ForgeDashboardClient
-        forgeDashboardApplication={
-          forgeApplicationSuite.forgeDashboardApplication
+        initialDashboardIntelligence={
+          await forgeApplicationSuite.forgeDashboardApplication
+            .loadDashboardIntelligence()
+        }
+        initialReadModels={
+          await forgeApplicationSuite.forgeDashboardApplication
+            .loadReadModels()
         }
       />
     </div>
