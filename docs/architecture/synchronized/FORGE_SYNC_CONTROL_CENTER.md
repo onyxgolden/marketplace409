@@ -32,12 +32,11 @@
 
 | Check                 | Result       |
 | --------------------- | ------------ |
-| Branch                | main |
-| HEAD                  | 813610cfa805a3379ec3ead0f77ed8f68237e674 |
-| origin/main           | 813610cfa805a3379ec3ead0f77ed8f68237e674 |
-| Working tree          | dirty |
-| Implementation commit | Not recorded |
-| Governance commit     | Not recorded |
+| HEAD                  | f785f187f3c294e3fc328e2f00dd7b739da13194 |
+| origin/main           | f785f187f3c294e3fc328e2f00dd7b739da13194 |
+| Working tree          | clean |
+| Implementation commit | f785f18 |
+| Governance commit     | Pending |
 
 <!-- FORGE:SYNC:repository_state:END -->
 
@@ -47,8 +46,8 @@
 
 ## Active Phase
 
-**Phase:** 21D.8
-**Title:** Authenticated Financial Runtime Validation
+**Phase:** 21D.15
+**Title:** Intelligence Governance Validation
 **Status:** complete
 
 <!-- FORGE:SYNC:active_phase:END -->
@@ -59,7 +58,10 @@
 
 ## Current Objective
 
-Phase 21D.8 completed authenticated financial runtime validation through the FORGE application boundary, canonical persistence, financial read models, and executive dashboard runtime.
+Phase 21D.15 completed validation of canonical intelligence boundaries across explainability, dashboard intelligence, financial intelligence, operations, and decision workflows.
+
+Repository-backed read models remain the authority source.
+Derived intelligence remains immutable and provenance tracked.
 
 <!-- FORGE:SYNC:current_objective:END -->
 
@@ -101,11 +103,13 @@ Future queue selection remains human-controlled during the shadow evaluation per
 
 ## Completed
 
-- Authenticated Supabase SSR runtime boundary
-- FORGE financial application composition validation
-- Canonical financial persistence validation
-- Financial read model validation
-- Executive KPI dashboard runtime validation
+- Canonical Intelligence Context validation
+- Canonical Explainability Projection boundary
+- Financial Intelligence validation
+- Dashboard Intelligence validation
+- Financial Decision validation
+- Financial Operations intelligence validation
+- Intelligence provenance verification
 
 <!-- FORGE:SYNC:completed_work:END -->
 
@@ -117,9 +121,9 @@ Future queue selection remains human-controlled during the shadow evaluation per
 
 | Validation       | Status | Summary |
 | ---------------- | ------ | ------- |
-| Focused tests    | passing | 14 files / 76 tests passed |
-| Full tests       | not-run | Not executed during Phase 21D.8 |
-| Production build | passing | Next.js production build succeeded |
+| Focused tests    | passing | Explainability, intelligence, dashboard, operations, and composition tests passed |
+| Full tests       | not-run | Not executed during Phase 21D.15 |
+| Production build | not-run | No production runtime changes during governance validation |
 
 <!-- FORGE:SYNC:validation_evidence:END -->
 

@@ -30,7 +30,16 @@
 
 # Trial History
 
-No trial sessions have been recorded.
+Phase 21D.15 Intelligence Governance Validation recorded.
+
+Validation scope:
+
+- Canonical intelligence context
+- Explainability boundary
+- Financial intelligence workflow
+- Dashboard intelligence workflow
+- Decision intelligence workflow
+- Operations intelligence workflow
 
 <!-- FORGE:SYNC:trial_history:END -->
 
@@ -50,7 +59,13 @@ No authoritative-to-shadow comparison has been recorded.
 
 ## Observed Strengths
 
-None recorded.
+Observed strengths:
+
+- Intelligence workflows consume application boundaries.
+- Repository-backed read models remain the authority source.
+- Canonical contexts enforce immutable derived intelligence.
+- Provenance metadata is preserved.
+- Decision workflows consume intelligence outputs rather than raw persistence.
 
 <!-- FORGE:SYNC:observed_strengths:END -->
 

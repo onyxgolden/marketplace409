@@ -30,8 +30,8 @@
 
 ## Active Phase
 
-**Phase:** 21D.8
-**Title:** Authenticated Financial Runtime Validation
+**Phase:** 21D.15
+**Title:** Intelligence Governance Validation
 **Status:** complete
 
 <!-- FORGE:SYNC:active_phase:END -->
@@ -42,7 +42,7 @@
 
 ## Current Objective
 
-Validate the authenticated financial runtime path from user session through FORGE application composition, canonical persistence, financial read models, and executive dashboard output.
+Validate that intelligence workflows consume canonical application boundaries and repository-backed intelligence context without bypassing governance controls.
 
 <!-- FORGE:SYNC:current_objective:END -->
 
@@ -52,11 +52,12 @@ Validate the authenticated financial runtime path from user session through FORG
 
 ## Last Completed Work
 
-- Authenticated Supabase SSR runtime boundary
-- FORGE financial application composition validation
-- Canonical financial persistence validation
-- Financial read model validation
-- Executive KPI dashboard runtime validation
+- Canonical Intelligence Context validation
+- Canonical Explainability Projection boundary
+- Financial Intelligence validation
+- Dashboard Intelligence validation
+- Decision Intelligence validation
+- Intelligence provenance verification
 
 <!-- FORGE:SYNC:last_completed_work:END -->
 
@@ -94,7 +95,22 @@ None recorded.
 
 ## Starting Inspection
 
-Phase 21D.8 completed validation from authenticated session through canonical financial persistence, read models, and executive dashboard runtime. Next review target is Phase 21D.9 Canonical Intelligence Context Migration.
+Phase 21D.15 completed validation of the FORGE intelligence architecture.
+
+Validated paths:
+
+Canonical Intelligence Context
+        |
+        +--> Dashboard Intelligence
+        |
+        +--> Financial Intelligence
+                 |
+                 +--> Operations
+                 |
+                 +--> Decisions
+
+Next review target:
+FORGE engineering autonomy and governance evolution.
 
 <!-- FORGE:SYNC:starting_inspection:END -->
 

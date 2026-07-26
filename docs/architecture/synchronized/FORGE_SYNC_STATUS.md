@@ -30,8 +30,8 @@
 
 ## Current Architectural Phase
 
-**Phase:** 21D.8
-**Title:** Authenticated Financial Runtime Validation
+**Phase:** 21D.15
+**Title:** Intelligence Governance Validation
 **Status:** complete
 
 <!-- FORGE:SYNC:active_phase:END -->
@@ -42,8 +42,12 @@
 
 ## Immediate Objective
 
-Phase 21D.8 validation completed:
-authenticated financial runtime now flows through the FORGE application boundary into canonical financial persistence and read models.
+Phase 21D.15 validation completed:
+
+canonical intelligence boundaries have been validated across explainability, dashboard intelligence, financial intelligence, operations, and decision workflows.
+
+Repository-backed read models remain the authority source.
+Intelligence outputs remain derived and immutable.
 
 <!-- FORGE:SYNC:current_objective:END -->
 
@@ -53,13 +57,10 @@ authenticated financial runtime now flows through the FORGE application boundary
 
 ## Repository State
 
-| Check                 | Result       |
-| --------------------- | ------------ |
-| Branch                | main |
-| HEAD                  | d998f9126610a09625e6ef35d936c00d24516efa |
-| origin/main           | d998f9126610a09625e6ef35d936c00d24516efa |
-| Working tree          | dirty |
-| Implementation commit | d998f91 |
+| HEAD                  | f785f187f3c294e3fc328e2f00dd7b739da13194 |
+| origin/main           | f785f187f3c294e3fc328e2f00dd7b739da13194 |
+| Working tree          | clean |
+| Implementation commit | f785f18 |
 | Governance commit     | Pending |
 
 <!-- FORGE:SYNC:repository_state:END -->
@@ -72,9 +73,9 @@ authenticated financial runtime now flows through the FORGE application boundary
 
 | Validation       | Status | Summary |
 | ---------------- | ------ | ------- |
-| Focused tests    | passing | 14 files / 76 tests passed |
-| Full tests       | not-run | Not executed during Phase 21D.8 |
-| Production build | passing | Next.js production build succeeded |
+| Focused tests    | passing | Explainability, intelligence, dashboard, operations, and composition tests passed |
+| Full tests       | not-run | Not executed during Phase 21D.15 |
+| Production build | not-run | No production code changes during governance update |
 
 <!-- FORGE:SYNC:validation_evidence:END -->
 
