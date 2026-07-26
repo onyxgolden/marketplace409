@@ -29,10 +29,23 @@ export class FinancialDashboardIntelligenceApplication {
   }
 
   buildDashboardIntelligence({
-    ledgerContext = {},
-    assets = [],
-    liabilities = [],
+    intelligenceContext = {},
   } = {}) {
+    const financial =
+      intelligenceContext?.financial || {};
+
+    const position =
+      financial?.position || {};
+
+    const ledgerContext =
+      financial?.dashboard?.ledgerContext || {};
+
+    const assets =
+      position.assets || [];
+
+    const liabilities =
+      position.liabilities || [];
+
     const auditFindings = this.auditAgent.run({
       ledger: ledgerContext,
     });
@@ -41,7 +54,10 @@ export class FinancialDashboardIntelligenceApplication {
       auditFindings: auditFindings?.anomalies ?? [],
     });
 
-    const netWorth = this.netWorthService.calculate(assets, liabilities);
+    const netWorth = this.netWorthService.calculate(
+      assets,
+      liabilities,
+    );
 
     return buildDashboardIntelligenceResponse({
       auditFindings,

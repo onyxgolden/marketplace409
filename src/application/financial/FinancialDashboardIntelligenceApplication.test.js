@@ -42,9 +42,17 @@ describe("FinancialDashboardIntelligenceApplication", () => {
     });
 
     const result = application.buildDashboardIntelligence({
-      ledgerContext: { accounts: [] },
-      assets: [{ value: 100 }],
-      liabilities: [{ balance: 25 }],
+      intelligenceContext: {
+        financial: {
+          dashboard: {
+            ledgerContext: { accounts: [] },
+          },
+          position: {
+            assets: [{ value: 100 }],
+            liabilities: [{ balance: 25 }],
+          },
+        },
+      },
     });
 
     expect(result).toMatchObject({
