@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Money } from "@/platform";
+import {
+  TransactionReviewApplication,
+} from "@/application";
 
 function formatCurrency(value) {
   return new Money(Math.round(Number(value || 0) * 100)).toString();
@@ -53,10 +56,9 @@ function reportSections(report) {
   }));
 }
 
-export default function FinancialImportTool({
-  financialImportApplication,
-  transactionReviewApplication,
-}) {
+export default function FinancialImportTool() {
+  const transactionReviewApplication =
+    new TransactionReviewApplication();
   const [source, setSource] = useState("rentec");
   const [fileName, setFileName] = useState("");
   const [result, setResult] = useState(null);
@@ -69,8 +71,22 @@ export default function FinancialImportTool({
 
   useEffect(() => {
     async function initializeImportTool() {
+      const response = await fetch(
+        "/api/financial/import/bootstrap",
+      );
+
+      const payload = await response.json();
+
       const initialized =
-        await financialImportApplication.initialize();
+        payload.success
+          ? payload.data
+          : {
+              ownerId: null,
+              properties: [],
+              error:
+                payload.error ||
+                "Unable to initialize financial import.",
+            };
 
       setOwnerId(initialized.ownerId);
       setProperties(initialized.properties);
@@ -78,7 +94,7 @@ export default function FinancialImportTool({
     }
 
     initializeImportTool();
-  }, [financialImportApplication]);
+  }, []);
 
   async function handleFileChange(event) {
     const file = event.target.files?.[0];

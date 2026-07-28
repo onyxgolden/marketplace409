@@ -12,6 +12,10 @@ import type {
 } from "./credential-reference.types";
 
 import type {
+  InstitutionReference,
+} from "./institution-reference.types";
+
+import type {
   ConnectionHealth,
 } from "./connection-health.types";
 
@@ -62,6 +66,12 @@ export type ConnectionProviderImportResult = Readonly<{
 export type ConnectionProviderImportPayload =
   ConnectionImportPayload;
 
+export type ConnectionProviderImportContext = Readonly<{
+  connection: Connection;
+  credentialReference: CredentialReference;
+  institutionReference: InstitutionReference;
+}>;
+
 export type ConnectionProviderHealth = Readonly<{
   provider: string;
   status: ConnectionProviderStatus;
@@ -97,10 +107,12 @@ export type ConnectionProvider = Readonly<{
 
   importData(
     connection: Connection,
+    context?: ConnectionProviderImportContext,
   ): Promise<ConnectionProviderImportResult>;
 
   importDataPayload(
     connection: Connection,
+    context?: ConnectionProviderImportContext,
   ): Promise<ConnectionProviderImportPayload>;
 
   reportHealth(

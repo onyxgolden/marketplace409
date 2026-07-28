@@ -79,6 +79,11 @@ export async function POST(request: Request) {
           options,
         });
 
+    console.log(
+      "===== CONNECTION EXECUTION RESULT =====",
+      JSON.stringify(result, null, 2),
+    );
+
     return NextResponse.json({
       success: true,
       data: result,

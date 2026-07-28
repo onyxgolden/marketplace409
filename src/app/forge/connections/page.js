@@ -50,20 +50,22 @@ export default function ConnectionPage() {
       setExecutionResult(
         payload.data,
       );
+
+      await loadDashboard();
     } finally {
       setIsExecuting(false);
     }
   }
 
+  async function loadDashboard() {
+    const result =
+      await ForgeConnectionDashboardApplication.load();
+
+    setViewModel(result);
+  }
+
   useEffect(() => {
-    async function load() {
-      const result =
-        await ForgeConnectionDashboardApplication.load();
-
-      setViewModel(result);
-    }
-
-    load();
+    loadDashboard();
   }, []);
 
   const {

@@ -225,6 +225,51 @@ expect(suite.transactionImportService.mapper).toBe(
 
 });
 
+it("injects the vault service and Plaid client into the default adapter", async () => {
+const credentialVaultService = {
+retrieveCredential: vi.fn(),
+};
+
+const plaidClient = {
+linkTokenCreate: vi.fn().mockResolvedValue({
+data: {
+link_token: "composed-link-token",
+},
+}),
+itemPublicTokenExchange: vi.fn().mockResolvedValue({
+data: {
+access_token: "composed-access-token",
+item_id: "composed-item-id",
+},
+}),
+};
+
+const suite = createConnectionPlatformSuite({
+credentialVaultService,
+plaidClient,
+});
+
+expect(suite.credentialVaultService).toBe(
+credentialVaultService,
+);
+
+const linkToken =
+await suite.plaidProvider.createLinkToken({
+userId: "user_1",
+clientName: "FORGE",
+language: "en",
+countryCodes: ["US"],
+products: ["transactions"],
+});
+
+expect(linkToken).toBe("composed-link-token");
+expect(plaidClient.linkTokenCreate).toHaveBeenCalledOnce();
+expect(
+credentialVaultService.retrieveCredential,
+).not.toHaveBeenCalled();
+});
+
+
 it("allows providers, registry, and services to be injected", () => {
 const plaidProvider = {
 provider: "plaid",

@@ -72,16 +72,7 @@ export default async function ImportPage() {
         </div>
       </div>
 
-      <FinancialImportTool
-        financialImportApplication={
-          forgeApplicationSuite.financialApplicationSuite
-            .financialImportApplication
-        }
-        transactionReviewApplication={
-          forgeApplicationSuite.financialApplicationSuite
-            .transactionReviewApplication
-        }
-      />
+      <FinancialImportTool />
     </main>
   );
 }

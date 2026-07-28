@@ -74,9 +74,11 @@ export default function PlaidConnectButton() {
       setStatus("connected");
       setMessage(
         metadata?.institution?.name
-          ? `Connected ${metadata.institution.name}. Item ${data.itemId} is ready for import.`
-          : `Bank connected. Item ${data.itemId} is ready for import.`,
+          ? `Connected ${metadata.institution.name}. Loading the import operation...`
+          : "Bank connected. Loading the import operation...",
       );
+
+      window.location.reload();
     } catch (error) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Plaid token exchange failed.");

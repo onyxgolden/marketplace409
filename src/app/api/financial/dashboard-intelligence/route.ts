@@ -21,7 +21,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      data: intelligence,
+      data:
+        typeof intelligence?.toJSON === "function"
+          ? intelligence.toJSON()
+          : intelligence,
     });
   } catch (error) {
     console.error("Financial dashboard intelligence error", error);

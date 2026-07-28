@@ -82,6 +82,7 @@ export {
 export type {
   ConnectionProvider,
   ConnectionProviderHealth,
+  ConnectionProviderImportContext,
   ConnectionProviderImportResult,
   ConnectionProviderImportPayload,
   ConnectionProviderOperation,

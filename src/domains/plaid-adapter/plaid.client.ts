@@ -7,6 +7,11 @@ import {
 } from "plaid";
 
 import type {
+  AccountsGetResponse,
+  TransactionsSyncResponse,
+} from "plaid";
+
+import type {
   PlaidConfig,
 } from "./plaid.config";
 
@@ -31,8 +36,47 @@ export type PlaidPublicTokenExchangeResult = {
   itemId: string;
 };
 
-type PlaidLinkTokenClient = Pick<PlaidApi, "linkTokenCreate">;
-type PlaidPublicTokenExchangeClient = Pick<PlaidApi, "itemPublicTokenExchange">;
+export type PlaidAccessTokenRequest = {
+  accessToken: string;
+};
+
+export type PlaidTransactionsSyncRequest = {
+  accessToken: string;
+  cursor?: string;
+};
+
+export type PlaidTransactionUpdates = {
+  added: TransactionsSyncResponse["added"];
+  modified: TransactionsSyncResponse["modified"];
+  removed: TransactionsSyncResponse["removed"];
+  nextCursor: string;
+};
+
+export type PlaidAdapterClient = Partial<
+  Pick<
+    PlaidApi,
+    | "linkTokenCreate"
+    | "itemPublicTokenExchange"
+    | "accountsGet"
+    | "accountsBalanceGet"
+    | "transactionsSync"
+  >
+>;
+
+type PlaidLinkTokenClient =
+  Pick<PlaidAdapterClient, "linkTokenCreate">;
+
+type PlaidPublicTokenExchangeClient =
+  Pick<PlaidAdapterClient, "itemPublicTokenExchange">;
+
+type PlaidAccountsClient =
+  Pick<PlaidAdapterClient, "accountsGet">;
+
+type PlaidBalancesClient =
+  Pick<PlaidAdapterClient, "accountsBalanceGet">;
+
+type PlaidTransactionsSyncClient =
+  Pick<PlaidAdapterClient, "transactionsSync">;
 
 export function createPlaidClient(
   config: PlaidConfig = getPlaidConfig(),
@@ -78,5 +122,80 @@ export async function exchangePlaidPublicToken(
   return {
     accessToken: response.data.access_token,
     itemId: response.data.item_id,
+  };
+}
+
+export async function getPlaidAccounts(
+  client: PlaidAccountsClient,
+  request: PlaidAccessTokenRequest,
+): Promise<AccountsGetResponse> {
+  const response = await client.accountsGet({
+    access_token: request.accessToken,
+  });
+
+  return response.data;
+}
+
+export async function getPlaidBalances(
+  client: PlaidBalancesClient,
+  request: PlaidAccessTokenRequest,
+): Promise<AccountsGetResponse> {
+  const response = await client.accountsBalanceGet({
+    access_token: request.accessToken,
+  });
+
+  return response.data;
+}
+
+export async function getPlaidTransactionsSync(
+  client: PlaidTransactionsSyncClient,
+  request: PlaidTransactionsSyncRequest,
+): Promise<TransactionsSyncResponse> {
+  const response = await client.transactionsSync({
+    access_token: request.accessToken,
+    ...(request.cursor !== undefined
+      ? {
+          cursor: request.cursor,
+        }
+      : {}),
+  });
+
+  return response.data;
+}
+
+export async function getAllPlaidTransactionUpdates(
+  client: PlaidTransactionsSyncClient,
+  request: PlaidTransactionsSyncRequest,
+): Promise<PlaidTransactionUpdates> {
+  const added: TransactionsSyncResponse["added"] = [];
+  const modified: TransactionsSyncResponse["modified"] = [];
+  const removed: TransactionsSyncResponse["removed"] = [];
+
+  let cursor = request.cursor;
+  let hasMore = true;
+
+  while (hasMore) {
+    const page = await getPlaidTransactionsSync(client, {
+      accessToken: request.accessToken,
+      ...(cursor !== undefined
+        ? {
+            cursor,
+          }
+        : {}),
+    });
+
+    added.push(...page.added);
+    modified.push(...page.modified);
+    removed.push(...page.removed);
+
+    cursor = page.next_cursor;
+    hasMore = page.has_more;
+  }
+
+  return {
+    added,
+    modified,
+    removed,
+    nextCursor: cursor ?? "",
   };
 }

@@ -135,6 +135,144 @@ describe("CredentialVaultService", () => {
     expect(Number.isNaN(Date.parse(result.storedAt))).toBe(false);
   });
 
+
+  it("retrieves a credential through the injected repository", async () => {
+    const repository = createRepository();
+
+    vi.mocked(repository.retrieve).mockResolvedValue(
+      "secret-1",
+    );
+
+    const service = new CredentialVaultService(repository);
+
+    await expect(
+      service.retrieveCredential(
+        "vault://credential-1",
+      ),
+    ).resolves.toBe("secret-1");
+
+    expect(repository.retrieve).toHaveBeenCalledWith(
+      "vault://credential-1",
+    );
+  });
+
+  it("returns null when a credential does not exist", async () => {
+    const repository = createRepository();
+    const service = new CredentialVaultService(repository);
+
+    await expect(
+      service.retrieveCredential(
+        "vault://missing",
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("deletes a credential through the injected repository", async () => {
+    const repository = createRepository();
+
+    vi.mocked(repository.delete).mockResolvedValue(
+      true,
+    );
+
+    const service = new CredentialVaultService(repository);
+
+    await expect(
+      service.deleteCredential(
+        "vault://credential-1",
+      ),
+    ).resolves.toBe(true);
+
+    expect(repository.delete).toHaveBeenCalledWith(
+      "vault://credential-1",
+    );
+  });
+
+  it("checks credential existence through the injected repository", async () => {
+    const repository = createRepository();
+
+    vi.mocked(repository.exists).mockResolvedValue(
+      true,
+    );
+
+    const service = new CredentialVaultService(repository);
+
+    await expect(
+      service.credentialExists(
+        "vault://credential-1",
+      ),
+    ).resolves.toBe(true);
+
+    expect(repository.exists).toHaveBeenCalledWith(
+      "vault://credential-1",
+    );
+  });
+
+  it.each([
+    ["retrieveCredential", "retrieve"],
+    ["deleteCredential", "delete"],
+    ["credentialExists", "exists"],
+  ])(
+    "rejects an empty vault reference for %s",
+    async (serviceMethod, repositoryMethod) => {
+      const repository = createRepository();
+      const service = new CredentialVaultService(repository);
+
+      await expect(
+        service[
+          serviceMethod as
+            | "retrieveCredential"
+            | "deleteCredential"
+            | "credentialExists"
+        ](" "),
+      ).rejects.toThrow(
+        "vaultReference must be a non-empty string.",
+      );
+
+      expect(
+        repository[
+          repositoryMethod as
+            | "retrieve"
+            | "delete"
+            | "exists"
+        ],
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["retrieveCredential", "retrieve"],
+    ["deleteCredential", "delete"],
+    ["credentialExists", "exists"],
+  ])(
+    "propagates repository failures from %s",
+    async (serviceMethod, repositoryMethod) => {
+      const repository = createRepository();
+      const error = new Error(
+        "Credential vault operation failed.",
+      );
+
+      vi.mocked(
+        repository[
+          repositoryMethod as
+            | "retrieve"
+            | "delete"
+            | "exists"
+        ],
+      ).mockRejectedValue(error);
+
+      const service = new CredentialVaultService(repository);
+
+      await expect(
+        service[
+          serviceMethod as
+            | "retrieveCredential"
+            | "deleteCredential"
+            | "credentialExists"
+        ]("vault://credential-1"),
+      ).rejects.toBe(error);
+    },
+  );
+
   it("exposes the injected repository for composition verification", () => {
     const repository = createRepository();
     const service = new CredentialVaultService(repository);

@@ -47,11 +47,13 @@ export class AccountImportService {
     const providerResult =
       await provider.importData(
         input.connection,
+        input,
       );
 
     const providerPayload =
       await provider.importDataPayload(
         input.connection,
+        input,
       );
 
     return toAccountImportResult(

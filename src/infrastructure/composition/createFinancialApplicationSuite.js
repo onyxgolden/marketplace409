@@ -23,6 +23,7 @@ import {
   FinancialDecisionOutcomeApplication,
   FinancialExplainabilityApplication,
   FinancialImportApplication,
+  ForgeDashboardApplication,
   FinancialIntelligenceApplication,
   FinancialOperationsApplication,
   FinancialReportingApplication,
@@ -160,6 +161,8 @@ export async function createFinancialApplicationSuite(deps = {}) {
         ? createLazyFinancialAccountRepository({
             storage:
               FinancialAccountRepositoryStorage.SUPABASE,
+            supabaseClient:
+              deps.supabaseClient,
           })
         : new InMemoryFinancialAccountRepository()
     );
@@ -177,6 +180,8 @@ export async function createFinancialApplicationSuite(deps = {}) {
         ? createLazyAccountBalanceRepository({
             storage:
               AccountBalanceRepositoryStorage.SUPABASE,
+            supabaseClient:
+              deps.supabaseClient,
           })
         : new InMemoryAccountBalanceRepository()
     );
@@ -345,6 +350,8 @@ export async function createFinancialApplicationSuite(deps = {}) {
     financialSnapshotViewApplication,
     financialImportApplication,
     transactionReviewApplication,
+    forgeDashboardApplication:
+      ForgeDashboardApplication,
     snapshotRepository,
     financialEventRepository,
     engine,

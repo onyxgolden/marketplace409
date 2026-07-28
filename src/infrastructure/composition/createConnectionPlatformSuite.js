@@ -73,11 +73,28 @@ ConnectionOperationsApplication,
 ConnectionImportExecutionCoordinator,
 ConnectionReviewExecutionCoordinator,
 ConnectionRepairExecutionCoordinator,
+ConnectionExecutionHistoryQueryService,
+ConnectionExecutionHistoryIntelligenceBuilder,
 } from "../../application/connection/index.js";
 
 export function createConnectionPlatformSuite(deps = {}) {
+
+
+
+const credentialVault =
+deps.credentialVault ||
+new InMemoryCredentialVaultRepository();
+
+const credentialVaultService =
+deps.credentialVaultService ||
+new CredentialVaultService(credentialVault);
+
 const plaidProvider =
-deps.plaidProvider || createPlaidAdapter();
+  deps.plaidProvider ||
+  createPlaidAdapter({
+    credentialVaultService,
+    plaidClient: deps.plaidClient,
+  });
 
 const providers =
 deps.providers || [plaidProvider];
@@ -122,13 +139,6 @@ CredentialReferenceRepositoryStorage.SUPABASE
   : new InMemoryCredentialReferenceRepository()
 );
 
-const credentialVault =
-deps.credentialVault ||
-new InMemoryCredentialVaultRepository();
-
-const credentialVaultService =
-deps.credentialVaultService ||
-new CredentialVaultService(credentialVault);
 
 const institutionReferenceRepositoryStorage =
 deps.institutionReferenceRepositoryStorage ||
@@ -161,6 +171,8 @@ FinancialAccountRepositoryStorage.SUPABASE
   ? createLazyFinancialAccountRepository({
       storage:
         FinancialAccountRepositoryStorage.SUPABASE,
+      supabaseClient:
+        deps.supabaseClient,
     })
   : new InMemoryFinancialAccountRepository()
 );
@@ -178,6 +190,8 @@ AccountBalanceRepositoryStorage.SUPABASE
   ? createLazyAccountBalanceRepository({
       storage:
         AccountBalanceRepositoryStorage.SUPABASE,
+      supabaseClient:
+        deps.supabaseClient,
     })
   : new InMemoryAccountBalanceRepository()
 );
@@ -317,6 +331,16 @@ connectionReadModelAdapter,
 currentOwnerId: deps.currentOwnerId,
 });
 
+const connectionExecutionHistoryQueryService =
+deps.connectionExecutionHistoryQueryService ||
+new ConnectionExecutionHistoryQueryService({
+connectionExecutionHistoryRepository,
+});
+
+const connectionExecutionHistoryIntelligenceBuilder =
+deps.connectionExecutionHistoryIntelligenceBuilder ||
+ConnectionExecutionHistoryIntelligenceBuilder;
+
 const connectionOperationsApplication =
 deps.connectionOperationsApplication ||
 new ConnectionOperationsApplication({
@@ -324,6 +348,8 @@ connectionReadModelApplication,
 connectionReviewExecutionCoordinator,
 connectionRepairExecutionCoordinator,
 connectionImportExecutionCoordinator,
+connectionExecutionHistoryQueryService,
+connectionExecutionHistoryIntelligenceBuilder,
 });
 
 return Object.freeze({
@@ -357,6 +383,8 @@ connectionQueryService,
 connectionSummaryQueryService,
 connectionReadModelAdapter,
 connectionReadModelApplication,
+connectionExecutionHistoryQueryService,
+connectionExecutionHistoryIntelligenceBuilder,
 connectionOperationsApplication,
 });
 }

@@ -57,12 +57,21 @@ export class ConnectionOperationsApplication {
       );
     }
 
+    const hasConnectionId =
+      typeof connectionId === "string" &&
+      connectionId.trim().length > 0;
+
     const history =
-      await this.connectionExecutionHistoryQueryService
-        .findByConnectionId(
-          ownerId,
-          connectionId,
-        );
+      hasConnectionId
+        ? await this.connectionExecutionHistoryQueryService
+            .findByConnectionId(
+              ownerId,
+              connectionId,
+            )
+        : await this.connectionExecutionHistoryQueryService
+            .findRecentByOwnerId(
+              ownerId,
+            );
 
     return this.connectionExecutionHistoryIntelligenceBuilder
       .build(history);

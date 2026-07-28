@@ -14,7 +14,7 @@ export default function ForgeDashboardClient({
   initialDashboardIntelligence,
   initialReadModels,
 }) {
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState("networth");
 
   const [dashboardIntelligence, setDashboardIntelligence] =
     useState(initialDashboardIntelligence);

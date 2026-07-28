@@ -31,6 +31,7 @@ export class ForgeConnectionDashboardApplication {
   static buildReadyModel({
     dashboard,
     reports,
+    summary = null,
     health = null,
     recommendations = [],
     intelligence = null,
@@ -46,18 +47,54 @@ export class ForgeConnectionDashboardApplication {
       normalizedDashboard?.metadata ||
       DEFAULT_METADATA;
 
+    const sourceConnections =
+      normalizedDashboard?.connections ||
+      normalizedReports?.connections ||
+      [];
+
+    const connections =
+      sourceConnections.map((entry) => {
+        const connection =
+          entry?.connection || entry;
+
+        return {
+          ...connection,
+          institution:
+            entry?.institution ||
+            connection?.institution ||
+            null,
+          institutionName:
+            entry?.institution?.name ||
+            connection?.institutionName ||
+            null,
+          status:
+            entry?.statusDetails?.status ||
+            connection?.status ||
+            "unknown",
+          readyForImport:
+            entry?.statusDetails?.allowsImport ??
+            entry?.health?.allowsImport ??
+            connection?.readyForImport ??
+            false,
+          statusDetails:
+            entry?.statusDetails || null,
+          capabilities:
+            entry?.capabilities || null,
+          health:
+            entry?.health || null,
+        };
+      });
+
     return {
       dashboard: normalizedDashboard,
       reports: normalizedReports,
       loadState: "ready",
       error: null,
       summary:
+        summary ||
         normalizedDashboard?.summary ||
         {},
-      connections:
-        normalizedDashboard?.connections ||
-        normalizedReports?.connections ||
-        [],
+      connections,
       metadata,
       health,
       recommendations,
@@ -111,6 +148,8 @@ export class ForgeConnectionDashboardApplication {
           operations.dashboard?.dashboard ||
           null,
         reports: null,
+        summary:
+          operations.summary || null,
         health:
           operations.health || null,
         recommendations:

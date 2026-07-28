@@ -36,6 +36,45 @@ export class CredentialVaultService {
 
     return toCredentialVaultStorageResult(input);
   }
+
+  async retrieveCredential(
+    vaultReference: string,
+  ): Promise<string | null> {
+    assertNonEmptyString(
+      vaultReference,
+      "vaultReference",
+    );
+
+    return this.repository.retrieve(
+      vaultReference,
+    );
+  }
+
+  async deleteCredential(
+    vaultReference: string,
+  ): Promise<boolean> {
+    assertNonEmptyString(
+      vaultReference,
+      "vaultReference",
+    );
+
+    return this.repository.delete(
+      vaultReference,
+    );
+  }
+
+  async credentialExists(
+    vaultReference: string,
+  ): Promise<boolean> {
+    assertNonEmptyString(
+      vaultReference,
+      "vaultReference",
+    );
+
+    return this.repository.exists(
+      vaultReference,
+    );
+  }
 }
 
 function assertNonEmptyString(
