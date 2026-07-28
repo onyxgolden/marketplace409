@@ -19,6 +19,7 @@ describe("CredentialVaultService", () => {
     const service = new CredentialVaultService(repository);
 
     await service.storeCredential({
+      ownerId: "owner-1",
       vaultReference: "vault://credential-1",
       secret: "secret-1",
       storedAt: "2026-07-25T02:00:00.000Z",
@@ -32,12 +33,14 @@ describe("CredentialVaultService", () => {
     const service = new CredentialVaultService(repository);
 
     await service.storeCredential({
+      ownerId: "owner-1",
       vaultReference: "vault://credential-1",
       secret: "secret-1",
       storedAt: "2026-07-25T02:00:00.000Z",
     });
 
     expect(repository.store).toHaveBeenCalledWith(
+      "owner-1",
       "vault://credential-1",
       "secret-1",
     );
@@ -49,6 +52,7 @@ describe("CredentialVaultService", () => {
 
     await expect(
       service.storeCredential({
+        ownerId: "owner-1",
         vaultReference: "vault://credential-1",
         secret: "secret-1",
         storedAt: "2026-07-25T02:00:00.000Z",
@@ -65,6 +69,7 @@ describe("CredentialVaultService", () => {
     const service = new CredentialVaultService(repository);
 
     const result = await service.storeCredential({
+      ownerId: "owner-1",
       vaultReference: "vault://credential-1",
       secret: "secret-1",
       storedAt: "2026-07-25T02:00:00.000Z",
@@ -81,6 +86,7 @@ describe("CredentialVaultService", () => {
 
     await expect(
       service.storeCredential({
+        ownerId: "owner-1",
         vaultReference: " ",
         secret: "secret-1",
       }),
@@ -97,6 +103,7 @@ describe("CredentialVaultService", () => {
 
     await expect(
       service.storeCredential({
+        ownerId: "owner-1",
         vaultReference: "vault://credential-1",
         secret: " ",
       }),
@@ -117,6 +124,7 @@ describe("CredentialVaultService", () => {
 
     await expect(
       service.storeCredential({
+        ownerId: "owner-1",
         vaultReference: "vault://credential-1",
         secret: "secret-1",
       }),
@@ -128,6 +136,7 @@ describe("CredentialVaultService", () => {
     const service = new CredentialVaultService(repository);
 
     const result = await service.storeCredential({
+      ownerId: "owner-1",
       vaultReference: "vault://credential-1",
       secret: "secret-1",
     });
@@ -147,11 +156,13 @@ describe("CredentialVaultService", () => {
 
     await expect(
       service.retrieveCredential(
+        "owner-1",
         "vault://credential-1",
       ),
     ).resolves.toBe("secret-1");
 
     expect(repository.retrieve).toHaveBeenCalledWith(
+      "owner-1",
       "vault://credential-1",
     );
   });
@@ -162,6 +173,7 @@ describe("CredentialVaultService", () => {
 
     await expect(
       service.retrieveCredential(
+        "owner-1",
         "vault://missing",
       ),
     ).resolves.toBeNull();
@@ -178,11 +190,13 @@ describe("CredentialVaultService", () => {
 
     await expect(
       service.deleteCredential(
+        "owner-1",
         "vault://credential-1",
       ),
     ).resolves.toBe(true);
 
     expect(repository.delete).toHaveBeenCalledWith(
+      "owner-1",
       "vault://credential-1",
     );
   });
@@ -198,11 +212,13 @@ describe("CredentialVaultService", () => {
 
     await expect(
       service.credentialExists(
+        "owner-1",
         "vault://credential-1",
       ),
     ).resolves.toBe(true);
 
     expect(repository.exists).toHaveBeenCalledWith(
+      "owner-1",
       "vault://credential-1",
     );
   });
@@ -223,7 +239,7 @@ describe("CredentialVaultService", () => {
             | "retrieveCredential"
             | "deleteCredential"
             | "credentialExists"
-        ](" "),
+        ]("owner-1", " "),
       ).rejects.toThrow(
         "vaultReference must be a non-empty string.",
       );
@@ -268,7 +284,7 @@ describe("CredentialVaultService", () => {
             | "retrieveCredential"
             | "deleteCredential"
             | "credentialExists"
-        ]("vault://credential-1"),
+        ]("owner-1", "vault://credential-1"),
       ).rejects.toBe(error);
     },
   );

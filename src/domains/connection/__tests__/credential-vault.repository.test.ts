@@ -18,12 +18,14 @@ describe(
           new InMemoryCredentialVaultRepository();
 
         await repository.store(
+          "owner-1",
           "vault://plaid/items/item_1/access-token",
           "access-token-1",
         );
 
         await expect(
           repository.retrieve(
+            "owner-1",
             "vault://plaid/items/item_1/access-token",
           ),
         ).resolves.toBe("access-token-1");
@@ -38,6 +40,7 @@ describe(
 
         await expect(
           repository.retrieve(
+            "owner-1",
             "vault://missing",
           ),
         ).resolves.toBeNull();
@@ -51,18 +54,21 @@ describe(
           new InMemoryCredentialVaultRepository();
 
         await repository.store(
+          "owner-1",
           "vault://credential-1",
           "secret-1",
         );
 
         await expect(
           repository.exists(
+            "owner-1",
             "vault://credential-1",
           ),
         ).resolves.toBe(true);
 
         await expect(
           repository.exists(
+            "owner-1",
             "vault://credential-2",
           ),
         ).resolves.toBe(false);
@@ -76,17 +82,20 @@ describe(
           new InMemoryCredentialVaultRepository();
 
         await repository.store(
+          "owner-1",
           "vault://credential-1",
           "original-secret",
         );
 
         await repository.store(
+          "owner-1",
           "vault://credential-1",
           "replacement-secret",
         );
 
         await expect(
           repository.retrieve(
+            "owner-1",
             "vault://credential-1",
           ),
         ).resolves.toBe(
@@ -102,18 +111,21 @@ describe(
           new InMemoryCredentialVaultRepository();
 
         await repository.store(
+          "owner-1",
           "vault://credential-1",
           "secret-1",
         );
 
         await expect(
           repository.delete(
+            "owner-1",
             "vault://credential-1",
           ),
         ).resolves.toBe(true);
 
         await expect(
           repository.retrieve(
+            "owner-1",
             "vault://credential-1",
           ),
         ).resolves.toBeNull();
@@ -128,6 +140,7 @@ describe(
 
         await expect(
           repository.delete(
+            "owner-1",
             "vault://missing",
           ),
         ).resolves.toBe(false);
@@ -148,6 +161,7 @@ describe(
         if (operation === "store") {
           await expect(
             repository.store(
+              "owner-1",
               " ",
               "secret",
             ),
@@ -164,7 +178,7 @@ describe(
               | "retrieve"
               | "delete"
               | "exists"
-          ](" "),
+          ]("owner-1", " "),
         ).rejects.toThrow(
           "vaultReference must be a non-empty string.",
         );
@@ -179,6 +193,7 @@ describe(
 
         await expect(
           repository.store(
+            "owner-1",
             "vault://credential-1",
             " ",
           ),

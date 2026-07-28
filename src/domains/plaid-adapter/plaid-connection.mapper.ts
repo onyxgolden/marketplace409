@@ -18,6 +18,7 @@ export type PlaidConnectionMappingResult = Readonly<{
   credentialReference: CredentialReference;
   connection: Connection;
   institutionReference: InstitutionReference;
+  credentialSecret: string;
 }>;
 
 export function mapPlaidExchangeToConnection(
@@ -29,6 +30,7 @@ export function mapPlaidExchangeToConnection(
   const institutionReferenceId = `institution_plaid_${input.exchange.itemId}`;
 
   return {
+    credentialSecret: input.exchange.accessToken,
     credentialReference: {
       id: credentialReferenceId,
       provider: "plaid",

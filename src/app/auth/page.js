@@ -1,8 +1,10 @@
 "use client";
 
 import Header from "@/components/Header";
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@/lib/supabase/client";
 import { useState } from "react";
+
+const supabase = createClient();
 
 export default function AuthPage() {
   const [email, setEmail] = useState("");

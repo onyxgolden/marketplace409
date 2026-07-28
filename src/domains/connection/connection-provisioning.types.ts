@@ -14,6 +14,7 @@ export type ConnectionProvisioningInput = Readonly<{
   connection: Connection;
   credentialReference: CredentialReference;
   institutionReference: InstitutionReference;
+  credentialSecret?: string;
   provisionedAt?: string;
 }>;
 
@@ -21,6 +22,7 @@ export type ConnectionProvisioningResult = Readonly<{
   connection: Connection;
   credentialReference: CredentialReference;
   institutionReference: InstitutionReference;
+  credentialSecret?: string;
   provisionedAt: string;
   readyForPersistence: true;
 }>;
@@ -32,6 +34,7 @@ export function toConnectionProvisioningResult(
     connection: input.connection,
     credentialReference: input.credentialReference,
     institutionReference: input.institutionReference,
+    credentialSecret: input.credentialSecret,
     provisionedAt: input.provisionedAt ?? new Date().toISOString(),
     readyForPersistence: true,
   };

@@ -4,9 +4,9 @@ ConnectionImportOrchestrator,
 ConnectionPersistenceService,
 ConnectionProvisioningService,
 CredentialVaultService,
+InMemoryCredentialVaultRepository,
 InMemoryConnectionRepository,
 InMemoryCredentialReferenceRepository,
-InMemoryCredentialVaultRepository,
 InMemoryInstitutionReferenceRepository,
 createConnectionProviderRegistry,
 } from "../../domains/connection";
@@ -31,6 +31,11 @@ import {
 CredentialReferenceRepositoryStorage,
 createLazyCredentialReferenceRepository,
 } from "./createCredentialReferenceRepository.js";
+
+import {
+CredentialVaultRepositoryStorage,
+createLazyCredentialVaultRepository,
+} from "./createCredentialVaultRepository.js";
 
 import {
 InstitutionReferenceRepositoryStorage,
@@ -81,9 +86,24 @@ export function createConnectionPlatformSuite(deps = {}) {
 
 
 
+const credentialVaultRepositoryStorage =
+deps.credentialVaultRepositoryStorage ||
+process.env.CREDENTIAL_VAULT_REPOSITORY ||
+CredentialVaultRepositoryStorage.MEMORY;
+
 const credentialVault =
 deps.credentialVault ||
-new InMemoryCredentialVaultRepository();
+(
+  credentialVaultRepositoryStorage ===
+  CredentialVaultRepositoryStorage.SUPABASE
+    ? createLazyCredentialVaultRepository({
+        storage:
+          CredentialVaultRepositoryStorage.SUPABASE,
+        supabaseClient:
+          deps.supabaseClient,
+      })
+    : new InMemoryCredentialVaultRepository()
+);
 
 const credentialVaultService =
 deps.credentialVaultService ||
@@ -236,6 +256,7 @@ new ConnectionPersistenceService(
 connectionRepository,
 credentialReferenceRepository,
 institutionReferenceRepository,
+credentialVaultService,
 );
 
 const connectionImportOrchestrator =

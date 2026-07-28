@@ -8,9 +8,15 @@ export class InMemoryCredentialVaultRepository
   private readonly secrets = new Map<string, string>();
 
   async store(
+    ownerId: string,
     vaultReference: string,
     secret: string,
   ): Promise<void> {
+    assertNonEmptyString(
+      ownerId,
+      "ownerId",
+    );
+
     assertNonEmptyString(
       vaultReference,
       "vaultReference",
@@ -22,43 +28,88 @@ export class InMemoryCredentialVaultRepository
     );
 
     this.secrets.set(
-      vaultReference,
+      createKey(
+        ownerId,
+        vaultReference,
+      ),
       secret,
     );
   }
 
   async retrieve(
+    ownerId: string,
     vaultReference: string,
   ): Promise<string | null> {
     assertNonEmptyString(
+      ownerId,
+      "ownerId",
+    );
+
+    assertNonEmptyString(
       vaultReference,
       "vaultReference",
     );
 
-    return this.secrets.get(vaultReference) ?? null;
+    return (
+      this.secrets.get(
+        createKey(
+          ownerId,
+          vaultReference,
+        ),
+      ) ?? null
+    );
   }
 
   async delete(
+    ownerId: string,
     vaultReference: string,
   ): Promise<boolean> {
+    assertNonEmptyString(
+      ownerId,
+      "ownerId",
+    );
+
     assertNonEmptyString(
       vaultReference,
       "vaultReference",
     );
 
-    return this.secrets.delete(vaultReference);
+    return this.secrets.delete(
+      createKey(
+        ownerId,
+        vaultReference,
+      ),
+    );
   }
 
   async exists(
+    ownerId: string,
     vaultReference: string,
   ): Promise<boolean> {
+    assertNonEmptyString(
+      ownerId,
+      "ownerId",
+    );
+
     assertNonEmptyString(
       vaultReference,
       "vaultReference",
     );
 
-    return this.secrets.has(vaultReference);
+    return this.secrets.has(
+      createKey(
+        ownerId,
+        vaultReference,
+      ),
+    );
   }
+}
+
+function createKey(
+  ownerId: string,
+  vaultReference: string,
+): string {
+  return `${ownerId}:${vaultReference}`;
 }
 
 function assertNonEmptyString(

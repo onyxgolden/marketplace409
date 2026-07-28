@@ -210,3 +210,7 @@ export {
 export {
   InMemoryCredentialVaultRepository,
 } from "./in-memory-credential-vault.repository";
+
+export {
+  SupabaseCredentialVaultRepository,
+} from "./SupabaseCredentialVaultRepository";

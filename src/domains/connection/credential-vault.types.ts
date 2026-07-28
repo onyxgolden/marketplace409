@@ -1,4 +1,5 @@
 export type CredentialVaultStorageInput = Readonly<{
+  ownerId: string;
   vaultReference: string;
   secret: string;
   storedAt?: string;

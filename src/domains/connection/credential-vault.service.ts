@@ -20,6 +20,11 @@ export class CredentialVaultService {
     input: CredentialVaultStorageInput,
   ): Promise<CredentialVaultStorageResult> {
     assertNonEmptyString(
+      input?.ownerId,
+      "ownerId",
+    );
+
+    assertNonEmptyString(
       input?.vaultReference,
       "vaultReference",
     );
@@ -30,6 +35,7 @@ export class CredentialVaultService {
     );
 
     await this.repository.store(
+      input.ownerId,
       input.vaultReference,
       input.secret,
     );
@@ -38,40 +44,61 @@ export class CredentialVaultService {
   }
 
   async retrieveCredential(
+    ownerId: string,
     vaultReference: string,
   ): Promise<string | null> {
+    assertNonEmptyString(
+      ownerId,
+      "ownerId",
+    );
+
     assertNonEmptyString(
       vaultReference,
       "vaultReference",
     );
 
     return this.repository.retrieve(
+      ownerId,
       vaultReference,
     );
   }
 
   async deleteCredential(
+    ownerId: string,
     vaultReference: string,
   ): Promise<boolean> {
+    assertNonEmptyString(
+      ownerId,
+      "ownerId",
+    );
+
     assertNonEmptyString(
       vaultReference,
       "vaultReference",
     );
 
     return this.repository.delete(
+      ownerId,
       vaultReference,
     );
   }
 
   async credentialExists(
+    ownerId: string,
     vaultReference: string,
   ): Promise<boolean> {
+    assertNonEmptyString(
+      ownerId,
+      "ownerId",
+    );
+
     assertNonEmptyString(
       vaultReference,
       "vaultReference",
     );
 
     return this.repository.exists(
+      ownerId,
       vaultReference,
     );
   }
