@@ -67,6 +67,7 @@ export type ConnectionProviderImportPayload =
   ConnectionImportPayload;
 
 export type ConnectionProviderImportContext = Readonly<{
+  ownerId: string;
   connection: Connection;
   credentialReference: CredentialReference;
   institutionReference: InstitutionReference;

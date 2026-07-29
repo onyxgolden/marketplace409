@@ -44,6 +44,7 @@ export function createPlaidAdapter({
 }: {
   credentialVaultService?: {
     retrieveCredential(
+      ownerId: string,
       vaultReference: string,
     ): Promise<string | null>;
   };
@@ -69,6 +70,7 @@ export function createPlaidAdapter({
 
     const accessToken =
       await credentialVaultService.retrieveCredential(
+        context.ownerId,
         context.credentialReference.vaultReference,
       );
 

@@ -24,6 +24,16 @@ import type {
   ConnectionProvisioningResult,
 } from "../connection-provisioning.types";
 
+import { CredentialVaultService } from "../credential-vault.service";
+
+const credentialVaultService =
+  new CredentialVaultService({
+    store: async () => {},
+    retrieve: async () => null,
+    delete: async () => true,
+    exists: async () => false,
+  });
+
 const buildProvisioningResult = (
   overrides:
     Partial<ConnectionProvisioningResult> = {},
@@ -90,6 +100,7 @@ describe(
           connectionRepository,
           credentialReferenceRepository,
           institutionReferenceRepository,
+          credentialVaultService,
         );
 
       const provisionedConnection =
@@ -174,6 +185,7 @@ describe(
           connectionRepository,
           credentialReferenceRepository,
           institutionReferenceRepository,
+          credentialVaultService,
         );
 
       const result = await service.persist(

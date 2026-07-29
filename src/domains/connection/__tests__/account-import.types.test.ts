@@ -12,6 +12,7 @@ import {
 describe("AccountImportResult", () => {
   it("marks persisted connection accounts as ready for transaction import", () => {
     const input: AccountImportInput = {
+      ownerId: "user-1",
       connection: {
         id: "connection-1",
         userId: "user-1",

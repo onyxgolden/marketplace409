@@ -100,6 +100,7 @@ export class ConnectionImportExecutionCoordinator {
 
     const connectionPersistenceResult =
       Object.freeze({
+        ownerId,
         connection,
         credentialReference,
         institutionReference,

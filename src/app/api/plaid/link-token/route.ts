@@ -8,20 +8,34 @@ import {
 } from "next/server";
 
 import {
-  createPlaidAdapter,
-} from "@/domains/plaid-adapter";
+  createAuthenticatedConnectionApplication,
+} from "@/lib/supabase/createAuthenticatedConnectionApplication";
 
 export async function POST() {
   try {
-    const adapter = createPlaidAdapter();
+    const authenticatedApplication =
+      await createAuthenticatedConnectionApplication();
 
-    const linkToken = await adapter.createLinkToken({
-      userId: "sandbox_user",
-      clientName: "409 Marketplace",
-      language: "en",
-      countryCodes: [CountryCode.Us],
-      products: [Products.Transactions],
-    });
+    if (authenticatedApplication.response) {
+      return authenticatedApplication.response;
+    }
+
+    const ownerId =
+      await authenticatedApplication.currentOwnerId();
+
+    const connectionPlatformSuite =
+      await authenticatedApplication
+        .getConnectionPlatformSuite();
+
+    const linkToken =
+      await connectionPlatformSuite.plaidProvider
+        .createLinkToken({
+          userId: ownerId,
+          clientName: "409 Marketplace",
+          language: "en",
+          countryCodes: [CountryCode.Us],
+          products: [Products.Transactions],
+        });
 
     return NextResponse.json({
       linkToken,

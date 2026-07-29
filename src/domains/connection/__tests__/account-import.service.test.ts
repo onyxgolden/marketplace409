@@ -10,6 +10,7 @@ import {
 
 function makeInput(provider = "plaid"): AccountImportInput {
   return {
+    ownerId: "user-1",
     connection: {
       id: "connection-1",
       userId: "user-1",

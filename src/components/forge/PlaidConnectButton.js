@@ -6,7 +6,7 @@ import { usePlaidLink } from "react-plaid-link";
 export default function PlaidConnectButton() {
   const [linkToken, setLinkToken] = useState(null);
   const [status, setStatus] = useState("idle");
-  const [message, setMessage] = useState("Connect a sandbox bank account through Plaid Link.");
+  const [message, setMessage] = useState("Connect a bank account securely through Plaid Link.");
 
   useEffect(() => {
     let active = true;

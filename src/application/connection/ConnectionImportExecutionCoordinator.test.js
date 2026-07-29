@@ -228,6 +228,7 @@ describe(
         expect(
           accountImportService.importAccounts,
         ).toHaveBeenCalledWith({
+          ownerId: "owner_1",
           connection,
           credentialReference,
           institutionReference,

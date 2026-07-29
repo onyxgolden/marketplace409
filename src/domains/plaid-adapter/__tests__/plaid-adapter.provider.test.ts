@@ -225,6 +225,7 @@ describe("createPlaidAdapter", () => {
     const payload = await adapter.importDataPayload(
       connection,
       {
+        ownerId: "owner-1",
         connection,
         credentialReference: {
           id: "credential_1",
@@ -251,6 +252,7 @@ describe("createPlaidAdapter", () => {
     expect(
       credentialVaultService.retrieveCredential,
     ).toHaveBeenCalledWith(
+      "owner-1",
       "vault://plaid/access-token-1",
     );
 
@@ -346,6 +348,7 @@ describe("createPlaidAdapter", () => {
       adapter.importDataPayload(
         connection,
         {
+          ownerId: "owner-1",
           connection,
           credentialReference: {
             id: "credential_1",
@@ -397,6 +400,7 @@ describe("createPlaidAdapter", () => {
       adapter.importDataPayload(
         connection,
         {
+          ownerId: "owner-1",
           connection,
           credentialReference: {
             id: "credential_1",

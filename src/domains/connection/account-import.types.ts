@@ -11,7 +11,11 @@ import type { Connection } from "./connection.types";
 import type { CredentialReference } from "./credential-reference.types";
 import type { InstitutionReference } from "./institution-reference.types";
 
-export type AccountImportInput = ConnectionPersistenceResult;
+export type AccountImportInput =
+  ConnectionPersistenceResult &
+  Readonly<{
+    ownerId: string;
+  }>;
 
 export type AccountImportResult = Readonly<{
   connection: Connection;

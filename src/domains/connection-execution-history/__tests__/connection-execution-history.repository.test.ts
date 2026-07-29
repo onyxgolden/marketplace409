@@ -1,11 +1,24 @@
 import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+
+import {
   InMemoryConnectionExecutionHistoryRepository,
 } from "../index";
+
+import type {
+  ConnectionExecutionHistory,
+} from "../connection-execution-history.types";
 
 describe(
   "InMemoryConnectionExecutionHistoryRepository",
   () => {
-    const createRecord = (overrides = {}) => ({
+    const createRecord = (
+      overrides:
+        Partial<ConnectionExecutionHistory> = {},
+    ): ConnectionExecutionHistory => ({
       id: "execution-1",
       ownerId: "owner-1",
       connectionId: "connection-1",
@@ -21,7 +34,7 @@ describe(
       createdAt: "2026-07-25T05:01:00.000Z",
       ...overrides,
     });
-    
+
     it("saves execution history", async () => {
       const repository =
         new InMemoryConnectionExecutionHistoryRepository();
