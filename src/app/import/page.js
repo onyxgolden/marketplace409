@@ -1,6 +1,5 @@
-import Link from "next/link";
-
 import Header from "@/components/Header";
+import ForgeNavigationBar from "@/components/forge/ForgeNavigationBar";
 import FinancialImportTool from "./FinancialImportTool";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 
@@ -20,21 +19,7 @@ export default async function ImportPage() {
       <Header />
 
       <div className="mx-auto max-w-7xl px-4 pt-6">
-        <div className="flex flex-wrap gap-3">
-          <Link
-            href="/"
-            className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-black uppercase tracking-wide text-slate-800 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
-          >
-            ← Back to Home
-          </Link>
-
-          <Link
-            href="/forge/financial"
-            className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black uppercase tracking-wide text-white shadow-sm transition hover:bg-slate-800"
-          >
-            Executive KPI Dashboard →
-          </Link>
-        </div>
+        <ForgeNavigationBar />
 
         <div className="mt-6 rounded-3xl border border-amber-300 bg-amber-50 p-6 shadow-sm">
           <div className="text-xs font-black uppercase tracking-[0.25em] text-amber-700">
@@ -46,7 +31,7 @@ export default async function ImportPage() {
           </h1>
 
           <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-700">
-            You're viewing an active production preview of the FORGE financial platform.
+            You&apos;re viewing an active production preview of the FORGE financial platform.
             Core financial imports and persistence are operational, while live bank
             synchronization, advanced portfolio analytics, and forecasting
             are still under development. The Executive KPI Dashboard is now available.

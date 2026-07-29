@@ -1,4 +1,5 @@
 import Header from "@/components/Header";
+import RealEstateWorkspaceNavigation from "@/components/forge/RealEstateWorkspaceNavigation";
 import ShareButton from "@/components/ShareButton";
 import { supabase } from "@/lib/supabase";
 
@@ -56,6 +57,7 @@ export default async function InvestorContractorsPage() {
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       <Header />
+      <RealEstateWorkspaceNavigation />
 
       <section className="bg-green-900 text-white py-16 px-6">
         <div className="max-w-6xl mx-auto">

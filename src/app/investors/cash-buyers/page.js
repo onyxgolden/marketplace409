@@ -1,4 +1,5 @@
 import Header from "@/components/Header";
+import RealEstateWorkspaceNavigation from "@/components/forge/RealEstateWorkspaceNavigation";
 import { supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +14,7 @@ export default async function CashBuyersPage() {
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       <Header />
+      <RealEstateWorkspaceNavigation />
 
       <section className="max-w-7xl mx-auto py-10 px-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">

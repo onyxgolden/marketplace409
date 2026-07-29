@@ -1,4 +1,5 @@
 import Header from "@/components/Header";
+import RealEstateWorkspaceNavigation from "@/components/forge/RealEstateWorkspaceNavigation";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,8 @@ export default function InvestorsPage() {
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       <Header />
+
+      <RealEstateWorkspaceNavigation />
 
       <section className="bg-green-900 text-white py-16 px-6">
         <div className="max-w-6xl mx-auto">

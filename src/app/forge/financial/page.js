@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ForgeFinancialDashboardApplication } from "@/application/financial";
 import ForgeDashboardCard from "@/components/forge/ForgeDashboardCard";
+import ForgeNavigationBar from "@/components/forge/ForgeNavigationBar";
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import { forgeTheme } from "@/components/forge/theme";
@@ -95,6 +96,7 @@ export default function FinancialPage() {
   return (
     <div className={forgeTheme.page}>
       <main className="mx-auto min-h-screen max-w-[1600px] space-y-6 p-4 lg:p-8">
+        <ForgeNavigationBar />
         <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm lg:p-8">
           <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
             <div>

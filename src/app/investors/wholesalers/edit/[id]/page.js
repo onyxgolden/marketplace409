@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
+import RealEstateWorkspaceNavigation from "@/components/forge/RealEstateWorkspaceNavigation";
 import { createInvestorApplicationSuite } from "@/infrastructure/composition";
 
 const {
@@ -60,6 +61,7 @@ export default function EditWholesalerPage({ params }) {
     return (
       <main className="min-h-screen bg-gray-100 text-gray-900">
         <Header />
+      <RealEstateWorkspaceNavigation />
         <section className="max-w-3xl mx-auto py-12 px-6">
           <div className="bg-white rounded-3xl shadow-md p-8 text-center">
             Loading contact...
@@ -72,6 +74,7 @@ export default function EditWholesalerPage({ params }) {
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       <Header />
+      <RealEstateWorkspaceNavigation />
 
       <section className="max-w-3xl mx-auto py-12 px-6">
         <div className="bg-white rounded-3xl shadow-md p-8">

@@ -1,4 +1,5 @@
 import Header from "@/components/Header";
+import RealEstateWorkspaceNavigation from "@/components/forge/RealEstateWorkspaceNavigation";
 import DeleteWholesalerButton from "@/components/DeleteWholesalerButton";
 import { supabase } from "@/lib/supabase";
 
@@ -36,6 +37,7 @@ export default async function WholesalersPage({ searchParams }) {
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       <Header />
+      <RealEstateWorkspaceNavigation />
 
       <section className="max-w-6xl mx-auto py-12 px-6">
         <h1 className="text-5xl font-extrabold mb-4">Investor Wholesalers</h1>
