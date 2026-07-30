@@ -1601,3 +1601,388 @@ The Kernel shall not store secrets in:
 - governance summaries
 - unprotected context fields
 
+---
+
+## 41. Authority Model
+
+The Kernel shall operate under explicit authority.
+
+Authority determines which requests may be planned, executed, validated, governed, or approved.
+
+Authority shall never be inferred solely from:
+
+- repository state
+- previous execution
+- manager identity
+- workspace identity
+- reasoning output
+- cached decisions
+
+Authority sources may include:
+
+- owner approval
+- delegated governance
+- platform policy
+- authenticated identity
+- approved execution context
+
+The Kernel shall distinguish between:
+
+- requested authority
+- granted authority
+- delegated authority
+- temporary authority
+- expired authority
+- revoked authority
+
+A request exceeding granted authority shall be rejected or escalated.
+
+---
+
+## 42. Protected Operations
+
+Certain operations require elevated authority.
+
+Examples include:
+
+- repository mutation
+- destructive actions
+- production deployment
+- security-policy modification
+- governance-policy modification
+- workspace registration changes
+- manager registration changes
+- context restoration from backup
+- credential operations
+
+Protected operations shall require explicit authorization before execution.
+
+The Kernel shall preserve evidence of every authorization decision.
+
+---
+
+## 43. Extension Model
+
+FORGE OS is designed to evolve without modifying the Kernel's architectural invariants.
+
+Extensions may provide:
+
+- additional managers
+- additional workspaces
+- additional planning strategies
+- additional validation strategies
+- additional governance rules
+- additional reasoning capabilities
+- additional observability providers
+- additional integrations
+
+Extensions shall not:
+
+- redefine Kernel lifecycle states
+- bypass Kernel authority
+- weaken workspace isolation
+- violate manager contracts
+- override architectural invariants
+
+All extensions shall publish compatible contracts before registration.
+
+---
+
+## 44. Contract Versioning
+
+All Kernel contracts shall be versioned.
+
+Versioned contracts include:
+
+- manager contracts
+- workspace contracts
+- request contracts
+- outcome contracts
+- event schemas
+- context schemas
+- extension contracts
+
+Version compatibility shall be evaluated during initialization.
+
+The Kernel shall reject incompatible mandatory contracts before entering the Ready state.
+
+Contract evolution shall preserve backward compatibility where practical.
+
+Breaking changes require a new major contract version.
+
+---
+
+## 45. Determinism
+
+The Kernel shall produce deterministic outcomes whenever identical inputs, authority, context, and configuration are supplied.
+
+Deterministic behavior improves:
+
+- reproducibility
+- validation
+- recovery
+- governance
+- auditing
+
+Where deterministic execution is not possible, the Kernel shall preserve sufficient evidence to explain outcome differences.
+
+---
+
+## 46. Idempotency
+
+Kernel operations shall be idempotent whenever practical.
+
+Repeated execution of the same authorized request shall not create unintended duplicate state.
+
+Idempotency shall be considered for:
+
+- context updates
+- event publication
+- workspace registration
+- manager registration
+- recovery operations
+- validation recording
+
+Operations that are intentionally non-idempotent shall explicitly declare that characteristic.
+
+---
+
+## 47. Time and Sequencing
+
+Kernel workflows shall preserve observable ordering.
+
+Every workflow shall be attributable to:
+
+- a sequence
+- a workflow identity
+- a request identity
+- a context version
+
+Ordering shall be sufficient to reconstruct workflow history.
+
+The Kernel shall not rely solely on wall-clock timestamps to determine execution ordering.
+
+---
+
+## 48. Version 1 Constraints
+
+Version 1 intentionally limits system autonomy.
+
+Version 1 shall require human authority for:
+
+- repository mutation
+- production deployment
+- destructive operations
+- governance exceptions
+- security-policy changes
+- architectural invariant modification
+
+These constraints are intentional architectural safeguards rather than implementation limitations.
+
+---
+
+## 49. Required Capabilities
+
+A conforming FORGE OS Kernel implementation shall provide:
+
+- lifecycle management
+- context coordination
+- manager coordination
+- workspace coordination
+- planning coordination
+- execution coordination
+- validation coordination
+- governance coordination
+- recovery coordination
+- security coordination
+- event publication
+- observability
+- auditability
+
+Optional capabilities may be added without violating this specification provided architectural invariants remain satisfied.
+
+---
+
+## 50. Architectural Invariants
+
+The following invariants shall remain true for every conforming implementation.
+
+- The Kernel remains the platform coordinator.
+- Managers own bounded responsibilities.
+- Workspaces own business logic.
+- The Canonical Engineering Context remains the authoritative engineering-state boundary.
+- Authority is explicit.
+- Validation is observable.
+- Governance is enforceable.
+- Recovery preserves evidence.
+- Workspace isolation is preserved.
+- Protected operations require authorization.
+- Kernel contracts are versioned.
+- Significant actions are attributable.
+- Architectural boundaries remain explicit.
+- Extensions do not weaken the Kernel.
+
+Violation of these invariants constitutes an architectural defect rather than an implementation preference.
+
+---
+
+## 51. Implementation Independence
+
+This specification defines architectural behavior rather than implementation details.
+
+A conforming implementation may vary in:
+
+- programming language
+- runtime
+- dependency injection framework
+- persistence technology
+- messaging technology
+- deployment model
+- operating system
+- cloud provider
+
+Implementation choices shall not weaken the architectural contracts defined by this specification.
+
+---
+
+## 52. Traceability
+
+The Kernel shall preserve end-to-end traceability.
+
+Every significant engineering workflow shall be traceable from:
+
+- engineering request
+- planning
+- authority
+- execution
+- validation
+- governance
+- recovery
+- Canonical Engineering Context update
+- resulting events
+
+Traceability shall remain available for engineering review, validation, governance, and audit.
+
+---
+
+## 53. Validation Strategy
+
+Conforming implementations shall include validation covering:
+
+- Kernel lifecycle
+- manager registration
+- manager contracts
+- workspace registration
+- workspace isolation
+- planning
+- execution
+- validation
+- governance
+- recovery
+- security boundaries
+- context construction
+- event publication
+- contract compatibility
+
+Validation shall include both successful and failure scenarios.
+
+---
+
+## 54. Implementation Readiness
+
+A Kernel implementation is considered implementation-ready when:
+
+- required managers are available
+- contracts are validated
+- context initialization succeeds
+- lifecycle transitions are operational
+- event publication functions correctly
+- validation integration is operational
+- governance integration is operational
+- recovery integration is operational
+- workspace activation succeeds
+- security boundaries are enforced
+
+Implementation readiness does not imply production readiness.
+
+---
+
+## 55. Version 1 Completion Criteria
+
+Version 1 is complete when:
+
+- all required Kernel capabilities are implemented
+- all required manager contracts are implemented
+- workspace coordination is operational
+- Canonical Engineering Context coordination is operational
+- lifecycle management is operational
+- validation, governance, and recovery are integrated
+- architectural invariants are enforced
+- required documentation is complete
+- required validation passes
+
+Future releases may extend Version 1 without weakening its architectural guarantees.
+
+---
+
+## 56. Future Evolution
+
+Future architectural evolution may introduce:
+
+- additional managers
+- additional workspaces
+- distributed execution
+- multi-repository coordination
+- autonomous planning
+- governed autonomous execution
+- additional reasoning providers
+- additional observability providers
+- additional security capabilities
+
+Future evolution shall preserve compatibility with the Kernel's architectural invariants unless a new major specification version explicitly replaces them.
+
+---
+
+## 57. Glossary
+
+For the purposes of this specification:
+
+**Kernel** — The platform coordinator responsible for orchestrating engineering workflows.
+
+**Manager** — A bounded architectural component responsible for a single engineering capability.
+
+**Workspace** — An isolated engineering environment containing business-specific logic.
+
+**Canonical Engineering Context** — The authoritative engineering-state boundary used by the Kernel.
+
+**Engineering Request** — A bounded request that initiates Kernel coordination.
+
+**Authority** — Explicit permission allowing specific engineering actions.
+
+**Governance** — Architectural and policy evaluation of engineering activity.
+
+**Validation** — Objective verification that required outcomes have been achieved.
+
+**Recovery** — Coordinated restoration following failure or interruption.
+
+**Architectural Invariant** — A rule that every conforming implementation shall preserve.
+
+---
+
+## 58. Final Architectural Statement
+
+The FORGE OS Kernel is the authoritative coordination layer for the FORGE Engineering Platform.
+
+It exists to coordinate engineering work through explicit authority, bounded responsibilities, deterministic workflows, canonical engineering context, observable validation, enforceable governance, attributable evidence, and recoverable execution.
+
+Managers own capabilities.
+
+Workspaces own business logic.
+
+The Kernel owns coordination.
+
+All conforming implementations shall preserve the architectural invariants defined by this specification.
+
+---
+
+**End of FORGE OS Kernel Specification**
