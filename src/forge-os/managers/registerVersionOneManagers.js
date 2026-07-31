@@ -10,6 +10,10 @@ import {
   MemoryManager,
 } from "./memory/index.js";
 
+import {
+  PlanningManager,
+} from "./planning/index.js";
+
 export function registerVersionOneManagers() {
   const registry = new ManagerRegistry();
 
@@ -19,6 +23,10 @@ export function registerVersionOneManagers() {
 
   registry.register(
     new MemoryManager(),
+  );
+
+  registry.register(
+    new PlanningManager(),
   );
 
   return registry;

@@ -28,6 +28,18 @@ describe(
             "repository.inspect",
           ),
         ).toBe(true);
+
+        expect(
+          registry.hasCapability(
+            "memory.retrieve",
+          ),
+        ).toBe(true);
+
+        expect(
+          registry.hasCapability(
+            "planning.create",
+          ),
+        ).toBe(true);
       },
     );
 
@@ -43,6 +55,22 @@ describe(
           ).managerIdentity,
         ).toBe(
           "repository-intelligence-manager",
+        );
+
+        expect(
+          registry.resolve(
+            "memory.retrieve",
+          ).managerIdentity,
+        ).toBe(
+          "memory-manager",
+        );
+
+        expect(
+          registry.resolve(
+            "planning.create",
+          ).managerIdentity,
+        ).toBe(
+          "planning-manager",
         );
       },
     );
