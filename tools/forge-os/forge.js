@@ -6,6 +6,9 @@ const { spawnSync } = require("child_process");
 
 const ForgePlanner = require("./planner/ForgePlanner");
 const ForgeMemory = require("./memory/ForgeMemory");
+const ConstitutionGuard = require(
+  "./guards/ConstitutionGuard"
+);
 
 const repoRoot = process.cwd();
 const PLAN_FILE = path.join(repoRoot, "tools/forge-os/.forge-plan.json");
@@ -28,6 +31,46 @@ function exec(cmd) {
 }
 
 /**
+ * COMMAND AUTHORIZATION
+ *
+ * Inspection steps must remain read-only even when a plan
+ * incorrectly or maliciously labels a mutating command as inspect.
+ */
+function authorizeStepCommand(step) {
+  if (!step?.command || step.action !== "inspect") {
+    return;
+  }
+
+  const command = step.command.trim();
+
+  const mutatingPatterns = [
+    /(^|[;&|]\s*)(?:sh|bash|dash|zsh|ksh)\s+-c(?:\s|$)/i,
+    /(^|[;&|]\s*)rm(?:\s|$)/i,
+    /(^|[;&|]\s*)mv(?:\s|$)/i,
+    /(^|[;&|]\s*)cp(?:\s|$)/i,
+    /(^|[;&|]\s*)mkdir(?:\s|$)/i,
+    /(^|[;&|]\s*)rmdir(?:\s|$)/i,
+    /(^|[;&|]\s*)touch(?:\s|$)/i,
+    /(^|[;&|]\s*)chmod(?:\s|$)/i,
+    /(^|[;&|]\s*)chown(?:\s|$)/i,
+    /(^|[;&|]\s*)truncate(?:\s|$)/i,
+    /(^|[;&|]\s*)tee(?:\s|$)/i,
+    /(^|[;&|]\s*)git\s+(?:add|commit|push|reset|clean|checkout|switch|restore|merge|rebase|cherry-pick|revert|tag|branch\s+-[dD])(?:\s|$)/i,
+    /(^|[^>])>{1,2}(?!>)/,
+  ];
+
+  if (
+    mutatingPatterns.some((pattern) =>
+      pattern.test(command)
+    )
+  ) {
+    throw new Error(
+      `Command rejected by FORGE execution policy: ${command}`
+    );
+  }
+}
+
+/**
  * FORMAT OUTPUT (CLEAN)
  */
 function printSection(title) {
@@ -41,11 +84,8 @@ function printSection(title) {
  */
 function plan(intent) {
   const planner = new ForgePlanner();
-  const memory = new ForgeMemory(repoRoot);
 
   const plan = planner.generatePlan(intent);
-
-  memory.logRun(intent, plan);
 
   fs.writeFileSync(PLAN_FILE, JSON.stringify(plan, null, 2));
 
@@ -76,6 +116,33 @@ function run() {
 
   const plan = JSON.parse(fs.readFileSync(PLAN_FILE, "utf8"));
   const memory = new ForgeMemory(repoRoot);
+  const guard = new ConstitutionGuard();
+
+  try {
+    guard.load(
+      path.join(repoRoot, "FORGE_CONSTITUTION.json")
+    );
+
+    const validation = guard.validateStepOrder(
+      plan.steps || []
+    );
+
+    if (!validation.valid) {
+      const details = validation.violations
+        .map((violation) => violation.message)
+        .join("; ");
+
+      throw new Error(details);
+    }
+  } catch (error) {
+    console.error(
+      "Plan rejected by FORGE Constitution:",
+      error?.message || String(error)
+    );
+
+    process.exitCode = 1;
+    return;
+  }
 
   printSection("FORGE EXECUTION (STABLE MODE)");
 
@@ -89,6 +156,17 @@ function run() {
 
     if (step.command) {
       console.log("→", step.command);
+
+      try {
+        authorizeStepCommand(step);
+      } catch (error) {
+        console.error(
+          error?.message || String(error)
+        );
+
+        process.exitCode = 1;
+        return;
+      }
 
       const result = exec(step.command);
 

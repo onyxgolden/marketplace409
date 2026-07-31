@@ -79,7 +79,7 @@ class ConstitutionGuard {
       if (step.action === "edit" || step.action === "apply_patch") {
         const next = steps[i + 1];
 
-        if (!next || !next.action.includes("test")) {
+        if (!next || next.action !== "run_tests") {
           violations.push({
             type: "test_after_edit",
             index: i,

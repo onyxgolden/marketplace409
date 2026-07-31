@@ -34,6 +34,31 @@ class PatchEngine {
       ) {
         throw new Error(`Refusing to write outside repository: ${operation.path}`);
       }
+
+      const relativeTarget = path.relative(
+        this.repositoryRoot,
+        target
+      );
+
+      const segments = relativeTarget
+        .split(path.sep)
+        .filter(Boolean);
+
+      let currentPath = this.repositoryRoot;
+
+      for (const segment of segments) {
+        currentPath = path.join(currentPath, segment);
+
+        if (!fs.existsSync(currentPath)) {
+          break;
+        }
+
+        if (fs.lstatSync(currentPath).isSymbolicLink()) {
+          throw new Error(
+            `Refusing to write outside repository: ${operation.path}`
+          );
+        }
+      }
     }
   }
 

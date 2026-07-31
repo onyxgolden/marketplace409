@@ -87,7 +87,7 @@ class ForgePlanner {
 
         case "run_tests":
           steps.push({
-            action: "inspect",
+            action: "run_tests",
             description: "Run tests",
             command: "npm test",
             weight: signals.biasTest
@@ -96,7 +96,7 @@ class ForgePlanner {
 
         case "build_project":
           steps.push({
-            action: "inspect",
+            action: "build_project",
             description: "Build project",
             command: "npm run build",
             weight: signals.biasBuild
