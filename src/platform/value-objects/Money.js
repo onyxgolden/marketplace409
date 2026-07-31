@@ -77,9 +77,10 @@ export class Money {
       throw new Error("Currency mismatch.");
     }
   }
-    toJSON() {
+  toJSON() {
     return {
       amount: this.amount,
+      currency: this.currency,
     };
   }
 }

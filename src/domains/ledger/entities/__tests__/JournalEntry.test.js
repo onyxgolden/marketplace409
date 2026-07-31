@@ -127,7 +127,7 @@ describe("JournalEntry", () => {
         {
           id: "P-DEBIT",
           accountId: "Cash",
-          amount: { amount: 100 },
+          amount: { amount: 100, currency: "USD" },
           direction: LedgerDirection.DEBIT,
           description: "",
           metadata: {},
@@ -135,7 +135,7 @@ describe("JournalEntry", () => {
         {
           id: "P-CREDIT",
           accountId: "Revenue",
-          amount: { amount: 100 },
+          amount: { amount: 100, currency: "USD" },
           direction: LedgerDirection.CREDIT,
           description: "",
           metadata: {},

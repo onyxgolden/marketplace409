@@ -86,7 +86,7 @@ describe("Posting", () => {
     expect(posting.toJSON()).toEqual({
       id: "P1",
       accountId: "Cash",
-      amount: { amount: 100 },
+      amount: { amount: 100, currency: "USD" },
       direction: LedgerDirection.DEBIT,
       description: "Opening balance",
       metadata: { source: "test" },
