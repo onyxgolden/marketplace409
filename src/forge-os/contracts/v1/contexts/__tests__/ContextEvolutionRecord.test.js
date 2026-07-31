@@ -191,6 +191,86 @@ describe(
       },
     );
 
+
+    it(
+      "stores immutable governance decision metadata",
+      () => {
+        const contract =
+          createContextEvolutionRecordContract({
+            contractId:
+              "forge.context-evolution.governance-test",
+            version: {
+              major: 1,
+              minor: 0,
+              patch: 0,
+              identifier: "1.0.0",
+            },
+            description:
+              "Captures governance decision metadata.",
+            provenance: {
+              requestId:
+                "request-governance-1",
+              workflowId:
+                "workflow-governance-1",
+              correlationId:
+                "correlation-governance-1",
+              origin: {
+                componentType:
+                  "kernel",
+                componentId:
+                  "governance-evaluator",
+              },
+              contextVersion:
+                "1.0.0",
+            },
+            evolutionId:
+              "evolution-governance-1",
+            sourceManager:
+              "repository-intelligence-manager",
+            contribution: {
+              repositoryInspected:
+                true,
+            },
+            evidenceReferences: [
+              "evidence-1",
+            ],
+            governanceDecision: {
+              decision:
+                "approved",
+              reason:
+                "Governance requirements satisfied.",
+              requirementsEvaluated: [
+                "evidence-present",
+              ],
+            },
+            previousContextIdentity:
+              "context-1",
+            resultingContextIdentity:
+              "context-2",
+            sequence: 1,
+          });
+
+        expect(
+          contract.payload.governanceDecision.decision,
+        ).toBe(
+          "approved",
+        );
+
+        expect(
+          Object.isFrozen(
+            contract.payload.governanceDecision,
+          ),
+        ).toBe(true);
+
+        expect(
+          Object.isFrozen(
+            contract.payload.governanceDecision
+              .requirementsEvaluated,
+          ),
+        ).toBe(true);
+      },
+    );
+
     it(
       "passes the existing structural contract validator",
       () => {

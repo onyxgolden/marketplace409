@@ -15,6 +15,7 @@ export class ContextContributionApplier {
     currentContext,
     managerIdentity,
     contextContribution,
+    governanceDecision,
   }) {
     const validation =
       validateContextContribution({
@@ -55,6 +56,17 @@ export class ContextContributionApplier {
           contextContribution,
         evidenceReferences:
           currentContext.payload.evidenceReferences,
+        governanceDecision:
+          governanceDecision
+            ? {
+                decision:
+                  governanceDecision.decision,
+                reason:
+                  governanceDecision.reason,
+                requirementsEvaluated:
+                  governanceDecision.requirementsEvaluated,
+              }
+            : undefined,
         previousContextIdentity:
           currentContext.payload.contextIdentity,
         resultingContextIdentity:

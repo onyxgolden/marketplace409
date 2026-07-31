@@ -125,6 +125,13 @@ describe(
           context.payload.contributionHistory[0]
             .payload.evidenceReferences,
         ).toEqual([]);
+
+        expect(
+          context.payload.contributionHistory[0]
+            .payload.governanceDecision.decision,
+        ).toBe(
+          "approved",
+        );
       },
     );
 

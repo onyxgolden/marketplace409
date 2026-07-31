@@ -24,6 +24,24 @@ function freezeCollection(value) {
     : value;
 }
 
+function freezeGovernanceDecision(governanceDecision) {
+  if (
+    governanceDecision !== null &&
+    typeof governanceDecision === "object" &&
+    !Array.isArray(governanceDecision)
+  ) {
+    return Object.freeze({
+      ...governanceDecision,
+      requirementsEvaluated:
+        freezeCollection(
+          governanceDecision.requirementsEvaluated,
+        ),
+    });
+  }
+
+  return governanceDecision;
+}
+
 export function createContextEvolutionRecordContract({
   contractId,
   version,
@@ -33,6 +51,7 @@ export function createContextEvolutionRecordContract({
   sourceManager,
   contribution,
   evidenceReferences = [],
+  governanceDecision,
   previousContextIdentity,
   resultingContextIdentity,
   sequence,
@@ -54,6 +73,8 @@ export function createContextEvolutionRecordContract({
       freezeContribution(contribution),
     evidenceReferences:
       freezeCollection(evidenceReferences),
+    governanceDecision:
+      freezeGovernanceDecision(governanceDecision),
     previousContextIdentity,
     resultingContextIdentity,
     sequence,

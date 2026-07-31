@@ -78,6 +78,7 @@ export class ForgeRuntime {
             outcome.payload.contextContribution,
           evidenceReferences:
             outcome.payload.producedEvidence,
+          governanceDecision,
         });
 
       this.contextStore.replaceContext(
