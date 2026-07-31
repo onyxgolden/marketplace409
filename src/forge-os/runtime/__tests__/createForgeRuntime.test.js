@@ -21,6 +21,15 @@ describe(
         const runtime =
           createForgeRuntime();
 
+        const context =
+          runtime.contextStore.getCurrent();
+
+        expect(
+          context.metadata.contractType,
+        ).toBe(
+          "context",
+        );
+
         const request =
           createManagerRequestContract({
             contractId:

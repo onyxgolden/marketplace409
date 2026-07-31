@@ -13,6 +13,10 @@ import {
 } from "../../managers/registerVersionOneManagers.js";
 
 import {
+  createCanonicalContextStore,
+} from "../../context/createCanonicalContextStore.js";
+
+import {
   createManagerRequestContract,
 } from "../../contracts/v1/requests/index.js";
 
@@ -27,6 +31,9 @@ describe(
           new ForgeRuntime({
             managerRegistry:
               registerVersionOneManagers(),
+
+            contextStore:
+              createCanonicalContextStore(),
           });
 
         const request =
