@@ -8,7 +8,8 @@ import {
 
 import {
   createCanonicalContextStore,
-} from "../context/createCanonicalContextStore.js";
+  ContextContributionApplier,
+} from "../context/index.js";
 
 export function createForgeRuntime() {
   return new ForgeRuntime({
@@ -17,5 +18,8 @@ export function createForgeRuntime() {
 
     contextStore:
       createCanonicalContextStore(),
+
+    contextContributionApplier:
+      new ContextContributionApplier(),
   });
 }

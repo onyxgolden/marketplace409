@@ -13,3 +13,7 @@ export {
 export {
   ContextContributionApplier,
 } from "./ContextContributionApplier.js";
+
+export {
+  createCanonicalContextStore,
+} from "./createCanonicalContextStore.js";

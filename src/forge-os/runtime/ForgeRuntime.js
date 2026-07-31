@@ -6,6 +6,7 @@ export class ForgeRuntime {
   constructor({
     managerRegistry,
     contextStore,
+    contextContributionApplier,
   }) {
     if (!managerRegistry) {
       throw new Error(
@@ -19,8 +20,17 @@ export class ForgeRuntime {
       );
     }
 
+    if (!contextContributionApplier) {
+      throw new Error(
+        "ForgeRuntime requires a contextContributionApplier.",
+      );
+    }
+
     this.contextStore =
       contextStore;
+
+    this.contextContributionApplier =
+      contextContributionApplier;
 
     this.dispatcher =
       new ContractDispatcher({
@@ -31,8 +41,29 @@ export class ForgeRuntime {
   }
 
   async dispatch(requestContract) {
-    return this.dispatcher.dispatch(
-      requestContract,
-    );
+    const outcome =
+      await this.dispatcher.dispatch(
+        requestContract,
+      );
+
+    if (
+      outcome.payload.contextContribution
+    ) {
+      const updatedContext =
+        this.contextContributionApplier.apply({
+          currentContext:
+            this.contextStore.getCurrent(),
+          managerIdentity:
+            outcome.payload.managerIdentity,
+          contextContribution:
+            outcome.payload.contextContribution,
+        });
+
+      this.contextStore.replaceContext(
+        updatedContext,
+      );
+    }
+
+    return outcome;
   }
 }

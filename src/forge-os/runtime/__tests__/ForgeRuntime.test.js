@@ -17,6 +17,10 @@ import {
 } from "../../context/createCanonicalContextStore.js";
 
 import {
+  ContextContributionApplier,
+} from "../../context/index.js";
+
+import {
   createManagerRequestContract,
 } from "../../contracts/v1/requests/index.js";
 
@@ -34,6 +38,9 @@ describe(
 
             contextStore:
               createCanonicalContextStore(),
+
+            contextContributionApplier:
+              new ContextContributionApplier(),
           });
 
         const request =
@@ -91,6 +98,20 @@ describe(
             .capabilityInvoked,
         ).toBe(
           "repository.inspect",
+        );
+
+        const context =
+          runtime.contextStore.getCurrent();
+
+        expect(
+          context.payload.contributionHistory.length,
+        ).toBe(1);
+
+        expect(
+          context.payload.contributionHistory[0]
+            .source,
+        ).toBe(
+          "repository-intelligence-manager",
         );
       },
     );
