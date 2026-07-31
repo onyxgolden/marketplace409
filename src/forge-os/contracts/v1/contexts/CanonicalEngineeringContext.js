@@ -23,6 +23,7 @@ export function createCanonicalEngineeringContextContract({
   validationState,
   authorityState,
   evidenceReferences = [],
+  contributionHistory = [],
 }) {
   const metadata = createContractMetadata({
     contractId,
@@ -44,6 +45,8 @@ export function createCanonicalEngineeringContextContract({
     authorityState,
     evidenceReferences:
       freezeCollection(evidenceReferences),
+    contributionHistory:
+      freezeCollection(contributionHistory),
   });
 
   return createBaseContract({

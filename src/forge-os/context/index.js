@@ -9,3 +9,7 @@ export {
 export {
   validateContextContribution,
 } from "./ContextContributionValidator.js";
+
+export {
+  ContextContributionApplier,
+} from "./ContextContributionApplier.js";

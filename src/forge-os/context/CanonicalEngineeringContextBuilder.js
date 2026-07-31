@@ -19,6 +19,7 @@ export function buildCanonicalEngineeringContext({
   validationState,
   authorityState,
   evidenceReferences = [],
+  contributionHistory = [],
 }) {
   return createCanonicalEngineeringContextContract({
     contractId:
@@ -36,5 +37,6 @@ export function buildCanonicalEngineeringContext({
     validationState,
     authorityState,
     evidenceReferences,
+    contributionHistory,
   });
 }
