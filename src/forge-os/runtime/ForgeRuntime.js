@@ -1,5 +1,6 @@
 import {
   ContractDispatcher,
+  GovernanceEvaluator,
 } from "../kernel/index.js";
 
 export class ForgeRuntime {
@@ -7,6 +8,7 @@ export class ForgeRuntime {
     managerRegistry,
     contextStore,
     contextContributionApplier,
+    governanceEvaluator = new GovernanceEvaluator(),
   }) {
     if (!managerRegistry) {
       throw new Error(
@@ -25,6 +27,15 @@ export class ForgeRuntime {
         "ForgeRuntime requires a contextContributionApplier.",
       );
     }
+
+    if (!governanceEvaluator) {
+      throw new Error(
+        "ForgeRuntime requires a governanceEvaluator.",
+      );
+    }
+
+    this.governanceEvaluator =
+      governanceEvaluator;
 
     this.contextStore =
       contextStore;
@@ -46,7 +57,15 @@ export class ForgeRuntime {
         requestContract,
       );
 
+    const governanceDecision =
+      this.governanceEvaluator.evaluate({
+        outcome,
+        currentContext:
+          this.contextStore.getCurrent(),
+      });
+
     if (
+      governanceDecision.decision === "approved" &&
       outcome.payload.contextContribution
     ) {
       const updatedContext =

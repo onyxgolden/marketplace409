@@ -127,5 +127,81 @@ describe(
         ).toEqual([]);
       },
     );
+
+    it(
+      "does not apply context mutations when governance rejects",
+      async () => {
+        const runtime =
+          new ForgeRuntime({
+            managerRegistry:
+              registerVersionOneManagers(),
+
+            contextStore:
+              createCanonicalContextStore(),
+
+            contextContributionApplier:
+              new ContextContributionApplier(),
+
+            governanceEvaluator: {
+              evaluate() {
+                return {
+                  decision:
+                    "rejected",
+                };
+              },
+            },
+          });
+
+        const request =
+          createManagerRequestContract({
+            contractId:
+              "forge.request.repository-inspection-rejected",
+            version:
+              {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                identifier: "1.0.0",
+              },
+            description:
+              "Requests repository inspection rejected by governance.",
+            provenance: {
+              requestId:
+                "request-2",
+              workflowId:
+                "workflow-2",
+              correlationId:
+                "correlation-2",
+              origin: {
+                componentType:
+                  "runtime",
+                componentId:
+                  "forge-runtime",
+              },
+              contextVersion:
+                "1.0.0",
+            },
+            targetWorkspace:
+              "test-workspace",
+            requestedCapability:
+              "repository.inspect",
+            input: {},
+            grantedAuthority: {},
+            securityScope: {},
+          });
+
+        await runtime.dispatch(
+          request,
+        );
+
+        const context =
+          runtime.contextStore.getCurrent();
+
+        expect(
+          context.payload.contributionHistory.length,
+        ).toBe(0);
+      },
+    );
+
   },
 );
