@@ -42,7 +42,13 @@ describe(
         ).toBe(1);
 
         expect(
-          nextContext.payload.contributionHistory[0].source,
+          nextContext.payload.contributionHistory[0].metadata.contractType,
+        ).toBe(
+          "context-evolution-record",
+        );
+
+        expect(
+          nextContext.payload.contributionHistory[0].payload.sourceManager,
         ).toBe(
           "planning-manager",
         );

@@ -6,6 +6,10 @@ import {
   validateContextContribution,
 } from "./ContextContributionValidator.js";
 
+import {
+  createContextEvolutionRecordContract,
+} from "../contracts/v1/contexts/index.js";
+
 export class ContextContributionApplier {
   apply({
     currentContext,
@@ -13,9 +17,12 @@ export class ContextContributionApplier {
     contextContribution,
   }) {
     const validation =
-      validateContextContribution(
+      validateContextContribution({
+        managerIdentity,
         contextContribution,
-      );
+        evidenceReferences:
+          currentContext.payload.evidenceReferences,
+      });
 
     if (!validation.valid) {
       throw new Error(
@@ -23,12 +30,42 @@ export class ContextContributionApplier {
       );
     }
 
+    const previousHistory =
+      currentContext.payload.contributionHistory ?? [];
+
+    const evolutionRecord =
+      createContextEvolutionRecordContract({
+        contractId:
+          "forge.context.evolution-record",
+        version: {
+          major: 1,
+          minor: 0,
+          patch: 0,
+          identifier: "1.0.0",
+        },
+        description:
+          "Records canonical context evolution.",
+        provenance:
+          currentContext.provenance,
+        evolutionId:
+          `context-evolution-${previousHistory.length + 1}`,
+        sourceManager:
+          managerIdentity,
+        contribution:
+          contextContribution,
+        evidenceReferences:
+          currentContext.payload.evidenceReferences,
+        previousContextIdentity:
+          currentContext.payload.contextIdentity,
+        resultingContextIdentity:
+          currentContext.payload.contextIdentity,
+        sequence:
+          previousHistory.length + 1,
+      });
+
     const contributionHistory = [
-      ...(currentContext.payload.contributionHistory ?? []),
-      Object.freeze({
-        source: managerIdentity,
-        contribution: contextContribution,
-      }),
+      ...previousHistory,
+      evolutionRecord,
     ];
 
     return buildCanonicalEngineeringContext({

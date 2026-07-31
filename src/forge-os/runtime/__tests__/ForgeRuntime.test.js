@@ -109,10 +109,22 @@ describe(
 
         expect(
           context.payload.contributionHistory[0]
-            .source,
+            .metadata.contractType,
+        ).toBe(
+          "context-evolution-record",
+        );
+
+        expect(
+          context.payload.contributionHistory[0]
+            .payload.sourceManager,
         ).toBe(
           "repository-intelligence-manager",
         );
+
+        expect(
+          context.payload.contributionHistory[0]
+            .payload.evidenceReferences,
+        ).toEqual([]);
       },
     );
   },

@@ -57,6 +57,8 @@ export class ForgeRuntime {
             outcome.payload.managerIdentity,
           contextContribution:
             outcome.payload.contextContribution,
+          evidenceReferences:
+            outcome.payload.producedEvidence,
         });
 
       this.contextStore.replaceContext(
