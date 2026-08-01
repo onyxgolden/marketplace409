@@ -24,6 +24,25 @@ function createEvidence(evidenceId) {
   };
 }
 
+
+function createValidatedEvidence(evidenceId) {
+  return {
+    metadata: {
+      contractType:
+        "evidence-record",
+    },
+    payload: {
+      evidenceId,
+      sourceComponent:
+        "test-validator",
+    },
+    provenance: {
+      workflowId:
+        "workflow-001",
+    },
+  };
+}
+
 describe("EvidenceRegistry", () => {
   it("registers and resolves evidence records", () => {
     const registry =
@@ -93,4 +112,73 @@ describe("EvidenceRegistry", () => {
       Object.isFrozen(records),
     ).toBe(true);
   });
+  it("creates accepted references from validated evidence", () => {
+    const registry =
+      new EvidenceRegistry();
+
+    registry.register(
+      createValidatedEvidence(
+        "evidence-001",
+      ),
+    );
+
+    const reference =
+      registry.acceptValidationResult({
+        evidenceId:
+          "evidence-001",
+        status:
+          "validated",
+      });
+
+    expect(
+      reference.evidenceId,
+    ).toBe(
+      "evidence-001",
+    );
+
+    expect(
+      reference.sourceComponent,
+    ).toBe(
+      "test-validator",
+    );
+
+    expect(
+      Object.isFrozen(reference),
+    ).toBe(true);
+  });
+
+  it("rejects non-validated evidence acceptance", () => {
+    const registry =
+      new EvidenceRegistry();
+
+    registry.register(
+      createValidatedEvidence(
+        "evidence-001",
+      ),
+    );
+
+    expect(() =>
+      registry.acceptValidationResult({
+        evidenceId:
+          "evidence-001",
+        status:
+          "rejected",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects acceptance for unknown evidence", () => {
+    const registry =
+      new EvidenceRegistry();
+
+    expect(() =>
+      registry.acceptValidationResult({
+        evidenceId:
+          "missing-evidence",
+        status:
+          "validated",
+      }),
+    ).toThrow();
+  });
+
 });

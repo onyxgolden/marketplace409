@@ -13,3 +13,8 @@ export {
 export {
   createEvidenceValidationResult,
 } from "./EvidenceValidationResult.js";
+
+
+export {
+  EvidenceAcceptanceService,
+} from "./EvidenceAcceptanceService.js";

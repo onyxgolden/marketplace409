@@ -1,3 +1,7 @@
+import {
+  createAcceptedEvidenceReference,
+} from "../contracts/v1/evidence/index.js";
+
 export class EvidenceRegistry {
   constructor() {
     this.evidenceRecords = new Map();
@@ -44,6 +48,38 @@ export class EvidenceRegistry {
     return this.evidenceRecords.has(
       evidenceId,
     );
+  }
+
+  acceptValidationResult(validationResult) {
+    if (!validationResult) {
+      throw new Error(
+        "Evidence validation result is required.",
+      );
+    }
+
+    if (validationResult.status !== "validated") {
+      throw new Error(
+        "Only validated evidence can be accepted.",
+      );
+    }
+
+    const evidenceRecord =
+      this.get(validationResult.evidenceId);
+
+    if (!evidenceRecord) {
+      throw new Error(
+        "Validated evidence must already be registered.",
+      );
+    }
+
+    return createAcceptedEvidenceReference({
+      evidenceId:
+        validationResult.evidenceId,
+      sourceComponent:
+        evidenceRecord.payload.sourceComponent,
+      acceptedAt:
+        new Date().toISOString(),
+    });
   }
 
   list() {
