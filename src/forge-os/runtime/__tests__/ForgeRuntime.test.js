@@ -319,5 +319,119 @@ describe(
       },
     );
 
+
+    it(
+      "preserves lineage identifiers through lifecycle transition history",
+      async () => {
+        const lifecycleTransitions = [];
+
+        const runtime =
+          new ForgeRuntime({
+            managerRegistry:
+              registerVersionOneManagers(),
+
+            contextStore:
+              createCanonicalContextStore(),
+
+            contextContributionApplier:
+              new ContextContributionApplier(),
+
+            lifecycleCoordinatorFactory:
+              () => ({
+                transition(input) {
+                  lifecycleTransitions.push(input);
+                },
+              }),
+          });
+
+        const request =
+          createManagerRequestContract({
+            contractId:
+              "forge.request.repository-inspection-lineage-history",
+            version:
+              {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                identifier: "1.0.0",
+              },
+            description:
+              "Validates lifecycle lineage preservation.",
+            provenance: {
+              requestId:
+                "request-lineage-history-1",
+              workflowId:
+                "workflow-lineage-history-1",
+              correlationId:
+                "correlation-lineage-history-1",
+              origin: {
+                componentType:
+                  "runtime-test",
+                componentId:
+                  "forge-runtime-lineage",
+              },
+              contextVersion:
+                "1.0.0",
+            },
+            targetWorkspace:
+              "test-workspace",
+            requestedCapability:
+              "repository.inspect",
+            input: {},
+            grantedAuthority: {},
+            securityScope: {},
+          });
+
+        await runtime.dispatch(
+          request,
+        );
+
+        expect(
+          lifecycleTransitions.length,
+        ).toBeGreaterThan(0);
+
+        for (const transition of lifecycleTransitions) {
+          expect(
+            transition.provenance.requestId,
+          ).toBe(
+            "request-lineage-history-1",
+          );
+
+          expect(
+            transition.provenance.workflowId,
+          ).toBe(
+            "workflow-lineage-history-1",
+          );
+
+          expect(
+            transition.provenance.correlationId,
+          ).toBe(
+            "correlation-lineage-history-1",
+          );
+        }
+
+        const validatingTransition =
+          lifecycleTransitions.find(
+            (transition) =>
+              transition.toState === "validating",
+          );
+
+        expect(
+          validatingTransition.evidenceReferences,
+        ).toBeDefined();
+
+        const contextTransition =
+          lifecycleTransitions.find(
+            (transition) =>
+              transition.toState === "updating-context",
+          );
+
+        expect(
+          contextTransition.governanceDecision,
+        ).toBeDefined();
+      },
+    );
+
+
   },
 );
