@@ -78,6 +78,48 @@ describe("LifecycleCoordinator", () => {
     );
   });
 
+  it("preserves evidence lineage in lifecycle transitions", () => {
+    const coordinator =
+      new LifecycleCoordinator({
+        initialState:
+          "ready",
+      });
+
+    const transition =
+      coordinator.transition({
+        contractId:
+          "forge.lifecycle.evidence-lineage",
+        description:
+          "Evidence lineage transition test.",
+        provenance:
+          createProvenance(),
+        toState:
+          "planning",
+        initiatingCause:
+          "evidence-validation",
+        evidenceReferences: [
+          "forge.outcome.manager.repository-inspection.correlation-001.evidence",
+        ],
+        correlationIdentity:
+          "correlation-001",
+        contextVersion:
+          "context-001",
+      });
+
+    expect(
+      transition.payload.evidenceReferences,
+    ).toEqual([
+      "forge.outcome.manager.repository-inspection.correlation-001.evidence",
+    ]);
+
+    expect(
+      transition.payload.correlationIdentity,
+    ).toBe(
+      "correlation-001",
+    );
+  });
+
+
   it("rejects invalid lifecycle transitions", () => {
     const coordinator =
       new LifecycleCoordinator({
