@@ -23,3 +23,9 @@ export {
 export {
   EvidenceProductionAdapter,
 } from "./EvidenceProductionAdapter.js";
+
+
+
+export {
+  EvidenceValidationCoordinator,
+} from "./EvidenceValidationCoordinator.js";
