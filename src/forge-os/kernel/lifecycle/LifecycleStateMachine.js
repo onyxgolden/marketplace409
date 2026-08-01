@@ -59,6 +59,7 @@ const ALLOWED_TRANSITIONS = Object.freeze({
 
   governing: Object.freeze([
     "updating-context",
+    "ready",
     "recovering",
     "failed",
   ]),

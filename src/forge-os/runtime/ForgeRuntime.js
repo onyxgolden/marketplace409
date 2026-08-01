@@ -84,10 +84,102 @@ export class ForgeRuntime {
         requestContract.provenance.contextVersion,
     });
 
+    lifecycleCoordinator.transition({
+      contractId:
+        requestContract.metadata.contractId,
+      description:
+        "Runtime authority evaluation started.",
+      provenance:
+        requestContract.provenance,
+      toState:
+        "awaiting-authority",
+      initiatingCause:
+        "planning-complete",
+      authorityDecision:
+        requestContract.payload.grantedAuthority,
+      governanceDecision:
+        undefined,
+      evidenceReferences:
+        [],
+      correlationIdentity:
+        requestContract.provenance.correlationId,
+      contextVersion:
+        requestContract.provenance.contextVersion,
+    });
+
+    lifecycleCoordinator.transition({
+      contractId:
+        requestContract.metadata.contractId,
+      description:
+        "Runtime execution started.",
+      provenance:
+        requestContract.provenance,
+      toState:
+        "executing",
+      initiatingCause:
+        "authority-gate-complete",
+      authorityDecision:
+        requestContract.payload.grantedAuthority,
+      governanceDecision:
+        undefined,
+      evidenceReferences:
+        [],
+      correlationIdentity:
+        requestContract.provenance.correlationId,
+      contextVersion:
+        requestContract.provenance.contextVersion,
+    });
+
     const outcome =
       await this.dispatcher.dispatch(
         requestContract,
       );
+
+    lifecycleCoordinator.transition({
+      contractId:
+        requestContract.metadata.contractId,
+      description:
+        "Runtime validation started.",
+      provenance:
+        requestContract.provenance,
+      toState:
+        "validating",
+      initiatingCause:
+        "execution-complete",
+      authorityDecision:
+        requestContract.payload.grantedAuthority,
+      governanceDecision:
+        undefined,
+      evidenceReferences:
+        outcome.payload.producedEvidence ?? [],
+      correlationIdentity:
+        requestContract.provenance.correlationId,
+      contextVersion:
+        requestContract.provenance.contextVersion,
+    });
+
+    lifecycleCoordinator.transition({
+      contractId:
+        requestContract.metadata.contractId,
+      description:
+        "Runtime governance started.",
+      provenance:
+        requestContract.provenance,
+      toState:
+        "governing",
+      initiatingCause:
+        "validation-complete",
+      authorityDecision:
+        requestContract.payload.grantedAuthority,
+      governanceDecision:
+        undefined,
+      evidenceReferences:
+        outcome.payload.producedEvidence ?? [],
+      correlationIdentity:
+        requestContract.provenance.correlationId,
+      contextVersion:
+        requestContract.provenance.contextVersion,
+    });
 
     const governanceDecision =
       this.governanceEvaluator.evaluate({
@@ -100,6 +192,28 @@ export class ForgeRuntime {
       governanceDecision.decision === "approved" &&
       outcome.payload.contextContribution
     ) {
+      lifecycleCoordinator.transition({
+        contractId:
+          requestContract.metadata.contractId,
+        description:
+          "Runtime context update started.",
+        provenance:
+          requestContract.provenance,
+        toState:
+          "updating-context",
+        initiatingCause:
+          "governance-approved",
+        authorityDecision:
+          requestContract.payload.grantedAuthority,
+        governanceDecision,
+        evidenceReferences:
+          outcome.payload.producedEvidence ?? [],
+        correlationIdentity:
+          requestContract.provenance.correlationId,
+        contextVersion:
+          requestContract.provenance.contextVersion,
+      });
+
       const updatedContext =
         this.contextContributionApplier.apply({
           currentContext:
@@ -116,6 +230,28 @@ export class ForgeRuntime {
       this.contextStore.replaceContext(
         updatedContext,
       );
+
+      lifecycleCoordinator.transition({
+        contractId:
+          requestContract.metadata.contractId,
+        description:
+          "Runtime lifecycle returned to ready.",
+        provenance:
+          requestContract.provenance,
+        toState:
+          "ready",
+        initiatingCause:
+          "context-update-complete",
+        authorityDecision:
+          requestContract.payload.grantedAuthority,
+        governanceDecision,
+        evidenceReferences:
+          outcome.payload.producedEvidence ?? [],
+        correlationIdentity:
+          requestContract.provenance.correlationId,
+        contextVersion:
+          requestContract.provenance.contextVersion,
+      });
     }
 
     return outcome;

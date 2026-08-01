@@ -253,7 +253,7 @@ describe(
 
         expect(
           lifecycleTransitions.length,
-        ).toBe(2);
+        ).toBe(14);
 
         expect(
           lifecycleCoordinatorInstances.length,
@@ -266,16 +266,38 @@ describe(
         );
 
         expect(
-          lifecycleTransitions[0].toState,
-        ).toBe(
+          lifecycleTransitions
+            .slice(0, 7)
+            .map(
+              (transition) =>
+                transition.toState,
+            ),
+        ).toEqual([
           "planning",
-        );
+          "awaiting-authority",
+          "executing",
+          "validating",
+          "governing",
+          "updating-context",
+          "ready",
+        ]);
 
         expect(
-          lifecycleTransitions[1].toState,
-        ).toBe(
+          lifecycleTransitions
+            .slice(7, 14)
+            .map(
+              (transition) =>
+                transition.toState,
+            ),
+        ).toEqual([
           "planning",
-        );
+          "awaiting-authority",
+          "executing",
+          "validating",
+          "governing",
+          "updating-context",
+          "ready",
+        ]);
       },
     );
 

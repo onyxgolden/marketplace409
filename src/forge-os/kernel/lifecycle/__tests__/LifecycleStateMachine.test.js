@@ -69,4 +69,40 @@ describe("LifecycleStateMachine", () => {
       toState: "recovering",
     });
   });
+
+  it("supports governance completion without context updates", () => {
+    const machine =
+      new LifecycleStateMachine(
+        "governing",
+      );
+
+    expect(
+      machine.transitionTo(
+        "ready",
+      ),
+    ).toEqual({
+      fromState: "governing",
+      toState: "ready",
+    });
+
+    expect(
+      machine.getCurrentState(),
+    ).toBe("ready");
+  });
+
+  it("supports governance completion with context updates", () => {
+    const machine =
+      new LifecycleStateMachine(
+        "governing",
+      );
+
+    expect(
+      machine.transitionTo(
+        "updating-context",
+      ),
+    ).toEqual({
+      fromState: "governing",
+      toState: "updating-context",
+    });
+  });
 });
