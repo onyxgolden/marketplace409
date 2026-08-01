@@ -24,6 +24,10 @@ import {
   createManagerRequestContract,
 } from "../../contracts/v1/requests/index.js";
 
+import {
+  LifecycleCoordinator,
+} from "../../kernel/lifecycle/LifecycleCoordinator.js";
+
 
 describe(
   "ForgeRuntime",
@@ -611,6 +615,104 @@ describe(
         expect(
           currentContext.payload.contributionHistory.length,
         ).toBe(0);
+      },
+    );
+
+
+
+    it(
+      "propagates lifecycle events through runtime execution",
+      async () => {
+        const events = [];
+
+        const runtime =
+          new ForgeRuntime({
+            managerRegistry:
+              registerVersionOneManagers(),
+
+            contextStore:
+              createCanonicalContextStore(),
+
+            contextContributionApplier:
+              new ContextContributionApplier(),
+
+            lifecycleCoordinatorFactory:
+              () =>
+                new LifecycleCoordinator({
+                  eventSink: {
+                    record(event) {
+                      events.push(event);
+                    },
+                  },
+                }),
+          });
+
+        const request =
+          createManagerRequestContract({
+            contractId:
+              "forge.request.runtime-events",
+            version:
+              {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                identifier: "1.0.0",
+              },
+            description:
+              "Validates runtime event propagation.",
+            provenance: {
+              requestId:
+                "request-runtime-events-1",
+              workflowId:
+                "workflow-runtime-events-1",
+              correlationId:
+                "correlation-runtime-events-1",
+              origin: {
+                componentType:
+                  "runtime-test",
+                componentId:
+                  "forge-runtime-events",
+              },
+              contextVersion:
+                "1.0.0",
+            },
+            targetWorkspace:
+              "test-workspace",
+            requestedCapability:
+              "repository.inspect",
+            input: {},
+            grantedAuthority: {},
+            securityScope: {},
+          });
+
+        await runtime.dispatch(
+          request,
+        );
+
+        expect(
+          events.length,
+        ).toBeGreaterThan(0);
+
+        expect(
+          events[0].payload.correlationIdentity,
+        ).toBe(
+          "correlation-runtime-events-1",
+        );
+
+        expect(
+          events.map(
+            (event) =>
+              event.payload.transitionId,
+          ),
+        ).toEqual([
+          "ready-planning",
+          "planning-awaiting-authority",
+          "awaiting-authority-executing",
+          "executing-validating",
+          "validating-governing",
+          "governing-updating-context",
+          "updating-context-ready",
+        ]);
       },
     );
 
