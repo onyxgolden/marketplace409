@@ -124,7 +124,9 @@ describe(
         expect(
           context.payload.contributionHistory[0]
             .payload.evidenceReferences,
-        ).toEqual([]);
+        ).toEqual([
+          "forge.outcome.manager.repository-inspection.correlation-1.evidence",
+        ]);
 
         expect(
           context.payload.contributionHistory[0]

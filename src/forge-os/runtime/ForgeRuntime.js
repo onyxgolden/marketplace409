@@ -149,10 +149,17 @@ export class ForgeRuntime {
         requestContract,
       );
 
-    outcome =
+    const evidenceCoordination =
       this.evidenceCoordinator.process({
         outcome,
       });
+
+    const acceptedEvidenceReferences =
+      evidenceCoordination.acceptedEvidenceReferences
+        .map(
+          (reference) =>
+            reference.evidenceId,
+        );
 
     lifecycleCoordinator.transition({
       contractId:
@@ -170,7 +177,7 @@ export class ForgeRuntime {
       governanceDecision:
         undefined,
       evidenceReferences:
-        outcome.payload.producedEvidence ?? [],
+        acceptedEvidenceReferences,
       correlationIdentity:
         requestContract.provenance.correlationId,
       contextVersion:
@@ -193,7 +200,7 @@ export class ForgeRuntime {
       governanceDecision:
         undefined,
       evidenceReferences:
-        outcome.payload.producedEvidence ?? [],
+        acceptedEvidenceReferences,
       correlationIdentity:
         requestContract.provenance.correlationId,
       contextVersion:
@@ -205,6 +212,8 @@ export class ForgeRuntime {
         outcome,
         currentContext:
           this.contextStore.getCurrent(),
+        evidenceReferences:
+          acceptedEvidenceReferences,
       });
 
     if (
@@ -226,7 +235,7 @@ export class ForgeRuntime {
           requestContract.payload.grantedAuthority,
         governanceDecision,
         evidenceReferences:
-          outcome.payload.producedEvidence ?? [],
+          acceptedEvidenceReferences,
         correlationIdentity:
           requestContract.provenance.correlationId,
         contextVersion:
@@ -242,7 +251,7 @@ export class ForgeRuntime {
           contextContribution:
             outcome.payload.contextContribution,
           evidenceReferences:
-            outcome.payload.producedEvidence,
+            acceptedEvidenceReferences,
           governanceDecision,
         });
 
@@ -265,7 +274,7 @@ export class ForgeRuntime {
           requestContract.payload.grantedAuthority,
         governanceDecision,
         evidenceReferences:
-          outcome.payload.producedEvidence ?? [],
+          acceptedEvidenceReferences,
         correlationIdentity:
           requestContract.provenance.correlationId,
         contextVersion:

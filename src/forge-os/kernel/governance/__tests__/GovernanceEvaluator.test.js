@@ -61,10 +61,10 @@ describe(
                   architecture:
                     "updated",
                 },
-                producedEvidence: [
-                  "test-result",
-                ],
               }),
+            evidenceReferences: [
+              "test-result",
+            ],
           });
 
         expect(

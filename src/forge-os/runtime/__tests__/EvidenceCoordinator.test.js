@@ -74,7 +74,7 @@ describe(
   "EvidenceCoordinator",
   () => {
     it(
-      "returns unchanged outcomes without evidence requirements",
+      "returns outcomes without accepted evidence when evidence is not required",
       () => {
         const coordinator =
           new EvidenceCoordinator();
@@ -82,18 +82,25 @@ describe(
         const outcome =
           createOutcome();
 
-        expect(
+        const result =
           coordinator.process({
             outcome,
-          }),
+          });
+
+        expect(
+          result.outcome,
         ).toBe(
           outcome,
         );
+
+        expect(
+          result.acceptedEvidenceReferences,
+        ).toEqual([]);
       },
     );
 
     it(
-      "creates evidence for outcomes requiring validation",
+      "produces, registers, validates, and accepts required evidence",
       () => {
         const coordinator =
           new EvidenceCoordinator();
@@ -111,21 +118,33 @@ describe(
           });
 
         expect(
-          result,
-        ).not.toBe(
+          result.outcome,
+        ).toBe(
           outcome,
         );
 
         expect(
-          result.payload.producedEvidence.length,
+          result.acceptedEvidenceReferences.length,
+        ).toBe(1);
+
+        expect(
+          result.acceptedEvidenceReferences[0]
+            .evidenceId,
         ).toBe(
-          1,
+          "forge.outcome.test.evidence",
+        );
+
+        expect(
+          result.acceptedEvidenceReferences[0]
+            .sourceComponent,
+        ).toBe(
+          "test-manager",
         );
       },
     );
 
     it(
-      "preserves immutability",
+      "does not overwrite manager-produced evidence",
       () => {
         const coordinator =
           new EvidenceCoordinator();
@@ -134,6 +153,9 @@ describe(
           createOutcome({
             stateChanged:
               true,
+            producedEvidence: [
+              "manager-produced-reference",
+            ],
           });
 
         const result =
@@ -142,12 +164,72 @@ describe(
           });
 
         expect(
+          result.outcome.payload
+            .producedEvidence,
+        ).toEqual([
+          "manager-produced-reference",
+        ]);
+      },
+    );
+
+    it(
+      "returns immutable coordination results",
+      () => {
+        const coordinator =
+          new EvidenceCoordinator();
+
+        const result =
+          coordinator.process({
+            outcome:
+              createOutcome({
+                stateChanged:
+                  true,
+              }),
+          });
+
+        expect(
           Object.isFrozen(result),
         ).toBe(true);
 
         expect(
-          Object.isFrozen(result.payload),
+          Object.isFrozen(
+            result.acceptedEvidenceReferences,
+          ),
         ).toBe(true);
+
+        expect(
+          Object.isFrozen(
+            result.acceptedEvidenceReferences[0],
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      "rejects missing outcomes",
+      () => {
+        const coordinator =
+          new EvidenceCoordinator();
+
+        expect(() =>
+          coordinator.process({}),
+        ).toThrow(
+          "EvidenceCoordinator requires an outcome.",
+        );
+      },
+    );
+
+    it(
+      "requires explicitly supplied dependencies",
+      () => {
+        expect(() =>
+          new EvidenceCoordinator({
+            evidenceRegistry:
+              null,
+          }),
+        ).toThrow(
+          "EvidenceCoordinator requires an evidenceRegistry.",
+        );
       },
     );
   },

@@ -65,7 +65,7 @@ export class EvidenceProductionAdapter {
       provenance:
         outcome.provenance,
       evidenceId:
-        `${outcome.metadata.contractId}.evidence`,
+        `${outcome.metadata.contractId}.${outcome.provenance.correlationId}.evidence`,
       evidenceType:
         capabilityInvoked,
       sourceComponent:

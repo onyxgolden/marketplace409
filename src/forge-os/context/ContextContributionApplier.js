@@ -15,6 +15,7 @@ export class ContextContributionApplier {
     currentContext,
     managerIdentity,
     contextContribution,
+    evidenceReferences,
     governanceDecision,
   }) {
     const validation =
@@ -22,7 +23,7 @@ export class ContextContributionApplier {
         managerIdentity,
         contextContribution,
         evidenceReferences:
-          currentContext.payload.evidenceReferences,
+          evidenceReferences,
       });
 
     if (!validation.valid) {
@@ -55,7 +56,7 @@ export class ContextContributionApplier {
         contribution:
           contextContribution,
         evidenceReferences:
-          currentContext.payload.evidenceReferences,
+          evidenceReferences,
         governanceDecision:
           governanceDecision
             ? {

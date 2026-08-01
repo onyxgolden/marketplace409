@@ -35,6 +35,9 @@ describe(
               planningCompleted:
                 true,
             },
+            evidenceReferences: [
+              "accepted-evidence-001",
+            ],
           });
 
         expect(
@@ -52,6 +55,12 @@ describe(
         ).toBe(
           "planning-manager",
         );
+
+        expect(
+          nextContext.payload.contributionHistory[0].payload.evidenceReferences,
+        ).toEqual([
+          "accepted-evidence-001",
+        ]);
       },
     );
 

@@ -6,6 +6,7 @@ export class GovernanceEvaluator {
   evaluate({
     outcome,
     currentContext,
+    evidenceReferences = [],
   }) {
     if (!outcome) {
       throw new Error(
@@ -28,8 +29,8 @@ export class GovernanceEvaluator {
     const contextContribution =
       outcome.payload.contextContribution;
 
-    const evidenceReferences =
-      outcome.payload.producedEvidence || [];
+    evidenceReferences =
+      evidenceReferences || [];
 
     if (!contextContribution) {
       return createGovernanceDecision({
