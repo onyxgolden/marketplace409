@@ -138,6 +138,113 @@ describe(
     );
 
     it(
+      "preserves evidence identity through governance and context evolution",
+      async () => {
+        let acceptedEvidenceReferences = [];
+
+        const evidenceCoordinator = {
+          process() {
+            acceptedEvidenceReferences = [
+              "forge.outcome.manager.repository-inspection.correlation-lineage-1.evidence",
+            ];
+
+            return {
+              acceptedEvidenceReferences: [
+                {
+                  evidenceId:
+                    acceptedEvidenceReferences[0],
+                },
+              ],
+            };
+          },
+        };
+
+        const runtime =
+          new ForgeRuntime({
+            managerRegistry:
+              registerVersionOneManagers(),
+
+            contextStore:
+              createCanonicalContextStore(),
+
+            contextContributionApplier:
+              new ContextContributionApplier(),
+
+            evidenceCoordinator,
+          });
+
+        const request =
+          createManagerRequestContract({
+            contractId:
+              "forge.request.repository-inspection-lineage",
+            version:
+              {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                identifier: "1.0.0",
+              },
+            description:
+              "Requests repository inspection lineage validation.",
+            provenance: {
+              requestId:
+                "request-lineage-1",
+              workflowId:
+                "workflow-lineage-1",
+              correlationId:
+                "correlation-lineage-1",
+              origin: {
+                componentType:
+                  "runtime",
+                componentId:
+                  "forge-runtime",
+              },
+              contextVersion:
+                "1.0.0",
+            },
+            targetWorkspace:
+              "test-workspace",
+            requestedCapability:
+              "repository.inspect",
+            input: {},
+            grantedAuthority: {},
+            securityScope: {},
+          });
+
+        const outcome =
+          await runtime.dispatch(
+            request,
+          );
+
+        const context =
+          runtime.contextStore.getCurrent();
+
+        const evolutionRecord =
+          context.payload
+            .contributionHistory[0];
+
+        expect(
+          outcome.payload.managerIdentity,
+        ).toBe(
+          evolutionRecord.payload.sourceManager,
+        );
+
+        expect(
+          acceptedEvidenceReferences[0],
+        ).toBe(
+          evolutionRecord.payload.evidenceReferences[0],
+        );
+
+        expect(
+          Object.isFrozen(
+            evolutionRecord.payload.evidenceReferences,
+          ),
+        ).toBe(true);
+      },
+    );
+
+
+    it(
       "does not apply context mutations when governance rejects",
       async () => {
         const runtime =
