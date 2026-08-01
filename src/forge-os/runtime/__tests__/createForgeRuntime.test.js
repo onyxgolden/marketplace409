@@ -9,6 +9,10 @@ import {
 } from "../index.js";
 
 import {
+  ForgeRuntime,
+} from "../ForgeRuntime.js";
+
+import {
   createManagerRequestContract,
 } from "../../contracts/v1/requests/index.js";
 
@@ -162,6 +166,116 @@ describe(
             capability,
           );
         }
+      },
+    );
+
+    it(
+      "creates isolated lifecycle coordinators per dispatch",
+      async () => {
+        const lifecycleTransitions = [];
+        const lifecycleCoordinatorInstances = [];
+
+        const runtime =
+          new ForgeRuntime({
+            managerRegistry:
+              (await import("../../managers/registerVersionOneManagers.js"))
+                .registerVersionOneManagers(),
+
+            contextStore:
+              (await import("../../context/createCanonicalContextStore.js"))
+                .createCanonicalContextStore(),
+
+            contextContributionApplier:
+              new (
+                await import("../../context/index.js")
+              ).ContextContributionApplier(),
+
+            lifecycleCoordinatorFactory:
+              () => {
+                const coordinator = {
+                  transition(input) {
+                    lifecycleTransitions.push(input);
+                  },
+                };
+
+                lifecycleCoordinatorInstances.push(
+                  coordinator,
+                );
+
+                return coordinator;
+              },
+          });
+
+        const createRequest = (id) =>
+          createManagerRequestContract({
+            contractId:
+              `forge.request.${id}`,
+            version: {
+              major: 1,
+              minor: 0,
+              patch: 0,
+              identifier: "1.0.0",
+            },
+            description:
+              "Lifecycle isolation test.",
+            provenance: {
+              requestId:
+                id,
+              workflowId:
+                id,
+              correlationId:
+                id,
+              origin: {
+                componentType:
+                  "runtime-test",
+                componentId:
+                  "lifecycle-test",
+              },
+              contextVersion:
+                "1.0.0",
+            },
+            targetWorkspace:
+              "test-workspace",
+            requestedCapability:
+              "repository.inspect",
+            input: {},
+            grantedAuthority: {},
+            securityScope: {},
+          });
+
+        await runtime.dispatch(
+          createRequest("one"),
+        );
+
+        await runtime.dispatch(
+          createRequest("two"),
+        );
+
+        expect(
+          lifecycleTransitions.length,
+        ).toBe(2);
+
+        expect(
+          lifecycleCoordinatorInstances.length,
+        ).toBe(2);
+
+        expect(
+          lifecycleCoordinatorInstances[0],
+        ).not.toBe(
+          lifecycleCoordinatorInstances[1],
+        );
+
+        expect(
+          lifecycleTransitions[0].toState,
+        ).toBe(
+          "planning",
+        );
+
+        expect(
+          lifecycleTransitions[1].toState,
+        ).toBe(
+          "planning",
+        );
       },
     );
 

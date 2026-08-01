@@ -1,6 +1,7 @@
 import {
   ContractDispatcher,
   GovernanceEvaluator,
+  LifecycleCoordinator,
 } from "../kernel/index.js";
 
 export class ForgeRuntime {
@@ -9,6 +10,8 @@ export class ForgeRuntime {
     contextStore,
     contextContributionApplier,
     governanceEvaluator = new GovernanceEvaluator(),
+    lifecycleCoordinatorFactory =
+      () => new LifecycleCoordinator(),
   }) {
     if (!managerRegistry) {
       throw new Error(
@@ -37,6 +40,9 @@ export class ForgeRuntime {
     this.governanceEvaluator =
       governanceEvaluator;
 
+    this.lifecycleCoordinatorFactory =
+      lifecycleCoordinatorFactory;
+
     this.contextStore =
       contextStore;
 
@@ -52,6 +58,32 @@ export class ForgeRuntime {
   }
 
   async dispatch(requestContract) {
+    const lifecycleCoordinator =
+      this.lifecycleCoordinatorFactory();
+
+    lifecycleCoordinator.transition({
+      contractId:
+        requestContract.metadata.contractId,
+      description:
+        "Runtime planning started.",
+      provenance:
+        requestContract.provenance,
+      toState:
+        "planning",
+      initiatingCause:
+        "manager-request-received",
+      authorityDecision:
+        requestContract.payload.grantedAuthority,
+      governanceDecision:
+        undefined,
+      evidenceReferences:
+        [],
+      correlationIdentity:
+        requestContract.provenance.correlationId,
+      contextVersion:
+        requestContract.provenance.contextVersion,
+    });
+
     const outcome =
       await this.dispatcher.dispatch(
         requestContract,
