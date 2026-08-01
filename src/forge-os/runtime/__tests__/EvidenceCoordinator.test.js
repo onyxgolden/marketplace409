@@ -131,7 +131,7 @@ describe(
           result.acceptedEvidenceReferences[0]
             .evidenceId,
         ).toBe(
-          "forge.outcome.test.evidence",
+          "forge.outcome.test.correlation-001.evidence",
         );
 
         expect(

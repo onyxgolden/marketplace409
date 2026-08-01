@@ -10,6 +10,19 @@ import {
   createContextEvolutionRecordContract,
 } from "../contracts/v1/contexts/index.js";
 
+function mergeEvidenceReferences(
+  existingReferences = [],
+  incomingReferences = [],
+) {
+  return Object.freeze([
+    ...new Set([
+      ...existingReferences,
+      ...incomingReferences,
+    ]),
+  ]);
+}
+
+
 export class ContextContributionApplier {
   apply({
     currentContext,
@@ -34,6 +47,12 @@ export class ContextContributionApplier {
 
     const previousHistory =
       currentContext.payload.contributionHistory ?? [];
+
+    const nextEvidenceReferences =
+      mergeEvidenceReferences(
+        currentContext.payload.evidenceReferences,
+        evidenceReferences,
+      );
 
     const evolutionRecord =
       createContextEvolutionRecordContract({
@@ -99,7 +118,7 @@ export class ContextContributionApplier {
       authorityState:
         currentContext.payload.authorityState,
       evidenceReferences:
-        currentContext.payload.evidenceReferences,
+        nextEvidenceReferences,
       contributionHistory,
     });
   }
