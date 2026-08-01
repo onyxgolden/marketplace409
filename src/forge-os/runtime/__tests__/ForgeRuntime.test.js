@@ -717,5 +717,73 @@ describe(
     );
 
 
+    it(
+      "creates a session snapshot through the runtime boundary",
+      () => {
+        const runtime =
+          new ForgeRuntime({
+            managerRegistry:
+              registerVersionOneManagers(),
+
+            contextStore:
+              createCanonicalContextStore(),
+
+            contextContributionApplier:
+              new ContextContributionApplier(),
+          });
+
+        const snapshot =
+          runtime.createSessionSnapshot({
+            snapshotIdentity:
+              "session-runtime-001",
+            provenance: {
+              requestId:
+                "request-snapshot-1",
+              workflowId:
+                "workflow-snapshot-1",
+              correlationId:
+                "correlation-snapshot-1",
+              origin: {
+                componentType:
+                  "runtime-test",
+                componentId:
+                  "forge-runtime-snapshot",
+              },
+              contextVersion:
+                "1.0.0",
+            },
+            acceptedEvidence: [
+              {
+                evidenceId:
+                  "evidence-snapshot-001",
+                sourceComponent:
+                  "repository-manager",
+                acceptedAt:
+                  "2026-08-01T21:00:00.000Z",
+              },
+            ],
+          });
+
+        expect(
+          snapshot.metadata.contractType,
+        ).toBe(
+          "snapshot",
+        );
+
+        expect(
+          snapshot.payload.snapshotIdentity,
+        ).toBe(
+          "session-runtime-001",
+        );
+
+        expect(
+          snapshot.payload.acceptedEvidence[0]
+            .evidenceId,
+        ).toBe(
+          "evidence-snapshot-001",
+        );
+      },
+    );
+
   },
 );

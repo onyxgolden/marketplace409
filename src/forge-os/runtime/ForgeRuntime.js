@@ -8,6 +8,10 @@ import {
   EvidenceCoordinator,
 } from "./EvidenceCoordinator.js";
 
+import {
+  buildSessionSnapshot,
+} from "../session/index.js";
+
 export class ForgeRuntime {
   constructor({
     managerRegistry,
@@ -15,6 +19,8 @@ export class ForgeRuntime {
     contextContributionApplier,
     governanceEvaluator = new GovernanceEvaluator(),
     evidenceCoordinator = new EvidenceCoordinator(),
+    sessionSnapshotBuilder =
+      buildSessionSnapshot,
     lifecycleCoordinatorFactory =
       () => new LifecycleCoordinator(),
   }) {
@@ -48,11 +54,20 @@ export class ForgeRuntime {
       );
     }
 
+    if (!sessionSnapshotBuilder) {
+      throw new Error(
+        "ForgeRuntime requires a sessionSnapshotBuilder.",
+      );
+    }
+
     this.governanceEvaluator =
       governanceEvaluator;
 
     this.evidenceCoordinator =
       evidenceCoordinator;
+
+    this.sessionSnapshotBuilder =
+      sessionSnapshotBuilder;
 
     this.lifecycleCoordinatorFactory =
       lifecycleCoordinatorFactory;
@@ -283,5 +298,19 @@ export class ForgeRuntime {
     }
 
     return outcome;
+  }
+
+  createSessionSnapshot({
+    snapshotIdentity,
+    provenance,
+    acceptedEvidence = [],
+    environment = {},
+  }) {
+    return this.sessionSnapshotBuilder({
+      snapshotIdentity,
+      provenance,
+      acceptedEvidence,
+      environment,
+    });
   }
 }
