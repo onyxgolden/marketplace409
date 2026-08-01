@@ -74,6 +74,20 @@ function createRequest(
   });
 }
 
+const inspectionProvider =
+  Object.freeze({
+    async inspect() {
+      return Object.freeze({
+        branch: "main",
+        head: "test-head",
+        originMain: "test-head",
+        headMatchesOriginMain: true,
+        workingTreeClean: true,
+        changedFiles: Object.freeze([]),
+      });
+    },
+  });
+
 describe(
   "RepositoryIntelligenceManager",
   () => {
@@ -81,7 +95,9 @@ describe(
       "declares an immutable canonical manager boundary",
       () => {
         const manager =
-          new RepositoryIntelligenceManager();
+          new RepositoryIntelligenceManager({
+            inspectionProvider,
+          });
 
         expect(manager.managerIdentity).toBe(
           "repository-intelligence-manager",
@@ -105,7 +121,9 @@ describe(
       "produces a deterministic immutable outcome",
       async () => {
         const manager =
-          new RepositoryIntelligenceManager();
+          new RepositoryIntelligenceManager({
+            inspectionProvider,
+          });
 
         const request = createRequest();
 
@@ -128,9 +146,13 @@ describe(
           stateChanged: false,
           producedOutput: {
             repositoryState: "inspected",
-            branch: "unknown",
-            dirty: "unknown",
-            commit: "unknown",
+            branch: "main",
+            dirty: "clean",
+            commit: "test-head",
+            originMain: "test-head",
+            headMatchesOriginMain: true,
+            workingTreeClean: true,
+            changedFiles: [],
             observations: [],
           },
           producedEvidence: [],
@@ -191,7 +213,9 @@ describe(
       "rejects unsupported capabilities",
       async () => {
         const manager =
-          new RepositoryIntelligenceManager();
+          new RepositoryIntelligenceManager({
+            inspectionProvider,
+          });
 
         await expect(
           manager.execute(
@@ -213,7 +237,9 @@ describe(
           new ManagerRegistry();
 
         registry.register(
-          new RepositoryIntelligenceManager(),
+          new RepositoryIntelligenceManager({
+            inspectionProvider,
+          }),
         );
 
         const dispatcher =

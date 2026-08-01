@@ -2,6 +2,10 @@ import {
   createManagerOutcomeContract,
 } from "../../contracts/v1/outcomes/index.js";
 
+import {
+  RepositoryInspectionProvider,
+} from "./RepositoryInspectionProvider.js";
+
 const MANAGER_IDENTITY =
   "repository-intelligence-manager";
 
@@ -9,11 +13,16 @@ const REPOSITORY_INSPECTION_CAPABILITY =
   "repository.inspect";
 
 export class RepositoryIntelligenceManager {
-  constructor() {
+  constructor({
+    inspectionProvider =
+      new RepositoryInspectionProvider(),
+  } = {}) {
     this.managerIdentity = MANAGER_IDENTITY;
     this.capabilities = Object.freeze([
       REPOSITORY_INSPECTION_CAPABILITY,
     ]);
+    this.inspectionProvider =
+      inspectionProvider;
 
     Object.freeze(this);
   }
@@ -32,11 +41,32 @@ export class RepositoryIntelligenceManager {
       );
     }
 
+    const repositoryPath =
+      requestContract.payload.input
+        ?.repositoryPath;
+
+    const repositoryFacts =
+      await this.inspectionProvider.inspect(
+        repositoryPath,
+      );
+
     const producedOutput = Object.freeze({
       repositoryState: "inspected",
-      branch: "unknown",
-      dirty: "unknown",
-      commit: "unknown",
+      branch: repositoryFacts.branch,
+      dirty:
+        repositoryFacts.workingTreeClean
+          ? "clean"
+          : "dirty",
+      commit: repositoryFacts.head,
+      originMain:
+        repositoryFacts.originMain,
+      headMatchesOriginMain:
+        repositoryFacts
+          .headMatchesOriginMain,
+      workingTreeClean:
+        repositoryFacts.workingTreeClean,
+      changedFiles:
+        repositoryFacts.changedFiles,
       observations: Object.freeze([]),
     });
 
