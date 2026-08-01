@@ -433,5 +433,98 @@ describe(
     );
 
 
+
+    it(
+      "preserves context evolution history across sequential executions",
+      async () => {
+        const runtime =
+          new ForgeRuntime({
+            managerRegistry:
+              registerVersionOneManagers(),
+
+            contextStore:
+              createCanonicalContextStore(),
+
+            contextContributionApplier:
+              new ContextContributionApplier(),
+          });
+
+        const createRequest = (id) =>
+          createManagerRequestContract({
+            contractId:
+              `forge.request.sequential-${id}`,
+            version:
+              {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                identifier: "1.0.0",
+              },
+            description:
+              "Sequential context evolution validation.",
+            provenance: {
+              requestId:
+                `request-sequential-${id}`,
+              workflowId:
+                "workflow-sequential-test",
+              correlationId:
+                `correlation-sequential-${id}`,
+              origin: {
+                componentType:
+                  "runtime-test",
+                componentId:
+                  "forge-runtime-state-integrity",
+              },
+              contextVersion:
+                "1.0.0",
+            },
+            targetWorkspace:
+              "test-workspace",
+            requestedCapability:
+              "repository.inspect",
+            input: {},
+            grantedAuthority: {},
+            securityScope: {},
+          });
+
+        await runtime.dispatch(
+          createRequest("one"),
+        );
+
+        const firstContext =
+          runtime.contextStore.getCurrent();
+
+        expect(
+          firstContext.payload.contributionHistory.length,
+        ).toBe(1);
+
+        const firstEvolution =
+          firstContext.payload.contributionHistory[0];
+
+        await runtime.dispatch(
+          createRequest("two"),
+        );
+
+        const secondContext =
+          runtime.contextStore.getCurrent();
+
+        expect(
+          secondContext.payload.contributionHistory.length,
+        ).toBe(2);
+
+        expect(
+          secondContext.payload.contributionHistory[0],
+        ).toBe(
+          firstEvolution,
+        );
+
+        expect(
+          secondContext.payload.contributionHistory[1]
+            .payload.sequence,
+        ).toBe(2);
+      },
+    );
+
+
   },
 );
