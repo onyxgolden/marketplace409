@@ -2,7 +2,7 @@
 
 **Version:** 2.0
 **Status:** Active
-**Last Updated:** 2026-07-20
+**Last Updated:** 2026-07-31 (partial resync - test counts and Repository Health only; full Phase 18C documentation synchronization still pending)
 
 ---
 
@@ -73,8 +73,10 @@ PASS at the latest verified implementation checkpoint.
 
 Latest verified full-suite result:
 
-- 255 test files passing
-- 1,297 tests passing
+- 338 test files passing
+- 1,677 tests passing
+
+_(Verified 2026-07-31 via npx vitest run and npm run build, both clean.)_
 
 The filesystem count of files beneath `__tests__` is not equivalent to the verified Vitest test-file total.
 

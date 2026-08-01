@@ -1,14 +1,14 @@
 # Forge Feature Manifest
 
-Status checkpoint after Step 15.
+Status checkpoint after Step 15. Feature table below is unverified since Step 15 - see FORGE_STATUS.md for current capability status.
 
 ## Verified Green State
 
-- Branch: forge/business-domain-lockdown
-- Tests: 62 files passing
-- Test count: 192 passing
+- Branch: main
+- Tests: 338 files passing
+- Test count: 1,677 passing
 - Production build: passing
-- Latest confirmed Step 15 commit: f057d3b
+- Verified: 2026-07-31 via npx vitest run and npm run build
 
 ## Feature Status
 
@@ -43,7 +43,4 @@ Before modifying Forge UI, inspect:
 
 ```bash
 grep -nE "NetWorthService|useTraceExplorer|autonomousAuditAgent|Live Audit|trace|audit" src/app/forge/page.js
-eof
-cd ~/USMarketplace/marketplace409 && \
-sed -n '1,240p' docs/architecture/FORGE_FEATURE_MANIFEST.md && \
-git status --short
+```
