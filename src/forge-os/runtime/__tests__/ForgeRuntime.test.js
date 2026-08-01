@@ -526,5 +526,94 @@ describe(
     );
 
 
+
+    it(
+      "does not apply context mutations when evidence processing fails",
+      async () => {
+        const runtime =
+          new ForgeRuntime({
+            managerRegistry:
+              registerVersionOneManagers(),
+
+            contextStore:
+              createCanonicalContextStore(),
+
+            contextContributionApplier:
+              new ContextContributionApplier(),
+
+            evidenceCoordinator: {
+              process() {
+                throw new Error(
+                  "Evidence validation failed.",
+                );
+              },
+            },
+          });
+
+        const initialContext =
+          runtime.contextStore.getCurrent();
+
+        const request =
+          createManagerRequestContract({
+            contractId:
+              "forge.request.evidence-failure",
+            version:
+              {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                identifier: "1.0.0",
+              },
+            description:
+              "Validates evidence failure recovery.",
+            provenance: {
+              requestId:
+                "request-evidence-failure-1",
+              workflowId:
+                "workflow-evidence-failure-1",
+              correlationId:
+                "correlation-evidence-failure-1",
+              origin: {
+                componentType:
+                  "runtime-test",
+                componentId:
+                  "forge-runtime-recovery",
+              },
+              contextVersion:
+                "1.0.0",
+            },
+            targetWorkspace:
+              "test-workspace",
+            requestedCapability:
+              "repository.inspect",
+            input: {},
+            grantedAuthority: {},
+            securityScope: {},
+          });
+
+        await expect(
+          runtime.dispatch(
+            request,
+          ),
+        ).rejects.toThrow(
+          "Evidence validation failed.",
+        );
+
+        const currentContext =
+          runtime.contextStore.getCurrent();
+
+        expect(
+          currentContext,
+        ).toBe(
+          initialContext,
+        );
+
+        expect(
+          currentContext.payload.contributionHistory.length,
+        ).toBe(0);
+      },
+    );
+
+
   },
 );
