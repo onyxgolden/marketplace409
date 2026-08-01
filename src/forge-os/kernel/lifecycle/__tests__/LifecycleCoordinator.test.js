@@ -120,6 +120,76 @@ describe("LifecycleCoordinator", () => {
   });
 
 
+  it("records lifecycle transition events through the event sink", () => {
+    const events = [];
+
+    const coordinator =
+      new LifecycleCoordinator({
+        initialState:
+          "ready",
+        eventSink: {
+          record(event) {
+            events.push(event);
+          },
+        },
+      });
+
+    coordinator.transition({
+      contractId:
+        "forge.lifecycle.event-recording",
+      description:
+        "Records lifecycle event.",
+      provenance:
+        createProvenance(),
+      toState:
+        "planning",
+      initiatingCause:
+        "event-test",
+      evidenceReferences: [
+        "evidence-001",
+      ],
+      correlationIdentity:
+        "correlation-001",
+      contextVersion:
+        "context-001",
+    });
+
+    expect(
+      events.length,
+    ).toBe(1);
+
+    expect(
+      events[0].metadata.contractType,
+    ).toBe(
+      "lifecycle_transition_event",
+    );
+
+    expect(
+      events[0].payload.transitionId,
+    ).toBe(
+      "ready-planning",
+    );
+
+    expect(
+      events[0].payload.correlationIdentity,
+    ).toBe(
+      "correlation-001",
+    );
+
+    expect(
+      events[0].payload.evidenceReferences,
+    ).toEqual([
+      "evidence-001",
+    ]);
+
+    expect(
+      events[0].provenance.workflowId,
+    ).toBe(
+      "workflow-001",
+    );
+  });
+
+
   it("rejects invalid lifecycle transitions", () => {
     const coordinator =
       new LifecycleCoordinator({

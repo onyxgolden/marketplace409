@@ -1,6 +1,7 @@
 import {
   createContractVersion,
   createLifecycleTransitionContract,
+  createLifecycleTransitionEventContract,
 } from "../../contracts/v1/index.js";
 
 import {
@@ -10,11 +11,15 @@ import {
 export class LifecycleCoordinator {
   constructor({
     initialState = "ready",
+    eventSink,
   } = {}) {
     this.stateMachine =
       new LifecycleStateMachine(
         initialState,
       );
+
+    this.eventSink =
+      eventSink;
   }
 
   getCurrentState() {
@@ -39,30 +44,62 @@ export class LifecycleCoordinator {
         toState,
       );
 
-    return createLifecycleTransitionContract({
-      contractId,
-      version:
-        createContractVersion({
-          major: 1,
-          minor: 0,
-          patch: 0,
+    const lifecycleTransition =
+      createLifecycleTransitionContract({
+        contractId,
+        version:
+          createContractVersion({
+            major: 1,
+            minor: 0,
+            patch: 0,
+          }),
+        description,
+        provenance,
+        transitionId:
+          `${transition.fromState}-${transition.toState}`,
+        lifecycleDomain:
+          "kernel",
+        fromState:
+          transition.fromState,
+        toState:
+          transition.toState,
+        initiatingCause,
+        authorityDecision,
+        governanceDecision,
+        evidenceReferences,
+        correlationIdentity,
+        contextVersion,
+      });
+
+    if (this.eventSink) {
+      this.eventSink.record(
+        createLifecycleTransitionEventContract({
+          contractId:
+            `${contractId}.event`,
+          version:
+            createContractVersion({
+              major: 1,
+              minor: 0,
+              patch: 0,
+            }),
+          description:
+            "Lifecycle transition event.",
+          provenance,
+          eventId:
+            `${transition.fromState}-${transition.toState}-event`,
+          eventType:
+            "lifecycle_transition",
+          transitionId:
+            lifecycleTransition.payload.transitionId,
+          lifecycleDomain:
+            lifecycleTransition.payload.lifecycleDomain,
+          contextVersion,
+          correlationIdentity,
+          evidenceReferences,
         }),
-      description,
-      provenance,
-      transitionId:
-        `${transition.fromState}-${transition.toState}`,
-      lifecycleDomain:
-        "kernel",
-      fromState:
-        transition.fromState,
-      toState:
-        transition.toState,
-      initiatingCause,
-      authorityDecision,
-      governanceDecision,
-      evidenceReferences,
-      correlationIdentity,
-      contextVersion,
-    });
+      );
+    }
+
+    return lifecycleTransition;
   }
 }
