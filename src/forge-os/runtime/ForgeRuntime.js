@@ -4,12 +4,17 @@ import {
   LifecycleCoordinator,
 } from "../kernel/index.js";
 
+import {
+  EvidenceCoordinator,
+} from "./EvidenceCoordinator.js";
+
 export class ForgeRuntime {
   constructor({
     managerRegistry,
     contextStore,
     contextContributionApplier,
     governanceEvaluator = new GovernanceEvaluator(),
+    evidenceCoordinator = new EvidenceCoordinator(),
     lifecycleCoordinatorFactory =
       () => new LifecycleCoordinator(),
   }) {
@@ -37,8 +42,17 @@ export class ForgeRuntime {
       );
     }
 
+    if (!evidenceCoordinator) {
+      throw new Error(
+        "ForgeRuntime requires an evidenceCoordinator.",
+      );
+    }
+
     this.governanceEvaluator =
       governanceEvaluator;
+
+    this.evidenceCoordinator =
+      evidenceCoordinator;
 
     this.lifecycleCoordinatorFactory =
       lifecycleCoordinatorFactory;
@@ -130,10 +144,15 @@ export class ForgeRuntime {
         requestContract.provenance.contextVersion,
     });
 
-    const outcome =
+    let outcome =
       await this.dispatcher.dispatch(
         requestContract,
       );
+
+    outcome =
+      this.evidenceCoordinator.process({
+        outcome,
+      });
 
     lifecycleCoordinator.transition({
       contractId:

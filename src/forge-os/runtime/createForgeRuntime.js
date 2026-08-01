@@ -11,6 +11,10 @@ import {
   ContextContributionApplier,
 } from "../context/index.js";
 
+import {
+  EvidenceCoordinator,
+} from "./EvidenceCoordinator.js";
+
 export function createForgeRuntime() {
   return new ForgeRuntime({
     managerRegistry:
@@ -21,5 +25,8 @@ export function createForgeRuntime() {
 
     contextContributionApplier:
       new ContextContributionApplier(),
+
+    evidenceCoordinator:
+      new EvidenceCoordinator(),
   });
 }

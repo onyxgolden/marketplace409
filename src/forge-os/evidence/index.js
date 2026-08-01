@@ -18,3 +18,8 @@ export {
 export {
   EvidenceAcceptanceService,
 } from "./EvidenceAcceptanceService.js";
+
+
+export {
+  EvidenceProductionAdapter,
+} from "./EvidenceProductionAdapter.js";
