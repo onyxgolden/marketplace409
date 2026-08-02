@@ -137,8 +137,10 @@ export default function ConnectionPage() {
               Connect your financial institution
             </h2>
             <p className="mt-3 text-sm text-slate-600">
-              Plaid securely handles your bank sign-in. FORGE receives a
-              connection token rather than your banking username and password.
+              Plaid securely handles your bank sign-in. FORGE does not
+              receive your banking username or password. After you authorize
+              the connection, FORGE receives only the financial information
+              permitted through the connection.
             </p>
             <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               After the connection succeeds, refresh this dashboard to display
