@@ -81,7 +81,7 @@ export default function ForgeDashboardShell({
                 <ForgeAlerts alerts={alertItems} />
                 <ForgeRecentActivity activities={recentActivities} />
                 <PlaidConnectButton />
-                <ForgeQuickActions />
+                <ForgeQuickActions setView={setView} />
               </div>
             </div>
           )}

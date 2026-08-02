@@ -18,7 +18,7 @@ const quickActions = [
   },
 ];
 
-export default function ForgeQuickActions() {
+export default function ForgeQuickActions({ setView }) {
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-6">
       <div className="text-sm uppercase tracking-wide text-slate-500">
@@ -27,14 +27,26 @@ export default function ForgeQuickActions() {
 
       <div className="mt-4 grid gap-3 md:grid-cols-3">
         {quickActions.map((action) => (
-          <Link
-            key={action.label}
-            href={action.href}
-            className="rounded-2xl border border-slate-200 bg-slate-100 p-4 text-left transition hover:border-slate-400"
-          >
-            <div className="font-black text-slate-950">{action.label}</div>
-            <div className="mt-2 text-sm text-slate-600">{action.detail}</div>
-          </Link>
+          action.label === "Run Audit" ? (
+            <button
+              key={action.label}
+              type="button"
+              onClick={() => setView("audit")}
+              className="rounded-2xl border border-slate-200 bg-slate-100 p-4 text-left transition hover:border-slate-400"
+            >
+              <div className="font-black text-slate-950">{action.label}</div>
+              <div className="mt-2 text-sm text-slate-600">{action.detail}</div>
+            </button>
+          ) : (
+            <Link
+              key={action.label}
+              href={action.href}
+              className="rounded-2xl border border-slate-200 bg-slate-100 p-4 text-left transition hover:border-slate-400"
+            >
+              <div className="font-black text-slate-950">{action.label}</div>
+              <div className="mt-2 text-sm text-slate-600">{action.detail}</div>
+            </Link>
+          )
         ))}
       </div>
     </section>
