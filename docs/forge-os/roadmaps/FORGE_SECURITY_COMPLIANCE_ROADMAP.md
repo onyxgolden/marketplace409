@@ -1,3 +1,4 @@
+
 # FORGE Security & Compliance Roadmap
 
 ## Document Status
@@ -125,3 +126,47 @@ Lifecycle Decision
  |
 Context Update
 
+---
+
+## Future FORGE Security Governance Integration
+
+The FORGE platform may eventually integrate security documentation and
+compliance evidence into the FORGE governance system.
+
+Future capability:
+
+Security Documentation
+        |
+        v
+FORGE Document Registry
+        |
+        v
+Security Governance Manager
+        |
+        v
+FORGE Control Center
+        |
+        v
+Security Posture Visibility
+
+Potential capabilities:
+
+- Security policy registry.
+- Policy version tracking.
+- Security control status tracking.
+- Evidence references.
+- Review schedules.
+- Security decision history.
+- Compliance readiness visibility.
+
+Initial security documents remain repository-managed artifacts.
+
+Future FORGE integration should preserve:
+
+- Document ownership.
+- Evidence traceability.
+- Governance history.
+- Separation between internal controls and customer-facing content.
+
+This capability is intentionally deferred until the core FORGE governance
+architecture requires security visibility.
