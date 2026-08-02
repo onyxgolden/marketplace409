@@ -33,7 +33,19 @@ export default function HomeFooter() {
       </div>
 
       <div className="max-w-6xl mx-auto px-6 mt-8 pt-6 border-t border-blue-700 text-center text-blue-100">
-        © 2026 409 Marketplace — Built for Local Communities
+        <p>
+          © 2026 409 Marketplace — Built for Local Communities
+        </p>
+
+        <div className="mt-3 flex justify-center gap-4">
+          <a href="/privacy" className="hover:text-white">
+            Privacy Policy
+          </a>
+
+          <a href="/terms" className="hover:text-white">
+            Terms of Service
+          </a>
+        </div>
       </div>
     </footer>
   );
