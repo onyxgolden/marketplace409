@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ForgeFinancialDashboardApplication } from "@/application/financial";
+import {
+  ForgeDashboardApplication,
+  ForgeFinancialDashboardApplication,
+} from "@/application/financial";
 import ForgeDashboardCard from "@/components/forge/ForgeDashboardCard";
+import ForgeExecutiveBriefing from "@/components/forge/ForgeExecutiveBriefing";
+import ForgeExecutiveCopilot from "@/components/forge/ForgeExecutiveCopilot";
+import ForgeInsights from "@/components/forge/ForgeInsights";
+import ForgeRiskCenter from "@/components/forge/ForgeRiskCenter";
 import ForgeNavigationBar from "@/components/forge/ForgeNavigationBar";
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
@@ -65,14 +72,33 @@ export default function FinancialPage() {
     ForgeFinancialDashboardApplication.buildLoadingModel(),
   );
 
+  const [intelligenceModel, setIntelligenceModel] = useState(
+    ForgeDashboardApplication.buildLoadingDashboardIntelligence(),
+  );
+
   useEffect(() => {
     async function load() {
-      const result = await ForgeFinancialDashboardApplication.load();
+      const [
+        result,
+        intelligenceResult,
+      ] = await Promise.all([
+        ForgeFinancialDashboardApplication.load(),
+        ForgeDashboardApplication.loadDashboardIntelligence(),
+      ]);
+
       setViewModel(result);
+      setIntelligenceModel(intelligenceResult);
     }
 
     load();
   }, []);
+
+  const {
+    riskSummary,
+    riskAssessment,
+    executiveBriefing,
+    insightItems,
+  } = intelligenceModel;
 
   const {
     operationsPlan,
@@ -151,6 +177,55 @@ export default function FinancialPage() {
             label="Profit Margin"
             value={percent(kpis.margin)}
             detail="Revenue retained after expenses"
+          />
+        </section>
+
+        <section className="space-y-6">
+          <ForgeExecutiveBriefing
+            executiveBriefing={
+              executiveBriefing || {
+                headline: "Loading executive briefing",
+                overview: "Dashboard intelligence is loading.",
+                outlook: "Preparing financial outlook.",
+              }
+            }
+            riskAssessment={
+              riskAssessment || {
+                recommendations: [],
+              }
+            }
+          />
+
+          <ForgeRiskCenter
+            riskSummary={
+              riskSummary || {
+                status: "Loading",
+                score: 0,
+                summary: "Risk assessment is loading.",
+              }
+            }
+            riskAssessment={
+              riskAssessment || {
+                primaryDrivers: [],
+                trendIndicators: [],
+                recommendations: [],
+              }
+            }
+          />
+
+          <ForgeInsights insights={insightItems || []} />
+
+          <ForgeExecutiveCopilot
+            executiveBriefing={
+              executiveBriefing || {
+                outlook: "Preparing financial outlook.",
+              }
+            }
+            riskAssessment={
+              riskAssessment || {
+                recommendations: [],
+              }
+            }
           />
         </section>
 
