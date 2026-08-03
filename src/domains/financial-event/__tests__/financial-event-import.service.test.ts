@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { toTransactionImportResult, type Transaction } from "../../transaction";
 import { InMemoryFinancialEventRepository } from "../InMemoryFinancialEventRepository";
+import { FinancialWorkspaceQueryService } from "../../../application/financial/FinancialWorkspaceQueryService.js";
 import { FinancialEventImportService } from "../financial-event-import.service";
 
 function buildTransaction(overrides: Partial<Transaction> = {}): Transaction {
@@ -138,5 +139,50 @@ describe("FinancialEventImportService", () => {
 
     expect(event.description).toBe("External Bank Description");
     expect(event.normalized_category).toBe("property_tax");
+  });
+
+  it("projects imported financial events into the owner workspace", async () => {
+    const repository = new InMemoryFinancialEventRepository();
+
+    const importService = new FinancialEventImportService({
+      repository,
+      ownerId: "owner-1",
+    });
+
+    await importService.import(
+      buildTransactionImport([buildTransaction()]),
+    );
+
+    const workspaceQueryService =
+      new FinancialWorkspaceQueryService({
+        financialEventRepository: repository,
+      });
+
+    const workspace =
+      await workspaceQueryService.buildWorkspace("owner-1");
+
+    expect(repository.count()).toBe(1);
+
+    expect(workspace.portfolio).toMatchObject({
+      expenses: 12500,
+      cashFlow: -12500,
+      transactionCount: 1,
+    });
+
+    expect(workspace.transactions).toHaveLength(1);
+    expect(workspace.transactions[0]).toMatchObject({
+      description: "Repairs (170 John)",
+      amount: 12500,
+      transactionKind: "expense",
+      category: "property_repairs",
+      sourceSystem: "transaction",
+      sourceRecordId: "transaction-1",
+    });
+
+    const unrelatedOwnerWorkspace =
+      await workspaceQueryService.buildWorkspace("owner-2");
+
+    expect(unrelatedOwnerWorkspace.portfolio.transactionCount).toBe(0);
+    expect(unrelatedOwnerWorkspace.transactions).toEqual([]);
   });
 });
