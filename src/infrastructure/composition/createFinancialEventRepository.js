@@ -30,6 +30,27 @@ export async function createFinancialEventRepository(options = {}) {
   );
 }
 
+
+export function createLazyFinancialEventRepository(options = {}) {
+  let repositoryPromise = null;
+
+  function resolveRepository() {
+    if (repositoryPromise === null) {
+      repositoryPromise = createFinancialEventRepository(options);
+    }
+
+    return repositoryPromise;
+  }
+
+  return Object.freeze({
+    async saveMany(events) {
+      const repository = await resolveRepository();
+
+      return repository.saveMany(events);
+    },
+  });
+}
+
 export const FinancialEventRepositoryStorage = Object.freeze({
   MEMORY: MEMORY_STORAGE,
   SUPABASE: SUPABASE_STORAGE,

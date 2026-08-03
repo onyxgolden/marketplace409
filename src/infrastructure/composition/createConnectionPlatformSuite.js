@@ -48,6 +48,11 @@ FinancialAccountRepositoryStorage,
 } from "./createFinancialAccountRepository.js";
 
 import {
+createLazyFinancialEventRepository,
+FinancialEventRepositoryStorage,
+} from "./createFinancialEventRepository.js";
+
+import {
 AccountBalanceRepositoryStorage,
 createLazyAccountBalanceRepository,
 } from "./createAccountBalanceRepository.js";
@@ -61,6 +66,10 @@ import {
 InMemoryTransactionRepository,
 TransactionImportService,
 } from "../../domains/transaction";
+
+import {
+FinancialEventImportService,
+} from "../../domains/financial-event";
 
 import {
 PlaidAccountBalanceMapper,
@@ -216,6 +225,20 @@ AccountBalanceRepositoryStorage.SUPABASE
   : new InMemoryAccountBalanceRepository()
 );
 
+const financialEventRepositoryStorage =
+deps.financialEventRepositoryStorage ||
+process.env.FINANCIAL_EVENT_REPOSITORY ||
+FinancialEventRepositoryStorage.MEMORY;
+
+const financialEventRepository =
+deps.financialEventRepository ||
+createLazyFinancialEventRepository({
+storage:
+  financialEventRepositoryStorage,
+supabaseClient:
+  deps.supabaseClient,
+});
+
 const connectionExecutionHistoryRepositoryStorage =
 deps.connectionExecutionHistoryRepositoryStorage ||
 process.env.CONNECTION_EXECUTION_HISTORY_REPOSITORY ||
@@ -296,6 +319,12 @@ transactionRepository,
 transactionMapper,
 );
 
+const financialEventImportService =
+deps.financialEventImportService ||
+new FinancialEventImportService({
+repository: financialEventRepository,
+});
+
 const connectionImportExecutionCoordinator =
 deps.connectionImportExecutionCoordinator ||
 new ConnectionImportExecutionCoordinator({
@@ -306,6 +335,7 @@ accountImportService,
 financialAccountImportService,
 accountBalanceImportService,
 transactionImportService,
+financialEventImportService,
 });
 
 const connectionReviewExecutionCoordinator =
@@ -384,6 +414,7 @@ credentialVaultService,
 institutionReferenceRepository,
 financialAccountRepository,
 accountBalanceRepository,
+financialEventRepository,
 connectionExecutionHistoryRepository,
 transactionRepository,
 financialAccountMapper,
@@ -397,6 +428,7 @@ financialAccountImportService,
 financialAccountService,
 accountBalanceImportService,
 transactionImportService,
+financialEventImportService,
 connectionImportExecutionCoordinator,
 connectionReviewExecutionCoordinator,
 connectionRepairExecutionCoordinator,

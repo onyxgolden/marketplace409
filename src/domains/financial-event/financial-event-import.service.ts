@@ -13,7 +13,11 @@ import {
 } from "./financial-event-import.types";
 
 type FinancialEventRepositoryLike = {
-  saveMany(events: FinancialEvent[]): FinancialEvent[];
+  saveMany(
+    events: FinancialEvent[],
+  ):
+    | FinancialEvent[]
+    | Promise<FinancialEvent[]>;
 };
 
 type CategoryNormalizerLike = {
@@ -78,7 +82,9 @@ export class FinancialEventImportService {
     );
 
     const persistedFinancialEvents =
-      this.repository.saveMany(financialEvents);
+      await this.repository.saveMany(
+        financialEvents,
+      );
 
     return toFinancialEventImportResult(input, persistedFinancialEvents);
   }

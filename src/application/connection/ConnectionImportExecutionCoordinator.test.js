@@ -177,6 +177,23 @@ describe(
             ),
         };
 
+        const financialEventImportService = {
+          import: vi.fn(
+            async (input) => ({
+              ...input,
+              financialEvents:
+                input.transactions,
+              importedFinancialEventCount:
+                input.transactions.length,
+              skippedFinancialEventCount: 0,
+              failedFinancialEventCount: 0,
+              financialEventsImportedAt:
+                payload.occurredAt,
+              readyForLedgerPosting: true,
+            }),
+          ),
+        };
+
         const coordinator =
           new ConnectionImportExecutionCoordinator({
             connectionRepository: {
@@ -201,6 +218,7 @@ describe(
             financialAccountImportService,
             accountBalanceImportService,
             transactionImportService,
+            financialEventImportService,
           });
 
         const result =
@@ -216,6 +234,7 @@ describe(
           financialAccountsImported: 2,
           accountBalancesImported: 1,
           transactionsImported: 2,
+          financialEventsImported: 2,
           failedRecordCount: 0,
           occurredAt:
             "2026-01-03T00:00:00.000Z",
@@ -283,6 +302,36 @@ describe(
           [payload.transactions[1]],
           payload.occurredAt,
         );
+
+        expect(
+          financialEventImportService.import,
+        ).toHaveBeenCalledTimes(2);
+
+        expect(
+          financialEventImportService.import,
+        ).toHaveBeenNthCalledWith(
+          1,
+          expect.objectContaining({
+            transactions: [
+              payload.transactions[0],
+            ],
+            readyForFinancialEventImport:
+              true,
+          }),
+        );
+
+        expect(
+          financialEventImportService.import,
+        ).toHaveBeenNthCalledWith(
+          2,
+          expect.objectContaining({
+            transactions: [
+              payload.transactions[1],
+            ],
+            readyForFinancialEventImport:
+              true,
+          }),
+        );
       },
     );
 
@@ -302,6 +351,7 @@ describe(
             financialAccountImportService: {},
             accountBalanceImportService: {},
             transactionImportService: {},
+            financialEventImportService: {},
           });
 
         await expect(

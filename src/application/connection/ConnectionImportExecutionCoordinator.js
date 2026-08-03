@@ -19,6 +19,7 @@ export class ConnectionImportExecutionCoordinator {
     financialAccountImportService,
     accountBalanceImportService,
     transactionImportService,
+    financialEventImportService,
   }) {
     this.connectionRepository =
       connectionRepository;
@@ -40,6 +41,9 @@ export class ConnectionImportExecutionCoordinator {
 
     this.transactionImportService =
       transactionImportService;
+
+    this.financialEventImportService =
+      financialEventImportService;
   }
 
   async executeImport({
@@ -160,6 +164,32 @@ export class ConnectionImportExecutionCoordinator {
       );
     }
 
+    const financialEventImportResults =
+      await Promise.all(
+        transactionImportResults.map(
+          (transactionImportResult) =>
+            this.financialEventImportService.import(
+              transactionImportResult,
+            ),
+        ),
+      );
+
+    const financialEventsImported =
+      financialEventImportResults.reduce(
+        (total, result) =>
+          total +
+          result.importedFinancialEventCount,
+        0,
+      );
+
+    const failedFinancialEventCount =
+      financialEventImportResults.reduce(
+        (total, result) =>
+          total +
+          result.failedFinancialEventCount,
+        0,
+      );
+
     const transactionsImported =
       transactionImportResults.reduce(
         (total, result) =>
@@ -181,13 +211,17 @@ export class ConnectionImportExecutionCoordinator {
         .failedFinancialAccountCount +
       accountBalanceImportResult
         .failedAccountBalanceCount +
-      failedTransactionCount;
+      failedTransactionCount +
+      failedFinancialEventCount;
 
     const success =
       accountImportResult.success &&
       financialAccountImportResult.success &&
       accountBalanceImportResult.success &&
       transactionImportResults.every(
+        (result) => result.success,
+      ) &&
+      financialEventImportResults.every(
         (result) => result.success,
       ) &&
       failedRecordCount === 0;
@@ -203,6 +237,7 @@ export class ConnectionImportExecutionCoordinator {
         accountBalanceImportResult
           .importedAccountBalanceCount,
       transactionsImported,
+      financialEventsImported,
       failedRecordCount,
       occurredAt: payload.occurredAt,
     });
