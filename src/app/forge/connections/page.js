@@ -131,20 +131,42 @@ export default function ConnectionPage() {
 
           <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
             <div className={forgeTheme.labelSmall}>
-              Secure Connection Setup
+              What Happens Next
             </div>
             <h2 className="mt-2 text-2xl font-black text-slate-950">
-              Connect your financial institution
+              From secure connection to financial insight
             </h2>
             <p className="mt-3 text-sm text-slate-600">
-              Plaid securely handles your bank sign-in. FORGE does not
-              receive your banking username or password. After you authorize
-              the connection, FORGE receives only the financial information
-              permitted through the connection.
+              After you authorize an institution through Plaid, FORGE prepares
+              the connection for financial import and review.
             </p>
-            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              After the connection succeeds, refresh this dashboard to display
-              the new institution and its import readiness.
+
+            <div className="mt-6 space-y-3">
+              {[
+                "Secure connection established",
+                "Authorized accounts discovered",
+                "Financial import becomes available",
+                "Imported transactions are ready for review",
+                "FORGE dashboards begin using authorized financial data",
+              ].map((step, index) => (
+                <div
+                  key={step}
+                  className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                >
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-950 text-xs font-black text-white">
+                    {index + 1}
+                  </div>
+                  <div className="pt-1 text-sm font-bold text-slate-800">
+                    {step}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
+              Once authorization completes, this dashboard refreshes
+              automatically and displays the connected institution and import
+              readiness.
             </div>
           </div>
         </section>

@@ -6,7 +6,10 @@ import { usePlaidLink } from "react-plaid-link";
 export default function PlaidConnectButton() {
   const [linkToken, setLinkToken] = useState(null);
   const [status, setStatus] = useState("idle");
-  const [message, setMessage] = useState("Connect a bank account securely through Plaid Link.");
+  const [message, setMessage] = useState(
+    "Connect an account to securely import authorized financial information.",
+  );
+  const [connectedInstitution, setConnectedInstitution] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -71,17 +74,25 @@ export default function PlaidConnectButton() {
         throw new Error(data?.error ?? "Unable to exchange Plaid token.");
       }
 
+      const institutionName =
+        metadata?.institution?.name || "Financial institution";
+
+      setConnectedInstitution(institutionName);
       setStatus("connected");
       setMessage(
-        metadata?.institution?.name
-          ? `Connected ${metadata.institution.name}. Loading the import operation...`
-          : "Bank connected. Loading the import operation...",
+        `${institutionName} connected successfully. Preparing your financial dashboard...`,
       );
 
-      window.location.reload();
+      window.setTimeout(() => {
+        window.location.reload();
+      }, 1200);
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Plaid token exchange failed.");
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "We could not complete the secure connection. No financial information was imported. Please try again.",
+      );
     }
   }, []);
 
@@ -92,7 +103,10 @@ export default function PlaidConnectButton() {
       return;
     }
 
-    setMessage("Plaid Link closed before connecting.");
+    setStatus("idle");
+    setMessage(
+      "No account was connected. You can return at any time to securely connect an institution.",
+    );
   }, []);
 
   const { open, ready } = usePlaidLink({
@@ -108,12 +122,55 @@ export default function PlaidConnectButton() {
       </div>
 
       <div className="mt-2 text-2xl font-black text-slate-950">
-        Connect Bank
+        Secure Bank Connection
+      </div>
+
+      <div className="mt-3 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-emerald-800">
+        Secure connection powered by Plaid
       </div>
 
       <p className="mt-3 text-sm text-slate-600">
         {message}
       </p>
+
+      <div className="mt-5 space-y-4">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Why connect?
+          </div>
+          <ul className="mt-3 space-y-2 text-sm text-slate-700">
+            <li>• Import authorized transaction history.</li>
+            <li>• Build financial reports and cash-flow insights.</li>
+            <li>• Support rental and business performance tracking.</li>
+            <li>• Power forecasting and explainable recommendations.</li>
+          </ul>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Information you authorize
+          </div>
+          <p className="mt-3 text-sm text-slate-700">
+            FORGE may receive account details, balances, transactions, and
+            institution information for the accounts you choose to share.
+          </p>
+          <p className="mt-3 text-sm font-bold text-slate-900">
+            Plaid handles your bank sign-in. FORGE never receives your online
+            banking username or password.
+          </p>
+        </div>
+      </div>
+
+      {connectedInstitution ? (
+        <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
+          <div className="font-black">
+            ✓ {connectedInstitution} connected
+          </div>
+          <div className="mt-1">
+            Authorization completed. Opening your connection dashboard.
+          </div>
+        </div>
+      ) : null}
 
       <button
         type="button"
@@ -127,6 +184,21 @@ export default function PlaidConnectButton() {
             ? "Securing..."
             : "Connect Bank"}
       </button>
+
+      <p className="mt-4 text-xs leading-5 text-slate-500">
+        By continuing, you will securely connect through Plaid. You choose
+        which accounts to share, and FORGE accesses only the information you
+        authorize.
+      </p>
+
+      <div className="mt-3 flex flex-wrap gap-4 text-xs font-bold">
+        <a className="text-slate-700 underline hover:text-slate-950" href="/privacy">
+          Privacy Policy
+        </a>
+        <a className="text-slate-700 underline hover:text-slate-950" href="/terms">
+          Terms of Service
+        </a>
+      </div>
 
       <div className="mt-4 rounded-2xl bg-slate-100 p-3 text-xs font-bold uppercase tracking-wide text-slate-500">
         Status: {status}
