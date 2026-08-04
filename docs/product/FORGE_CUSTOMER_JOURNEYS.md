@@ -4,350 +4,1184 @@
 
 ## Purpose
 
-Describe how different customers enter, benefit from, and grow within the FORGE ecosystem.
+The FORGE Customer Journeys document describes how customers discover, adopt, expand, and mature within the FORGE platform.
 
-Products should be designed around measurable customer outcomes rather than isolated features or screens.
+Every journey is organized around measurable customer outcomes rather than isolated features or screens.
+
+Customer journeys connect:
+
+- Product Domains
+- Platform Capabilities
+- Product Roadmap
+- Decision Intelligence
+- FORGE OS
+
+Every journey should trace to one or more capability areas defined in the Platform Capabilities catalog.
+
+---
 
 ## Depends On
 
-- `FORGE_NORTH_STAR.md`
-- `FORGE_VISION_MAP.md`
-- `FORGE_PRODUCT_CONSTITUTION.md`
-- `FORGE_PLATFORM_CAPABILITIES.md`
+- FORGE_NORTH_STAR.md
+- FORGE_PRODUCT_DOMAIN_MODEL.md
+- FORGE_PRODUCT_DOMAIN_GOVERNANCE.md
+- FORGE_PLATFORM_CAPABILITIES.md
+- FORGE_PRODUCT_ROADMAP.md
+
+---
 
 ## Referenced By
 
-- Product research
-- UX design
-- Product roadmaps
-- Feature Investment Cards
-- Product Decision Records
-- Product architecture
-- Customer-success planning
+- Product Research
+- UX Design
+- Product Architecture
+- Product Decisions
+- Product Roadmap
+- Engineering Architecture
+- AI Planning
 
-## Journey Standard
+---
 
-Each detailed journey should define:
+# Journey Principles
 
-- Customer segment
-- Customer problem
-- Entry point
-- First successful outcome
-- Recurring workflow
-- Products used
-- Shared capabilities used
-- Expansion path
-- Long-term value
-- Success metrics
-- Trust and safety requirements
+Every journey should:
 
-## Student and Young Adult
+- begin with a real customer problem;
+- demonstrate measurable customer value;
+- identify the primary product domain;
+- identify supporting domains;
+- identify capability areas used;
+- support long-term customer growth;
+- preserve domain ownership;
+- support explainable AI recommendations.
 
-### Entry Point
+---
 
-Financial-literacy education through FORGE Academy.
+# Journey Template
 
-### Journey
+Every detailed journey should identify:
 
-Financial literacy
-→ budgeting
-→ savings
-→ emergency fund
-→ credit understanding
-→ first job and taxes
-→ investing
-→ entrepreneurship
-→ asset ownership
-→ long-term financial independence
+- Customer Persona
+- Entry Point
+- Primary Product Domain
+- Supporting Domains
+- Capability Areas
+- First Success
+- Recurring Workflow
+- Expansion Path
+- Long-Term Value
+- Success Measures
 
-### Long-Term Value
+# Personal Financial Journey
 
-FORGE grows with the user rather than serving only one financial stage.
+## Customer Persona
 
-## Employee and Family
+Student, employee, family, retiree, or individual seeking financial clarity.
 
-### Entry Point
+## Entry Point
 
-Financial organization and education.
+- Connect financial accounts
+- Start a budget
+- Financial education
+- Cash flow visibility
 
-### Journey
+## Primary Product Domain
+
+- Financial Operations
+
+## Supporting Domains
+
+- Education
+- Decision Intelligence
+- FORGE OS
+
+## Capability Areas
+
+- Banking Connections
+- Financial Accounts
+- Budgeting
+- Forecasting
+- Financial Reporting
+- Tax Readiness
+- Financial Education
+
+## First Success
+
+The customer understands where their money goes and begins making better financial decisions.
+
+## Recurring Workflow
 
 Connect accounts
-→ understand cash flow
-→ build a budget
-→ manage debt
-→ organize insurance and taxes
-→ plan major purchases
-→ track assets
-→ invest
-→ preserve family financial knowledge
 
-### Long-Term Value
+↓
 
-A unified financial history and decision-support system for the household.
+Review transactions
 
-## Entrepreneur and Freelancer
+↓
 
-### Entry Point
+Monitor cash flow
 
-Business financial organization.
+↓
 
-### Journey
+Manage budget
 
-Connect bank accounts
-→ categorize income and expenses
-→ create invoices
-→ track mileage
-→ monitor cash flow
-→ organize tax records
-→ forecast obligations
-→ hire help
-→ expand the business
+↓
 
-### Expansion Path
+Track financial goals
 
-FORGE Financial
-→ Billing
-→ Tax Intelligence
-→ Contractor or Business tools
-→ Marketplace participation
+↓
 
-## Contractor and Service Business
+Prepare taxes
 
-### Entry Point
+↓
 
-A qualified service opportunity or contractor profile.
+Receive AI recommendations
 
-### Journey
+## Expansion Path
+
+Financial Operations
+
+↓
+
+Property Ownership
+
+↓
+
+Business Operations
+
+↓
+
+Investment Analysis
+
+## Long-Term Value
+
+FORGE becomes the long-term financial operating system rather than a budgeting application.
+
+## Success Measures
+
+- Budget adherence
+- Cash flow improvement
+- Debt reduction
+- Savings growth
+- Financial confidence
+
+---
+
+# Rental Owner Journey
+
+## Customer Persona
+
+Landlord or rental property owner.
+
+## Entry Point
+
+- Financial dashboard
+- Property import
+- Bank connection
+
+## Primary Product Domain
+
+- Rental Operations
+
+## Supporting Domains
+
+- Financial Operations
+- Property Intelligence
+- Marketplace
+- Decision Intelligence
+- FORGE OS
+
+## Capability Areas
+
+- Portfolio Management
+- Tenant Management
+- Lease Management
+- Rent Collection
+- Maintenance Operations
+- Owner Portal
+- Rental Reporting
+
+## First Success
+
+The owner successfully manages a property from one integrated platform.
+
+## Recurring Workflow
+
+Acquire property
+
+↓
+
+Manage leases
+
+↓
+
+Collect rent
+
+↓
+
+Coordinate maintenance
+
+↓
+
+Review NOI
+
+↓
+
+Improve portfolio performance
+
+## Expansion Path
+
+Rental Operations
+
+↓
+
+Marketplace
+
+↓
+
+Capital Planning
+
+↓
+
+Investment Portfolio
+
+## Long-Term Value
+
+FORGE becomes the operating system for the owner's entire real estate portfolio.
+
+# Professional Property Management Journey
+
+## Customer Persona
+
+Professional property manager managing multiple owners and portfolios.
+
+## Entry Point
+
+- Portfolio import
+- Owner onboarding
+- Existing management operations
+
+## Primary Product Domain
+
+- Rental Operations
+
+## Supporting Domains
+
+- Financial Operations
+- Business Operations
+- Property Intelligence
+- Marketplace
+- Decision Intelligence
+- FORGE OS
+
+## Capability Areas
+
+- Portfolio Management
+- Owner Reporting
+- Tenant Management
+- Leasing
+- Maintenance Coordination
+- Vendor Management
+- Financial Reporting
+
+## First Success
+
+The manager operates multiple properties and owners from a single governed platform.
+
+## Recurring Workflow
+
+Manage portfolio
+
+↓
+
+Coordinate leasing
+
+↓
+
+Collect rent
+
+↓
+
+Manage maintenance
+
+↓
+
+Produce owner reports
+
+↓
+
+Monitor portfolio performance
+
+↓
+
+Improve operating efficiency
+
+## Expansion Path
+
+Rental Operations
+
+↓
+
+Business Operations
+
+↓
+
+Marketplace
+
+↓
+
+Decision Intelligence
+
+## Long-Term Value
+
+FORGE becomes the operating platform for an entire property management organization.
+
+---
+
+# Small Business Journey
+
+## Customer Persona
+
+Small business owner, entrepreneur, or freelancer.
+
+## Entry Point
+
+- Business financial organization
+- Customer billing
+- Cash flow management
+
+## Primary Product Domain
+
+- Business Operations
+
+## Supporting Domains
+
+- Financial Operations
+- Marketplace
+- Decision Intelligence
+- FORGE OS
+
+## Capability Areas
+
+- CRM
+- Purchasing
+- Vendor Management
+- Financial Reporting
+- Billing
+- Workflow Management
+
+## First Success
+
+The business owner gains complete visibility into financial and operational performance.
+
+## Recurring Workflow
+
+Manage customers
+
+↓
+
+Invoice work
+
+↓
+
+Pay vendors
+
+↓
+
+Monitor profitability
+
+↓
+
+Forecast cash flow
+
+↓
+
+Improve operations
+
+## Expansion Path
+
+Business Operations
+
+↓
+
+Marketplace
+
+↓
+
+Industrial Operations
+
+↓
+
+Executive Intelligence
+
+## Long-Term Value
+
+FORGE evolves from bookkeeping into the business operating system.
+
+# Contractor and Service Business Journey
+
+## Customer Persona
+
+Independent contractor, trade professional, service company, or specialty vendor.
+
+## Entry Point
+
+- Marketplace opportunity
+- Contractor profile
+- Customer invitation
+
+## Primary Product Domain
+
+- Marketplace
+
+## Supporting Domains
+
+- Business Operations
+- Financial Operations
+- Property Intelligence
+- Decision Intelligence
+- FORGE OS
+
+## Capability Areas
+
+- Provider Network
+- Service Marketplace
+- Product Marketplace
+- Billing
+- Workflow Management
+- Financial Reporting
+
+## First Success
+
+The contractor receives qualified work with sufficient property and asset context to complete the job efficiently.
+
+## Recurring Workflow
 
 Receive opportunity
-→ review property and equipment context
-→ prepare likely tools and parts
-→ schedule work
-→ complete service
-→ upload photos and documents
-→ update warranty and service history
-→ invoice customer
-→ receive payment
-→ adopt FORGE Financial
-→ manage business growth
 
-### Long-Term Value
+↓
 
-Better-qualified jobs, fewer wasted trips, verified reputation, and integrated business management.
+Review property context
 
-## Landlord
+↓
 
-### Entry Point
+Prepare labor and materials
 
-Financial dashboard, property management, or bank connection.
+↓
 
-### Journey
+Complete work
 
-Create account
-→ connect financial institution
-→ import transactions
-→ add properties
-→ resolve transactions to properties
-→ add units and tenants
-→ manage leases
-→ collect rent
-→ manage maintenance
-→ review cash flow and NOI
-→ receive property opportunities
-→ prepare taxes
-→ grow the portfolio
+↓
 
-### Long-Term Value
+Upload documentation
 
-One system for financial performance, operations, asset health, maintenance, and decision support.
+↓
 
-## Property Manager
+Invoice customer
 
-### Entry Point
+↓
 
-Portfolio operations.
+Grow business
 
-### Journey
+## Expansion Path
 
-Import portfolio
-→ configure owners and teams
-→ manage occupancy
-→ coordinate leasing
-→ collect rent
-→ manage maintenance and vendors
-→ reconcile finances
-→ produce owner reports
-→ monitor portfolio risk
-→ scale operations
+Marketplace
 
-### Long-Term Value
+↓
 
-Professional operating depth without losing explainability or usability.
+Business Operations
 
-## Real Estate Investor
+↓
 
-### Entry Point
+Financial Operations
 
-Property and financial analysis.
+↓
 
-### Journey
+Industrial Services
 
-Review opportunities
-→ evaluate acquisition
-→ estimate rehabilitation
-→ arrange contractors
-→ track capital improvements
-→ monitor operating performance
-→ optimize rent and expenses
-→ refinance, hold, or sell
-→ preserve complete resale documentation
+## Long-Term Value
 
-### Long-Term Value
+FORGE becomes the operating system for acquiring, managing, and growing a service business.
 
-Decision intelligence across the full property-investment lifecycle.
+---
 
-## Small Business Owner
+# Industrial Operations Journey
 
-### Entry Point
+## Customer Persona
 
-FORGE Financial or Marketplace.
+Facility manager, plant manager, operations manager, or asset owner.
 
-### Journey
+## Entry Point
 
-Connect accounts
-→ monitor cash flow
-→ bill customers
-→ pay vendors
-→ organize taxes
-→ understand profitability
-→ receive business opportunities
-→ manage assets and warranties
-→ hire contractors or employees
-→ expand operations
+- Asset registry
+- Facility onboarding
+- Existing operational records
 
-### Long-Term Value
+## Primary Product Domain
 
-An operating system for understanding and improving the business rather than merely recording transactions.
+- Industrial Asset Management
 
-## CPA and Tax Professional
+## Supporting Domains
 
-### Entry Point
+- Enterprise Asset Management
+- Maintenance & Reliability
+- Project Controls
+- Decision Intelligence
+- FORGE OS
 
-Client-authorized financial and tax workspace.
+## Capability Areas
 
-### Journey
+- Facility Structure
+- Equipment Registry
+- Asset History
+- Industrial Work Coordination
+- Compliance
+- Asset Intelligence
 
-Receive organized records
-→ review categorized transactions
-→ inspect supporting documents
-→ resolve exceptions
-→ prepare property schedules
-→ review mileage and depreciation records
-→ export tax-ready workpapers
-→ communicate outstanding items
+## First Success
 
-### Long-Term Value
+The organization establishes a governed digital record for every operational asset.
 
-Less time gathering documents and more time providing professional judgment.
+## Recurring Workflow
 
-FORGE supports preparation and organization; it does not replace licensed tax advice.
+Manage facilities
 
-## Insurance Professional
+↓
 
-### Entry Point
+Track equipment
 
-Customer-authorized asset and property information.
+↓
 
-### Journey
+Coordinate work
 
-Review property characteristics
-→ inspect improvements and equipment
-→ verify maintenance history
-→ identify coverage gaps
-→ prepare quotes
-→ store policy records
-→ monitor renewal opportunities
+↓
 
-### Long-Term Value
+Monitor performance
 
-More accurate information and better-informed coverage decisions.
+↓
 
-## Vendor and Manufacturer
+Improve reliability
 
-### Entry Point
+↓
 
-Opportunity Network participation.
+Plan investments
 
-### Journey
+## Expansion Path
 
-Publish verified products, warranties, rebates, or incentives
-→ reach qualified customers
-→ support product registration
-→ receive outcome data where permission exists
-→ improve future offers
+Industrial Asset Management
 
-### Long-Term Value
+↓
 
-Relevant demand without intrusive advertising.
+Enterprise Asset Management
 
-Commercial participation must never control the underlying recommendation.
+↓
 
-## Homeowner
+Project Controls
 
-### Entry Point
+↓
 
-Property Passport or Opportunity Center.
+Executive Intelligence
 
-### Journey
+## Long-Term Value
 
-Create property record
-→ add equipment and warranties
-→ track maintenance
-→ monitor utilities
-→ receive explainable opportunities
-→ compare products and contractors
-→ complete improvements
-→ preserve service and resale history
+FORGE becomes the operational intelligence platform for industrial facilities.
 
-### Long-Term Value
+# Enterprise Asset Management Journey
 
-Lower ownership cost, better maintenance, improved resale readiness, and less fragmented documentation.
+## Customer Persona
 
-## Retiree and Long-Term Asset Owner
+Maintenance manager, maintenance planner, reliability engineer, or enterprise asset manager.
 
-### Entry Point
+## Entry Point
 
-Financial organization and asset continuity.
+- Existing asset hierarchy
+- Work management system
+- Maintenance backlog
+- Enterprise migration
 
-### Journey
+## Primary Product Domain
 
-Consolidate finances
-→ organize assets and documents
-→ monitor recurring costs
-→ prepare taxes
-→ plan maintenance and replacements
-→ share trusted information with family or professionals
-→ preserve long-term asset history
+- Enterprise Asset Management
 
-### Long-Term Value
+## Supporting Domains
 
-Greater financial clarity and continuity across generations.
+- Industrial Asset Management
+- Maintenance & Reliability
+- Project Controls
+- Financial Operations
+- Decision Intelligence
+- FORGE OS
 
-## Cross-Journey Expansion Principle
+## Capability Areas
 
-Expansion must be earned through successful outcomes.
+- Asset Lifecycle
+- Work Management
+- Preventive Maintenance
+- Predictive Maintenance
+- Materials Management
+- Service Contracts
+- Compliance
 
-A landlord may later adopt Opportunity Network services.
+## First Success
 
-A contractor may later adopt FORGE Financial.
+The organization manages every enterprise asset and work order from one governed platform.
 
-A young adult may later become an entrepreneur or investor.
+## Recurring Workflow
 
-A homeowner may later become a landlord.
+Receive work request
 
-FORGE should support these transitions without forcing customers into unrelated products.
+↓
 
-## Journey Success Rule
+Plan work
 
-Every new capability should make at least one documented customer journey measurably faster, clearer, safer, less costly, or more successful.
+↓
+
+Schedule resources
+
+↓
+
+Execute work
+
+↓
+
+Capture costs
+
+↓
+
+Analyze performance
+
+↓
+
+Improve asset reliability
+
+## Expansion Path
+
+Enterprise Asset Management
+
+↓
+
+Project Controls
+
+↓
+
+Capital Projects
+
+↓
+
+Executive Intelligence
+
+## Long-Term Value
+
+FORGE becomes the enterprise asset management platform supporting the complete operational lifecycle.
+
+---
+
+# Project Delivery Journey
+
+## Customer Persona
+
+Project manager, project controls engineer, cost engineer, scheduler, construction manager, or capital project executive.
+
+## Entry Point
+
+- New project
+- Capital investment
+- Turnaround
+- Shutdown
+- Major maintenance event
+
+## Primary Product Domains
+
+- Project Controls
+- Capital Projects
+
+## Supporting Domains
+
+- Construction Management
+- Financial Operations
+- Enterprise Asset Management
+- Industrial Asset Management
+- Decision Intelligence
+- FORGE OS
+
+## Capability Areas
+
+- Cost Management
+- Schedule Management
+- Progress Management
+- Forecasting
+- Earned Value
+- Change Management
+- Risk Management
+- Executive Reporting
+
+## First Success
+
+Project leadership establishes a governed cost, schedule, and progress baseline.
+
+## Recurring Workflow
+
+Plan project
+
+↓
+
+Develop schedule
+
+↓
+
+Control costs
+
+↓
+
+Measure progress
+
+↓
+
+Forecast outcomes
+
+↓
+
+Manage changes
+
+↓
+
+Deliver project
+
+## Expansion Path
+
+Project Controls
+
+↓
+
+Capital Projects
+
+↓
+
+Portfolio Management
+
+↓
+
+Executive Intelligence
+
+## Long-Term Value
+
+FORGE becomes the enterprise platform for project delivery, cost engineering, scheduling, forecasting, and executive governance.
+
+# Executive Leadership Journey
+
+## Customer Persona
+
+Business owner, executive, portfolio manager, COO, CFO, CEO, or board member.
+
+## Entry Point
+
+- Executive dashboard
+- Portfolio reporting
+- Enterprise performance review
+
+## Primary Product Domain
+
+- Decision Intelligence
+
+## Supporting Domains
+
+- Financial Operations
+- Business Operations
+- Rental Operations
+- Project Controls
+- Capital Projects
+- Enterprise Asset Management
+- FORGE OS
+
+## Capability Areas
+
+- Executive Intelligence
+- Portfolio Intelligence
+- Forecast Intelligence
+- Risk Intelligence
+- Opportunity Intelligence
+- Scenario Planning
+- Explainable AI
+
+## First Success
+
+Leadership gains a trusted, enterprise-wide view of operational performance supported by explainable recommendations.
+
+## Recurring Workflow
+
+Review enterprise KPIs
+
+↓
+
+Identify exceptions
+
+↓
+
+Evaluate risks
+
+↓
+
+Review forecasts
+
+↓
+
+Approve strategic actions
+
+↓
+
+Monitor execution
+
+↓
+
+Measure business outcomes
+
+## Expansion Path
+
+Decision Intelligence
+
+↓
+
+Enterprise Portfolio Management
+
+↓
+
+Strategic Planning
+
+↓
+
+AI-Assisted Executive Operations
+
+## Long-Term Value
+
+FORGE becomes the executive operating system for enterprise decision making.
+
+---
+
+# Education Journey
+
+## Customer Persona
+
+Student, employee, customer, partner, contractor, or enterprise user.
+
+## Entry Point
+
+- FORGE Academy
+- Product onboarding
+- Contextual learning
+
+## Primary Product Domain
+
+- Education
+
+## Supporting Domains
+
+- Every Product Domain
+- Decision Intelligence
+- FORGE OS
+
+## Capability Areas
+
+- FORGE Academy
+- Financial Education
+- Property Education
+- Industrial Education
+- Certifications
+- Guided Learning
+- Contextual Learning
+
+## First Success
+
+The customer becomes productive quickly using guided learning tailored to their role.
+
+## Recurring Workflow
+
+Learn
+
+↓
+
+Practice
+
+↓
+
+Apply
+
+↓
+
+Measure progress
+
+↓
+
+Earn certifications
+
+↓
+
+Advance to new responsibilities
+
+## Expansion Path
+
+Education
+
+↓
+
+Professional Development
+
+↓
+
+Advanced Product Domains
+
+↓
+
+Leadership Training
+
+## Long-Term Value
+
+Education accelerates successful adoption across every FORGE product.
+
+# Cross-Journey Growth Model
+
+Customers should naturally expand across product domains as their needs evolve.
+
+## Individual Progression
+
+Financial Operations
+
+↓
+
+Property Ownership
+
+↓
+
+Rental Operations
+
+↓
+
+Business Operations
+
+↓
+
+Investment Management
+
+↓
+
+Executive Intelligence
+
+---
+
+## Property Professional Progression
+
+Rental Operations
+
+↓
+
+Property Intelligence
+
+↓
+
+Marketplace
+
+↓
+
+Business Operations
+
+↓
+
+Decision Intelligence
+
+↓
+
+Executive Portfolio Management
+
+---
+
+## Contractor Progression
+
+Marketplace
+
+↓
+
+Business Operations
+
+↓
+
+Financial Operations
+
+↓
+
+Industrial Services
+
+↓
+
+Enterprise Asset Management
+
+↓
+
+Project Delivery
+
+---
+
+## Industrial Enterprise Progression
+
+Industrial Asset Management
+
+↓
+
+Enterprise Asset Management
+
+↓
+
+Maintenance & Reliability
+
+↓
+
+Project Controls
+
+↓
+
+Capital Projects
+
+↓
+
+Decision Intelligence
+
+↓
+
+Executive Operations
+
+---
+
+# Cross-Domain Collaboration
+
+Customer journeys intentionally cross product domains.
+
+Examples include:
+
+- Rental Operations using Financial Operations.
+- Project Controls consuming Financial Operations.
+- Enterprise Asset Management consuming Industrial Asset Management.
+- Decision Intelligence consuming information from every business domain.
+- FORGE OS coordinating governed execution across all domains.
+
+Cross-domain collaboration must preserve canonical ownership.
+
+---
+
+# AI-Assisted Customer Experience
+
+FORGE AI should assist customers throughout every journey.
+
+AI may:
+
+- recommend actions;
+- explain recommendations;
+- summarize information;
+- forecast outcomes;
+- identify risks;
+- identify opportunities;
+- automate approved workflows.
+
+AI must:
+
+- identify supporting evidence;
+- respect domain ownership;
+- preserve authoritative information;
+- require approval where appropriate;
+- explain recommendations.
+
+AI should increase customer confidence rather than replace customer judgment.
+
+# Journey Governance
+
+Customer journeys are governed by the Product Operating System.
+
+## Domain Alignment
+
+Every journey must identify:
+
+- Primary Product Domain
+- Supporting Product Domains
+- Capability Areas
+- Customer Outcomes
+
+Customer journeys should never redefine domain ownership.
+
+---
+
+## Capability Alignment
+
+Every recurring workflow should map to one or more capability areas defined in the Platform Capabilities catalog.
+
+Capabilities should not be introduced inside customer journeys.
+
+---
+
+## Roadmap Alignment
+
+Every roadmap initiative should improve at least one documented customer journey.
+
+Every production capability should support one or more customer journeys.
+
+---
+
+## Engineering Alignment
+
+Engineering implementation should trace through the following chain:
+
+Customer Journey
+
+↓
+
+Product Domain
+
+↓
+
+Capability Area
+
+↓
+
+Capability
+
+↓
+
+Engineering Architecture
+
+↓
+
+Repository Implementation
+
+↓
+
+Validation Evidence
+
+↓
+
+Customer Outcome
+
+---
+
+## Journey Success Measures
+
+Every journey should demonstrate measurable improvement in one or more of the following:
+
+- Time saved
+- Cost reduced
+- Revenue increased
+- Risk reduced
+- Productivity improved
+- Customer satisfaction
+- Asset performance
+- Portfolio performance
+- Decision quality
+
+---
+
+## Evolution Principle
+
+Customer journeys evolve from observed customer behavior, research findings, production evidence, and validated operational outcomes.
+
+As new product domains and capabilities are introduced, existing journeys should expand rather than fragment.
+
+---
+
+# Guiding Principle
+
+FORGE succeeds when customers naturally progress from solving a single problem to operating more of their financial, property, business, industrial, and enterprise activities through one governed platform, with every journey supported by clear domain ownership, reusable capabilities, explainable intelligence, and FORGE OS coordination.
