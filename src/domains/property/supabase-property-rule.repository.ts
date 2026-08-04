@@ -1,5 +1,3 @@
-import { supabase } from "@/lib/supabase";
-
 import type { PropertyRuleRepository } from "./property-rule.repository";
 import type {
   PropertyResolutionRule,
@@ -8,6 +6,10 @@ import type {
   PropertyResolutionRuleType,
 } from "./property-resolution-rule.types";
 import type { Property } from "./property.types";
+
+type SupabaseClientLike = Readonly<{
+  from(table: string): any;
+}>;
 
 type PropertyRuleRow = Readonly<{
   id: string;
@@ -25,12 +27,25 @@ type PropertyRuleRow = Readonly<{
 
 export class SupabasePropertyRuleRepository
   implements PropertyRuleRepository {
+  constructor(
+    private readonly supabaseClient: SupabaseClientLike,
+  ) {
+    if (
+      !supabaseClient ||
+      typeof supabaseClient.from !== "function"
+    ) {
+      throw new Error(
+        "SupabasePropertyRuleRepository requires a Supabase client.",
+      );
+    }
+  }
+
   async save(
     rule: PropertyResolutionRule,
   ): Promise<PropertyResolutionRule> {
     const row = this.toRow(rule);
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabaseClient
       .from("property_rules")
       .upsert(row)
       .select("*")
@@ -52,7 +67,7 @@ export class SupabasePropertyRuleRepository
 
     const rows = rules.map((rule) => this.toRow(rule));
 
-    const { data, error } = await supabase
+    const { data, error } = await this.supabaseClient
       .from("property_rules")
       .upsert(rows)
       .select("*");
@@ -74,7 +89,7 @@ export class SupabasePropertyRuleRepository
       organizationId = null,
     } = context;
 
-    let query = supabase
+    let query = this.supabaseClient
       .from("property_rules")
       .select("*")
       .eq("enabled", true)
@@ -83,7 +98,9 @@ export class SupabasePropertyRuleRepository
     if (ownerId == null) {
       query = query.is("owner_id", null);
     } else {
-      query = query.or(`owner_id.is.null,owner_id.eq.${ownerId}`);
+      query = query.or(
+        `owner_id.is.null,owner_id.eq.${ownerId}`,
+      );
     }
 
     if (organizationId == null) {

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { createTransactionReviewApplicationSuite } from "@/infrastructure/composition";
+import {
+  createAuthenticatedForgeApplication,
+} from "@/lib/supabase/createAuthenticatedForgeApplication";
 import {
   TransactionReviewItem,
   type TransactionReviewItemInput,
@@ -10,80 +12,131 @@ import type { Transaction } from "@/domains/transaction";
 
 type BulkAssignPropertyRequestBody = Readonly<{
   assignments?: readonly BulkAssignPropertyRequestItem[];
-  ownerId?: string | null;
-  organizationId?: string | null;
 }>;
 
 type BulkAssignPropertyRequestItem = Readonly<{
   transaction?: Transaction;
   property?: Property;
-  ownerId?: string | null;
-  organizationId?: string | null;
   reviewItem?: TransactionReviewItemInput;
 }>;
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as BulkAssignPropertyRequestBody;
+    const authenticatedApplication =
+      await createAuthenticatedForgeApplication();
+
+    if (authenticatedApplication.response) {
+      return authenticatedApplication.response;
+    }
+
+    const body =
+      (await request.json()) as BulkAssignPropertyRequestBody;
 
     if (!Array.isArray(body.assignments)) {
       return NextResponse.json(
-        { error: "assignments is required." },
-        { status: 400 },
+        {
+          error:
+            "assignments is required.",
+        },
+        {
+          status: 400,
+        },
       );
     }
 
     if (body.assignments.length === 0) {
       return NextResponse.json(
-        { error: "assignments must contain at least one assignment." },
-        { status: 400 },
+        {
+          error:
+            "assignments must contain at least one assignment.",
+        },
+        {
+          status: 400,
+        },
       );
     }
 
     for (const assignment of body.assignments) {
       if (!isTransaction(assignment.transaction)) {
         return NextResponse.json(
-          { error: "assignment transaction is required." },
-          { status: 400 },
+          {
+            error:
+              "assignment transaction is required.",
+          },
+          {
+            status: 400,
+          },
         );
       }
 
       if (!isProperty(assignment.property)) {
         return NextResponse.json(
-          { error: "assignment property is required." },
-          { status: 400 },
+          {
+            error:
+              "assignment property is required.",
+          },
+          {
+            status: 400,
+          },
         );
       }
     }
 
-    const { bulkAssignmentService } =
-      createTransactionReviewApplicationSuite();
+    const {
+      transactionReviewApplicationSuite,
+    } =
+      await authenticatedApplication
+        .getForgeApplicationSuite();
+
+    const {
+      bulkAssignmentService,
+    } = transactionReviewApplicationSuite;
+
+    const authenticatedOwnerId =
+      authenticatedApplication.user.id;
 
     const result =
-      await bulkAssignmentService.assignTransactionsToProperty({
-        assignments: body.assignments.map((assignment) => ({
-          transaction: assignment.transaction as Transaction,
-          property: assignment.property as Property,
-          ownerId: normalizeNullableString(assignment.ownerId),
-          organizationId: normalizeNullableString(
-            assignment.organizationId,
-          ),
-          reviewItem: assignment.reviewItem
-            ? new TransactionReviewItem(assignment.reviewItem)
-            : undefined,
-        })),
-        ownerId: normalizeNullableString(body.ownerId),
-        organizationId: normalizeNullableString(body.organizationId),
-      });
+      await bulkAssignmentService
+        .assignTransactionsToProperty({
+          assignments:
+            body.assignments.map(
+              (assignment) => ({
+                transaction:
+                  assignment.transaction as Transaction,
+                property:
+                  assignment.property as Property,
+                ownerId:
+                  authenticatedOwnerId,
+                organizationId:
+                  null,
+                reviewItem:
+                  assignment.reviewItem
+                    ? new TransactionReviewItem(
+                        assignment.reviewItem,
+                      )
+                    : undefined,
+              }),
+            ),
+          ownerId:
+            authenticatedOwnerId,
+          organizationId:
+            null,
+        });
 
     return NextResponse.json({
       success: true,
-      assignments: result.assignments,
-      assignedCount: result.assignedCount,
-      failedCount: result.failedCount,
+      assignments:
+        result.assignments,
+      assignedCount:
+        result.assignedCount,
+      failedCount:
+        result.failedCount,
     });
   } catch (error) {
-    console.error("Bulk property assignment error", error);
+    console.error(
+      "Bulk property assignment error",
+      error,
+    );
 
     const message =
       error instanceof Error
@@ -91,18 +144,29 @@ export async function POST(request: Request) {
         : "Unable to assign transactions to properties.";
 
     return NextResponse.json(
-      { error: message },
-      { status: 500 },
+      {
+        error:
+          message,
+      },
+      {
+        status: 500,
+      },
     );
   }
 }
 
-function isTransaction(value: unknown): value is Transaction {
-  if (value == null || typeof value !== "object") {
+function isTransaction(
+  value: unknown,
+): value is Transaction {
+  if (
+    value == null ||
+    typeof value !== "object"
+  ) {
     return false;
   }
 
-  const transaction = value as Partial<Transaction>;
+  const transaction =
+    value as Partial<Transaction>;
 
   return (
     typeof transaction.id === "string" &&
@@ -125,12 +189,18 @@ function isTransaction(value: unknown): value is Transaction {
   );
 }
 
-function isProperty(value: unknown): value is Property {
-  if (value == null || typeof value !== "object") {
+function isProperty(
+  value: unknown,
+): value is Property {
+  if (
+    value == null ||
+    typeof value !== "object"
+  ) {
     return false;
   }
 
-  const property = value as Partial<Property>;
+  const property =
+    value as Partial<Property>;
 
   return (
     typeof property.id === "string" &&
@@ -139,14 +209,4 @@ function isProperty(value: unknown): value is Property {
       property.name == null
     )
   );
-}
-
-function normalizeNullableString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const normalized = value.trim();
-
-  return normalized.length > 0 ? normalized : null;
 }

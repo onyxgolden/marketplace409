@@ -5,6 +5,7 @@ import {
 import {
   createConnectionPlatformSuite,
   createFinancialApplicationSuite,
+  createTransactionReviewApplicationSuite,
 } from "@/infrastructure/composition";
 
 export async function createForgeApplicationSuite(
@@ -32,6 +33,17 @@ export async function createForgeApplicationSuite(
         deps.currentOwnerId,
     });
 
+  const transactionReviewApplicationSuite =
+    deps.transactionReviewApplicationSuite ||
+    createTransactionReviewApplicationSuite({
+      supabaseClient:
+        deps.supabaseClient,
+      ownerId:
+        deps.ownerId,
+      currentOwnerId:
+        deps.currentOwnerId,
+    });
+
   const canonicalIntelligenceContextBuilder =
     deps.canonicalIntelligenceContextBuilder ||
     new CanonicalIntelligenceContextBuilder({
@@ -48,6 +60,7 @@ export async function createForgeApplicationSuite(
   return Object.freeze({
     connectionPlatformSuite,
     financialApplicationSuite,
+    transactionReviewApplicationSuite,
 
     connectionOperationsApplication:
       connectionPlatformSuite.connectionOperationsApplication,

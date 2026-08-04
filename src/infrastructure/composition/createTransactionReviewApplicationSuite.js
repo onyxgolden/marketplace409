@@ -9,7 +9,10 @@ import {
 
 export function createTransactionReviewApplicationSuite(deps = {}) {
   const ruleRepository =
-    deps.ruleRepository || new SupabasePropertyRuleRepository();
+    deps.ruleRepository ||
+    new SupabasePropertyRuleRepository(
+      deps.supabaseClient,
+    );
 
   const ruleManagementService =
     deps.ruleManagementService ||
@@ -28,7 +31,8 @@ export function createTransactionReviewApplicationSuite(deps = {}) {
     });
 
   const reviewApplication =
-    deps.reviewApplication || new TransactionReviewApplication();
+    deps.reviewApplication ||
+    new TransactionReviewApplication();
 
   return Object.freeze({
     reviewApplication,
