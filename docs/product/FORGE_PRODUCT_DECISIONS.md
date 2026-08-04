@@ -260,7 +260,7 @@ Separating analysis from authority preserves trust, explainability, and governan
 
 ### Context
 
-FORGE OS has evolved beyond infrastructure into the governed execution platform coordinating AI, automation, governance, evidence, and workflow execution.
+FORGE OS has evolved beyond infrastructure into the governed execution platform coordinating AI, automation, planning, workflow execution, governance, evidence, workflow intelligence, and context evolution.
 
 ### Decision
 
@@ -467,7 +467,9 @@ Validation Evidence
 
 Production Outcome
 
-## PDR-017 — Knowledge, Product, Engineering, and Runtime Are Independent Operating Systems
+---
+
+## PDR-017 — Knowledge, Product, Engineering, and FORGE OS Are Independent Operating Systems
 
 ### Context
 
@@ -489,7 +491,7 @@ The operating systems are:
 - Knowledge Operating System
 - Product Operating System
 - Engineering Operating System
-- FORGE OS Runtime Operating System
+- FORGE OS
 
 Each evolves independently while remaining architecturally aligned.
 

@@ -543,7 +543,11 @@ Engineering Operating System
 
 ↓
 
-FORGE OS Runtime
+FORGE OS
+
+↓
+
+Governed Runtime Execution
 
 Each layer has a unique responsibility.
 

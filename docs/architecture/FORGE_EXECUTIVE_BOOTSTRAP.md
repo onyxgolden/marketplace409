@@ -46,6 +46,11 @@ Review:
 - Runtime status
 - Governance status
 - Evidence pipeline
+- Workflow execution status
+- Workflow intelligence status
+- Planning layer status
+- Execution lineage status
+- Recovery and optimization recommendations
 - Validation status
 - Current engineering phase
 
@@ -200,10 +205,75 @@ Engineering Operating System
 
 ↓
 
-Implementation
+FORGE OS
+
+↓
+
+Governed Planning
+
+↓
+
+Workflow Execution
+
+↓
+
+Evidence
+
+↓
+
+Intelligence
 
 ↓
 
 Customer Outcomes
 
 The purpose of this document is continuity.
+
+---
+
+# Product-to-Engineering Traceability
+
+Product architecture governs engineering architecture.
+
+Every significant engineering initiative should identify the product authority it implements.
+
+| Product Architecture | Engineering Representation |
+|---|---|
+| North Star outcome | Engineering objective and completion criteria |
+| Product Domain | Registered workspace or bounded engineering domain |
+| Capability Area | Application service, module, or bounded component |
+| Product Capability | Implemented business ability exposed through explicit interfaces |
+| Product Decision Record | Engineering constraint or architectural invariant |
+| Customer Journey | End-to-end application workflow |
+| Product Roadmap phase | Engineering milestone or implementation phase |
+| Validation expectation | Test, evidence record, or production-readiness proof |
+| FORGE OS | Kernel, contracts, managers, planning, workflow execution, governance evaluation, evidence lineage, workflow intelligence, and governed runtime evolution |
+
+## Required Initiative Traceability
+
+Before implementation begins, record:
+
+- North Star alignment;
+- customer outcome;
+- canonical Product Domain;
+- owning capability area;
+- supporting domains;
+- relevant Product Decision Records;
+- customer journey served;
+- engineering workspace or bounded domain;
+- repository implementation location;
+- FORGE OS participation;
+- required validation evidence;
+- roadmap phase and maturity target.
+
+## Boundary Rule
+
+Product Domains own business responsibilities and authoritative business rules.
+
+Engineering workspaces implement those responsibilities.
+
+FORGE OS coordinates governed execution but does not acquire ownership of Product Domain business logic.
+
+## Traceability Rule
+
+No major engineering initiative should proceed without a visible path from the North Star through Product Domain, Platform Capability, Product Decision, Customer Journey, Engineering Workspace, repository implementation, and validation evidence.

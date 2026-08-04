@@ -249,6 +249,8 @@ Investment Portfolio
 
 FORGE becomes the operating system for the owner's entire real estate portfolio.
 
+---
+
 # Professional Property Management Journey
 
 ## Customer Persona
@@ -418,6 +420,8 @@ Executive Intelligence
 
 FORGE evolves from bookkeeping into the business operating system.
 
+---
+
 # Contractor and Service Business Journey
 
 ## Customer Persona
@@ -585,6 +589,8 @@ Executive Intelligence
 ## Long-Term Value
 
 FORGE becomes the operational intelligence platform for industrial facilities.
+
+---
 
 # Enterprise Asset Management Journey
 
@@ -766,6 +772,8 @@ Executive Intelligence
 ## Long-Term Value
 
 FORGE becomes the enterprise platform for project delivery, cost engineering, scheduling, forecasting, and executive governance.
+
+---
 
 # Executive Leadership Journey
 
