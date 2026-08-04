@@ -23,6 +23,10 @@ export class ForgeRuntime {
       buildSessionSnapshot,
     lifecycleCoordinatorFactory =
       () => new LifecycleCoordinator(),
+    workspaceRegistry = null,
+    workspaceCoordinator = null,
+    workspaceActivationReport =
+      Object.freeze([]),
   }) {
     if (!managerRegistry) {
       throw new Error(
@@ -77,6 +81,15 @@ export class ForgeRuntime {
 
     this.contextContributionApplier =
       contextContributionApplier;
+
+    this.workspaceRegistry =
+      workspaceRegistry;
+
+    this.workspaceCoordinator =
+      workspaceCoordinator;
+
+    this.workspaceActivationReport =
+      workspaceActivationReport;
 
     this.dispatcher =
       new ContractDispatcher({

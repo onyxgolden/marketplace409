@@ -15,10 +15,29 @@ import {
   EvidenceCoordinator,
 } from "./EvidenceCoordinator.js";
 
+import {
+  registerVersionOneWorkspaces,
+  WorkspaceCoordinator,
+} from "../workspaces/index.js";
+
 export function createForgeRuntime() {
+  const managerRegistry =
+    registerVersionOneManagers();
+
+  const workspaceRegistry =
+    registerVersionOneWorkspaces();
+
+  const workspaceCoordinator =
+    new WorkspaceCoordinator({
+      workspaceRegistry,
+      managerRegistry,
+    });
+
+  const workspaceActivationReport =
+    workspaceCoordinator.activateAll();
+
   return new ForgeRuntime({
-    managerRegistry:
-      registerVersionOneManagers(),
+    managerRegistry,
 
     contextStore:
       createCanonicalContextStore(),
@@ -28,5 +47,11 @@ export function createForgeRuntime() {
 
     evidenceCoordinator:
       new EvidenceCoordinator(),
+
+    workspaceRegistry,
+
+    workspaceCoordinator,
+
+    workspaceActivationReport,
   });
 }

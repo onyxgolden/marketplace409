@@ -29,6 +29,23 @@ describe(
           runtime.contextStore.getCurrent();
 
         expect(
+          runtime.workspaceRegistry.has(
+            "forge-engineering",
+          ),
+        ).toBe(true);
+
+        expect(
+          runtime.workspaceActivationReport,
+        ).toEqual([
+          expect.objectContaining({
+            workspaceIdentity:
+              "forge-engineering",
+            status:
+              "activated",
+          }),
+        ]);
+
+        expect(
           context.metadata.contractType,
         ).toBe(
           "context",
