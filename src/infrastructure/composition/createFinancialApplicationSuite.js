@@ -31,6 +31,8 @@ import {
   FinancialWorkspaceQueryService,
   FinancialSnapshotViewApplication,
   TransactionReviewApplication,
+  TransactionReviewQueryService,
+  transactionReviewReadModelAdapter,
 } from "../../application/financial";
 
 import {
@@ -320,6 +322,22 @@ export async function createFinancialApplicationSuite(deps = {}) {
       financialEventRepository,
     });
 
+  const transactionReviewQueryService =
+    deps.transactionReviewQueryService ||
+    (
+      deps.transactionReviewProjectionService
+        ? new TransactionReviewQueryService({
+            financialEventRepository,
+            projectionService:
+              deps.transactionReviewProjectionService,
+          })
+        : null
+    );
+
+  const transactionReviewReadModel =
+    deps.transactionReviewReadModelAdapter ||
+    transactionReviewReadModelAdapter;
+
   const transactionReviewApplication =
     deps.transactionReviewApplication ||
     new TransactionReviewApplication();
@@ -349,6 +367,9 @@ export async function createFinancialApplicationSuite(deps = {}) {
     dashboardIntelligenceApplication,
     financialSnapshotViewApplication,
     financialImportApplication,
+    transactionReviewQueryService,
+    transactionReviewReadModelAdapter:
+      transactionReviewReadModel,
     transactionReviewApplication,
     forgeDashboardApplication:
       ForgeDashboardApplication,

@@ -11,6 +11,8 @@ import {
   FinancialReadModelApplication,
   FinancialSnapshotViewApplication,
   TransactionReviewApplication,
+  TransactionReviewQueryService,
+  transactionReviewReadModelAdapter,
 } from "../../../application/financial";
 
 import { FinancialOperationsService } from "../../../domains/financial-operations";
@@ -657,6 +659,102 @@ describe("createFinancialApplicationSuite", () => {
     expect(suite.financialImportApplication).toBe(
       financialImportApplication,
     );
+  });
+
+  test("registers transaction review query service with an injected projection service", async () => {
+    const financialEventRepository = {
+      findByOwnerId: vi.fn(async () => []),
+    };
+
+    const transactionReviewProjectionService = {
+      project: vi.fn(),
+    };
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      financialEventRepository,
+      transactionReviewProjectionService,
+    });
+
+    expect(
+      suite.transactionReviewQueryService,
+    ).toBeInstanceOf(
+      TransactionReviewQueryService,
+    );
+
+    expect(
+      suite.transactionReviewQueryService
+        .financialEventRepository,
+    ).toBe(financialEventRepository);
+
+    expect(
+      suite.transactionReviewQueryService
+        .projectionService,
+    ).toBe(transactionReviewProjectionService);
+  });
+
+  test("allows transaction review query service injection", async () => {
+    const transactionReviewQueryService = {};
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      transactionReviewQueryService,
+    });
+
+    expect(
+      suite.transactionReviewQueryService,
+    ).toBe(transactionReviewQueryService);
+  });
+
+  test("leaves transaction review query service unregistered without a projection service", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(
+      suite.transactionReviewQueryService,
+    ).toBeNull();
+  });
+
+  test("registers the default transaction review read model adapter", async () => {
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+    });
+
+    expect(
+      suite.transactionReviewReadModelAdapter,
+    ).toBe(transactionReviewReadModelAdapter);
+  });
+
+  test("allows transaction review read model adapter injection", async () => {
+    const injectedAdapter = {
+      buildQueue: vi.fn(),
+    };
+
+    const suite = await createFinancialApplicationSuite({
+      engine: {},
+      dashboardService: {},
+      snapshotApplication: {},
+      snapshotRepository: {},
+      transactionReviewReadModelAdapter:
+        injectedAdapter,
+    });
+
+    expect(
+      suite.transactionReviewReadModelAdapter,
+    ).toBe(injectedAdapter);
   });
 
   test("wires transaction review application into the suite", async () => {
