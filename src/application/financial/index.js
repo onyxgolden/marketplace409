@@ -10,6 +10,7 @@ export { FinancialIntelligenceApplication } from "./FinancialIntelligenceApplica
 export { FinancialOperationsApplication } from "./FinancialOperationsApplication.js";
 export { FinancialImportApplication } from "./FinancialImportApplication.js";
 export { FinancialWorkspaceQueryService } from "./FinancialWorkspaceQueryService.js";
+export { TransactionReviewQueryService } from "./TransactionReviewQueryService.js";
 export { TransactionReviewApplication } from "./TransactionReviewApplication.js";
 export { FinancialSnapshotViewApplication } from "./FinancialSnapshotViewApplication.js";
 export { ForgeDashboardApplication } from "./ForgeDashboardApplication.js";
