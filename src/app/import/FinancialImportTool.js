@@ -2,10 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Money } from "@/platform";
-import {
-  TransactionReviewApplication,
-} from "@/application";
-import TransactionReviewWorkspace from "@/components/forge/TransactionReviewWorkspace";
+import TransactionReviewContainer from "@/components/forge/TransactionReviewContainer";
 
 function formatCurrency(value) {
   return new Money(Math.round(Number(value || 0) * 100)).toString();
@@ -58,17 +55,12 @@ function reportSections(report) {
 }
 
 export default function FinancialImportTool() {
-  const transactionReviewApplication =
-    new TransactionReviewApplication();
   const [source, setSource] = useState("rentec");
   const [fileName, setFileName] = useState("");
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [ownerId, setOwnerId] = useState(null);
   const [properties, setProperties] = useState([]);
-  const [selectedProperties, setSelectedProperties] = useState({});
-  const [selectedReviewItems, setSelectedReviewItems] = useState({});
-  const [assignmentStatus, setAssignmentStatus] = useState({});
 
   useEffect(() => {
     async function initializeImportTool() {
@@ -102,11 +94,6 @@ export default function FinancialImportTool() {
 
     setError("");
     setResult(null);
-    setSelectedProperties({});
-    setSelectedReviewItems({});
-    setAssignmentStatus({});
-
-
     const csv = await file.text();
 
     const response = await fetch(
@@ -163,54 +150,6 @@ export default function FinancialImportTool() {
     }
   }
 
-  function applyAssignmentResult(assignmentResult) {
-
-    const reviewApplication =
-      transactionReviewApplication;
-
-    const nextState = reviewApplication.applyAssignmentResult({
-      currentResult: result,
-      selectedReviewItems,
-      assignmentStatus,
-      assignmentResult,
-    });
-
-    setResult(nextState.result);
-    setSelectedReviewItems(nextState.selectedReviewItems);
-    setAssignmentStatus(nextState.assignmentStatus);
-  }
-
-  async function assignProperty(reviewItem, index) {
-
-    const reviewApplication =
-      transactionReviewApplication;
-
-    const assignmentResult = await reviewApplication.assignProperty({
-      reviewItem,
-      index,
-      properties,
-      selectedProperties,
-      ownerId,
-    });
-
-    applyAssignmentResult(assignmentResult);
-  }
-
-  async function assignSelectedProperties() {
-
-    const reviewApplication =
-      transactionReviewApplication;
-
-    const assignmentResult = await reviewApplication.assignSelectedProperties({
-      reviews: result?.transactionReview || [],
-      properties,
-      selectedProperties,
-      selectedReviewItems,
-      ownerId,
-    });
-
-    applyAssignmentResult(assignmentResult);
-  }
  return (   
   <section className="max-w-6xl mx-auto px-6 py-12">
       <div className="bg-white rounded-3xl shadow-xl p-8 mb-8">
@@ -232,9 +171,6 @@ export default function FinancialImportTool() {
               setFileName("");
               setResult(null);
               setError("");
-              setSelectedProperties({});
-              setSelectedReviewItems({});
-              setAssignmentStatus({});
             }}
             className="mt-3 block w-full rounded-xl border bg-gray-50 px-4 py-4"
           >
@@ -270,16 +206,12 @@ export default function FinancialImportTool() {
         <div className="space-y-8">
           <ImportSummary summary={result.summary} />
 
-          <TransactionReviewWorkspace
+          <TransactionReviewContainer
             reviews={result.transactionReview || []}
             properties={properties}
-            selectedProperties={selectedProperties}
-            setSelectedProperties={setSelectedProperties}
-            selectedReviewItems={selectedReviewItems}
-            setSelectedReviewItems={setSelectedReviewItems}
-            assignmentStatus={assignmentStatus}
-            assignProperty={assignProperty}
-            assignSelectedProperties={assignSelectedProperties}
+            ownerId={ownerId}
+            result={result}
+            setResult={setResult}
           />
 
           <ParsedRecords records={result.records} />
