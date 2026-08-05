@@ -13,3 +13,7 @@ export {
 export {
   registerVersionOneWorkspaces,
 } from "./registerVersionOneWorkspaces.js";
+
+export {
+  registerFinancialWorkspace,
+} from "./registerFinancialWorkspace.js";
