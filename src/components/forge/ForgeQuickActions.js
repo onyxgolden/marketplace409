@@ -18,36 +18,46 @@ const quickActions = [
   },
 ];
 
-export default function ForgeQuickActions({ setView }) {
+export default function ForgeQuickActions({ setView, variant = "default" }) {
+  const embedded = variant === "embedded";
+
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white p-6">
-      <div className="text-sm uppercase tracking-wide text-slate-500">
+    <section
+      className={
+        embedded ? "" : "rounded-3xl border border-slate-200 bg-white p-6"
+      }
+    >
+      <div className="text-xs font-black uppercase tracking-wide text-slate-500">
         Quick Actions
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
-        {quickActions.map((action) => (
+      <div className="mt-4 grid gap-3">
+        {quickActions.map((action) =>
           action.label === "Run Audit" ? (
             <button
               key={action.label}
               type="button"
               onClick={() => setView("audit")}
-              className="rounded-2xl border border-slate-200 bg-slate-100 p-4 text-left transition hover:border-slate-400"
+              className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-slate-400 hover:bg-white"
             >
               <div className="font-black text-slate-950">{action.label}</div>
-              <div className="mt-2 text-sm text-slate-600">{action.detail}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-600">
+                {action.detail}
+              </div>
             </button>
           ) : (
             <Link
               key={action.label}
               href={action.href}
-              className="rounded-2xl border border-slate-200 bg-slate-100 p-4 text-left transition hover:border-slate-400"
+              className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-slate-400 hover:bg-white"
             >
               <div className="font-black text-slate-950">{action.label}</div>
-              <div className="mt-2 text-sm text-slate-600">{action.detail}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-600">
+                {action.detail}
+              </div>
             </Link>
-          )
-        ))}
+          ),
+        )}
       </div>
     </section>
   );

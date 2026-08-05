@@ -5,9 +5,16 @@ export default function ForgeKpiCards({
   riskSummary,
   auditFindings,
   formatCurrency,
+  variant = "default",
 }) {
+  const embedded = variant === "embedded";
+
   return (
-    <section className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <section
+      className={`grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 ${
+        embedded ? "" : "mb-8"
+      }`}
+    >
       <ForgeDashboardCard
         label="Net Worth"
         value={formatCurrency(netWorth.netWorth)}

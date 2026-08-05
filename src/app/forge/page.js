@@ -7,8 +7,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 export const dynamic = "force-dynamic";
 
 export default async function ForgePage() {
-  const forgeApplication =
-    await createAuthenticatedForgeApplication();
+  const forgeApplication = await createAuthenticatedForgeApplication();
 
   if (forgeApplication.response) {
     redirect("/auth");
@@ -18,41 +17,34 @@ export default async function ForgePage() {
     await forgeApplication.getForgeApplicationSuite();
 
   const canonicalIntelligenceContext =
-    await forgeApplicationSuite
-      .canonicalIntelligenceContextBuilder
-      .build({
-        ownerId: forgeApplication.user.id,
-      });
+    await forgeApplicationSuite.canonicalIntelligenceContextBuilder.build({
+      ownerId: forgeApplication.user.id,
+    });
 
   const initialDashboardIntelligence =
-    forgeApplicationSuite.forgeDashboardApplication
-      .normalizeDashboardIntelligence(
-        typeof canonicalIntelligenceContext?.toJSON === "function"
-          ? canonicalIntelligenceContext.toJSON()
-          : canonicalIntelligenceContext,
-      );
+    forgeApplicationSuite.forgeDashboardApplication.normalizeDashboardIntelligence(
+      typeof canonicalIntelligenceContext?.toJSON === "function"
+        ? canonicalIntelligenceContext.toJSON()
+        : canonicalIntelligenceContext,
+    );
 
   const readModelApplication =
     forgeApplicationSuite.financialReadModelApplication;
 
-  const [
-    business,
-    investor,
-    kpi,
-    executive,
-  ] = await Promise.all([
-    readModelApplication.buildBusinessDashboard(),
-    readModelApplication.buildInvestorDashboard(),
-    readModelApplication.buildKPIModel(),
-    readModelApplication.buildExecutiveSummary(),
-  ]);
+  const [businessDashboard, investorDashboard, kpiModel, executiveSummary] =
+    await Promise.all([
+      readModelApplication.buildBusinessDashboard(),
+      readModelApplication.buildInvestorDashboard(),
+      readModelApplication.buildKPIModel(),
+      readModelApplication.buildExecutiveSummary(),
+    ]);
 
   const initialReadModels = {
     financial: null,
-    business,
-    investor,
-    kpi,
-    executive,
+    businessDashboard,
+    investorDashboard,
+    kpiModel,
+    executiveSummary,
     decisionOutcome: null,
   };
 
@@ -63,20 +55,10 @@ export default async function ForgePage() {
       </section>
 
       <ForgeDashboardClient
-        initialDashboardIntelligence={
-          JSON.parse(
-            JSON.stringify(
-              initialDashboardIntelligence,
-            ),
-          )
-        }
-        initialReadModels={
-          JSON.parse(
-            JSON.stringify(
-              initialReadModels,
-            ),
-          )
-        }
+        initialDashboardIntelligence={JSON.parse(
+          JSON.stringify(initialDashboardIntelligence),
+        )}
+        initialReadModels={JSON.parse(JSON.stringify(initialReadModels))}
       />
     </div>
   );

@@ -14,18 +14,14 @@ export default function ForgeDashboardClient({
   initialDashboardIntelligence,
   initialReadModels,
 }) {
-  const [view, setView] = useState("networth");
+  const [view, setView] = useState("dashboard");
 
-  const [dashboardIntelligence, setDashboardIntelligence] =
-    useState(initialDashboardIntelligence);
+  const [dashboardIntelligence] = useState(initialDashboardIntelligence);
 
-  const [readModels, setReadModels] =
-    useState(initialReadModels);
+  const [readModels] = useState(initialReadModels);
 
   const dashboardViewModel = useMemo(
-    () => ForgeDashboardApplication.buildViewModel(
-      dashboardIntelligence,
-    ),
+    () => ForgeDashboardApplication.buildViewModel(dashboardIntelligence),
     [dashboardIntelligence],
   );
 
@@ -49,25 +45,27 @@ export default function ForgeDashboardClient({
       />
 
       {readModels && (
-        <section className="mt-8 rounded-3xl border border-slate-200 bg-white p-6">
-          <div className="text-xs font-black uppercase tracking-wide text-slate-500">
-            Read Model Shadow Layer (Phase 10)
-          </div>
+        <section className="mx-auto mt-8 max-w-[1600px] px-4 pb-8 lg:px-8">
+          <details className="rounded-3xl border border-slate-200 bg-white p-6">
+            <summary className="cursor-pointer text-xs font-black uppercase tracking-wide text-slate-500">
+              Read Model Diagnostic Layer
+            </summary>
 
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <pre className="overflow-auto text-xs">
-              {JSON.stringify(readModels.businessDashboard, null, 2)}
-            </pre>
-            <pre className="overflow-auto text-xs">
-              {JSON.stringify(readModels.investorDashboard, null, 2)}
-            </pre>
-            <pre className="overflow-auto text-xs">
-              {JSON.stringify(readModels.kpiModel, null, 2)}
-            </pre>
-            <pre className="overflow-auto text-xs">
-              {JSON.stringify(readModels.executiveSummary, null, 2)}
-            </pre>
-          </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <pre className="overflow-auto rounded-2xl bg-slate-100 p-4 text-xs">
+                {JSON.stringify(readModels.businessDashboard, null, 2)}
+              </pre>
+              <pre className="overflow-auto rounded-2xl bg-slate-100 p-4 text-xs">
+                {JSON.stringify(readModels.investorDashboard, null, 2)}
+              </pre>
+              <pre className="overflow-auto rounded-2xl bg-slate-100 p-4 text-xs">
+                {JSON.stringify(readModels.kpiModel, null, 2)}
+              </pre>
+              <pre className="overflow-auto rounded-2xl bg-slate-100 p-4 text-xs">
+                {JSON.stringify(readModels.executiveSummary, null, 2)}
+              </pre>
+            </div>
+          </details>
         </section>
       )}
     </>
