@@ -5,3 +5,7 @@ export {
 export {
   createForgeRuntime,
 } from "./createForgeRuntime.js";
+
+export {
+  createAuthenticatedForgeRuntime,
+} from "./createAuthenticatedForgeRuntime.js";
