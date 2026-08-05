@@ -8,28 +8,37 @@ export default function TransactionReviewContainer({
   reviews,
   properties,
   ownerId,
-  result,
-  setResult,
 }) {
   const transactionReviewApplication =
     new TransactionReviewApplication();
 
+  const [reviewItems, setReviewItems] = useState(reviews || []);
   const [selectedProperties, setSelectedProperties] = useState({});
   const [selectedReviewItems, setSelectedReviewItems] = useState({});
   const [assignmentStatus, setAssignmentStatus] = useState({});
 
   function applyAssignmentResult(assignmentResult) {
-    const nextState =
-      transactionReviewApplication.applyAssignmentResult({
-        currentResult: result,
-        selectedReviewItems,
-        assignmentStatus,
-        assignmentResult,
-      });
+    const nextReviews = reviewItems.map(
+      (candidate, candidateIndex) =>
+        assignmentResult.updatedByIndex?.[candidateIndex] || candidate,
+    );
 
-    setResult(nextState.result);
-    setSelectedReviewItems(nextState.selectedReviewItems);
-    setAssignmentStatus(nextState.assignmentStatus);
+    const nextSelectedReviewItems = {
+      ...selectedReviewItems,
+    };
+
+    Object.keys(assignmentResult.completedSelections || {}).forEach(
+      (index) => {
+        delete nextSelectedReviewItems[index];
+      },
+    );
+
+    setReviewItems(nextReviews);
+    setSelectedReviewItems(nextSelectedReviewItems);
+    setAssignmentStatus({
+      ...assignmentStatus,
+      ...(assignmentResult.statuses || {}),
+    });
   }
 
   async function assignProperty(reviewItem, index) {
@@ -48,7 +57,7 @@ export default function TransactionReviewContainer({
   async function assignSelectedProperties() {
     const assignmentResult =
       await transactionReviewApplication.assignSelectedProperties({
-        reviews,
+        reviews: reviewItems,
         properties,
         selectedProperties,
         selectedReviewItems,
@@ -60,7 +69,7 @@ export default function TransactionReviewContainer({
 
   return (
     <TransactionReviewWorkspace
-      reviews={reviews}
+      reviews={reviewItems}
       properties={properties}
       selectedProperties={selectedProperties}
       setSelectedProperties={setSelectedProperties}

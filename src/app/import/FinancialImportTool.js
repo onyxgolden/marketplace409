@@ -210,8 +210,6 @@ export default function FinancialImportTool() {
             reviews={result.transactionReview || []}
             properties={properties}
             ownerId={ownerId}
-            result={result}
-            setResult={setResult}
           />
 
           <ParsedRecords records={result.records} />
