@@ -5,6 +5,7 @@ import ForgeSystemHealth from "@/components/forge/ForgeSystemHealth";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import ForgeInformationCenter from "@/components/forge/workspace/ForgeInformationCenter";
 import ForgeWorkspaceTile from "@/components/forge/workspace/ForgeWorkspaceTile";
+import TransactionReviewContainer from "@/components/forge/TransactionReviewContainer";
 
 export default function ForgeWorkspaceDesktop({
   netWorth,
@@ -20,6 +21,9 @@ export default function ForgeWorkspaceDesktop({
   recentActivities,
   formatCurrency,
   setView,
+  ownerId,
+  properties,
+  transactionReview,
 }) {
   const anomalyCount = auditFindings?.anomalies?.length ?? 0;
 
@@ -96,22 +100,24 @@ export default function ForgeWorkspaceDesktop({
             <div className="grid gap-4 sm:grid-cols-2">
               <QueueMetric
                 label="Items requiring review"
-                value={anomalyCount}
+                value={transactionReview?.metrics?.needsReviewCount ?? anomalyCount}
               />
               <QueueMetric
                 label="Queue status"
-                value={anomalyCount ? "Action required" : "Current"}
+                value={
+                  transactionReview?.metrics?.needsReviewCount
+                    ? "Action required"
+                    : "Current"
+                }
               />
             </div>
 
-            <div className="mt-5 space-y-3">
-              {(alertItems ?? []).slice(0, 3).map((item) => (
-                <CompactQueueItem
-                  key={item.label}
-                  label={item.label}
-                  detail={item.detail}
-                />
-              ))}
+            <div className="mt-5">
+              <TransactionReviewContainer
+                reviews={transactionReview?.items || []}
+                properties={properties}
+                ownerId={ownerId}
+              />
             </div>
           </ForgeWorkspaceTile>
 

@@ -23,6 +23,9 @@ export default function ForgeDashboardShell({
   systemStatusItems,
   recentActivities,
   formatCurrency,
+  ownerId,
+  properties,
+  transactionReview,
 }) {
   return (
     <div className={forgeTheme.page}>
@@ -47,6 +50,9 @@ export default function ForgeDashboardShell({
               recentActivities={recentActivities}
               formatCurrency={formatCurrency}
               setView={setView}
+              ownerId={ownerId}
+              properties={properties}
+              transactionReview={transactionReview}
             />
           )}
 

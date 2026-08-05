@@ -42,6 +42,9 @@ export default function ForgeDashboardClient({
         systemStatusItems={dashboardViewModel.systemStatusItems}
         recentActivities={dashboardViewModel.recentActivities}
         formatCurrency={formatCurrency}
+        ownerId={readModels.ownerId}
+        properties={readModels.workspace?.properties || []}
+        transactionReview={readModels.transactionReview}
       />
 
       {readModels && (

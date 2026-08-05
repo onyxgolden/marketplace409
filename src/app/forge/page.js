@@ -31,13 +31,29 @@ export default async function ForgePage() {
   const readModelApplication =
     forgeApplicationSuite.financialReadModelApplication;
 
-  const [businessDashboard, investorDashboard, kpiModel, executiveSummary] =
-    await Promise.all([
-      readModelApplication.buildBusinessDashboard(),
-      readModelApplication.buildInvestorDashboard(),
-      readModelApplication.buildKPIModel(),
-      readModelApplication.buildExecutiveSummary(),
-    ]);
+  const [
+    businessDashboard,
+    investorDashboard,
+    kpiModel,
+    executiveSummary,
+    workspace,
+    transactionReview,
+  ] = await Promise.all([
+    readModelApplication.buildBusinessDashboard(),
+    readModelApplication.buildInvestorDashboard(),
+    readModelApplication.buildKPIModel(),
+    readModelApplication.buildExecutiveSummary(),
+    readModelApplication.buildWorkspace(
+      forgeApplication.user.id,
+    ),
+    forgeApplicationSuite.transactionReviewQueryService
+      ? forgeApplicationSuite.transactionReviewReadModelAdapter.buildQueue(
+          await forgeApplicationSuite.transactionReviewQueryService.buildReviewQueue(
+            forgeApplication.user.id,
+          ),
+        )
+      : null,
+  ]);
 
   const initialReadModels = {
     financial: null,
@@ -45,6 +61,9 @@ export default async function ForgePage() {
     investorDashboard,
     kpiModel,
     executiveSummary,
+    workspace,
+    transactionReview,
+    ownerId: forgeApplication.user.id,
     decisionOutcome: null,
   };
 
