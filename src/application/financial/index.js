@@ -11,6 +11,7 @@ export { FinancialOperationsApplication } from "./FinancialOperationsApplication
 export { FinancialImportApplication } from "./FinancialImportApplication.js";
 export { FinancialWorkspaceQueryService } from "./FinancialWorkspaceQueryService.js";
 export { TransactionReviewQueryService } from "./TransactionReviewQueryService.js";
+export { TransactionReviewReadModelAdapter, transactionReviewReadModelAdapter } from "./read-models/TransactionReviewReadModelAdapter.js";
 export { TransactionReviewApplication } from "./TransactionReviewApplication.js";
 export { FinancialSnapshotViewApplication } from "./FinancialSnapshotViewApplication.js";
 export { ForgeDashboardApplication } from "./ForgeDashboardApplication.js";
