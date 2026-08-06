@@ -235,7 +235,9 @@ export default function FinancialPage() {
         />
 
         <section className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
-          <div className="space-y-6">
+          <FinancialWorkspaceSurface
+            portfolio={
+              <>
             <section className={forgeTheme.card}>
               <div className={forgeTheme.labelSmall}>Financial Statement</div>
               <h2 className="mt-2 text-2xl font-black text-slate-950">
@@ -561,7 +563,9 @@ export default function FinancialPage() {
                 </>
               )}
             </section>
-          </div>
+              </>
+            }
+          />
 
           <div className="space-y-6">
             <ForgeSystemStatus statusItems={statusItems} />

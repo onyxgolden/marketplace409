@@ -55,6 +55,28 @@ describe("FinancialWorkspaceSurface", () => {
     expect(markup).toContain("Sidebar");
   });
 
+  it("renders a portfolio region without an empty sidebar", () => {
+    const markup = renderToStaticMarkup(
+      <FinancialWorkspaceSurface
+        portfolio={<div>Portfolio Only</div>}
+      />,
+    );
+
+    expect(markup).toContain(
+      'data-financial-workspace-region="portfolio"',
+    );
+
+    expect(markup).toContain("Portfolio Only");
+
+    expect(markup).not.toContain(
+      'data-financial-workspace-region="operations"',
+    );
+
+    expect(markup).not.toContain(
+      'data-financial-workspace-region="sidebar"',
+    );
+  });
+
   it("supports the embedded presentation variant", () => {
     const markup = renderToStaticMarkup(
       <FinancialWorkspaceSurface

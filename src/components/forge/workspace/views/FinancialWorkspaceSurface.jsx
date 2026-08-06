@@ -28,7 +28,13 @@ export default function FinancialWorkspaceSurface({
         </section>
       )}
 
-      {(portfolio || sidebar) && (
+      {portfolio && !sidebar && (
+        <section data-financial-workspace-region="portfolio">
+          {portfolio}
+        </section>
+      )}
+
+      {sidebar && (
         <section
           data-financial-workspace-region="operations"
           className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]"
