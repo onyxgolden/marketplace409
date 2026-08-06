@@ -247,6 +247,61 @@ Users interact with Transaction Review.
 
 ---
 
+
+# Workspace Migration Pattern
+
+Transaction Review represents the first production migration pattern toward the FORGE Workspace architecture.
+
+The capability was evolved incrementally without replacing existing domain or application architecture.
+
+Existing application flow:
+
+Import Pipeline
+      ↓
+Transaction Review Domain
+      ↓
+Assignment Workflow
+      ↓
+Property Learning
+
+Workspace-oriented evolution:
+
+Transaction Review Read Model
+      ↓
+Workspace Container
+      ↓
+Live Operational Module
+      ↓
+FORGE Workspace Experience
+
+The migration preserves:
+
+- Transaction Review domain boundaries
+- Application services
+- Repository contracts
+- APIs
+- Authentication and ownership enforcement
+- Validation strategy
+
+The Workspace layer provides:
+
+- operational awareness
+- workflow access
+- module composition
+- preserved user context
+
+Transaction Review establishes the reusable pattern for future Workspace migrations including:
+
+- Financial Operations
+- Rental Operations
+- Property Intelligence
+- Business Operations
+- Investor Intelligence
+
+Future Workspace modules should follow the same evolutionary approach rather than creating separate application experiences.
+
+---
+
 # Knowledge Feedback Loop
 
 The property engine now improves over time.
