@@ -13,6 +13,7 @@ import ForgeRiskCenter from "@/components/forge/ForgeRiskCenter";
 import ForgeNavigationBar from "@/components/forge/ForgeNavigationBar";
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
+import FinancialWorkspaceSurface from "@/components/forge/workspace/views/FinancialWorkspaceSurface";
 import { forgeTheme } from "@/components/forge/theme";
 
 function cents(value) {
@@ -180,54 +181,58 @@ export default function FinancialPage() {
           />
         </section>
 
-        <section className="space-y-6">
-          <ForgeExecutiveBriefing
-            executiveBriefing={
-              executiveBriefing || {
-                headline: "Loading executive briefing",
-                overview: "Dashboard intelligence is loading.",
-                outlook: "Preparing financial outlook.",
-              }
-            }
-            riskAssessment={
-              riskAssessment || {
-                recommendations: [],
-              }
-            }
-          />
+        <FinancialWorkspaceSurface
+          executive={
+            <>
+              <ForgeExecutiveBriefing
+                executiveBriefing={
+                  executiveBriefing || {
+                    headline: "Loading executive briefing",
+                    overview: "Dashboard intelligence is loading.",
+                    outlook: "Preparing financial outlook.",
+                  }
+                }
+                riskAssessment={
+                  riskAssessment || {
+                    recommendations: [],
+                  }
+                }
+              />
 
-          <ForgeRiskCenter
-            riskSummary={
-              riskSummary || {
-                status: "Loading",
-                score: 0,
-                summary: "Risk assessment is loading.",
-              }
-            }
-            riskAssessment={
-              riskAssessment || {
-                primaryDrivers: [],
-                trendIndicators: [],
-                recommendations: [],
-              }
-            }
-          />
+              <ForgeRiskCenter
+                riskSummary={
+                  riskSummary || {
+                    status: "Loading",
+                    score: 0,
+                    summary: "Risk assessment is loading.",
+                  }
+                }
+                riskAssessment={
+                  riskAssessment || {
+                    primaryDrivers: [],
+                    trendIndicators: [],
+                    recommendations: [],
+                  }
+                }
+              />
 
-          <ForgeInsights insights={insightItems || []} />
+              <ForgeInsights insights={insightItems || []} />
 
-          <ForgeExecutiveCopilot
-            executiveBriefing={
-              executiveBriefing || {
-                outlook: "Preparing financial outlook.",
-              }
-            }
-            riskAssessment={
-              riskAssessment || {
-                recommendations: [],
-              }
-            }
-          />
-        </section>
+              <ForgeExecutiveCopilot
+                executiveBriefing={
+                  executiveBriefing || {
+                    outlook: "Preparing financial outlook.",
+                  }
+                }
+                riskAssessment={
+                  riskAssessment || {
+                    recommendations: [],
+                  }
+                }
+              />
+            </>
+          }
+        />
 
         <section className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
           <div className="space-y-6">
