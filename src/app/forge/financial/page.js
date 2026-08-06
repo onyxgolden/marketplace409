@@ -15,6 +15,7 @@ import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import FinancialWorkspaceSurface from "@/components/forge/workspace/views/FinancialWorkspaceSurface";
 import RentalPortfolioPerformance from "@/components/forge/property/RentalPortfolioPerformance";
+import FinancialPositionSnapshot from "@/components/forge/financial/FinancialPositionSnapshot";
 import { forgeTheme } from "@/components/forge/theme";
 
 function cents(value) {
@@ -120,6 +121,14 @@ export default function FinancialPage() {
   const recentTransactions = [...transactions]
     .reverse()
     .slice(0, 8);
+
+  const balanceSheetPresentations =
+    balanceSheetLines.map((line) => ({
+      accountId: line.accountId,
+      accountName: line.accountName,
+      amount: money(line.amount),
+      isNegative: Number(line.amount) < 0,
+    }));
 
   const portfolioPresentation = portfolio
     ? {
@@ -310,35 +319,9 @@ export default function FinancialPage() {
         <FinancialWorkspaceSurface
           portfolio={
               <>
-            <section className={forgeTheme.card}>
-              <div className={forgeTheme.labelSmall}>Financial Statement</div>
-              <h2 className="mt-2 text-2xl font-black text-slate-950">
-                Balance Sheet Snapshot
-              </h2>
-
-              <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
-                <table className="w-full border-collapse text-left">
-                  <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-500">
-                    <tr>
-                      <th className="p-4">Account</th>
-                      <th className="p-4 text-right">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {balanceSheetLines.map((line) => (
-                      <tr key={line.accountId}>
-                        <td className="p-4 font-bold text-slate-800">
-                          {line.accountName}
-                        </td>
-                        <td className="p-4 text-right font-black text-slate-950">
-                          {money(line.amount)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
+            <FinancialPositionSnapshot
+              lines={balanceSheetPresentations}
+            />
 
             <RentalPortfolioPerformance
               loadState={loadState}
