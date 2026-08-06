@@ -97,7 +97,10 @@ export default function FinancialPage() {
     riskAssessment,
     executiveBriefing,
     insightItems,
-  } = intelligenceModel;
+  } =
+    ForgeDashboardApplication.buildViewModel(
+      intelligenceModel,
+    );
 
   const {
     operationsPlan,
