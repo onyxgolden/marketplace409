@@ -6,10 +6,7 @@ import {
   ForgeFinancialDashboardApplication,
 } from "@/application/financial";
 import FinancialWorkspaceHeader from "@/components/forge/financial/FinancialWorkspaceHeader";
-import ForgeExecutiveBriefing from "@/components/forge/ForgeExecutiveBriefing";
-import ForgeExecutiveCopilot from "@/components/forge/ForgeExecutiveCopilot";
-import ForgeInsights from "@/components/forge/ForgeInsights";
-import ForgeRiskCenter from "@/components/forge/ForgeRiskCenter";
+import FinancialExecutiveIntelligence from "@/components/forge/financial/FinancialExecutiveIntelligence";
 import ForgeNavigationBar from "@/components/forge/ForgeNavigationBar";
 import FinancialWorkspaceSurface from "@/components/forge/workspace/views/FinancialWorkspaceSurface";
 import RentalPortfolioPerformance from "@/components/forge/property/RentalPortfolioPerformance";
@@ -177,6 +174,29 @@ export default function FinancialPage() {
     },
   ];
 
+  const executiveBriefingPresentation =
+    executiveBriefing || {
+      headline: "Loading executive briefing",
+      overview: "Dashboard intelligence is loading.",
+      outlook: "Preparing financial outlook.",
+    };
+
+  const riskSummaryPresentation =
+    riskSummary || {
+      status: "Loading",
+      score: 0,
+      summary: "Risk assessment is loading.",
+    };
+
+  const riskAssessmentPresentation =
+    riskAssessment || {
+      primaryDrivers: [],
+      trendIndicators: [],
+      recommendations: [],
+    };
+
+  const insightPresentations = insightItems || [];
+
   const portfolioPresentation = portfolio
     ? {
         metrics: [
@@ -267,54 +287,16 @@ export default function FinancialPage() {
 
         <FinancialWorkspaceSurface
           executive={
-            <>
-              <ForgeExecutiveBriefing
-                executiveBriefing={
-                  executiveBriefing || {
-                    headline: "Loading executive briefing",
-                    overview: "Dashboard intelligence is loading.",
-                    outlook: "Preparing financial outlook.",
-                  }
-                }
-                riskAssessment={
-                  riskAssessment || {
-                    recommendations: [],
-                  }
-                }
-              />
-
-              <ForgeRiskCenter
-                riskSummary={
-                  riskSummary || {
-                    status: "Loading",
-                    score: 0,
-                    summary: "Risk assessment is loading.",
-                  }
-                }
-                riskAssessment={
-                  riskAssessment || {
-                    primaryDrivers: [],
-                    trendIndicators: [],
-                    recommendations: [],
-                  }
-                }
-              />
-
-              <ForgeInsights insights={insightItems || []} />
-
-              <ForgeExecutiveCopilot
-                executiveBriefing={
-                  executiveBriefing || {
-                    outlook: "Preparing financial outlook.",
-                  }
-                }
-                riskAssessment={
-                  riskAssessment || {
-                    recommendations: [],
-                  }
-                }
-              />
-            </>
+            <FinancialExecutiveIntelligence
+              executiveBriefing={
+                executiveBriefingPresentation
+              }
+              riskSummary={riskSummaryPresentation}
+              riskAssessment={
+                riskAssessmentPresentation
+              }
+              insights={insightPresentations}
+            />
           }
         />
 
