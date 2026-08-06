@@ -298,25 +298,22 @@ export default function FinancialPage() {
               insights={insightPresentations}
             />
           }
-        />
-
-        <FinancialWorkspaceSurface
           portfolio={
-              <>
-            <FinancialPositionSnapshot
-              lines={balanceSheetPresentations}
-            />
+            <>
+              <FinancialPositionSnapshot
+                lines={balanceSheetPresentations}
+              />
 
-            <RentalPortfolioPerformance
-              loadState={loadState}
-              portfolio={portfolioPresentation}
-              properties={propertyPresentations}
-              categories={categoryPresentations}
-              recentTransactions={
-                recentTransactionPresentations
-              }
-            />
-              </>
+              <RentalPortfolioPerformance
+                loadState={loadState}
+                portfolio={portfolioPresentation}
+                properties={propertyPresentations}
+                categories={categoryPresentations}
+                recentTransactions={
+                  recentTransactionPresentations
+                }
+              />
+            </>
           }
           sidebar={
             <FinancialWorkspaceSidebar
