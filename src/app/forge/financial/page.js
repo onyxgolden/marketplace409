@@ -5,7 +5,7 @@ import {
   ForgeDashboardApplication,
   ForgeFinancialDashboardApplication,
 } from "@/application/financial";
-import ForgeDashboardCard from "@/components/forge/ForgeDashboardCard";
+import FinancialWorkspaceHeader from "@/components/forge/financial/FinancialWorkspaceHeader";
 import ForgeExecutiveBriefing from "@/components/forge/ForgeExecutiveBriefing";
 import ForgeExecutiveCopilot from "@/components/forge/ForgeExecutiveCopilot";
 import ForgeInsights from "@/components/forge/ForgeInsights";
@@ -146,6 +146,37 @@ export default function FinancialPage() {
       })),
   };
 
+  const kpiPresentations = [
+    {
+      id: "equity",
+      label: "Net Worth / Equity",
+      value: money(kpis.equity),
+      detail:
+        `Assets ${money(kpis.assets)} · ` +
+        `Liabilities ${money(kpis.liabilities)}`,
+    },
+    {
+      id: "cash",
+      label: "Cash",
+      value: money(kpis.cash),
+      detail: `Receivables ${money(kpis.receivables)}`,
+    },
+    {
+      id: "profit",
+      label: "Monthly Profit",
+      value: money(kpis.profit),
+      detail:
+        `Revenue ${money(kpis.revenue)} · ` +
+        `Expenses ${money(kpis.expenses)}`,
+    },
+    {
+      id: "margin",
+      label: "Profit Margin",
+      value: percent(kpis.margin),
+      detail: "Revenue retained after expenses",
+    },
+  ];
+
   const portfolioPresentation = portfolio
     ? {
         metrics: [
@@ -222,32 +253,10 @@ export default function FinancialPage() {
     <div className={forgeTheme.page}>
       <main className="mx-auto min-h-screen max-w-[1600px] space-y-6 p-4 lg:p-8">
         <ForgeNavigationBar />
-        <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm lg:p-8">
-          <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
-            <div>
-              <div className={forgeTheme.labelSmall}>FORGE Financial Command</div>
-              <h1 className="mt-3 text-4xl font-black tracking-tight text-slate-950">
-                Executive KPI Dashboard
-              </h1>
-              <p className="mt-3 max-w-3xl text-slate-600">
-                Financial performance, cash position, equity, and operating margin
-                surfaced from the FORGE financial engine and dashboard domain service.
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
-              <div className="text-xs font-black uppercase tracking-wide text-amber-700">
-                Health Status
-              </div>
-              <div className="mt-1 text-2xl font-black text-amber-950">
-                {health.label}
-              </div>
-              <div className="mt-1 max-w-xs text-sm text-amber-800">
-                {health.detail}
-              </div>
-            </div>
-          </div>
-        </section>
+        <FinancialWorkspaceHeader
+          health={health}
+          kpis={kpiPresentations}
+        />
 
         {loadState === "error" && (
           <section className="rounded-3xl border border-red-200 bg-red-50 p-6 text-red-900">
@@ -255,29 +264,6 @@ export default function FinancialPage() {
             <div className="mt-2 text-sm">{error}</div>
           </section>
         )}
-
-        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <ForgeDashboardCard
-            label="Net Worth / Equity"
-            value={money(kpis.equity)}
-            detail={`Assets ${money(kpis.assets)} · Liabilities ${money(kpis.liabilities)}`}
-          />
-          <ForgeDashboardCard
-            label="Cash"
-            value={money(kpis.cash)}
-            detail={`Receivables ${money(kpis.receivables)}`}
-          />
-          <ForgeDashboardCard
-            label="Monthly Profit"
-            value={money(kpis.profit)}
-            detail={`Revenue ${money(kpis.revenue)} · Expenses ${money(kpis.expenses)}`}
-          />
-          <ForgeDashboardCard
-            label="Profit Margin"
-            value={percent(kpis.margin)}
-            detail="Revenue retained after expenses"
-          />
-        </section>
 
         <FinancialWorkspaceSurface
           executive={
