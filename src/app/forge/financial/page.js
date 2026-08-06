@@ -11,12 +11,10 @@ import ForgeExecutiveCopilot from "@/components/forge/ForgeExecutiveCopilot";
 import ForgeInsights from "@/components/forge/ForgeInsights";
 import ForgeRiskCenter from "@/components/forge/ForgeRiskCenter";
 import ForgeNavigationBar from "@/components/forge/ForgeNavigationBar";
-import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
-import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import FinancialWorkspaceSurface from "@/components/forge/workspace/views/FinancialWorkspaceSurface";
 import RentalPortfolioPerformance from "@/components/forge/property/RentalPortfolioPerformance";
 import FinancialPositionSnapshot from "@/components/forge/financial/FinancialPositionSnapshot";
-import FinancialOperationsPanel from "@/components/forge/financial/FinancialOperationsPanel";
+import FinancialWorkspaceSidebar from "@/components/forge/financial/FinancialWorkspaceSidebar";
 import { forgeTheme } from "@/components/forge/theme";
 
 function cents(value) {
@@ -353,26 +351,11 @@ export default function FinancialPage() {
               </>
           }
           sidebar={
-            <>
-              <ForgeSystemStatus statusItems={statusItems} />
-            <ForgeRecentActivity activities={activities} />
-
-            <FinancialOperationsPanel
-              focus={operationsPresentation.focus}
-              summary={operationsPresentation.summary}
-              priority={operationsPresentation.priority}
-              actions={operationsPresentation.actions}
+            <FinancialWorkspaceSidebar
+              statusItems={statusItems}
+              activities={activities}
+              operations={operationsPresentation}
             />
-
-            <section className={forgeTheme.cardCompact}>
-              <div className={forgeTheme.labelSmall}>Phase Guardrails</div>
-              <div className="mt-3 space-y-3 text-sm text-slate-600">
-                <p>Rental portfolio activity is now displayed from persisted financial events.</p>
-                <p>Plaid, brokerage, valuation, and Stripe integrations remain behind the provider boundary.</p>
-                <p>Financial calculations stay in the domain layer, not React components.</p>
-              </div>
-            </section>
-            </>
           }
         />
       </main>
