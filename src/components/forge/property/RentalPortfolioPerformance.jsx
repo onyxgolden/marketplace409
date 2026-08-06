@@ -1,13 +1,105 @@
 import RentalPropertyPerformanceCard from "./RentalPropertyPerformanceCard.jsx";
 import { forgeTheme } from "@/components/forge/theme";
 
+function selectFeaturedProperties({
+  properties,
+  initialPropertyCount,
+}) {
+  const negativePropertyIds =
+    new Set(
+      properties
+        .filter(
+          (property) =>
+            property.noiIsNegative ||
+            property.cashFlowIsNegative,
+        )
+        .map((property) => property.propertyId),
+    );
+
+  const targetCount = Math.max(
+    initialPropertyCount,
+    negativePropertyIds.size,
+  );
+
+  const featuredPropertyIds =
+    new Set(negativePropertyIds);
+
+  for (const property of properties) {
+    if (
+      featuredPropertyIds.size >= targetCount
+    ) {
+      break;
+    }
+
+    featuredPropertyIds.add(
+      property.propertyId,
+    );
+  }
+
+  return {
+    featured: properties.filter(
+      (property) =>
+        featuredPropertyIds.has(
+          property.propertyId,
+        ),
+    ),
+    additional: properties.filter(
+      (property) =>
+        !featuredPropertyIds.has(
+          property.propertyId,
+        ),
+    ),
+  };
+}
+
+function PropertyGrid({ properties }) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {properties.map((property) => (
+        <RentalPropertyPerformanceCard
+          key={property.propertyId}
+          propertyName={property.propertyName}
+          transactionCount={
+            property.transactionCount
+          }
+          income={property.income}
+          expenses={property.expenses}
+          noi={property.noi}
+          noiIsNegative={
+            property.noiIsNegative
+          }
+          cashFlow={property.cashFlow}
+          cashFlowIsNegative={
+            property.cashFlowIsNegative
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function RentalPortfolioPerformance({
   loadState,
   portfolio,
   properties = [],
   categories = [],
   recentTransactions = [],
+  initialPropertyCount = 6,
 }) {
+  const resolvedInitialPropertyCount =
+    Number.isInteger(initialPropertyCount) &&
+    initialPropertyCount >= 0
+      ? initialPropertyCount
+      : 6;
+
+  const {
+    featured: featuredProperties,
+    additional: additionalProperties,
+  } = selectFeaturedProperties({
+    properties,
+    initialPropertyCount:
+      resolvedInitialPropertyCount,
+  });
   return (
     <section
       data-rental-portfolio-performance
@@ -97,23 +189,48 @@ export default function RentalPortfolioPerformance({
                 No property-linked financial events were found.
               </div>
             ) : (
-              <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                {properties.map((property) => (
-                  <RentalPropertyPerformanceCard
-                    key={property.propertyId}
-                    propertyName={property.propertyName}
-                    transactionCount={property.transactionCount}
-                    income={property.income}
-                    expenses={property.expenses}
-                    noi={property.noi}
-                    noiIsNegative={property.noiIsNegative}
-                    cashFlow={property.cashFlow}
-                    cashFlowIsNegative={
-                      property.cashFlowIsNegative
+              <>
+                <div
+                  data-featured-properties
+                  className="mt-4"
+                >
+                  <PropertyGrid
+                    properties={
+                      featuredProperties
                     }
                   />
-                ))}
-              </div>
+                </div>
+
+                {additionalProperties.length > 0 && (
+                  <details
+                    data-additional-properties
+                    className="group mt-5 rounded-2xl border border-slate-200 bg-slate-50"
+                  >
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-4 text-sm font-black text-slate-800">
+                      <span>
+                        View all{" "}
+                        {properties.length}{" "}
+                        properties
+                      </span>
+
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs uppercase tracking-wide text-slate-500">
+                        {
+                          additionalProperties.length
+                        }{" "}
+                        additional
+                      </span>
+                    </summary>
+
+                    <div className="border-t border-slate-200 p-4">
+                      <PropertyGrid
+                        properties={
+                          additionalProperties
+                        }
+                      />
+                    </div>
+                  </details>
+                )}
+              </>
             )}
           </div>
 

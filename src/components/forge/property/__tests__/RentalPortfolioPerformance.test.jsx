@@ -117,6 +117,125 @@ describe("RentalPortfolioPerformance", () => {
     expect(markup).toContain("+$1,500.00");
   });
 
+  it("features negative properties while collapsing additional cards", () => {
+    const properties = Array.from(
+      { length: 7 },
+      (_, index) => ({
+        propertyId: `property-${index + 1}`,
+        propertyName:
+          index === 6
+            ? "Negative Property"
+            : `Property ${index + 1}`,
+        transactionCount: index + 1,
+        income: "$10,000.00",
+        expenses: "$5,000.00",
+        noi:
+          index === 6
+            ? "-$1,000.00"
+            : "$5,000.00",
+        noiIsNegative: index === 6,
+        cashFlow:
+          index === 6
+            ? "-$2,000.00"
+            : "$4,000.00",
+        cashFlowIsNegative:
+          index === 6,
+      }),
+    );
+
+    const markup = renderToStaticMarkup(
+      <RentalPortfolioPerformance
+        loadState="ready"
+        portfolio={{
+          metrics: [],
+        }}
+        properties={properties}
+        initialPropertyCount={3}
+      />,
+    );
+
+    expect(markup).toContain(
+      "data-featured-properties",
+    );
+    expect(markup).toContain(
+      "data-additional-properties",
+    );
+    expect(markup).toContain(
+      "View all 7 properties",
+    );
+    expect(markup).toContain(
+      "4 additional",
+    );
+
+    const featuredMarkup =
+      markup
+        .split(
+          "data-featured-properties",
+        )[1]
+        .split(
+          "data-additional-properties",
+        )[0];
+
+    const additionalMarkup =
+      markup.split(
+        "data-additional-properties",
+      )[1];
+
+    expect(featuredMarkup).toContain(
+      "Negative Property",
+    );
+    expect(featuredMarkup).toContain(
+      "Property 1",
+    );
+    expect(featuredMarkup).toContain(
+      "Property 2",
+    );
+    expect(featuredMarkup).not.toContain(
+      "Property 3",
+    );
+
+    expect(additionalMarkup).toContain(
+      "Property 3",
+    );
+    expect(additionalMarkup).toContain(
+      "Property 6",
+    );
+    expect(additionalMarkup).not.toContain(
+      "Negative Property",
+    );
+  });
+
+  it("omits disclosure when every property is featured", () => {
+    const markup = renderToStaticMarkup(
+      <RentalPortfolioPerformance
+        loadState="ready"
+        portfolio={{
+          metrics: [],
+        }}
+        properties={[
+          {
+            propertyId: "property-1",
+            propertyName: "Only Property",
+            transactionCount: 1,
+            income: "$1,000.00",
+            expenses: "$500.00",
+            noi: "$500.00",
+            noiIsNegative: false,
+            cashFlow: "$500.00",
+            cashFlowIsNegative: false,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain(
+      "Only Property",
+    );
+    expect(markup).not.toContain(
+      "data-additional-properties",
+    );
+  });
+
   it("renders populated-section empty collections", () => {
     const markup = renderToStaticMarkup(
       <RentalPortfolioPerformance
