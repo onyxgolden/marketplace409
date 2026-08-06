@@ -1,11 +1,10 @@
-import ForgeExecutiveBriefing from "@/components/forge/ForgeExecutiveBriefing";
-import ForgeKpiCards from "@/components/forge/ForgeKpiCards";
-import ForgePortfolioSummary from "@/components/forge/ForgePortfolioSummary";
-import ForgeSystemHealth from "@/components/forge/ForgeSystemHealth";
-import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
+import { Fragment } from "react";
+
 import ForgeInformationCenter from "@/components/forge/workspace/ForgeInformationCenter";
-import ForgeWorkspaceTile from "@/components/forge/workspace/ForgeWorkspaceTile";
-import TransactionReviewContainer from "@/components/forge/TransactionReviewContainer";
+import { createWorkspaceRegistry } from "@/components/forge/workspace/composition/createWorkspaceRegistry";
+
+const workspaceRegistry =
+  createWorkspaceRegistry();
 
 export default function ForgeWorkspaceDesktop({
   netWorth,
@@ -25,7 +24,20 @@ export default function ForgeWorkspaceDesktop({
   properties,
   transactionReview,
 }) {
-  const anomalyCount = auditFindings?.anomalies?.length ?? 0;
+  const workspaceContext = {
+    netWorth,
+    riskSummary,
+    riskAssessment,
+    executiveBriefing,
+    auditFindings,
+    portfolioSummaryItems,
+    systemHealthItems,
+    systemStatusItems,
+    formatCurrency,
+    ownerId,
+    properties,
+    transactionReview,
+  };
 
   return (
     <section>
@@ -51,9 +63,11 @@ export default function ForgeWorkspaceDesktop({
             <div className="text-xs font-black uppercase tracking-wide text-slate-300">
               Current risk
             </div>
+
             <div className="mt-1 text-2xl font-black text-amber-400">
               {riskSummary?.severity ?? "Unknown"}
             </div>
+
             <div className="text-sm text-slate-300">
               Score {riskSummary?.score ?? 0}
             </div>
@@ -63,103 +77,19 @@ export default function ForgeWorkspaceDesktop({
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(360px,0.8fr)]">
         <div className="grid gap-6 md:grid-cols-2">
-          <ForgeWorkspaceTile
-            eyebrow="Financial Application"
-            title="Financial Position"
-            detail="Executive financial intelligence, portfolio position, risk, and recommended actions."
-            href="/forge/financial"
-            actionLabel="Open financial workspace"
-            status={riskSummary?.status ?? "Ready"}
-            span="wide"
-          >
-            <ForgeKpiCards
-              netWorth={netWorth}
-              riskSummary={riskSummary}
-              auditFindings={auditFindings}
-              formatCurrency={formatCurrency}
-              variant="embedded"
-            />
-
-            <div className="mt-5">
-              <ForgeExecutiveBriefing
-                executiveBriefing={executiveBriefing}
-                riskAssessment={riskAssessment}
-                variant="embedded"
-              />
-            </div>
-          </ForgeWorkspaceTile>
-
-          <ForgeWorkspaceTile
-            eyebrow="Review Application"
-            title="Transaction Review"
-            detail="Resolve unknown transactions and strengthen future property-assignment rules."
-            href="/import"
-            actionLabel="Open transaction review"
-            status={anomalyCount ? "Review" : "Clear"}
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <QueueMetric
-                label="Items requiring review"
-                value={transactionReview?.metrics?.needsReviewCount ?? anomalyCount}
-              />
-              <QueueMetric
-                label="Queue status"
-                value={
-                  transactionReview?.metrics?.needsReviewCount
-                    ? "Action required"
-                    : "Current"
+          {workspaceRegistry
+            .list()
+            .map((workspaceModule) => (
+              <Fragment
+                key={
+                  workspaceModule.moduleIdentity
                 }
-              />
-            </div>
-
-            <div className="mt-5">
-              <TransactionReviewContainer
-                reviews={transactionReview?.items || []}
-                properties={properties}
-                ownerId={ownerId}
-              />
-            </div>
-          </ForgeWorkspaceTile>
-
-          <ForgeWorkspaceTile
-            eyebrow="Property Application"
-            title="Property Portfolio"
-            detail="Owner-scoped portfolio value and financial position represented by current holdings."
-            href="/forge/financial"
-            actionLabel="Open portfolio workspace"
-            status="Owner scoped"
-          >
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-              <ForgePortfolioSummary
-                summaryItems={portfolioSummaryItems}
-                variant="embedded"
-              />
-            </div>
-          </ForgeWorkspaceTile>
-
-          <ForgeWorkspaceTile
-            eyebrow="Operating System"
-            title="FORGE OS"
-            detail="Runtime status and system health supporting the authenticated workbench."
-            status="Active"
-            span="wide"
-          >
-            <div className="grid gap-6 lg:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                <ForgeSystemStatus
-                  statusItems={systemStatusItems}
-                  variant="embedded"
-                />
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                <ForgeSystemHealth
-                  healthItems={systemHealthItems}
-                  variant="embedded"
-                />
-              </div>
-            </div>
-          </ForgeWorkspaceTile>
+              >
+                {workspaceModule.renderTile(
+                  workspaceContext,
+                )}
+              </Fragment>
+            ))}
         </div>
 
         <ForgeInformationCenter
@@ -170,25 +100,5 @@ export default function ForgeWorkspaceDesktop({
         />
       </div>
     </section>
-  );
-}
-
-function QueueMetric({ label, value }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <div className="text-xs font-black uppercase tracking-wide text-slate-500">
-        {label}
-      </div>
-      <div className="mt-2 text-2xl font-black text-slate-950">{value}</div>
-    </div>
-  );
-}
-
-function CompactQueueItem({ label, detail }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <div className="font-bold text-slate-950">{label}</div>
-      <div className="mt-1 text-sm leading-6 text-slate-600">{detail}</div>
-    </div>
   );
 }
