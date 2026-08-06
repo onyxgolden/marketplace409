@@ -70,6 +70,53 @@ describe("RentalPropertyPerformanceCard", () => {
     expect(markup).toContain("Imported");
   });
 
+  it("marks negative operating outcomes as risks", () => {
+    const markup = renderToStaticMarkup(
+      <RentalPropertyPerformanceCard
+        propertyName="185 Laxon"
+        transactionCount={89}
+        income="$123,808.93"
+        expenses="$21,693.10"
+        noi="-$593.10"
+        cashFlow="$102,115.83"
+        noiIsNegative
+      />,
+    );
+
+    expect(markup).toContain(
+      'data-performance-status="negative"',
+    );
+
+    expect(markup).toContain(
+      'data-performance-status="positive"',
+    );
+
+    expect(markup).toContain("from-rose-50");
+    expect(markup).toContain("text-rose-950");
+    expect(markup).toContain("-$593.10");
+  });
+
+  it("marks negative cash flow as a risk", () => {
+    const markup = renderToStaticMarkup(
+      <RentalPropertyPerformanceCard
+        propertyName="Cash Flow Risk"
+        transactionCount={12}
+        income="$10,000.00"
+        expenses="$12,000.00"
+        noi="$1,000.00"
+        cashFlow="-$2,000.00"
+        cashFlowIsNegative
+      />,
+    );
+
+    expect(markup).toContain(
+      'data-performance-status="negative"',
+    );
+
+    expect(markup).toContain("from-rose-50");
+    expect(markup).toContain("-$2,000.00");
+  });
+
   it("uses singular transaction wording", () => {
     const markup = renderToStaticMarkup(
       <RentalPropertyPerformanceCard

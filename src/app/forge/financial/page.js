@@ -391,9 +391,15 @@ export default function FinancialPage() {
                             noi={portfolioMoney(
                               property.noi,
                             )}
+                            noiIsNegative={
+                              Number(property.noi) < 0
+                            }
                             cashFlow={portfolioMoney(
                               property.cashFlow,
                             )}
+                            cashFlowIsNegative={
+                              Number(property.cashFlow) < 0
+                            }
                           />
                         ))}
                       </div>

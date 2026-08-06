@@ -49,12 +49,19 @@ export default function RentalPropertyPerformanceCard({
   expenses,
   noi,
   cashFlow,
+  noiIsNegative = false,
+  cashFlowIsNegative = false,
 }) {
   const values = {
     income,
     expenses,
     noi,
     cashFlow,
+  };
+
+  const negativeMetrics = {
+    noi: noiIsNegative,
+    cashFlow: cashFlowIsNegative,
   };
 
   return (
@@ -115,30 +122,50 @@ export default function RentalPropertyPerformanceCard({
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          {primaryMetrics.map((metric) => (
-            <section
-              key={metric.identity}
-              className={`rounded-2xl border p-4 ${metric.treatment}`}
-            >
-              <div
-                className={`text-[11px] font-black uppercase tracking-wider ${metric.labelClassName}`}
-              >
-                <span className="sm:hidden">
-                  {metric.shortLabel}
-                </span>
+          {primaryMetrics.map((metric) => {
+            const isNegative =
+              negativeMetrics[metric.identity];
 
-                <span className="hidden sm:inline">
-                  {metric.label}
-                </span>
-              </div>
-
-              <div
-                className={`mt-2 text-2xl font-black tracking-tight ${metric.valueClassName}`}
+            return (
+              <section
+                key={metric.identity}
+                data-performance-status={
+                  isNegative ? "negative" : "positive"
+                }
+                className={`rounded-2xl border p-4 ${
+                  isNegative
+                    ? "border-rose-200 bg-gradient-to-br from-rose-50 to-red-50"
+                    : metric.treatment
+                }`}
               >
-                {values[metric.identity]}
-              </div>
-            </section>
-          ))}
+                <div
+                  className={`text-[11px] font-black uppercase tracking-wider ${
+                    isNegative
+                      ? "text-rose-700"
+                      : metric.labelClassName
+                  }`}
+                >
+                  <span className="sm:hidden">
+                    {metric.shortLabel}
+                  </span>
+
+                  <span className="hidden sm:inline">
+                    {metric.label}
+                  </span>
+                </div>
+
+                <div
+                  className={`mt-2 text-2xl font-black tracking-tight ${
+                    isNegative
+                      ? "text-rose-950"
+                      : metric.valueClassName
+                  }`}
+                >
+                  {values[metric.identity]}
+                </div>
+              </section>
+            );
+          })}
         </div>
 
         <div className="mt-3 grid grid-cols-2 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
