@@ -13,7 +13,7 @@ vi.mock(
 );
 
 vi.mock(
-  "@/components/forge/ForgeKpiCards",
+  "@/components/forge/financial/FinancialKpiSurface",
   () => ({
     default: () => null,
   }),

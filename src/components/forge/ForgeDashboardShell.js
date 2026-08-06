@@ -23,6 +23,8 @@ export default function ForgeDashboardShell({
   systemStatusItems,
   recentActivities,
   formatCurrency,
+  financialKpiModel,
+  financialExecutiveSummary,
   ownerId,
   properties,
   transactionReview,
@@ -49,6 +51,12 @@ export default function ForgeDashboardShell({
               systemStatusItems={systemStatusItems}
               recentActivities={recentActivities}
               formatCurrency={formatCurrency}
+              financialKpiModel={
+                financialKpiModel
+              }
+              financialExecutiveSummary={
+                financialExecutiveSummary
+              }
               setView={setView}
               ownerId={ownerId}
               properties={properties}

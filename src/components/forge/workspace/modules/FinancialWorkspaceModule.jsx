@@ -1,16 +1,22 @@
 import ForgeExecutiveBriefing from "@/components/forge/ForgeExecutiveBriefing";
-import ForgeKpiCards from "@/components/forge/ForgeKpiCards";
+import FinancialKpiSurface from "@/components/forge/financial/FinancialKpiSurface";
+import { buildFinancialTilePresentation } from "@/components/forge/financial/buildFinancialTilePresentation";
 import ForgeWorkspaceTile from "@/components/forge/workspace/ForgeWorkspaceTile";
 import { WorkspaceModule } from "@/components/forge/workspace/composition/WorkspaceModule";
 
 function renderFinancialWorkspaceTile({
-  netWorth,
-  riskSummary,
+  financialKpiModel,
+  financialExecutiveSummary,
   riskAssessment,
   executiveBriefing,
-  auditFindings,
-  formatCurrency,
 }) {
+  const presentation =
+    buildFinancialTilePresentation({
+      kpiModel: financialKpiModel,
+      executiveSummary:
+        financialExecutiveSummary,
+    });
+
   return (
     <ForgeWorkspaceTile
       eyebrow="Financial Application"
@@ -18,14 +24,11 @@ function renderFinancialWorkspaceTile({
       detail="Executive financial intelligence, portfolio position, risk, and recommended actions."
       href="/forge/financial"
       actionLabel="Open financial workspace"
-      status={riskSummary?.status ?? "Ready"}
+      status={presentation.health.label}
       span="wide"
     >
-      <ForgeKpiCards
-        netWorth={netWorth}
-        riskSummary={riskSummary}
-        auditFindings={auditFindings}
-        formatCurrency={formatCurrency}
+      <FinancialKpiSurface
+        kpis={presentation.kpis}
         variant="embedded"
       />
 
