@@ -1,4 +1,4 @@
-import ForgeDashboardCard from "@/components/forge/ForgeDashboardCard";
+import FinancialKpiSurface from "@/components/forge/financial/FinancialKpiSurface";
 import { forgeTheme } from "@/components/forge/theme";
 
 const headerVariants = Object.freeze({
@@ -67,19 +67,14 @@ export default function FinancialWorkspaceHeader({
         </div>
       </section>
 
-      <section
-        data-financial-kpi-surface
-        className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"
-      >
-        {kpis.map((kpi) => (
-          <ForgeDashboardCard
-            key={kpi.id}
-            label={kpi.label}
-            value={kpi.value}
-            detail={kpi.detail}
-          />
-        ))}
-      </section>
+      <FinancialKpiSurface
+        kpis={kpis}
+        variant={
+          variant === "embedded"
+            ? "embedded"
+            : "workspace"
+        }
+      />
     </section>
   );
 }
