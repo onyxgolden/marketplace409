@@ -16,6 +16,7 @@ import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import FinancialWorkspaceSurface from "@/components/forge/workspace/views/FinancialWorkspaceSurface";
 import RentalPortfolioPerformance from "@/components/forge/property/RentalPortfolioPerformance";
 import FinancialPositionSnapshot from "@/components/forge/financial/FinancialPositionSnapshot";
+import FinancialOperationsPanel from "@/components/forge/financial/FinancialOperationsPanel";
 import { forgeTheme } from "@/components/forge/theme";
 
 function cents(value) {
@@ -129,6 +130,23 @@ export default function FinancialPage() {
       amount: money(line.amount),
       isNegative: Number(line.amount) < 0,
     }));
+
+  const operationsPresentation = {
+    focus: operationsPlan?.focus || "Operations Plan",
+    summary:
+      operationsPlan?.summary ||
+      "Financial operations guidance is loading.",
+    priority: operationsPlan?.priority || "monitor",
+    actions: (operationsPlan?.actions || [])
+      .slice(0, 3)
+      .map((action) => ({
+        id: action.id,
+        title: action.title,
+        status: action.status,
+        priority: action.priority,
+        rationale: action.rationale,
+      })),
+  };
 
   const portfolioPresentation = portfolio
     ? {
@@ -339,44 +357,12 @@ export default function FinancialPage() {
               <ForgeSystemStatus statusItems={statusItems} />
             <ForgeRecentActivity activities={activities} />
 
-            <section className={forgeTheme.cardCompact}>
-              <div className={forgeTheme.labelSmall}>Financial Operations</div>
-              <h2 className="mt-2 text-xl font-black text-slate-950">
-                {operationsPlan?.focus || "Operations Plan"}
-              </h2>
-              <p className="mt-3 text-sm text-slate-600">
-                {operationsPlan?.summary ||
-                  "Financial operations guidance is loading."}
-              </p>
-
-              <div className="mt-4 rounded-2xl bg-slate-100 p-4">
-                <div className="text-xs font-black uppercase tracking-wide text-slate-500">
-                  Priority
-                </div>
-                <div className="mt-1 text-lg font-black capitalize text-slate-950">
-                  {operationsPlan?.priority || "monitor"}
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {(operationsPlan?.actions || []).slice(0, 3).map((action) => (
-                  <div
-                    key={action.id}
-                    className="rounded-2xl border border-slate-200 p-4"
-                  >
-                    <div className="font-black text-slate-900">
-                      {action.title}
-                    </div>
-                    <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">
-                      {action.status} · {action.priority}
-                    </div>
-                    <div className="mt-2 text-sm text-slate-600">
-                      {action.rationale}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+            <FinancialOperationsPanel
+              focus={operationsPresentation.focus}
+              summary={operationsPresentation.summary}
+              priority={operationsPresentation.priority}
+              actions={operationsPresentation.actions}
+            />
 
             <section className={forgeTheme.cardCompact}>
               <div className={forgeTheme.labelSmall}>Phase Guardrails</div>
