@@ -23,20 +23,35 @@ describe("RentalPropertyPerformanceCard", () => {
       />,
     );
 
+    expect(markup).toContain(
+      "data-property-performance-card",
+    );
+
     expect(markup).toContain("Rental Property");
     expect(markup).toContain("123 Main Street");
     expect(markup).toContain("24 transactions");
+    expect(markup).toContain(
+      "Operating Performance",
+    );
+
+    expect(markup).toContain(
+      "Repository-backed imported activity",
+    );
+
+    expect(markup).toContain(
+      "Net Operating Income",
+    );
+
+    expect(markup).toContain("$9,000.00");
+    expect(markup).toContain("Cash Flow");
+    expect(markup).toContain("$8,000.00");
     expect(markup).toContain("Income");
     expect(markup).toContain("$12,500.00");
     expect(markup).toContain("Expenses");
     expect(markup).toContain("$4,500.00");
-    expect(markup).toContain("NOI");
-    expect(markup).toContain("$9,000.00");
-    expect(markup).toContain("Cash Flow");
-    expect(markup).toContain("$8,000.00");
   });
 
-  it("retains the four established performance treatments", () => {
+  it("promotes operating outcomes above supporting activity", () => {
     const markup = renderToStaticMarkup(
       <RentalPropertyPerformanceCard
         propertyName="Rental"
@@ -48,9 +63,26 @@ describe("RentalPropertyPerformanceCard", () => {
       />,
     );
 
-    expect(markup).toContain("bg-emerald-50");
-    expect(markup).toContain("bg-rose-50");
-    expect(markup).toContain("bg-amber-50");
-    expect(markup).toContain("bg-sky-50");
+    expect(markup).toContain("from-amber-50");
+    expect(markup).toContain("from-sky-50");
+    expect(markup).toContain("bg-emerald-500");
+    expect(markup).toContain("bg-rose-500");
+    expect(markup).toContain("Imported");
+  });
+
+  it("uses singular transaction wording", () => {
+    const markup = renderToStaticMarkup(
+      <RentalPropertyPerformanceCard
+        propertyName="Rental"
+        transactionCount={1}
+        income="$0.00"
+        expenses="$0.00"
+        noi="$0.00"
+        cashFlow="$0.00"
+      />,
+    );
+
+    expect(markup).toContain("1 transaction");
+    expect(markup).not.toContain("1 transactions");
   });
 });
