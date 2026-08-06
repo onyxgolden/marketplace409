@@ -46,6 +46,33 @@ Every major screen should help users answer:
 - Why did it happen?
 - What should I do next?
 
+
+### Operational Workspace Experience
+
+FORGE should provide an operational environment rather than a collection of disconnected pages.
+
+The primary user experience should help customers understand the condition of their financial, business, property, and operational ecosystem before entering individual workflows.
+
+The workspace should communicate:
+
+- current state;
+- important changes;
+- required actions;
+- recommendations;
+- opportunities;
+- system health.
+
+Users should move through a connected operating environment where applications maintain context rather than feeling like separate destinations.
+
+FORGE should draw inspiration from professional operational systems including:
+
+- executive dashboards;
+- business intelligence platforms;
+- trading workstations;
+- mission control environments.
+
+The design objective is clarity, situational awareness, and informed decision-making—not interface complexity.
+
 ### Mobile First
 
 Important workflows should remain practical on phones and tablets.

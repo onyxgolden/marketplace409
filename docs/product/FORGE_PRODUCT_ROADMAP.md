@@ -26,6 +26,144 @@ The roadmap follows these principles:
 
 ---
 
+
+---
+
+# FORGE Workspace Evolution Initiative
+
+## Objective
+
+Evolve FORGE from a page-oriented application experience into a unified operational workspace.
+
+The Workspace becomes the primary authenticated user environment where intelligent application modules expose live operational state, workflows, recommendations, and decisions.
+
+The Workspace does not replace existing product domains. It provides the interaction layer that allows all domains to operate as one connected platform.
+
+## Workspace Architecture
+
+The Workspace is composed of:
+
+- Workspace Shell
+- Application Modules
+- Live Operational Tiles
+- Expanded Workspaces
+- Information Center
+- Context Preservation
+
+Applications remain responsible for their domain capabilities while the Workspace coordinates presentation, navigation, and operational awareness.
+
+## Migration Strategy
+
+The transition is evolutionary.
+
+Existing architecture is preserved:
+
+- Domain models
+- Application services
+- Repository layer
+- Authentication
+- Read models
+- APIs
+- Business rules
+- Ownership enforcement
+- Validation strategy
+
+The primary evolution occurs in workspace composition and presentation architecture.
+
+## Workspace Evolution Phases
+
+### Phase 1 — Workspace Shell
+
+Establish the primary authenticated workspace environment.
+
+Capabilities:
+
+- Workspace layout
+- Module composition
+- Navigation framework
+- Responsive workspace structure
+
+### Phase 2 — Tile Framework
+
+Create reusable workspace tiles.
+
+Capabilities:
+
+- Live application summaries
+- Operational status
+- Pending actions
+- Recommendations
+- Health indicators
+
+### Phase 3 — Live Tile Read Models
+
+Connect workspace tiles to authoritative application projections.
+
+Capabilities:
+
+- Application read models
+- Operational metrics
+- Status projections
+- Change detection
+
+### Phase 4 — Workspace Navigation
+
+Move from page transitions to workspace orchestration.
+
+Capabilities:
+
+- Module expansion
+- Context preservation
+- Application focus management
+
+### Phase 5 — Module Migration
+
+Migrate existing applications into workspace modules.
+
+Examples:
+
+- Financial Workspace
+- Transaction Review
+- Rental Operations
+- Property Intelligence
+- Business Operations
+- Investor Intelligence
+
+### Phase 6 — Real-Time Workspace Updates
+
+Introduce continuously refreshed operational awareness.
+
+Capabilities:
+
+- Live status updates
+- Notifications
+- Operational changes
+- Event-driven projections
+
+### Phase 7 — Workspace Personalization
+
+Adapt the workspace to user roles, workflows, and priorities.
+
+Capabilities:
+
+- Role-based layouts
+- Personalized modules
+- Recommended actions
+- User preferences
+
+### Phase 8 — Multi-Display Workspace
+
+Expand the Workspace concept into advanced operational environments.
+
+Capabilities:
+
+- Multiple workspace views
+- Large display support
+- Command-center style operations
+- Professional operational environments
+
+---
+
 # Phase 1 — Product Foundation
 
 Objective

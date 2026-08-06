@@ -60,6 +60,56 @@ Internal domain boundaries should organize engineering rather than create discon
 
 ---
 
+
+---
+
+# FORGE Workspace Interaction Model
+
+The FORGE Workspace is the primary customer interaction environment.
+
+Customers should experience FORGE as one connected operational platform rather than a collection of independent applications.
+
+Product domains remain responsible for their business capabilities, while the Workspace provides a unified environment where those capabilities can be accessed, understood, and combined.
+
+## Workspace Modules
+
+Each product capability may be represented as a workspace module.
+
+Workspace modules should expose:
+
+- current operational state;
+- relevant context;
+- pending actions;
+- recommendations;
+- workflow entry points.
+
+Modules provide awareness before requiring users to enter detailed workflows.
+
+## Continuous Context
+
+The Workspace should preserve context as customers move between capabilities.
+
+A customer moving between Financial Operations, Rental Operations, Property Intelligence, or Decision Intelligence should remain within the same connected operating environment.
+
+## Progressive Interaction
+
+FORGE interaction follows progressive disclosure:
+
+Level 1:
+
+Operational awareness through workspace modules.
+
+Level 2:
+
+Expanded capability workflows.
+
+Level 3:
+
+Detailed domain operations and decisions.
+
+This allows customers to understand system condition before taking action.
+
+
 # Shared Information
 
 Information commonly shared between domains includes:

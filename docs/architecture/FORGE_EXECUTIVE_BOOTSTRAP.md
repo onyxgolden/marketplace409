@@ -75,6 +75,105 @@ Required references:
 
 ---
 
+
+---
+
+# FORGE Workspace Evolution State
+
+The long-term FORGE user experience is a unified operational workspace.
+
+FORGE is evolving from a page-oriented application model into a workspace environment where applications operate as intelligent modules inside a shared operational surface.
+
+The Workspace should provide:
+
+- live operational awareness;
+- application health visibility;
+- pending actions;
+- recommendations;
+- workflow access;
+- preserved context across modules.
+
+## Workspace Architecture Direction
+
+The Workspace consists of:
+
+- Workspace Shell;
+- Live Operational Tiles;
+- Application Modules;
+- Expanded Operational Workspaces;
+- Information Center;
+- Context Preservation.
+
+Applications remain responsible for their domain capabilities.
+
+The Workspace layer is responsible for:
+
+- module composition;
+- workspace layout;
+- navigation orchestration;
+- presentation state;
+- operational awareness.
+
+## Engineering Migration Pattern
+
+Workspace evolution should preserve existing platform architecture.
+
+Preserve:
+
+- domain models;
+- application services;
+- repositories;
+- authentication;
+- read models;
+- APIs;
+- business rules;
+- ownership enforcement;
+- validation strategy.
+
+The primary evolution occurs through presentation composition and reusable workspace containers.
+
+Canonical application composition:
+
+Repository
+
+↓
+
+Query Service
+
+↓
+
+Read Model
+
+↓
+
+Application Service
+
+↓
+
+Container
+
+↓
+
+Presentation Component
+
+↓
+
+Workspace Module
+
+## Current Migration Example
+
+Transaction Review represents the initial Workspace migration pattern.
+
+Completed:
+
+- transaction review application boundary;
+- transaction review query service;
+- transaction review read model;
+- reusable TransactionReviewContainer;
+- Workbench integration.
+
+Future workspace modules should follow the same architectural pattern.
+
 # Platform Capability State
 
 Review:

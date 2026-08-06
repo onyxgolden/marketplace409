@@ -158,6 +158,75 @@ It transforms governed information into explainable recommendations while preser
 
 ---
 
+
+# FORGE Workspace Vision
+
+The long-term FORGE user experience is a unified operational workspace.
+
+FORGE should feel like an operating environment rather than a traditional website composed of disconnected pages.
+
+Users interact with intelligent application modules through a shared workspace where information, health, recommendations, and required actions are visible before entering detailed workflows.
+
+## Workspace Principles
+
+### Unified Workspace
+
+Authenticated users enter a single FORGE Workspace.
+
+Applications operate inside the workspace instead of existing primarily as separate destinations.
+
+### Live Operational Modules
+
+Each application exposes a live workspace projection.
+
+Workspace tiles are not shortcuts. They communicate current operational state including:
+
+- health
+- status
+- pending actions
+- recommendations
+- important changes
+
+### Continuous Context
+
+Moving between applications should preserve user context.
+
+The experience should feel like changing focus within the same operating environment rather than leaving one application and opening another.
+
+### Progressive Disclosure
+
+Information is presented through progressive levels:
+
+Level 1:
+Workspace Tile
+
+Level 2:
+Expanded Operational Module
+
+Level 3:
+Detailed Workflow
+
+The user gains deeper detail without losing awareness of the broader operating environment.
+
+### Evolutionary Migration
+
+The Workspace transition is an evolution of the existing FORGE architecture.
+
+The migration preserves:
+
+- domain models
+- application services
+- repositories
+- authentication
+- read models
+- APIs
+- business rules
+- ownership enforcement
+- validation strategy
+
+The primary evolution occurs in the presentation and workspace composition layers.
+
+
 # Shared Platform Services
 
 Shared services include:
