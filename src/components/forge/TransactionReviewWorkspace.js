@@ -1,3 +1,5 @@
+import TransactionReviewWorkspaceSurface from "@/components/forge/workspace/views/TransactionReviewWorkspaceSurface";
+
 function propertyLabel(property) {
   return property.name || property.address || property.id;
 }
@@ -48,7 +50,10 @@ export default function TransactionReviewWorkspace({
   }
 
   return (
-    <div className="bg-white rounded-3xl shadow-lg p-8">
+    <TransactionReviewWorkspaceSurface
+      variant="embedded"
+      queue={
+        <div className="bg-white rounded-3xl shadow-lg p-8">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
         <div>
           <h2 className="text-2xl font-bold">Transaction Review</h2>
@@ -229,6 +234,8 @@ export default function TransactionReviewWorkspace({
           })}
         </div>
       )}
-    </div>
+        </div>
+      }
+    />
   );
 }
