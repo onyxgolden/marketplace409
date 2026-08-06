@@ -30,23 +30,23 @@ describe("FinancialWorkspaceSurface", () => {
     );
 
     expect(markup).toContain(
-      'data-financial-workspace-region="header"',
+      'data-workspace-region="header"',
     );
 
     expect(markup).toContain(
-      'data-financial-workspace-region="executive"',
+      'data-workspace-region="executive"',
     );
 
     expect(markup).toContain(
-      'data-financial-workspace-region="operations"',
+      'data-workspace-region="operations"',
     );
 
     expect(markup).toContain(
-      'data-financial-workspace-region="portfolio"',
+      'data-workspace-region="primary"',
     );
 
     expect(markup).toContain(
-      'data-financial-workspace-region="sidebar"',
+      'data-workspace-region="sidebar"',
     );
 
     expect(markup).toContain("Header");
@@ -63,17 +63,17 @@ describe("FinancialWorkspaceSurface", () => {
     );
 
     expect(markup).toContain(
-      'data-financial-workspace-region="portfolio"',
+      'data-workspace-region="primary"',
     );
 
     expect(markup).toContain("Portfolio Only");
 
     expect(markup).not.toContain(
-      'data-financial-workspace-region="operations"',
+      'data-workspace-region="operations"',
     );
 
     expect(markup).not.toContain(
-      'data-financial-workspace-region="sidebar"',
+      'data-workspace-region="sidebar"',
     );
   });
 
@@ -115,15 +115,15 @@ describe("FinancialWorkspaceSurface", () => {
     );
 
     expect(markup).toContain(
-      'data-financial-workspace-region="executive"',
+      'data-workspace-region="executive"',
     );
 
     expect(markup).not.toContain(
-      'data-financial-workspace-region="header"',
+      'data-workspace-region="header"',
     );
 
     expect(markup).not.toContain(
-      'data-financial-workspace-region="operations"',
+      'data-workspace-region="operations"',
     );
   });
 });
