@@ -234,9 +234,8 @@ export default function FinancialPage() {
           }
         />
 
-        <section className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
-          <FinancialWorkspaceSurface
-            portfolio={
+        <FinancialWorkspaceSurface
+          portfolio={
               <>
             <section className={forgeTheme.card}>
               <div className={forgeTheme.labelSmall}>Financial Statement</div>
@@ -564,11 +563,10 @@ export default function FinancialPage() {
               )}
             </section>
               </>
-            }
-          />
-
-          <div className="space-y-6">
-            <ForgeSystemStatus statusItems={statusItems} />
+          }
+          sidebar={
+            <>
+              <ForgeSystemStatus statusItems={statusItems} />
             <ForgeRecentActivity activities={activities} />
 
             <section className={forgeTheme.cardCompact}>
@@ -618,8 +616,9 @@ export default function FinancialPage() {
                 <p>Financial calculations stay in the domain layer, not React components.</p>
               </div>
             </section>
-          </div>
-        </section>
+            </>
+          }
+        />
       </main>
     </div>
   );
