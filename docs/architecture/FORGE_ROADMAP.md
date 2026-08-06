@@ -2960,6 +2960,72 @@ Future Engineering Agents
 
 ---
 
+
+# Phase 16 — Workspace-Oriented Platform Architecture
+
+## Purpose
+
+Evolve Financial Forge from a collection of connected application experiences into a unified workspace-oriented platform architecture.
+
+## Architectural Direction
+
+The Workspace architecture composes existing platform capabilities into operational environments while preserving established domain boundaries.
+
+The evolution preserves:
+
+- domain models
+- application services
+- repositories
+- authentication boundaries
+- read models
+- APIs
+- business rules
+- ownership enforcement
+- validation strategy
+
+The primary architectural evolution occurs through workspace composition, presentation orchestration, and operational awareness.
+
+## Workspace Architecture Pattern
+
+```text
+Repository
+      ↓
+Query Services
+      ↓
+Read Models
+      ↓
+Application Services
+      ↓
+Containers
+      ↓
+Workspace Modules
+      ↓
+Operational Experience
+
+Operational Experience
+
+## Protected Rules
+
+The Workspace layer shall:
+
+- compose capabilities
+- preserve user context
+- expose operational awareness
+- coordinate presentation boundaries
+
+The Workspace layer shall not:
+
+- own domain truth
+- replace application services
+- contain business rules
+- bypass architectural boundaries
+
+## Status
+
+Planned architectural evolution.
+
+---
+
 # Relationship to the Platform Roadmap
 
 The Architecture Roadmap changes infrequently.
