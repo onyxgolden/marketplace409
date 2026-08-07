@@ -27,3 +27,7 @@ export {
 export type {
   PropertyValuationRow,
 } from "./property-valuation.mapper";
+
+export {
+  SupabasePropertyValuationRepository,
+} from "./SupabasePropertyValuationRepository.js";

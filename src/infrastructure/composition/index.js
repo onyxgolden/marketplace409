@@ -44,3 +44,9 @@ export { createInvestorApplicationSuite } from "./createInvestorApplicationSuite
 export {
   createForgeApplicationSuite,
 } from "./createForgeApplicationSuite.js";
+
+export {
+  createPropertyValuationRepository,
+  createLazyPropertyValuationRepository,
+  PropertyValuationRepositoryStorage,
+} from "./createPropertyValuationRepository.js";
