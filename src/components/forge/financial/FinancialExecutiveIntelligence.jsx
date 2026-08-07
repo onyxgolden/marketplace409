@@ -19,6 +19,40 @@ export default function FinancialExecutiveIntelligence({
     intelligenceVariants[variant] ??
     intelligenceVariants.workspace;
 
+  const normalizeCopy = (value) =>
+    String(value ?? "")
+      .toLowerCase()
+      .replace(/\bis\b/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+
+  const recommendations =
+    riskAssessment?.recommendations ?? [];
+
+  const showBriefingOverview =
+    normalizeCopy(executiveBriefing?.overview) !==
+    normalizeCopy(executiveBriefing?.headline);
+
+  const displayedDetails = new Set(
+    [
+      executiveBriefing?.headline,
+      executiveBriefing?.overview,
+      executiveBriefing?.outlook,
+      riskSummary?.summary,
+      ...recommendations,
+    ].filter(Boolean),
+  );
+
+  const distinctInsights = insights.filter(
+    (insight) =>
+      !displayedDetails.has(insight.detail),
+  );
+
+  const showRiskSummary =
+    Boolean(riskSummary?.summary) &&
+    riskSummary.summary !== executiveBriefing?.overview &&
+    riskSummary.summary !== executiveBriefing?.outlook;
+
   return (
     <section
       data-financial-executive-intelligence
@@ -33,15 +67,20 @@ export default function FinancialExecutiveIntelligence({
             ? "embedded"
             : "default"
         }
+        showOverview={showBriefingOverview}
+        showOutlook={false}
+        showRecommendations={false}
       />
 
       <ForgeRiskCenter
         riskSummary={riskSummary}
         riskAssessment={riskAssessment}
+        showSummary={showRiskSummary}
+        showRecommendations={false}
       />
 
       <ForgeInsights
-        insights={insights}
+        insights={distinctInsights}
         variant={
           variant === "embedded"
             ? "embedded"

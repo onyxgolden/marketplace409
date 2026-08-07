@@ -1,4 +1,9 @@
-export default function ForgeRiskCenter({ riskSummary, riskAssessment }) {
+export default function ForgeRiskCenter({
+  riskSummary,
+  riskAssessment,
+  showSummary = true,
+  showRecommendations = true,
+}) {
   const primaryDrivers = riskAssessment.primaryDrivers ?? [];
   const trendIndicators = riskAssessment.trendIndicators ?? [];
   const recommendations = riskAssessment.recommendations ?? [];
@@ -25,9 +30,11 @@ export default function ForgeRiskCenter({ riskSummary, riskAssessment }) {
         </div>
       </div>
 
-      <p className="mt-4 text-sm text-slate-600">
-        {riskSummary.summary}
-      </p>
+      {showSummary && (
+        <p className="mt-4 text-sm text-slate-600">
+          {riskSummary.summary}
+        </p>
+      )}
 
       <div className="mt-6 space-y-4">
         <RiskSection
@@ -56,13 +63,15 @@ export default function ForgeRiskCenter({ riskSummary, riskAssessment }) {
           ))}
         />
 
-        <RiskSection
-          title="Recommended Actions"
-          emptyText="Continue routine monitoring."
-          items={recommendations.map((recommendation) => (
-            <div key={recommendation}>{recommendation}</div>
-          ))}
-        />
+        {showRecommendations && (
+          <RiskSection
+            title="Recommended Actions"
+            emptyText="Continue routine monitoring."
+            items={recommendations.map((recommendation) => (
+              <div key={recommendation}>{recommendation}</div>
+            ))}
+          />
+        )}
       </div>
     </section>
   );

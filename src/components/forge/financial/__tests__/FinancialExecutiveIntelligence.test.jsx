@@ -16,10 +16,16 @@ vi.mock(
       executiveBriefing,
       riskAssessment,
       variant,
+      showOverview,
+      showOutlook,
+      showRecommendations,
     }) {
       return (
         <section data-executive-briefing>
           <div>{variant}</div>
+          <div>show-overview:{String(showOverview)}</div>
+          <div>show-outlook:{String(showOutlook)}</div>
+          <div>show-recommendations:{String(showRecommendations)}</div>
           <div>{executiveBriefing.headline}</div>
           <div>{executiveBriefing.overview}</div>
           <div>{executiveBriefing.outlook}</div>
@@ -38,9 +44,13 @@ vi.mock(
     default: function MockForgeRiskCenter({
       riskSummary,
       riskAssessment,
+      showSummary,
+      showRecommendations,
     }) {
       return (
         <section data-risk-center>
+          <div>show-summary:{String(showSummary)}</div>
+          <div>show-risk-recommendations:{String(showRecommendations)}</div>
           <div>{riskSummary.status}</div>
           <div>{riskSummary.score}</div>
           <div>{riskSummary.summary}</div>
@@ -155,6 +165,50 @@ describe("FinancialExecutiveIntelligence", () => {
     expect(markup).toContain(
       "data-executive-copilot",
     );
+  });
+
+  it("suppresses repeated intelligence while preserving distinct content", () => {
+    const repeatedCopy = "Dashboard intelligence is ready.";
+
+    const markup = renderToStaticMarkup(
+      <FinancialExecutiveIntelligence
+        executiveBriefing={{
+          headline: "Dashboard intelligence ready.",
+          overview: repeatedCopy,
+          outlook: repeatedCopy,
+        }}
+        riskSummary={{
+          status: "Ready",
+          score: 0,
+          summary: repeatedCopy,
+        }}
+        riskAssessment={{
+          primaryDrivers: [],
+          trendIndicators: [],
+          recommendations: ["Continue routine monitoring."],
+        }}
+        insights={[
+          {
+            label: "Executive Outlook",
+            detail: repeatedCopy,
+          },
+          {
+            label: "Distinct Insight",
+            detail: "Cash flow remains positive.",
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("show-overview:false");
+    expect(markup).toContain("show-outlook:false");
+    expect(markup).toContain("show-recommendations:false");
+    expect(markup).toContain("show-summary:false");
+    expect(markup).toContain("show-risk-recommendations:false");
+    expect(markup).not.toContain("Executive Outlook");
+    expect(markup).toContain("Distinct Insight");
+    expect(markup).toContain("Cash flow remains positive.");
+    expect(markup).toContain("data-executive-copilot");
   });
 
   it("supports embedded live-application composition", () => {
