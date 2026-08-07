@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
     vi.fn(),
   importSpreadsheetRows:
     vi.fn(),
+  listLatest:
+    vi.fn(),
 }));
 
 vi.mock(
@@ -26,6 +28,7 @@ vi.mock(
 );
 
 import {
+  GET,
   POST,
 } from "./route";
 
@@ -43,6 +46,8 @@ function configureAuthenticatedRequest() {
           mocks.previewSpreadsheetRows,
         importSpreadsheetRows:
           mocks.importSpreadsheetRows,
+        listLatest:
+          mocks.listLatest,
       },
     });
 }
@@ -58,6 +63,89 @@ function createRequest(body) {
     },
   );
 }
+
+describe(
+  "GET /api/property-valuations",
+  () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it(
+      "returns latest valuations using authenticated owner authority",
+      async () => {
+        configureAuthenticatedRequest();
+
+        const valuations = [
+          {
+            id:
+              "valuation-1",
+            propertyId:
+              "property-1",
+            amountCents:
+              12500000,
+          },
+        ];
+
+        mocks.listLatest
+          .mockResolvedValue(
+            valuations,
+          );
+
+        const response =
+          await GET();
+
+        expect(
+          mocks.listLatest,
+        ).toHaveBeenCalledWith(
+          "authenticated-owner",
+        );
+
+        await expect(
+          response.json(),
+        ).resolves.toEqual({
+          success:
+            true,
+          valuations,
+        });
+      },
+    );
+
+    it(
+      "returns the authentication response unchanged",
+      async () => {
+        const authenticationResponse =
+          Response.json(
+            {
+              error:
+                "Authenticated owner id is required.",
+            },
+            {
+              status:
+                401,
+            },
+          );
+
+        mocks.createAuthenticatedPropertyValuationApplication
+          .mockResolvedValue({
+            response:
+              authenticationResponse,
+          });
+
+        const response =
+          await GET();
+
+        expect(response).toBe(
+          authenticationResponse,
+        );
+
+        expect(
+          mocks.listLatest,
+        ).not.toHaveBeenCalled();
+      },
+    );
+  },
+);
 
 describe(
   "POST /api/property-valuations",

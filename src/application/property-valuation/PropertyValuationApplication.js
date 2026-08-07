@@ -193,6 +193,24 @@ export class PropertyValuationApplication {
     });
   }
 
+  async listLatest(ownerId) {
+    if (
+      typeof ownerId !== "string" ||
+      ownerId.trim() === ""
+    ) {
+      throw new Error(
+        "Property valuation owner ID is required.",
+      );
+    }
+
+    const valuations =
+      await this.repository.findLatestByOwnerId(
+        ownerId.trim(),
+      );
+
+    return freezeArray(valuations);
+  }
+
   async recordManual(input, ownerId) {
     if (
       typeof ownerId !== "string" ||

@@ -6,6 +6,45 @@ import {
   createAuthenticatedPropertyValuationApplication,
 } from "@/lib/supabase/createAuthenticatedPropertyValuationApplication";
 
+export async function GET() {
+  try {
+    const authenticatedApplication =
+      await createAuthenticatedPropertyValuationApplication();
+
+    if (authenticatedApplication.response) {
+      return authenticatedApplication.response;
+    }
+
+    const valuations =
+      await authenticatedApplication.application
+        .listLatest(
+          authenticatedApplication.user.id,
+        );
+
+    return NextResponse.json({
+      success: true,
+      valuations,
+    });
+  } catch (error) {
+    console.error(
+      "Property valuation query error",
+      error,
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to load property valuations.",
+      },
+      {
+        status: 500,
+      },
+    );
+  }
+}
+
 export async function POST(request) {
   try {
     const authenticatedApplication =

@@ -39,6 +39,73 @@ describe(
   "PropertyValuationApplication",
   () => {
     it(
+          "lists the latest valuation for each owner property",
+          async () => {
+            const {
+              application,
+            } = createApplication();
+
+            await application.recordManual(
+              {
+                propertyId:
+                  "1214-wagner",
+                amount:
+                  125000,
+                effectiveAt:
+                  "2026-07-01",
+              },
+              "owner_1",
+            );
+
+            await application.recordManual(
+              {
+                propertyId:
+                  "1214-wagner",
+                amount:
+                  150000,
+                effectiveAt:
+                  "2026-08-01",
+              },
+              "owner_1",
+            );
+
+            await application.recordManual(
+              {
+                propertyId:
+                  "other-property",
+                amount:
+                  90000,
+              },
+              "owner_2",
+            );
+
+            const valuations =
+              await application.listLatest(
+                "owner_1",
+              );
+
+            expect(valuations).toHaveLength(
+              1,
+            );
+
+            expect(
+              valuations[0],
+            ).toMatchObject({
+              propertyId:
+                "1214-wagner",
+              amountCents:
+                15000000,
+            });
+
+            expect(
+              Object.isFrozen(
+                valuations,
+              ),
+            ).toBe(true);
+          },
+        );
+
+        it(
       "records an owner-scoped manual valuation",
       async () => {
         const {
