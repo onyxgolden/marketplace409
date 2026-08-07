@@ -53,6 +53,13 @@ export default function FinancialExecutiveIntelligence({
     riskSummary.summary !== executiveBriefing?.overview &&
     riskSummary.summary !== executiveBriefing?.outlook;
 
+  const showCopilotOutlook =
+    Boolean(executiveBriefing?.outlook) &&
+    normalizeCopy(executiveBriefing.outlook) !==
+      normalizeCopy(executiveBriefing?.headline) &&
+    normalizeCopy(executiveBriefing.outlook) !==
+      normalizeCopy(executiveBriefing?.overview);
+
   return (
     <section
       data-financial-executive-intelligence
@@ -79,18 +86,21 @@ export default function FinancialExecutiveIntelligence({
         showRecommendations={false}
       />
 
-      <ForgeInsights
-        insights={distinctInsights}
-        variant={
-          variant === "embedded"
-            ? "embedded"
-            : "default"
-        }
-      />
+      {distinctInsights.length > 0 && (
+        <ForgeInsights
+          insights={distinctInsights}
+          variant={
+            variant === "embedded"
+              ? "embedded"
+              : "default"
+          }
+        />
+      )}
 
       <ForgeExecutiveCopilot
         executiveBriefing={executiveBriefing}
         riskAssessment={riskAssessment}
+        showOutlook={showCopilotOutlook}
       />
     </section>
   );

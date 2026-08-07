@@ -1,6 +1,7 @@
 export default function ForgeExecutiveCopilot({
   executiveBriefing,
   riskAssessment,
+  showOutlook = true,
 }) {
   const recommendations = riskAssessment?.recommendations ?? [];
 
@@ -10,12 +11,14 @@ export default function ForgeExecutiveCopilot({
         Executive Copilot
       </div>
 
-      <div className="mt-4 rounded-2xl bg-slate-100 p-4">
-        <div className="text-sm font-bold text-slate-950">Outlook</div>
-        <div className="mt-2 text-sm text-slate-600">
-          {executiveBriefing?.outlook ?? "No executive outlook available."}
+      {showOutlook && (
+        <div className="mt-4 rounded-2xl bg-slate-100 p-4">
+          <div className="text-sm font-bold text-slate-950">Outlook</div>
+          <div className="mt-2 text-sm text-slate-600">
+            {executiveBriefing?.outlook ?? "No executive outlook available."}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="mt-4 space-y-3">
         {(recommendations.length ? recommendations : ["Continue routine monitoring."]).map(

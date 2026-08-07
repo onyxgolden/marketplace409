@@ -90,9 +90,11 @@ vi.mock(
     default: function MockForgeExecutiveCopilot({
       executiveBriefing,
       riskAssessment,
+      showOutlook,
     }) {
       return (
         <section data-executive-copilot>
+          <div>show-copilot-outlook:{String(showOutlook)}</div>
           <div>{executiveBriefing.outlook}</div>
           <div>
             {riskAssessment.recommendations.join(", ")}
@@ -206,9 +208,48 @@ describe("FinancialExecutiveIntelligence", () => {
     expect(markup).toContain("show-summary:false");
     expect(markup).toContain("show-risk-recommendations:false");
     expect(markup).not.toContain("Executive Outlook");
+    expect(markup).toContain("show-copilot-outlook:false");
     expect(markup).toContain("Distinct Insight");
     expect(markup).toContain("Cash flow remains positive.");
     expect(markup).toContain("data-executive-copilot");
+  });
+
+  it("omits the insights surface when every insight is repeated", () => {
+    const repeatedCopy = "Dashboard intelligence is ready.";
+
+    const markup = renderToStaticMarkup(
+      <FinancialExecutiveIntelligence
+        executiveBriefing={{
+          headline: "Dashboard intelligence ready.",
+          overview: repeatedCopy,
+          outlook: repeatedCopy,
+        }}
+        riskSummary={{
+          status: "Ready",
+          score: 0,
+          summary: repeatedCopy,
+        }}
+        riskAssessment={{
+          primaryDrivers: [],
+          trendIndicators: [],
+          recommendations: ["Continue routine monitoring."],
+        }}
+        insights={[
+          {
+            label: "Executive Outlook",
+            detail: repeatedCopy,
+          },
+          {
+            label: "Recommended Focus",
+            detail: "Continue routine monitoring.",
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain("data-forge-insights");
+    expect(markup).toContain("show-copilot-outlook:false");
+    expect(markup).toContain("Continue routine monitoring.");
   });
 
   it("supports embedded live-application composition", () => {
@@ -229,7 +270,7 @@ describe("FinancialExecutiveIntelligence", () => {
     const embeddedCount =
       markup.split("embedded").length - 1;
 
-    expect(embeddedCount).toBeGreaterThanOrEqual(3);
+    expect(embeddedCount).toBeGreaterThanOrEqual(2);
   });
 
   it("falls back to workspace spacing for unknown variants", () => {
