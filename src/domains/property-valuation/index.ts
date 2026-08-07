@@ -18,3 +18,12 @@ export type {
 export {
   InMemoryPropertyValuationRepository,
 } from "./in-memory-property-valuation.repository";
+
+export {
+  mapPropertyValuationRowToPropertyValuation,
+  mapPropertyValuationToRow,
+} from "./property-valuation.mapper";
+
+export type {
+  PropertyValuationRow,
+} from "./property-valuation.mapper";
