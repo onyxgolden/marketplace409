@@ -31,6 +31,7 @@ export default function ForgeWorkspaceDesktop({
     riskSummary,
     riskAssessment,
     executiveBriefing,
+    insightItems,
     auditFindings,
     portfolioSummaryItems,
     systemHealthItems,

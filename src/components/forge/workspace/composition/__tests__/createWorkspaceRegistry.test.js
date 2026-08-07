@@ -20,6 +20,20 @@ vi.mock(
 );
 
 vi.mock(
+  "@/components/forge/financial/FinancialExecutiveIntelligence",
+  () => ({
+    default: () => null,
+  }),
+);
+
+vi.mock(
+  "@/components/forge/financial/FinancialExecutiveIntelligence",
+  () => ({
+    default: () => null,
+  }),
+);
+
+vi.mock(
   "@/components/forge/ForgePortfolioSummary",
   () => ({
     default: () => null,

@@ -16,12 +16,20 @@ vi.mock(
       title,
       status,
       children,
+      expandedChildren,
+      expandLabel,
+      collapseLabel,
     }) {
       return (
         <section data-workspace-tile>
           <div>{title}</div>
           <div>{status}</div>
+          <div>{expandLabel}</div>
+          <div>{collapseLabel}</div>
           {children}
+          <div data-expanded-children>
+            {expandedChildren}
+          </div>
         </section>
       );
     },
@@ -44,6 +52,33 @@ vi.mock(
             <div key={kpi.id}>
               {kpi.label} · {kpi.value} ·{" "}
               {kpi.detail}
+            </div>
+          ))}
+        </section>
+      );
+    },
+  }),
+);
+
+vi.mock(
+  "@/components/forge/financial/FinancialExecutiveIntelligence",
+  () => ({
+    default: function MockFinancialExecutiveIntelligence({
+      variant,
+      riskSummary = {
+        status: "Loading",
+      },
+      insights = [],
+    }) {
+      return (
+        <section
+          data-financial-executive-intelligence
+          data-variant={variant}
+        >
+          <div>{riskSummary.status}</div>
+          {insights.map((insight) => (
+            <div key={insight.label}>
+              {insight.label} · {insight.detail}
             </div>
           ))}
         </section>
@@ -106,9 +141,22 @@ describe("FinancialWorkspaceModule", () => {
           overview: "Performance is stable.",
           outlook: "Monitor receivables.",
         },
+        riskSummary: {
+          status: "Monitor",
+          score: 24,
+          summary: "Risk remains controlled.",
+        },
         riskAssessment: {
+          primaryDrivers: [],
+          trendIndicators: [],
           recommendations: [],
         },
+        insightItems: [
+          {
+            label: "Receivables",
+            detail: "Collections require monitoring.",
+          },
+        ],
       }),
     );
 
@@ -141,6 +189,26 @@ describe("FinancialWorkspaceModule", () => {
     expect(markup).toContain("24.7%");
     expect(markup).toContain(
       "Cash remains resilient",
+    );
+    expect(markup).toContain(
+      "Expand financial view",
+    );
+    expect(markup).toContain(
+      "Collapse financial view",
+    );
+    expect(markup).toContain(
+      "data-expanded-children",
+    );
+    expect(markup).toContain(
+      "data-financial-expanded-tile",
+    );
+    expect(markup).toContain(
+      "data-financial-executive-intelligence",
+    );
+    expect(markup).toContain("Monitor");
+    expect(markup).toContain("Receivables");
+    expect(markup).toContain(
+      "Collections require monitoring.",
     );
   });
 
