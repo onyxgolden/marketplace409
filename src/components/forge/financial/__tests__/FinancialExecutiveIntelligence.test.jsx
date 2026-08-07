@@ -214,6 +214,32 @@ describe("FinancialExecutiveIntelligence", () => {
     expect(markup).toContain("data-executive-copilot");
   });
 
+  it("suppresses a risk summary equivalent to the briefing headline", () => {
+    const markup = renderToStaticMarkup(
+      <FinancialExecutiveIntelligence
+        executiveBriefing={{
+          headline: "Dashboard intelligence ready.",
+          overview: "Operating performance is stable.",
+          outlook: "Continue monitoring cash flow.",
+        }}
+        riskSummary={{
+          status: "Ready",
+          score: 0,
+          summary: "Dashboard intelligence is ready.",
+        }}
+        riskAssessment={{
+          primaryDrivers: [],
+          trendIndicators: [],
+          recommendations: ["Continue routine monitoring."],
+        }}
+      />,
+    );
+
+    expect(markup).toContain("show-summary:false");
+    expect(markup).toContain("Operating performance is stable.");
+    expect(markup).toContain("show-copilot-outlook:true");
+  });
+
   it("omits the insights surface when every insight is repeated", () => {
     const repeatedCopy = "Dashboard intelligence is ready.";
 

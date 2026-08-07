@@ -50,8 +50,12 @@ export default function FinancialExecutiveIntelligence({
 
   const showRiskSummary =
     Boolean(riskSummary?.summary) &&
-    riskSummary.summary !== executiveBriefing?.overview &&
-    riskSummary.summary !== executiveBriefing?.outlook;
+    normalizeCopy(riskSummary.summary) !==
+      normalizeCopy(executiveBriefing?.headline) &&
+    normalizeCopy(riskSummary.summary) !==
+      normalizeCopy(executiveBriefing?.overview) &&
+    normalizeCopy(riskSummary.summary) !==
+      normalizeCopy(executiveBriefing?.outlook);
 
   const showCopilotOutlook =
     Boolean(executiveBriefing?.outlook) &&
