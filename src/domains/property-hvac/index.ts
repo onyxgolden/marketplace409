@@ -23,3 +23,13 @@ export type {
   HVACSystemStatus,
   HVACSystemType,
 } from "./property-hvac.types";
+
+
+export type {
+  HVACPersistenceContext,
+  PropertyHVACRepository,
+} from "./property-hvac.repository";
+
+export {
+  InMemoryPropertyHVACRepository,
+} from "./in-memory-property-hvac.repository";
