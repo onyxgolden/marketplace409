@@ -57,3 +57,10 @@ export {
   createLazyPropertyConditionAssessmentRepository,
   PropertyConditionAssessmentRepositoryStorage,
 } from "./createPropertyConditionAssessmentRepository.js";
+
+
+export {
+  createLazyPropertyHVACRepository,
+  createPropertyHVACRepository,
+  PropertyHVACRepositoryStorage,
+} from "./createPropertyHVACRepository.js";
