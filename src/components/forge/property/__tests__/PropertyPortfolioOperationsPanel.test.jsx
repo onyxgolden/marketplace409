@@ -32,6 +32,19 @@ vi.mock(
   }),
 );
 
+vi.mock(
+  "../PropertyHVACPanel",
+  () => ({
+    default: () => (
+      <div data-property-hvac-panel>
+        HVAC systems, components, and service history
+        Read equipment label or invoice
+        reviewable proposals
+      </div>
+    ),
+  }),
+);
+
 import PropertyPortfolioOperationsPanel, {
   PROPERTY_PORTFOLIO_OPERATION_VIEWS,
 } from "../PropertyPortfolioOperationsPanel.jsx";
@@ -104,7 +117,7 @@ describe(
     );
 
     it(
-      "renders the prepared HVAC lifecycle surface",
+      "renders the interactive HVAC lifecycle surface",
       () => {
         const markup =
           renderToStaticMarkup(
@@ -114,15 +127,15 @@ describe(
           );
 
         expect(markup).toContain(
-          'data-property-prepared-operation="hvac"',
+          'data-property-hvac-panel',
         );
 
         expect(markup).toContain(
-          "HVAC systems, components, and service events",
+          "HVAC systems, components, and service history",
         );
 
         expect(markup).toContain(
-          "reviewable field proposals",
+          "reviewable proposals",
         );
       },
     );

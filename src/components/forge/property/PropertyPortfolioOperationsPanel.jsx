@@ -5,6 +5,7 @@ import {
 } from "react";
 
 import PropertyConditionAssessmentPanel from "./PropertyConditionAssessmentPanel";
+import PropertyHVACPanel from "./PropertyHVACPanel";
 import PropertyValuationPanel from "./PropertyValuationPanel";
 
 export const PROPERTY_PORTFOLIO_OPERATION_VIEWS =
@@ -105,14 +106,11 @@ export default function PropertyPortfolioOperationsPanel({
     )
   }
 
-  {activeView === "hvac" && (
-        <PreparedOperationSurface
-          kind="hvac"
-          eyebrow="Major Systems"
-          title="HVAC systems, components, and service events"
-          detail="Track the system separately from compressors, capacitors, blower motors, coils, controls, warranties, invoices, and replacement history."
-        />
-      )}
+  {
+    activeView === "hvac" && (
+      <PropertyHVACPanel />
+    )
+  }
     </section>
   );
 }
