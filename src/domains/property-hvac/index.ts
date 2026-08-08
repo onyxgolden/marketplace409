@@ -33,3 +33,19 @@ export type {
 export {
   InMemoryPropertyHVACRepository,
 } from "./in-memory-property-hvac.repository";
+
+
+export {
+  mapHVACComponentEventRowToDomain,
+  mapHVACComponentEventToRow,
+  mapHVACComponentRowToDomain,
+  mapHVACComponentToRow,
+  mapHVACSystemRowToDomain,
+  mapHVACSystemToRow,
+} from "./property-hvac.mapper";
+
+export type {
+  HVACComponentEventRow,
+  HVACComponentRow,
+  HVACSystemRow,
+} from "./property-hvac.mapper";
