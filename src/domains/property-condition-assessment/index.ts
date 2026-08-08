@@ -39,3 +39,8 @@ export type {
 export {
   InMemoryPropertyConditionAssessmentRepository,
 } from "./in-memory-property-condition-assessment.repository";
+
+
+export {
+  SupabasePropertyConditionAssessmentRepository,
+} from "./SupabasePropertyConditionAssessmentRepository.js";
