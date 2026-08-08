@@ -278,6 +278,57 @@ export class SupabasePropertyHVACRepository {
     );
   }
 
+  async appendComponentEventWithEvidence(
+    event,
+    evidenceId,
+    context,
+  ) {
+    const ownerId =
+      this.requireOwnerId(
+        context?.ownerId,
+      );
+
+    const requiredEvidenceId =
+      this.requireIdentifier(
+        evidenceId,
+        "Property evidence id is required.",
+      );
+
+    const {
+      data,
+      error,
+    } = await this.supabase.rpc(
+      "record_property_hvac_event_with_evidence",
+      {
+        p_owner_id:
+          ownerId,
+        p_event:
+          mapHVACComponentEventToRow(
+            event,
+            ownerId,
+          ),
+        p_evidence_id:
+          requiredEvidenceId,
+      },
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data?.event) {
+      throw new Error(
+        "Atomic HVAC evidence recording did not return an event.",
+      );
+    }
+
+    return Object.freeze(
+      mapHVACComponentEventRowToDomain(
+        data.event,
+      ),
+    );
+  }
+
   async findEventsBySystem(
     systemId,
     ownerId,

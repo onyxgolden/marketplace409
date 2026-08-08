@@ -703,18 +703,52 @@ export class PropertyHVACApplication {
   async recordComponentEvent(
     input,
     ownerId,
+    evidenceId = null,
   ) {
+    const requiredOwnerId =
+      requireIdentifier(
+        ownerId,
+        "HVAC owner id is required.",
+      );
+
+    const event =
+      this.createComponentEvent(
+        input,
+      );
+
+    const normalizedEvidenceId =
+      optionalString(
+        evidenceId,
+      );
+
+    if (normalizedEvidenceId) {
+      if (
+        typeof this.repository
+          .appendComponentEventWithEvidence !==
+        "function"
+      ) {
+        throw new Error(
+          "HVAC repository does not support atomic evidence recording.",
+        );
+      }
+
+      return this.repository
+        .appendComponentEventWithEvidence(
+          event,
+          normalizedEvidenceId,
+          {
+            ownerId:
+              requiredOwnerId,
+          },
+        );
+    }
+
     return this.repository
       .appendComponentEvent(
-        this.createComponentEvent(
-          input,
-        ),
+        event,
         {
           ownerId:
-            requireIdentifier(
-              ownerId,
-              "HVAC owner id is required.",
-            ),
+            requiredOwnerId,
         },
       );
   }
