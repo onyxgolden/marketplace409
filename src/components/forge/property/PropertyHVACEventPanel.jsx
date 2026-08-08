@@ -632,7 +632,13 @@ export default function PropertyHVACEventPanel({
                       {event.occurredAt
                         ? new Date(
                             event.occurredAt,
-                          ).toLocaleDateString()
+                          ).toLocaleDateString(
+                            "en-US",
+                            {
+                              timeZone:
+                                "UTC",
+                            },
+                          )
                         : "Date unavailable"}
                     </div>
                   </div>

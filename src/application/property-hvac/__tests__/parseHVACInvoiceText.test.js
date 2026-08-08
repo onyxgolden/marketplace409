@@ -21,7 +21,7 @@ Charged with 13 lbs R-410A.
 Contactor was welded closed and was replaced.
 Capacitor was out of range and was replaced.
 Damaged low-voltage wire was repaired and rerouted.
-Cleaned condenser coil.
+Washed condensing coil that was plugged with grass.
 
 Total: $950.00
 `;

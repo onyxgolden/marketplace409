@@ -4,6 +4,29 @@ const PDF_MIME_TYPE =
 const MAX_INVOICE_BYTES =
   10 * 1024 * 1024;
 
+export function ensurePDFRuntimeCompatibility() {
+  if (
+    typeof Math.sumPrecise !==
+    "function"
+  ) {
+    Math.sumPrecise =
+      function sumPrecise(
+        numbers,
+      ) {
+        return Array.from(
+          numbers,
+        ).reduce(
+          (
+            total,
+            value,
+          ) =>
+            total + value,
+          0,
+        );
+      };
+  }
+}
+
 export async function extractHVACInvoiceText({
   bytes,
   contentType,
@@ -33,6 +56,8 @@ export async function extractHVACInvoiceText({
       "HVAC invoice PDF must not exceed 10 MB.",
     );
   }
+
+  ensurePDFRuntimeCompatibility();
 
   const {
     extractText,

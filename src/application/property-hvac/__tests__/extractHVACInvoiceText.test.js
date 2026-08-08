@@ -23,6 +23,7 @@ vi.mock(
 );
 
 import {
+  ensurePDFRuntimeCompatibility,
   extractHVACInvoiceText,
 } from "../extractHVACInvoiceText";
 
@@ -37,6 +38,32 @@ describe(
           id: "pdf-document",
         });
     });
+
+    it(
+      "provides the PDF.js numeric compatibility function",
+      () => {
+        const original =
+          Math.sumPrecise;
+
+        try {
+          Math.sumPrecise =
+            undefined;
+
+          ensurePDFRuntimeCompatibility();
+
+          expect(
+            Math.sumPrecise([
+              1.25,
+              2.75,
+              6,
+            ]),
+          ).toBe(10);
+        } finally {
+          Math.sumPrecise =
+            original;
+        }
+      },
+    );
 
     it(
       "extracts text from a digital PDF",

@@ -201,11 +201,11 @@ export function parseHVACInvoiceText(
   if (
     includes(
       text,
-      /\bcondenser\s+coil\b[\s\S]{0,80}\bclean/i,
+      /\b(?:condenser|condensing)\s+coil\b[\s\S]{0,80}\b(?:clean|wash)/i,
     ) ||
     includes(
       text,
-      /\bclean(?:ed|ing)[\s\S]{0,80}\bcondenser\s+coil\b/i,
+      /\b(?:clean|wash)(?:ed|ing)?[\s\S]{0,80}\b(?:condenser|condensing)\s+coil\b/i,
     )
   ) {
     actions.push(
