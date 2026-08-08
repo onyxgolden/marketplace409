@@ -10,16 +10,22 @@ const {
   authenticate,
   extractInvoice,
   parseInvoice,
+  preserveEvidence,
 } = vi.hoisted(() => ({
-  authenticate: vi.fn(),
-  extractInvoice: vi.fn(),
-  parseInvoice: vi.fn(),
+  authenticate:
+    vi.fn(),
+  extractInvoice:
+    vi.fn(),
+  parseInvoice:
+    vi.fn(),
+  preserveEvidence:
+    vi.fn(),
 }));
 
 vi.mock(
-  "@/lib/supabase/createAuthenticatedPropertyHVACApplication",
+  "@/lib/supabase/createAuthenticatedPropertyEvidenceApplication",
   () => ({
-    createAuthenticatedPropertyHVACApplication:
+    createAuthenticatedPropertyEvidenceApplication:
       authenticate,
   }),
 );
@@ -45,15 +51,28 @@ import {
   runtime,
 } from "./route";
 
-function requestWith(invoice) {
+function requestWith(
+  invoice,
+  {
+    propertyId =
+      "1214-wagner",
+    systemId =
+      "system_1",
+  } = {},
+) {
+  const values = {
+    invoice,
+    propertyId,
+    systemId,
+  };
+
   return {
     formData: vi.fn()
       .mockResolvedValue({
         get: vi.fn(
           (name) =>
-            name === "invoice"
-              ? invoice
-              : null,
+            values[name] ??
+            null,
         ),
       }),
   };
@@ -61,7 +80,10 @@ function requestWith(invoice) {
 
 function invoice() {
   return {
-    type: "application/pdf",
+    name:
+      "Invoice #603.pdf",
+    type:
+      "application/pdf",
     arrayBuffer: vi.fn()
       .mockResolvedValue(
         new Uint8Array([
@@ -71,6 +93,19 @@ function invoice() {
           70,
         ]).buffer,
       ),
+  };
+}
+
+function evidence() {
+  return {
+    id:
+      "property_evidence_1",
+    originalFilename:
+      "Invoice #603.pdf",
+    reviewStatus:
+      "pending_review",
+    objectPath:
+      "owner_1/1214-wagner/property_evidence_1/Invoice-603.pdf",
   };
 }
 
@@ -85,6 +120,10 @@ describe(
           response: null,
           user: {
             id: "owner_1",
+          },
+          application: {
+            preserve:
+              preserveEvidence,
           },
         });
 
@@ -116,6 +155,11 @@ describe(
             ],
           },
         });
+
+      preserveEvidence
+        .mockResolvedValue(
+          evidence(),
+        );
     });
 
     it(
@@ -128,7 +172,7 @@ describe(
     );
 
     it(
-      "returns a reviewable bulk invoice proposal",
+      "preserves a readable invoice and returns its review reference",
       async () => {
         const file = invoice();
 
@@ -157,6 +201,14 @@ describe(
                 "603",
             },
           },
+          evidence: {
+            id:
+              "property_evidence_1",
+            originalFilename:
+              "Invoice #603.pdf",
+            reviewStatus:
+              "pending_review",
+          },
         });
 
         expect(
@@ -171,35 +223,42 @@ describe(
         });
 
         expect(
-          parseInvoice,
-        ).toHaveBeenCalledWith(
-          "Readable HVAC invoice text",
-        );
+          preserveEvidence,
+        ).toHaveBeenCalledWith({
+          ownerId:
+            "owner_1",
+          propertyId:
+            "1214-wagner",
+          hvacSystemId:
+            "system_1",
+          bytes:
+            expect.any(
+              ArrayBuffer,
+            ),
+          originalFilename:
+            "Invoice #603.pdf",
+          mimeType:
+            "application/pdf",
+          extractionMethod:
+            "native_pdf",
+          parserVersion:
+            "hvac-invoice-v1",
+          reviewStatus:
+            "pending_review",
+        });
       },
     );
 
     it(
-      "returns the authentication response",
+      "preserves OCR-required invoices without creating a proposal",
       async () => {
-        const authenticationResponse =
-          new Response(
-            JSON.stringify({
-              error:
-                "Authentication required.",
-            }),
-            {
-              status: 401,
-              headers: {
-                "Content-Type":
-                  "application/json",
-              },
-            },
-          );
-
-        authenticate
+        extractInvoice
           .mockResolvedValue({
-            response:
-              authenticationResponse,
+            text: "",
+            totalPages: 1,
+            extractionMethod:
+              "ocr_required",
+            requiresOCR: true,
           });
 
         const response =
@@ -209,8 +268,107 @@ describe(
             ),
           );
 
-        expect(response).toBe(
-          authenticationResponse,
+        expect(response.status).toBe(
+          422,
+        );
+
+        expect(
+          await response.json(),
+        ).toMatchObject({
+          success: false,
+          ocrRequired: true,
+          evidence: {
+            id:
+              "property_evidence_1",
+          },
+        });
+
+        expect(
+          preserveEvidence,
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({
+            extractionMethod:
+              "pending",
+            parserVersion:
+              null,
+          }),
+        );
+
+        expect(
+          parseInvoice,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it(
+      "requires property and system identity",
+      async () => {
+        const missingProperty =
+          await POST(
+            requestWith(
+              invoice(),
+              {
+                propertyId: "",
+              },
+            ),
+          );
+
+        expect(
+          missingProperty.status,
+        ).toBe(400);
+
+        const missingSystem =
+          await POST(
+            requestWith(
+              invoice(),
+              {
+                systemId: "",
+              },
+            ),
+          );
+
+        expect(
+          missingSystem.status,
+        ).toBe(400);
+
+        expect(
+          extractInvoice,
+        ).not.toHaveBeenCalled();
+
+        expect(
+          preserveEvidence,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it(
+      "returns the authentication response before reading the invoice",
+      async () => {
+        const response =
+          Response.json(
+            {
+              error:
+                "Authentication required.",
+            },
+            {
+              status: 401,
+            },
+          );
+
+        authenticate
+          .mockResolvedValue({
+            response,
+          });
+
+        const result =
+          await POST(
+            requestWith(
+              invoice(),
+            ),
+          );
+
+        expect(result).toBe(
+          response,
         );
 
         expect(
@@ -242,45 +400,7 @@ describe(
     );
 
     it(
-      "reports when OCR is required",
-      async () => {
-        extractInvoice
-          .mockResolvedValue({
-            text: "",
-            totalPages: 1,
-            extractionMethod:
-              "ocr_required",
-            requiresOCR: true,
-          });
-
-        const response =
-          await POST(
-            requestWith(
-              invoice(),
-            ),
-          );
-
-        expect(response.status).toBe(
-          422,
-        );
-
-        expect(
-          await response.json(),
-        ).toMatchObject({
-          success: false,
-          ocrRequired: true,
-          extractionMethod:
-            "ocr_required",
-        });
-
-        expect(
-          parseInvoice,
-        ).not.toHaveBeenCalled();
-      },
-    );
-
-    it(
-      "rejects invalid PDF input",
+      "rejects invalid PDF input without preserving it",
       async () => {
         extractInvoice
           .mockRejectedValue(
@@ -299,6 +419,10 @@ describe(
         expect(response.status).toBe(
           400,
         );
+
+        expect(
+          preserveEvidence,
+        ).not.toHaveBeenCalled();
       },
     );
   },

@@ -257,6 +257,46 @@ describe(
     );
 
     it(
+      "passes reviewed evidence to atomic event recording",
+      async () => {
+        authenticate();
+
+        const event = {
+          systemId:
+            "system_1",
+          eventType:
+            "serviced",
+        };
+
+        mocks.recordComponentEvent
+          .mockResolvedValue({
+            id:
+              "event_1",
+          });
+
+        const response =
+          await post({
+            operation:
+              "record-component-event",
+            event,
+            evidenceId:
+              " property_evidence_1 ",
+          });
+
+        expect(
+          mocks.recordComponentEvent,
+        ).toHaveBeenCalledWith(
+          event,
+          "authenticated-owner",
+          "property_evidence_1",
+        );
+
+        expect(response.status)
+          .toBe(200);
+      },
+    );
+
+    it(
       "rejects unsupported or incomplete operations",
       async () => {
         authenticate();

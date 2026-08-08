@@ -80,6 +80,52 @@ export function buildHVACEventPayload({
   };
 }
 
+export function buildHVACEventOperation({
+  systemId,
+  values,
+  evidenceId = null,
+}) {
+  return {
+    operation:
+      "record-component-event",
+    event:
+      buildHVACEventPayload({
+        systemId,
+        values,
+      }),
+    evidenceId:
+      optionalText(
+        evidenceId,
+      ),
+  };
+}
+
+export function buildHVACInvoiceFormData({
+  file,
+  propertyId,
+  systemId,
+}) {
+  const formData =
+    new FormData();
+
+  formData.append(
+    "invoice",
+    file,
+  );
+
+  formData.append(
+    "propertyId",
+    propertyId,
+  );
+
+  formData.append(
+    "systemId",
+    systemId,
+  );
+
+  return formData;
+}
+
 export function applyHVACInvoiceProposal(
   current,
   proposal,
@@ -139,6 +185,7 @@ function Field({
 }
 
 export default function PropertyHVACEventPanel({
+  propertyId = "",
   systemId = "",
   components = [],
   events = [],
@@ -175,6 +222,11 @@ export default function PropertyHVACEventPanel({
     setMessage,
   ] = useState("");
 
+  const [
+    evidenceReference,
+    setEvidenceReference,
+  ] = useState(null);
+
   function updateValue(
     name,
     value,
@@ -192,17 +244,23 @@ export default function PropertyHVACEventPanel({
       return;
     }
 
+    if (!propertyId || !systemId) {
+      setMessage(
+        "Choose an HVAC system before adding an invoice.",
+      );
+      return;
+    }
+
     setImportingInvoice(true);
     setMessage("");
 
     try {
       const formData =
-        new FormData();
-
-      formData.append(
-        "invoice",
-        file,
-      );
+        buildHVACInvoiceFormData({
+          file,
+          propertyId,
+          systemId,
+        });
 
       const response =
         await fetch(
@@ -239,6 +297,10 @@ export default function PropertyHVACEventPanel({
           ),
       );
 
+      setEvidenceReference(
+        payload.evidence ?? null,
+      );
+
       const actionCount =
         payload.proposal
           ?.event
@@ -246,7 +308,7 @@ export default function PropertyHVACEventPanel({
           ?.length ?? 0;
 
       setMessage(
-        `Invoice proposal loaded with ${actionCount} component actions. Review the fields, then record the event once.`,
+        `Invoice preserved privately and proposal loaded with ${actionCount} component actions. Review the fields, then record the event once.`,
       );
     } catch (error) {
       setMessage(
@@ -279,15 +341,14 @@ export default function PropertyHVACEventPanel({
             "Content-Type":
               "application/json",
           },
-          body: JSON.stringify({
-            operation:
-              "record-component-event",
-            event:
-              buildHVACEventPayload({
-                systemId,
-                values,
-              }),
-          }),
+          body: JSON.stringify(
+            buildHVACEventOperation({
+              systemId,
+              values,
+              evidenceId:
+                evidenceReference?.id,
+            }),
+          ),
         },
       );
 
@@ -305,6 +366,10 @@ export default function PropertyHVACEventPanel({
         onEventSaved(payload.event);
       }
 
+      setEvidenceReference(
+        null,
+      );
+
       setValues((current) => ({
         componentId:
           current.componentId,
@@ -320,7 +385,9 @@ export default function PropertyHVACEventPanel({
       }));
 
       setMessage(
-        "HVAC service event recorded.",
+        evidenceReference?.id
+          ? "HVAC service event and private invoice evidence recorded."
+          : "HVAC service event recorded.",
       );
     } catch (error) {
       setMessage(

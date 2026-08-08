@@ -785,6 +785,16 @@ export default function PropertyHVACComponentPanel({
         )}
       </div>
       <PropertyHVACEventPanel
+        propertyId={
+          history?.system
+            ?.propertyId ||
+          systems.find(
+            (system) =>
+              system.id ===
+              systemId,
+          )?.propertyId ||
+          ""
+        }
         systemId={systemId}
         components={components}
         events={history?.events || []}

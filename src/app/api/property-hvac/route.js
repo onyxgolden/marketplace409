@@ -169,12 +169,26 @@ export async function POST(request) {
           );
         }
 
+        const evidenceId =
+          typeof body.evidenceId ===
+            "string" &&
+          body.evidenceId.trim()
+            ? body.evidenceId.trim()
+            : null;
+
         const event =
-          await application
-            .recordComponentEvent(
-              body.event,
-              user.id,
-            );
+          evidenceId
+            ? await application
+                .recordComponentEvent(
+                  body.event,
+                  user.id,
+                  evidenceId,
+                )
+            : await application
+                .recordComponentEvent(
+                  body.event,
+                  user.id,
+                );
 
         return NextResponse.json({
           success: true,

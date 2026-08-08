@@ -10,6 +10,8 @@ import {
 
 import PropertyHVACEventPanel, {
   applyHVACInvoiceProposal,
+  buildHVACEventOperation,
+  buildHVACInvoiceFormData,
 } from "../PropertyHVACEventPanel.jsx";
 
 describe(
@@ -40,6 +42,100 @@ describe(
         expect(markup).not.toContain(
           "Add invoice or service photo — planned",
         );
+      },
+    );
+
+    it(
+      "builds owner-context invoice form data",
+      () => {
+        const file =
+          new Blob(
+            ["invoice"],
+            {
+              type:
+                "application/pdf",
+            },
+          );
+
+        const formData =
+          buildHVACInvoiceFormData({
+            file,
+            propertyId:
+              "1214-wagner",
+            systemId:
+              "system_1",
+          });
+
+        expect(
+          formData.get(
+            "invoice",
+          ),
+        ).toMatchObject({
+          size: 7,
+          type:
+            "application/pdf",
+        });
+
+        expect(
+          formData.get(
+            "propertyId",
+          ),
+        ).toBe(
+          "1214-wagner",
+        );
+
+        expect(
+          formData.get(
+            "systemId",
+          ),
+        ).toBe(
+          "system_1",
+        );
+      },
+    );
+
+    it(
+      "retains evidence identity in the event operation",
+      () => {
+        const operation =
+          buildHVACEventOperation({
+            systemId:
+              "system_1",
+            values: {
+              componentId: "",
+              eventType:
+                "serviced",
+              occurredAt:
+                "2026-08-01",
+              failureSymptoms: "",
+              workPerformed:
+                "Invoice work",
+              costDollars:
+                "950",
+              vendorName: "",
+              invoiceReference:
+                "603",
+              componentActions: [],
+              notes: "",
+            },
+            evidenceId:
+              "property_evidence_1",
+          });
+
+        expect(operation).toMatchObject({
+          operation:
+            "record-component-event",
+          evidenceId:
+            "property_evidence_1",
+          event: {
+            systemId:
+              "system_1",
+            invoiceReference:
+              "603",
+            costCents:
+              95000,
+          },
+        });
       },
     );
 

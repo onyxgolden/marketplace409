@@ -11,15 +11,15 @@ import {
 } from "@/application/property-hvac/parseHVACInvoiceText";
 
 import {
-  createAuthenticatedPropertyHVACApplication,
-} from "@/lib/supabase/createAuthenticatedPropertyHVACApplication";
+  createAuthenticatedPropertyEvidenceApplication,
+} from "@/lib/supabase/createAuthenticatedPropertyEvidenceApplication";
 
 export const runtime = "nodejs";
 
 export async function POST(request) {
   try {
     const authenticatedApplication =
-      await createAuthenticatedPropertyHVACApplication();
+      await createAuthenticatedPropertyEvidenceApplication();
 
     if (
       authenticatedApplication.response
@@ -34,6 +34,18 @@ export async function POST(request) {
     const invoice =
       formData.get("invoice");
 
+    const propertyId =
+      requiredFormValue(
+        formData,
+        "propertyId",
+      );
+
+    const systemId =
+      requiredFormValue(
+        formData,
+        "systemId",
+      );
+
     if (
       !invoice ||
       typeof invoice.arrayBuffer !==
@@ -44,15 +56,55 @@ export async function POST(request) {
       );
     }
 
+    if (!propertyId) {
+      return badRequest(
+        "An HVAC invoice property id is required.",
+      );
+    }
+
+    if (!systemId) {
+      return badRequest(
+        "An HVAC invoice system id is required.",
+      );
+    }
+
+    const bytes =
+      await invoice.arrayBuffer();
+
     const extraction =
       await extractHVACInvoiceText({
-        bytes:
-          await invoice.arrayBuffer(),
+        bytes,
         contentType:
           invoice.type,
       });
 
+    const {
+      application,
+      user,
+    } = authenticatedApplication;
+
     if (extraction.requiresOCR) {
+      const evidence =
+        await application.preserve({
+          ownerId:
+            user.id,
+          propertyId,
+          hvacSystemId:
+            systemId,
+          bytes,
+          originalFilename:
+            invoice.name ||
+            "hvac-invoice.pdf",
+          mimeType:
+            invoice.type,
+          extractionMethod:
+            "pending",
+          parserVersion:
+            null,
+          reviewStatus:
+            "pending_review",
+        });
+
       return NextResponse.json(
         {
           success: false,
@@ -60,6 +112,10 @@ export async function POST(request) {
           extractionMethod:
             extraction
               .extractionMethod,
+          evidence:
+            evidenceReference(
+              evidence,
+            ),
           error:
             "This PDF does not contain enough readable text. OCR is required.",
         },
@@ -74,9 +130,35 @@ export async function POST(request) {
         extraction.text,
       );
 
+    const evidence =
+      await application.preserve({
+        ownerId:
+          user.id,
+        propertyId,
+        hvacSystemId:
+          systemId,
+        bytes,
+        originalFilename:
+          invoice.name ||
+          "hvac-invoice.pdf",
+        mimeType:
+          invoice.type,
+        extractionMethod:
+          extraction
+            .extractionMethod,
+        parserVersion:
+          proposal.parserVersion,
+        reviewStatus:
+          "pending_review",
+      });
+
     return NextResponse.json({
       success: true,
       proposal,
+      evidence:
+        evidenceReference(
+          evidence,
+        ),
       extraction: {
         method:
           extraction
@@ -105,6 +187,9 @@ export async function POST(request) {
       ) ||
       message.includes(
         "must not exceed",
+      ) ||
+      message.includes(
+        "must be a PDF, JPEG, or PNG",
       )
         ? 400
         : 500;
@@ -119,6 +204,32 @@ export async function POST(request) {
       },
     );
   }
+}
+
+function requiredFormValue(
+  formData,
+  name,
+) {
+  const value =
+    formData.get(name);
+
+  return typeof value ===
+    "string"
+    ? value.trim()
+    : "";
+}
+
+function evidenceReference(
+  evidence,
+) {
+  return Object.freeze({
+    id:
+      evidence.id,
+    originalFilename:
+      evidence.originalFilename,
+    reviewStatus:
+      evidence.reviewStatus,
+  });
 }
 
 function badRequest(message) {
