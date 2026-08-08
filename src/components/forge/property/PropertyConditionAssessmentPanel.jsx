@@ -33,6 +33,25 @@ function todayValue() {
   return new Date().toISOString().slice(0, 10);
 }
 
+export function formatPropertyConditionDate(
+  value,
+) {
+  const date = new Date(value);
+
+  if (
+    Number.isNaN(date.getTime())
+  ) {
+    return "Date unavailable";
+  }
+
+  return new Intl.DateTimeFormat(
+    "en-US",
+    {
+      timeZone: "UTC",
+    },
+  ).format(date);
+}
+
 function displayValue(value) {
   return String(value || "")
     .replace(/_/g, " ")
@@ -140,30 +159,41 @@ export function buildConditionObservation({
   estimatedReplacementCostCents = "",
   plannedReplacementYear = "",
 }) {
-  const observation = {
+  const definition =
+    getPropertyConditionChecklistItem(
+      itemKey,
+    );
+
+  if (!definition) {
+    throw new Error(
+      "Choose a supported checklist item.",
+    );
+  }
+
+  return {
     section,
-    itemKey,
     systemKey: itemKey,
-    status,
+    itemKey,
+    label: definition.label,
+    observationStatus: status,
+    condition: "unknown",
+    replacementPriority: "unknown",
+    estimatedReplacementCostCents:
+      estimatedReplacementCostCents === ""
+        ? null
+        : Number(
+            estimatedReplacementCostCents,
+          ),
+    plannedReplacementYear:
+      plannedReplacementYear === ""
+        ? null
+        : Number(
+            plannedReplacementYear,
+          ),
+    valuationImpact: "unknown",
     attributes,
     notes: notes.trim() || null,
   };
-
-  if (
-    estimatedReplacementCostCents !== ""
-  ) {
-    observation.estimatedReplacementCostCents =
-      Number(
-        estimatedReplacementCostCents,
-      );
-  }
-
-  if (plannedReplacementYear !== "") {
-    observation.plannedReplacementYear =
-      Number(plannedReplacementYear);
-  }
-
-  return observation;
 }
 
 export default function PropertyConditionAssessmentPanel() {
@@ -984,9 +1014,9 @@ export default function PropertyConditionAssessmentPanel() {
 
                   <div className="mt-1 text-xs font-bold text-slate-500">
                     {assessment.effectiveAt
-                      ? new Date(
+                      ? formatPropertyConditionDate(
                           assessment.effectiveAt,
-                        ).toLocaleDateString()
+                        )
                       : "Date unavailable"}
                     {" · "}
                     {assessment.items?.length ||

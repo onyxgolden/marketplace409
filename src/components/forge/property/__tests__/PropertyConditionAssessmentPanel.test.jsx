@@ -10,6 +10,7 @@ import {
 
 import PropertyConditionAssessmentPanel, {
   buildConditionObservation,
+  formatPropertyConditionDate,
 } from "../PropertyConditionAssessmentPanel.jsx";
 
 describe(
@@ -58,68 +59,119 @@ describe(
     );
 
     it(
-      "builds an owner observation with structured attributes",
+      "builds a complete catalog-backed observation payload",
       () => {
         expect(
           buildConditionObservation({
             section:
               "structural_systems",
-            itemKey: "roof_covering",
-            status: "deficient",
+            itemKey:
+              "roof_structures_and_attics",
+            status: "observed",
             attributes: {
-              roofType:
-                "composition_shingle",
-              approximateAgeYears: 14,
+              roofStructureType:
+                "conventional",
+              averageInsulationDepth:
+                8,
             },
             notes:
-              "Granule loss observed.",
+              "Viewed from attic access.",
             estimatedReplacementCostCents:
-              1250000,
+              125000,
             plannedReplacementYear:
               2027,
           }),
         ).toEqual({
           section:
             "structural_systems",
-          itemKey: "roof_covering",
-          systemKey: "roof_covering",
-          status: "deficient",
-          attributes: {
-            roofType:
-              "composition_shingle",
-            approximateAgeYears: 14,
-          },
-          notes:
-            "Granule loss observed.",
+          systemKey:
+            "roof_structures_and_attics",
+          itemKey:
+            "roof_structures_and_attics",
+          label:
+            "Roof Structures and Attics",
+          observationStatus:
+            "observed",
+          condition: "unknown",
+          replacementPriority:
+            "unknown",
           estimatedReplacementCostCents:
-            1250000,
+            125000,
           plannedReplacementYear:
             2027,
+          valuationImpact: "unknown",
+          attributes: {
+            roofStructureType:
+              "conventional",
+            averageInsulationDepth:
+              8,
+          },
+          notes:
+            "Viewed from attic access.",
         });
       },
     );
 
     it(
-      "normalizes optional observation values",
+      "normalizes optional observation values to persistence-safe defaults",
       () => {
         expect(
           buildConditionObservation({
             section: "hvac_systems",
             itemKey:
               "cooling_equipment",
-            status: "operational",
+            status: "observed",
             notes: "  ",
           }),
         ).toEqual({
           section: "hvac_systems",
-          itemKey:
-            "cooling_equipment",
           systemKey:
             "cooling_equipment",
-          status: "operational",
+          itemKey:
+            "cooling_equipment",
+          label:
+            "Cooling Equipment",
+          observationStatus:
+            "observed",
+          condition: "unknown",
+          replacementPriority:
+            "unknown",
+          estimatedReplacementCostCents:
+            null,
+          plannedReplacementYear:
+            null,
+          valuationImpact: "unknown",
           attributes: {},
           notes: null,
         });
+      },
+    );
+
+    it(
+      "preserves the effective calendar date across local time zones",
+      () => {
+        expect(
+          formatPropertyConditionDate(
+            "2026-08-08T00:00:00.000Z",
+          ),
+        ).toBe("8/8/2026");
+      },
+    );
+
+    it(
+      "rejects an unknown checklist identity before persistence",
+      () => {
+        expect(() =>
+          buildConditionObservation({
+            section:
+              "structural_systems",
+            itemKey:
+              "not_in_catalog",
+            status: "observed",
+          }),
+        ).toThrow(
+          "Choose a supported checklist item.",
+        );
       },
     );
   },
