@@ -64,3 +64,8 @@ export {
   createPropertyHVACRepository,
   PropertyHVACRepositoryStorage,
 } from "./createPropertyHVACRepository.js";
+
+export {
+  createPropertyEvidenceRepository,
+  PropertyEvidenceRepositoryStorage,
+} from "./createPropertyEvidenceRepository.js";
