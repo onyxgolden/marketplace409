@@ -18,3 +18,24 @@ export type {
   PropertyReplacementPriority,
   PropertyValuationImpact,
 } from "./property-condition-assessment.types";
+
+
+export type {
+  PropertyConditionAssessmentPersistenceContext,
+  PropertyConditionAssessmentRepository,
+} from "./property-condition-assessment.repository";
+
+export {
+  mapPropertyConditionAssessmentRecordToDomain,
+  mapPropertyConditionAssessmentToRecord,
+} from "./property-condition-assessment.mapper";
+
+export type {
+  PropertyConditionAssessmentItemRow,
+  PropertyConditionAssessmentPersistenceRecord,
+  PropertyConditionAssessmentRow,
+} from "./property-condition-assessment.mapper";
+
+export {
+  InMemoryPropertyConditionAssessmentRepository,
+} from "./in-memory-property-condition-assessment.repository";
