@@ -49,3 +49,8 @@ export type {
   HVACComponentRow,
   HVACSystemRow,
 } from "./property-hvac.mapper";
+
+
+export {
+  SupabasePropertyHVACRepository,
+} from "./SupabasePropertyHVACRepository.js";
