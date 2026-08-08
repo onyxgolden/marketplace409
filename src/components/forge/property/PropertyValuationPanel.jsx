@@ -10,40 +10,13 @@ import {
   parsePropertyValuationCsv,
 } from "@/application/property-valuation/parsePropertyValuationCsv";
 
-function displayPropertyIdentity(propertyId) {
-  return String(propertyId || "")
-    .replace(/[-_]+/g, " ")
-    .replace(/\b\w/g, (character) =>
-      character.toUpperCase(),
-    );
-}
+import {
+  buildPropertyPortfolioProperties,
+} from "./buildPropertyPortfolioProperties";
 
-export function buildValuationProperties(payload) {
-  const properties =
-    payload?.data?.business
-      ?.reports?.properties ?? [];
-
-  return properties
-    .filter(
-      (property) =>
-        typeof property?.propertyId ===
-          "string" &&
-        property.propertyId.trim() !== "" &&
-        property.propertyId !==
-          "unassigned",
-    )
-    .map((property) =>
-      Object.freeze({
-        id:
-          property.propertyId,
-        name:
-          property.propertyName ||
-          displayPropertyIdentity(
-            property.propertyId,
-          ),
-      }),
-    );
-}
+export {
+  buildPropertyPortfolioProperties as buildValuationProperties,
+} from "./buildPropertyPortfolioProperties";
 
 function propertyLabel(property) {
   return (
@@ -163,7 +136,7 @@ export default function PropertyValuationPanel() {
           );
 
         const loadedProperties =
-          buildValuationProperties(
+          buildPropertyPortfolioProperties(
             propertyPayload,
           );
 
