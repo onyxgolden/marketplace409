@@ -12,6 +12,8 @@ import {
   HVAC_SYSTEM_TYPES,
 } from "@/domains/property-hvac/property-hvac.types";
 
+import PropertyHVACComponentPanel from "./PropertyHVACComponentPanel";
+
 import {
   buildPropertyPortfolioProperties,
 } from "./buildPropertyPortfolioProperties";
@@ -785,6 +787,10 @@ export default function PropertyHVACPanel() {
           </div>
         )}
       </div>
+
+      <PropertyHVACComponentPanel
+        systems={systems}
+      />
 
       <div className="mt-6 rounded-xl border border-dashed border-indigo-300 bg-indigo-50 p-4 text-sm font-semibold leading-6 text-indigo-950">
         Future equipment-label and invoice OCR will create reviewable proposals for manufacturer, model, serial number, refrigerant, capacity, installation date, warranty, components, and service events. Nothing will update automatically without user approval.

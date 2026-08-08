@@ -48,6 +48,18 @@ describe(
         );
 
         expect(markup).toContain(
+          "data-property-hvac-component-panel",
+        );
+
+        expect(markup).toContain(
+          "Component identity and replacement history",
+        );
+
+        expect(markup).toContain(
+          "Save an HVAC system before adding its components.",
+        );
+
+        expect(markup).toContain(
           "Read equipment label or invoice",
         );
 
