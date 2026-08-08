@@ -60,6 +60,10 @@ function buildAssessment(
           850000,
         plannedReplacementYear: 2028,
         valuationImpact: "negative",
+        attributes: {
+          systemType:
+            "split_system",
+        },
         notes: "Older unit.",
       },
     ],
@@ -93,6 +97,8 @@ function buildItemRow(
       item.plannedReplacementYear,
     valuation_impact:
       item.valuationImpact,
+    attributes:
+      item.attributes,
     notes: item.notes,
     ...overrides,
   };

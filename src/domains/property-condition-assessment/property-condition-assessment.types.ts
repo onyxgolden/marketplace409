@@ -65,6 +65,9 @@ export const PROPERTY_VALUATION_IMPACTS = [
 export type PropertyValuationImpact =
   typeof PROPERTY_VALUATION_IMPACTS[number];
 
+export type PropertyConditionAttributeValue =
+  string | number | boolean | null;
+
 export type PropertyConditionAssessmentItem =
   Readonly<{
     id: string;
@@ -83,6 +86,13 @@ export type PropertyConditionAssessmentItem =
       number | null;
     valuationImpact:
       PropertyValuationImpact;
+    attributes:
+      Readonly<
+        Record<
+          string,
+          PropertyConditionAttributeValue
+        >
+      >;
     notes: string | null;
   }>;
 
@@ -141,6 +151,97 @@ function requireTimestamp(
   }
 
   return timestamp;
+}
+
+function normalizeAttributes(
+  value:
+    | Readonly<
+        Record<
+          string,
+          PropertyConditionAttributeValue
+        >
+      >
+    | null
+    | undefined,
+): Readonly<
+  Record<
+    string,
+    PropertyConditionAttributeValue
+  >
+> {
+  if (value == null) {
+    return Object.freeze({});
+  }
+
+  if (
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    throw new Error(
+      "Property condition assessment item attributes must be an object.",
+    );
+  }
+
+  const normalized:
+    Record<
+      string,
+      PropertyConditionAttributeValue
+    > = {};
+
+  for (
+    const [
+      rawKey,
+      rawValue,
+    ] of Object.entries(value)
+  ) {
+    const key = rawKey.trim();
+
+    if (key === "") {
+      throw new Error(
+        "Property condition assessment item attribute keys must not be empty.",
+      );
+    }
+
+    if (
+      rawValue !== null &&
+      typeof rawValue !== "string" &&
+      typeof rawValue !== "number" &&
+      typeof rawValue !== "boolean"
+    ) {
+      throw new Error(
+        "Property condition assessment item attribute values must be strings, numbers, booleans, or null.",
+      );
+    }
+
+    if (
+      typeof rawValue === "number" &&
+      !Number.isFinite(rawValue)
+    ) {
+      throw new Error(
+        "Property condition assessment item numeric attributes must be finite.",
+      );
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        normalized,
+        key,
+      )
+    ) {
+      throw new Error(
+        "Property condition assessment item attribute keys must be unique after normalization.",
+      );
+    }
+
+    normalized[key] =
+      typeof rawValue === "string"
+        ? rawValue.trim()
+        : rawValue;
+  }
+
+  return Object.freeze(
+    normalized,
+  );
 }
 
 function createAssessmentItem(
@@ -248,6 +349,10 @@ function createAssessmentItem(
       requireNonEmptyString(
         item.label,
         "an item label",
+      ),
+    attributes:
+      normalizeAttributes(
+        item.attributes,
       ),
     notes:
       normalizeOptionalString(

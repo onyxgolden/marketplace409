@@ -76,6 +76,12 @@ function buildInput(
           "2028",
         valuationImpact:
           "negative",
+        attributes: {
+          systemType:
+            "split_system",
+          approximateAgeYears:
+            18,
+        },
         notes:
           "  Older unit.  ",
       },
@@ -129,6 +135,12 @@ describe(
             850000,
           plannedReplacementYear:
             2028,
+          attributes: {
+            systemType:
+              "split_system",
+            approximateAgeYears:
+              18,
+          },
           notes:
             "Older unit.",
         });
@@ -214,6 +226,7 @@ describe(
             null,
           valuationImpact:
             "unknown",
+          attributes: {},
           notes: null,
         });
       },

@@ -42,6 +42,11 @@ function buildAssessment(
           850000,
         plannedReplacementYear: 2028,
         valuationImpact: "negative",
+        attributes: {
+          systemType:
+            "split_system",
+          approximateAgeYears: 18,
+        },
         notes:
           "  Older unit; operating today.  ",
       },
@@ -72,6 +77,21 @@ describe(
         expect(
           assessment.items[0].systemKey,
         ).toBe("central_hvac_1");
+
+        expect(
+          assessment.items[0].attributes,
+        ).toEqual({
+          systemType:
+            "split_system",
+          approximateAgeYears: 18,
+        });
+
+        expect(
+          Object.isFrozen(
+            assessment.items[0]
+              .attributes,
+          ),
+        ).toBe(true);
 
         expect(
           assessment.items[0].notes,
@@ -144,6 +164,48 @@ describe(
         expect(
           assessment.items[0].section,
         ).toBe(section);
+      },
+    );
+
+    it(
+      "rejects invalid structured attributes",
+      () => {
+        const item =
+          buildAssessment().items[0];
+
+        expect(() =>
+          createPropertyConditionAssessment(
+            buildAssessment({
+              items: [
+                {
+                  ...item,
+                  attributes:
+                    [] as never,
+                },
+              ],
+            }),
+          ),
+        ).toThrow(
+          "Property condition assessment item attributes must be an object.",
+        );
+
+        expect(() =>
+          createPropertyConditionAssessment(
+            buildAssessment({
+              items: [
+                {
+                  ...item,
+                  attributes: {
+                    invalid:
+                      Number.POSITIVE_INFINITY,
+                  },
+                },
+              ],
+            }),
+          ),
+        ).toThrow(
+          "Property condition assessment item numeric attributes must be finite.",
+        );
       },
     );
 

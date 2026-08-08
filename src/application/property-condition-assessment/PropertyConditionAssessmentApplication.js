@@ -334,6 +334,9 @@ export class PropertyConditionAssessmentApplication {
                 ) ??
                 "unknown",
               ).trim(),
+            attributes:
+              item?.attributes ??
+              {},
             notes:
               normalizeOptionalString(
                 readField(

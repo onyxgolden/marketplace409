@@ -42,6 +42,12 @@ function buildAssessment() {
           850000,
         plannedReplacementYear: 2028,
         valuationImpact: "negative",
+        attributes: {
+          systemType:
+            "split_system",
+          refrigerantType:
+            "R-22",
+        },
         notes: "Older unit.",
       },
     ],
@@ -77,6 +83,12 @@ describe(
             "central_hvac_1",
           estimated_replacement_cost_cents:
             850000,
+          attributes: {
+            systemType:
+              "split_system",
+            refrigerantType:
+              "R-22",
+          },
         });
 
         const restored =

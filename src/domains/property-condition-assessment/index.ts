@@ -10,6 +10,7 @@ export {
 
 export type {
   PropertyCondition,
+  PropertyConditionAttributeValue,
   PropertyConditionAssessment,
   PropertyConditionAssessmentItem,
   PropertyConditionAssessmentType,

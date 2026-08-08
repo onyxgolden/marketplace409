@@ -47,6 +47,12 @@ export type PropertyConditionAssessmentItemRow =
       number | null;
     valuation_impact:
       PropertyValuationImpact;
+    attributes: Readonly<
+      Record<
+        string,
+        string | number | boolean | null
+      >
+    >;
     notes: string | null;
   }>;
 
@@ -124,6 +130,8 @@ export function mapPropertyConditionAssessmentToRecord(
               item.plannedReplacementYear,
             valuation_impact:
               item.valuationImpact,
+            attributes:
+              item.attributes,
             notes: item.notes,
           }),
       ),
@@ -208,6 +216,8 @@ export function mapPropertyConditionAssessmentRecordToDomain(
               ),
         valuationImpact:
           item.valuation_impact,
+        attributes:
+          item.attributes ?? {},
         notes: item.notes,
       })),
   });
