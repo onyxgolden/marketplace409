@@ -87,6 +87,37 @@ export class InMemoryPropertyValuationRepository
     return stored.valuation;
   }
 
+  async deleteById(
+    id: string,
+    ownerId: string,
+  ): Promise<PropertyValuation | null> {
+    const requiredId = requireIdentifier(
+      id,
+      "Property valuation id is required.",
+    );
+    const requiredOwnerId = requireIdentifier(
+      ownerId,
+      "Property valuation owner id is required.",
+    );
+    const stored =
+      this.valuationsById.get(
+        requiredId,
+      );
+
+    if (
+      !stored ||
+      stored.ownerId !== requiredOwnerId
+    ) {
+      return null;
+    }
+
+    this.valuationsById.delete(
+      requiredId,
+    );
+
+    return stored.valuation;
+  }
+
   async findByProperty(
     propertyId: string,
     ownerId: string,

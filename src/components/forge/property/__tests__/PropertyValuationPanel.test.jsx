@@ -8,11 +8,65 @@ import {
   renderToStaticMarkup,
 } from "react-dom/server";
 
-import PropertyValuationPanel from "../PropertyValuationPanel.jsx";
+import PropertyValuationPanel, {
+  buildValuationProperties,
+} from "../PropertyValuationPanel.jsx";
 
 describe(
   "PropertyValuationPanel",
   () => {
+    it(
+      "selects canonical financial workspace properties",
+      () => {
+        const properties =
+          buildValuationProperties({
+            data: {
+              business: {
+                reports: {
+                  properties: [
+                    {
+                      propertyId:
+                        "170-john",
+                    },
+                    {
+                      propertyId:
+                        "unassigned",
+                    },
+                    {
+                      propertyId:
+                        "185-laxon",
+                      propertyName:
+                        "185 Laxon Street",
+                    },
+                  ],
+                },
+              },
+            },
+          });
+
+        expect(properties).toEqual([
+          {
+            id:
+              "170-john",
+            name:
+              "170 John",
+          },
+          {
+            id:
+              "185-laxon",
+            name:
+              "185 Laxon Street",
+          },
+        ]);
+
+        expect(
+          Object.isFrozen(
+            properties[0],
+          ),
+        ).toBe(true);
+      },
+    );
+
     it(
       "renders manual and spreadsheet valuation controls",
       () => {

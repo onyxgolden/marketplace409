@@ -86,6 +86,46 @@ export class SupabasePropertyValuationRepository {
       : null;
   }
 
+  async deleteById(id, ownerId) {
+    const requiredId =
+      this.requireIdentifier(
+        id,
+        "Property valuation id is required.",
+      );
+    const requiredOwnerId =
+      this.requireIdentifier(
+        ownerId,
+        "Property valuation owner id is required.",
+      );
+
+    const { data, error } =
+      await this.supabase
+        .from("property_valuations")
+        .delete()
+        .eq(
+          "owner_id",
+          requiredOwnerId,
+        )
+        .eq(
+          "id",
+          requiredId,
+        )
+        .select("*")
+        .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    return data
+      ? Object.freeze(
+          mapPropertyValuationRowToPropertyValuation(
+            data,
+          ),
+        )
+      : null;
+  }
+
   async findByProperty(
     propertyId,
     ownerId,

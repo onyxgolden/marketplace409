@@ -45,6 +45,71 @@ export async function GET() {
   }
 }
 
+export async function DELETE(request) {
+  try {
+    const authenticatedApplication =
+      await createAuthenticatedPropertyValuationApplication();
+
+    if (authenticatedApplication.response) {
+      return authenticatedApplication.response;
+    }
+
+    const body =
+      await request.json();
+
+    if (
+      typeof body?.valuationId !==
+        "string" ||
+      body.valuationId.trim() === ""
+    ) {
+      return badRequest(
+        "valuationId is required.",
+      );
+    }
+
+    const valuation =
+      await authenticatedApplication
+        .application.remove(
+          body.valuationId,
+          authenticatedApplication.user.id,
+        );
+
+    if (!valuation) {
+      return NextResponse.json(
+        {
+          error:
+            "Property valuation was not found.",
+        },
+        {
+          status: 404,
+        },
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      valuation,
+    });
+  } catch (error) {
+    console.error(
+      "Property valuation deletion error",
+      error,
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to remove the property valuation.",
+      },
+      {
+        status: 500,
+      },
+    );
+  }
+}
+
 export async function POST(request) {
   try {
     const authenticatedApplication =

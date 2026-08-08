@@ -86,6 +86,19 @@ export function createLazyPropertyValuationRepository(
       );
     },
 
+  async deleteById(
+    id,
+    ownerId,
+  ) {
+    const repository =
+      await resolveRepository();
+
+    return repository.deleteById(
+      id,
+      ownerId,
+    );
+  },
+
     async findByProperty(
       propertyId,
       ownerId,

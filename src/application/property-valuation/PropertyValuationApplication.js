@@ -193,6 +193,34 @@ export class PropertyValuationApplication {
     });
   }
 
+  async remove(
+    valuationId,
+    ownerId,
+  ) {
+    if (
+      typeof valuationId !== "string" ||
+      valuationId.trim() === ""
+    ) {
+      throw new Error(
+        "Property valuation ID is required.",
+      );
+    }
+
+    if (
+      typeof ownerId !== "string" ||
+      ownerId.trim() === ""
+    ) {
+      throw new Error(
+        "Property valuation owner ID is required.",
+      );
+    }
+
+    return this.repository.deleteById(
+      valuationId.trim(),
+      ownerId.trim(),
+    );
+  }
+
   async listLatest(ownerId) {
     if (
       typeof ownerId !== "string" ||

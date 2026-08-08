@@ -110,6 +110,8 @@ describe(
         expect(
           mocks.createPropertyValuationRepository,
         ).toHaveBeenCalledWith({
+          storage:
+            "supabase",
           supabaseClient,
         });
 

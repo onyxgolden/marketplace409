@@ -23,6 +23,11 @@ export interface PropertyValuationRepository {
     ownerId: string,
   ): Promise<PropertyValuation | null>;
 
+  deleteById(
+    id: string,
+    ownerId: string,
+  ): Promise<PropertyValuation | null>;
+
   findByProperty(
     propertyId: string,
     ownerId: string,

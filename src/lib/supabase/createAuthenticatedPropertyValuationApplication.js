@@ -17,7 +17,9 @@ export async function createAuthenticatedPropertyValuationApplication() {
   }
 
   const repository =
-    createPropertyValuationRepository({
+    await createPropertyValuationRepository({
+      storage:
+        "supabase",
       supabaseClient:
         authenticatedApplication.supabaseClient,
     });

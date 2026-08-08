@@ -10,6 +10,41 @@ import {
   parsePropertyValuationCsv,
 } from "@/application/property-valuation/parsePropertyValuationCsv";
 
+function displayPropertyIdentity(propertyId) {
+  return String(propertyId || "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (character) =>
+      character.toUpperCase(),
+    );
+}
+
+export function buildValuationProperties(payload) {
+  const properties =
+    payload?.data?.business
+      ?.reports?.properties ?? [];
+
+  return properties
+    .filter(
+      (property) =>
+        typeof property?.propertyId ===
+          "string" &&
+        property.propertyId.trim() !== "" &&
+        property.propertyId !==
+          "unassigned",
+    )
+    .map((property) =>
+      Object.freeze({
+        id:
+          property.propertyId,
+        name:
+          property.propertyName ||
+          displayPropertyIdentity(
+            property.propertyId,
+          ),
+      }),
+    );
+}
+
 function propertyLabel(property) {
   return (
     property.name ||
@@ -95,6 +130,8 @@ export default function PropertyValuationPanel() {
     useState(false);
   const [importing, setImporting] =
     useState(false);
+  const [deletingId, setDeletingId] =
+    useState(null);
   const [error, setError] =
     useState("");
   const [message, setMessage] =
@@ -108,7 +145,7 @@ export default function PropertyValuationPanel() {
           valuationResponse,
         ] = await Promise.all([
           fetch(
-            "/api/financial/import/bootstrap",
+            "/api/financial/read-models?financial=true&business=true",
           ),
           fetch(
             "/api/property-valuations",
@@ -126,8 +163,9 @@ export default function PropertyValuationPanel() {
           );
 
         const loadedProperties =
-          propertyPayload.data
-            ?.properties ?? [];
+          buildValuationProperties(
+            propertyPayload,
+          );
 
         setProperties(
           loadedProperties,
@@ -384,6 +422,82 @@ export default function PropertyValuationPanel() {
     }
   }
 
+  async function handleRemove(
+    valuation,
+  ) {
+    const property =
+      propertiesById.get(
+        valuation.propertyId,
+      );
+    const label =
+      property
+        ? propertyLabel(property)
+        : valuation.propertyId;
+
+    if (
+      !window.confirm(
+        `Remove the recorded valuation for ${label}?`,
+      )
+    ) {
+      return;
+    }
+
+    setError("");
+    setMessage("");
+    setDeletingId(
+      valuation.id,
+    );
+
+    try {
+      const response =
+        await fetch(
+          "/api/property-valuations",
+          {
+            method:
+              "DELETE",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body:
+              JSON.stringify({
+                valuationId:
+                  valuation.id,
+              }),
+          },
+        );
+
+      await readJson(response);
+
+      const refreshedResponse =
+        await fetch(
+          "/api/property-valuations",
+        );
+
+      const refreshedPayload =
+        await readJson(
+          refreshedResponse,
+        );
+
+      setValuations(
+        refreshedPayload
+          .valuations ?? [],
+      );
+
+      setMessage(
+        "Property valuation removed.",
+      );
+    } catch (removeError) {
+      setError(
+        removeError instanceof Error
+          ? removeError.message
+          : "Unable to remove the property valuation.",
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <section
       data-property-valuation-panel
@@ -527,11 +641,14 @@ export default function PropertyValuationPanel() {
                   <option value="appraisal">
                     Appraisal
                   </option>
-                  <option value="market_analysis">
-                    Market analysis
+                  <option value="assessed_value">
+                    Assessed value
                   </option>
-                  <option value="automated_valuation">
-                    Automated valuation
+                  <option value="provider_estimate">
+                    Provider estimate
+                  </option>
+                  <option value="purchase_price">
+                    Purchase price
                   </option>
                 </select>
               </label>
@@ -763,6 +880,25 @@ export default function PropertyValuationPanel() {
                         valuation.effectiveAt,
                       )}
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRemove(
+                          valuation,
+                        )
+                      }
+                      disabled={
+                        deletingId ===
+                        valuation.id
+                      }
+                      className="mt-4 rounded-xl border border-rose-300 bg-white px-4 py-2 text-xs font-black text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deletingId ===
+                      valuation.id
+                        ? "Removing…"
+                        : "Remove valuation"}
+                    </button>
                   </article>
                 );
               },
