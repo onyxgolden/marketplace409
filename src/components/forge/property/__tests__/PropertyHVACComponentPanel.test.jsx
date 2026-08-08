@@ -61,6 +61,18 @@ describe(
         expect(markup).toContain(
           "Save HVAC component",
         );
+
+        expect(markup).toContain(
+          "data-property-hvac-event-panel",
+        );
+
+        expect(markup).toContain(
+          "Service, failure, and replacement events",
+        );
+
+        expect(markup).toContain(
+          "Choose an HVAC system before recording events.",
+        );
       },
     );
 

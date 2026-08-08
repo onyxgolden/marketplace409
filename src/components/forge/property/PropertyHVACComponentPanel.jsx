@@ -11,6 +11,8 @@ import {
   HVAC_CONDITIONS,
 } from "@/domains/property-hvac/property-hvac.types";
 
+import PropertyHVACEventPanel from "./PropertyHVACEventPanel";
+
 const INITIAL_COMPONENT =
 Object.freeze({
   componentType: "compressor",
@@ -782,6 +784,35 @@ export default function PropertyHVACComponentPanel({
           </div>
         )}
       </div>
+      <PropertyHVACEventPanel
+        systemId={systemId}
+        components={components}
+        events={history?.events || []}
+        onEventSaved={(savedEvent) =>
+          setHistory((current) => ({
+            system:
+              current?.system ||
+              systems.find(
+                (system) =>
+                  system.id === systemId,
+              ) ||
+              null,
+            components:
+              current?.components || [],
+            events: [
+              savedEvent,
+              ...(
+                current?.events || []
+              ).filter(
+                (event) =>
+                  event.id !==
+                  savedEvent.id,
+              ),
+            ],
+          }))
+        }
+      />
+
     </section>
   );
 }
