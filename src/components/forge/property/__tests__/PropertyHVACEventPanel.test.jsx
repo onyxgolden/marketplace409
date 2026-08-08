@@ -92,6 +92,18 @@ describe(
         );
 
         expect(markup).toContain(
+          "data-property-hvac-event-action-editor",
+        );
+
+        expect(markup).toContain(
+          "Work included in this event",
+        );
+
+        expect(markup).toContain(
+          "Add component action",
+        );
+
+        expect(markup).toContain(
           "Record HVAC event",
         );
 
@@ -161,6 +173,7 @@ describe(
           invoiceReference:
             "INV-500",
           photoReferences: [],
+          componentActions: [],
           notes:
             "Unit tested normally.",
         });
@@ -200,6 +213,7 @@ describe(
           vendorName: null,
           invoiceReference: null,
           photoReferences: [],
+          componentActions: [],
           notes: null,
         });
       },

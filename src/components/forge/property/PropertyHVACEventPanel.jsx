@@ -8,6 +8,8 @@ import {
   HVAC_COMPONENT_EVENT_TYPES,
 } from "@/domains/property-hvac/property-hvac.types";
 
+import PropertyHVACEventActionEditor from "./PropertyHVACEventActionEditor";
+
 const INPUT_CLASS =
   "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950";
 
@@ -72,6 +74,8 @@ export function buildHVACEventPayload({
         values.invoiceReference,
       ),
     photoReferences: [],
+    componentActions:
+      values.componentActions ?? [],
     notes: optionalText(values.notes),
   };
 }
@@ -106,6 +110,7 @@ export default function PropertyHVACEventPanel({
     costDollars: "",
     vendorName: "",
     invoiceReference: "",
+    componentActions: [],
     notes: "",
   });
 
@@ -185,6 +190,7 @@ export default function PropertyHVACEventPanel({
         costDollars: "",
         vendorName: "",
         invoiceReference: "",
+        componentActions: [],
         notes: "",
       }));
 
@@ -411,6 +417,21 @@ export default function PropertyHVACEventPanel({
               />
             </Field>
           </div>
+
+          <PropertyHVACEventActionEditor
+            components={components}
+            actions={
+              values.componentActions
+            }
+            onChange={(
+              componentActions,
+            ) =>
+              updateValue(
+                "componentActions",
+                componentActions,
+              )
+            }
+          />
 
           <button
             type="button"
