@@ -4,6 +4,7 @@ import {
   useState,
 } from "react";
 
+import PropertyConditionAssessmentPanel from "./PropertyConditionAssessmentPanel";
 import PropertyValuationPanel from "./PropertyValuationPanel";
 
 export const PROPERTY_PORTFOLIO_OPERATION_VIEWS =
@@ -98,17 +99,13 @@ export default function PropertyPortfolioOperationsPanel({
         <PropertyValuationPanel />
       )}
 
-      {activeView ===
-        "condition" && (
-        <PreparedOperationSurface
-          kind="condition"
-          eyebrow="Condition Assessments"
-          title="Standardized property condition history"
-          detail="Record owner observations against the Texas REI 7-6-aligned checklist, including roof, water-heater, replacement-cost, and capital-priority details."
-        />
-      )}
+      {
+    activeView === "condition" && (
+      <PropertyConditionAssessmentPanel />
+    )
+  }
 
-      {activeView === "hvac" && (
+  {activeView === "hvac" && (
         <PreparedOperationSurface
           kind="hvac"
           eyebrow="Major Systems"

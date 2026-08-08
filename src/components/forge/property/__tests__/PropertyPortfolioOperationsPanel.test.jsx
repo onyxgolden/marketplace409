@@ -20,6 +20,18 @@ vi.mock(
   }),
 );
 
+vi.mock(
+  "../PropertyConditionAssessmentPanel",
+  () => ({
+    default: () => (
+      <div data-property-condition-assessment-panel>
+        Standardized property condition history
+        Add from photo or document
+      </div>
+    ),
+  }),
+);
+
 import PropertyPortfolioOperationsPanel, {
   PROPERTY_PORTFOLIO_OPERATION_VIEWS,
 } from "../PropertyPortfolioOperationsPanel.jsx";
@@ -64,7 +76,7 @@ describe(
     );
 
     it(
-      "renders the prepared condition surface",
+      "renders the interactive condition assessment surface",
       () => {
         const markup =
           renderToStaticMarkup(
@@ -74,7 +86,7 @@ describe(
           );
 
         expect(markup).toContain(
-          'data-property-prepared-operation="condition"',
+          "data-property-condition-assessment-panel",
         );
 
         expect(markup).toContain(
