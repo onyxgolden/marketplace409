@@ -1,5 +1,5 @@
 import ForgePortfolioSummary from "@/components/forge/ForgePortfolioSummary";
-import PropertyValuationPanel from "@/components/forge/property/PropertyValuationPanel";
+import PropertyPortfolioOperationsPanel from "@/components/forge/property/PropertyPortfolioOperationsPanel";
 import ForgeWorkspaceTile from "@/components/forge/workspace/ForgeWorkspaceTile";
 import { WorkspaceModule } from "@/components/forge/workspace/composition/WorkspaceModule";
 
@@ -15,9 +15,9 @@ function renderPropertyPortfolioWorkspaceTile({
       actionLabel="Open portfolio workspace"
       status="Owner scoped"
       expandedChildren={
-        <PropertyValuationPanel />
+        <PropertyPortfolioOperationsPanel />
       }
-      expandLabel="Manage valuations"
+      expandLabel="Manage property records"
       collapseLabel="Show portfolio summary"
     >
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">

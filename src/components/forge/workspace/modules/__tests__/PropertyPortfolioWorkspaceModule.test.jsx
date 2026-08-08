@@ -21,11 +21,11 @@ vi.mock(
 );
 
 vi.mock(
-  "@/components/forge/property/PropertyValuationPanel",
+  "@/components/forge/property/PropertyPortfolioOperationsPanel",
   () => ({
     default: () => (
-      <div data-property-valuation-panel>
-        Expanded valuation application
+      <div data-property-portfolio-operations>
+        Expanded property operations
       </div>
     ),
   }),
@@ -69,7 +69,7 @@ describe(
   "PropertyPortfolioWorkspaceModule",
   () => {
     it(
-      "composes compact portfolio and expanded valuation surfaces",
+      "composes compact portfolio and expanded property operations",
       () => {
         const markup =
           renderToStaticMarkup(
@@ -93,15 +93,15 @@ describe(
         );
 
         expect(markup).toContain(
-          "data-property-valuation-panel",
+          "data-property-portfolio-operations",
         );
 
         expect(markup).toContain(
-          "Expanded valuation application",
+          "Expanded property operations",
         );
 
         expect(markup).toContain(
-          "Manage valuations",
+          "Manage property records",
         );
 
         expect(markup).toContain(
