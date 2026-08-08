@@ -80,6 +80,52 @@ export function buildHVACEventPayload({
   };
 }
 
+export function applyHVACInvoiceProposal(
+  current,
+  proposal,
+) {
+  const event =
+    proposal?.event ?? {};
+
+  return {
+    ...current,
+    eventType:
+      event.eventType ||
+      current.eventType,
+    occurredAt:
+      event.occurredAt
+        ? String(
+            event.occurredAt,
+          ).slice(0, 10)
+        : current.occurredAt,
+    failureSymptoms:
+      event.failureSymptoms || "",
+    workPerformed:
+      event.workPerformed || "",
+    costDollars:
+      event.costCents == null
+        ? ""
+        : String(
+            event.costCents / 100,
+          ),
+    vendorName:
+      event.vendorName || "",
+    invoiceReference:
+      event.invoiceReference || "",
+    componentActions:
+      Array.isArray(
+        event.componentActions,
+      )
+        ? [
+            ...event
+              .componentActions,
+          ]
+        : [],
+    notes:
+      event.notes || "",
+  };
+}
+
 function Field({
   label,
   children,
@@ -120,6 +166,11 @@ export default function PropertyHVACEventPanel({
   ] = useState(false);
 
   const [
+    importingInvoice,
+    setImportingInvoice,
+  ] = useState(false);
+
+  const [
     message,
     setMessage,
   ] = useState("");
@@ -132,6 +183,80 @@ export default function PropertyHVACEventPanel({
       ...current,
       [name]: value,
     }));
+  }
+
+  async function importInvoice(
+    file,
+  ) {
+    if (!file) {
+      return;
+    }
+
+    setImportingInvoice(true);
+    setMessage("");
+
+    try {
+      const formData =
+        new FormData();
+
+      formData.append(
+        "invoice",
+        file,
+      );
+
+      const response =
+        await fetch(
+          "/api/property-hvac/invoice-proposal",
+          {
+            method: "POST",
+            body: formData,
+          },
+        );
+
+      const payload =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.ocrRequired
+            ? "This invoice requires OCR. Google Cloud Vision support is the next fallback."
+            : payload?.error ||
+              "Unable to read the HVAC invoice.",
+        );
+      }
+
+      if (!payload?.proposal) {
+        throw new Error(
+          "The HVAC invoice did not return a proposal.",
+        );
+      }
+
+      setValues(
+        (current) =>
+          applyHVACInvoiceProposal(
+            current,
+            payload.proposal,
+          ),
+      );
+
+      const actionCount =
+        payload.proposal
+          ?.event
+          ?.componentActions
+          ?.length ?? 0;
+
+      setMessage(
+        `Invoice proposal loaded with ${actionCount} component actions. Review the fields, then record the event once.`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to read the HVAC invoice.",
+      );
+    } finally {
+      setImportingInvoice(false);
+    }
   }
 
   async function recordEvent() {
@@ -241,13 +366,33 @@ export default function PropertyHVACEventPanel({
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled
-          className="rounded-xl border border-dashed border-amber-300 bg-white px-4 py-2 text-xs font-black text-amber-700 opacity-70"
+        <label
+          className={
+            importingInvoice
+              ? "cursor-wait rounded-xl border border-amber-300 bg-white px-4 py-2 text-xs font-black text-amber-500 opacity-70"
+              : "cursor-pointer rounded-xl border border-amber-400 bg-white px-4 py-2 text-xs font-black text-amber-800 transition hover:bg-amber-100"
+          }
         >
-          Add invoice or service photo — planned
-        </button>
+          {importingInvoice
+            ? "Reading invoice..."
+            : "Add invoice PDF"}
+
+          <input
+            type="file"
+            accept="application/pdf,.pdf"
+            disabled={importingInvoice}
+            onChange={(event) => {
+              const file =
+                event.target
+                  .files?.[0];
+
+              importInvoice(file);
+
+              event.target.value = "";
+            }}
+            className="sr-only"
+          />
+        </label>
       </div>
 
       {!systemId ? (
