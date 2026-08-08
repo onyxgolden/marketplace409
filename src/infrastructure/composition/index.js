@@ -50,3 +50,10 @@ export {
   createLazyPropertyValuationRepository,
   PropertyValuationRepositoryStorage,
 } from "./createPropertyValuationRepository.js";
+
+
+export {
+  createPropertyConditionAssessmentRepository,
+  createLazyPropertyConditionAssessmentRepository,
+  PropertyConditionAssessmentRepositoryStorage,
+} from "./createPropertyConditionAssessmentRepository.js";
