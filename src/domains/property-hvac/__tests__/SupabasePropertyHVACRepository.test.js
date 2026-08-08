@@ -183,6 +183,7 @@ function eventRow() {
     invoice_reference:
       "invoice-1",
     photo_references: [],
+    component_actions: [],
     notes: null,
     created_at:
       "2026-08-08T00:00:00.000Z",
@@ -208,6 +209,7 @@ function event() {
     invoiceReference:
       "invoice-1",
     photoReferences: [],
+    componentActions: [],
     notes: null,
     createdAt:
       "2026-08-08T00:00:00.000Z",

@@ -81,7 +81,7 @@ describe(
       () => {
         expect(
           HVAC_COMPONENT_TYPES,
-        ).toHaveLength(23);
+        ).toHaveLength(26);
 
         expect(
           HVAC_COMPONENT_TYPES,

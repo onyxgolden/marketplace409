@@ -8,6 +8,7 @@ import type {
   HVACComponent,
   HVACComponentEvent,
   HVACComponentEventType,
+  HVACEventComponentAction,
   HVACComponentStatus,
   HVACComponentType,
   HVACCondition,
@@ -84,6 +85,8 @@ export type HVACComponentEventRow =
     invoice_reference: string | null;
     photo_references:
       readonly string[];
+    component_actions:
+      readonly HVACEventComponentAction[];
     notes: string | null;
     created_at: string;
   }>;
@@ -319,6 +322,17 @@ export function mapHVACComponentEventToRow(
       Object.freeze([
         ...event.photoReferences,
       ]),
+    component_actions:
+      Object.freeze(
+        (
+          event.componentActions ?? []
+        ).map(
+          (action) =>
+            Object.freeze({
+              ...action,
+            }),
+        ),
+      ),
     notes: event.notes,
     created_at:
       event.createdAt,
@@ -352,6 +366,8 @@ export function mapHVACComponentEventRowToDomain(
       row.invoice_reference,
     photoReferences:
       row.photo_references ?? [],
+    componentActions:
+      row.component_actions ?? [],
     notes: row.notes,
     createdAt:
       row.created_at,

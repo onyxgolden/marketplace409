@@ -71,6 +71,9 @@ export const HVAC_COMPONENT_TYPES = [
   "igniter",
   "flame_sensor",
   "inducer_motor",
+  "filter_drier",
+  "refrigerant_line_set",
+  "low_voltage_wiring",
   "heat_exchanger",
 ] as const;
 
@@ -100,6 +103,36 @@ export const HVAC_COMPONENT_EVENT_TYPES = [
 
 export type HVACComponentEventType =
   typeof HVAC_COMPONENT_EVENT_TYPES[number];
+
+export const HVAC_EVENT_ACTION_TYPES = [
+  "diagnosed",
+  "inspected",
+  "cleaned",
+  "repaired",
+  "replaced",
+  "installed",
+  "removed",
+  "recharged",
+  "adjusted",
+  "tested",
+  "other",
+] as const;
+
+export type HVACEventActionType =
+  typeof HVAC_EVENT_ACTION_TYPES[number];
+
+export type HVACEventComponentAction =
+  Readonly<{
+    actionType: HVACEventActionType;
+    componentId: string | null;
+    componentType:
+      HVACComponentType | null;
+    description: string;
+    quantity: number | null;
+    unit: string | null;
+    allocatedCostCents:
+      number | null;
+  }>;
 
 export type HVACSystem = Readonly<{
   id: string;
@@ -159,9 +192,21 @@ export type HVACComponentEvent = Readonly<{
   vendorName: string | null;
   invoiceReference: string | null;
   photoReferences: readonly string[];
+  componentActions:
+    readonly HVACEventComponentAction[];
   notes: string | null;
   createdAt: string;
 }>;
+
+export type HVACComponentEventInput =
+  Omit<
+    HVACComponentEvent,
+    "componentActions"
+  > &
+  Readonly<{
+    componentActions?:
+      readonly HVACEventComponentAction[];
+  }>;
 
 function requireString(
   value: string,
@@ -504,8 +549,68 @@ export function createHVACComponent(
   });
 }
 
+export function createHVACEventComponentAction(
+  action: HVACEventComponentAction,
+): HVACEventComponentAction {
+  if (
+    !HVAC_EVENT_ACTION_TYPES.includes(
+      action.actionType,
+    )
+  ) {
+    throw new Error(
+      "HVAC event component action requires a supported action type.",
+    );
+  }
+
+  if (
+    action.componentType !== null &&
+    !HVAC_COMPONENT_TYPES.includes(
+      action.componentType,
+    )
+  ) {
+    throw new Error(
+      "HVAC event component action requires a supported component type.",
+    );
+  }
+
+  if (
+    action.quantity !== null &&
+    (
+      !Number.isFinite(action.quantity) ||
+      action.quantity < 0
+    )
+  ) {
+    throw new Error(
+      "HVAC event component action quantity must be a non-negative number.",
+    );
+  }
+
+  return Object.freeze({
+    actionType: action.actionType,
+    componentId:
+      optionalString(
+        action.componentId,
+      ),
+    componentType:
+      action.componentType,
+    description:
+      requireString(
+        action.description,
+        "HVAC event component action description is required.",
+      ),
+    quantity: action.quantity,
+    unit:
+      optionalString(action.unit),
+    allocatedCostCents:
+      optionalCents(
+        action.allocatedCostCents,
+        "HVAC event component action allocated cost must be a non-negative integer number of cents.",
+      ),
+  });
+}
+
 export function createHVACComponentEvent(
-  event: HVACComponentEvent,
+  event: HVACComponentEventInput,
 ): HVACComponentEvent {
   if (
     !HVAC_COMPONENT_EVENT_TYPES.includes(
@@ -576,6 +681,17 @@ export function createHVACComponentEvent(
             requireString(
               reference,
               "HVAC component event photo reference must not be empty.",
+            ),
+        ),
+      ),
+    componentActions:
+      Object.freeze(
+        (
+          event.componentActions ?? []
+        ).map(
+          (action) =>
+            createHVACEventComponentAction(
+              action,
             ),
         ),
       ),

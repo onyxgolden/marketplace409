@@ -553,6 +553,11 @@ export class PropertyHVACApplication {
       input?.photo_references ??
       [];
 
+    const componentActions =
+      input?.componentActions ??
+      input?.component_actions ??
+      [];
+
     return createHVACComponentEvent({
       id:
         input.id ??
@@ -642,6 +647,7 @@ export class PropertyHVACApplication {
         ),
       photoReferences:
         photos,
+      componentActions,
       notes:
         optionalString(
           readField(
