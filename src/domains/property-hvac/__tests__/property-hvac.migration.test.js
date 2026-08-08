@@ -16,7 +16,7 @@ const migration =
   readFileSync(
     resolve(
       process.cwd(),
-      "supabase/migrations/20260808_create_property_hvac.sql",
+      "supabase/migrations/20260808000400_create_property_hvac.sql",
     ),
     "utf8",
   )

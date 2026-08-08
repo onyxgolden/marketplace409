@@ -16,7 +16,7 @@ const migration =
   readFileSync(
     resolve(
       process.cwd(),
-      "supabase/migrations/20260808_create_property_condition_assessments.sql",
+      "supabase/migrations/20260808000100_create_property_condition_assessments.sql",
     ),
     "utf8",
   )
