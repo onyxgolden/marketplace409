@@ -46,6 +46,21 @@ describe(
                   workPerformed:
                     "Replaced capacitor",
                   costCents: 42500,
+                  componentActions: [
+                    {
+                      actionType:
+                        "replaced",
+                      componentId: null,
+                      componentType:
+                        "capacitor",
+                      description:
+                        "Replaced out-of-range capacitor.",
+                      quantity: 1,
+                      unit: "each",
+                      allocatedCostCents:
+                        null,
+                    },
+                  ],
                 },
                 {
                   id: "event_2",
@@ -85,6 +100,18 @@ describe(
 
         expect(markup).toContain(
           "Replaced capacitor",
+        );
+
+        expect(markup).toContain(
+          "Component actions",
+        );
+
+        expect(markup).toContain(
+          "Replaced out-of-range capacitor.",
+        );
+
+        expect(markup).toContain(
+          "Capacitor",
         );
 
         expect(markup).toContain(

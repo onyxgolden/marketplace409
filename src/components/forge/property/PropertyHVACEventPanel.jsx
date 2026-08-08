@@ -526,6 +526,59 @@ export default function PropertyHVACEventPanel({
                     )}
                   </div>
                 )}
+
+                {event.componentActions?.length >
+                  0 && (
+                  <div className="mt-4 border-t border-amber-100 pt-3">
+                    <div className="text-xs font-black uppercase tracking-wide text-amber-800">
+                      Component actions
+                    </div>
+
+                    <div className="mt-2 space-y-2">
+                      {event.componentActions.map(
+                        (
+                          action,
+                          index,
+                        ) => (
+                          <div
+                            key={`${action.actionType}-${action.description}-${index}`}
+                            className="rounded-lg bg-amber-50 px-3 py-2"
+                          >
+                            <div className="text-xs font-black text-slate-950">
+                              {displayValue(
+                                action.actionType,
+                              )}
+                              {" · "}
+                              {action.componentId
+                                ? componentName(
+                                    action.componentId,
+                                  )
+                                : action.componentType
+                                  ? displayValue(
+                                      action.componentType,
+                                    )
+                                  : "System action"}
+                            </div>
+
+                            <div className="mt-1 text-sm font-semibold text-slate-600">
+                              {action.description}
+                            </div>
+
+                            {action.quantity !=
+                              null && (
+                              <div className="mt-1 text-xs font-bold text-slate-500">
+                                {action.quantity}
+                                {action.unit
+                                  ? ` ${action.unit}`
+                                  : ""}
+                              </div>
+                            )}
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                )}
               </article>
             ))}
           </div>
