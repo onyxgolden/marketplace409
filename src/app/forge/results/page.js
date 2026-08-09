@@ -1,4 +1,3 @@
-import ForgeNavigationBar from "@/components/forge/ForgeNavigationBar";
 import { TransactionReviewCollection } from "../../../domains/transaction-review/transaction-review-collection";
 
 export default function Page() {
@@ -9,8 +8,6 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-slate-100 p-4 text-slate-950 lg:p-8">
       <div className="mx-auto max-w-[1600px]">
-        <ForgeNavigationBar />
-
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <h1 className="text-3xl font-black">Transaction Review Results</h1>
 

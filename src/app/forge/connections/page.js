@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { ForgeConnectionDashboardApplication } from "@/application/connection";
 import ForgeDashboardCard from "@/components/forge/ForgeDashboardCard";
-import ForgeNavigationBar from "@/components/forge/ForgeNavigationBar";
 import PlaidConnectButton from "@/components/forge/PlaidConnectButton";
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
@@ -95,7 +94,6 @@ export default function ConnectionPage() {
   return (
     <div className={forgeTheme.page}>
       <main className="mx-auto min-h-screen max-w-[1600px] space-y-6 p-4 lg:p-8">
-        <ForgeNavigationBar />
         <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm lg:p-8">
           <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
             <div>

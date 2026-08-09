@@ -1,7 +1,5 @@
 "use client";
 
-import Link from "next/link";
-
 export function normalizeApplicationFunctions(
   functions,
 ) {
@@ -61,8 +59,6 @@ export default function ApplicationShell({
   functions = [],
   activeFunctionId,
   onFunctionChange,
-  workspaceHref = "/forge",
-  workspaceLabel = "Workspace",
   utility = null,
   activeSurface,
 }) {
@@ -90,13 +86,6 @@ export default function ApplicationShell({
         <div className="mx-auto max-w-[1800px] px-4 py-4 lg:px-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-4">
-              <Link
-                href={workspaceHref}
-                className="shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-              >
-                ← {workspaceLabel}
-              </Link>
-
               <div className="min-w-0">
                 <div className="text-xs font-black uppercase tracking-[0.2em] text-sky-700">
                   FORGE Application

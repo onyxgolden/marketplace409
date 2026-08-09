@@ -61,7 +61,7 @@ describe(
           'data-active-function-surface="transactions"',
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "← Workspace",
         );
 
