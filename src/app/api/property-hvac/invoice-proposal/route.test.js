@@ -294,6 +294,52 @@ describe(
     );
 
     it(
+      "preserves evidence when extraction detaches its buffer",
+      async () => {
+        extractInvoice.mockImplementation(
+          async ({ bytes }) => {
+            structuredClone(
+              bytes,
+              { transfer: [bytes] },
+            );
+
+            return {
+              text: "Readable HVAC invoice text",
+              totalPages: 1,
+              extractionMethod: "native_pdf",
+              requiresOCR: false,
+            };
+          },
+        );
+
+        preserveEvidence.mockImplementation(
+          async ({ bytes }) => {
+            expect(
+              Array.from(
+                new Uint8Array(bytes),
+              ),
+            ).toEqual([
+              37,
+              80,
+              68,
+              70,
+            ]);
+
+            return evidence();
+          },
+        );
+
+        const response = await POST(
+          requestWith(invoice()),
+        );
+
+        expect(response.status).toBe(200);
+        expect(preserveEvidence)
+          .toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it(
       "uses Vision OCR for scanned PDFs and returns a proposal",
       async () => {
         extractInvoice

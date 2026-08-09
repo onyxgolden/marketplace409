@@ -81,8 +81,15 @@ export async function POST(request) {
       );
     }
 
-    const bytes =
+    const uploadedBytes =
       await invoice.arrayBuffer();
+
+    // Consumers may detach their input buffer.
+    const extractionBytes =
+      uploadedBytes.slice(0);
+
+    const evidenceBytes =
+      uploadedBytes.slice(0);
 
     const mimeType =
       String(
@@ -108,7 +115,7 @@ export async function POST(request) {
       mimeType ===
         PDF_MIME_TYPE
         ? await extractHVACInvoiceText({
-            bytes,
+            bytes: extractionBytes,
             contentType:
               mimeType,
           })
@@ -130,7 +137,7 @@ export async function POST(request) {
         const ocr =
           await new GoogleCloudVisionOCRAdapter()
             .extractText({
-              bytes,
+              bytes: extractionBytes,
               mimeType,
             });
 
@@ -154,7 +161,7 @@ export async function POST(request) {
             propertyId,
             hvacSystemId:
               systemId,
-            bytes,
+            bytes: evidenceBytes,
             originalFilename:
               invoice.name ||
               "hvac-invoice.pdf",
@@ -193,7 +200,7 @@ export async function POST(request) {
             propertyId,
             hvacSystemId:
               systemId,
-            bytes,
+            bytes: evidenceBytes,
             originalFilename:
               invoice.name ||
               "hvac-invoice.pdf",
@@ -241,7 +248,7 @@ export async function POST(request) {
         propertyId,
         hvacSystemId:
           systemId,
-        bytes,
+        bytes: evidenceBytes,
         originalFilename:
           invoice.name ||
           "hvac-invoice.pdf",
