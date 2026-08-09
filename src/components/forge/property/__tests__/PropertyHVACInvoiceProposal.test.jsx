@@ -18,7 +18,7 @@ describe(
   "PropertyHVACEventPanel invoice proposals",
   () => {
     it(
-      "renders an active PDF invoice control",
+      "renders an active invoice and photo control",
       () => {
         const markup =
           renderToStaticMarkup(
@@ -28,7 +28,7 @@ describe(
           );
 
         expect(markup).toContain(
-          "Add invoice PDF",
+          "Add invoice or photo",
         );
 
         expect(markup).toContain(
@@ -36,7 +36,7 @@ describe(
         );
 
         expect(markup).toContain(
-          "application/pdf,.pdf",
+          "application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png",
         );
 
         expect(markup).not.toContain(

@@ -11,10 +11,23 @@ import {
 } from "@/application/property-hvac/parseHVACInvoiceText";
 
 import {
+  GoogleCloudVisionOCRAdapter,
+} from "@/infrastructure/ocr/GoogleCloudVisionOCRAdapter";
+
+import {
   createAuthenticatedPropertyEvidenceApplication,
 } from "@/lib/supabase/createAuthenticatedPropertyEvidenceApplication";
 
 export const runtime = "nodejs";
+
+const PDF_MIME_TYPE =
+  "application/pdf";
+
+const OCR_IMAGE_MIME_TYPES =
+  Object.freeze([
+    "image/jpeg",
+    "image/png",
+  ]);
 
 export async function POST(request) {
   try {
@@ -71,12 +84,41 @@ export async function POST(request) {
     const bytes =
       await invoice.arrayBuffer();
 
+    const mimeType =
+      String(
+        invoice.type || "",
+      )
+        .trim()
+        .toLowerCase();
+
+    if (
+      mimeType !==
+        PDF_MIME_TYPE &&
+      !OCR_IMAGE_MIME_TYPES
+        .includes(
+          mimeType,
+        )
+    ) {
+      return badRequest(
+        "An HVAC invoice must be a PDF, JPEG, or PNG file.",
+      );
+    }
+
     const extraction =
-      await extractHVACInvoiceText({
-        bytes,
-        contentType:
-          invoice.type,
-      });
+      mimeType ===
+        PDF_MIME_TYPE
+        ? await extractHVACInvoiceText({
+            bytes,
+            contentType:
+              mimeType,
+          })
+        : {
+            text: "",
+            totalPages: 1,
+            extractionMethod:
+              "ocr_required",
+            requiresOCR: true,
+          };
 
     const {
       application,
@@ -84,45 +126,107 @@ export async function POST(request) {
     } = authenticatedApplication;
 
     if (extraction.requiresOCR) {
-      const evidence =
-        await application.preserve({
-          ownerId:
-            user.id,
-          propertyId,
-          hvacSystemId:
-            systemId,
-          bytes,
-          originalFilename:
-            invoice.name ||
-            "hvac-invoice.pdf",
-          mimeType:
-            invoice.type,
-          extractionMethod:
-            "pending",
-          parserVersion:
-            null,
-          reviewStatus:
-            "pending_review",
-        });
+      try {
+        const ocr =
+          await new GoogleCloudVisionOCRAdapter()
+            .extractText({
+              bytes,
+              mimeType,
+            });
 
-      return NextResponse.json(
-        {
-          success: false,
-          ocrRequired: true,
-          extractionMethod:
-            extraction
-              .extractionMethod,
+        if (
+          ocr.text.length < 40
+        ) {
+          throw new Error(
+            "Google Vision did not find enough readable invoice text.",
+          );
+        }
+
+        const proposal =
+          parseHVACInvoiceText(
+            ocr.text,
+          );
+
+        const evidence =
+          await application.preserve({
+            ownerId:
+              user.id,
+            propertyId,
+            hvacSystemId:
+              systemId,
+            bytes,
+            originalFilename:
+              invoice.name ||
+              "hvac-invoice.pdf",
+            mimeType,
+            extractionMethod:
+              ocr.extractionMethod,
+            parserVersion:
+              proposal.parserVersion,
+            reviewStatus:
+              "pending_review",
+          });
+
+        return NextResponse.json({
+          success: true,
+          proposal,
           evidence:
             evidenceReference(
               evidence,
             ),
-          error:
-            "This PDF does not contain enough readable text. OCR is required.",
-        },
-        {
-          status: 422,
-        },
-      );
+          extraction: {
+            method:
+              ocr.extractionMethod,
+            totalPages:
+              ocr.totalPages,
+            processedPages:
+              ocr.processedPages,
+            truncated:
+              ocr.truncated,
+          },
+        });
+      } catch (ocrError) {
+        const evidence =
+          await application.preserve({
+            ownerId:
+              user.id,
+            propertyId,
+            hvacSystemId:
+              systemId,
+            bytes,
+            originalFilename:
+              invoice.name ||
+              "hvac-invoice.pdf",
+            mimeType,
+            extractionMethod:
+              "pending",
+            parserVersion:
+              null,
+            reviewStatus:
+              "extraction_failed",
+          });
+
+        return NextResponse.json(
+          {
+            success: false,
+            ocrRequired: true,
+            extractionMethod:
+              "google_cloud_vision",
+            evidence:
+              evidenceReference(
+                evidence,
+              ),
+            error:
+              ocrError instanceof
+                Error
+                ? ocrError.message
+                : "Google Vision could not read this invoice.",
+          },
+          {
+            status: 422,
+          },
+        );
+      }
     }
 
     const proposal =
@@ -165,6 +269,9 @@ export async function POST(request) {
             .extractionMethod,
         totalPages:
           extraction.totalPages,
+        processedPages:
+          extraction.totalPages,
+        truncated: false,
       },
     });
   } catch (error) {

@@ -11,6 +11,7 @@ const {
   extractInvoice,
   parseInvoice,
   preserveEvidence,
+  extractOCR,
 } = vi.hoisted(() => ({
   authenticate:
     vi.fn(),
@@ -20,6 +21,8 @@ const {
     vi.fn(),
   preserveEvidence:
     vi.fn(),
+  extractOCR:
+    vi.fn(),
 }));
 
 vi.mock(
@@ -27,6 +30,17 @@ vi.mock(
   () => ({
     createAuthenticatedPropertyEvidenceApplication:
       authenticate,
+  }),
+);
+
+vi.mock(
+  "@/infrastructure/ocr/GoogleCloudVisionOCRAdapter",
+  () => ({
+    GoogleCloudVisionOCRAdapter:
+      class {
+        extractText =
+          extractOCR;
+      },
   }),
 );
 
@@ -96,6 +110,23 @@ function invoice() {
   };
 }
 
+function image() {
+  return {
+    name:
+      "HVAC service photo.jpg",
+    type:
+      "image/jpeg",
+    arrayBuffer: vi.fn()
+      .mockResolvedValue(
+        new Uint8Array([
+          255,
+          216,
+          255,
+        ]).buffer,
+      ),
+  };
+}
+
 function evidence() {
   return {
     id:
@@ -160,6 +191,19 @@ describe(
         .mockResolvedValue(
           evidence(),
         );
+
+      extractOCR
+        .mockResolvedValue({
+          text:
+            "Readable OCR HVAC invoice text with enough characters to parse safely.",
+          extractionMethod:
+            "google_cloud_vision",
+          mimeType:
+            "application/pdf",
+          processedPages: 1,
+          totalPages: 1,
+          truncated: false,
+        });
     });
 
     it(
@@ -250,7 +294,7 @@ describe(
     );
 
     it(
-      "preserves OCR-required invoices without creating a proposal",
+      "uses Vision OCR for scanned PDFs and returns a proposal",
       async () => {
         extractInvoice
           .mockResolvedValue({
@@ -269,6 +313,92 @@ describe(
           );
 
         expect(response.status).toBe(
+          200,
+        );
+
+        expect(
+          await response.json(),
+        ).toMatchObject({
+          success: true,
+          evidence: {
+            id:
+              "property_evidence_1",
+          },
+          extraction: {
+            method:
+              "google_cloud_vision",
+            processedPages: 1,
+            totalPages: 1,
+            truncated: false,
+          },
+        });
+
+        expect(
+          extractOCR,
+        ).toHaveBeenCalledWith({
+          bytes:
+            expect.any(
+              ArrayBuffer,
+            ),
+          mimeType:
+            "application/pdf",
+        });
+
+        expect(
+          parseInvoice,
+        ).toHaveBeenCalledWith(
+          "Readable OCR HVAC invoice text with enough characters to parse safely.",
+        );
+
+        expect(
+          preserveEvidence,
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({
+            extractionMethod:
+              "google_cloud_vision",
+            parserVersion:
+              "hvac-invoice-v1",
+            reviewStatus:
+              "pending_review",
+          }),
+        );
+      },
+    );
+
+    it(
+      "preserves failed OCR evidence without creating a proposal",
+      async () => {
+        extractInvoice
+          .mockResolvedValue({
+            text: "",
+            totalPages: 1,
+            extractionMethod:
+              "ocr_required",
+            requiresOCR: true,
+          });
+
+        extractOCR
+          .mockRejectedValue(
+            new Error(
+              "Vision service unavailable.",
+            ),
+          );
+
+        preserveEvidence
+          .mockResolvedValue({
+            ...evidence(),
+            reviewStatus:
+              "extraction_failed",
+          });
+
+        const response =
+          await POST(
+            requestWith(
+              invoice(),
+            ),
+          );
+
+        expect(response.status).toBe(
           422,
         );
 
@@ -277,9 +407,15 @@ describe(
         ).toMatchObject({
           success: false,
           ocrRequired: true,
+          extractionMethod:
+            "google_cloud_vision",
+          error:
+            "Vision service unavailable.",
           evidence: {
             id:
               "property_evidence_1",
+            reviewStatus:
+              "extraction_failed",
           },
         });
 
@@ -291,12 +427,58 @@ describe(
               "pending",
             parserVersion:
               null,
+            reviewStatus:
+              "extraction_failed",
           }),
         );
 
         expect(
           parseInvoice,
         ).not.toHaveBeenCalled();
+      },
+    );
+
+    it(
+      "uses Vision directly for JPEG invoice photographs",
+      async () => {
+        const response =
+          await POST(
+            requestWith(
+              image(),
+            ),
+          );
+
+        expect(response.status).toBe(
+          200,
+        );
+
+        expect(
+          extractInvoice,
+        ).not.toHaveBeenCalled();
+
+        expect(
+          extractOCR,
+        ).toHaveBeenCalledWith({
+          bytes:
+            expect.any(
+              ArrayBuffer,
+            ),
+          mimeType:
+            "image/jpeg",
+        });
+
+        expect(
+          preserveEvidence,
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({
+            originalFilename:
+              "HVAC service photo.jpg",
+            mimeType:
+              "image/jpeg",
+            extractionMethod:
+              "google_cloud_vision",
+          }),
+        );
       },
     );
 

@@ -285,7 +285,7 @@ export default function PropertyHVACEventPanel({
 
       if (!payload?.proposal) {
         throw new Error(
-          "The HVAC invoice did not return a proposal.",
+          "The HVAC invoice or photo did not return a proposal.",
         );
       }
 
@@ -442,11 +442,11 @@ export default function PropertyHVACEventPanel({
         >
           {importingInvoice
             ? "Reading invoice..."
-            : "Add invoice PDF"}
+            : "Add invoice or photo"}
 
           <input
             type="file"
-            accept="application/pdf,.pdf"
+            accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png"
             disabled={importingInvoice}
             onChange={(event) => {
               const file =

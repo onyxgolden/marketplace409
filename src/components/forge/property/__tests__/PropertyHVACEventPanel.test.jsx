@@ -135,7 +135,7 @@ describe(
         );
 
         expect(markup).toContain(
-          "Add invoice PDF",
+          "Add invoice or photo",
         );
       },
     );
