@@ -34,27 +34,6 @@ vi.mock(
 );
 
 vi.mock(
-  "@/components/forge/ForgeSystemHealth",
-  () => ({
-    default: () => null,
-  }),
-);
-
-vi.mock(
-  "@/components/forge/ForgeSystemStatus",
-  () => ({
-    default: () => null,
-  }),
-);
-
-vi.mock(
-  "@/components/forge/TransactionReviewContainer",
-  () => ({
-    default: () => null,
-  }),
-);
-
-vi.mock(
   "@/components/forge/workspace/ForgeWorkspaceTile",
   () => ({
     default: () => null,

@@ -46,21 +46,19 @@ export default function ForgeWorkspaceDesktop({
 
   return (
     <section>
-      <header className="mb-6 rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 px-6 py-5 text-white shadow-2xl lg:px-8 lg:py-6">
+      <header className="mb-6 rounded-3xl border border-slate-800 bg-slate-950 px-6 py-5 text-white shadow-lg lg:px-8">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <div className="text-xs font-black uppercase tracking-[0.3em] text-amber-400">
-              FORGE Workbench
+              FORGE Workspace
             </div>
 
-            <h1 className="mt-2 text-3xl font-black tracking-tight lg:text-5xl">
-              Your business operating surface
+            <h1 className="mt-2 text-3xl font-black tracking-tight">
+              Choose an application
             </h1>
 
             <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300 lg:text-base">
-              Live financial position, transaction review, portfolio state,
-              system intelligence, and pending actions in one coordinated
-              environment.
+              Review current operating signals, then open the application that owns the work.
             </p>
           </div>
 
@@ -80,29 +78,52 @@ export default function ForgeWorkspaceDesktop({
         </div>
       </header>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(360px,0.8fr)]">
-        <div className="grid gap-6 md:grid-cols-2">
-          {workspaceRegistry
-            .list()
-            .map((workspaceModule) => (
-              <Fragment
-                key={
-                  workspaceModule.moduleIdentity
-                }
-              >
-                {workspaceModule.renderTile(
-                  workspaceContext,
-                )}
-              </Fragment>
-            ))}
-        </div>
+      <details
+        data-workspace-information-center
+        className="mb-6 rounded-2xl border border-slate-200 bg-white shadow-sm"
+      >
+        <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-5 py-4">
+          <div>
+            <div className="text-sm font-black text-slate-950">
+              Information center
+            </div>
 
-        <ForgeInformationCenter
-          alerts={alertItems}
-          insights={insightItems}
-          recentActivities={recentActivities}
-          setView={setView}
-        />
+            <div className="mt-1 text-xs font-semibold text-slate-500">
+              Alerts, insights, activity, and quick actions
+            </div>
+          </div>
+
+          <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700">
+            {(alertItems || []).length} alerts
+          </div>
+        </summary>
+
+        <div className="border-t border-slate-200 p-4">
+          <ForgeInformationCenter
+            alerts={alertItems}
+            insights={insightItems}
+            recentActivities={
+              recentActivities
+            }
+            setView={setView}
+          />
+        </div>
+      </details>
+
+      <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+        {workspaceRegistry
+          .list()
+          .map((workspaceModule) => (
+            <Fragment
+              key={
+                workspaceModule.moduleIdentity
+              }
+            >
+              {workspaceModule.renderTile(
+                workspaceContext,
+              )}
+            </Fragment>
+          ))}
       </div>
     </section>
   );

@@ -1,35 +1,68 @@
-import ForgeSystemHealth from "@/components/forge/ForgeSystemHealth";
-import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import ForgeWorkspaceTile from "@/components/forge/workspace/ForgeWorkspaceTile";
 import { WorkspaceModule } from "@/components/forge/workspace/composition/WorkspaceModule";
+
+function SystemMetric({
+  label,
+  value,
+  detail,
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
+
+      <div className="mt-2 text-2xl font-black text-slate-950">
+        {value}
+      </div>
+
+      <div className="mt-1 text-sm text-slate-600">
+        {detail}
+      </div>
+    </div>
+  );
+}
 
 function renderForgeOperatingSystemWorkspaceTile({
   systemHealthItems,
   systemStatusItems,
 }) {
+  const monitoredRuntimeCount =
+    Array.isArray(systemStatusItems)
+      ? systemStatusItems.length
+      : 0;
+
+  const healthSignalCount =
+    Array.isArray(systemHealthItems)
+      ? systemHealthItems.length
+      : 0;
+
   return (
     <ForgeWorkspaceTile
       eyebrow="Operating System"
       title="FORGE OS"
-      detail="Runtime status and system health supporting the authenticated workbench."
+      detail="Runtime awareness for the services supporting this authenticated workspace."
       status="Active"
       span="wide"
     >
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-          <ForgeSystemStatus
-            statusItems={systemStatusItems}
-            variant="embedded"
-          />
-        </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <SystemMetric
+          label="Runtime services"
+          value={monitoredRuntimeCount}
+          detail="Registered status signals"
+        />
 
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-          <ForgeSystemHealth
-            healthItems={systemHealthItems}
-            variant="embedded"
-          />
-        </div>
+        <SystemMetric
+          label="Health checks"
+          value={healthSignalCount}
+          detail="Monitored system signals"
+        />
       </div>
+
+      <p className="mt-4 text-sm leading-6 text-slate-600">
+        Detailed diagnostics remain outside the
+        application-selection workspace.
+      </p>
     </ForgeWorkspaceTile>
   );
 }

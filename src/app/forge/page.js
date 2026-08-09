@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 
 import ForgeDashboardClient from "@/components/forge/ForgeDashboardClient";
-import ForgeNavigationBar from "@/components/forge/ForgeNavigationBar";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 
 export const dynamic = "force-dynamic";
@@ -68,17 +67,13 @@ export default async function ForgePage() {
   };
 
   return (
-    <div>
-      <section className="mx-auto max-w-[1600px] px-4 pt-4 lg:px-8 lg:pt-6">
-        <ForgeNavigationBar />
-      </section>
-
-      <ForgeDashboardClient
-        initialDashboardIntelligence={JSON.parse(
-          JSON.stringify(initialDashboardIntelligence),
-        )}
-        initialReadModels={JSON.parse(JSON.stringify(initialReadModels))}
-      />
-    </div>
+    <ForgeDashboardClient
+      initialDashboardIntelligence={JSON.parse(
+        JSON.stringify(initialDashboardIntelligence),
+      )}
+      initialReadModels={JSON.parse(
+        JSON.stringify(initialReadModels),
+      )}
+    />
   );
 }
