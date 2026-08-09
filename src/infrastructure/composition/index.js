@@ -69,3 +69,9 @@ export {
   createPropertyEvidenceRepository,
   PropertyEvidenceRepositoryStorage,
 } from "./createPropertyEvidenceRepository.js";
+
+export {
+  createLazyPropertyOperatingObligationRepository,
+  createPropertyOperatingObligationRepository,
+  PropertyOperatingObligationRepositoryStorage,
+} from "./createPropertyOperatingObligationRepository.js";
