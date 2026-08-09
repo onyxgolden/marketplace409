@@ -518,6 +518,7 @@ export class PropertyOperatingObligationApplication {
     servicePeriodStart,
     servicePeriodEnd,
     annualAmountCents,
+    obligationType,
     verificationStatus =
       "document_verified",
     evidenceId,
@@ -559,6 +560,11 @@ export class PropertyOperatingObligationApplication {
             undefined
             ? existing.annualAmountCents
             : annualAmountCents,
+        obligationType:
+          obligationType ===
+            undefined
+            ? existing.obligationType
+            : obligationType,
         status: "active",
         verificationStatus,
         recognitionStatus:

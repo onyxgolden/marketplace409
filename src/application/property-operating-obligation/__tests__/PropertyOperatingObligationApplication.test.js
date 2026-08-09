@@ -354,7 +354,7 @@ describe(
         const pending =
           obligation({
             obligationType:
-              "fire_insurance",
+              "bundled_fire_windstorm_insurance",
             servicePeriodStart:
               null,
             servicePeriodEnd:
@@ -391,6 +391,8 @@ describe(
                 "2027-03-19",
               annualAmountCents:
                 41945,
+              obligationType:
+                "fire_insurance",
               providerName:
                 "Farm Bureau",
               providerReference:
@@ -413,6 +415,8 @@ describe(
             "document_verified",
           recognitionStatus:
             "accrual_ready",
+          obligationType:
+            "fire_insurance",
           providerName:
             "Farm Bureau",
           providerReference:

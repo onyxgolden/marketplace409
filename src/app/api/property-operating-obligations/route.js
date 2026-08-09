@@ -296,6 +296,7 @@ export async function POST(request) {
       for (
         const field of [
           "evidenceId",
+          "obligationType",
           "providerName",
           "providerReference",
           "notes",

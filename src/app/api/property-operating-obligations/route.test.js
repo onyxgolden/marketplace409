@@ -374,6 +374,8 @@ describe(
                   "2027-03-19",
                 annualAmountCents:
                   41945,
+                obligationType:
+                  "fire_insurance",
                 providerName:
                   "Farm Bureau",
                 providerReference:
@@ -397,6 +399,8 @@ describe(
             "2027-03-19",
           annualAmountCents:
             41945,
+          obligationType:
+            "fire_insurance",
           providerName:
             "Farm Bureau",
           providerReference:

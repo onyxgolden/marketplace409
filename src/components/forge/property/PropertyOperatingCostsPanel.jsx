@@ -89,6 +89,7 @@ export function canVerifyCoverage(
 export function buildCoverageVerificationPayload({
   obligation,
   annualPremium,
+  obligationType,
   servicePeriodStart,
   servicePeriodEnd,
   providerName,
@@ -116,6 +117,7 @@ export function buildCoverageVerificationPayload({
       Math.round(
         amount * 100,
       ),
+    obligationType,
     servicePeriodStart,
     servicePeriodEnd,
     providerName,
@@ -128,6 +130,12 @@ function CoverageVerificationForm({
   obligation,
   onVerified,
 }) {
+  const [
+    obligationType,
+    setObligationType,
+  ] = useState(
+    obligation.obligationType,
+  );
   const [
     annualPremium,
     setAnnualPremium,
@@ -208,6 +216,7 @@ function CoverageVerificationForm({
                 buildCoverageVerificationPayload({
                   obligation,
                   annualPremium,
+                  obligationType,
                   servicePeriodStart,
                   servicePeriodEnd,
                   providerName,
@@ -248,6 +257,38 @@ function CoverageVerificationForm({
         Enter facts from the policy declaration. The premium accrues into NOI; the imported payment remains unchanged in cash flow.
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label className="text-xs font-bold text-slate-700">
+          Verified policy type
+          <select
+            required
+            value={obligationType}
+            onChange={(event) =>
+              setObligationType(
+                event.target.value,
+              )
+            }
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+          >
+            <option value="fire_insurance">
+              Fire insurance
+            </option>
+            <option value="windstorm_insurance">
+              Windstorm insurance
+            </option>
+            <option value="flood_insurance">
+              Flood insurance
+            </option>
+            <option value="bundled_fire_windstorm_insurance">
+              Fire and windstorm insurance
+            </option>
+            <option value="business_liability_insurance">
+              Business liability insurance
+            </option>
+            <option value="other_insurance">
+              Other insurance
+            </option>
+          </select>
+        </label>
         <label className="text-xs font-bold text-slate-700">
           Annual policy premium
           <input
