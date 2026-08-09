@@ -21,41 +21,23 @@ vi.mock(
 );
 
 vi.mock(
-  "@/components/forge/property/PropertyPortfolioOperationsPanel",
-  () => ({
-    default: () => (
-      <div data-property-portfolio-operations>
-        Expanded property operations
-      </div>
-    ),
-  }),
-);
-
-vi.mock(
   "@/components/forge/workspace/ForgeWorkspaceTile",
   () => ({
     default: ({
       children,
+      href,
+      actionLabel,
       expandedChildren,
-      expandLabel,
-      collapseLabel,
     }) => (
-      <section data-workspace-tile>
-        <div data-compact-content>
-          {children}
-        </div>
-
-        <div data-expanded-content>
-          {expandedChildren}
-        </div>
-
-        <div>
-          {expandLabel}
-        </div>
-
-        <div>
-          {collapseLabel}
-        </div>
+      <section
+        data-workspace-tile
+        data-href={href}
+        data-action-label={
+          actionLabel
+        }
+      >
+        {children}
+        {expandedChildren}
       </section>
     ),
   }),
@@ -69,7 +51,7 @@ describe(
   "PropertyPortfolioWorkspaceModule",
   () => {
     it(
-      "composes compact portfolio and expanded property operations",
+      "composes a launch-only Property application tile",
       () => {
         const markup =
           renderToStaticMarkup(
@@ -89,23 +71,19 @@ describe(
         );
 
         expect(markup).toContain(
-          "Compact portfolio summary",
+          'data-href="/forge/property"',
         );
 
         expect(markup).toContain(
+          'data-action-label="Open property application"',
+        );
+
+        expect(markup).not.toContain(
           "data-property-portfolio-operations",
         );
 
-        expect(markup).toContain(
-          "Expanded property operations",
-        );
-
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Manage property records",
-        );
-
-        expect(markup).toContain(
-          "Show portfolio summary",
         );
       },
     );
