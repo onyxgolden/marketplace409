@@ -2,6 +2,10 @@ import {
   createPropertyOperatingObligation,
 } from "@/domains/property-operating-obligation/property-operating-obligation.types";
 
+import {
+  previewPropertyOperatingObligationImport,
+} from "./parsePropertyOperatingObligationCsv.js";
+
 const MILLISECONDS_PER_DAY =
   24 * 60 * 60 * 1000;
 
@@ -507,6 +511,71 @@ export class PropertyOperatingObligationApplication {
           requiredOwnerId,
       },
     );
+  }
+
+  previewSpreadsheet({
+    csv,
+    properties,
+    financialEvents,
+    taxServiceYear = 2025,
+  }) {
+    return previewPropertyOperatingObligationImport({
+      csv,
+      properties,
+      financialEvents,
+      taxServiceYear,
+      clock: this.clock,
+    });
+  }
+
+  async importSpreadsheet({
+    csv,
+    properties,
+    financialEvents,
+    taxServiceYear = 2025,
+    ownerId,
+  }) {
+    const requiredOwnerId =
+      requireIdentifier(
+        ownerId,
+        "Property operating obligation owner id is required.",
+      );
+
+    const preview =
+      this.previewSpreadsheet({
+        csv,
+        properties,
+        financialEvents,
+        taxServiceYear,
+      });
+
+    if (!preview.valid) {
+      return Object.freeze({
+        ...preview,
+        importedCount: 0,
+        persistedObligations:
+          Object.freeze([]),
+      });
+    }
+
+    const persistedObligations =
+      await this.repository.saveMany(
+        preview.obligations,
+        {
+          ownerId:
+            requiredOwnerId,
+        },
+      );
+
+    return Object.freeze({
+      ...preview,
+      importedCount:
+        persistedObligations.length,
+      persistedObligations:
+        Object.freeze([
+          ...persistedObligations,
+        ]),
+    });
   }
 
   async buildAccrualProjection({

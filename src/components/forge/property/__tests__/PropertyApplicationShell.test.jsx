@@ -36,6 +36,15 @@ vi.mock(
 );
 
 vi.mock(
+  "../PropertyOperatingCostsPanel",
+  () => ({
+    default: function MockOperatingCosts() {
+      return <section data-operating-costs-function>Operating costs function</section>;
+    },
+  }),
+);
+
+vi.mock(
   "../PropertyHVACPanel",
   () => ({
     default: function MockHVAC() {
@@ -85,6 +94,10 @@ describe(
             id: "hvac",
             label: "HVAC & Evidence",
           },
+          {
+            id: "operating-costs",
+            label: "Taxes & Insurance",
+          },
         ]);
       },
     );
@@ -101,6 +114,10 @@ describe(
       [
         "hvac",
         "data-hvac-function",
+      ],
+      [
+        "operating-costs",
+        "data-operating-costs-function",
       ],
     ])(
       "renders only the %s function surface",
@@ -125,6 +142,7 @@ describe(
           "data-valuations-function",
           "data-condition-function",
           "data-hvac-function",
+          "data-operating-costs-function",
         ];
 
         for (

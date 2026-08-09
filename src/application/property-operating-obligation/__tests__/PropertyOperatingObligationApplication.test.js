@@ -430,3 +430,128 @@ describe(
     );
   },
 );
+
+describe(
+  "PropertyOperatingObligationApplication spreadsheet import",
+  () => {
+    const csv = [
+      "DATE,PROPERTY,DESCRIPTION,INCOME,EXPENSE",
+      "1/6/2026,1214 WAGNER,Property Tax (COUNTY),,1000",
+    ].join("\n");
+
+    const properties = [
+      {
+        id: "1214-wagner",
+        address: "1214 Wagner",
+      },
+    ];
+
+    it(
+      "previews without persistence",
+      () => {
+        const repository = {
+          saveMany: vi.fn(),
+        };
+        const application =
+          new PropertyOperatingObligationApplication({
+            repository,
+            clock: () =>
+              "2026-08-09T16:00:00.000Z",
+          });
+
+        const preview =
+          application.previewSpreadsheet({
+            csv,
+            properties,
+            financialEvents: [],
+          });
+
+        expect(preview.valid).toBe(
+          true,
+        );
+        expect(
+          preview.obligationCount,
+        ).toBe(1);
+        expect(
+          repository.saveMany,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it(
+      "imports a valid preview through authenticated owner authority",
+      async () => {
+        const repository = {
+          saveMany: vi.fn(
+            async (obligations) =>
+              obligations,
+          ),
+        };
+        const application =
+          new PropertyOperatingObligationApplication({
+            repository,
+            clock: () =>
+              "2026-08-09T16:00:00.000Z",
+          });
+
+        const result =
+          await application
+            .importSpreadsheet({
+              csv,
+              properties,
+              financialEvents: [],
+              ownerId: " owner_1 ",
+            });
+
+        expect(
+          repository.saveMany,
+        ).toHaveBeenCalledWith(
+          result.obligations,
+          {
+            ownerId: "owner_1",
+          },
+        );
+        expect(
+          result.importedCount,
+        ).toBe(1);
+        expect(
+          Object.isFrozen(
+            result.persistedObligations,
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      "does not persist an invalid preview",
+      async () => {
+        const repository = {
+          saveMany: vi.fn(),
+        };
+        const application =
+          new PropertyOperatingObligationApplication({
+            repository,
+          });
+
+        const result =
+          await application
+            .importSpreadsheet({
+              csv,
+              properties: [],
+              financialEvents: [],
+              ownerId: "owner_1",
+            });
+
+        expect(result.valid).toBe(
+          false,
+        );
+        expect(
+          result.importedCount,
+        ).toBe(0);
+        expect(
+          repository.saveMany,
+        ).not.toHaveBeenCalled();
+      },
+    );
+  },
+);

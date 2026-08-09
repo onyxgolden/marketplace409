@@ -2,6 +2,7 @@
 
 import PropertyConditionAssessmentPanel from "./PropertyConditionAssessmentPanel";
 import PropertyHVACPanel from "./PropertyHVACPanel";
+import PropertyOperatingCostsPanel from "./PropertyOperatingCostsPanel";
 import PropertyValuationPanel from "./PropertyValuationPanel";
 import ApplicationShell from "@/components/forge/workspace/ApplicationShell";
 
@@ -19,6 +20,10 @@ export const PROPERTY_FUNCTIONS =
       id: "hvac",
       label: "HVAC & Evidence",
     }),
+    Object.freeze({
+      id: "operating-costs",
+      label: "Taxes & Insurance",
+    }),
   ]);
 
 export function buildPropertyActiveSurface({
@@ -33,6 +38,11 @@ export function buildPropertyActiveSurface({
     case "hvac":
       return (
         <PropertyHVACPanel />
+      );
+
+    case "operating-costs":
+      return (
+        <PropertyOperatingCostsPanel />
       );
 
     case "valuations":
@@ -55,7 +65,7 @@ export default function PropertyApplicationShell({
   return (
     <ApplicationShell
       applicationName="Property"
-      applicationDescription="Property value, standardized condition history, HVAC systems, service events, and private evidence."
+      applicationDescription="Property value, standardized condition history, operating obligations, HVAC systems, service events, and private evidence."
       functions={PROPERTY_FUNCTIONS}
       activeFunctionId={
         activeFunctionId
