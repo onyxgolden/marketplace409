@@ -10,6 +10,32 @@ import {
 } from "@/application/financial/FinancialPeriodApplication";
 import FinancialApplicationShell from "@/components/forge/financial/FinancialApplicationShell";
 
+async function loadPropertyOperatingObligations() {
+  try {
+    const response =
+      await fetch(
+        "/api/property-operating-obligations",
+      );
+
+    const payload =
+      await response.json();
+
+    if (
+      !response.ok ||
+      payload?.success !== true ||
+      !Array.isArray(
+        payload.obligations,
+      )
+    ) {
+      return [];
+    }
+
+    return payload.obligations;
+  } catch {
+    return [];
+  }
+}
+
 function cents(value) {
   return Number(value || 0);
 }
@@ -81,18 +107,29 @@ export default function FinancialPage() {
     setSelectedPeriodKey,
   ] = useState(null);
 
+  const [
+    propertyOperatingObligations,
+    setPropertyOperatingObligations,
+  ] = useState([]);
+
+
   useEffect(() => {
     async function load() {
       const [
         result,
         intelligenceResult,
+        obligations,
       ] = await Promise.all([
         ForgeFinancialDashboardApplication.load(),
         ForgeDashboardApplication.loadDashboardIntelligence(),
+        loadPropertyOperatingObligations(),
       ]);
 
       setViewModel(result);
       setIntelligenceModel(intelligenceResult);
+      setPropertyOperatingObligations(
+        obligations,
+      );
     }
 
     load();
@@ -127,6 +164,8 @@ export default function FinancialPage() {
     FinancialPeriodApplication
       .buildModel({
         transactions,
+        obligations:
+          propertyOperatingObligations,
         requestedPeriodKey:
           selectedPeriodKey,
       });
@@ -239,6 +278,13 @@ export default function FinancialPage() {
             value: portfolioMoney(periodPortfolio.expenses),
           },
           {
+            label: "Accrued Property Costs",
+            value: portfolioMoney(
+              periodPortfolio
+                .accruedOperatingExpenses,
+            ),
+          },
+          {
             label: "NOI",
             value: portfolioMoney(periodPortfolio.noi),
           },
@@ -265,6 +311,11 @@ export default function FinancialPage() {
       transactionCount: property.transactionCount,
       income: portfolioMoney(property.income),
       expenses: portfolioMoney(property.expenses),
+      accruedOperatingExpenses:
+        portfolioMoney(
+          property
+            .accruedOperatingExpenses,
+        ),
       noi: portfolioMoney(property.noi),
       noiIsNegative: Number(property.noi) < 0,
       cashFlow: portfolioMoney(property.cashFlow),

@@ -19,6 +19,7 @@ function renderProperty(
       transactionCount={24}
       income="$12,500.00"
       expenses="$4,500.00"
+      accruedOperatingExpenses="$1,200.00"
       noi="$9,000.00"
       cashFlow="$8,000.00"
       {...overrides}
@@ -89,6 +90,14 @@ describe(
 
         expect(markup).toContain(
           "$4,500.00",
+        );
+
+        expect(markup).toContain(
+          "Accrued property costs",
+        );
+
+        expect(markup).toContain(
+          "$1,200.00",
         );
       },
     );

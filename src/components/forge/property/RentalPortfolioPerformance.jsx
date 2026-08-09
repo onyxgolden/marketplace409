@@ -33,6 +33,10 @@ function PropertyList({
             expenses={
               property.expenses
             }
+            accruedOperatingExpenses={
+              property
+                .accruedOperatingExpenses
+            }
             noi={property.noi}
             noiIsNegative={
               property.noiIsNegative
@@ -77,9 +81,9 @@ export default function RentalPortfolioPerformance({
           </h2>
 
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-            Actual imported income and expenses grouped from your
-            persisted financial events. No property values, occupancy,
-            loan balances, or forecasts are inferred here.
+            Actual imported cash activity plus verified taxes and insurance
+            accrued into the selected reporting period. NOI uses accrued
+            property costs while cash flow preserves actual payments.
           </p>
         </div>
 
@@ -144,7 +148,7 @@ export default function RentalPortfolioPerformance({
 
       {portfolio && (
         <>
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
             {portfolio.metrics.map((metric) => (
               <div
                 key={metric.label}
@@ -192,7 +196,7 @@ export default function RentalPortfolioPerformance({
             ) : (
               <div className="mt-4">
                 <div className="mb-3 text-xs font-semibold text-slate-500">
-                  Select a property to expand its imported financial details.
+                  Select a property to expand and compare imported cash activity with accrued operating costs.
                 </div>
 
                 <PropertyList

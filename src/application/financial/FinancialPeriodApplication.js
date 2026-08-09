@@ -2,6 +2,10 @@ import {
   financialEventAggregationService,
 } from "@/domains/financial-workspace";
 
+import {
+  buildPropertyOperatingObligationAccrualProjection,
+} from "@/application/property-operating-obligation/PropertyOperatingObligationApplication.js";
+
 const ALL_TIME_KEY =
   "all";
 
@@ -242,8 +246,257 @@ export function resolveFinancialPeriodKey({
   );
 }
 
+function dateOnly(
+  year,
+  month,
+  day = 1,
+) {
+  return [
+    year,
+    String(month).padStart(2, "0"),
+    String(day).padStart(2, "0"),
+  ].join("-");
+}
+
+function nextMonth({
+  year,
+  month,
+}) {
+  return month === 12
+    ? {
+        year: year + 1,
+        month: 1,
+      }
+    : {
+        year,
+        month: month + 1,
+      };
+}
+
+function obligationPeriodBounds({
+  selectedOption,
+  obligations,
+}) {
+  if (selectedOption.mode === "year") {
+    return Object.freeze({
+      periodStart:
+        dateOnly(
+          selectedOption.year,
+          1,
+        ),
+      periodEnd:
+        dateOnly(
+          selectedOption.year + 1,
+          1,
+        ),
+    });
+  }
+
+  if (selectedOption.mode === "month") {
+    const following =
+      nextMonth({
+        year:
+          selectedOption.year,
+        month:
+          selectedOption.month,
+      });
+
+    return Object.freeze({
+      periodStart:
+        dateOnly(
+          selectedOption.year,
+          selectedOption.month,
+        ),
+      periodEnd:
+        dateOnly(
+          following.year,
+          following.month,
+        ),
+    });
+  }
+
+  const recognized =
+    obligations.filter(
+      (obligation) =>
+        obligation
+          ?.recognitionStatus ===
+            "accrual_ready" &&
+        obligation?.status !==
+          "provisional" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(
+          String(
+            obligation
+              ?.servicePeriodStart ||
+              "",
+          ),
+        ) &&
+        /^\d{4}-\d{2}-\d{2}$/.test(
+          String(
+            obligation
+              ?.servicePeriodEnd ||
+              "",
+          ),
+        ),
+    );
+
+  if (recognized.length === 0) {
+    return null;
+  }
+
+  return Object.freeze({
+    periodStart:
+      recognized
+        .map(
+          (obligation) =>
+            obligation
+              .servicePeriodStart,
+        )
+        .sort()[0],
+    periodEnd:
+      recognized
+        .map(
+          (obligation) =>
+            obligation
+              .servicePeriodEnd,
+        )
+        .sort()
+        .at(-1),
+  });
+}
+
+function emptyProjection() {
+  return Object.freeze({
+    periodStart: null,
+    periodEnd: null,
+    entries:
+      Object.freeze([]),
+    propertyExpenseCents:
+      Object.freeze({}),
+    scopeExpenseCents:
+      Object.freeze({}),
+    suppressedFinancialEventIds:
+      Object.freeze([]),
+  });
+}
+
+function applyObligationProjection({
+  workspace,
+  projection,
+}) {
+  const propertyExpenses =
+    projection
+      .propertyExpenseCents ||
+    {};
+
+  const portfolioAccrual =
+    (
+      Number(
+        projection
+          .scopeExpenseCents
+          ?.property || 0,
+      ) +
+      Number(
+        projection
+          .scopeExpenseCents
+          ?.portfolio || 0,
+      )
+    ) / 100;
+
+  const properties =
+    new Map(
+      workspace.properties.map(
+        (property) => [
+          property.propertyId,
+          {
+            ...property,
+            accruedOperatingExpenses:
+              0,
+          },
+        ],
+      ),
+    );
+
+  for (
+    const [
+      propertyId,
+      amountCents,
+    ] of Object.entries(
+      propertyExpenses,
+    )
+  ) {
+    const accrued =
+      Number(amountCents || 0) /
+      100;
+
+    const current =
+      properties.get(
+        propertyId,
+      ) || {
+        propertyId,
+        income: 0,
+        expenses: 0,
+        noi: 0,
+        cashFlow: 0,
+        transactionCount: 0,
+        accruedOperatingExpenses:
+          0,
+      };
+
+    properties.set(
+      propertyId,
+      {
+        ...current,
+        noi:
+          Number(
+            current.noi || 0,
+          ) - accrued,
+        accruedOperatingExpenses:
+          Number(
+            current
+              .accruedOperatingExpenses ||
+              0,
+          ) + accrued,
+      },
+    );
+  }
+
+  return Object.freeze({
+    ...workspace,
+    portfolio:
+      Object.freeze({
+        ...workspace.portfolio,
+        noi:
+          Number(
+            workspace.portfolio
+              .noi || 0,
+          ) -
+          portfolioAccrual,
+        accruedOperatingExpenses:
+          portfolioAccrual,
+      }),
+    properties:
+      Object.freeze(
+        [...properties.values()]
+          .sort(
+            (left, right) =>
+              left.propertyId
+                .localeCompare(
+                  right.propertyId,
+                ),
+          )
+          .map(
+            (property) =>
+              Object.freeze(
+                property,
+              ),
+          ),
+      ),
+  });
+}
+
 export function buildFinancialPeriodModel({
   transactions = [],
+  obligations = [],
   requestedPeriodKey = null,
 } = {}) {
   const options =
@@ -295,19 +548,61 @@ export function buildFinancialPeriodModel({
           },
         );
 
-  const workspace =
+  const bounds =
+    obligationPeriodBounds({
+      selectedOption,
+      obligations,
+    });
+
+  const obligationProjection =
+    bounds
+      ? buildPropertyOperatingObligationAccrualProjection({
+          obligations,
+          periodStart:
+            bounds.periodStart,
+          periodEnd:
+            bounds.periodEnd,
+        })
+      : emptyProjection();
+
+  const suppressedIds =
+    new Set(
+      obligationProjection
+        .suppressedFinancialEventIds,
+    );
+
+  const importedWorkspace =
     financialEventAggregationService
       .aggregate(
         filteredTransactions.map(
-          toCanonicalEvent,
+          (transaction) =>
+            toCanonicalEvent({
+              ...transaction,
+              affectsNOI:
+                suppressedIds.has(
+                  transaction.id,
+                )
+                  ? false
+                  : transaction
+                      .affectsNOI,
+            }),
         ),
       );
+
+  const workspace =
+    applyObligationProjection({
+      workspace:
+        importedWorkspace,
+      projection:
+        obligationProjection,
+    });
 
   return Object.freeze({
     selectedPeriodKey,
     selectedPeriodLabel:
       selectedOption.label,
     options,
+    obligationProjection,
     workspace,
   });
 }

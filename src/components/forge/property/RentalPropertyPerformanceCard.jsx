@@ -42,6 +42,8 @@ export default function RentalPropertyPerformanceCard({
   transactionCount,
   income,
   expenses,
+  accruedOperatingExpenses =
+    "$0.00",
   noi,
   cashFlow,
   noiIsNegative = false,
@@ -139,7 +141,7 @@ export default function RentalPropertyPerformanceCard({
         data-property-performance-details
         className="border-t border-slate-200 bg-slate-50/60 p-3"
       >
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Metric
             label="Income"
             value={income}
@@ -151,6 +153,13 @@ export default function RentalPropertyPerformanceCard({
           />
 
           <Metric
+            label="Accrued property costs"
+            value={
+              accruedOperatingExpenses
+            }
+          />
+
+          <Metric
             label="Imported activity"
             value={transactionLabel(
               transactionCount,
@@ -159,9 +168,9 @@ export default function RentalPropertyPerformanceCard({
         </div>
 
         <p className="mt-3 text-xs font-semibold leading-5 text-slate-500">
-          Repository-backed imported financial activity.
-          Property value, occupancy, debt, and forecasts
-          are not inferred.
+          Imported expenses represent actual cash payments.
+          Accrued property costs recognize verified taxes and
+          insurance in NOI for the selected reporting period.
         </p>
       </div>
     </details>

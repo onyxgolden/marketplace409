@@ -35,6 +35,44 @@ function transaction({
   };
 }
 
+function obligation({
+  id = "tax-2025",
+  propertyId =
+    "1214-wagner",
+  scope = "property",
+  recognitionStatus =
+    "accrual_ready",
+  status = "active",
+  annualAmountCents =
+    120000,
+  servicePeriodStart =
+    "2025-01-01",
+  servicePeriodEnd =
+    "2026-01-01",
+  reconciledFinancialEventId =
+    null,
+} = {}) {
+  return {
+    id,
+    propertyId,
+    scope,
+    recognitionStatus,
+    status,
+    annualAmountCents,
+    servicePeriodStart,
+    servicePeriodEnd,
+    reconciledFinancialEventId,
+    obligationType:
+      "property_tax",
+    subjectLabel:
+      "2025 property tax",
+    currencyCode:
+      "USD",
+    businessUseBasisPoints:
+      null,
+  };
+}
+
 const transactions = [
   transaction({
     id: "january-rent",
@@ -131,6 +169,7 @@ describe(
         ).toEqual({
           income: 1500,
           expenses: 250,
+          accruedOperatingExpenses: 0,
           noi: 1250,
           cashFlow: 1250,
           transactionCount: 2,
@@ -162,6 +201,7 @@ describe(
         ).toEqual({
           income: 3100,
           expenses: 250,
+          accruedOperatingExpenses: 0,
           noi: 2850,
           cashFlow: 2850,
           transactionCount: 3,
@@ -223,6 +263,205 @@ describe(
             .portfolio
             .transactionCount,
         ).toBe(1);
+      },
+    );
+    it(
+      "accrues annual property costs into yearly NOI without changing cash flow",
+      () => {
+        const model =
+          buildFinancialPeriodModel({
+            transactions,
+            obligations: [
+              obligation(),
+            ],
+            requestedPeriodKey:
+              "year:2025",
+          });
+
+        expect(
+          model.workspace
+            .portfolio
+            .accruedOperatingExpenses,
+        ).toBe(1200);
+
+        expect(
+          model.workspace
+            .portfolio.noi,
+        ).toBe(1650);
+
+        expect(
+          model.workspace
+            .portfolio.cashFlow,
+        ).toBe(2850);
+
+        expect(
+          model.workspace
+            .properties[0]
+            .accruedOperatingExpenses,
+        ).toBe(1200);
+      },
+    );
+
+    it(
+      "allocates annual property costs by exact calendar days for a month",
+      () => {
+        const model =
+          buildFinancialPeriodModel({
+            transactions,
+            obligations: [
+              obligation(),
+            ],
+            requestedPeriodKey:
+              "month:2025-01",
+          });
+
+        expect(
+          model.workspace
+            .portfolio
+            .accruedOperatingExpenses,
+        ).toBe(101.91);
+
+        expect(
+          model.workspace
+            .portfolio.noi,
+        ).toBe(1148.09);
+
+        expect(
+          model.workspace
+            .portfolio.cashFlow,
+        ).toBe(1250);
+      },
+    );
+
+    it(
+      "keeps reconciled payments in cash expenses while suppressing duplicate NOI",
+      () => {
+        const taxPayment =
+          transaction({
+            id:
+              "tax-payment",
+            eventDate:
+              "2026-02-01",
+            amount: 1200,
+            transactionKind:
+              "expense",
+            category:
+              "property_tax",
+          });
+
+        const model =
+          buildFinancialPeriodModel({
+            transactions: [
+              ...transactions,
+              taxPayment,
+            ],
+            obligations: [
+              obligation({
+                reconciledFinancialEventId:
+                  "tax-payment",
+              }),
+            ],
+            requestedPeriodKey:
+              "year:2026",
+          });
+
+        expect(
+          model.workspace
+            .portfolio.expenses,
+        ).toBe(1200);
+
+        expect(
+          model.workspace
+            .portfolio.noi,
+        ).toBe(1700);
+
+        expect(
+          model.workspace
+            .portfolio.cashFlow,
+        ).toBe(500);
+
+        expect(
+          model.workspace
+            .portfolio
+            .accruedOperatingExpenses,
+        ).toBe(0);
+      },
+    );
+
+    it(
+      "ignores provisional insurance without verified coverage dates",
+      () => {
+        const model =
+          buildFinancialPeriodModel({
+            transactions,
+            obligations: [
+              obligation({
+                id:
+                  "pending-insurance",
+                recognitionStatus:
+                  "dates_needed",
+                status:
+                  "provisional",
+                servicePeriodStart:
+                  null,
+                servicePeriodEnd:
+                  null,
+              }),
+            ],
+            requestedPeriodKey:
+              "year:2025",
+          });
+
+        expect(
+          model.workspace
+            .portfolio
+            .accruedOperatingExpenses,
+        ).toBe(0);
+
+        expect(
+          model.workspace
+            .portfolio.noi,
+        ).toBe(2850);
+      },
+    );
+
+    it(
+      "uses full obligation service periods for all-time NOI",
+      () => {
+        const model =
+          buildFinancialPeriodModel({
+            transactions,
+            obligations: [
+              obligation(),
+            ],
+            requestedPeriodKey:
+              "all",
+          });
+
+        expect(
+          model.workspace
+            .portfolio
+            .accruedOperatingExpenses,
+        ).toBe(1200);
+
+        expect(
+          model.workspace
+            .portfolio.noi,
+        ).toBe(3350);
+
+        expect(
+          model.obligationProjection
+            .periodStart,
+        ).toBe(
+          "2025-01-01",
+        );
+
+        expect(
+          model.obligationProjection
+            .periodEnd,
+        ).toBe(
+          "2026-01-01",
+        );
       },
     );
   },
