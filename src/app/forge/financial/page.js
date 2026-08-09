@@ -5,14 +5,7 @@ import {
   ForgeDashboardApplication,
   ForgeFinancialDashboardApplication,
 } from "@/application/financial";
-import FinancialWorkspaceHeader from "@/components/forge/financial/FinancialWorkspaceHeader";
-import FinancialExecutiveIntelligence from "@/components/forge/financial/FinancialExecutiveIntelligence";
-import ForgeNavigationBar from "@/components/forge/ForgeNavigationBar";
-import FinancialWorkspaceSurface from "@/components/forge/workspace/views/FinancialWorkspaceSurface";
-import RentalPortfolioPerformance from "@/components/forge/property/RentalPortfolioPerformance";
-import FinancialPositionSnapshot from "@/components/forge/financial/FinancialPositionSnapshot";
-import FinancialWorkspaceSidebar from "@/components/forge/financial/FinancialWorkspaceSidebar";
-import { forgeTheme } from "@/components/forge/theme";
+import FinancialApplicationShell from "@/components/forge/financial/FinancialApplicationShell";
 
 function cents(value) {
   return Number(value || 0);
@@ -74,6 +67,11 @@ export default function FinancialPage() {
   const [intelligenceModel, setIntelligenceModel] = useState(
     ForgeDashboardApplication.buildLoadingDashboardIntelligence(),
   );
+
+  const [
+    activeFunctionId,
+    setActiveFunctionId,
+  ] = useState("overview");
 
   useEffect(() => {
     async function load() {
@@ -273,60 +271,53 @@ export default function FinancialPage() {
     }));
 
   return (
-    <div className={forgeTheme.page}>
-      <main className="mx-auto min-h-screen max-w-[1600px] space-y-6 p-4 lg:p-8">
-        <ForgeNavigationBar />
-        <FinancialWorkspaceHeader
-          health={health}
-          kpis={kpiPresentations}
-        />
-
-        {loadState === "error" && (
-          <section className="rounded-3xl border border-red-200 bg-red-50 p-6 text-red-900">
-            <div className="font-black">Financial dashboard failed to load.</div>
-            <div className="mt-2 text-sm">{error}</div>
-          </section>
-        )}
-
-        <FinancialWorkspaceSurface
-          executive={
-            <FinancialExecutiveIntelligence
-              executiveBriefing={
-                executiveBriefingPresentation
-              }
-              riskSummary={riskSummaryPresentation}
-              riskAssessment={
-                riskAssessmentPresentation
-              }
-              insights={insightPresentations}
-            />
-          }
-          portfolio={
-            <>
-              <FinancialPositionSnapshot
-                lines={balanceSheetPresentations}
-              />
-
-              <RentalPortfolioPerformance
-                loadState={loadState}
-                portfolio={portfolioPresentation}
-                properties={propertyPresentations}
-                categories={categoryPresentations}
-                recentTransactions={
-                  recentTransactionPresentations
-                }
-              />
-            </>
-          }
-          sidebar={
-            <FinancialWorkspaceSidebar
-              statusItems={statusItems}
-              activities={activities}
-              operations={operationsPresentation}
-            />
-          }
-        />
-      </main>
-    </div>
+    <FinancialApplicationShell
+      activeFunctionId={
+        activeFunctionId
+      }
+      onFunctionChange={
+        setActiveFunctionId
+      }
+      loadState={loadState}
+      error={
+        loadState === "error"
+          ? error
+          : null
+      }
+      health={health}
+      kpis={kpiPresentations}
+      executiveBriefing={
+        executiveBriefingPresentation
+      }
+      riskSummary={
+        riskSummaryPresentation
+      }
+      riskAssessment={
+        riskAssessmentPresentation
+      }
+      insights={
+        insightPresentations
+      }
+      balanceSheetLines={
+        balanceSheetPresentations
+      }
+      portfolio={
+        portfolioPresentation
+      }
+      properties={
+        propertyPresentations
+      }
+      categories={
+        categoryPresentations
+      }
+      transactions={
+        recentTransactionPresentations
+      }
+      statusItems={statusItems}
+      activities={activities}
+      operations={
+        operationsPresentation
+      }
+    />
   );
 }

@@ -1,0 +1,177 @@
+"use client";
+
+import Link from "next/link";
+
+export function normalizeApplicationFunctions(
+  functions,
+) {
+  if (!Array.isArray(functions)) {
+    return Object.freeze([]);
+  }
+
+  return Object.freeze(
+    functions
+      .filter(
+        (item) =>
+          typeof item?.id ===
+            "string" &&
+          item.id.trim() &&
+          typeof item?.label ===
+            "string" &&
+          item.label.trim(),
+      )
+      .map((item) =>
+        Object.freeze({
+          id:
+            item.id.trim(),
+          label:
+            item.label.trim(),
+        }),
+      ),
+  );
+}
+
+export function resolveActiveFunction(
+  functions,
+  requestedFunctionId,
+) {
+  const normalizedFunctions =
+    normalizeApplicationFunctions(
+      functions,
+    );
+
+  const requestedId =
+    String(
+      requestedFunctionId || "",
+    ).trim();
+
+  return (
+    normalizedFunctions.find(
+      (item) =>
+        item.id === requestedId,
+    )?.id ||
+    normalizedFunctions[0]?.id ||
+    null
+  );
+}
+
+export default function ApplicationShell({
+  applicationName,
+  applicationDescription = null,
+  functions = [],
+  activeFunctionId,
+  onFunctionChange,
+  workspaceHref = "/forge",
+  workspaceLabel = "Workspace",
+  utility = null,
+  activeSurface,
+}) {
+  const normalizedFunctions =
+    normalizeApplicationFunctions(
+      functions,
+    );
+
+  const resolvedActiveFunctionId =
+    resolveActiveFunction(
+      normalizedFunctions,
+      activeFunctionId,
+    );
+
+  return (
+    <section
+      data-application-shell
+      data-active-function={
+        resolvedActiveFunctionId ||
+        ""
+      }
+      className="min-h-screen bg-slate-100 text-slate-950"
+    >
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto max-w-[1800px] px-4 py-4 lg:px-8">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-4">
+              <Link
+                href={workspaceHref}
+                className="shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+              >
+                ← {workspaceLabel}
+              </Link>
+
+              <div className="min-w-0">
+                <div className="text-xs font-black uppercase tracking-[0.2em] text-sky-700">
+                  FORGE Application
+                </div>
+
+                <h1 className="truncate text-2xl font-black tracking-tight lg:text-3xl">
+                  {applicationName}
+                </h1>
+
+                {applicationDescription && (
+                  <p className="mt-1 max-w-3xl text-sm font-semibold text-slate-600">
+                    {applicationDescription}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {utility && (
+              <div data-application-utility>
+                {utility}
+              </div>
+            )}
+          </div>
+
+          {normalizedFunctions.length >
+            0 && (
+            <nav
+              aria-label={`${applicationName} functions`}
+              className="mt-4 flex max-w-full gap-2 overflow-x-auto pb-1"
+            >
+              {normalizedFunctions.map(
+                (item) => {
+                  const active =
+                    item.id ===
+                    resolvedActiveFunctionId;
+
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-current={
+                        active
+                          ? "page"
+                          : undefined
+                      }
+                      onClick={() =>
+                        onFunctionChange?.(
+                          item.id,
+                        )
+                      }
+                      className={
+                        active
+                          ? "shrink-0 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-black text-white"
+                          : "shrink-0 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-black text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
+                      }
+                    >
+                      {item.label}
+                    </button>
+                  );
+                },
+              )}
+            </nav>
+          )}
+        </div>
+      </header>
+
+      <main
+        data-active-function-surface={
+          resolvedActiveFunctionId ||
+          ""
+        }
+        className="mx-auto max-w-[1800px] p-4 lg:p-8"
+      >
+        {activeSurface}
+      </main>
+    </section>
+  );
+}

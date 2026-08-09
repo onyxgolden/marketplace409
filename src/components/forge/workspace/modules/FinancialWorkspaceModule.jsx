@@ -1,5 +1,4 @@
 import ForgeExecutiveBriefing from "@/components/forge/ForgeExecutiveBriefing";
-import FinancialExecutiveIntelligence from "@/components/forge/financial/FinancialExecutiveIntelligence";
 import FinancialKpiSurface from "@/components/forge/financial/FinancialKpiSurface";
 import { buildFinancialTilePresentation } from "@/components/forge/financial/buildFinancialTilePresentation";
 import ForgeWorkspaceTile from "@/components/forge/workspace/ForgeWorkspaceTile";
@@ -41,27 +40,6 @@ function renderFinancialWorkspaceTile({
       actionLabel="Open financial workspace"
       status={presentation.health.label}
       span="wide"
-      expandLabel="Expand financial view"
-      collapseLabel="Collapse financial view"
-      expandedChildren={
-        <div
-          data-financial-expanded-tile
-          className="space-y-6"
-        >
-          <FinancialKpiSurface
-            kpis={presentation.kpis}
-            variant="embedded"
-          />
-
-          <FinancialExecutiveIntelligence
-            variant="embedded"
-            executiveBriefing={executiveBriefing}
-            riskSummary={riskSummary}
-            riskAssessment={riskAssessment}
-            insights={insightItems}
-          />
-        </div>
-      }
     >
       <FinancialKpiSurface
         kpis={presentation.kpis}

@@ -190,25 +190,12 @@ describe("FinancialWorkspaceModule", () => {
     expect(markup).toContain(
       "Cash remains resilient",
     );
-    expect(markup).toContain(
-      "Expand financial view",
-    );
-    expect(markup).toContain(
-      "Collapse financial view",
-    );
-    expect(markup).toContain(
-      "data-expanded-children",
-    );
-    expect(markup).toContain(
+    expect(markup).not.toContain(
       "data-financial-expanded-tile",
     );
-    expect(markup).toContain(
-      "data-financial-executive-intelligence",
-    );
-    expect(markup).toContain("Monitor");
-    expect(markup).toContain("Receivables");
-    expect(markup).toContain(
-      "Collections require monitoring.",
+
+    expect(markup).not.toContain(
+      "Expand financial view",
     );
   });
 
