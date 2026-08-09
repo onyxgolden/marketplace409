@@ -48,6 +48,14 @@ describe(
         );
 
         expect(markup).toContain(
+          "data-property-evidence-history-panel",
+        );
+
+        expect(markup).toContain(
+          "Private evidence history",
+        );
+
+        expect(markup).toContain(
           "data-property-hvac-component-panel",
         );
 
@@ -60,11 +68,15 @@ describe(
         );
 
         expect(markup).toContain(
-          "Read equipment label or invoice",
+          "Equipment-label extraction",
         );
 
         expect(markup).toContain(
-          "reviewable proposals",
+          "Invoice and photo extraction now creates reviewable HVAC service proposals",
+        );
+
+        expect(markup).toContain(
+          "Nothing updates without user approval",
         );
       },
     );

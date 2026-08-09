@@ -13,6 +13,7 @@ import {
 } from "@/domains/property-hvac/property-hvac.types";
 
 import PropertyHVACComponentPanel from "./PropertyHVACComponentPanel";
+import PropertyEvidenceHistoryPanel from "./PropertyEvidenceHistoryPanel";
 
 import {
   buildPropertyPortfolioProperties,
@@ -374,7 +375,7 @@ export default function PropertyHVACPanel() {
           disabled
           className="rounded-xl border border-dashed border-indigo-300 bg-indigo-50 px-4 py-2 text-xs font-black text-indigo-500 opacity-70"
         >
-          Read equipment label or invoice — planned
+          Equipment-label extraction — planned
         </button>
       </div>
 
@@ -788,12 +789,17 @@ export default function PropertyHVACPanel() {
         )}
       </div>
 
+      <PropertyEvidenceHistoryPanel
+        propertyId={propertyId}
+        systems={systems}
+      />
+
       <PropertyHVACComponentPanel
         systems={systems}
       />
 
       <div className="mt-6 rounded-xl border border-dashed border-indigo-300 bg-indigo-50 p-4 text-sm font-semibold leading-6 text-indigo-950">
-        Future equipment-label and invoice OCR will create reviewable proposals for manufacturer, model, serial number, refrigerant, capacity, installation date, warranty, components, and service events. Nothing will update automatically without user approval.
+        Invoice and photo extraction now creates reviewable HVAC service proposals while preserving the original private evidence. Equipment-label extraction remains planned for manufacturer, model, serial number, capacity, installation date, and warranty proposals. Nothing updates without user approval.
       </div>
     </section>
   );
