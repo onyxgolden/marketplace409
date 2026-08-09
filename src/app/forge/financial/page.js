@@ -5,6 +5,9 @@ import {
   ForgeDashboardApplication,
   ForgeFinancialDashboardApplication,
 } from "@/application/financial";
+import {
+  FinancialPeriodApplication,
+} from "@/application/financial/FinancialPeriodApplication";
 import FinancialApplicationShell from "@/components/forge/financial/FinancialApplicationShell";
 
 function cents(value) {
@@ -73,6 +76,11 @@ export default function FinancialPage() {
     setActiveFunctionId,
   ] = useState("overview");
 
+  const [
+    selectedPeriodKey,
+    setSelectedPeriodKey,
+  ] = useState(null);
+
   useEffect(() => {
     async function load() {
       const [
@@ -115,7 +123,28 @@ export default function FinancialPage() {
     activities,
   } = viewModel;
 
-  const recentTransactions = [...transactions]
+  const periodModel =
+    FinancialPeriodApplication
+      .buildModel({
+        transactions,
+        requestedPeriodKey:
+          selectedPeriodKey,
+      });
+
+  const {
+    portfolio:
+      periodPortfolio,
+    properties:
+      periodProperties,
+    categories:
+      periodCategories,
+    transactions:
+      periodTransactions,
+  } = periodModel.workspace;
+
+  const recentTransactions = [
+    ...periodTransactions,
+  ]
     .reverse()
     .slice(0, 8);
 
@@ -198,36 +227,36 @@ export default function FinancialPage() {
 
   const insightPresentations = insightItems || [];
 
-  const portfolioPresentation = portfolio
+  const portfolioPresentation = periodPortfolio
     ? {
         metrics: [
           {
             label: "Imported Income",
-            value: portfolioMoney(portfolio.income),
+            value: portfolioMoney(periodPortfolio.income),
           },
           {
             label: "Imported Expenses",
-            value: portfolioMoney(portfolio.expenses),
+            value: portfolioMoney(periodPortfolio.expenses),
           },
           {
             label: "NOI",
-            value: portfolioMoney(portfolio.noi),
+            value: portfolioMoney(periodPortfolio.noi),
           },
           {
             label: "Cash Flow",
-            value: portfolioMoney(portfolio.cashFlow),
+            value: portfolioMoney(periodPortfolio.cashFlow),
           },
           {
             label: "Transactions",
             value: Number(
-              portfolio.transactionCount || 0,
+              periodPortfolio.transactionCount || 0,
             ).toLocaleString(),
           },
         ],
       }
     : null;
 
-  const propertyPresentations = properties.map(
+  const propertyPresentations = periodProperties.map(
     (property) => ({
       propertyId: property.propertyId,
       propertyName: displayPropertyName(
@@ -244,7 +273,7 @@ export default function FinancialPage() {
     }),
   );
 
-  const categoryPresentations = categories.map(
+  const categoryPresentations = periodCategories.map(
     (category) => ({
       category: category.category,
       label: displayCategory(category.category),
@@ -303,6 +332,18 @@ export default function FinancialPage() {
       }
       portfolio={
         portfolioPresentation
+      }
+      periodOptions={
+        periodModel.options
+      }
+      selectedPeriodKey={
+        periodModel.selectedPeriodKey
+      }
+      selectedPeriodLabel={
+        periodModel.selectedPeriodLabel
+      }
+      onPeriodChange={
+        setSelectedPeriodKey
       }
       properties={
         propertyPresentations

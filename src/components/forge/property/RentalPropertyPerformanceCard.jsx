@@ -1,45 +1,40 @@
-const primaryMetrics = Object.freeze([
-  {
-    identity: "noi",
-    label: "Net Operating Income",
-    shortLabel: "NOI",
-    treatment:
-      "border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50",
-    labelClassName: "text-amber-700",
-    valueClassName: "text-amber-950",
-  },
-  {
-    identity: "cashFlow",
-    label: "Cash Flow",
-    shortLabel: "Cash Flow",
-    treatment:
-      "border-sky-200 bg-gradient-to-br from-sky-50 to-cyan-50",
-    labelClassName: "text-sky-700",
-    valueClassName: "text-sky-950",
-  },
-]);
-
-const activityMetrics = Object.freeze([
-  {
-    identity: "income",
-    label: "Income",
-    indicatorClassName: "bg-emerald-500",
-    valueClassName: "text-emerald-800",
-  },
-  {
-    identity: "expenses",
-    label: "Expenses",
-    indicatorClassName: "bg-rose-500",
-    valueClassName: "text-rose-800",
-  },
-]);
-
-function transactionLabel(transactionCount) {
-  const count = Number(transactionCount || 0);
+function transactionLabel(
+  transactionCount,
+) {
+  const count =
+    Number(
+      transactionCount || 0,
+    );
 
   return `${count.toLocaleString()} ${
-    count === 1 ? "transaction" : "transactions"
+    count === 1
+      ? "transaction"
+      : "transactions"
   }`;
+}
+
+function Metric({
+  label,
+  value,
+  negative = false,
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
+
+      <div
+        className={`mt-1 text-base font-black ${
+          negative
+            ? "text-rose-700"
+            : "text-slate-950"
+        }`}
+      >
+        {value}
+      </div>
+    </div>
+  );
 }
 
 export default function RentalPropertyPerformanceCard({
@@ -52,149 +47,123 @@ export default function RentalPropertyPerformanceCard({
   noiIsNegative = false,
   cashFlowIsNegative = false,
 }) {
-  const values = {
-    income,
-    expenses,
-    noi,
-    cashFlow,
-  };
-
-  const negativeMetrics = {
-    noi: noiIsNegative,
-    cashFlow: cashFlowIsNegative,
-  };
+  const requiresAttention =
+    noiIsNegative ||
+    cashFlowIsNegative;
 
   return (
-    <article
+    <details
       data-property-performance-card
-      className="group overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_18px_50px_-32px_rgba(15,23,42,0.65)] transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_24px_60px_-30px_rgba(15,23,42,0.72)]"
+      data-property-performance-item
+      data-performance-status={
+        requiresAttention
+          ? "negative"
+          : "positive"
+      }
+      className={`group overflow-hidden rounded-2xl border bg-white ${
+        requiresAttention
+          ? "border-rose-300"
+          : "border-slate-200"
+      }`}
     >
-      <header className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 p-5 text-white">
-        <div
-          aria-hidden="true"
-          className="absolute -right-10 -top-14 h-36 w-36 rounded-full border border-white/10 bg-white/5"
-        />
-
-        <div
-          aria-hidden="true"
-          className="absolute -bottom-20 right-14 h-32 w-32 rounded-full border border-emerald-300/10"
-        />
-
-        <div className="relative flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-emerald-300">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.9)]" />
-              Rental Property
-            </div>
-
-            <h4 className="mt-3 truncate text-xl font-black tracking-tight text-white">
-              {propertyName}
-            </h4>
-          </div>
-
-          <div className="shrink-0 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-right backdrop-blur">
-            <div className="text-[10px] font-black uppercase tracking-wider text-slate-300">
-              Activity
-            </div>
-
-            <div className="mt-0.5 text-xs font-black text-white">
-              {transactionLabel(transactionCount)}
-            </div>
-          </div>
+      <summary className="grid cursor-pointer list-none items-center gap-2 px-4 py-2.5 transition hover:bg-slate-50 sm:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.7fr)_minmax(8rem,0.8fr)_minmax(8rem,0.8fr)_auto]">
+        <div className="min-w-0 truncate font-black text-slate-950">
+          {propertyName}
         </div>
-      </header>
 
-      <div className="p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-              Operating Performance
-            </div>
+        <div className="text-sm font-bold text-slate-600">
+          <span className="mr-2 text-[10px] font-black uppercase tracking-wide text-slate-500 sm:hidden">
+            Activity
+          </span>
 
-            <div className="mt-1 text-sm font-semibold text-slate-600">
-              Repository-backed imported activity
-            </div>
+          {transactionLabel(
+            transactionCount,
+          )}
+        </div>
+
+        <div>
+          <div className="text-[10px] font-black uppercase tracking-wide text-slate-500 sm:hidden">
+            NOI
           </div>
 
-          <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-700">
-            Imported
+          <div
+            className={`font-black ${
+              noiIsNegative
+                ? "text-rose-700"
+                : "text-slate-950"
+            }`}
+          >
+            {noi}
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          {primaryMetrics.map((metric) => {
-            const isNegative =
-              negativeMetrics[metric.identity];
+        <div>
+          <div className="text-[10px] font-black uppercase tracking-wide text-slate-500 sm:hidden">
+            Cash flow
+          </div>
 
-            return (
-              <section
-                key={metric.identity}
-                data-performance-status={
-                  isNegative ? "negative" : "positive"
-                }
-                className={`rounded-2xl border p-4 ${
-                  isNegative
-                    ? "border-rose-200 bg-gradient-to-br from-rose-50 to-red-50"
-                    : metric.treatment
-                }`}
-              >
-                <div
-                  className={`text-[11px] font-black uppercase tracking-wider ${
-                    isNegative
-                      ? "text-rose-700"
-                      : metric.labelClassName
-                  }`}
-                >
-                  <span className="sm:hidden">
-                    {metric.shortLabel}
-                  </span>
-
-                  <span className="hidden sm:inline">
-                    {metric.label}
-                  </span>
-                </div>
-
-                <div
-                  className={`mt-2 text-2xl font-black tracking-tight ${
-                    isNegative
-                      ? "text-rose-950"
-                      : metric.valueClassName
-                  }`}
-                >
-                  {values[metric.identity]}
-                </div>
-              </section>
-            );
-          })}
+          <div
+            className={`font-black ${
+              cashFlowIsNegative
+                ? "text-rose-700"
+                : "text-slate-950"
+            }`}
+          >
+            {cashFlow}
+          </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-          {activityMetrics.map((metric, index) => (
-            <div
-              key={metric.identity}
-              className={`p-4 ${
-                index > 0 ? "border-l border-slate-200" : ""
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span
-                  className={`h-2 w-2 rounded-full ${metric.indicatorClassName}`}
-                />
+        <div className="flex items-center justify-between gap-2 sm:justify-end">
+          <span
+            className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${
+              requiresAttention
+                ? "bg-rose-100 text-rose-800"
+                : "bg-emerald-100 text-emerald-800"
+            }`}
+          >
+            {requiresAttention
+              ? "Review"
+              : "Current"}
+          </span>
 
-                <div className="text-[11px] font-black uppercase tracking-wider text-slate-500">
-                  {metric.label}
-                </div>
-              </div>
-
-              <div
-                className={`mt-2 text-lg font-black ${metric.valueClassName}`}
-              >
-                {values[metric.identity]}
-              </div>
-            </div>
-          ))}
+          <span
+            aria-hidden="true"
+            className="text-base font-black text-slate-400 transition group-open:rotate-180"
+          >
+            ⌄
+          </span>
         </div>
+      </summary>
+
+      <div
+        data-property-performance-details
+        className="border-t border-slate-200 bg-slate-50/60 p-3"
+      >
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Metric
+            label="Income"
+            value={income}
+          />
+
+          <Metric
+            label="Expenses"
+            value={expenses}
+          />
+
+          <Metric
+            label="Imported activity"
+            value={transactionLabel(
+              transactionCount,
+            )}
+          />
+        </div>
+
+        <p className="mt-3 text-xs font-semibold leading-5 text-slate-500">
+          Repository-backed imported financial activity.
+          Property value, occupancy, debt, and forecasts
+          are not inferred.
+        </p>
       </div>
-    </article>
+    </details>
   );
 }

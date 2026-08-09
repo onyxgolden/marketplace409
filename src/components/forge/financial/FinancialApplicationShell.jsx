@@ -37,6 +37,10 @@ export function buildFinancialActiveSurface({
   insights,
   balanceSheetLines,
   portfolio,
+  periodOptions,
+  selectedPeriodKey,
+  selectedPeriodLabel,
+  onPeriodChange,
   properties,
   categories,
   transactions,
@@ -58,6 +62,18 @@ export function buildFinancialActiveSurface({
         <RentalPortfolioPerformance
           loadState={loadState}
           portfolio={portfolio}
+          periodOptions={
+            periodOptions
+          }
+          selectedPeriodKey={
+            selectedPeriodKey
+          }
+          selectedPeriodLabel={
+            selectedPeriodLabel
+          }
+          onPeriodChange={
+            onPeriodChange
+          }
           properties={properties}
           categories={categories}
           recentTransactions={
