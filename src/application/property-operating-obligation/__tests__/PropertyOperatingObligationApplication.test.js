@@ -338,6 +338,119 @@ describe(
     );
 
     it(
+      "creates a document-verified policy without fabricating cash activity",
+      async () => {
+        const repository =
+          new InMemoryPropertyOperatingObligationRepository();
+        const application =
+          new PropertyOperatingObligationApplication({
+            repository,
+            clock: () =>
+              "2026-08-09T18:00:00.000Z",
+            idFactory: () =>
+              "south29-policy",
+          });
+
+        const created =
+          await application
+            .createVerifiedPolicy({
+              propertyId:
+                "420-south-29th",
+              subjectLabel:
+                "420 SOUTH 29TH annual insurance",
+              obligationType:
+                "fire_insurance",
+              annualAmountCents:
+                78668,
+              servicePeriodStart:
+                "2025-12-16",
+              servicePeriodEnd:
+                "2026-12-16",
+              providerName:
+                "Scottsdale Insurance Company",
+              providerReference:
+                "DFS5003139",
+              notes:
+                "Windstorm or hail excluded.",
+              ownerId:
+                " owner_1 ",
+            });
+
+        expect(created).toEqual(
+          expect.objectContaining({
+            id:
+              "property_operating_obligation_south29-policy",
+            scope:
+              "property",
+            propertyId:
+              "420-south-29th",
+            obligationType:
+              "fire_insurance",
+            annualAmountCents:
+              78668,
+            servicePeriodStart:
+              "2025-12-16",
+            servicePeriodEnd:
+              "2026-12-16",
+            paymentDate: null,
+            paidAmountCents: null,
+            status: "active",
+            verificationStatus:
+              "document_verified",
+            recognitionStatus:
+              "accrual_ready",
+            source:
+              "policy_document",
+            reconciledFinancialEventId:
+              null,
+            createdAt:
+              "2026-08-09T18:00:00.000Z",
+            updatedAt:
+              "2026-08-09T18:00:00.000Z",
+          }),
+        );
+
+        const repeated =
+          await application
+            .createVerifiedPolicy({
+              propertyId:
+                "420-south-29th",
+              subjectLabel:
+                "420 SOUTH 29TH annual insurance",
+              obligationType:
+                "fire_insurance",
+              annualAmountCents:
+                78668,
+              servicePeriodStart:
+                "2025-12-16",
+              servicePeriodEnd:
+                "2026-12-16",
+              providerName:
+                "Scottsdale Insurance Company",
+              providerReference:
+                "DFS5003139",
+              ownerId:
+                "owner_1",
+            });
+
+        expect(repeated).toEqual(
+          created,
+        );
+        await expect(
+          application.list(
+            {
+              propertyId:
+                "420-south-29th",
+            },
+            "owner_1",
+          ),
+        ).resolves.toHaveLength(
+          1,
+        );
+      },
+    );
+
+    it(
       "verifies policy coverage without changing imported payment facts",
       async () => {
         const repository =

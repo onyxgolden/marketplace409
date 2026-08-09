@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
     vi.fn(),
   importSpreadsheet:
     vi.fn(),
+  createVerifiedPolicy:
+    vi.fn(),
   verifyCoverage:
     vi.fn(),
   reconcilePayment:
@@ -50,6 +52,8 @@ function authenticate() {
         mocks.previewSpreadsheet,
       importSpreadsheet:
         mocks.importSpreadsheet,
+      createVerifiedPolicy:
+        mocks.createVerifiedPolicy,
       verifyCoverage:
         mocks.verifyCoverage,
       reconcilePayment:
@@ -337,6 +341,122 @@ describe(
           success: true,
           result,
         });
+      },
+    );
+
+    it(
+      "creates a verified policy only for an owned property",
+      async () => {
+        const policy = {
+          id:
+            "property_operating_obligation_south29",
+          propertyId:
+            "1214-wagner",
+        };
+
+        mocks.createVerifiedPolicy
+          .mockResolvedValue(
+            policy,
+          );
+
+        const response =
+          await POST(
+            request({
+              method: "POST",
+              body: {
+                operation:
+                  "create-verified-policy",
+                propertyId:
+                  "1214-wagner",
+                subjectLabel:
+                  "1214 WAGNER annual insurance",
+                obligationType:
+                  "fire_insurance",
+                annualAmountCents:
+                  78668,
+                servicePeriodStart:
+                  "2025-12-16",
+                servicePeriodEnd:
+                  "2026-12-16",
+                providerName:
+                  "Scottsdale Insurance Company",
+                providerReference:
+                  "DFS5003139",
+                notes:
+                  "Windstorm excluded.",
+                ownerId:
+                  "spoofed-owner",
+              },
+            }),
+          );
+
+        expect(
+          mocks.createVerifiedPolicy,
+        ).toHaveBeenCalledWith({
+          propertyId:
+            "1214-wagner",
+          subjectLabel:
+            "1214 WAGNER annual insurance",
+          obligationType:
+            "fire_insurance",
+          annualAmountCents:
+            78668,
+          servicePeriodStart:
+            "2025-12-16",
+          servicePeriodEnd:
+            "2026-12-16",
+          providerName:
+            "Scottsdale Insurance Company",
+          providerReference:
+            "DFS5003139",
+          evidenceId: null,
+          notes:
+            "Windstorm excluded.",
+          ownerId:
+            "authenticated-owner",
+        });
+
+        await expect(
+          response.json(),
+        ).resolves.toEqual({
+          success: true,
+          policy,
+        });
+      },
+    );
+
+    it(
+      "rejects a verified policy for an unowned property",
+      async () => {
+        const response =
+          await POST(
+            request({
+              method: "POST",
+              body: {
+                operation:
+                  "create-verified-policy",
+                propertyId:
+                  "unowned-property",
+                subjectLabel:
+                  "Unowned policy",
+                obligationType:
+                  "fire_insurance",
+                annualAmountCents:
+                  78668,
+                servicePeriodStart:
+                  "2025-12-16",
+                servicePeriodEnd:
+                  "2026-12-16",
+              },
+            }),
+          );
+
+        expect(response.status).toBe(
+          404,
+        );
+        expect(
+          mocks.createVerifiedPolicy,
+        ).not.toHaveBeenCalled();
       },
     );
 

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import PropertyOperatingCostsPanel, {
   buildCoverageVerificationPayload,
+  buildOperatingCostPropertyChoices,
+  buildVerifiedPolicyPayload,
   canVerifyCoverage,
   displayObligationValue,
   summarizeObligations,
@@ -13,6 +15,7 @@ describe("PropertyOperatingCostsPanel", () => {
     expect(markup).toContain("data-property-operating-costs-panel");
     expect(markup).toContain("Taxes &amp; Insurance");
     expect(markup).toContain("Category ledger CSV");
+    expect(markup).toContain("Add verified policy");
   });
 
   it("uses accounting-friendly labels", () => {
@@ -49,6 +52,56 @@ describe("PropertyOperatingCostsPanel", () => {
       scope: "property",
       obligationType: "fire_insurance",
     })).toBe(false);
+  });
+
+  it("builds unique property choices from canonical obligations", () => {
+    expect(buildOperatingCostPropertyChoices([
+      {
+        propertyId: "420-south-29th",
+        obligationType: "property_tax",
+        subjectLabel: "420 SOUTH 29TH 2025 property taxes",
+      },
+      {
+        propertyId: "420-south-29th",
+        obligationType: "fire_insurance",
+        subjectLabel: "420 SOUTH 29TH annual insurance",
+      },
+      {
+        propertyId: null,
+        obligationType: "business_liability_insurance",
+        subjectLabel: "Portfolio liability",
+      },
+    ])).toEqual([
+      {
+        propertyId: "420-south-29th",
+        label: "420 SOUTH 29TH",
+      },
+    ]);
+  });
+
+  it("creates a verified policy payload without cash fields", () => {
+    expect(buildVerifiedPolicyPayload({
+      propertyId: "420-south-29th",
+      propertyLabel: "420 SOUTH 29TH",
+      obligationType: "fire_insurance",
+      annualPremium: "786.68",
+      servicePeriodStart: "2025-12-16",
+      servicePeriodEnd: "2026-12-16",
+      providerName: "Scottsdale Insurance Company",
+      providerReference: "DFS5003139",
+      notes: "Windstorm or hail excluded.",
+    })).toEqual({
+      operation: "create-verified-policy",
+      propertyId: "420-south-29th",
+      subjectLabel: "420 SOUTH 29TH annual insurance",
+      obligationType: "fire_insurance",
+      annualAmountCents: 78668,
+      servicePeriodStart: "2025-12-16",
+      servicePeriodEnd: "2026-12-16",
+      providerName: "Scottsdale Insurance Company",
+      providerReference: "DFS5003139",
+      notes: "Windstorm or hail excluded.",
+    });
   });
 
   it("separates verified premium from imported payment data", () => {

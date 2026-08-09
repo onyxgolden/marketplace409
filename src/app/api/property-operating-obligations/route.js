@@ -247,6 +247,108 @@ export async function POST(request) {
 
     if (
       operation ===
+        "create-verified-policy"
+    ) {
+      let propertyId;
+      let subjectLabel;
+      let obligationType;
+      let servicePeriodStart;
+      let servicePeriodEnd;
+
+      try {
+        propertyId =
+          requiredString(
+            body?.propertyId,
+            "Verified policy property id is required.",
+          );
+        subjectLabel =
+          requiredString(
+            body?.subjectLabel,
+            "Verified policy subject label is required.",
+          );
+        obligationType =
+          requiredString(
+            body?.obligationType,
+            "Verified policy type is required.",
+          );
+        servicePeriodStart =
+          requiredString(
+            body?.servicePeriodStart,
+            "Verified policy coverage start is required.",
+          );
+        servicePeriodEnd =
+          requiredString(
+            body?.servicePeriodEnd,
+            "Verified policy coverage end is required.",
+          );
+      } catch (error) {
+        return badRequest(
+          error.message,
+        );
+      }
+
+      const context =
+        await authenticated
+          .loadImportContext();
+      const ownedProperty =
+        context.properties.find(
+          (property) =>
+            String(
+              property?.id,
+            ) === propertyId,
+        );
+
+      if (!ownedProperty) {
+        return NextResponse.json(
+          {
+            error:
+              "Property was not found.",
+          },
+          {
+            status: 404,
+          },
+        );
+      }
+
+      const policy =
+        await authenticated
+          .application
+          .createVerifiedPolicy({
+            propertyId,
+            subjectLabel,
+            obligationType,
+            annualAmountCents:
+              body?.annualAmountCents,
+            servicePeriodStart,
+            servicePeriodEnd,
+            providerName:
+              optionalValue(
+                body?.providerName,
+              ),
+            providerReference:
+              optionalValue(
+                body?.providerReference,
+              ),
+            evidenceId:
+              optionalValue(
+                body?.evidenceId,
+              ),
+            notes:
+              optionalValue(
+                body?.notes,
+              ),
+            ownerId:
+              authenticated.user.id,
+          });
+
+      return NextResponse.json({
+        success: true,
+        policy,
+      });
+    }
+
+    if (
+      operation ===
         "verify-coverage"
     ) {
       let obligationId;

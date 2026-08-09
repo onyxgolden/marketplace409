@@ -68,6 +68,422 @@ function mergeObligations(current, incoming) {
   );
 }
 
+export function buildOperatingCostPropertyChoices(
+  obligations = [],
+) {
+  const choices =
+    new Map();
+
+  for (
+    const obligation of obligations
+  ) {
+    if (
+      !obligation?.propertyId
+    ) {
+      continue;
+    }
+
+    const taxLabel =
+      obligation.obligationType ===
+        "property_tax"
+        ? String(
+            obligation.subjectLabel ||
+              "",
+          ).replace(
+            /\s+\d{4}\s+property taxes$/i,
+            "",
+          ).trim()
+        : "";
+
+    const current =
+      choices.get(
+        obligation.propertyId,
+      );
+
+    choices.set(
+      obligation.propertyId,
+      {
+        propertyId:
+          obligation.propertyId,
+        label:
+          taxLabel ||
+          current?.label ||
+          obligation.propertyId,
+      },
+    );
+  }
+
+  return Object.freeze(
+    [...choices.values()]
+      .sort(
+        (left, right) =>
+          left.label.localeCompare(
+            right.label,
+          ),
+      )
+      .map(
+        (choice) =>
+          Object.freeze(
+            choice,
+          ),
+      ),
+  );
+}
+
+export function buildVerifiedPolicyPayload({
+  propertyId,
+  propertyLabel,
+  obligationType,
+  annualPremium,
+  servicePeriodStart,
+  servicePeriodEnd,
+  providerName,
+  providerReference,
+  notes,
+}) {
+  const amount =
+    Number(annualPremium);
+
+  if (!propertyId) {
+    throw new Error(
+      "Select the insured property.",
+    );
+  }
+
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0
+  ) {
+    throw new Error(
+      "Enter the verified annual policy premium.",
+    );
+  }
+
+  return Object.freeze({
+    operation:
+      "create-verified-policy",
+    propertyId,
+    subjectLabel:
+      `${propertyLabel} annual insurance`,
+    obligationType,
+    annualAmountCents:
+      Math.round(
+        amount * 100,
+      ),
+    servicePeriodStart,
+    servicePeriodEnd,
+    providerName,
+    providerReference,
+    notes,
+  });
+}
+
+function VerifiedPolicyForm({
+  propertyChoices,
+  onCreated,
+}) {
+  const [
+    propertyId,
+    setPropertyId,
+  ] = useState("");
+  const [
+    obligationType,
+    setObligationType,
+  ] = useState(
+    "fire_insurance",
+  );
+  const [
+    annualPremium,
+    setAnnualPremium,
+  ] = useState("");
+  const [
+    servicePeriodStart,
+    setServicePeriodStart,
+  ] = useState("");
+  const [
+    servicePeriodEnd,
+    setServicePeriodEnd,
+  ] = useState("");
+  const [
+    providerName,
+    setProviderName,
+  ] = useState("");
+  const [
+    providerReference,
+    setProviderReference,
+  ] = useState("");
+  const [
+    notes,
+    setNotes,
+  ] = useState("");
+  const [
+    working,
+    setWorking,
+  ] = useState(false);
+  const [
+    error,
+    setError,
+  ] = useState("");
+
+  async function handleSubmit(
+    event,
+  ) {
+    event.preventDefault();
+    setWorking(true);
+    setError("");
+
+    try {
+      const property =
+        propertyChoices.find(
+          (choice) =>
+            choice.propertyId ===
+              propertyId,
+        );
+      const payload =
+        buildVerifiedPolicyPayload({
+          propertyId,
+          propertyLabel:
+            property?.label ||
+            propertyId,
+          obligationType,
+          annualPremium,
+          servicePeriodStart,
+          servicePeriodEnd,
+          providerName,
+          providerReference,
+          notes,
+        });
+      const response =
+        await fetch(
+          "/api/property-operating-obligations",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body:
+              JSON.stringify(
+                payload,
+              ),
+          },
+        );
+      const result =
+        await readJson(
+          response,
+        );
+
+      onCreated(
+        result.policy,
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Unable to create the verified policy.",
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <details className="rounded-2xl border border-sky-200 bg-white shadow-sm">
+      <summary className="cursor-pointer list-none px-5 py-4">
+        <div className="text-xs font-black uppercase tracking-wide text-sky-700">
+          Policy Declaration
+        </div>
+        <div className="mt-1 text-lg font-black text-slate-950">
+          Add verified policy
+        </div>
+        <div className="mt-1 text-sm text-slate-600">
+          Create coverage from a declaration without inventing a cash payment.
+        </div>
+      </summary>
+
+      <form
+        onSubmit={handleSubmit}
+        className="grid gap-4 border-t border-sky-100 px-5 py-5"
+      >
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="text-xs font-bold text-slate-700">
+            Insured property
+            <select
+              required
+              value={propertyId}
+              onChange={(event) =>
+                setPropertyId(
+                  event.target.value,
+                )
+              }
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            >
+              <option value="">
+                Select property
+              </option>
+              {propertyChoices.map(
+                (choice) => (
+                  <option
+                    key={
+                      choice.propertyId
+                    }
+                    value={
+                      choice.propertyId
+                    }
+                  >
+                    {choice.label}
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+
+          <label className="text-xs font-bold text-slate-700">
+            Verified policy type
+            <select
+              required
+              value={obligationType}
+              onChange={(event) =>
+                setObligationType(
+                  event.target.value,
+                )
+              }
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            >
+              <option value="fire_insurance">
+                Fire insurance
+              </option>
+              <option value="windstorm_insurance">
+                Windstorm insurance
+              </option>
+              <option value="flood_insurance">
+                Flood insurance
+              </option>
+              <option value="bundled_fire_windstorm_insurance">
+                Fire and windstorm insurance
+              </option>
+              <option value="business_liability_insurance">
+                Business liability insurance
+              </option>
+              <option value="other_insurance">
+                Other insurance
+              </option>
+            </select>
+          </label>
+
+          <label className="text-xs font-bold text-slate-700">
+            Annual policy premium
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              required
+              value={annualPremium}
+              onChange={(event) =>
+                setAnnualPremium(
+                  event.target.value,
+                )
+              }
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+
+          <label className="text-xs font-bold text-slate-700">
+            Provider
+            <input
+              type="text"
+              value={providerName}
+              onChange={(event) =>
+                setProviderName(
+                  event.target.value,
+                )
+              }
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+
+          <label className="text-xs font-bold text-slate-700">
+            Coverage starts
+            <input
+              type="date"
+              required
+              value={servicePeriodStart}
+              onChange={(event) =>
+                setServicePeriodStart(
+                  event.target.value,
+                )
+              }
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+
+          <label className="text-xs font-bold text-slate-700">
+            Coverage ends
+            <input
+              type="date"
+              required
+              value={servicePeriodEnd}
+              onChange={(event) =>
+                setServicePeriodEnd(
+                  event.target.value,
+                )
+              }
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+
+          <label className="text-xs font-bold text-slate-700">
+            Policy reference
+            <input
+              type="text"
+              value={providerReference}
+              onChange={(event) =>
+                setProviderReference(
+                  event.target.value,
+                )
+              }
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+
+          <label className="text-xs font-bold text-slate-700">
+            Verification notes
+            <input
+              type="text"
+              value={notes}
+              onChange={(event) =>
+                setNotes(
+                  event.target.value,
+                )
+              }
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+        </div>
+
+        {error && (
+          <div
+            role="alert"
+            className="text-sm font-bold text-rose-700"
+          >
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={working}
+          className="w-full rounded-lg bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40 sm:w-auto"
+        >
+          {working
+            ? "Creating policy…"
+            : "Create verified policy"}
+        </button>
+      </form>
+    </details>
+  );
+}
+
 export function canVerifyCoverage(
   obligation,
 ) {
@@ -463,6 +879,10 @@ export default function PropertyOperatingCostsPanel() {
   }, []);
 
   const summary = summarizeObligations(obligations);
+  const propertyChoices =
+    buildOperatingCostPropertyChoices(
+      obligations,
+    );
 
   async function handleFileChange(event) {
     const file = event.target.files?.[0];
@@ -553,6 +973,24 @@ export default function PropertyOperatingCostsPanel() {
           </div>
         ))}
       </div>
+
+      <VerifiedPolicyForm
+        propertyChoices={
+          propertyChoices
+        }
+        onCreated={(policy) => {
+          setObligations(
+            (current) =>
+              mergeObligations(
+                current,
+                [policy],
+              ),
+          );
+          setMessage(
+            `${policy.subjectLabel} created from verified policy evidence.`,
+          );
+        }}
+      />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,1.2fr)]">
         <div className="rounded-2xl border border-slate-200 bg-white p-5">

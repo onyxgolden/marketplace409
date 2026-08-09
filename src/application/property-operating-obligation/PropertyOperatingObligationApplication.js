@@ -402,6 +402,8 @@ export class PropertyOperatingObligationApplication {
     repository,
     clock = () =>
       new Date().toISOString(),
+    idFactory = () =>
+      globalThis.crypto.randomUUID(),
   } = {}) {
     if (!repository) {
       throw new Error(
@@ -412,6 +414,8 @@ export class PropertyOperatingObligationApplication {
     this.repository =
       repository;
     this.clock = clock;
+    this.idFactory =
+      idFactory;
   }
 
   async save(
@@ -506,6 +510,100 @@ export class PropertyOperatingObligationApplication {
 
     return this.repository.save(
       reconciled,
+      {
+        ownerId:
+          requiredOwnerId,
+      },
+    );
+  }
+
+  async createVerifiedPolicy({
+    propertyId,
+    subjectLabel,
+    obligationType,
+    annualAmountCents,
+    servicePeriodStart,
+    servicePeriodEnd,
+    providerName = null,
+    providerReference = null,
+    evidenceId = null,
+    notes = null,
+    ownerId,
+  }) {
+    const requiredOwnerId =
+      requireIdentifier(
+        ownerId,
+        "Property operating obligation owner id is required.",
+      );
+    const requiredPropertyId =
+      requireIdentifier(
+        propertyId,
+        "Property operating obligation property id is required.",
+      );
+    const existingPolicies =
+      await this.repository.list(
+        {
+          propertyId:
+            requiredPropertyId,
+          obligationType,
+        },
+        requiredOwnerId,
+      );
+    const existingPolicy =
+      existingPolicies.find(
+        (policy) =>
+          policy.servicePeriodStart ===
+            servicePeriodStart &&
+          policy.servicePeriodEnd ===
+            servicePeriodEnd,
+      );
+
+    if (existingPolicy) {
+      return existingPolicy;
+    }
+
+    const timestamp =
+      this.clock();
+
+    const policy =
+      createPropertyOperatingObligation({
+        id:
+          `property_operating_obligation_${this.idFactory()}`,
+        scope: "property",
+        propertyId:
+          requiredPropertyId,
+        subjectLabel,
+        obligationType,
+        annualAmountCents,
+        currencyCode: "USD",
+        servicePeriodStart,
+        servicePeriodEnd,
+        paymentDate: null,
+        paidAmountCents: null,
+        status: "active",
+        verificationStatus:
+          "document_verified",
+        recognitionStatus:
+          "accrual_ready",
+        businessUseBasisPoints:
+          null,
+        source:
+          "policy_document",
+        providerName,
+        providerReference,
+        evidenceId,
+        reconciledFinancialEventId:
+          null,
+        cancelledAt: null,
+        createdAt:
+          timestamp,
+        updatedAt:
+          timestamp,
+        notes,
+      });
+
+    return this.repository.save(
+      policy,
       {
         ownerId:
           requiredOwnerId,
