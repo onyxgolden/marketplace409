@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import PropertyOperatingCostsPanel, { displayObligationValue, summarizeObligations } from "../PropertyOperatingCostsPanel.jsx";
+import PropertyOperatingCostsPanel, {
+  buildCoverageVerificationPayload,
+  canVerifyCoverage,
+  displayObligationValue,
+  summarizeObligations,
+} from "../PropertyOperatingCostsPanel.jsx";
 
 describe("PropertyOperatingCostsPanel", () => {
   it("renders the focused operating-cost workspace", () => {
@@ -24,5 +29,49 @@ describe("PropertyOperatingCostsPanel", () => {
 
   it("freezes the summary", () => {
     expect(Object.isFrozen(summarizeObligations([]))).toBe(true);
+  });
+
+  it("offers verification only for pending non-home insurance", () => {
+    expect(canVerifyCoverage({
+      recognitionStatus: "pending",
+      scope: "property",
+      obligationType: "fire_insurance",
+    })).toBe(true);
+
+    expect(canVerifyCoverage({
+      recognitionStatus: "pending",
+      scope: "personal_home_office",
+      obligationType: "flood_insurance",
+    })).toBe(false);
+
+    expect(canVerifyCoverage({
+      recognitionStatus: "accrual_ready",
+      scope: "property",
+      obligationType: "fire_insurance",
+    })).toBe(false);
+  });
+
+  it("separates verified premium from imported payment data", () => {
+    expect(buildCoverageVerificationPayload({
+      obligation: {
+        id: "insurance_1",
+        paidAmountCents: 42340,
+      },
+      annualPremium: "419.45",
+      servicePeriodStart: "2026-03-19",
+      servicePeriodEnd: "2027-03-19",
+      providerName: "Farm Bureau",
+      providerReference: "policy-reference",
+      notes: "$3.95 payment variance retained.",
+    })).toEqual({
+      operation: "verify-coverage",
+      obligationId: "insurance_1",
+      annualAmountCents: 41945,
+      servicePeriodStart: "2026-03-19",
+      servicePeriodEnd: "2027-03-19",
+      providerName: "Farm Bureau",
+      providerReference: "policy-reference",
+      notes: "$3.95 payment variance retained.",
+    });
   });
 });

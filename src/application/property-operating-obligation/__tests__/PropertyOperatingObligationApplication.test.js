@@ -338,6 +338,164 @@ describe(
     );
 
     it(
+      "verifies policy coverage without changing imported payment facts",
+      async () => {
+        const repository =
+          new InMemoryPropertyOperatingObligationRepository();
+        const clock = vi.fn(() =>
+          "2026-08-09T17:00:00.000Z"
+        );
+        const application =
+          new PropertyOperatingObligationApplication({
+            repository,
+            clock,
+          });
+
+        const pending =
+          obligation({
+            obligationType:
+              "fire_insurance",
+            servicePeriodStart:
+              null,
+            servicePeriodEnd:
+              null,
+            status:
+              "provisional",
+            verificationStatus:
+              "unverified",
+            recognitionStatus:
+              "pending",
+            annualAmountCents:
+              42340,
+            paidAmountCents:
+              42340,
+            paymentDate:
+              "2026-03-19",
+            reconciledFinancialEventId:
+              "financial_event_insurance",
+          });
+
+        await application.save(
+          pending,
+          "owner_1",
+        );
+
+        const verified =
+          await application
+            .verifyCoverage({
+              obligationId:
+                "obligation_1",
+              servicePeriodStart:
+                "2026-03-19",
+              servicePeriodEnd:
+                "2027-03-19",
+              annualAmountCents:
+                41945,
+              providerName:
+                "Farm Bureau",
+              providerReference:
+                "policy-reference",
+              notes:
+                "Policy amount $419.45; imported payment $423.40; $3.95 variance retained.",
+              ownerId:
+                " owner_1 ",
+            });
+
+        expect(
+          verified,
+        ).toMatchObject({
+          servicePeriodStart:
+            "2026-03-19",
+          servicePeriodEnd:
+            "2027-03-19",
+          status: "active",
+          verificationStatus:
+            "document_verified",
+          recognitionStatus:
+            "accrual_ready",
+          providerName:
+            "Farm Bureau",
+          providerReference:
+            "policy-reference",
+          annualAmountCents:
+            41945,
+          paidAmountCents:
+            42340,
+          paymentDate:
+            "2026-03-19",
+          reconciledFinancialEventId:
+            "financial_event_insurance",
+          updatedAt:
+            "2026-08-09T17:00:00.000Z",
+        });
+      },
+    );
+
+    it(
+      "rejects coverage verification for an obligation outside the owner scope",
+      async () => {
+        const repository =
+          new InMemoryPropertyOperatingObligationRepository();
+        const application =
+          new PropertyOperatingObligationApplication({
+            repository,
+          });
+
+        await application.save(
+          obligation(),
+          "owner_1",
+        );
+
+        await expect(
+          application.verifyCoverage({
+            obligationId:
+              "obligation_1",
+            servicePeriodStart:
+              "2026-03-19",
+            servicePeriodEnd:
+              "2027-03-19",
+            ownerId:
+              "owner_2",
+          }),
+        ).rejects.toThrow(
+          "Property operating obligation was not found.",
+        );
+      },
+    );
+
+    it(
+      "rejects incomplete or reversed verified coverage periods",
+      async () => {
+        const repository =
+          new InMemoryPropertyOperatingObligationRepository();
+        const application =
+          new PropertyOperatingObligationApplication({
+            repository,
+          });
+
+        await application.save(
+          obligation(),
+          "owner_1",
+        );
+
+        await expect(
+          application.verifyCoverage({
+            obligationId:
+              "obligation_1",
+            servicePeriodStart:
+              "2027-03-19",
+            servicePeriodEnd:
+              "2026-03-19",
+            ownerId:
+              "owner_1",
+          }),
+        ).rejects.toThrow(
+          "service period end must follow its start",
+        );
+      },
+    );
+
+    it(
       "reconciles one imported payment idempotently",
       async () => {
         const repository =

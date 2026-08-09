@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
     vi.fn(),
   importSpreadsheet:
     vi.fn(),
+  verifyCoverage:
+    vi.fn(),
   reconcilePayment:
     vi.fn(),
   loadImportContext:
@@ -48,6 +50,8 @@ function authenticate() {
         mocks.previewSpreadsheet,
       importSpreadsheet:
         mocks.importSpreadsheet,
+      verifyCoverage:
+        mocks.verifyCoverage,
       reconcilePayment:
         mocks.reconcilePayment,
     },
@@ -333,6 +337,109 @@ describe(
           success: true,
           result,
         });
+      },
+    );
+
+    it(
+      "verifies coverage through authenticated owner authority",
+      async () => {
+        const obligation = {
+          id:
+            "obligation_1",
+          servicePeriodStart:
+            "2026-03-19",
+          servicePeriodEnd:
+            "2027-03-19",
+          recognitionStatus:
+            "accrual_ready",
+        };
+
+        mocks.verifyCoverage
+          .mockResolvedValue(
+            obligation,
+          );
+
+        const response =
+          await POST(
+            request({
+              method: "POST",
+              body: {
+                operation:
+                  "verify-coverage",
+                obligationId:
+                  "obligation_1",
+                servicePeriodStart:
+                  "2026-03-19",
+                servicePeriodEnd:
+                  "2027-03-19",
+                annualAmountCents:
+                  41945,
+                providerName:
+                  "Farm Bureau",
+                providerReference:
+                  "policy-reference",
+                notes:
+                  "Document verified.",
+                ownerId:
+                  "spoofed-owner",
+              },
+            }),
+          );
+
+        expect(
+          mocks.verifyCoverage,
+        ).toHaveBeenCalledWith({
+          obligationId:
+            "obligation_1",
+          servicePeriodStart:
+            "2026-03-19",
+          servicePeriodEnd:
+            "2027-03-19",
+          annualAmountCents:
+            41945,
+          providerName:
+            "Farm Bureau",
+          providerReference:
+            "policy-reference",
+          notes:
+            "Document verified.",
+          ownerId:
+            "authenticated-owner",
+        });
+
+        await expect(
+          response.json(),
+        ).resolves.toEqual({
+          success: true,
+          obligation,
+        });
+      },
+    );
+
+    it(
+      "requires complete coverage dates before verification",
+      async () => {
+        const response =
+          await POST(
+            request({
+              method: "POST",
+              body: {
+                operation:
+                  "verify-coverage",
+                obligationId:
+                  "obligation_1",
+                servicePeriodStart:
+                  "2026-03-19",
+              },
+            }),
+          );
+
+        expect(response.status).toBe(
+          400,
+        );
+        expect(
+          mocks.verifyCoverage,
+        ).not.toHaveBeenCalled();
       },
     );
 

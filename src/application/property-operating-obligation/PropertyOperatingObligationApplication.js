@@ -513,6 +513,86 @@ export class PropertyOperatingObligationApplication {
     );
   }
 
+  async verifyCoverage({
+    obligationId,
+    servicePeriodStart,
+    servicePeriodEnd,
+    annualAmountCents,
+    verificationStatus =
+      "document_verified",
+    evidenceId,
+    providerName,
+    providerReference,
+    notes,
+    ownerId,
+  }) {
+    const requiredOwnerId =
+      requireIdentifier(
+        ownerId,
+        "Property operating obligation owner id is required.",
+      );
+    const requiredObligationId =
+      requireIdentifier(
+        obligationId,
+        "Property operating obligation id is required.",
+      );
+
+    const existing =
+      await this.repository.findById(
+        requiredObligationId,
+        requiredOwnerId,
+      );
+
+    if (!existing) {
+      throw new Error(
+        "Property operating obligation was not found.",
+      );
+    }
+
+    const verified =
+      createPropertyOperatingObligation({
+        ...existing,
+        servicePeriodStart,
+        servicePeriodEnd,
+        annualAmountCents:
+          annualAmountCents ===
+            undefined
+            ? existing.annualAmountCents
+            : annualAmountCents,
+        status: "active",
+        verificationStatus,
+        recognitionStatus:
+          "accrual_ready",
+        evidenceId:
+          evidenceId === undefined
+            ? existing.evidenceId
+            : evidenceId,
+        providerName:
+          providerName === undefined
+            ? existing.providerName
+            : providerName,
+        providerReference:
+          providerReference ===
+            undefined
+            ? existing.providerReference
+            : providerReference,
+        notes:
+          notes === undefined
+            ? existing.notes
+            : notes,
+        updatedAt:
+          this.clock(),
+      });
+
+    return this.repository.save(
+      verified,
+      {
+        ownerId:
+          requiredOwnerId,
+      },
+    );
+  }
+
   previewSpreadsheet({
     csv,
     properties,

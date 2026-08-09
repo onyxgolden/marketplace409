@@ -247,6 +247,88 @@ export async function POST(request) {
 
     if (
       operation ===
+        "verify-coverage"
+    ) {
+      let obligationId;
+      let servicePeriodStart;
+      let servicePeriodEnd;
+
+      try {
+        obligationId =
+          requiredString(
+            body?.obligationId,
+            "Property operating obligation id is required.",
+          );
+        servicePeriodStart =
+          requiredString(
+            body?.servicePeriodStart,
+            "Property operating obligation coverage start is required.",
+          );
+        servicePeriodEnd =
+          requiredString(
+            body?.servicePeriodEnd,
+            "Property operating obligation coverage end is required.",
+          );
+      } catch (error) {
+        return badRequest(
+          error.message,
+        );
+      }
+
+      const verification = {
+        obligationId,
+        servicePeriodStart,
+        servicePeriodEnd,
+        ownerId:
+          authenticated.user.id,
+      };
+
+      if (
+        Object.prototype.hasOwnProperty.call(
+          body,
+          "annualAmountCents",
+        )
+      ) {
+        verification.annualAmountCents =
+          body.annualAmountCents;
+      };
+
+      for (
+        const field of [
+          "evidenceId",
+          "providerName",
+          "providerReference",
+          "notes",
+        ]
+      ) {
+        if (
+          Object.prototype.hasOwnProperty.call(
+            body,
+            field,
+          )
+        ) {
+          verification[field] =
+            optionalValue(
+              body[field],
+            );
+        }
+      }
+
+      const obligation =
+        await authenticated
+          .application
+          .verifyCoverage(
+            verification,
+          );
+
+      return NextResponse.json({
+        success: true,
+        obligation,
+      });
+    }
+
+    if (
+      operation ===
         "reconcile-payment"
     ) {
       let obligationId;

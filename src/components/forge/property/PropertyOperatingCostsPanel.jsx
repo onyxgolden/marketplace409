@@ -68,7 +68,292 @@ function mergeObligations(current, incoming) {
   );
 }
 
-function ObligationRow({ obligation }) {
+export function canVerifyCoverage(
+  obligation,
+) {
+  return (
+    obligation
+      ?.recognitionStatus ===
+        "pending" &&
+    obligation?.scope !==
+      "personal_home_office" &&
+    String(
+      obligation?.obligationType ||
+        "",
+    ).includes(
+      "insurance",
+    )
+  );
+}
+
+export function buildCoverageVerificationPayload({
+  obligation,
+  annualPremium,
+  servicePeriodStart,
+  servicePeriodEnd,
+  providerName,
+  providerReference,
+  notes,
+}) {
+  const amount =
+    Number(annualPremium);
+
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0
+  ) {
+    throw new Error(
+      "Enter the verified annual policy premium.",
+    );
+  }
+
+  return Object.freeze({
+    operation:
+      "verify-coverage",
+    obligationId:
+      obligation.id,
+    annualAmountCents:
+      Math.round(
+        amount * 100,
+      ),
+    servicePeriodStart,
+    servicePeriodEnd,
+    providerName,
+    providerReference,
+    notes,
+  });
+}
+
+function CoverageVerificationForm({
+  obligation,
+  onVerified,
+}) {
+  const [
+    annualPremium,
+    setAnnualPremium,
+  ] = useState(
+    (
+      Number(
+        obligation
+          .annualAmountCents ||
+          0,
+      ) / 100
+    ).toFixed(2),
+  );
+  const [
+    servicePeriodStart,
+    setServicePeriodStart,
+  ] = useState(
+    obligation
+      .servicePeriodStart ||
+      "",
+  );
+  const [
+    servicePeriodEnd,
+    setServicePeriodEnd,
+  ] = useState(
+    obligation
+      .servicePeriodEnd ||
+      "",
+  );
+  const [
+    providerName,
+    setProviderName,
+  ] = useState(
+    obligation.providerName ||
+      "",
+  );
+  const [
+    providerReference,
+    setProviderReference,
+  ] = useState(
+    obligation
+      .providerReference ||
+      "",
+  );
+  const [
+    notes,
+    setNotes,
+  ] = useState(
+    obligation.notes || "",
+  );
+  const [
+    working,
+    setWorking,
+  ] = useState(false);
+  const [
+    error,
+    setError,
+  ] = useState("");
+
+  async function handleSubmit(
+    event,
+  ) {
+    event.preventDefault();
+    setWorking(true);
+    setError("");
+
+    try {
+      const response =
+        await fetch(
+          "/api/property-operating-obligations",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body:
+              JSON.stringify(
+                buildCoverageVerificationPayload({
+                  obligation,
+                  annualPremium,
+                  servicePeriodStart,
+                  servicePeriodEnd,
+                  providerName,
+                  providerReference,
+                  notes,
+                }),
+              ),
+          },
+        );
+      const payload =
+        await readJson(
+          response,
+        );
+
+      onVerified(
+        payload.obligation,
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Unable to verify policy coverage.",
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mt-2 grid gap-3 rounded-xl border border-amber-200 bg-white p-4 sm:col-span-2 lg:col-span-4"
+    >
+      <div className="text-sm font-black text-slate-950">
+        Verify policy coverage
+      </div>
+      <div className="text-xs leading-5 text-slate-600">
+        Enter facts from the policy declaration. The premium accrues into NOI; the imported payment remains unchanged in cash flow.
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label className="text-xs font-bold text-slate-700">
+          Annual policy premium
+          <input
+            type="number"
+            min="0.01"
+            step="0.01"
+            required
+            value={annualPremium}
+            onChange={(event) =>
+              setAnnualPremium(
+                event.target.value,
+              )
+            }
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+          />
+        </label>
+        <label className="text-xs font-bold text-slate-700">
+          Coverage starts
+          <input
+            type="date"
+            required
+            value={servicePeriodStart}
+            onChange={(event) =>
+              setServicePeriodStart(
+                event.target.value,
+              )
+            }
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+          />
+        </label>
+        <label className="text-xs font-bold text-slate-700">
+          Coverage ends
+          <input
+            type="date"
+            required
+            value={servicePeriodEnd}
+            onChange={(event) =>
+              setServicePeriodEnd(
+                event.target.value,
+              )
+            }
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+          />
+        </label>
+        <label className="text-xs font-bold text-slate-700">
+          Provider
+          <input
+            type="text"
+            value={providerName}
+            onChange={(event) =>
+              setProviderName(
+                event.target.value,
+              )
+            }
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+          />
+        </label>
+        <label className="text-xs font-bold text-slate-700">
+          Policy reference
+          <input
+            type="text"
+            value={providerReference}
+            onChange={(event) =>
+              setProviderReference(
+                event.target.value,
+              )
+            }
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+          />
+        </label>
+        <label className="text-xs font-bold text-slate-700 sm:col-span-2 lg:col-span-1">
+          Verification notes
+          <input
+            type="text"
+            value={notes}
+            onChange={(event) =>
+              setNotes(
+                event.target.value,
+              )
+            }
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+          />
+        </label>
+      </div>
+      {error && (
+        <div
+          role="alert"
+          className="text-xs font-bold text-rose-700"
+        >
+          {error}
+        </div>
+      )}
+      <button
+        type="submit"
+        disabled={working}
+        className="w-full rounded-lg bg-slate-950 px-4 py-2 text-xs font-black text-white disabled:opacity-40 sm:w-auto"
+      >
+        {working
+          ? "Verifying…"
+          : "Verify coverage and accrue"}
+      </button>
+    </form>
+  );
+}
+
+function ObligationRow({ obligation, onVerified }) {
   const ready = obligation.recognitionStatus === "accrual_ready";
 
   return (
@@ -99,6 +384,12 @@ function ObligationRow({ obligation }) {
         <div><b>Verification:</b><br />{displayObligationValue(obligation.verificationStatus)}</div>
         <div><b>Financial payment:</b><br />{obligation.reconciledFinancialEventId ? "Reconciled" : "Needs matching"}</div>
         {obligation.notes && <div className="sm:col-span-2 lg:col-span-4"><b>Notes:</b> {obligation.notes}</div>}
+        {canVerifyCoverage(obligation) && (
+          <CoverageVerificationForm
+            obligation={obligation}
+            onVerified={onVerified}
+          />
+        )}
       </div>
     </details>
   );
@@ -248,7 +539,23 @@ export default function PropertyOperatingCostsPanel() {
           <div className="grid gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[10px] font-black uppercase text-slate-500 sm:grid-cols-[minmax(180px,1.4fr)_minmax(130px,1fr)_110px_125px_20px]"><div>Property</div><div>Category</div><div>Annual</div><div>Status</div><div /></div>
           {loading && <div className="p-5 text-sm font-bold text-slate-600">Loading operating costs…</div>}
           {!loading && obligations.length === 0 && <div className="p-5 text-sm text-slate-600">No operating obligations have been imported.</div>}
-          {obligations.map((item) => <ObligationRow key={item.id} obligation={item} />)}
+          {obligations.map((item) => (
+            <ObligationRow
+              key={item.id}
+              obligation={item}
+              onVerified={(verified) => {
+                setObligations((current) =>
+                  mergeObligations(
+                    current,
+                    [verified],
+                  ),
+                );
+                setMessage(
+                  `${verified.subjectLabel} coverage verified and ready for accrual.`,
+                );
+              }}
+            />
+          ))}
         </div>
       </div>
     </section>
