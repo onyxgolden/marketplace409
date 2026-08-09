@@ -97,6 +97,8 @@ function query({
       vi.fn(),
     eq:
       vi.fn(),
+    order:
+      vi.fn(),
     update:
       vi.fn(),
   };
@@ -124,6 +126,17 @@ function query({
   builder.maybeSingle
     .mockResolvedValue({
       data,
+      error,
+    });
+
+  builder.order
+    .mockResolvedValue({
+      data:
+        Array.isArray(data)
+          ? data
+          : data
+            ? [data]
+            : [],
       error,
     });
 
@@ -264,6 +277,187 @@ describe(
 
         expect(found).toEqual(
           evidence(),
+        );
+      },
+    );
+
+    it(
+      "lists evidence through authenticated owner scope and optional filters",
+      async () => {
+        builder.order
+          .mockResolvedValue({
+            data: [
+              row(),
+              row({
+                id:
+                  "property_evidence_2",
+                hvac_event_id:
+                  "event-1",
+                review_status:
+                  "approved",
+              }),
+            ],
+            error: null,
+          });
+
+        const listed =
+          await repository.list(
+            {
+              propertyId:
+                " property-1 ",
+              hvacSystemId:
+                " system-1 ",
+              hvacEventId:
+                " event-1 ",
+              reviewStatus:
+                " approved ",
+            },
+            "owner-1",
+          );
+
+        expect(
+          builder.eq,
+        ).toHaveBeenNthCalledWith(
+          1,
+          "owner_id",
+          "owner-1",
+        );
+
+        expect(
+          builder.eq,
+        ).toHaveBeenNthCalledWith(
+          2,
+          "property_id",
+          "property-1",
+        );
+
+        expect(
+          builder.eq,
+        ).toHaveBeenNthCalledWith(
+          3,
+          "hvac_system_id",
+          "system-1",
+        );
+
+        expect(
+          builder.eq,
+        ).toHaveBeenNthCalledWith(
+          4,
+          "hvac_event_id",
+          "event-1",
+        );
+
+        expect(
+          builder.eq,
+        ).toHaveBeenNthCalledWith(
+          5,
+          "review_status",
+          "approved",
+        );
+
+        expect(
+          builder.order,
+        ).toHaveBeenCalledWith(
+          "created_at",
+          {
+            ascending: false,
+          },
+        );
+
+        expect(listed).toHaveLength(
+          2,
+        );
+
+        expect(
+          listed[1].hvacEventId,
+        ).toBe("event-1");
+
+        expect(
+          Object.isFrozen(
+            listed,
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      "lists all evidence for an owner without adding empty filters",
+      async () => {
+        builder.order
+          .mockResolvedValue({
+            data: [],
+            error: null,
+          });
+
+        const listed =
+          await repository.list(
+            {
+              propertyId: " ",
+              hvacSystemId: null,
+              hvacEventId: "",
+              reviewStatus:
+                undefined,
+            },
+            "owner-1",
+          );
+
+        expect(
+          builder.eq,
+        ).toHaveBeenCalledTimes(
+          1,
+        );
+
+        expect(listed).toEqual(
+          [],
+        );
+      },
+    );
+
+    it(
+      "requires owner authority before listing evidence",
+      async () => {
+        await expect(
+          repository.list(
+            {
+              propertyId:
+                "property-1",
+            },
+          ),
+        ).rejects.toThrow(
+          "Property evidence owner id is required.",
+        );
+
+        expect(
+          supabaseClient.from,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it(
+      "propagates evidence listing failures",
+      async () => {
+        const failure =
+          new Error(
+            "Evidence listing failed.",
+          );
+
+        builder.order
+          .mockResolvedValue({
+            data: null,
+            error:
+              failure,
+          });
+
+        await expect(
+          repository.list(
+            {
+              propertyId:
+                "property-1",
+            },
+            "owner-1",
+          ),
+        ).rejects.toBe(
+          failure,
         );
       },
     );

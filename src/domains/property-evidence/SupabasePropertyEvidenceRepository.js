@@ -201,6 +201,91 @@ export class SupabasePropertyEvidenceRepository {
       : null;
   }
 
+  async list(
+    {
+      propertyId = null,
+      hvacSystemId = null,
+      hvacEventId = null,
+      reviewStatus = null,
+    } = {},
+    ownerId,
+  ) {
+    const authenticatedOwnerId =
+      this.requireOwnerId(
+        ownerId,
+      );
+
+    let query =
+      this.supabase
+        .from(
+          "property_evidence",
+        )
+        .select("*")
+        .eq(
+          "owner_id",
+          authenticatedOwnerId,
+        );
+
+    const filters = [
+      [
+        "property_id",
+        propertyId,
+      ],
+      [
+        "hvac_system_id",
+        hvacSystemId,
+      ],
+      [
+        "hvac_event_id",
+        hvacEventId,
+      ],
+      [
+        "review_status",
+        reviewStatus,
+      ],
+    ];
+
+    for (
+      const [
+        column,
+        value,
+      ] of filters
+    ) {
+      const normalizedValue =
+        optionalIdentifier(
+          value,
+        );
+
+      if (normalizedValue) {
+        query =
+          query.eq(
+            column,
+            normalizedValue,
+          );
+      }
+    }
+
+    const {
+      data,
+      error,
+    } = await query.order(
+      "created_at",
+      {
+        ascending: false,
+      },
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    return Object.freeze(
+      (data || []).map(
+        evidenceRowToDomain,
+      ),
+    );
+  }
+
   async attachToHVACEvent({
     evidenceId,
     hvacEventId,

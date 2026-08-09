@@ -4,6 +4,9 @@ const EVIDENCE_BUCKET =
 const MAX_EVIDENCE_BYTES =
   10 * 1024 * 1024;
 
+const SIGNED_URL_TTL_SECONDS =
+  5 * 60;
+
 const ALLOWED_MIME_TYPES =
   Object.freeze([
     "application/pdf",
@@ -213,6 +216,130 @@ export class PropertyEvidenceApplication {
         crypto.randomUUID());
   }
 
+  async listEvidence(
+    {
+      propertyId = null,
+      hvacSystemId = null,
+      hvacEventId = null,
+      reviewStatus = null,
+    } = {},
+    ownerId,
+  ) {
+    const authenticatedOwnerId =
+      requireIdentifier(
+        ownerId,
+        "Property evidence owner id is required.",
+      );
+
+    if (
+      typeof this.repository.list !==
+        "function"
+    ) {
+      throw new Error(
+        "Property evidence repository does not support listing.",
+      );
+    }
+
+    const evidenceRecords =
+      await this.repository.list(
+        {
+          propertyId:
+            optionalIdentifier(
+              propertyId,
+            ),
+          hvacSystemId:
+            optionalIdentifier(
+              hvacSystemId,
+            ),
+          hvacEventId:
+            optionalIdentifier(
+              hvacEventId,
+            ),
+          reviewStatus:
+            optionalIdentifier(
+              reviewStatus,
+            ),
+        },
+        authenticatedOwnerId,
+      );
+
+    const evidence =
+      await Promise.all(
+        evidenceRecords.map(
+          async (record) => {
+            const bucket =
+              this.storage.from(
+                record.bucket,
+              );
+
+            if (
+              !bucket ||
+              typeof bucket
+                .createSignedUrl !==
+                "function"
+            ) {
+              throw new Error(
+                "Property evidence storage does not support signed URLs.",
+              );
+            }
+
+            const {
+              data,
+              error,
+            } = await bucket
+              .createSignedUrl(
+                record.objectPath,
+                SIGNED_URL_TTL_SECONDS,
+              );
+
+            if (error) {
+              throw error;
+            }
+
+            const accessUrl =
+              requireIdentifier(
+                data?.signedUrl,
+                "Property evidence signed URL was not returned.",
+              );
+
+            return Object.freeze({
+              id:
+                record.id,
+              propertyId:
+                record.propertyId,
+              hvacSystemId:
+                record.hvacSystemId,
+              hvacEventId:
+                record.hvacEventId,
+              originalFilename:
+                record.originalFilename,
+              mimeType:
+                record.mimeType,
+              byteSize:
+                record.byteSize,
+              extractionMethod:
+                record.extractionMethod,
+              parserVersion:
+                record.parserVersion,
+              reviewStatus:
+                record.reviewStatus,
+              createdAt:
+                record.createdAt,
+              updatedAt:
+                record.updatedAt,
+              accessUrl,
+              accessExpiresInSeconds:
+                SIGNED_URL_TTL_SECONDS,
+            });
+          },
+        ),
+      );
+
+    return Object.freeze(
+      evidence,
+    );
+  }
+
   async preserve({
     ownerId,
     propertyId,
@@ -392,5 +519,6 @@ export {
   ALLOWED_MIME_TYPES,
   EVIDENCE_BUCKET,
   MAX_EVIDENCE_BYTES,
+  SIGNED_URL_TTL_SECONDS,
   buildStoredFilename,
 };

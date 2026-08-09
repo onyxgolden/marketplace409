@@ -10,6 +10,7 @@ import {
   EVIDENCE_BUCKET,
   MAX_EVIDENCE_BYTES,
   PropertyEvidenceApplication,
+  SIGNED_URL_TTL_SECONDS,
   buildStoredFilename,
 } from "../PropertyEvidenceApplication";
 
@@ -18,6 +19,7 @@ describe(
   () => {
     let repository;
     let upload;
+    let createSignedUrl;
     let storage;
     let application;
 
@@ -28,6 +30,11 @@ describe(
             evidence,
           ) => evidence,
         ),
+        list:
+          vi.fn()
+            .mockResolvedValue(
+              [],
+            ),
       };
 
       upload =
@@ -40,10 +47,21 @@ describe(
             error: null,
           });
 
+      createSignedUrl =
+        vi.fn()
+          .mockResolvedValue({
+            data: {
+              signedUrl:
+                "https://private.example/evidence-token",
+            },
+            error: null,
+          });
+
       storage = {
         from: vi.fn(
           () => ({
             upload,
+            createSignedUrl,
           }),
         ),
       };
@@ -152,6 +170,235 @@ describe(
             evidence,
           ),
         ).toBe(true);
+      },
+    );
+
+    it(
+      "lists owner-scoped evidence with short-lived private access",
+      async () => {
+        repository.list
+          .mockResolvedValue([
+            {
+              id:
+                "property_evidence_1",
+              ownerId:
+                "owner-1",
+              propertyId:
+                "1214-wagner",
+              hvacSystemId:
+                "system-1",
+              hvacEventId:
+                "event-1",
+              bucket:
+                "property-evidence",
+              objectPath:
+                "owner-1/1214-wagner/property_evidence_1/Invoice-603.pdf",
+              originalFilename:
+                "Invoice 603.pdf",
+              mimeType:
+                "application/pdf",
+              byteSize: 400,
+              extractionMethod:
+                "native_pdf",
+              parserVersion:
+                "hvac-invoice-v1",
+              reviewStatus:
+                "approved",
+              createdAt:
+                "2026-08-08T21:00:00.000Z",
+              updatedAt:
+                "2026-08-08T22:00:00.000Z",
+            },
+          ]);
+
+        const evidence =
+          await application.listEvidence(
+            {
+              propertyId:
+                " 1214-wagner ",
+              hvacSystemId:
+                " system-1 ",
+              reviewStatus:
+                " approved ",
+            },
+            "owner-1",
+          );
+
+        expect(
+          repository.list,
+        ).toHaveBeenCalledWith(
+          {
+            propertyId:
+              "1214-wagner",
+            hvacSystemId:
+              "system-1",
+            hvacEventId:
+              null,
+            reviewStatus:
+              "approved",
+          },
+          "owner-1",
+        );
+
+        expect(
+          storage.from,
+        ).toHaveBeenCalledWith(
+          "property-evidence",
+        );
+
+        expect(
+          createSignedUrl,
+        ).toHaveBeenCalledWith(
+          "owner-1/1214-wagner/property_evidence_1/Invoice-603.pdf",
+          SIGNED_URL_TTL_SECONDS,
+        );
+
+        expect(evidence).toEqual([
+          {
+            id:
+              "property_evidence_1",
+            propertyId:
+              "1214-wagner",
+            hvacSystemId:
+              "system-1",
+            hvacEventId:
+              "event-1",
+            originalFilename:
+              "Invoice 603.pdf",
+            mimeType:
+              "application/pdf",
+            byteSize: 400,
+            extractionMethod:
+              "native_pdf",
+            parserVersion:
+              "hvac-invoice-v1",
+            reviewStatus:
+              "approved",
+            createdAt:
+              "2026-08-08T21:00:00.000Z",
+            updatedAt:
+              "2026-08-08T22:00:00.000Z",
+            accessUrl:
+              "https://private.example/evidence-token",
+            accessExpiresInSeconds:
+              SIGNED_URL_TTL_SECONDS,
+          },
+        ]);
+
+        expect(evidence[0]).not
+          .toHaveProperty(
+            "ownerId",
+          );
+
+        expect(evidence[0]).not
+          .toHaveProperty(
+            "bucket",
+          );
+
+        expect(evidence[0]).not
+          .toHaveProperty(
+            "objectPath",
+          );
+
+        expect(
+          Object.isFrozen(
+            evidence,
+          ),
+        ).toBe(true);
+
+        expect(
+          Object.isFrozen(
+            evidence[0],
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      "requires owner authority before listing evidence",
+      async () => {
+        await expect(
+          application.listEvidence(
+            {
+              propertyId:
+                "1214-wagner",
+            },
+          ),
+        ).rejects.toThrow(
+          "Property evidence owner id is required.",
+        );
+
+        expect(
+          repository.list,
+        ).not.toHaveBeenCalled();
+
+        expect(
+          storage.from,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it(
+      "fails closed when private URL signing fails",
+      async () => {
+        const signingFailure =
+          new Error(
+            "Private signing failed.",
+          );
+
+        repository.list
+          .mockResolvedValue([
+            {
+              id:
+                "property_evidence_1",
+              ownerId:
+                "owner-1",
+              propertyId:
+                "1214-wagner",
+              hvacSystemId:
+                null,
+              hvacEventId:
+                null,
+              bucket:
+                "property-evidence",
+              objectPath:
+                "owner-1/1214-wagner/property_evidence_1/invoice.pdf",
+              originalFilename:
+                "invoice.pdf",
+              mimeType:
+                "application/pdf",
+              byteSize: 400,
+              extractionMethod:
+                "pending",
+              parserVersion:
+                null,
+              reviewStatus:
+                "pending_review",
+              createdAt:
+                "2026-08-08T21:00:00.000Z",
+              updatedAt:
+                "2026-08-08T21:00:00.000Z",
+            },
+          ]);
+
+        createSignedUrl
+          .mockResolvedValue({
+            data: null,
+            error:
+              signingFailure,
+          });
+
+        await expect(
+          application.listEvidence(
+            {
+              propertyId:
+                "1214-wagner",
+            },
+            "owner-1",
+          ),
+        ).rejects.toBe(
+          signingFailure,
+        );
       },
     );
 
