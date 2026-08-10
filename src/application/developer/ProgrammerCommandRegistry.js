@@ -25,7 +25,7 @@ export const PROGRAMMER_COMMANDS =
         "Runs every Vitest test and reports whether the complete automated test suite passes.",
       commandPreview:
         Object.freeze([
-          "npx vitest run",
+          "NODE_ENV=test npx vitest run",
         ]),
       confirmationRequired: false,
     }),
@@ -39,7 +39,7 @@ export const PROGRAMMER_COMMANDS =
         "Compiles the complete Next.js production application and verifies TypeScript and route generation.",
       commandPreview:
         Object.freeze([
-          "npm run build",
+          "NODE_ENV=production npm run build",
         ]),
       confirmationRequired: false,
     }),

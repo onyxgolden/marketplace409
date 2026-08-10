@@ -474,6 +474,14 @@ function executeCommand({
           repositoryRoot,
         encoding:
           "utf8",
+        env: {
+          ...process.env,
+          NODE_ENV:
+            category ===
+              "productionBuild"
+              ? "production"
+              : "test",
+        },
         stdio: [
           "ignore",
           "pipe",

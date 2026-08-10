@@ -95,6 +95,64 @@ describe(
     );
 
     it(
+      "runs tests with the test Node environment",
+      () => {
+        const spawnSyncFn =
+          vi.fn().mockReturnValue({
+            status: 0,
+            stdout:
+              "Tests passed.",
+            stderr: "",
+          });
+
+        executeProgrammerCommand({
+          commandId:
+            "full-tests",
+          repositoryRoot:
+            process.cwd(),
+          spawnSyncFn,
+          vercelEnvironment:
+            undefined,
+        });
+
+        expect(
+          spawnSyncFn.mock.calls[0][2]
+            .env.NODE_ENV,
+        ).toBe("test");
+      },
+    );
+
+    it(
+      "runs builds with the production Node environment",
+      () => {
+        const spawnSyncFn =
+          vi.fn().mockReturnValue({
+            status: 0,
+            stdout:
+              "Build passed.",
+            stderr: "",
+          });
+
+        executeProgrammerCommand({
+          commandId:
+            "production-build",
+          repositoryRoot:
+            process.cwd(),
+          spawnSyncFn,
+          vercelEnvironment:
+            undefined,
+        });
+
+        expect(
+          spawnSyncFn.mock.calls[0][2]
+            .env.NODE_ENV,
+        ).toBe(
+          "production",
+        );
+      },
+    );
+
+    it(
       "rejects an unregistered command",
       () => {
         expect(

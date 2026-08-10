@@ -44,6 +44,7 @@ function runStep({
   repositoryRoot,
   command,
   args,
+  nodeEnvironment,
   spawnSyncFn,
 }) {
   const result =
@@ -55,6 +56,15 @@ function runStep({
           repositoryRoot,
         encoding:
           "utf8",
+        env: {
+          ...process.env,
+          ...(nodeEnvironment
+            ? {
+                NODE_ENV:
+                  nodeEnvironment,
+              }
+            : {}),
+        },
         shell:
           false,
         stdio: [
@@ -183,6 +193,8 @@ function commandSteps({
             "vitest",
             "run",
           ],
+          nodeEnvironment:
+            "test",
         },
       ];
 
@@ -194,6 +206,8 @@ function commandSteps({
             "run",
             "build",
           ],
+          nodeEnvironment:
+            "production",
         },
       ];
 
@@ -342,6 +356,9 @@ export function executeProgrammerCommand({
           resolvedStep.command,
         args:
           resolvedStep.args,
+        nodeEnvironment:
+          resolvedStep
+            .nodeEnvironment,
         spawnSyncFn,
       });
 
