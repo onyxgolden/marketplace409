@@ -28,7 +28,7 @@ export default function ForgeSidebar({ view, setView }) {
           href="/"
           className="flex items-center justify-center rounded-xl border border-white/20 bg-white/95 px-4 py-3 text-sm font-black text-slate-950 shadow transition hover:border-amber-400 hover:bg-amber-50"
         >
-          ← Back to Marketplace
+          ← Return to 409 Marketplace
         </Link>
       </div>
 

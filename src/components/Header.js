@@ -62,10 +62,10 @@ export default function Header() {
           </a>
 
           <a
-            href="/import"
-            className="bg-white text-blue-900 px-4 py-2 rounded-xl font-bold hover:bg-blue-100"
+            href="/forge"
+            className="bg-amber-400 text-slate-950 px-4 py-2 rounded-xl font-black hover:bg-amber-300"
           >
-            📥 Import
+            ⚒ Launch FORGE
           </a>
 
           <a
@@ -122,10 +122,10 @@ export default function Header() {
             My Listings
           </a>
           <a
-            href="/import"
-            className="block bg-white text-blue-900 px-4 py-3 rounded-xl font-bold"
+            href="/forge"
+            className="block bg-amber-400 text-slate-950 px-4 py-3 rounded-xl font-black"
           >
-            Import
+            ⚒ Launch FORGE
           </a>
           <a
             href="/post"

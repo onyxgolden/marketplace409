@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 const ITEMS = [
-  { href: "/", label: "🏠 Home" },
+  { href: "/", label: "← 409 Marketplace" },
   { href: "/forge", label: "⚒ Dashboard" },
   { href: "/forge/financial", label: "📊 Executive KPI" },
   { href: "/investors", label: "🏘 Real Estate" },

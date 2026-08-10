@@ -1,7 +1,6 @@
 import Header from "@/components/Header";
 import HomeLaunchBanner from "@/components/home/HomeLaunchBanner";
 import HomeHero from "@/components/home/HomeHero";
-import HomeForgeLaunch from "@/components/home/HomeForgeLaunch";
 import HomeCategories from "@/components/home/HomeCategories";
 import HomePetOfWeek from "@/components/home/HomePetOfWeek";
 import HomeFeaturedListings from "@/components/home/HomeFeaturedListings";
@@ -59,9 +58,7 @@ export default async function Home() {
 
       <HomeHero />
 
-      <HomeForgeLaunch />
-
-      <HomeCategories />
+          <HomeCategories />
 
       <HomePetOfWeek petOfTheWeek={petOfTheWeek} />
 

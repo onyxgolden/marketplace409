@@ -216,7 +216,7 @@ export default function ForgeApplicationRail({
             title={
               expanded
                 ? undefined
-                : "Marketplace"
+                : "409 Marketplace"
             }
             className={[
               "flex min-h-12 items-center rounded-xl border border-white/10 bg-white/5 text-sm font-black text-slate-300 transition hover:bg-white/10 hover:text-white",
@@ -229,11 +229,11 @@ export default function ForgeApplicationRail({
               aria-hidden="true"
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-black/20"
             >
-              ←
+              409
             </span>
             {expanded && (
               <span>
-                Marketplace
+                409 Marketplace
               </span>
             )}
           </Link>
@@ -308,7 +308,7 @@ export default function ForgeApplicationRail({
                 href="/"
                 className="mt-auto rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white"
               >
-                ← Marketplace
+                ← Return to 409 Marketplace
               </Link>
             </aside>
           </div>
