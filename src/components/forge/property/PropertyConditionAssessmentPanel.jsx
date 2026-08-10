@@ -20,6 +20,10 @@ import {
   buildPropertyPortfolioProperties,
 } from "./buildPropertyPortfolioProperties";
 
+import PropertyConditionWorkflowChooser, {
+  PropertyConditionWorkflowHeader,
+} from "./PropertyConditionWorkflowChooser";
+
 const SECTION_LABELS = Object.freeze({
   structural_systems: "Structural systems",
   electrical_systems: "Electrical systems",
@@ -294,6 +298,40 @@ export default function PropertyConditionAssessmentPanel() {
     setSaving,
   ] = useState(false);
 
+  const [
+    workflow,
+    setWorkflow,
+  ] = useState(null);
+
+  const [
+    showGuidance,
+    setShowGuidance,
+  ] = useState(true);
+
+  useEffect(() => {
+    const savedPreference =
+      window.localStorage.getItem(
+        "forge.display.guidance",
+      );
+
+    if (savedPreference === "off") {
+      setShowGuidance(false);
+    }
+  }, []);
+
+  function toggleGuidance() {
+    setShowGuidance((current) => {
+      const next = !current;
+
+      window.localStorage.setItem(
+        "forge.display.guidance",
+        next ? "on" : "off",
+      );
+
+      return next;
+    });
+  }
+
   useEffect(() => {
     let active = true;
 
@@ -338,268 +376,96 @@ export default function PropertyConditionAssessmentPanel() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!propertyId) {
-      setAssessments([]);
-      return;
-    }
-
-    let active = true;
-
-    async function loadAssessments() {
-      try {
-        const response = await fetch(
-          `/api/property-condition-assessments?propertyId=${encodeURIComponent(
-            propertyId,
-          )}`,
-        );
-
-        const payload =
-          await response.json();
-
-        if (!active) {
-          return;
-        }
-
-        setAssessments(
-          Array.isArray(payload?.assessments)
-            ? payload.assessments
-            : [],
-        );
-      } catch {
-        if (active) {
-          setAssessments([]);
-        }
-      }
-    }
-
-    loadAssessments();
-
-    return () => {
-      active = false;
-    };
-  }, [propertyId]);
-
-  function changeSection(nextSection) {
-    setSection(nextSection);
-    setItemKey("");
-    setAttributes({});
-  }
-
-  function changeItem(nextItemKey) {
-    setItemKey(nextItemKey);
-    setAttributes({});
-  }
-
-  function updateAttribute(
-    definition,
-    value,
-  ) {
-    const key =
-      attributeKey(definition);
-
-    const normalizedValue =
-      normalizeAttributeValue(
-        definition,
-        value,
-      );
-
-    setAttributes((current) => {
-      const next = {
-        ...current,
-      };
-
-      if (normalizedValue === undefined) {
-        delete next[key];
-      } else {
-        next[key] = normalizedValue;
-      }
-
-      return next;
-    });
-  }
-
-  function addObservation() {
-    if (!itemKey) {
-      setMessage(
-        "Choose a checklist item first.",
-      );
-      return;
-    }
-
-    if (
-      observations.some(
-        (observation) =>
-          observation.itemKey === itemKey,
-      )
-    ) {
-      setMessage(
-        "That checklist item is already included.",
-      );
-      return;
-    }
-
-    const cents =
-      replacementCostDollars === ""
-        ? ""
-        : Math.round(
-            Number(
-              replacementCostDollars,
-            ) * 100,
-          );
-
-    const observation =
-      buildConditionObservation({
-        section,
-        itemKey,
-        status,
-        attributes,
-        notes,
-        estimatedReplacementCostCents:
-          cents,
-        plannedReplacementYear:
-          replacementYear,
-      });
-
-    setObservations((current) => [
-      ...current,
-      observation,
-    ]);
-
-    setItemKey("");
-    setAttributes({});
-    setNotes("");
-    setReplacementCostDollars("");
-    setReplacementYear("");
-    setMessage(
-      "Observation added to the assessment.",
-    );
-  }
-
-  function removeObservation(
-    observationItemKey,
-  ) {
-    setObservations((current) =>
-      current.filter(
-        (observation) =>
-          observation.itemKey !==
-          observationItemKey,
-      ),
-    );
-  }
-
-  async function saveAssessment() {
-    if (!propertyId) {
-      setMessage("Choose a property.");
-      return;
-    }
-
-    if (observations.length === 0) {
-      setMessage(
-        "Add at least one condition observation.",
-      );
-      return;
-    }
-
-    setSaving(true);
-    setMessage("");
-
-    try {
-      const response = await fetch(
-        "/api/property-condition-assessments",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify({
-            operation:
-              "record-owner-assessment",
-            assessment: {
-              propertyId,
-              effectiveAt,
-              summary:
-                summary.trim() || null,
-              items: observations,
-            },
-          }),
-        },
-      );
-
-      const payload =
-        await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          payload?.error ||
-            "Unable to save the assessment.",
-        );
-      }
-
-      const savedAssessment =
-        payload?.assessment;
-
-      if (savedAssessment) {
-        setAssessments((current) => [
-          savedAssessment,
-          ...current.filter(
-            (assessment) =>
-              assessment.id !==
-              savedAssessment.id,
-          ),
-        ]);
-      }
-
-      setObservations([]);
-      setSummary("");
-      setMessage(
-        "Property condition assessment saved.",
-      );
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "Unable to save the assessment.",
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const definitions =
-    attributeDefinitions(
-      selectedDefinition,
-    );
-
   return (
     <section
       data-property-condition-assessment-panel
-      className="rounded-2xl border border-slate-200 bg-white p-6"
+      className={
+        workflow === null
+          ? "max-w-5xl rounded-2xl border border-slate-200 bg-white p-6"
+          : "rounded-2xl border border-slate-200 bg-white p-6"
+      }
     >
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="text-xs font-black uppercase tracking-wide text-emerald-700">
-            Condition Assessments
+      {workflow === null ? (
+        <>
+          <div>
+            <div className="text-xs font-black uppercase tracking-wide text-emerald-700">
+              Condition Assessments
+            </div>
+
+            <h4 className="mt-2 text-xl font-black text-slate-950">
+              Standardized property condition history
+            </h4>
+
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+              Record owner observations using the standardized REI 7-6-aligned checklist.
+            </p>
           </div>
 
-          <h4 className="mt-2 text-xl font-black text-slate-950">
-            Standardized property condition history
-          </h4>
+      <div className="mt-6 max-w-2xl">
+        <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+          Property
+          <select
+            value={propertyId}
+            onChange={(event) =>
+              setPropertyId(
+                event.target.value,
+              )
+            }
+            className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+          >
+            <option value="">
+              Choose a property
+            </option>
 
-          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
-            Record owner observations using the standardized REI 7-6-aligned checklist.
-          </p>
-        </div>
-
-        <button
-          type="button"
-          disabled
-          className="rounded-xl border border-dashed border-indigo-300 bg-indigo-50 px-4 py-2 text-xs font-black text-indigo-500 opacity-70"
-        >
-          Add from photo or document — planned
-        </button>
+            {properties.map((property) => (
+              <option
+                key={property.id}
+                value={property.id}
+              >
+                {property.name}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
+
+          <div className="mt-5 max-w-xl rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-[11px] font-black uppercase text-slate-500">
+              Saved assessments
+            </div>
+
+            <div className="mt-1 text-xl font-black text-slate-950">
+              {assessments.length}
+            </div>
+          </div>
+
+          <PropertyConditionWorkflowChooser
+            showGuidance={
+              showGuidance
+            }
+            onToggleGuidance={
+              toggleGuidance
+            }
+            onChoose={setWorkflow}
+          />
+        </>
+      ) : (
+        <>
+          <PropertyConditionWorkflowHeader
+            workflowId={workflow}
+            showGuidance={
+              showGuidance
+            }
+            onBack={() =>
+              setWorkflow(null)
+            }
+          />
+
+          {workflow === "record" && (
+            <>
+              <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold leading-6 text-amber-950">
+                This is an owner condition assessment aligned to the REI 7-6 checklist. It is not a licensed property inspection.
+              </div>
 
       <div className="mt-6 grid gap-4 md:grid-cols-3">
         <label className="text-xs font-black uppercase tracking-wide text-slate-600">
@@ -990,6 +856,39 @@ export default function PropertyConditionAssessmentPanel() {
         )}
       </div>
 
+
+            </>
+          )}
+
+          {workflow === "history" && (
+            <>
+      <div className="mt-6 max-w-2xl">
+        <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+          Property
+          <select
+            value={propertyId}
+            onChange={(event) =>
+              setPropertyId(
+                event.target.value,
+              )
+            }
+            className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+          >
+            <option value="">
+              Choose a property
+            </option>
+
+            {properties.map((property) => (
+              <option
+                key={property.id}
+                value={property.id}
+              >
+                {property.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <div className="mt-7 border-t border-slate-200 pt-6">
         <h5 className="text-sm font-black text-slate-950">
           Condition history
@@ -1030,9 +929,11 @@ export default function PropertyConditionAssessmentPanel() {
         )}
       </div>
 
-      <div className="mt-6 rounded-xl border border-dashed border-indigo-300 bg-indigo-50 p-4 text-sm font-semibold leading-6 text-indigo-950">
-        Future OCR imports will create reviewable field proposals. A user must approve those proposals before they update the property record.
-      </div>
+
+            </>
+          )}
+        </>
+      )}
     </section>
   );
 }

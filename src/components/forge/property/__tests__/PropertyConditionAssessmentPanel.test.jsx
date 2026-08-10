@@ -17,7 +17,7 @@ describe(
   "PropertyConditionAssessmentPanel",
   () => {
     it(
-      "renders the standardized manual assessment interface",
+      "renders a compact condition workflow landing",
       () => {
         const markup =
           renderToStaticMarkup(
@@ -33,27 +33,43 @@ describe(
         );
 
         expect(markup).toContain(
+          "What do you want to do?",
+        );
+
+        expect(markup).toContain(
+          "Record condition assessment",
+        );
+
+        expect(markup).toContain(
+          "Review condition history",
+        );
+
+        expect(markup).toContain(
+          "Saved assessments",
+        );
+
+        expect(markup).toContain(
+          "max-w-5xl",
+        );
+
+        expect(markup).not.toContain(
           "Checklist section",
         );
 
-        expect(markup).toContain(
-          "Checklist item",
-        );
-
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Add observation",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Save assessment",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Add from photo or document",
         );
 
-        expect(markup).toContain(
-          "reviewable field proposals",
+        expect(markup).not.toContain(
+          "Future OCR imports",
         );
       },
     );
