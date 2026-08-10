@@ -393,7 +393,25 @@ export function executeShadowGovernanceTransaction() {
     console.log(
       "Promotion state: unchanged by pipeline design",
     );
-  } catch (error) {
+
+  return Object.freeze({
+    status: "completed",
+    mode: "shadow",
+    snapshotPath:
+      path.relative(
+        repositoryRoot,
+        selectedSnapshotPath,
+      ),
+    governanceStatePath:
+      path.relative(
+        repositoryRoot,
+        governanceStatePath,
+      ),
+    shadowDocumentsSynchronized: true,
+    authoritativeDocumentsChanged: false,
+    promotionStateChanged: false,
+  });
+} catch (error) {
     console.error(
       "\nPipeline failed. Restoring pre-run generated state...",
     );

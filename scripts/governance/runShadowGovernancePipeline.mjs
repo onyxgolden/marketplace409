@@ -19,11 +19,21 @@ try {
     );
   }
 
-  runGovernancePipeline({
-    mode: "shadow",
-    validationEvidencePath:
-      selection.selected.path,
-  });
+  const governanceResult =
+runGovernancePipeline({
+  mode: "shadow",
+  validationEvidencePath:
+    selection.selected.path,
+});
+
+if (
+  governanceResult?.status !==
+    "completed"
+) {
+  throw new Error(
+    "Shadow governance pipeline did not return a completed execution receipt.",
+  );
+}
 } catch (error) {
   console.error(
     `FAIL: ${error.message}`,

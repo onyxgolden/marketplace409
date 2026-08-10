@@ -531,6 +531,35 @@ describe(
         });
 
         expect(
+      dependencies
+        .buildEvolutionReviewContextFn,
+    ).toHaveBeenCalledWith({
+      repositoryEvidence:
+        dependencies.results
+          .repositoryResult,
+
+      governanceState:
+        dependencies.results
+          .governanceResult,
+
+      validationEvidence:
+        dependencies.results
+          .evidenceResult,
+
+      promotionEvaluation:
+        dependencies.results
+          .promotionResult,
+
+      evolutionReadiness:
+        dependencies.results
+          .evolutionReadinessResult,
+
+      evolutionDecision:
+        dependencies.results
+          .evolutionDecisionResult,
+    });
+
+    expect(
           dependencies
             .runConversationPreparationFn,
         ).toHaveBeenCalledWith({

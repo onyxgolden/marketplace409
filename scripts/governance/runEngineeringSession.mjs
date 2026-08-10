@@ -504,7 +504,9 @@ export function runEngineeringSession({
         promotion,
 
       evolutionReadiness,
-    });
+
+  evolutionDecision,
+});
 
   const conversation =
     runConversationPreparationFn({
