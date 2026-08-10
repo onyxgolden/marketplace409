@@ -1,10 +1,22 @@
 import ForgeApplicationRail from "@/components/forge/ForgeApplicationRail";
 
-export default function ForgeLayout({
+import {
+  loadProgrammerAuthorization,
+} from "@/lib/supabase/loadProgrammerAuthorization";
+
+export default async function ForgeLayout({
   children,
 }) {
+  const authorization =
+    await loadProgrammerAuthorization();
+
   return (
-    <ForgeApplicationRail>
+    <ForgeApplicationRail
+      showDeveloperTools={
+        authorization.ok &&
+        authorization.authorized
+      }
+    >
       {children}
     </ForgeApplicationRail>
   );

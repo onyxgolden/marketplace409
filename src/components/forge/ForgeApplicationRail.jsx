@@ -43,6 +43,26 @@ export const FORGE_APPLICATIONS =
     }),
   ]);
 
+export const FORGE_PROGRAMMER_APPLICATION =
+  Object.freeze({
+    href: "/forge/developer",
+    label: "Programmer",
+    shortLabel: "D",
+  });
+
+export function buildForgeApplications(
+  showDeveloperTools = false,
+) {
+  if (!showDeveloperTools) {
+    return FORGE_APPLICATIONS;
+  }
+
+  return Object.freeze([
+    ...FORGE_APPLICATIONS,
+    FORGE_PROGRAMMER_APPLICATION,
+  ]);
+}
+
 export function isForgeApplicationActive(
   pathname,
   application,
@@ -67,13 +87,15 @@ function ForgeApplicationLinks({
   pathname,
   expanded,
   onNavigate,
+  applications =
+    FORGE_APPLICATIONS,
 }) {
   return (
     <nav
       aria-label="Forge applications"
       className="space-y-2"
     >
-      {FORGE_APPLICATIONS.map(
+      {applications.map(
         (application) => {
           const active =
             isForgeApplicationActive(
@@ -128,6 +150,8 @@ function ForgeApplicationLinks({
 
 export default function ForgeApplicationRail({
   children,
+  showDeveloperTools =
+    false,
 }) {
   const pathname =
     usePathname();
@@ -139,6 +163,11 @@ export default function ForgeApplicationRail({
     mobileOpen,
     setMobileOpen,
   ] = useState(false);
+
+  const applications =
+    buildForgeApplications(
+      showDeveloperTools,
+    );
 
   return (
     <div
@@ -208,6 +237,9 @@ export default function ForgeApplicationRail({
         <ForgeApplicationLinks
           pathname={pathname}
           expanded={expanded}
+          applications={
+            applications
+          }
         />
 
         <div className="mt-auto border-t border-white/10 pt-3">
@@ -297,6 +329,9 @@ export default function ForgeApplicationRail({
               <ForgeApplicationLinks
                 pathname={pathname}
                 expanded
+                applications={
+                  applications
+                }
                 onNavigate={() =>
                   setMobileOpen(
                     false,
