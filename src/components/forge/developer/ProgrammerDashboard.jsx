@@ -179,6 +179,28 @@ export default function ProgrammerDashboard({
                     {command.description}
                   </p>
 
+                  <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950 p-3">
+                    <div className="text-[10px] font-black uppercase tracking-wide text-amber-400">
+                      Command preview
+                    </div>
+
+                    <div className="mt-2 space-y-2">
+                      {command.commandPreview.map(
+                        (
+                          preview,
+                          index,
+                        ) => (
+                          <code
+                            key={`${command.id}-preview-${index}`}
+                            className="block break-all font-mono text-xs leading-5 text-slate-100"
+                          >
+                            {preview}
+                          </code>
+                        ),
+                      )}
+                    </div>
+                  </div>
+
                   {command.confirmationRequired && (
                     <p className="mt-3 text-xs font-bold text-amber-800">
                       Confirmation required before execution.

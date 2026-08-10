@@ -13,8 +13,15 @@ const MAXIMUM_OUTPUT_LENGTH =
   50000;
 
 function trimOutput(value) {
+  const ansiEscapePattern =
+    /\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+
   const output =
     String(value || "")
+      .replace(
+        ansiEscapePattern,
+        "",
+      )
       .replace(/\r\n?/g, "\n")
       .trim();
 

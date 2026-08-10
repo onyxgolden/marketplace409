@@ -61,6 +61,40 @@ describe(
     );
 
     it(
+      "removes terminal color codes from displayed output",
+      () => {
+        const spawnSyncFn =
+          vi.fn().mockReturnValue({
+            status: 0,
+            stdout:
+              "\u001b[32mPASS\u001b[39m\n",
+            stderr: "",
+          });
+
+        const result =
+          executeProgrammerCommand({
+            commandId:
+              "repository-status",
+            repositoryRoot:
+              process.cwd(),
+            spawnSyncFn,
+            vercelEnvironment:
+              undefined,
+          });
+
+        expect(
+          result.steps[0].output,
+        ).toBe("PASS");
+
+        expect(
+          result.steps[0].output,
+        ).not.toContain(
+          "\u001b",
+        );
+      },
+    );
+
+    it(
       "rejects an unregistered command",
       () => {
         expect(

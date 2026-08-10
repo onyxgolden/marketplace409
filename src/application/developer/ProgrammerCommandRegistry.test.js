@@ -56,6 +56,16 @@ describe(
           expect(
             command.risk.length,
           ).toBeGreaterThan(0);
+
+          expect(
+            command.commandPreview.length,
+          ).toBeGreaterThan(0);
+
+          expect(
+            Object.isFrozen(
+              command.commandPreview,
+            ),
+          ).toBe(true);
         }
       },
     );

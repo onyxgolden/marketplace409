@@ -7,6 +7,11 @@ export const PROGRAMMER_COMMANDS =
       risk: "read-only",
       description:
         "Shows the current branch, synchronization with origin/main, working-tree changes, and latest commits.",
+      commandPreview:
+        Object.freeze([
+          "git status --short --branch",
+          "git log -8 --oneline --decorate",
+        ]),
       confirmationRequired: false,
     }),
     Object.freeze({
@@ -16,6 +21,10 @@ export const PROGRAMMER_COMMANDS =
       risk: "read-only",
       description:
         "Runs every Vitest test and reports whether the complete automated test suite passes.",
+      commandPreview:
+        Object.freeze([
+          "npx vitest run",
+        ]),
       confirmationRequired: false,
     }),
     Object.freeze({
@@ -25,6 +34,10 @@ export const PROGRAMMER_COMMANDS =
       risk: "local-build",
       description:
         "Compiles the complete Next.js production application and verifies TypeScript and route generation.",
+      commandPreview:
+        Object.freeze([
+          "npm run build",
+        ]),
       confirmationRequired: false,
     }),
     Object.freeze({
@@ -34,6 +47,10 @@ export const PROGRAMMER_COMMANDS =
       risk: "generated-file",
       description:
         "Runs the full tests and production build, then creates a validated governance evidence artifact.",
+      commandPreview:
+        Object.freeze([
+          "node scripts/governance/generateValidationEvidence.mjs --full --build",
+        ]),
       confirmationRequired: true,
     }),
     Object.freeze({
@@ -43,6 +60,10 @@ export const PROGRAMMER_COMMANDS =
       risk: "shadow-write",
       description:
         "Uses the newest eligible validation evidence, runs shadow governance synchronization, and generates the next-session bootstrap.",
+      commandPreview:
+        Object.freeze([
+          "node scripts/orchestration/runEngineeringConversationSession.mjs <newest-validation-evidence.json>",
+        ]),
       confirmationRequired: true,
     }),
     Object.freeze({
@@ -52,6 +73,11 @@ export const PROGRAMMER_COMMANDS =
       risk: "shadow-write",
       description:
         "Runs full validation, creates evidence, synchronizes shadow governance documents, and generates a continuation bootstrap in one operation.",
+      commandPreview:
+        Object.freeze([
+          "node scripts/governance/generateValidationEvidence.mjs --full --build",
+          "node scripts/orchestration/runEngineeringConversationSession.mjs <newest-validation-evidence.json>",
+        ]),
       confirmationRequired: true,
     }),
   ]);

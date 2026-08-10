@@ -22,6 +22,10 @@ const commands = [
       "read-only",
     description:
       "Shows repository status and synchronization information.",
+    commandPreview: [
+      "git status --short --branch",
+      "git log -8 --oneline --decorate",
+    ],
     confirmationRequired:
       false,
   },
@@ -36,6 +40,10 @@ const commands = [
       "shadow-write",
     description:
       "Runs validation and generates the next-session bootstrap.",
+    commandPreview: [
+      "node scripts/governance/generateValidationEvidence.mjs --full --build",
+      "node scripts/orchestration/runEngineeringConversationSession.mjs <newest-validation-evidence.json>",
+    ],
     confirmationRequired:
       true,
   },
@@ -67,6 +75,14 @@ describe(
 
         expect(markup).toContain(
           "Shows repository status",
+        );
+
+        expect(markup).toContain(
+          "Command preview",
+        );
+
+        expect(markup).toContain(
+          "git status --short --branch",
         );
 
         expect(markup).toContain(
