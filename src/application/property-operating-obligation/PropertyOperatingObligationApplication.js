@@ -559,7 +559,28 @@ export class PropertyOperatingObligationApplication {
       );
 
     if (existingPolicy) {
-      return existingPolicy;
+      if (
+        !evidenceId ||
+        existingPolicy.evidenceId
+      ) {
+        return existingPolicy;
+      }
+
+      const evidenceLinkedPolicy =
+        createPropertyOperatingObligation({
+          ...existingPolicy,
+          evidenceId,
+          updatedAt:
+            this.clock(),
+        });
+
+      return this.repository.save(
+        evidenceLinkedPolicy,
+        {
+          ownerId:
+            requiredOwnerId,
+        },
+      );
     }
 
     const timestamp =

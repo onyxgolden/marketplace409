@@ -382,6 +382,8 @@ describe(
                   "Scottsdale Insurance Company",
                 providerReference:
                   "DFS5003139",
+                evidenceId:
+                  "property_evidence_south29",
                 notes:
                   "Windstorm excluded.",
                 ownerId:
@@ -409,7 +411,8 @@ describe(
             "Scottsdale Insurance Company",
           providerReference:
             "DFS5003139",
-          evidenceId: null,
+          evidenceId:
+            "property_evidence_south29",
           notes:
             "Windstorm excluded.",
           ownerId:

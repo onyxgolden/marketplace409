@@ -130,6 +130,74 @@ export function buildOperatingCostPropertyChoices(
   );
 }
 
+export function applyOperatingDocumentProposal(
+  result,
+) {
+  const proposal =
+    result?.proposal?.proposal ||
+    {};
+  const annualAmountCents =
+    proposal.annualAmountCents;
+
+  return Object.freeze({
+    obligationType:
+      proposal.obligationType ||
+      "other_insurance",
+    annualPremium:
+      Number.isFinite(
+        annualAmountCents,
+      )
+        ? (
+            annualAmountCents /
+            100
+          ).toFixed(2)
+        : "",
+    servicePeriodStart:
+      proposal.servicePeriodStart ||
+      "",
+    servicePeriodEnd:
+      proposal.servicePeriodEnd ||
+      "",
+    providerName:
+      proposal.providerName ||
+      "",
+    providerReference:
+      proposal.providerReference ||
+      "",
+    notes:
+      proposal.notes || "",
+    detectedAddress:
+      proposal.detectedAddress ||
+      "",
+    documentType:
+      result?.proposal
+        ?.documentType ||
+      "unknown",
+    confidence:
+      result?.proposal
+        ?.confidence ||
+      "low",
+    warnings:
+      Object.freeze([
+        ...(
+          result?.proposal
+            ?.warnings ||
+          []
+        ),
+      ]),
+    evidenceId:
+      result?.evidence?.id ||
+      null,
+    evidenceFilename:
+      result?.evidence
+        ?.originalFilename ||
+      "",
+    extractionMethod:
+      result?.extraction?.method ||
+      "unknown",
+  });
+}
+
 export function buildVerifiedPolicyPayload({
   propertyId,
   propertyLabel,
@@ -139,6 +207,7 @@ export function buildVerifiedPolicyPayload({
   servicePeriodEnd,
   providerName,
   providerReference,
+  evidenceId = null,
   notes,
 }) {
   const amount =
@@ -146,7 +215,10 @@ export function buildVerifiedPolicyPayload({
 
   if (!propertyId) {
     throw new Error(
-      "Select the insured property.",
+      obligationType ===
+        "property_tax"
+        ? "Select the taxed property."
+        : "Select the insured property.",
     );
   }
 
@@ -155,16 +227,24 @@ export function buildVerifiedPolicyPayload({
     amount <= 0
   ) {
     throw new Error(
-      "Enter the verified annual policy premium.",
+      obligationType ===
+        "property_tax"
+        ? "Enter the verified annual property tax."
+        : "Enter the verified annual policy premium.",
     );
   }
+
+  const subjectLabel =
+    obligationType ===
+      "property_tax"
+      ? `${propertyLabel} annual property taxes`
+      : `${propertyLabel} annual insurance`;
 
   return Object.freeze({
     operation:
       "create-verified-policy",
     propertyId,
-    subjectLabel:
-      `${propertyLabel} annual insurance`,
+    subjectLabel,
     obligationType,
     annualAmountCents:
       Math.round(
@@ -174,6 +254,13 @@ export function buildVerifiedPolicyPayload({
     servicePeriodEnd,
     providerName,
     providerReference,
+    ...(
+      evidenceId
+        ? {
+            evidenceId,
+          }
+        : {}
+    ),
     notes,
   });
 }
@@ -217,6 +304,18 @@ function VerifiedPolicyForm({
     setNotes,
   ] = useState("");
   const [
+    documentReview,
+    setDocumentReview,
+  ] = useState(null);
+  const [
+    extracting,
+    setExtracting,
+  ] = useState(false);
+  const [
+    extractingFilename,
+    setExtractingFilename,
+  ] = useState("");
+  const [
     working,
     setWorking,
   ] = useState(false);
@@ -224,6 +323,99 @@ function VerifiedPolicyForm({
     error,
     setError,
   ] = useState("");
+
+  async function handleDocumentChange(
+    event,
+  ) {
+    const document =
+      event.target.files?.[0];
+
+    setError("");
+
+    if (!document) {
+      return;
+    }
+
+    if (!propertyId) {
+      event.target.value = "";
+      setError(
+        "Select the property before uploading its document.",
+      );
+      return;
+    }
+
+    setExtractingFilename(
+      document.name ||
+        "property document",
+    );
+    setExtracting(true);
+
+    try {
+      const formData =
+        new FormData();
+
+      formData.append(
+        "propertyId",
+        propertyId,
+      );
+      formData.append(
+        "document",
+        document,
+      );
+
+      const response =
+        await fetch(
+          "/api/property-operating-obligations/document-proposal",
+          {
+            method: "POST",
+            body: formData,
+          },
+        );
+      const result =
+        await readJson(
+          response,
+        );
+      const review =
+        applyOperatingDocumentProposal(
+          result,
+        );
+
+      setObligationType(
+        review.obligationType,
+      );
+      setAnnualPremium(
+        review.annualPremium,
+      );
+      setServicePeriodStart(
+        review.servicePeriodStart,
+      );
+      setServicePeriodEnd(
+        review.servicePeriodEnd,
+      );
+      setProviderName(
+        review.providerName,
+      );
+      setProviderReference(
+        review.providerReference,
+      );
+      setNotes(
+        review.notes,
+      );
+      setDocumentReview(
+        review,
+      );
+    } catch (caught) {
+      setDocumentReview(null);
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Unable to read the property document.",
+      );
+    } finally {
+      setExtracting(false);
+      setExtractingFilename("");
+    }
+  }
 
   async function handleSubmit(
     event,
@@ -251,6 +443,10 @@ function VerifiedPolicyForm({
           servicePeriodEnd,
           providerName,
           providerReference,
+          evidenceId:
+            documentReview
+              ?.evidenceId ||
+            null,
           notes,
         });
       const response =
@@ -280,24 +476,31 @@ function VerifiedPolicyForm({
       setError(
         caught instanceof Error
           ? caught.message
-          : "Unable to create the verified policy.",
+          : "Unable to create the verified operating obligation.",
       );
     } finally {
       setWorking(false);
     }
   }
 
+  const isTax =
+    obligationType ===
+      "property_tax";
+
   return (
-    <details className="rounded-2xl border border-sky-200 bg-white shadow-sm">
+    <details
+      open
+      className="rounded-2xl border border-sky-200 bg-white shadow-sm"
+    >
       <summary className="cursor-pointer list-none px-5 py-4">
         <div className="text-xs font-black uppercase tracking-wide text-sky-700">
-          Policy Declaration
+          Tax or Insurance Document
         </div>
         <div className="mt-1 text-lg font-black text-slate-950">
-          Add verified policy
+          Add verified operating cost
         </div>
         <div className="mt-1 text-sm text-slate-600">
-          Create coverage from a declaration without inventing a cash payment.
+          Upload a declaration or tax statement to fill the fields, then review every fact before approval.
         </div>
       </summary>
 
@@ -305,21 +508,57 @@ function VerifiedPolicyForm({
         onSubmit={handleSubmit}
         className="grid gap-4 border-t border-sky-100 px-5 py-5"
       >
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="text-xs font-bold text-slate-700">
-            Insured property
+        {extracting && (
+          <div
+            role="status"
+            aria-live="polite"
+            aria-label="Document verification in progress"
+            className="fixed inset-0 z-[100] grid place-items-center bg-slate-950 px-6 text-white"
+          >
+            <div className="w-full max-w-xl text-center">
+              <div className="mx-auto h-16 w-16 animate-spin rounded-full border-4 border-blue-300 border-t-transparent" />
+              <div className="mt-8 text-xs font-black uppercase tracking-[0.3em] text-blue-300">
+                Property Document Verification
+              </div>
+              <h2 className="mt-3 text-3xl font-black">
+                Reading your document
+              </h2>
+              <p className="mt-3 text-base leading-7 text-slate-300">
+                FORGE is preserving the original evidence, extracting readable text, and preparing editable tax or insurance fields.
+              </p>
+              <div className="mt-6 truncate rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm font-bold text-slate-200">
+                {extractingFilename}
+              </div>
+              <div className="mt-5 text-sm font-bold text-blue-200">
+                No accounting records will change during this step.
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="grid gap-5 rounded-xl border border-blue-300 bg-blue-50 p-5">
+          <label className="block max-w-3xl">
+            <span className="block text-sm font-black uppercase tracking-wide text-blue-900">
+              1. Choose property
+            </span>
+            <span className="mt-1 block text-sm text-slate-700">
+              Select the property whose tax or insurance document you are adding.
+            </span>
             <select
               required
               value={propertyId}
-              onChange={(event) =>
+              onChange={(event) => {
                 setPropertyId(
                   event.target.value,
-                )
-              }
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+                );
+                setDocumentReview(
+                  null,
+                );
+              }}
+              className="mt-3 block w-full rounded-xl border-2 border-blue-400 bg-white px-4 py-3 text-base font-black text-slate-950 shadow-sm focus:border-blue-700 focus:outline-none"
             >
               <option value="">
-                Select property
+                Select property first
               </option>
               {propertyChoices.map(
                 (choice) => (
@@ -338,8 +577,90 @@ function VerifiedPolicyForm({
             </select>
           </label>
 
+          <label
+            className={`block max-w-3xl ${
+              !propertyId
+                ? "cursor-not-allowed opacity-50"
+                : "cursor-pointer"
+            }`}
+          >
+            <span className="block text-sm font-black uppercase tracking-wide text-blue-900">
+              2. Add tax or insurance document
+            </span>
+            <span className="mt-1 block text-sm text-slate-700">
+              PDF, JPEG, or PNG. FORGE will preserve the evidence and prepare editable fields.
+            </span>
+            <input
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+              onChange={
+                handleDocumentChange
+              }
+              disabled={
+                extracting ||
+                !propertyId
+              }
+              className="sr-only"
+            />
+            <span className="mt-3 flex min-h-14 w-full items-center justify-center rounded-xl border-2 border-blue-700 bg-blue-700 px-5 py-3 text-base font-black text-white shadow-sm transition hover:bg-blue-800">
+              {documentReview
+                ?.evidenceFilename
+                ? `Replace document: ${documentReview.evidenceFilename}`
+                : "Choose document"}
+            </span>
+          </label>
+
+          {extracting && (
+            <div
+              role="status"
+              className="text-sm font-bold text-blue-800 sm:col-span-2"
+            >
+              Reading the document and preparing editable fields…
+            </div>
+          )}
+
+          {documentReview && (
+            <div className="grid gap-2 rounded-lg border border-emerald-200 bg-white p-3 text-xs text-slate-700 sm:col-span-2">
+              <div className="font-black text-emerald-800">
+                Document read successfully — review the populated fields below.
+              </div>
+              <div>
+                <b>File:</b>{" "}
+                {documentReview.evidenceFilename}
+              </div>
+              <div>
+                <b>Detected:</b>{" "}
+                {displayObligationValue(
+                  documentReview.documentType,
+                )} ·{" "}
+                {documentReview.confidence} confidence ·{" "}
+                {displayObligationValue(
+                  documentReview.extractionMethod,
+                )}
+              </div>
+              {documentReview.detectedAddress && (
+                <div>
+                  <b>Detected address:</b>{" "}
+                  {documentReview.detectedAddress}
+                </div>
+              )}
+              {documentReview.warnings.map(
+                (warning) => (
+                  <div
+                    key={warning}
+                    className="rounded-md bg-amber-50 px-2 py-1 font-bold text-amber-800"
+                  >
+                    Review required: {warning}
+                  </div>
+                ),
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="text-xs font-bold text-slate-700">
-            Verified policy type
+            Operating-cost type
             <select
               required
               value={obligationType}
@@ -350,6 +671,9 @@ function VerifiedPolicyForm({
               }
               className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
             >
+              <option value="property_tax">
+                Property tax
+              </option>
               <option value="fire_insurance">
                 Fire insurance
               </option>
@@ -372,7 +696,9 @@ function VerifiedPolicyForm({
           </label>
 
           <label className="text-xs font-bold text-slate-700">
-            Annual policy premium
+            {isTax
+              ? "Annual property tax"
+              : "Annual policy premium"}
             <input
               type="number"
               min="0.01"
@@ -389,7 +715,7 @@ function VerifiedPolicyForm({
           </label>
 
           <label className="text-xs font-bold text-slate-700">
-            Provider
+            Provider or tax authority
             <input
               type="text"
               value={providerName}
@@ -403,7 +729,25 @@ function VerifiedPolicyForm({
           </label>
 
           <label className="text-xs font-bold text-slate-700">
-            Coverage starts
+            {isTax
+              ? "Account or parcel number"
+              : "Policy reference"}
+            <input
+              type="text"
+              value={providerReference}
+              onChange={(event) =>
+                setProviderReference(
+                  event.target.value,
+                )
+              }
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+
+          <label className="text-xs font-bold text-slate-700">
+            {isTax
+              ? "Tax period starts"
+              : "Coverage starts"}
             <input
               type="date"
               required
@@ -418,7 +762,9 @@ function VerifiedPolicyForm({
           </label>
 
           <label className="text-xs font-bold text-slate-700">
-            Coverage ends
+            {isTax
+              ? "Tax period ends"
+              : "Coverage ends"}
             <input
               type="date"
               required
@@ -432,21 +778,7 @@ function VerifiedPolicyForm({
             />
           </label>
 
-          <label className="text-xs font-bold text-slate-700">
-            Policy reference
-            <input
-              type="text"
-              value={providerReference}
-              onChange={(event) =>
-                setProviderReference(
-                  event.target.value,
-                )
-              }
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
-            />
-          </label>
-
-          <label className="text-xs font-bold text-slate-700">
+          <label className="text-xs font-bold text-slate-700 sm:col-span-2">
             Verification notes
             <input
               type="text"
@@ -461,6 +793,10 @@ function VerifiedPolicyForm({
           </label>
         </div>
 
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900">
+          Uploading only creates a review proposal. Taxes, insurance accruals, and NOI change only after you approve the populated fields below.
+        </div>
+
         {error && (
           <div
             role="alert"
@@ -472,12 +808,17 @@ function VerifiedPolicyForm({
 
         <button
           type="submit"
-          disabled={working}
+          disabled={
+            working ||
+            extracting
+          }
           className="w-full rounded-lg bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40 sm:w-auto"
         >
           {working
-            ? "Creating policy…"
-            : "Create verified policy"}
+            ? "Creating verified cost…"
+            : isTax
+              ? "Approve property tax"
+              : "Approve verified policy"}
         </button>
       </form>
     </details>

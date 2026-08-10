@@ -436,6 +436,47 @@ describe(
         expect(repeated).toEqual(
           created,
         );
+
+        const evidenceLinked =
+          await application
+            .createVerifiedPolicy({
+              propertyId:
+                "420-south-29th",
+              subjectLabel:
+                "420 SOUTH 29TH annual insurance",
+              obligationType:
+                "fire_insurance",
+              annualAmountCents:
+                78668,
+              servicePeriodStart:
+                "2025-12-16",
+              servicePeriodEnd:
+                "2026-12-16",
+              providerName:
+                "Scottsdale Insurance Company",
+              providerReference:
+                "DFS5003139",
+              evidenceId:
+                "property_evidence_south29",
+              ownerId:
+                "owner_1",
+            });
+
+        expect(
+          evidenceLinked,
+        ).toEqual(
+          expect.objectContaining({
+            id:
+              created.id,
+            evidenceId:
+              "property_evidence_south29",
+            paymentDate: null,
+            paidAmountCents: null,
+            reconciledFinancialEventId:
+              null,
+          }),
+        );
+
         await expect(
           application.list(
             {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import PropertyOperatingCostsPanel, {
+  applyOperatingDocumentProposal,
   buildCoverageVerificationPayload,
   buildOperatingCostPropertyChoices,
   buildVerifiedPolicyPayload,
@@ -15,7 +16,17 @@ describe("PropertyOperatingCostsPanel", () => {
     expect(markup).toContain("data-property-operating-costs-panel");
     expect(markup).toContain("Taxes &amp; Insurance");
     expect(markup).toContain("Category ledger CSV");
-    expect(markup).toContain("Add verified policy");
+    expect(markup).toContain("Add verified operating cost");
+    expect(markup).toContain("1. Choose property");
+    expect(markup).toContain("2. Add tax or insurance document");
+    expect(markup).toContain("Choose document");
+    expect(markup).toContain("Select property first");
+    expect(markup).toContain("<details open");
+    expect(
+      markup.indexOf("1. Choose property"),
+    ).toBeLessThan(
+      markup.indexOf("2. Add tax or insurance document"),
+    );
   });
 
   it("uses accounting-friendly labels", () => {
@@ -101,6 +112,75 @@ describe("PropertyOperatingCostsPanel", () => {
       providerName: "Scottsdale Insurance Company",
       providerReference: "DFS5003139",
       notes: "Windstorm or hail excluded.",
+    });
+  });
+
+  it("maps a reviewed document proposal into editable fields", () => {
+    expect(applyOperatingDocumentProposal({
+      proposal: {
+        documentType: "insurance_policy",
+        confidence: "high",
+        warnings: [],
+        proposal: {
+          obligationType: "fire_insurance",
+          annualAmountCents: 78668,
+          servicePeriodStart: "2025-12-16",
+          servicePeriodEnd: "2026-12-16",
+          providerName: "Scottsdale Insurance Company",
+          providerReference: "DFS5003139",
+          detectedAddress: "420 SOUTH 29TH",
+          notes: "Windstorm or hail excluded.",
+        },
+      },
+      evidence: {
+        id: "evidence_1",
+        originalFilename: "declaration.pdf",
+      },
+      extraction: {
+        method: "google_cloud_vision",
+      },
+    })).toEqual({
+      obligationType: "fire_insurance",
+      annualPremium: "786.68",
+      servicePeriodStart: "2025-12-16",
+      servicePeriodEnd: "2026-12-16",
+      providerName: "Scottsdale Insurance Company",
+      providerReference: "DFS5003139",
+      notes: "Windstorm or hail excluded.",
+      detectedAddress: "420 SOUTH 29TH",
+      documentType: "insurance_policy",
+      confidence: "high",
+      warnings: [],
+      evidenceId: "evidence_1",
+      evidenceFilename: "declaration.pdf",
+      extractionMethod: "google_cloud_vision",
+    });
+  });
+
+  it("creates an evidence-linked property-tax payload", () => {
+    expect(buildVerifiedPolicyPayload({
+      propertyId: "420-south-29th",
+      propertyLabel: "420 SOUTH 29TH",
+      obligationType: "property_tax",
+      annualPremium: "2157.55",
+      servicePeriodStart: "2025-01-01",
+      servicePeriodEnd: "2026-01-01",
+      providerName: "Jefferson County Tax Office",
+      providerReference: "parcel-420",
+      evidenceId: "evidence_tax_1",
+      notes: "Annual 2025 property taxes extracted from the tax document.",
+    })).toEqual({
+      operation: "create-verified-policy",
+      propertyId: "420-south-29th",
+      subjectLabel: "420 SOUTH 29TH annual property taxes",
+      obligationType: "property_tax",
+      annualAmountCents: 215755,
+      servicePeriodStart: "2025-01-01",
+      servicePeriodEnd: "2026-01-01",
+      providerName: "Jefferson County Tax Office",
+      providerReference: "parcel-420",
+      evidenceId: "evidence_tax_1",
+      notes: "Annual 2025 property taxes extracted from the tax document.",
     });
   });
 
