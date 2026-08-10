@@ -11,21 +11,50 @@ import PropertyOperatingCostsPanel, {
 } from "../PropertyOperatingCostsPanel.jsx";
 
 describe("PropertyOperatingCostsPanel", () => {
-  it("renders the focused operating-cost workspace", () => {
-    const markup = renderToStaticMarkup(<PropertyOperatingCostsPanel />);
-    expect(markup).toContain("data-property-operating-costs-panel");
-    expect(markup).toContain("Taxes &amp; Insurance");
-    expect(markup).toContain("Category ledger CSV");
-    expect(markup).toContain("Add verified operating cost");
-    expect(markup).toContain("1. Choose property");
-    expect(markup).toContain("2. Add tax or insurance document");
-    expect(markup).toContain("Choose document");
-    expect(markup).toContain("Select property first");
-    expect(markup).toContain("<details open");
-    expect(
-      markup.indexOf("1. Choose property"),
-    ).toBeLessThan(
-      markup.indexOf("2. Add tax or insurance document"),
+  it("renders a compact operating-cost workflow landing", () => {
+    const markup =
+      renderToStaticMarkup(
+        <PropertyOperatingCostsPanel />,
+      );
+
+    expect(markup).toContain(
+      "data-property-operating-costs-panel",
+    );
+    expect(markup).toContain(
+      "Taxes &amp; Insurance",
+    );
+    expect(markup).toContain(
+      "What do you want to do?",
+    );
+    expect(markup).toContain(
+      "Add or update property tax",
+    );
+    expect(markup).toContain(
+      "Add or update insurance policy",
+    );
+    expect(markup).toContain(
+      "Verify incomplete coverage",
+    );
+    expect(markup).toContain(
+      "Review taxes and insurance",
+    );
+    expect(markup).toContain(
+      "Import category ledger CSV",
+    );
+    expect(markup).toContain(
+      "max-w-5xl",
+    );
+    expect(markup).not.toContain(
+      "Category ledger CSV",
+    );
+    expect(markup).not.toContain(
+      "Add verified operating cost",
+    );
+    expect(markup).not.toContain(
+      "Choose document",
+    );
+    expect(markup).not.toContain(
+      "<details open",
     );
   });
 

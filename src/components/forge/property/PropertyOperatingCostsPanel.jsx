@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from "react";
 
+import PropertyOperatingCostsWorkflowChooser, {
+  PropertyOperatingCostsWorkflowHeader,
+} from "./PropertyOperatingCostsWorkflowChooser";
+
 function formatCurrency(cents) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -267,6 +271,8 @@ export function buildVerifiedPolicyPayload({
 
 function VerifiedPolicyForm({
   propertyChoices,
+  initialObligationType =
+    "fire_insurance",
   onCreated,
 }) {
   const [
@@ -277,7 +283,7 @@ function VerifiedPolicyForm({
     obligationType,
     setObligationType,
   ] = useState(
-    "fire_insurance",
+    initialObligationType,
   );
   const [
     annualPremium,
@@ -487,22 +493,31 @@ function VerifiedPolicyForm({
     obligationType ===
       "property_tax";
 
+  const taxWorkflow =
+    initialObligationType ===
+      "property_tax";
+
   return (
-    <details
-      open
+    <section
       className="rounded-2xl border border-sky-200 bg-white shadow-sm"
     >
-      <summary className="cursor-pointer list-none px-5 py-4">
+      <div className="px-5 py-4">
         <div className="text-xs font-black uppercase tracking-wide text-sky-700">
-          Tax or Insurance Document
+          {taxWorkflow
+            ? "Property Tax Document"
+            : "Insurance Policy Document"}
         </div>
         <div className="mt-1 text-lg font-black text-slate-950">
-          Add verified operating cost
+          {taxWorkflow
+            ? "Add verified property tax"
+            : "Add verified insurance policy"}
         </div>
         <div className="mt-1 text-sm text-slate-600">
-          Upload a declaration or tax statement to fill the fields, then review every fact before approval.
+          {taxWorkflow
+            ? "Upload a tax statement to fill the fields, then review every fact before approval."
+            : "Upload a policy declaration to fill the fields, then review every fact before approval."}
         </div>
-      </summary>
+      </div>
 
       <form
         onSubmit={handleSubmit}
@@ -542,7 +557,9 @@ function VerifiedPolicyForm({
               1. Choose property
             </span>
             <span className="mt-1 block text-sm text-slate-700">
-              Select the property whose tax or insurance document you are adding.
+              {taxWorkflow
+                ? "Select the property whose tax statement you are adding."
+                : "Select the property whose insurance policy you are adding."}
             </span>
             <select
               required
@@ -585,7 +602,9 @@ function VerifiedPolicyForm({
             }`}
           >
             <span className="block text-sm font-black uppercase tracking-wide text-blue-900">
-              2. Add tax or insurance document
+              {taxWorkflow
+                ? "2. Add property tax document"
+                : "2. Add insurance policy document"}
             </span>
             <span className="mt-1 block text-sm text-slate-700">
               PDF, JPEG, or PNG. FORGE will preserve the evidence and prepare editable fields.
@@ -671,27 +690,32 @@ function VerifiedPolicyForm({
               }
               className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
             >
-              <option value="property_tax">
-                Property tax
-              </option>
-              <option value="fire_insurance">
-                Fire insurance
-              </option>
-              <option value="windstorm_insurance">
-                Windstorm insurance
-              </option>
-              <option value="flood_insurance">
-                Flood insurance
-              </option>
-              <option value="bundled_fire_windstorm_insurance">
-                Fire and windstorm insurance
-              </option>
-              <option value="business_liability_insurance">
-                Business liability insurance
-              </option>
-              <option value="other_insurance">
-                Other insurance
-              </option>
+              {taxWorkflow ? (
+                <option value="property_tax">
+                  Property tax
+                </option>
+              ) : (
+                <>
+                  <option value="fire_insurance">
+                    Fire insurance
+                  </option>
+                  <option value="windstorm_insurance">
+                    Windstorm insurance
+                  </option>
+                  <option value="flood_insurance">
+                    Flood insurance
+                  </option>
+                  <option value="bundled_fire_windstorm_insurance">
+                    Fire and windstorm insurance
+                  </option>
+                  <option value="business_liability_insurance">
+                    Business liability insurance
+                  </option>
+                  <option value="other_insurance">
+                    Other insurance
+                  </option>
+                </>
+              )}
             </select>
           </label>
 
@@ -821,7 +845,7 @@ function VerifiedPolicyForm({
               : "Approve verified policy"}
         </button>
       </form>
-    </details>
+    </section>
   );
 }
 
@@ -1202,6 +1226,35 @@ export default function PropertyOperatingCostsPanel() {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [workflow, setWorkflow] = useState(null);
+  const [
+    showGuidance,
+    setShowGuidance,
+  ] = useState(true);
+
+  useEffect(() => {
+    const savedPreference =
+      window.localStorage.getItem(
+        "forge.display.guidance",
+      );
+
+    if (savedPreference === "off") {
+      setShowGuidance(false);
+    }
+  }, []);
+
+  function toggleGuidance() {
+    setShowGuidance((current) => {
+      const next = !current;
+
+      window.localStorage.setItem(
+        "forge.display.guidance",
+        next ? "on" : "off",
+      );
+
+      return next;
+    });
+  }
 
   useEffect(() => {
     async function initialize() {
@@ -1295,89 +1348,310 @@ export default function PropertyOperatingCostsPanel() {
     }
   }
 
-  return (
-    <section data-property-operating-costs-panel className="space-y-5">
-      <header className="rounded-2xl border border-blue-200 bg-gradient-to-br from-slate-950 to-blue-950 p-5 text-white">
-        <div className="text-xs font-black uppercase tracking-[0.2em] text-blue-300">Property Operations</div>
-        <h3 className="mt-2 text-2xl font-black">Taxes &amp; Insurance</h3>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">Maintain annual obligations once, reconcile cash payments, and accrue verified coverage into the correct property NOI.</p>
-      </header>
+  const pendingCoverage =
+    obligations.filter(
+      canVerifyCoverage,
+    );
 
-      {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-800">{error}</div>}
-      {message && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">{message}</div>}
+  function mergeCreatedPolicy(
+    policy,
+  ) {
+    setObligations(
+      (current) =>
+        mergeObligations(
+          current,
+          [policy],
+        ),
+    );
 
-      <div className="grid gap-3 sm:grid-cols-4">
-        {[["Obligations", summary.total], ["Accrual ready", summary.accrualReady], ["Dates needed", summary.pending], ["Reconciled", summary.reconciled]].map(([label, value]) => (
-          <div key={label} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-            <div className="text-[11px] font-black uppercase text-slate-500">{label}</div>
-            <div className="mt-1 text-xl font-black text-slate-950">{value}</div>
-          </div>
-        ))}
+    setMessage(
+      `${policy.subjectLabel} created from verified policy evidence.`,
+    );
+    setWorkflow(null);
+  }
+
+  function mergeVerifiedCoverage(
+    verified,
+  ) {
+    setObligations((current) =>
+      mergeObligations(
+        current,
+        [verified],
+      ),
+    );
+
+    setMessage(
+      `${verified.subjectLabel} coverage verified and ready for accrual.`,
+    );
+  }
+
+  const obligationTable = (
+    items,
+    emptyMessage,
+  ) => (
+    <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="grid gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[10px] font-black uppercase text-slate-500 sm:grid-cols-[minmax(180px,1.4fr)_minmax(130px,1fr)_110px_125px_20px]">
+        <div>Property</div>
+        <div>Category</div>
+        <div>Annual</div>
+        <div>Status</div>
+        <div />
       </div>
 
-      <VerifiedPolicyForm
-        propertyChoices={
-          propertyChoices
-        }
-        onCreated={(policy) => {
-          setObligations(
-            (current) =>
-              mergeObligations(
-                current,
-                [policy],
+      {loading && (
+        <div className="p-5 text-sm font-bold text-slate-600">
+          Loading operating costs…
+        </div>
+      )}
+
+      {!loading &&
+        items.length === 0 && (
+          <div className="p-5 text-sm text-slate-600">
+            {emptyMessage}
+          </div>
+        )}
+
+      {items.map((item) => (
+        <ObligationRow
+          key={item.id}
+          obligation={item}
+          onVerified={
+            mergeVerifiedCoverage
+          }
+        />
+      ))}
+    </div>
+  );
+
+  return (
+    <section
+      data-property-operating-costs-panel
+      className={
+        workflow === null
+          ? "max-w-5xl"
+          : ""
+      }
+    >
+      {workflow === null ? (
+        <>
+          <header className="rounded-2xl border border-blue-200 bg-gradient-to-br from-slate-950 to-blue-950 p-5 text-white">
+            <div className="text-xs font-black uppercase tracking-[0.2em] text-blue-300">
+              Property Operations
+            </div>
+
+            <h3 className="mt-2 text-2xl font-black">
+              Taxes &amp; Insurance
+            </h3>
+
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
+              Maintain annual obligations once, reconcile cash payments, and accrue verified coverage into the correct property NOI.
+            </p>
+          </header>
+
+          <div className="mt-5 grid max-w-3xl gap-3 sm:grid-cols-4">
+            {[
+              [
+                "Obligations",
+                summary.total,
+              ],
+              [
+                "Accrual ready",
+                summary.accrualReady,
+              ],
+              [
+                "Dates needed",
+                summary.pending,
+              ],
+              [
+                "Reconciled",
+                summary.reconciled,
+              ],
+            ].map(
+              ([label, value]) => (
+                <div
+                  key={label}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-3"
+                >
+                  <div className="text-[11px] font-black uppercase text-slate-500">
+                    {label}
+                  </div>
+
+                  <div className="mt-1 text-xl font-black text-slate-950">
+                    {value}
+                  </div>
+                </div>
               ),
-          );
-          setMessage(
-            `${policy.subjectLabel} created from verified policy evidence.`,
-          );
-        }}
-      />
+            )}
+          </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,1.2fr)]">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5">
-          <div className="text-xs font-black uppercase tracking-wide text-slate-500">Ledger Import</div>
-          <h4 className="mt-2 text-lg font-black text-slate-950">Preview taxes and insurance</h4>
-          <p className="mt-2 text-sm leading-6 text-slate-600">Taxes use the confirmed tax year. Insurance stays outside accrued NOI until policy dates are verified.</p>
-          <label className="mt-4 block">
-            <span className="text-sm font-bold text-slate-700">Category ledger CSV</span>
-            <input type="file" accept=".csv,text/csv" onChange={handleFileChange} disabled={working} className="mt-2 block w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-          </label>
-          {fileName && <div className="mt-2 text-xs font-bold text-slate-500">{fileName}</div>}
-          {working && <div className="mt-4 text-sm font-bold text-blue-700">Validating owner-scoped records…</div>}
+          <PropertyOperatingCostsWorkflowChooser
+            showGuidance={
+              showGuidance
+            }
+            onToggleGuidance={
+              toggleGuidance
+            }
+            onChoose={setWorkflow}
+          />
+        </>
+      ) : (
+        <>
+          <PropertyOperatingCostsWorkflowHeader
+            workflowId={workflow}
+            showGuidance={
+              showGuidance
+            }
+            onBack={() =>
+              setWorkflow(null)
+            }
+          />
 
-          {preview && (
-            <div className="mt-5 space-y-3">
-              <div className="text-sm font-black">{preview.validRowCount} valid · {preview.invalidRowCount} invalid · {preview.warnings?.length || 0} warnings</div>
-              {preview.errors?.map((item) => <div key={`e-${item.rowNumber}`} className="rounded-lg bg-rose-50 p-3 text-xs font-bold text-rose-800">Row {item.rowNumber}: {item.message}</div>)}
-              {preview.warnings?.map((item) => <div key={`w-${item.rowNumber}-${item.code}`} className="rounded-lg bg-amber-50 p-3 text-xs font-bold text-amber-800">Row {item.rowNumber}: {item.message}</div>)}
-              <button type="button" onClick={handleImport} disabled={working || !preview.valid} className="w-full rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40">Import verified preview</button>
+          {error && (
+            <div
+              role="alert"
+              className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-800"
+            >
+              {error}
             </div>
           )}
-        </div>
 
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-          <div className="grid gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[10px] font-black uppercase text-slate-500 sm:grid-cols-[minmax(180px,1.4fr)_minmax(130px,1fr)_110px_125px_20px]"><div>Property</div><div>Category</div><div>Annual</div><div>Status</div><div /></div>
-          {loading && <div className="p-5 text-sm font-bold text-slate-600">Loading operating costs…</div>}
-          {!loading && obligations.length === 0 && <div className="p-5 text-sm text-slate-600">No operating obligations have been imported.</div>}
-          {obligations.map((item) => (
-            <ObligationRow
-              key={item.id}
-              obligation={item}
-              onVerified={(verified) => {
-                setObligations((current) =>
-                  mergeObligations(
-                    current,
-                    [verified],
-                  ),
-                );
-                setMessage(
-                  `${verified.subjectLabel} coverage verified and ready for accrual.`,
-                );
-              }}
-            />
-          ))}
-        </div>
-      </div>
+          {message && (
+            <div
+              role="status"
+              className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800"
+            >
+              {message}
+            </div>
+          )}
+
+          {[
+            "property-tax",
+            "insurance-policy",
+          ].includes(workflow) && (
+            <div className="mt-6">
+              <VerifiedPolicyForm
+                key={workflow}
+                propertyChoices={
+                  propertyChoices
+                }
+                initialObligationType={
+                  workflow ===
+                    "property-tax"
+                    ? "property_tax"
+                    : "fire_insurance"
+                }
+                onCreated={
+                  mergeCreatedPolicy
+                }
+              />
+            </div>
+          )}
+
+          {workflow ===
+            "verify-coverage" &&
+            obligationTable(
+              pendingCoverage,
+              "No incomplete insurance coverage requires verification.",
+            )}
+
+          {workflow === "review" &&
+            obligationTable(
+              obligations,
+              "No verified taxes or insurance obligations are recorded.",
+            )}
+
+          {workflow === "import" && (
+            <div className="mt-6 max-w-4xl rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+                Ledger Import
+              </div>
+
+              <h4 className="mt-2 text-lg font-black text-slate-950">
+                Preview taxes and insurance
+              </h4>
+
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Taxes use the confirmed tax year. Insurance stays outside accrued NOI until policy dates are verified.
+              </p>
+
+              <label className="mt-4 block">
+                <span className="text-sm font-bold text-slate-700">
+                  Category ledger CSV
+                </span>
+
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={
+                    handleFileChange
+                  }
+                  disabled={working}
+                  className="mt-2 block w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                />
+              </label>
+
+              {fileName && (
+                <div className="mt-2 text-xs font-bold text-slate-500">
+                  {fileName}
+                </div>
+              )}
+
+              {working && (
+                <div className="mt-4 text-sm font-bold text-blue-700">
+                  Validating owner-scoped records…
+                </div>
+              )}
+
+              {preview && (
+                <div className="mt-5 space-y-3">
+                  <div className="text-sm font-black">
+                    {preview.validRowCount} valid ·{" "}
+                    {preview.invalidRowCount} invalid ·{" "}
+                    {preview.warnings?.length ||
+                      0} warnings
+                  </div>
+
+                  {preview.errors?.map(
+                    (item) => (
+                      <div
+                        key={`e-${item.rowNumber}`}
+                        className="rounded-lg bg-rose-50 p-3 text-xs font-bold text-rose-800"
+                      >
+                        Row {item.rowNumber}:{" "}
+                        {item.message}
+                      </div>
+                    ),
+                  )}
+
+                  {preview.warnings?.map(
+                    (item) => (
+                      <div
+                        key={`w-${item.rowNumber}-${item.code}`}
+                        className="rounded-lg bg-amber-50 p-3 text-xs font-bold text-amber-800"
+                      >
+                        Row {item.rowNumber}:{" "}
+                        {item.message}
+                      </div>
+                    ),
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleImport}
+                    disabled={
+                      working ||
+                      !preview.valid
+                    }
+                    className="w-full rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:opacity-40"
+                  >
+                    Import verified preview
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </section>
   );
 }
