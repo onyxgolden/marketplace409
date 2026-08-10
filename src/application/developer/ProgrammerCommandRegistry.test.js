@@ -58,6 +58,10 @@ describe(
           ).toBeGreaterThan(0);
 
           expect(
+            command.expectedDurationSeconds,
+          ).toBeGreaterThan(0);
+
+          expect(
             command.commandPreview.length,
           ).toBeGreaterThan(0);
 

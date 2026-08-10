@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useEffect,
   useState,
 } from "react";
 
@@ -14,6 +15,36 @@ function riskLabel(risk) {
         part.slice(1),
     )
     .join(" ");
+}
+
+export function calculateProgrammerCommandProgress({
+  elapsedSeconds,
+  expectedDurationSeconds,
+}) {
+  if (
+    !Number.isFinite(
+      elapsedSeconds,
+    ) ||
+    !Number.isFinite(
+      expectedDurationSeconds,
+    ) ||
+    expectedDurationSeconds <= 0
+  ) {
+    return 0;
+  }
+
+  return Math.min(
+    90,
+    Math.max(
+      0,
+      Math.round(
+        (
+          elapsedSeconds /
+          expectedDurationSeconds
+        ) * 100,
+      ),
+    ),
+  );
 }
 
 function statusClass(status) {
@@ -47,6 +78,69 @@ export default function ProgrammerDashboard({
     setError,
   ] = useState("");
 
+  const [
+    runningStartedAt,
+    setRunningStartedAt,
+  ] = useState(null);
+
+  const [
+    elapsedSeconds,
+    setElapsedSeconds,
+  ] = useState(0);
+
+  useEffect(() => {
+    if (!runningStartedAt) {
+      setElapsedSeconds(0);
+      return undefined;
+    }
+
+    function updateElapsedTime() {
+      setElapsedSeconds(
+        Math.max(
+          0,
+          Math.floor(
+            (
+              Date.now() -
+              runningStartedAt
+            ) / 1000,
+          ),
+        ),
+      );
+    }
+
+    updateElapsedTime();
+
+    const intervalId =
+      window.setInterval(
+        updateElapsedTime,
+        1000,
+      );
+
+    return () =>
+      window.clearInterval(
+        intervalId,
+      );
+  }, [
+    runningStartedAt,
+  ]);
+
+  const runningCommand =
+    commands.find(
+      (command) =>
+        command.id ===
+          runningCommandId,
+    ) || null;
+
+  const estimatedProgress =
+    runningCommand
+      ? calculateProgrammerCommandProgress({
+          elapsedSeconds,
+          expectedDurationSeconds:
+            runningCommand
+              .expectedDurationSeconds,
+        })
+      : 0;
+
   async function executeCommand(
     command,
   ) {
@@ -61,6 +155,9 @@ export default function ProgrammerDashboard({
 
     setRunningCommandId(
       command.id,
+    );
+    setRunningStartedAt(
+      Date.now(),
     );
     setExecution(null);
     setError("");
@@ -109,6 +206,9 @@ export default function ProgrammerDashboard({
       );
     } finally {
       setRunningCommandId(
+        null,
+      );
+      setRunningStartedAt(
         null,
       );
     }
@@ -207,23 +307,54 @@ export default function ProgrammerDashboard({
                     </p>
                   )}
 
-                  <button
-                    type="button"
-                    disabled={
-                      runningCommandId !==
-                        null
-                    }
-                    onClick={() =>
-                      executeCommand(
-                        command,
-                      )
-                    }
-                    className="mt-4 rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {running
-                      ? "Running…"
-                      : "Run action"}
-                  </button>
+                  <div className="mt-4 flex flex-wrap items-center gap-4">
+                    <button
+                      type="button"
+                      disabled={
+                        runningCommandId !==
+                          null
+                      }
+                      onClick={() =>
+                        executeCommand(
+                          command,
+                        )
+                      }
+                      className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {running
+                        ? "Running…"
+                        : "Run action"}
+                    </button>
+
+                    {running &&
+                    elapsedSeconds >= 5 && (
+                      <div
+                        data-programmer-command-progress
+                        className="min-w-52 flex-1"
+                      >
+                        <div className="flex items-center justify-between gap-3 text-[11px] font-black uppercase tracking-wide text-slate-600">
+                          <span>
+                            Estimated progress
+                          </span>
+
+                          <span>
+                            {estimatedProgress}% ·{" "}
+                            {elapsedSeconds}s
+                          </span>
+                        </div>
+
+                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+                          <div
+                            className="h-full rounded-full bg-amber-500 transition-[width] duration-1000"
+                            style={{
+                              width:
+                                `${estimatedProgress}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </article>
               );
             },

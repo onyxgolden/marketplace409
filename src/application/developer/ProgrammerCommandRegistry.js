@@ -5,6 +5,7 @@ export const PROGRAMMER_COMMANDS =
       label: "Check repository",
       category: "Repository",
       risk: "read-only",
+      expectedDurationSeconds: 5,
       description:
         "Shows the current branch, synchronization with origin/main, working-tree changes, and latest commits.",
       commandPreview:
@@ -19,6 +20,7 @@ export const PROGRAMMER_COMMANDS =
       label: "Run full test suite",
       category: "Validation",
       risk: "read-only",
+      expectedDurationSeconds: 45,
       description:
         "Runs every Vitest test and reports whether the complete automated test suite passes.",
       commandPreview:
@@ -32,6 +34,7 @@ export const PROGRAMMER_COMMANDS =
       label: "Run production build",
       category: "Validation",
       risk: "local-build",
+      expectedDurationSeconds: 30,
       description:
         "Compiles the complete Next.js production application and verifies TypeScript and route generation.",
       commandPreview:
@@ -45,6 +48,7 @@ export const PROGRAMMER_COMMANDS =
       label: "Create validation evidence",
       category: "Governance",
       risk: "generated-file",
+      expectedDurationSeconds: 75,
       description:
         "Runs the full tests and production build, then creates a validated governance evidence artifact.",
       commandPreview:
@@ -58,6 +62,7 @@ export const PROGRAMMER_COMMANDS =
       label: "Prepare next AI session",
       category: "AI helpers",
       risk: "shadow-write",
+      expectedDurationSeconds: 20,
       description:
         "Uses the newest eligible validation evidence, runs shadow governance synchronization, and generates the next-session bootstrap.",
       commandPreview:
@@ -71,6 +76,7 @@ export const PROGRAMMER_COMMANDS =
       label: "Complete session closeout",
       category: "AI helpers",
       risk: "shadow-write",
+      expectedDurationSeconds: 95,
       description:
         "Runs full validation, creates evidence, synchronizes shadow governance documents, and generates a continuation bootstrap in one operation.",
       commandPreview:

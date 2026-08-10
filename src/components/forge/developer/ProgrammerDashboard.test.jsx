@@ -8,7 +8,9 @@ import {
   it,
 } from "vitest";
 
-import ProgrammerDashboard from "./ProgrammerDashboard";
+import ProgrammerDashboard, {
+  calculateProgrammerCommandProgress,
+} from "./ProgrammerDashboard";
 
 const commands = [
   {
@@ -20,6 +22,8 @@ const commands = [
       "Repository",
     risk:
       "read-only",
+    expectedDurationSeconds:
+      5,
     description:
       "Shows repository status and synchronization information.",
     commandPreview: [
@@ -38,6 +42,8 @@ const commands = [
       "AI helpers",
     risk:
       "shadow-write",
+    expectedDurationSeconds:
+      95,
     description:
       "Runs validation and generates the next-session bootstrap.",
     commandPreview: [
@@ -115,6 +121,31 @@ describe(
         expect(markup).toContain(
           "disabled on Vercel",
         );
+      },
+    );
+    it(
+      "calculates capped estimated command progress",
+      () => {
+        expect(
+          calculateProgrammerCommandProgress({
+            elapsedSeconds: 15,
+            expectedDurationSeconds: 30,
+          }),
+        ).toBe(50);
+
+        expect(
+          calculateProgrammerCommandProgress({
+            elapsedSeconds: 45,
+            expectedDurationSeconds: 30,
+          }),
+        ).toBe(90);
+
+        expect(
+          calculateProgrammerCommandProgress({
+            elapsedSeconds: 5,
+            expectedDurationSeconds: 0,
+          }),
+        ).toBe(0);
       },
     );
   },
