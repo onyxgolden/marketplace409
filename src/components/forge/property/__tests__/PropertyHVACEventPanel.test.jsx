@@ -83,7 +83,7 @@ describe(
         );
 
         expect(markup).toContain(
-          "Service, failure, and replacement events",
+          "Inspection and service history",
         );
 
         expect(markup).toContain(

@@ -189,6 +189,7 @@ export default function PropertyHVACEventPanel({
   systemId = "",
   components = [],
   events = [],
+  initialEventType = "inspected",
   onEventSaved = () => {},
 }) {
   const [
@@ -196,7 +197,8 @@ export default function PropertyHVACEventPanel({
     setValues,
   ] = useState({
     componentId: "",
-    eventType: "inspected",
+    eventType:
+      initialEventType,
     occurredAt: todayValue(),
     failureSymptoms: "",
     workPerformed: "",
@@ -462,7 +464,11 @@ export default function PropertyHVACEventPanel({
         </div>
 
         <h5 className="mt-2 text-lg font-black text-slate-950">
-          Service, failure, and replacement events
+          {initialEventType === "failed"
+            ? "Complete system failure"
+            : initialEventType === "repaired"
+              ? "Component work and service history"
+              : "Inspection and service history"}
         </h5>
 
         <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">

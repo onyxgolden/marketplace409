@@ -147,11 +147,16 @@ function Field({
 
 export default function PropertyHVACComponentPanel({
   systems = [],
+  mode = "all",
+  focused = false,
 }) {
   const [
     systemId,
     setSystemId,
-  ] = useState("");
+  ] = useState(
+    () =>
+      systems[0]?.id || "",
+  );
 
   const [
     history,
@@ -377,11 +382,34 @@ export default function PropertyHVACComponentPanel({
   const components =
     history?.components || [];
 
+  const showComponentEditor =
+    mode === "all" ||
+    mode === "component";
+
+  const showEventEditor =
+    mode === "all" ||
+    mode === "service" ||
+    mode === "component" ||
+    mode === "failure";
+
+  const initialEventType =
+    mode === "failure"
+      ? "failed"
+      : mode === "component"
+        ? "repaired"
+        : "inspected";
+
   return (
     <section
       data-property-hvac-component-panel
-      className="mt-7 rounded-2xl border border-sky-200 bg-sky-50 p-5"
+      data-property-hvac-mode={mode}
+      className={
+        focused
+          ? "mt-6"
+          : "mt-7 rounded-2xl border border-sky-200 bg-sky-50 p-5"
+      }
     >
+      {!focused && (
       <div>
         <div className="text-xs font-black uppercase tracking-wide text-sky-700">
           Replaceable Components
@@ -395,8 +423,9 @@ export default function PropertyHVACComponentPanel({
           Track component age independently from the overall system so compressor, motor, coil, control, and warranty history is preserved.
         </p>
       </div>
+      )}
 
-      <div className="mt-5">
+      <div className="mt-5 max-w-2xl">
         <Field label="HVAC system">
           <select
             value={systemId}
@@ -423,7 +452,8 @@ export default function PropertyHVACComponentPanel({
         </Field>
       </div>
 
-      {systems.length === 0 ? (
+      {showComponentEditor && (
+      systems.length === 0 ? (
         <p className="mt-4 text-sm font-bold text-slate-600">
           Save an HVAC system before adding its components.
         </p>
@@ -719,6 +749,7 @@ export default function PropertyHVACComponentPanel({
               : "Save HVAC component"}
           </button>
         </div>
+      )
       )}
 
       {message && (
@@ -730,6 +761,7 @@ export default function PropertyHVACComponentPanel({
         </p>
       )}
 
+      {showComponentEditor && (
       <div className="mt-6">
         <h6 className="text-sm font-black text-slate-950">
           Recorded components
@@ -784,6 +816,9 @@ export default function PropertyHVACComponentPanel({
           </div>
         )}
       </div>
+      )}
+
+      {showEventEditor && (
       <PropertyHVACEventPanel
         propertyId={
           history?.system
@@ -798,6 +833,9 @@ export default function PropertyHVACComponentPanel({
         systemId={systemId}
         components={components}
         events={history?.events || []}
+        initialEventType={
+          initialEventType
+        }
         onEventSaved={(savedEvent) =>
           setHistory((current) => ({
             system:
@@ -822,6 +860,7 @@ export default function PropertyHVACComponentPanel({
           }))
         }
       />
+      )}
 
     </section>
   );

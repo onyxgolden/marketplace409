@@ -14,6 +14,11 @@ import {
 
 import PropertyHVACComponentPanel from "./PropertyHVACComponentPanel";
 import PropertyEvidenceHistoryPanel from "./PropertyEvidenceHistoryPanel";
+import PropertyHVACSystemReplacementPanel from "./PropertyHVACSystemReplacementPanel";
+
+import PropertyHVACWorkflowChooser, {
+  PropertyHVACWorkflowHeader,
+} from "./PropertyHVACWorkflowChooser";
 
 import {
   buildPropertyPortfolioProperties,
@@ -181,6 +186,63 @@ export default function PropertyHVACPanel() {
     workflow,
     setWorkflow,
   ] = useState(null);
+
+  const [
+    showGuidance,
+    setShowGuidance,
+  ] = useState(true);
+
+  useEffect(() => {
+    const savedPreference =
+      window.localStorage.getItem(
+        "forge.display.guidance",
+      );
+
+    if (savedPreference === "off") {
+      setShowGuidance(false);
+    }
+  }, []);
+
+  function toggleGuidance() {
+    setShowGuidance((current) => {
+      const next = !current;
+
+      window.localStorage.setItem(
+        "forge.display.guidance",
+        next ? "on" : "off",
+      );
+
+      return next;
+    });
+  }
+
+  function finishReplacement(result) {
+    if (
+      result?.predecessorSystem &&
+      result?.replacementSystem
+    ) {
+      setSystems((current) => [
+        result.replacementSystem,
+        ...current
+          .filter(
+            (system) =>
+              system.id !==
+              result.replacementSystem.id,
+          )
+          .map((system) =>
+            system.id ===
+            result.predecessorSystem.id
+              ? result.predecessorSystem
+              : system,
+          ),
+      ]);
+    }
+
+    setMessage(
+      "HVAC replacement recorded.",
+    );
+    setWorkflow(null);
+  }
 
   useEffect(() => {
     let active = true;
@@ -381,33 +443,6 @@ export default function PropertyHVACPanel() {
           </p>
         </div>
 
-      </div>
-
-      <div className="mt-6 max-w-2xl">
-        <Field label="Property">
-          <select
-            value={propertyId}
-            onChange={(event) =>
-              setPropertyId(
-                event.target.value,
-              )
-            }
-            className={INPUT_CLASS}
-          >
-            <option value="">
-              Choose a property
-            </option>
-
-            {properties.map((property) => (
-              <option
-                key={property.id}
-                value={property.id}
-              >
-                {property.name}
-              </option>
-            ))}
-          </select>
-        </Field>
       </div>
 
       {workflow === "add-system" && (
@@ -750,6 +785,34 @@ export default function PropertyHVACPanel() {
 
       {workflow === null && (
       <>
+      <div className="mt-6 max-w-2xl">
+        <Field label="Property">
+          <select
+            value={propertyId}
+            onChange={(event) => {
+              setPropertyId(
+                event.target.value,
+              );
+              setWorkflow(null);
+            }}
+            className={INPUT_CLASS}
+          >
+            <option value="">
+              Choose a property
+            </option>
+
+            {properties.map((property) => (
+              <option
+                key={property.id}
+                value={property.id}
+              >
+                {property.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
       <div className="mt-7 max-w-3xl border-t border-slate-200 pt-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h5 className="text-sm font-black text-slate-950">
@@ -843,18 +906,79 @@ export default function PropertyHVACPanel() {
       </div>
 
       {systems.length > 0 && (
-        <>
-          <PropertyEvidenceHistoryPanel
-            propertyId={propertyId}
-            systems={systems}
+        <PropertyHVACWorkflowChooser
+          showGuidance={showGuidance}
+          onToggleGuidance={
+            toggleGuidance
+          }
+          onChoose={setWorkflow}
+        />
+      )}
+      </>
+      )}
+
+      {[
+        "service",
+        "component",
+        "failure",
+      ].includes(workflow) && (
+        <div className="mt-6">
+          <PropertyHVACWorkflowHeader
+            workflowId={workflow}
+            showGuidance={
+              showGuidance
+            }
+            onBack={() =>
+              setWorkflow(null)
+            }
           />
 
           <PropertyHVACComponentPanel
             systems={systems}
+            mode={workflow}
+            focused
           />
-        </>
+        </div>
       )}
-      </>
+
+      {workflow === "replacement" && (
+        <div className="mt-6">
+          <PropertyHVACWorkflowHeader
+            workflowId="replacement"
+            showGuidance={
+              showGuidance
+            }
+            onBack={() =>
+              setWorkflow(null)
+            }
+          />
+
+          <PropertyHVACSystemReplacementPanel
+            systems={systems}
+            onSaved={
+              finishReplacement
+            }
+          />
+        </div>
+      )}
+
+      {workflow === "evidence" && (
+        <div className="mt-6">
+          <PropertyHVACWorkflowHeader
+            workflowId="evidence"
+            showGuidance={
+              showGuidance
+            }
+            onBack={() =>
+              setWorkflow(null)
+            }
+          />
+
+          <PropertyEvidenceHistoryPanel
+            propertyId={propertyId}
+            systems={systems}
+          />
+        </div>
       )}
     </section>
   );
