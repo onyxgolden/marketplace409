@@ -14,6 +14,10 @@ import {
   buildPropertyPortfolioProperties,
 } from "./buildPropertyPortfolioProperties";
 
+import PropertyValuationWorkflowChooser, {
+  PropertyValuationWorkflowHeader,
+} from "./PropertyValuationWorkflowChooser";
+
 export {
   buildPropertyPortfolioProperties as buildValuationProperties,
 } from "./buildPropertyPortfolioProperties";
@@ -109,6 +113,40 @@ export default function PropertyValuationPanel() {
     useState("");
   const [message, setMessage] =
     useState("");
+  const [workflow, setWorkflow] =
+    useState(null);
+  const [showGuidance, setShowGuidance] =
+    useState(true);
+
+  useEffect(() => {
+    const storedPreference =
+      window.localStorage.getItem(
+        "forge.display.guidance",
+      );
+
+    if (storedPreference !== null) {
+      setShowGuidance(
+        storedPreference !== "off",
+      );
+    }
+  }, []);
+
+  function toggleGuidance() {
+    setShowGuidance(
+      (current) => {
+        const next = !current;
+
+        window.localStorage.setItem(
+          "forge.display.guidance",
+          next
+            ? "on"
+            : "off",
+        );
+
+        return next;
+      },
+    );
+  }
 
   useEffect(() => {
     async function initialize() {
@@ -474,47 +512,104 @@ export default function PropertyValuationPanel() {
   return (
     <section
       data-property-valuation-panel
-      className="space-y-6"
+      className={
+        workflow === null
+          ? "max-w-5xl rounded-2xl border border-slate-200 bg-white p-6"
+          : "rounded-2xl border border-slate-200 bg-white p-6"
+      }
     >
-      <header className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-950 to-slate-950 p-5 text-white">
-        <div className="text-xs font-black uppercase tracking-[0.2em] text-emerald-300">
-          Property Intelligence
-        </div>
+      {workflow === null ? (
+        <>
+          <div>
+            <div className="text-xs font-black uppercase tracking-wide text-emerald-700">
+              Property Intelligence
+            </div>
 
-        <h3 className="mt-2 text-2xl font-black">
-          Current Property Values
-        </h3>
+            <h3 className="mt-2 text-xl font-black text-slate-950">
+              Current property values
+            </h3>
 
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
-          Maintain an owner-controlled valuation history with explicit source and effective-date provenance.
-        </p>
-      </header>
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+              Maintain an owner-controlled valuation history with explicit source and effective-date provenance.
+            </p>
+          </div>
 
-      {loading && (
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm font-bold text-slate-600">
-          Loading property valuations…
-        </div>
-      )}
+          {loading && (
+            <div className="mt-5 max-w-xl rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-600">
+              Loading property valuations…
+            </div>
+          )}
 
-      {error && (
-        <div
-          role="alert"
-          className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-bold text-rose-800"
-        >
-          {error}
-        </div>
-      )}
+          {error && (
+            <div
+              role="alert"
+              className="mt-5 max-w-3xl rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-bold text-rose-800"
+            >
+              {error}
+            </div>
+          )}
 
-      {message && (
-        <div
-          role="status"
-          className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800"
-        >
-          {message}
-        </div>
-      )}
+          {message && (
+            <div
+              role="status"
+              className="mt-5 max-w-3xl rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800"
+            >
+              {message}
+            </div>
+          )}
 
-      <div className="grid gap-6 xl:grid-cols-2">
+          <div className="mt-5 max-w-xl rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-[11px] font-black uppercase text-slate-500">
+              Recorded property values
+            </div>
+
+            <div className="mt-1 text-xl font-black text-slate-950">
+              {valuations.length}
+            </div>
+          </div>
+
+          <PropertyValuationWorkflowChooser
+            showGuidance={
+              showGuidance
+            }
+            onToggleGuidance={
+              toggleGuidance
+            }
+            onChoose={setWorkflow}
+          />
+        </>
+      ) : (
+        <>
+          <PropertyValuationWorkflowHeader
+            workflowId={workflow}
+            showGuidance={
+              showGuidance
+            }
+            onBack={() =>
+              setWorkflow(null)
+            }
+          />
+
+          {error && (
+            <div
+              role="alert"
+              className="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-bold text-rose-800"
+            >
+              {error}
+            </div>
+          )}
+
+          {message && (
+            <div
+              role="status"
+              className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800"
+            >
+              {message}
+            </div>
+          )}
+
+          {workflow === "record" && (
+            <div className="mt-6 max-w-3xl">
         <form
           onSubmit={
             handleManualSubmit
@@ -677,7 +772,11 @@ export default function PropertyValuationPanel() {
             </button>
           </div>
         </form>
+            </div>
+          )}
 
+          {workflow === "import" && (
+            <div className="mt-6 max-w-3xl">
         <section className="rounded-2xl border border-slate-200 bg-white p-5">
           <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
             Spreadsheet Update
@@ -781,8 +880,11 @@ export default function PropertyValuationPanel() {
             </div>
           )}
         </section>
-      </div>
+            </div>
+          )}
 
+          {workflow === "history" && (
+            <div className="mt-6">
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -879,6 +981,10 @@ export default function PropertyValuationPanel() {
           </div>
         )}
       </section>
+            </div>
+          )}
+        </>
+      )}
     </section>
   );
 }

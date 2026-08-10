@@ -68,7 +68,7 @@ describe(
     );
 
     it(
-      "renders manual and spreadsheet valuation controls",
+      "renders a compact valuation landing surface",
       () => {
         const markup =
           renderToStaticMarkup(
@@ -80,22 +80,30 @@ describe(
         );
 
         expect(markup).toContain(
-          "Current Property Values",
+          "Current property values",
         );
 
         expect(markup).toContain(
-          "Record a property value",
+          "Record or update a property value",
         );
 
         expect(markup).toContain(
+          "Import valuation CSV",
+        );
+
+        expect(markup).toContain(
+          "Review recorded values",
+        );
+
+        expect(markup).not.toContain(
           "Preview and import CSV",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "property_id and current_value",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Record valuation",
         );
       },
@@ -114,11 +122,15 @@ describe(
         );
 
         expect(markup).toContain(
+          "Recorded property values",
+        );
+
+        expect(markup).not.toContain(
           "Latest Recorded Values",
         );
 
-        expect(markup).toContain(
-          "Owner-scoped property valuations",
+        expect(markup).not.toContain(
+          "Remove valuation",
         );
 
         expect(markup).toContain(
