@@ -43,8 +43,17 @@ createConnectionPlatformSuite,
 } from "../createConnectionPlatformSuite.js";
 
 describe("createConnectionPlatformSuite", () => {
-it("builds the default connection platform suite", () => {
-const suite = createConnectionPlatformSuite();
+it("builds the in-memory connection platform suite", () => {
+const suite = createConnectionPlatformSuite({
+connectionRepositoryStorage: "memory",
+credentialReferenceRepositoryStorage: "memory",
+credentialVaultRepositoryStorage: "memory",
+institutionReferenceRepositoryStorage: "memory",
+financialAccountRepositoryStorage: "memory",
+accountBalanceRepositoryStorage: "memory",
+financialEventRepositoryStorage: "memory",
+connectionExecutionHistoryRepositoryStorage: "memory",
+});
 
 
 expect(suite.plaidProvider.provider).toBe("plaid");
