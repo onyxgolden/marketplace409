@@ -177,6 +177,11 @@ export default function PropertyHVACPanel() {
     setMessage,
   ] = useState("");
 
+  const [
+    workflow,
+    setWorkflow,
+  ] = useState(null);
+
   useEffect(() => {
     let active = true;
 
@@ -339,6 +344,8 @@ export default function PropertyHVACPanel() {
       setMessage(
         "HVAC system saved.",
       );
+
+      setWorkflow(null);
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -353,7 +360,11 @@ export default function PropertyHVACPanel() {
   return (
     <section
       data-property-hvac-panel
-      className="rounded-2xl border border-slate-200 bg-white p-6"
+      className={
+        workflow === null
+          ? "max-w-5xl rounded-2xl border border-slate-200 bg-white p-6"
+          : "rounded-2xl border border-slate-200 bg-white p-6"
+      }
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -366,20 +377,13 @@ export default function PropertyHVACPanel() {
           </h4>
 
           <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
-            Establish the system identity before adding replaceable components and append-only service events.
+            Record each system separately so service, components, failures, and replacements remain easy to follow.
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled
-          className="rounded-xl border border-dashed border-indigo-300 bg-indigo-50 px-4 py-2 text-xs font-black text-indigo-500 opacity-70"
-        >
-          Equipment-label extraction — planned
-        </button>
       </div>
 
-      <div className="mt-6">
+      <div className="mt-6 max-w-2xl">
         <Field label="Property">
           <select
             value={propertyId}
@@ -406,10 +410,30 @@ export default function PropertyHVACPanel() {
         </Field>
       </div>
 
-      <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-        <h5 className="text-sm font-black text-slate-950">
-          Add HVAC system
-        </h5>
+      {workflow === "add-system" && (
+      <div className="mt-6 rounded-2xl border border-sky-200 bg-sky-50 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-black uppercase tracking-wide text-sky-700">
+              System Setup
+            </div>
+            <h5 className="mt-1 text-lg font-black text-slate-950">
+              {systems.length === 0
+                ? "Add this property’s first HVAC system"
+                : "Add another HVAC system"}
+            </h5>
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              setWorkflow(null)
+            }
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-700"
+          >
+            Back
+          </button>
+        </div>
 
         <div className="mt-4 grid gap-4 md:grid-cols-3">
           <Field label="System name">
@@ -722,20 +746,49 @@ export default function PropertyHVACPanel() {
           </p>
         )}
       </div>
+      )}
 
-      <div className="mt-7 border-t border-slate-200 pt-6">
-        <h5 className="text-sm font-black text-slate-950">
-          HVAC systems
-        </h5>
+      {workflow === null && (
+      <>
+      <div className="mt-7 max-w-3xl border-t border-slate-200 pt-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h5 className="text-sm font-black text-slate-950">
+            HVAC systems
+          </h5>
+
+          {systems.length > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                setWorkflow("add-system")
+              }
+              className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-black text-sky-800"
+            >
+              Add another HVAC system
+            </button>
+          )}
+        </div>
 
         {loading ? (
           <p className="mt-3 text-sm font-semibold text-slate-500">
             Loading HVAC systems...
           </p>
         ) : systems.length === 0 ? (
-          <p className="mt-3 text-sm font-semibold text-slate-500">
-            No HVAC systems recorded for this property.
-          </p>
+          <div className="mt-4 max-w-xl rounded-2xl border border-sky-200 bg-sky-50 p-5">
+            <p className="text-base font-black text-slate-950">
+              No HVAC system is recorded for this property.
+            </p>
+
+            <button
+              type="button"
+              onClick={() =>
+                setWorkflow("add-system")
+              }
+              className="mt-4 w-full rounded-xl bg-sky-700 px-5 py-3 text-sm font-black text-white sm:w-auto"
+            >
+              Add this property’s first HVAC system
+            </button>
+          </div>
         ) : (
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             {systems.map((system) => (
@@ -789,18 +842,20 @@ export default function PropertyHVACPanel() {
         )}
       </div>
 
-      <PropertyEvidenceHistoryPanel
-        propertyId={propertyId}
-        systems={systems}
-      />
+      {systems.length > 0 && (
+        <>
+          <PropertyEvidenceHistoryPanel
+            propertyId={propertyId}
+            systems={systems}
+          />
 
-      <PropertyHVACComponentPanel
-        systems={systems}
-      />
-
-      <div className="mt-6 rounded-xl border border-dashed border-indigo-300 bg-indigo-50 p-4 text-sm font-semibold leading-6 text-indigo-950">
-        Invoice and photo extraction now creates reviewable HVAC service proposals while preserving the original private evidence. Equipment-label extraction remains planned for manufacturer, model, serial number, capacity, installation date, and warranty proposals. Nothing updates without user approval.
-      </div>
+          <PropertyHVACComponentPanel
+            systems={systems}
+          />
+        </>
+      )}
+      </>
+      )}
     </section>
   );
 }

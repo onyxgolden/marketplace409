@@ -3,6 +3,11 @@ import {
 } from "@/lib/supabase";
 
 import {
+  mapHVACSystemReplacementRowToDomain,
+  mapHVACSystemReplacementToRow,
+} from "./property-hvac-system-replacement.mapper";
+
+import {
   mapHVACComponentEventRowToDomain,
   mapHVACComponentEventToRow,
   mapHVACComponentRowToDomain,
@@ -327,6 +332,116 @@ export class SupabasePropertyHVACRepository {
         data.event,
       ),
     );
+  }
+
+  async replaceSystem(
+    command,
+    context,
+  ) {
+    const ownerId =
+      this.requireOwnerId(
+        context?.ownerId,
+      );
+
+    const {
+      data,
+      error,
+    } = await this.supabase.rpc(
+      "replace_property_hvac_system",
+      {
+        p_owner_id:
+          ownerId,
+        p_transition:
+          mapHVACSystemReplacementToRow(
+            command.transition,
+            ownerId,
+          ),
+        p_predecessor_system:
+          mapHVACSystemToRow(
+            command.predecessorSystem,
+            ownerId,
+          ),
+        p_replacement_system:
+          mapHVACSystemToRow(
+            command.replacementSystem,
+            ownerId,
+          ),
+        p_failure_event:
+          mapHVACComponentEventToRow(
+            command.failureEvent,
+            ownerId,
+          ),
+        p_installation_event:
+          mapHVACComponentEventToRow(
+            command.installationEvent,
+            ownerId,
+          ),
+        p_initial_components:
+          command.initialComponents.map(
+            (component) =>
+              mapHVACComponentToRow(
+                component,
+                ownerId,
+              ),
+          ),
+      },
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    if (
+      !data?.transition ||
+      !data?.predecessor_system ||
+      !data?.replacement_system ||
+      !data?.failure_event ||
+      !data?.installation_event
+    ) {
+      throw new Error(
+        "Atomic HVAC replacement did not return a complete lifecycle result.",
+      );
+    }
+
+    return Object.freeze({
+      transition:
+        Object.freeze(
+          mapHVACSystemReplacementRowToDomain(
+            data.transition,
+          ),
+        ),
+      predecessorSystem:
+        Object.freeze(
+          mapHVACSystemRowToDomain(
+            data.predecessor_system,
+          ),
+        ),
+      replacementSystem:
+        Object.freeze(
+          mapHVACSystemRowToDomain(
+            data.replacement_system,
+          ),
+        ),
+      failureEvent:
+        Object.freeze(
+          mapHVACComponentEventRowToDomain(
+            data.failure_event,
+          ),
+        ),
+      installationEvent:
+        Object.freeze(
+          mapHVACComponentEventRowToDomain(
+            data.installation_event,
+          ),
+        ),
+      initialComponents:
+        this.mapRows(
+          data.initial_components,
+          mapHVACComponentRowToDomain,
+        ),
+      created:
+        data.created === true,
+    });
   }
 
   async findEventsBySystem(

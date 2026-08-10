@@ -4,6 +4,11 @@ import type {
   HVACSystem,
 } from "./property-hvac.types";
 
+import type {
+  HVACSystemReplacementCommand,
+  HVACSystemReplacementResult,
+} from "./property-hvac-system-replacement.types";
+
 export type HVACPersistenceContext =
   Readonly<{
     ownerId: string;
@@ -54,4 +59,9 @@ export interface PropertyHVACRepository {
     componentId: string,
     ownerId: string,
   ): Promise<readonly HVACComponentEvent[]>;
+
+  replaceSystem(
+    command: HVACSystemReplacementCommand,
+    context: HVACPersistenceContext,
+  ): Promise<HVACSystemReplacementResult>;
 }

@@ -9,6 +9,11 @@ import type {
   HVACSystem,
 } from "./property-hvac.types";
 
+import type {
+  HVACSystemReplacementCommand,
+  HVACSystemReplacementResult,
+} from "./property-hvac-system-replacement.types";
+
 type StoredSystem = Readonly<{
   ownerId: string;
   system: HVACSystem;
@@ -22,6 +27,12 @@ type StoredComponent = Readonly<{
 type StoredEvent = Readonly<{
   ownerId: string;
   event: HVACComponentEvent;
+}>;
+
+type StoredReplacement = Readonly<{
+  ownerId: string;
+  fingerprint: string;
+  result: HVACSystemReplacementResult;
 }>;
 
 function requireIdentifier(
@@ -63,6 +74,9 @@ export class InMemoryPropertyHVACRepository
 
   private readonly events =
     new Map<string, StoredEvent>();
+
+  private readonly replacements =
+    new Map<string, StoredReplacement>();
 
   async saveSystem(
     system: HVACSystem,
@@ -319,6 +333,288 @@ export class InMemoryPropertyHVACRepository
     );
 
     return event;
+  }
+
+  async replaceSystem(
+    command: HVACSystemReplacementCommand,
+    context: HVACPersistenceContext,
+  ): Promise<HVACSystemReplacementResult> {
+    const ownerId =
+      requireIdentifier(
+        context?.ownerId,
+        "HVAC owner id is required.",
+      );
+
+    const transitionKey =
+      key(
+        ownerId,
+        command.transition.id,
+      );
+    const fingerprint =
+      JSON.stringify(command);
+    const existing =
+      this.replacements.get(
+        transitionKey,
+      );
+
+    if (existing) {
+      if (
+        existing.fingerprint !==
+          fingerprint
+      ) {
+        throw new Error(
+          "HVAC replacement id already exists with different facts.",
+        );
+      }
+
+      return Object.freeze({
+        ...existing.result,
+        created: false,
+      });
+    }
+
+    const {
+      transition,
+      predecessorSystem,
+      replacementSystem,
+      failureEvent,
+      installationEvent,
+      initialComponents,
+    } = command;
+
+    const currentPredecessor =
+      await this.findSystemById(
+        transition
+          .predecessorSystemId,
+        ownerId,
+      );
+
+    if (!currentPredecessor) {
+      throw new Error(
+        "HVAC replacement requires an owner-scoped predecessor system.",
+      );
+    }
+
+    if (
+      currentPredecessor.status ===
+        "replaced" ||
+      currentPredecessor.status ===
+        "removed"
+    ) {
+      throw new Error(
+        "Only a current HVAC system can be replaced.",
+      );
+    }
+
+    const preservedPredecessor = {
+      ...predecessorSystem,
+      status:
+        currentPredecessor.status,
+      condition:
+        currentPredecessor.condition,
+    };
+
+    if (
+      JSON.stringify(
+        preservedPredecessor,
+      ) !==
+        JSON.stringify(
+          currentPredecessor,
+        ) ||
+      predecessorSystem.status !==
+        "replaced" ||
+      predecessorSystem.condition !==
+        "failed"
+    ) {
+      throw new Error(
+        "HVAC replacement must preserve predecessor identity and mark it replaced and failed.",
+      );
+    }
+
+    if (
+      transition.propertyId !==
+        currentPredecessor.propertyId ||
+      replacementSystem.propertyId !==
+        currentPredecessor.propertyId ||
+      transition.replacementSystemId !==
+        replacementSystem.id ||
+      transition.predecessorSystemId !==
+        predecessorSystem.id
+    ) {
+      throw new Error(
+        "HVAC replacement systems must share the transition property and identities.",
+      );
+    }
+
+    if (
+      replacementSystem.status !==
+        "active" ||
+      await this.findSystemById(
+        replacementSystem.id,
+        ownerId,
+      )
+    ) {
+      throw new Error(
+        "HVAC replacement requires a new active system identity.",
+      );
+    }
+
+    if (
+      failureEvent.id !==
+        transition.failureEventId ||
+      failureEvent.systemId !==
+        predecessorSystem.id ||
+      failureEvent.componentId !==
+        null ||
+      failureEvent.eventType !==
+        "failed"
+    ) {
+      throw new Error(
+        "HVAC replacement requires a predecessor failure event.",
+      );
+    }
+
+    if (
+      installationEvent.id !==
+        transition.installationEventId ||
+      installationEvent.systemId !==
+        replacementSystem.id ||
+      installationEvent.componentId !==
+        null ||
+      installationEvent.eventType !==
+        "installed"
+    ) {
+      throw new Error(
+        "HVAC replacement requires a replacement installation event.",
+      );
+    }
+
+    if (
+      this.events.has(
+        key(ownerId, failureEvent.id),
+      ) ||
+      this.events.has(
+        key(
+          ownerId,
+          installationEvent.id,
+        ),
+      )
+    ) {
+      throw new Error(
+        "HVAC replacement event id already exists.",
+      );
+    }
+
+    const componentIds =
+      new Set<string>();
+
+    for (
+      const component of
+        initialComponents
+    ) {
+      const componentKey =
+        key(ownerId, component.id);
+
+      if (
+        component.systemId !==
+          replacementSystem.id ||
+        componentIds.has(
+          component.id,
+        ) ||
+        this.components.has(
+          componentKey,
+        )
+      ) {
+        throw new Error(
+          "HVAC replacement components require unique identities on the replacement system.",
+        );
+      }
+
+      componentIds.add(
+        component.id,
+      );
+    }
+
+    const frozenComponents =
+      freezeArray(
+        initialComponents,
+      );
+    const result =
+      Object.freeze({
+        transition,
+        predecessorSystem,
+        replacementSystem,
+        failureEvent,
+        installationEvent,
+        initialComponents:
+          frozenComponents,
+        created: true,
+      });
+
+    this.systems.set(
+      key(
+        ownerId,
+        predecessorSystem.id,
+      ),
+      Object.freeze({
+        ownerId,
+        system:
+          predecessorSystem,
+      }),
+    );
+    this.systems.set(
+      key(
+        ownerId,
+        replacementSystem.id,
+      ),
+      Object.freeze({
+        ownerId,
+        system:
+          replacementSystem,
+      }),
+    );
+    this.events.set(
+      key(ownerId, failureEvent.id),
+      Object.freeze({
+        ownerId,
+        event: failureEvent,
+      }),
+    );
+    this.events.set(
+      key(
+        ownerId,
+        installationEvent.id,
+      ),
+      Object.freeze({
+        ownerId,
+        event:
+          installationEvent,
+      }),
+    );
+
+    for (
+      const component of
+        frozenComponents
+    ) {
+      this.components.set(
+        key(ownerId, component.id),
+        Object.freeze({
+          ownerId,
+          component,
+        }),
+      );
+    }
+
+    this.replacements.set(
+      transitionKey,
+      Object.freeze({
+        ownerId,
+        fingerprint,
+        result,
+      }),
+    );
+
+    return result;
   }
 
   async findEventsBySystem(

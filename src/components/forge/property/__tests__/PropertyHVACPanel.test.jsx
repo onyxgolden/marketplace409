@@ -31,51 +31,71 @@ describe(
           "HVAC systems, components, and service history",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "System type",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Refrigerant type",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Serial number",
         );
 
         expect(markup).toContain(
+          "No HVAC system is recorded for this property.",
+        );
+
+        expect(markup).toContain(
+          "Add this property’s first HVAC system",
+        );
+
+        expect(markup).toContain(
+          "max-w-5xl",
+        );
+
+        expect(markup).toContain(
+          "max-w-2xl",
+        );
+
+        expect(markup).toContain(
+          "max-w-xl",
+        );
+
+        expect(markup).not.toContain(
           "Save HVAC system",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "data-property-evidence-history-panel",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Private evidence history",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "data-property-hvac-component-panel",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Component identity and replacement history",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Save an HVAC system before adding its components.",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Equipment-label extraction",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Invoice and photo extraction now creates reviewable HVAC service proposals",
         );
 
-        expect(markup).toContain(
+        expect(markup).not.toContain(
           "Nothing updates without user approval",
         );
       },

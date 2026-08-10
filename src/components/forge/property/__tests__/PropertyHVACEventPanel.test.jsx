@@ -131,11 +131,39 @@ describe(
         );
 
         expect(markup).toContain(
-          "Record HVAC event",
+          "3. Approve and record HVAC event",
         );
 
         expect(markup).toContain(
-          "Add invoice or photo",
+          "1. Add invoice or service photo",
+        );
+
+        expect(markup).toContain(
+          "Choose invoice or photo",
+        );
+
+        expect(markup).toContain(
+          "2. Review service and component details",
+        );
+
+        expect(
+          markup.indexOf(
+            "1. Add invoice or service photo",
+          ),
+        ).toBeLessThan(
+          markup.indexOf(
+            "2. Review service and component details",
+          ),
+        );
+
+        expect(
+          markup.indexOf(
+            "2. Review service and component details",
+          ),
+        ).toBeLessThan(
+          markup.indexOf(
+            "3. Approve and record HVAC event",
+          ),
         );
       },
     );

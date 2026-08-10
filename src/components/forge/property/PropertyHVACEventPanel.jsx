@@ -218,6 +218,11 @@ export default function PropertyHVACEventPanel({
   ] = useState(false);
 
   const [
+    importingFilename,
+    setImportingFilename,
+  ] = useState("");
+
+  const [
     message,
     setMessage,
   ] = useState("");
@@ -251,6 +256,10 @@ export default function PropertyHVACEventPanel({
       return;
     }
 
+    setImportingFilename(
+      file.name ||
+        "HVAC invoice",
+    );
     setImportingInvoice(true);
     setMessage("");
 
@@ -318,6 +327,7 @@ export default function PropertyHVACEventPanel({
       );
     } finally {
       setImportingInvoice(false);
+      setImportingFilename("");
     }
   }
 
@@ -418,36 +428,74 @@ export default function PropertyHVACEventPanel({
       data-property-hvac-event-panel
       className="mt-7 rounded-2xl border border-amber-200 bg-amber-50 p-5"
     >
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="text-xs font-black uppercase tracking-wide text-amber-800">
-            Append-Only History
+      {importingInvoice && (
+        <div
+          role="status"
+          aria-live="polite"
+          aria-label="HVAC invoice verification in progress"
+          className="fixed inset-0 z-[100] grid place-items-center bg-slate-950 px-6 text-white"
+        >
+          <div className="w-full max-w-xl text-center">
+            <div className="mx-auto h-16 w-16 animate-spin rounded-full border-4 border-blue-300 border-t-transparent" />
+            <div className="mt-8 text-xs font-black uppercase tracking-[0.3em] text-blue-300">
+              HVAC Document Verification
+            </div>
+            <h2 className="mt-3 text-3xl font-black">
+              Reading your invoice
+            </h2>
+            <p className="mt-3 text-base leading-7 text-slate-300">
+              FORGE is preserving the original evidence, extracting service details, and preparing editable component actions.
+            </p>
+            <div className="mt-6 truncate rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm font-bold text-slate-200">
+              {importingFilename}
+            </div>
+            <div className="mt-5 text-sm font-bold text-blue-200">
+              No HVAC history will change until you approve the review.
+            </div>
           </div>
+        </div>
+      )}
 
-          <h5 className="mt-2 text-lg font-black text-slate-950">
-            Service, failure, and replacement events
-          </h5>
+      <div>
+        <div className="text-xs font-black uppercase tracking-wide text-amber-800">
+          Append-Only History
+        </div>
 
-          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
-            Preserve what happened, when it happened, which component was involved, who performed the work, and what it cost.
-          </p>
+        <h5 className="mt-2 text-lg font-black text-slate-950">
+          Service, failure, and replacement events
+        </h5>
+
+        <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+          Preserve what happened, when it happened, which component was involved, who performed the work, and what it cost.
+        </p>
+      </div>
+
+      <div className="mt-5 grid gap-4 rounded-xl border border-blue-300 bg-blue-50 p-5">
+        <div className="max-w-3xl">
+          <div className="text-sm font-black uppercase tracking-wide text-blue-900">
+            1. Add invoice or service photo
+          </div>
+          <div className="mt-1 text-sm text-slate-700">
+            Select a PDF, JPEG, or PNG. FORGE will preserve the evidence and prepare editable service and component details.
+          </div>
         </div>
 
         <label
-          className={
-            importingInvoice
-              ? "cursor-wait rounded-xl border border-amber-300 bg-white px-4 py-2 text-xs font-black text-amber-500 opacity-70"
-              : "cursor-pointer rounded-xl border border-amber-400 bg-white px-4 py-2 text-xs font-black text-amber-800 transition hover:bg-amber-100"
-          }
+          className={`block max-w-3xl ${
+            !systemId
+              ? "cursor-not-allowed opacity-50"
+              : importingInvoice
+                ? "cursor-wait opacity-70"
+                : "cursor-pointer"
+          }`}
         >
-          {importingInvoice
-            ? "Reading invoice..."
-            : "Add invoice or photo"}
-
           <input
             type="file"
             accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png"
-            disabled={importingInvoice}
+            disabled={
+              importingInvoice ||
+              !systemId
+            }
             onChange={(event) => {
               const file =
                 event.target
@@ -459,7 +507,33 @@ export default function PropertyHVACEventPanel({
             }}
             className="sr-only"
           />
+          <span className="flex min-h-14 w-full items-center justify-center rounded-xl border-2 border-blue-700 bg-blue-700 px-5 py-3 text-base font-black text-white shadow-sm transition hover:bg-blue-800">
+            {evidenceReference
+              ?.originalFilename
+              ? `Replace document: ${evidenceReference.originalFilename}`
+              : "Choose invoice or photo"}
+          </span>
         </label>
+
+        {evidenceReference && (
+          <div className="grid max-w-3xl gap-2 rounded-lg border border-emerald-200 bg-white p-4 text-xs text-slate-700">
+            <div className="font-black text-emerald-800">
+              Document read successfully — review the populated HVAC fields below.
+            </div>
+            <div>
+              <b>File:</b>{" "}
+              {evidenceReference.originalFilename ||
+                "HVAC evidence"}
+            </div>
+            <div>
+              <b>Evidence status:</b>{" "}
+              {displayValue(
+                evidenceReference.reviewStatus ||
+                  "pending_review",
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {!systemId ? (
@@ -467,7 +541,16 @@ export default function PropertyHVACEventPanel({
           Choose an HVAC system before recording events.
         </p>
       ) : (
-        <div className="mt-5 rounded-2xl border border-amber-200 bg-white p-5">
+        <div className="mt-5 rounded-2xl border-2 border-blue-200 bg-white p-5 shadow-sm">
+          <div className="mb-5">
+            <div className="text-sm font-black uppercase tracking-wide text-blue-900">
+              2. Review service and component details
+            </div>
+            <div className="mt-1 text-sm text-slate-600">
+              Confirm or correct every extracted field before recording the append-only event.
+            </div>
+          </div>
+
           <div className="grid gap-4 md:grid-cols-3">
             <Field label="Related component">
               <select
@@ -645,15 +728,19 @@ export default function PropertyHVACEventPanel({
             }
           />
 
+          <div className="mt-5 rounded-lg bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900">
+            Invoice upload creates only a review proposal. HVAC history changes only after this approval.
+          </div>
+
           <button
             type="button"
             disabled={saving}
             onClick={recordEvent}
-            className="mt-5 rounded-xl bg-amber-700 px-5 py-3 text-sm font-black text-white disabled:opacity-60"
+            className="mt-4 w-full rounded-xl bg-slate-950 px-5 py-4 text-base font-black text-white shadow-sm disabled:opacity-60"
           >
             {saving
-              ? "Recording event..."
-              : "Record HVAC event"}
+              ? "Recording approved HVAC event..."
+              : "3. Approve and record HVAC event"}
           </button>
         </div>
       )}

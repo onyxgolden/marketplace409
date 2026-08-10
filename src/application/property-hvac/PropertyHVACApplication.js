@@ -4,6 +4,10 @@ import {
   createHVACSystem,
 } from "@/domains/property-hvac/property-hvac.types";
 
+import {
+  createHVACSystemReplacement,
+} from "@/domains/property-hvac/property-hvac-system-replacement.types";
+
 function readField(
   value,
   ...names
@@ -746,6 +750,198 @@ export class PropertyHVACApplication {
     return this.repository
       .appendComponentEvent(
         event,
+        {
+          ownerId:
+            requiredOwnerId,
+        },
+      );
+  }
+
+  async replaceSystem(
+    input,
+    ownerId,
+  ) {
+    const requiredOwnerId =
+      requireIdentifier(
+        ownerId,
+        "HVAC owner id is required.",
+      );
+
+    if (
+      typeof this.repository
+        .replaceSystem !==
+      "function"
+    ) {
+      throw new Error(
+        "HVAC repository does not support atomic system replacement.",
+      );
+    }
+
+    const predecessorSystemId =
+      requireIdentifier(
+        String(
+          readField(
+            input,
+            "predecessorSystemId",
+            "predecessor_system_id",
+          ) ?? "",
+        ),
+        "Predecessor HVAC system id is required.",
+      );
+
+    const existingPredecessor =
+      await this.repository
+        .findSystemById(
+          predecessorSystemId,
+          requiredOwnerId,
+        );
+
+    if (!existingPredecessor) {
+      throw new Error(
+        "Predecessor HVAC system was not found.",
+      );
+    }
+
+    if (
+      existingPredecessor.status ===
+        "replaced" ||
+      existingPredecessor.status ===
+        "removed"
+    ) {
+      throw new Error(
+        "Only a current HVAC system can be replaced.",
+      );
+    }
+
+    const replacementInput =
+      input?.replacementSystem;
+
+    if (
+      !replacementInput ||
+      typeof replacementInput !==
+        "object" ||
+      Array.isArray(
+        replacementInput,
+      )
+    ) {
+      throw new Error(
+        "Replacement HVAC system is required.",
+      );
+    }
+
+    const proposedPropertyId =
+      readField(
+        replacementInput,
+        "propertyId",
+        "property_id",
+      );
+
+    if (
+      proposedPropertyId !== null &&
+      String(proposedPropertyId)
+        .trim() !==
+        existingPredecessor
+          .propertyId
+    ) {
+      throw new Error(
+        "Replacement HVAC system must belong to the predecessor property.",
+      );
+    }
+
+    const predecessorSystem =
+      createHVACSystem({
+        ...existingPredecessor,
+        status: "replaced",
+        condition: "failed",
+      });
+
+    const replacementSystem =
+      this.createSystem({
+        ...replacementInput,
+        propertyId:
+          existingPredecessor
+            .propertyId,
+        status: "active",
+      });
+
+    const failureEvent =
+      this.createComponentEvent({
+        ...(input?.failureEvent ?? {}),
+        systemId:
+          predecessorSystem.id,
+        componentId: null,
+        eventType: "failed",
+      });
+
+    const installationEvent =
+      this.createComponentEvent({
+        ...(input?.installationEvent ?? {}),
+        systemId:
+          replacementSystem.id,
+        componentId: null,
+        eventType: "installed",
+      });
+
+    const initialComponents =
+      frozen(
+        (
+          input?.initialComponents ??
+          []
+        ).map(
+          (component) =>
+            this.createComponent({
+              ...component,
+              systemId:
+                replacementSystem.id,
+            }),
+        ),
+      );
+
+    const transition =
+      createHVACSystemReplacement({
+        id:
+          input?.id ??
+          `property_hvac_replacement_${this.idFactory()}`,
+        propertyId:
+          existingPredecessor
+            .propertyId,
+        predecessorSystemId:
+          predecessorSystem.id,
+        replacementSystemId:
+          replacementSystem.id,
+        failureEventId:
+          failureEvent.id,
+        installationEventId:
+          installationEvent.id,
+        evidenceId:
+          optionalString(
+            input?.evidenceId,
+          ),
+        occurredAt:
+          normalizeTimestamp(
+            input?.occurredAt,
+            installationEvent
+              .occurredAt,
+            "HVAC replacement occurrence date must be valid.",
+          ),
+        createdAt:
+          normalizeTimestamp(
+            input?.createdAt,
+            this.createdAt(),
+            "HVAC replacement creation date must be valid.",
+          ),
+      });
+
+    return this.repository
+      .replaceSystem(
+        Object.freeze({
+          transition,
+          predecessorSystem,
+          replacementSystem,
+          failureEvent,
+          installationEvent,
+          initialComponents,
+        }),
         {
           ownerId:
             requiredOwnerId,

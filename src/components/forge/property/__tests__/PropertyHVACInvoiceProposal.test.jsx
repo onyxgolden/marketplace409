@@ -28,7 +28,7 @@ describe(
           );
 
         expect(markup).toContain(
-          "Add invoice or photo",
+          "Add invoice or service photo",
         );
 
         expect(markup).toContain(

@@ -138,6 +138,30 @@ export async function POST(request) {
         });
       }
 
+      case "replace-system": {
+        if (
+          !isObject(
+            body.replacement,
+          )
+        ) {
+          return badRequest(
+            "replacement is required.",
+          );
+        }
+
+        const replacement =
+          await application
+            .replaceSystem(
+              body.replacement,
+              user.id,
+            );
+
+        return NextResponse.json({
+          success: true,
+          replacement,
+        });
+      }
+
       case "save-component": {
         if (
           !isObject(

@@ -54,3 +54,22 @@ export type {
 export {
   SupabasePropertyHVACRepository,
 } from "./SupabasePropertyHVACRepository.js";
+
+export {
+  createHVACSystemReplacement,
+} from "./property-hvac-system-replacement.types";
+
+export type {
+  HVACSystemReplacement,
+  HVACSystemReplacementCommand,
+  HVACSystemReplacementResult,
+} from "./property-hvac-system-replacement.types";
+
+export {
+  mapHVACSystemReplacementRowToDomain,
+  mapHVACSystemReplacementToRow,
+} from "./property-hvac-system-replacement.mapper";
+
+export type {
+  HVACSystemReplacementRow,
+} from "./property-hvac-system-replacement.mapper";
