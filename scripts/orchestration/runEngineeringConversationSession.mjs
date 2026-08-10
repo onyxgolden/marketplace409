@@ -181,9 +181,12 @@ if (isDirectExecution()) {
     const validationEvidencePath =
       process.argv[2];
 
+    const reviewedMetadataPath =
+      process.argv[3] || null;
+
     if (!validationEvidencePath) {
       throw new Error(
-        "Usage: npm run forge:session -- <validation-evidence-path>",
+        "Usage: npm run forge:session -- <validation-evidence-path> [reviewed-metadata-path]",
       );
     }
 
@@ -193,6 +196,7 @@ if (isDirectExecution()) {
           governancePipelineOptions: {
             validationEvidencePath,
           },
+          reviewedMetadataPath,
         },
 
         writeOutputFn:

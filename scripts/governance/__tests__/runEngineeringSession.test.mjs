@@ -490,6 +490,7 @@ describe(
         ).toHaveBeenCalledWith({
           repositoryRoot:
             normalizedRepositoryRoot,
+          reviewedMetadataPath: null,
         });
 
         expect(
@@ -921,3 +922,98 @@ describe(
     );
   },
 );
+
+describe("runEngineeringSession reviewedMetadataPath threading", () => {
+  test("passes a supplied reviewedMetadataPath through to collectSessionEvidenceFn", () => {
+    const collectSessionEvidenceFn = vi.fn(() => ({
+      status: "completed",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+    }));
+
+    const inspectRepositoryFn = vi.fn(() => ({
+      repositoryRoot: "/tmp/repo",
+      branch: "main",
+      head: "a".repeat(40),
+      originMain: "a".repeat(40),
+      headMatchesOriginMain: true,
+      workingTreeClean: true,
+      modifiedFiles: [],
+      gitStatus: [],
+    }));
+
+    const runGovernancePipelineFn = vi.fn(() => ({}));
+    const buildPromotionEvaluationContextFn = vi.fn(() => ({}));
+    const evaluatePromotionEligibilityFn = vi.fn(() => ({}));
+    const evaluateGovernanceEvolutionReadinessFn = vi.fn(() => ({}));
+    const evaluateGovernanceEvolutionDecisionFn = vi.fn(() => ({}));
+    const buildEvolutionReviewContextFn = vi.fn(() => ({}));
+    const runConversationPreparationFn = vi.fn(() => ({}));
+
+    runEngineeringSession({
+      repositoryRoot: "/tmp/repo",
+      reviewedMetadataPath: "/tmp/reviewed-metadata.json",
+      inspectRepositoryFn,
+      runGovernancePipelineFn,
+      collectSessionEvidenceFn,
+      buildPromotionEvaluationContextFn,
+      evaluatePromotionEligibilityFn,
+      evaluateGovernanceEvolutionReadinessFn,
+      evaluateGovernanceEvolutionDecisionFn,
+      buildEvolutionReviewContextFn,
+      runConversationPreparationFn,
+    });
+
+    expect(collectSessionEvidenceFn).toHaveBeenCalledWith({
+      repositoryRoot: "/tmp/repo",
+      reviewedMetadataPath: "/tmp/reviewed-metadata.json",
+    });
+  });
+
+  test("defaults reviewedMetadataPath to null when not supplied", () => {
+    const collectSessionEvidenceFn = vi.fn(() => ({
+      status: "completed",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+    }));
+
+    const inspectRepositoryFn = vi.fn(() => ({
+      repositoryRoot: "/tmp/repo",
+      branch: "main",
+      head: "a".repeat(40),
+      originMain: "a".repeat(40),
+      headMatchesOriginMain: true,
+      workingTreeClean: true,
+      modifiedFiles: [],
+      gitStatus: [],
+    }));
+
+    const runGovernancePipelineFn = vi.fn(() => ({}));
+    const buildPromotionEvaluationContextFn = vi.fn(() => ({}));
+    const evaluatePromotionEligibilityFn = vi.fn(() => ({}));
+    const evaluateGovernanceEvolutionReadinessFn = vi.fn(() => ({}));
+    const evaluateGovernanceEvolutionDecisionFn = vi.fn(() => ({}));
+    const buildEvolutionReviewContextFn = vi.fn(() => ({}));
+    const runConversationPreparationFn = vi.fn(() => ({}));
+
+    runEngineeringSession({
+      repositoryRoot: "/tmp/repo",
+      inspectRepositoryFn,
+      runGovernancePipelineFn,
+      collectSessionEvidenceFn,
+      buildPromotionEvaluationContextFn,
+      evaluatePromotionEligibilityFn,
+      evaluateGovernanceEvolutionReadinessFn,
+      evaluateGovernanceEvolutionDecisionFn,
+      buildEvolutionReviewContextFn,
+      runConversationPreparationFn,
+    });
+
+    expect(collectSessionEvidenceFn).toHaveBeenCalledWith({
+      repositoryRoot: "/tmp/repo",
+      reviewedMetadataPath: null,
+    });
+  });
+});
