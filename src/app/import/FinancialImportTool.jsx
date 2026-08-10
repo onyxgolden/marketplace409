@@ -54,6 +54,17 @@ function reportSections(report) {
   }));
 }
 
+export function financialImportSurfaceClassName(
+  hasResult,
+) {
+  return [
+    "px-4 py-6 lg:px-8",
+    hasResult
+      ? "mx-auto max-w-[1800px]"
+      : "max-w-3xl",
+  ].join(" ");
+}
+
 export default function FinancialImportTool() {
   const [source, setSource] = useState("rentec");
   const [fileName, setFileName] = useState("");
@@ -61,6 +72,10 @@ export default function FinancialImportTool() {
   const [error, setError] = useState("");
   const [ownerId, setOwnerId] = useState(null);
   const [properties, setProperties] = useState([]);
+  const [
+    selectedProperties,
+    setSelectedProperties,
+  ] = useState({});
 
   useEffect(() => {
     async function initializeImportTool() {
@@ -151,36 +166,59 @@ export default function FinancialImportTool() {
   }
 
  return (   
-  <section className="max-w-6xl mx-auto px-6 py-12">
-      <div className="bg-white rounded-3xl shadow-xl p-8 mb-8">
-        <h1 className="text-5xl font-extrabold mb-4">
+  <section
+    data-financial-import-tool
+    data-import-result={
+      result
+        ? "ready"
+        : "empty"
+    }
+    className={
+      financialImportSurfaceClassName(
+        Boolean(result),
+      )
+    }
+  >
+      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h1 className="text-2xl font-black text-slate-950">
           Financial Import
         </h1>
 
-        <p className="text-xl text-gray-600 mb-8">
-          Upload a Rentec or QuickBooks CSV and let Forge convert it into financial events,
-          ledger postings, and accounting reports.
+        <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-slate-600">
+          Choose a supported financial source, upload its CSV, and review the converted financial events, ledger postings, and accounting reports.
         </p>
 
-        <label className="block mb-6">
-          <span className="font-bold text-lg">Import Source</span>
+        <div className="mt-6 grid gap-5 lg:grid-cols-2">
+        <label className="block">
+          <span className="text-sm font-black text-slate-700">Import Source</span>
           <select
             value={source}
             onChange={(event) => {
               setSource(event.target.value);
               setFileName("");
               setResult(null);
+              setSelectedProperties({});
               setError("");
             }}
             className="mt-3 block w-full rounded-xl border bg-gray-50 px-4 py-4"
           >
-            <option value="rentec">Rentec</option>
-            <option value="quickbooks">QuickBooks</option>
+            <option value="rentec">
+              Rental records (Rentec CSV)
+            </option>
+            <option value="quickbooks">
+              Financial records (QuickBooks CSV)
+            </option>
           </select>
+
+          <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
+            {source === "rentec"
+              ? "Imports a Rentec-formatted CSV containing rental income, expenses, properties, and transactions."
+              : "Imports a QuickBooks-formatted CSV containing financial transactions and accounting activity."}
+          </p>
         </label>
 
         <label className="block">
-          <span className="font-bold text-lg">Financial CSV File</span>
+          <span className="text-sm font-black text-slate-700">Financial CSV File</span>
           <input
             type="file"
             accept=".csv,text/csv"
@@ -188,6 +226,7 @@ export default function FinancialImportTool() {
             className="mt-3 block w-full rounded-xl border bg-gray-50 px-4 py-4"
           />
         </label>
+        </div>
 
         {fileName && (
           <p className="text-sm text-gray-500 mt-4">
@@ -207,9 +246,13 @@ export default function FinancialImportTool() {
           <ImportSummary summary={result.summary} />
 
           <TransactionReviewContainer
+            key={fileName}
             reviews={result.transactionReview || []}
             properties={properties}
             ownerId={ownerId}
+            initialSelectedProperties={
+              selectedProperties
+            }
           />
 
           <ParsedRecords records={result.records} />

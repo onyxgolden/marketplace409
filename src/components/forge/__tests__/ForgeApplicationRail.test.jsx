@@ -73,6 +73,19 @@ describe(
             FORGE_APPLICATIONS[1],
           ),
         ).toBe(false);
+
+        expect(
+          FORGE_APPLICATIONS[5].href,
+        ).toBe(
+          "/forge/import",
+        );
+
+        expect(
+          isForgeApplicationActive(
+            "/forge/import/review",
+            FORGE_APPLICATIONS[5],
+          ),
+        ).toBe(true);
       },
     );
 

@@ -4,12 +4,12 @@ const quickActions = [
   {
     label: "Run Audit",
     detail: "Review ledger anomalies and risk signals.",
-    href: "/import",
+    href: "/forge/import",
   },
   {
     label: "Import Data",
     detail: "Prepare bank, accounting, or property data imports.",
-    href: "/import",
+    href: "/forge/import",
   },
   {
     label: "Review Portfolio",

@@ -8,12 +8,18 @@ export default function TransactionReviewContainer({
   reviews,
   properties,
   ownerId,
+  initialSelectedProperties = {},
 }) {
   const transactionReviewApplication =
     new TransactionReviewApplication();
 
   const [reviewItems, setReviewItems] = useState(reviews || []);
-  const [selectedProperties, setSelectedProperties] = useState({});
+  const [
+    selectedProperties,
+    setSelectedProperties,
+  ] = useState(
+    initialSelectedProperties,
+  );
   const [selectedReviewItems, setSelectedReviewItems] = useState({});
   const [assignmentStatus, setAssignmentStatus] = useState({});
 

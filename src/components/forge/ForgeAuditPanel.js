@@ -13,7 +13,7 @@ export default function ForgeAuditPanel({
           </div>
 
           <Link
-            href="/import"
+            href="/forge/import"
             className="rounded-xl border border-slate-300 bg-slate-100 px-4 py-2 text-sm font-black text-slate-900 transition hover:border-amber-400 hover:bg-amber-50"
           >
             Open Transaction Review

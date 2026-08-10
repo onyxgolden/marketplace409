@@ -45,7 +45,7 @@ function renderTransactionReviewWorkspaceTile({
       eyebrow="Review Application"
       title="Transaction Review"
       detail="Resolve unknown transactions and strengthen future property-assignment rules."
-      href="/import"
+      href="/forge/import"
       actionLabel="Open transaction review"
       status={
         requiresAttention

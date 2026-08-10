@@ -37,10 +37,9 @@ export const FORGE_APPLICATIONS =
       shortLabel: "R",
     }),
     Object.freeze({
-      href: "/import",
+      href: "/forge/import",
       label: "Import",
       shortLabel: "I",
-      externalRoute: true,
     }),
   ]);
 

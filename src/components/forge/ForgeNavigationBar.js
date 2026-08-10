@@ -9,7 +9,7 @@ const ITEMS = [
   { href: "/forge/financial", label: "📊 Executive KPI" },
   { href: "/investors", label: "🏘 Real Estate" },
   { href: "/forge/connections", label: "🔗 Connections" },
-  { href: "/import", label: "📥 Import" },
+  { href: "/forge/import", label: "📥 Import" },
   { href: "/forge/results", label: "📈 Results" },
 ];
 
