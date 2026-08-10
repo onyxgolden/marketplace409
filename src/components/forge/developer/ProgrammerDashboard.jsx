@@ -22,12 +22,8 @@ export function calculateProgrammerCommandProgress({
   expectedDurationSeconds,
 }) {
   if (
-    !Number.isFinite(
-      elapsedSeconds,
-    ) ||
-    !Number.isFinite(
-      expectedDurationSeconds,
-    ) ||
+    !Number.isFinite(elapsedSeconds) ||
+    !Number.isFinite(expectedDurationSeconds) ||
     expectedDurationSeconds <= 0
   ) {
     return 0;
@@ -38,10 +34,7 @@ export function calculateProgrammerCommandProgress({
     Math.max(
       0,
       Math.round(
-        (
-          elapsedSeconds /
-          expectedDurationSeconds
-        ) * 100,
+        (elapsedSeconds / expectedDurationSeconds) * 100,
       ),
     ),
   );
@@ -59,34 +52,55 @@ function statusClass(status) {
   return "border-slate-300 bg-slate-50 text-slate-700";
 }
 
+export function buildReadableProgrammerResultText({
+  execution,
+  error,
+} = {}) {
+  if (error) {
+    return [
+      "FORGE PROGRAMMER COMMAND RESULT",
+      "",
+      "Status: Error",
+      `Error: ${error}`,
+    ].join("\n");
+  }
+
+  if (!execution) {
+    return "";
+  }
+
+  const lines = [
+    "FORGE PROGRAMMER COMMAND RESULT",
+    "",
+    `Action: ${execution.label || ""}`,
+    `Status: ${execution.status || ""}`,
+    `Started: ${execution.startedAt || "n/a"}`,
+    `Completed: ${execution.completedAt || "n/a"}`,
+  ];
+
+  (execution.steps || []).forEach((step, index) => {
+    lines.push("");
+    lines.push(`Step ${index + 1} · ${step.status}`);
+    lines.push(`Command: ${step.command}`);
+    lines.push("Output:");
+    lines.push(
+      step.output || "Command completed without output.",
+    );
+  });
+
+  return lines.join("\n");
+}
+
 export default function ProgrammerDashboard({
   commands,
   programmerEmail,
 }) {
-  const [
-    runningCommandId,
-    setRunningCommandId,
-  ] = useState(null);
-
-  const [
-    execution,
-    setExecution,
-  ] = useState(null);
-
-  const [
-    error,
-    setError,
-  ] = useState("");
-
-  const [
-    runningStartedAt,
-    setRunningStartedAt,
-  ] = useState(null);
-
-  const [
-    elapsedSeconds,
-    setElapsedSeconds,
-  ] = useState(0);
+  const [runningCommandId, setRunningCommandId] = useState(null);
+  const [execution, setExecution] = useState(null);
+  const [error, setError] = useState("");
+  const [runningStartedAt, setRunningStartedAt] = useState(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [copyStatus, setCopyStatus] = useState(null);
 
   useEffect(() => {
     if (!runningStartedAt) {
@@ -99,10 +113,7 @@ export default function ProgrammerDashboard({
         Math.max(
           0,
           Math.floor(
-            (
-              Date.now() -
-              runningStartedAt
-            ) / 1000,
+            (Date.now() - runningStartedAt) / 1000,
           ),
         ),
       );
@@ -110,40 +121,85 @@ export default function ProgrammerDashboard({
 
     updateElapsedTime();
 
-    const intervalId =
-      window.setInterval(
-        updateElapsedTime,
-        1000,
-      );
+    const intervalId = window.setInterval(updateElapsedTime, 1000);
 
-    return () =>
-      window.clearInterval(
-        intervalId,
-      );
-  }, [
-    runningStartedAt,
-  ]);
+    return () => window.clearInterval(intervalId);
+  }, [runningStartedAt]);
+
+  const readableResultText = buildReadableProgrammerResultText({
+    execution,
+    error,
+  });
+
+  useEffect(() => {
+    if (!readableResultText) {
+      setCopyStatus(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function attemptCopy() {
+      try {
+        if (
+          typeof navigator === "undefined" ||
+          !navigator.clipboard ||
+          typeof navigator.clipboard.writeText !== "function"
+        ) {
+          if (!cancelled) {
+            setCopyStatus("blocked");
+          }
+          return;
+        }
+
+        await navigator.clipboard.writeText(readableResultText);
+
+        if (!cancelled) {
+          setCopyStatus("success");
+        }
+      } catch {
+        if (!cancelled) {
+          setCopyStatus("blocked");
+        }
+      }
+    }
+
+    attemptCopy();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [readableResultText]);
+
+  async function copyResultsManually() {
+    try {
+      if (
+        typeof navigator === "undefined" ||
+        !navigator.clipboard ||
+        typeof navigator.clipboard.writeText !== "function"
+      ) {
+        setCopyStatus("blocked");
+        return;
+      }
+
+      await navigator.clipboard.writeText(readableResultText);
+      setCopyStatus("success");
+    } catch {
+      setCopyStatus("blocked");
+    }
+  }
 
   const runningCommand =
-    commands.find(
-      (command) =>
-        command.id ===
-          runningCommandId,
-    ) || null;
+    commands.find((command) => command.id === runningCommandId) || null;
 
-  const estimatedProgress =
-    runningCommand
-      ? calculateProgrammerCommandProgress({
-          elapsedSeconds,
-          expectedDurationSeconds:
-            runningCommand
-              .expectedDurationSeconds,
-        })
-      : 0;
+  const estimatedProgress = runningCommand
+    ? calculateProgrammerCommandProgress({
+        elapsedSeconds,
+        expectedDurationSeconds: runningCommand.expectedDurationSeconds,
+      })
+    : 0;
 
-  async function executeCommand(
-    command,
-  ) {
+  async function executeCommand(command) {
     if (
       command.confirmationRequired &&
       !window.confirm(
@@ -153,64 +209,41 @@ export default function ProgrammerDashboard({
       return;
     }
 
-    setRunningCommandId(
-      command.id,
-    );
-    setRunningStartedAt(
-      Date.now(),
-    );
+    setRunningCommandId(command.id);
+    setRunningStartedAt(Date.now());
     setExecution(null);
     setError("");
+    setCopyStatus(null);
 
     try {
-      const response =
-        await fetch(
-          "/api/forge/developer/commands",
-          {
-            method: "POST",
-            headers: {
-              "content-type":
-                "application/json",
-            },
-            body:
-              JSON.stringify({
-                commandId:
-                  command.id,
-              }),
-          },
-        );
+      const response = await fetch("/api/forge/developer/commands", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          commandId: command.id,
+        }),
+      });
 
-      const payload =
-        await response.json();
+      const payload = await response.json();
 
-      if (
-        !response.ok ||
-        !payload?.result
-      ) {
+      if (!response.ok || !payload?.result) {
         throw new Error(
-          payload?.error ||
-          "Programmer command failed.",
+          payload?.error || "Programmer command failed.",
         );
       }
 
-      setExecution(
-        payload.result,
-      );
-    } catch (
-      executionError
-    ) {
+      setExecution(payload.result);
+    } catch (executionError) {
       setError(
         executionError instanceof Error
           ? executionError.message
           : "Programmer command failed.",
       );
     } finally {
-      setRunningCommandId(
-        null,
-      );
-      setRunningStartedAt(
-        null,
-      );
+      setRunningCommandId(null);
+      setRunningStartedAt(null);
     }
   }
 
@@ -219,7 +252,7 @@ export default function ProgrammerDashboard({
       data-programmer-dashboard
       className="min-h-screen bg-slate-100 px-4 py-6 text-slate-950 lg:px-8"
     >
-      <div className="max-w-6xl">
+      <div className="mx-auto max-w-7xl">
         <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="text-xs font-black uppercase tracking-[0.18em] text-amber-700">
             Private Programmer Tools
@@ -242,15 +275,17 @@ export default function ProgrammerDashboard({
           </p>
         </header>
 
-        <section
-          aria-label="Programmer commands"
-          className="mt-5 grid items-start gap-4 md:grid-cols-2"
+        <div
+          data-programmer-dashboard-layout
+          className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start"
         >
-          {commands.map(
-            (command) => {
-              const running =
-                runningCommandId ===
-                  command.id;
+          <section
+            data-programmer-commands-column
+            aria-label="Programmer commands"
+            className="grid items-start gap-4 md:grid-cols-2"
+          >
+            {commands.map((command) => {
+              const running = runningCommandId === command.id;
 
               return (
                 <article
@@ -269,9 +304,7 @@ export default function ProgrammerDashboard({
                     </div>
 
                     <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">
-                      {riskLabel(
-                        command.risk,
-                      )}
+                      {riskLabel(command.risk)}
                     </span>
                   </div>
 
@@ -285,19 +318,14 @@ export default function ProgrammerDashboard({
                     </div>
 
                     <div className="mt-2 space-y-2">
-                      {command.commandPreview.map(
-                        (
-                          preview,
-                          index,
-                        ) => (
-                          <code
-                            key={`${command.id}-preview-${index}`}
-                            className="block break-all font-mono text-xs leading-5 text-slate-100"
-                          >
-                            {preview}
-                          </code>
-                        ),
-                      )}
+                      {command.commandPreview.map((preview, index) => (
+                        <code
+                          key={`${command.id}-preview-${index}`}
+                          className="block break-all font-mono text-xs leading-5 text-slate-100"
+                        >
+                          {preview}
+                        </code>
+                      ))}
                     </div>
                   </div>
 
@@ -310,36 +338,23 @@ export default function ProgrammerDashboard({
                   <div className="mt-4 flex flex-wrap items-center gap-4">
                     <button
                       type="button"
-                      disabled={
-                        runningCommandId !==
-                          null
-                      }
-                      onClick={() =>
-                        executeCommand(
-                          command,
-                        )
-                      }
+                      disabled={runningCommandId !== null}
+                      onClick={() => executeCommand(command)}
                       className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {running
-                        ? "Running…"
-                        : "Run action"}
+                      {running ? "Running…" : "Run action"}
                     </button>
 
-                    {running &&
-                    elapsedSeconds >= 5 && (
+                    {running && elapsedSeconds >= 5 && (
                       <div
                         data-programmer-command-progress
                         className="min-w-52 flex-1"
                       >
                         <div className="flex items-center justify-between gap-3 text-[11px] font-black uppercase tracking-wide text-slate-600">
-                          <span>
-                            Estimated progress
-                          </span>
+                          <span>Estimated progress</span>
 
                           <span>
-                            {estimatedProgress}% ·{" "}
-                            {elapsedSeconds}s
+                            {estimatedProgress}% · {elapsedSeconds}s
                           </span>
                         </div>
 
@@ -347,8 +362,7 @@ export default function ProgrammerDashboard({
                           <div
                             className="h-full rounded-full bg-amber-500 transition-[width] duration-1000"
                             style={{
-                              width:
-                                `${estimatedProgress}%`,
+                              width: `${estimatedProgress}%`,
                             }}
                           />
                         </div>
@@ -357,30 +371,60 @@ export default function ProgrammerDashboard({
                   </div>
                 </article>
               );
-            },
-          )}
-        </section>
+            })}
+          </section>
 
-        {(execution || error) && (
-          <section className="mt-5 rounded-2xl border border-slate-300 bg-white p-5 shadow-sm">
+          <section
+            data-programmer-results-panel
+            className="rounded-2xl border border-slate-300 bg-white p-5 shadow-sm lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-auto"
+          >
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-lg font-black">
-                Execution result
-              </h2>
+              <h2 className="text-lg font-black">Execution result</h2>
 
               {execution && (
                 <span
                   className={[
                     "rounded-full border px-3 py-1 text-xs font-black uppercase",
-                    statusClass(
-                      execution.status,
-                    ),
+                    statusClass(execution.status),
                   ].join(" ")}
                 >
                   {execution.status}
                 </span>
               )}
             </div>
+
+            {!execution && !error && (
+              <p
+                data-programmer-results-empty
+                className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm font-semibold text-slate-500"
+              >
+                Results will appear here after you run an action.
+              </p>
+            )}
+
+            {(execution || error) && (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={copyResultsManually}
+                  className="rounded-xl border border-slate-300 bg-slate-100 px-4 py-2 text-xs font-black uppercase tracking-wide text-slate-800 transition hover:bg-slate-200"
+                >
+                  Copy results
+                </button>
+
+                {copyStatus === "success" && (
+                  <span className="text-xs font-bold text-emerald-700">
+                    Results copied automatically.
+                  </span>
+                )}
+
+                {copyStatus === "blocked" && (
+                  <span className="text-xs font-bold text-amber-700">
+                    Clipboard permission blocked. Use Copy results to try again.
+                  </span>
+                )}
+              </div>
+            )}
 
             {error && (
               <p
@@ -399,46 +443,37 @@ export default function ProgrammerDashboard({
                   </div>
 
                   <div className="mt-1 text-xs font-semibold text-slate-500">
-                    {execution.startedAt &&
-                    execution.completedAt
+                    {execution.startedAt && execution.completedAt
                       ? `${execution.startedAt} → ${execution.completedAt}`
                       : "Execution completed"}
                   </div>
                 </div>
 
-                {execution.steps.map(
-                  (
-                    step,
-                    index,
-                  ) => (
-                    <article
-                      key={`${step.command}-${index}`}
-                      className={[
-                        "rounded-xl border p-4",
-                        statusClass(
-                          step.status,
-                        ),
-                      ].join(" ")}
-                    >
-                      <div className="text-xs font-black uppercase tracking-wide">
-                        Step {index + 1} · {step.status}
-                      </div>
+                {execution.steps.map((step, index) => (
+                  <article
+                    key={`${step.command}-${index}`}
+                    className={[
+                      "rounded-xl border p-4",
+                      statusClass(step.status),
+                    ].join(" ")}
+                  >
+                    <div className="text-xs font-black uppercase tracking-wide">
+                      Step {index + 1} · {step.status}
+                    </div>
 
-                      <div className="mt-2 break-all font-mono text-xs font-bold">
-                        {step.command}
-                      </div>
+                    <div className="mt-2 break-all font-mono text-xs font-bold">
+                      {step.command}
+                    </div>
 
-                      <pre className="mt-3 max-h-[36rem] overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100">
-                        {step.output ||
-                          "Command completed without output."}
-                      </pre>
-                    </article>
-                  ),
-                )}
+                    <pre className="mt-3 max-h-[36rem] overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100">
+                      {step.output || "Command completed without output."}
+                    </pre>
+                  </article>
+                ))}
               </div>
             )}
           </section>
-        )}
+        </div>
       </div>
     </main>
   );
