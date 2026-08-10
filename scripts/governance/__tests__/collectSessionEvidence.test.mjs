@@ -38,6 +38,7 @@ const fixturePaths = [
   collectorRelativePath,
   snapshotValidatorRelativePath,
   "scripts/governance/buildSessionValidationEvidence.mjs",
+  "scripts/governance/reviewedSessionMetadataContract.mjs",
   "scripts/governance/selectEligibleValidationEvidence.mjs",
   "scripts/governance/validateValidationEvidence.mjs",
   "governance/schema/session-summary.schema.json",
@@ -505,6 +506,7 @@ function writeValidationArtifact(
 
 function runCollector(
   repositoryRoot,
+  extraArgs = [],
 ) {
   return runProcess(
     process.execPath,
@@ -513,6 +515,7 @@ function runCollector(
         repositoryRoot,
         collectorRelativePath,
       ),
+      ...extraArgs,
     ],
     {
       cwd:
@@ -884,3 +887,121 @@ describe(
     );
   },
 );
+
+describe("collectSessionEvidence reviewed metadata: applies fields", () => {
+  afterEach(() => {
+    for (const repositoryRoot of temporaryRepositories) {
+      fs.rmSync(repositoryRoot, { recursive: true, force: true });
+    }
+    temporaryRepositories.clear();
+  });
+
+  function writeReviewedMetadataFile(repositoryRoot, metadata) {
+    const metadataPath = path.join(repositoryRoot, "reviewed-metadata.json");
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata), "utf8");
+    return metadataPath;
+  }
+
+  test("applies reviewed phase, objective, and next-session fields when no completion is requested", () => {
+    const repositoryRoot = createFixture();
+    temporaryRepositories.add(repositoryRoot);
+
+    const metadataPath = writeReviewedMetadataFile(repositoryRoot, {
+      phaseIdentifier: "16.9",
+      phaseTitle: "Session Closeout Metadata",
+      endingObjective: "Ship the reviewed closeout workflow.",
+      deliveredWork: ["Added reviewed session metadata contract."],
+      nextSessionObjective: "Wire the metadata form into the dashboard.",
+    });
+
+    const result = runCollector(repositoryRoot, [
+      path.relative(repositoryRoot, metadataPath),
+    ]);
+
+    const { snapshot } = readOnlySnapshot(repositoryRoot);
+
+    expect(snapshot.phase.identifier).toBe("16.9");
+    expect(snapshot.phase.title).toBe("Session Closeout Metadata");
+    expect(snapshot.objective.endingObjective).toBe(
+      "Ship the reviewed closeout workflow.",
+    );
+    expect(snapshot.objective.startingObjective).toBe("REVIEW_REQUIRED");
+    expect(snapshot.work.delivered).toEqual([
+      "Added reviewed session metadata contract.",
+    ]);
+    expect(snapshot.nextSession.objective).toBe(
+      "Wire the metadata form into the dashboard.",
+    );
+    expect(snapshot.completion.workComplete).toBe(false);
+    expect(result.combinedOutput).toContain(
+      "Reviewed session metadata applied",
+    );
+  });
+});
+
+describe("collectSessionEvidence reviewed metadata: completion gating", () => {
+  afterEach(() => {
+    for (const repositoryRoot of temporaryRepositories) {
+      fs.rmSync(repositoryRoot, { recursive: true, force: true });
+    }
+    temporaryRepositories.clear();
+  });
+
+  function writeReviewedMetadataFile(repositoryRoot, metadata) {
+    const metadataPath = path.join(repositoryRoot, "reviewed-metadata.json");
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata), "utf8");
+    return metadataPath;
+  }
+
+  test("does not mark the session complete when no eligible validation evidence exists", () => {
+    const repositoryRoot = createFixture();
+    temporaryRepositories.add(repositoryRoot);
+
+    const metadataPath = writeReviewedMetadataFile(repositoryRoot, {
+      markSessionComplete: true,
+    });
+
+    runCollector(repositoryRoot, [
+      path.relative(repositoryRoot, metadataPath),
+    ]);
+
+    const { snapshot } = readOnlySnapshot(repositoryRoot);
+
+    expect(snapshot.completion.workComplete).toBe(false);
+    expect(snapshot.completion.supportedByEvidence).toBe(false);
+    expect(snapshot.completion.incompleteReason).toContain(
+      "does not yet cover a passing result",
+    );
+    expect(snapshot.phase.status).toBe("incomplete");
+  });
+});
+
+describe("collectSessionEvidence reviewed metadata: rejects invalid input", () => {
+  afterEach(() => {
+    for (const repositoryRoot of temporaryRepositories) {
+      fs.rmSync(repositoryRoot, { recursive: true, force: true });
+    }
+    temporaryRepositories.clear();
+  });
+
+  function writeReviewedMetadataFile(repositoryRoot, metadata) {
+    const metadataPath = path.join(repositoryRoot, "reviewed-metadata.json");
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata), "utf8");
+    return metadataPath;
+  }
+
+  test("rejects an invalid reviewed metadata file", () => {
+    const repositoryRoot = createFixture();
+    temporaryRepositories.add(repositoryRoot);
+
+    const metadataPath = writeReviewedMetadataFile(repositoryRoot, {
+      unrecognizedField: "x",
+    });
+
+    expect(() =>
+      runCollector(repositoryRoot, [
+        path.relative(repositoryRoot, metadataPath),
+      ]),
+    ).toThrow();
+  });
+});
