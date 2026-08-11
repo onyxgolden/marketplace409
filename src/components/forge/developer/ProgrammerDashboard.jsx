@@ -5,6 +5,10 @@ import {
   useState,
 } from "react";
 
+import {
+  validateReviewedSessionMetadata,
+} from "../../../../scripts/governance/reviewedSessionMetadataContract.mjs";
+
 function riskLabel(risk) {
   return String(risk || "")
     .split("-")
@@ -91,6 +95,86 @@ export function buildReadableProgrammerResultText({
   return lines.join("\n");
 }
 
+const SESSION_REVIEW_TEXT_FIELDS = Object.freeze([
+  "phaseIdentifier",
+  "phaseTitle",
+  "startingObjective",
+  "endingObjective",
+  "incompleteReason",
+  "nextSessionObjective",
+  "nextSessionStartingInspection",
+]);
+
+const SESSION_REVIEW_LIST_FIELDS = Object.freeze([
+  "deliveredWork",
+  "knownWarnings",
+]);
+
+export function createEmptySessionReviewFields() {
+  return {
+    phaseIdentifier: "",
+    phaseTitle: "",
+    startingObjective: "",
+    endingObjective: "",
+    deliveredWork: "",
+    knownWarnings: "",
+    markSessionComplete: false,
+    incompleteReason: "",
+    nextSessionObjective: "",
+    nextSessionStartingInspection: "",
+  };
+}
+
+export function buildReviewedSessionMetadataPayload(reviewFields) {
+  const payload = {};
+
+  for (const field of SESSION_REVIEW_TEXT_FIELDS) {
+    const value = String(reviewFields?.[field] || "").trim();
+
+    if (value) {
+      payload[field] = value;
+    }
+  }
+
+  for (const field of SESSION_REVIEW_LIST_FIELDS) {
+    const items = String(reviewFields?.[field] || "")
+      .split("\n")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    if (items.length > 0) {
+      payload[field] = items;
+    }
+  }
+
+  payload.markSessionComplete = Boolean(
+    reviewFields?.markSessionComplete,
+  );
+
+  return payload;
+}
+
+export function validateSessionReviewFields(reviewFields) {
+  const payload = buildReviewedSessionMetadataPayload(reviewFields);
+
+  try {
+    validateReviewedSessionMetadata(payload);
+
+    return {
+      valid: true,
+      payload,
+    };
+  } catch (validationError) {
+    return {
+      valid: false,
+      message:
+        validationError instanceof Error
+          ? validationError.message
+          : "Reviewed session metadata is invalid.",
+    };
+  }
+}
+
 export default function ProgrammerDashboard({
   commands,
   programmerEmail,
@@ -101,6 +185,12 @@ export default function ProgrammerDashboard({
   const [runningStartedAt, setRunningStartedAt] = useState(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [copyStatus, setCopyStatus] = useState(null);
+  const [reviewCommand, setReviewCommand] = useState(null);
+  const [reviewFields, setReviewFields] = useState(
+    createEmptySessionReviewFields(),
+  );
+  const [reviewValidationError, setReviewValidationError] =
+    useState(null);
 
   useEffect(() => {
     if (!runningStartedAt) {
@@ -199,7 +289,7 @@ export default function ProgrammerDashboard({
       })
     : 0;
 
-  async function executeCommand(command) {
+  async function executeCommand(command, reviewedMetadata = null) {
     if (
       command.confirmationRequired &&
       !window.confirm(
@@ -223,6 +313,9 @@ export default function ProgrammerDashboard({
         },
         body: JSON.stringify({
           commandId: command.id,
+          ...(reviewedMetadata
+            ? { reviewedMetadata }
+            : {}),
         }),
       });
 
@@ -245,6 +338,47 @@ export default function ProgrammerDashboard({
       setRunningCommandId(null);
       setRunningStartedAt(null);
     }
+  }
+
+  function startCommand(command) {
+    if (command.requiresSessionReview) {
+      setReviewFields(createEmptySessionReviewFields());
+      setReviewValidationError(null);
+      setReviewCommand(command);
+      return;
+    }
+
+    executeCommand(command);
+  }
+
+  function updateReviewField(field, value) {
+    setReviewFields((current) => ({
+      ...current,
+      [field]: value,
+    }));
+    setReviewValidationError(null);
+  }
+
+  function cancelSessionReview() {
+    setReviewCommand(null);
+    setReviewValidationError(null);
+  }
+
+  function approveSessionReview(event) {
+    event.preventDefault();
+
+    const validation = validateSessionReviewFields(reviewFields);
+
+    if (!validation.valid) {
+      setReviewValidationError(validation.message);
+      return;
+    }
+
+    const command = reviewCommand;
+
+    setReviewCommand(null);
+    setReviewValidationError(null);
+    executeCommand(command, validation.payload);
   }
 
   return (
@@ -338,11 +472,18 @@ export default function ProgrammerDashboard({
                   <div className="mt-4 flex flex-wrap items-center gap-4">
                     <button
                       type="button"
-                      disabled={runningCommandId !== null}
-                      onClick={() => executeCommand(command)}
+                      disabled={
+                        runningCommandId !== null ||
+                        reviewCommand !== null
+                      }
+                      onClick={() => startCommand(command)}
                       className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {running ? "Running…" : "Run action"}
+                      {running
+                        ? "Running…"
+                        : command.requiresSessionReview
+                          ? "Review & run"
+                          : "Run action"}
                     </button>
 
                     {running && elapsedSeconds >= 5 && (
@@ -475,6 +616,248 @@ export default function ProgrammerDashboard({
           </section>
         </div>
       </div>
+
+      {reviewCommand && (
+        <div
+          data-session-review-overlay
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-slate-950/70 p-4 py-10"
+        >
+          <form
+            data-session-review-form
+            aria-label={`Review before running ${reviewCommand.label}`}
+            onSubmit={approveSessionReview}
+            className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+          >
+            <h2 className="text-lg font-black">
+              Review before running: {reviewCommand.label}
+            </h2>
+
+            <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+              FORGE will not choose these values for you. Fill in what you
+              know, or leave a field blank to keep it marked
+              REVIEW_REQUIRED in the generated governance documents.
+            </p>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <label
+                htmlFor="review-phase-identifier"
+                className="block text-xs font-black uppercase tracking-wide text-slate-600"
+              >
+                Phase identifier
+                <input
+                  id="review-phase-identifier"
+                  type="text"
+                  value={reviewFields.phaseIdentifier}
+                  onChange={(event) =>
+                    updateReviewField(
+                      "phaseIdentifier",
+                      event.target.value,
+                    )
+                  }
+                  className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold normal-case text-slate-900"
+                />
+              </label>
+
+              <label
+                htmlFor="review-phase-title"
+                className="block text-xs font-black uppercase tracking-wide text-slate-600"
+              >
+                Phase title
+                <input
+                  id="review-phase-title"
+                  type="text"
+                  value={reviewFields.phaseTitle}
+                  onChange={(event) =>
+                    updateReviewField(
+                      "phaseTitle",
+                      event.target.value,
+                    )
+                  }
+                  className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold normal-case text-slate-900"
+                />
+              </label>
+            </div>
+
+            <label
+              htmlFor="review-starting-objective"
+              className="mt-4 block text-xs font-black uppercase tracking-wide text-slate-600"
+            >
+              Starting objective
+              <textarea
+                id="review-starting-objective"
+                rows={2}
+                value={reviewFields.startingObjective}
+                onChange={(event) =>
+                  updateReviewField(
+                    "startingObjective",
+                    event.target.value,
+                  )
+                }
+                className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold normal-case text-slate-900"
+              />
+            </label>
+
+            <label
+              htmlFor="review-ending-objective"
+              className="mt-4 block text-xs font-black uppercase tracking-wide text-slate-600"
+            >
+              Ending / current objective
+              <textarea
+                id="review-ending-objective"
+                rows={2}
+                value={reviewFields.endingObjective}
+                onChange={(event) =>
+                  updateReviewField(
+                    "endingObjective",
+                    event.target.value,
+                  )
+                }
+                className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold normal-case text-slate-900"
+              />
+            </label>
+
+            <label
+              htmlFor="review-delivered-work"
+              className="mt-4 block text-xs font-black uppercase tracking-wide text-slate-600"
+            >
+              Completed work items (one per line)
+              <textarea
+                id="review-delivered-work"
+                rows={3}
+                value={reviewFields.deliveredWork}
+                onChange={(event) =>
+                  updateReviewField(
+                    "deliveredWork",
+                    event.target.value,
+                  )
+                }
+                className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold normal-case text-slate-900"
+              />
+            </label>
+
+            <label
+              htmlFor="review-known-warnings"
+              className="mt-4 block text-xs font-black uppercase tracking-wide text-slate-600"
+            >
+              Known warnings (one per line)
+              <textarea
+                id="review-known-warnings"
+                rows={2}
+                value={reviewFields.knownWarnings}
+                onChange={(event) =>
+                  updateReviewField(
+                    "knownWarnings",
+                    event.target.value,
+                  )
+                }
+                className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold normal-case text-slate-900"
+              />
+            </label>
+
+            <label
+              htmlFor="review-mark-complete"
+              className="mt-4 flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-600"
+            >
+              <input
+                id="review-mark-complete"
+                type="checkbox"
+                checked={reviewFields.markSessionComplete}
+                onChange={(event) =>
+                  updateReviewField(
+                    "markSessionComplete",
+                    event.target.checked,
+                  )
+                }
+              />
+              Work complete
+            </label>
+
+            <label
+              htmlFor="review-incomplete-reason"
+              className="mt-4 block text-xs font-black uppercase tracking-wide text-slate-600"
+            >
+              Completion explanation
+              <textarea
+                id="review-incomplete-reason"
+                rows={2}
+                value={reviewFields.incompleteReason}
+                onChange={(event) =>
+                  updateReviewField(
+                    "incompleteReason",
+                    event.target.value,
+                  )
+                }
+                className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold normal-case text-slate-900"
+              />
+            </label>
+
+            <label
+              htmlFor="review-next-session-objective"
+              className="mt-4 block text-xs font-black uppercase tracking-wide text-slate-600"
+            >
+              Next-session objective
+              <textarea
+                id="review-next-session-objective"
+                rows={2}
+                value={reviewFields.nextSessionObjective}
+                onChange={(event) =>
+                  updateReviewField(
+                    "nextSessionObjective",
+                    event.target.value,
+                  )
+                }
+                className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold normal-case text-slate-900"
+              />
+            </label>
+
+            <label
+              htmlFor="review-next-session-starting-inspection"
+              className="mt-4 block text-xs font-black uppercase tracking-wide text-slate-600"
+            >
+              Next-session starting inspection
+              <textarea
+                id="review-next-session-starting-inspection"
+                rows={2}
+                value={reviewFields.nextSessionStartingInspection}
+                onChange={(event) =>
+                  updateReviewField(
+                    "nextSessionStartingInspection",
+                    event.target.value,
+                  )
+                }
+                className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold normal-case text-slate-900"
+              />
+            </label>
+
+            {reviewValidationError && (
+              <p
+                role="alert"
+                data-session-review-error
+                className="mt-4 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs font-bold text-rose-900"
+              >
+                {reviewValidationError}
+              </p>
+            )}
+
+            <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={cancelSessionReview}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-wide text-slate-700 transition hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-black uppercase tracking-wide text-white transition hover:bg-slate-800"
+              >
+                Approve &amp; run
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </main>
   );
 }
