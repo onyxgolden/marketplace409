@@ -94,28 +94,28 @@ export default function ConnectionPage() {
   return (
     <div className={forgeTheme.page}>
       <main className="mx-auto min-h-screen max-w-[1600px] space-y-6 p-4 lg:p-8">
-        <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm lg:p-8">
+        <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm lg:p-8 dark:bg-slate-900 dark:border-slate-800">
           <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
             <div>
               <div className={forgeTheme.labelSmall}>FORGE Connection Command</div>
-              <h1 className="mt-3 text-4xl font-black tracking-tight text-slate-950">
+              <h1 className="mt-3 text-4xl font-black tracking-tight text-slate-950 dark:text-slate-50">
                 Connection Platform Dashboard
               </h1>
-              <p className="mt-3 max-w-3xl text-slate-600">
+              <p className="mt-3 max-w-3xl text-slate-600 dark:text-slate-300">
                 Monitor authenticated financial connections, institution references,
                 provider capabilities, and import readiness.
               </p>
             </div>
 
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
-              <div className="text-xs font-black uppercase tracking-wide text-amber-700">
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 dark:bg-amber-950/30">
+              <div className="text-xs font-black uppercase tracking-wide text-amber-700 dark:text-amber-400">
                 Platform State
               </div>
-              <div className="mt-1 text-2xl font-black text-amber-950">
+              <div className="mt-1 text-2xl font-black text-amber-950 dark:text-amber-200">
                 {health?.overall ||
                   loadState}
               </div>
-              <div className="mt-1 max-w-xs text-sm text-amber-800">
+              <div className="mt-1 max-w-xs text-sm text-amber-800 dark:text-amber-300">
                 {health
                   ? `Health score ${health.score}. ${health.issueCount} issues and ${health.warningCount} warnings.`
                   : "Loading connection platform status."}
@@ -127,14 +127,14 @@ export default function ConnectionPage() {
         <section className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
           <PlaidConnectButton />
 
-          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <div className={forgeTheme.labelSmall}>
               What Happens Next
             </div>
-            <h2 className="mt-2 text-2xl font-black text-slate-950">
+            <h2 className="mt-2 text-2xl font-black text-slate-950 dark:text-slate-50">
               From secure connection to financial insight
             </h2>
-            <p className="mt-3 text-sm text-slate-600">
+            <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
               After you authorize an institution through Plaid, FORGE prepares
               the connection for financial import and review.
             </p>
@@ -149,19 +149,19 @@ export default function ConnectionPage() {
               ].map((step, index) => (
                 <div
                   key={step}
-                  className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                  className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:bg-slate-800/60 dark:border-slate-800"
                 >
                   <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-950 text-xs font-black text-white">
                     {index + 1}
                   </div>
-                  <div className="pt-1 text-sm font-bold text-slate-800">
+                  <div className="pt-1 text-sm font-bold text-slate-800 dark:text-slate-200">
                     {step}
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
+            <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:text-emerald-300">
               Once authorization completes, this dashboard refreshes
               automatically and displays the connected institution and import
               readiness.
@@ -170,11 +170,11 @@ export default function ConnectionPage() {
         </section>
 
         {error ? (
-          <section className="rounded-3xl border border-red-200 bg-red-50 p-6">
-            <div className="text-xs font-black uppercase tracking-wide text-red-700">
+          <section className="rounded-3xl border border-red-200 bg-red-50 p-6 dark:border-red-800/50 dark:bg-red-950/30">
+            <div className="text-xs font-black uppercase tracking-wide text-red-700 dark:text-red-400">
               Connection Dashboard Error
             </div>
-            <div className="mt-2 text-lg font-bold text-red-950">
+            <div className="mt-2 text-lg font-bold text-red-950 dark:text-red-300">
               {error instanceof Error
                 ? error.message
                 : String(error)}
@@ -218,23 +218,23 @@ export default function ConnectionPage() {
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[0.7fr_1.3fr]">
-          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <div className={forgeTheme.labelSmall}>
               Execution Readiness
             </div>
-            <h2 className="mt-2 text-2xl font-black text-slate-950">
+            <h2 className="mt-2 text-2xl font-black text-slate-950 dark:text-slate-50">
               Deterministic Workflow
             </h2>
 
-            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-              <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:bg-slate-800/60 dark:border-slate-800">
+              <div className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
                 Workflow State
               </div>
-              <div className="mt-2 text-3xl font-black text-slate-950">
+              <div className="mt-2 text-3xl font-black text-slate-950 dark:text-slate-50">
                 {executionReadiness?.status ||
                   "loading"}
               </div>
-              <div className="mt-3 text-sm text-slate-600">
+              <div className="mt-3 text-sm text-slate-600 dark:text-slate-300">
                 {executionReadiness
                   ? `${executionReadiness.readyOperations} of ${executionReadiness.totalOperations} operations are ready.`
                   : "Preparing the connection operations workflow."}
@@ -242,28 +242,28 @@ export default function ConnectionPage() {
             </div>
 
             <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-slate-200 p-4">
-                <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+              <div className="rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
                   Ready
                 </div>
-                <div className="mt-1 text-2xl font-black text-slate-950">
+                <div className="mt-1 text-2xl font-black text-slate-950 dark:text-slate-50">
                   {executionReadiness?.readyOperations ??
                     0}
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-slate-200 p-4">
-                <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+              <div className="rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
                   Blocked
                 </div>
-                <div className="mt-1 text-2xl font-black text-slate-950">
+                <div className="mt-1 text-2xl font-black text-slate-950 dark:text-slate-50">
                   {executionReadiness?.blockedOperations ??
                     0}
                 </div>
               </div>
             </div>
 
-            <div className="mt-4 text-xs text-slate-500">
+            <div className="mt-4 text-xs text-slate-500 dark:text-slate-400">
               Read-only:{" "}
               {workflow?.metadata?.readOnly
                 ? "yes"
@@ -276,11 +276,11 @@ export default function ConnectionPage() {
             </div>
           </div>
 
-          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <div className={forgeTheme.labelSmall}>
               Workflow Stages
             </div>
-            <h2 className="mt-2 text-2xl font-black text-slate-950">
+            <h2 className="mt-2 text-2xl font-black text-slate-950 dark:text-slate-50">
               Connection Operations Pipeline
             </h2>
 
@@ -288,18 +288,18 @@ export default function ConnectionPage() {
               {workflowStages.map((stage) => (
                 <article
                   key={stage.id}
-                  className="rounded-2xl border border-slate-200 p-5"
+                  className="rounded-2xl border border-slate-200 p-5 dark:border-slate-800"
                 >
-                  <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+                  <div className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     {stage.status}
                   </div>
-                  <h3 className="mt-2 text-lg font-black text-slate-950">
+                  <h3 className="mt-2 text-lg font-black text-slate-950 dark:text-slate-50">
                     {stage.label}
                   </h3>
-                  <div className="mt-3 text-3xl font-black text-slate-950">
+                  <div className="mt-3 text-3xl font-black text-slate-950 dark:text-slate-50">
                     {stage.operationCount}
                   </div>
-                  <div className="mt-1 text-sm text-slate-600">
+                  <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
                     Operations
                   </div>
                 </article>
@@ -308,55 +308,55 @@ export default function ConnectionPage() {
           </div>
         </section>
 
-        <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
           <div className={forgeTheme.labelSmall}>
             Priority Actions
           </div>
           <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
             <div>
-              <h2 className="mt-2 text-2xl font-black text-slate-950">
+              <h2 className="mt-2 text-2xl font-black text-slate-950 dark:text-slate-50">
                 Connection Operation Queue
               </h2>
-              <p className="mt-2 text-sm text-slate-600">
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
                 Prioritized, deterministic next steps generated from connection health and import readiness.
               </p>
             </div>
 
-            <div className="text-sm font-bold text-slate-600">
+            <div className="text-sm font-bold text-slate-600 dark:text-slate-300">
               {recommendations?.length || 0} recommendations
             </div>
           </div>
 
           <div className="mt-6 space-y-4">
             {workflowCards.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-600">
+              <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-600 dark:text-slate-300 dark:border-slate-700">
                 No connection operations are currently queued.
               </div>
             ) : (
               workflowCards.map((card, index) => (
                 <article
                   key={card.id}
-                  className="rounded-2xl border border-slate-200 p-5"
+                  className="rounded-2xl border border-slate-200 p-5 dark:border-slate-800"
                 >
                   <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
                     <div>
-                      <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+                      <div className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
                         Priority {index + 1} · {card.priority} · {card.stage}
                       </div>
-                      <h3 className="mt-2 text-xl font-black text-slate-950">
+                      <h3 className="mt-2 text-xl font-black text-slate-950 dark:text-slate-50">
                         {card.title}
                       </h3>
-                      <p className="mt-2 text-sm text-slate-600">
+                      <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
                         {card.detail}
                       </p>
                       {card.connectionId ? (
-                        <div className="mt-3 text-xs font-bold text-slate-500">
+                        <div className="mt-3 text-xs font-bold text-slate-500 dark:text-slate-400">
                           Connection: {card.connectionId}
                         </div>
                       ) : null}
                     </div>
 
-                    <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-800">
+                    <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-800 dark:bg-slate-800/60 dark:text-slate-200">
                       {card.readiness}
                     </div>
 
@@ -369,7 +369,7 @@ export default function ConnectionPage() {
                       onClick={() =>
                         executeConnectionOperation(card)
                       }
-                      className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
+                      className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950"
                     >
                       {isExecuting
                         ? "Executing..."
@@ -383,21 +383,21 @@ export default function ConnectionPage() {
 
           {intelligence ? (
             <div className="mt-6 grid gap-3 md:grid-cols-3">
-              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                 Ready connections:{" "}
                 <strong>
                   {intelligence.readyConnectionIds?.length ||
                     0}
                 </strong>
               </div>
-              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                 Attention connections:{" "}
                 <strong>
                   {intelligence.attentionConnectionIds?.length ||
                     0}
                 </strong>
               </div>
-              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                 Degraded connections:{" "}
                 <strong>
                   {intelligence.degradedConnectionIds?.length ||
@@ -419,39 +419,39 @@ export default function ConnectionPage() {
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
-          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <div className={forgeTheme.labelSmall}>Connection Inventory</div>
-            <h2 className="mt-2 text-2xl font-black text-slate-950">
+            <h2 className="mt-2 text-2xl font-black text-slate-950 dark:text-slate-50">
               Authenticated Connections
             </h2>
 
             <div className="mt-6 space-y-4">
               {connections.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-600">
+                <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-600 dark:text-slate-300 dark:border-slate-700">
                   No connection records are available yet.
                 </div>
               ) : (
                 connections.map((connection, index) => (
                   <article
                     key={connection.id || `${connection.provider}-${index}`}
-                    className="rounded-2xl border border-slate-200 p-5"
+                    className="rounded-2xl border border-slate-200 p-5 dark:border-slate-800"
                   >
                     <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
                       <div>
-                        <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+                        <div className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
                           {connection.provider || "Connection Provider"}
                         </div>
-                        <h3 className="mt-1 text-xl font-black text-slate-950">
+                        <h3 className="mt-1 text-xl font-black text-slate-950 dark:text-slate-50">
                           {connection.institution?.name ||
                             connection.institutionName ||
                             "Financial Institution"}
                         </h3>
-                        <div className="mt-2 text-sm text-slate-600">
+                        <div className="mt-2 text-sm text-slate-600 dark:text-slate-300">
                           Status: {connection.status || "unknown"}
                         </div>
                       </div>
 
-                      <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-800">
+                      <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-800 dark:bg-slate-800/60 dark:text-slate-200">
                         {connection.readyForImport
                           ? "Ready for import"
                           : "Import not ready"}

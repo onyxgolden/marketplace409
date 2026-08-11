@@ -68,16 +68,16 @@ export function PropertyHVACWorkflowHeader({
       className="flex flex-wrap items-start justify-between gap-4"
     >
       <div>
-        <div className="text-xs font-black uppercase tracking-wide text-sky-700">
+        <div className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">
           HVAC Workflow
         </div>
 
-        <h5 className="mt-1 text-xl font-black text-slate-950">
+        <h5 className="mt-1 text-xl font-black text-slate-950 dark:text-slate-50">
           {choice.label}
         </h5>
 
         {showGuidance && (
-          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
             {choice.explanation}
           </p>
         )}
@@ -86,7 +86,7 @@ export function PropertyHVACWorkflowHeader({
       <button
         type="button"
         onClick={onBack}
-        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-700"
+        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700"
       >
         Back
       </button>
@@ -105,7 +105,7 @@ export default function PropertyHVACWorkflowChooser({
       className="mt-6 max-w-3xl"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h5 className="text-base font-black text-slate-950">
+        <h5 className="text-base font-black text-slate-950 dark:text-slate-50">
           What do you want to do?
         </h5>
 
@@ -117,7 +117,7 @@ export default function PropertyHVACWorkflowChooser({
           onClick={
             onToggleGuidance
           }
-          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-600"
+          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700"
         >
           Guidance{" "}
           {showGuidance
@@ -137,7 +137,7 @@ export default function PropertyHVACWorkflowChooser({
                   choice.id,
                 )
               }
-              className="rounded-xl border border-slate-200 bg-white p-4 text-left text-sm font-black text-slate-900 shadow-sm transition hover:border-sky-400 hover:bg-sky-50"
+              className="rounded-xl border border-slate-200 bg-white p-4 text-left text-sm font-black text-slate-900 shadow-sm transition hover:border-sky-400 hover:bg-sky-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-50 dark:hover:border-sky-500 dark:hover:bg-slate-800"
             >
               {choice.label}
             </button>

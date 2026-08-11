@@ -499,20 +499,20 @@ function VerifiedPolicyForm({
 
   return (
     <section
-      className="rounded-2xl border border-sky-200 bg-white shadow-sm"
+      className="rounded-2xl border border-sky-200 bg-white shadow-sm dark:bg-slate-900"
     >
       <div className="px-5 py-4">
-        <div className="text-xs font-black uppercase tracking-wide text-sky-700">
+        <div className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">
           {taxWorkflow
             ? "Property Tax Document"
             : "Insurance Policy Document"}
         </div>
-        <div className="mt-1 text-lg font-black text-slate-950">
+        <div className="mt-1 text-lg font-black text-slate-950 dark:text-slate-50">
           {taxWorkflow
             ? "Add verified property tax"
             : "Add verified insurance policy"}
         </div>
-        <div className="mt-1 text-sm text-slate-600">
+        <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
           {taxWorkflow
             ? "Upload a tax statement to fill the fields, then review every fact before approval."
             : "Upload a policy declaration to fill the fields, then review every fact before approval."}
@@ -551,12 +551,12 @@ function VerifiedPolicyForm({
           </div>
         )}
 
-        <div className="grid gap-5 rounded-xl border border-blue-300 bg-blue-50 p-5">
+        <div className="grid gap-5 rounded-xl border border-blue-300 bg-blue-50 p-5 dark:bg-blue-950/30">
           <label className="block max-w-3xl">
-            <span className="block text-sm font-black uppercase tracking-wide text-blue-900">
+            <span className="block text-sm font-black uppercase tracking-wide text-blue-900 dark:text-blue-300">
               1. Choose property
             </span>
-            <span className="mt-1 block text-sm text-slate-700">
+            <span className="mt-1 block text-sm text-slate-700 dark:text-slate-300">
               {taxWorkflow
                 ? "Select the property whose tax statement you are adding."
                 : "Select the property whose insurance policy you are adding."}
@@ -572,7 +572,7 @@ function VerifiedPolicyForm({
                   null,
                 );
               }}
-              className="mt-3 block w-full rounded-xl border-2 border-blue-400 bg-white px-4 py-3 text-base font-black text-slate-950 shadow-sm focus:border-blue-700 focus:outline-none"
+              className="mt-3 block w-full rounded-xl border-2 border-blue-400 bg-white px-4 py-3 text-base font-black text-slate-950 shadow-sm focus:border-blue-700 focus:outline-none dark:bg-slate-900 dark:text-slate-50 dark:border-blue-600"
             >
               <option value="">
                 Select property first
@@ -601,12 +601,12 @@ function VerifiedPolicyForm({
                 : "cursor-pointer"
             }`}
           >
-            <span className="block text-sm font-black uppercase tracking-wide text-blue-900">
+            <span className="block text-sm font-black uppercase tracking-wide text-blue-900 dark:text-blue-300">
               {taxWorkflow
                 ? "2. Add property tax document"
                 : "2. Add insurance policy document"}
             </span>
-            <span className="mt-1 block text-sm text-slate-700">
+            <span className="mt-1 block text-sm text-slate-700 dark:text-slate-300">
               PDF, JPEG, or PNG. FORGE will preserve the evidence and prepare editable fields.
             </span>
             <input
@@ -639,7 +639,7 @@ function VerifiedPolicyForm({
           )}
 
           {documentReview && (
-            <div className="grid gap-2 rounded-lg border border-emerald-200 bg-white p-3 text-xs text-slate-700 sm:col-span-2">
+            <div className="grid gap-2 rounded-lg border border-emerald-200 bg-white p-3 text-xs text-slate-700 sm:col-span-2 dark:bg-slate-900 dark:text-slate-300">
               <div className="font-black text-emerald-800">
                 Document read successfully — review the populated fields below.
               </div>
@@ -667,7 +667,7 @@ function VerifiedPolicyForm({
                 (warning) => (
                   <div
                     key={warning}
-                    className="rounded-md bg-amber-50 px-2 py-1 font-bold text-amber-800"
+                    className="rounded-md bg-amber-50 px-2 py-1 font-bold text-amber-800 dark:text-amber-300 dark:bg-amber-950/30"
                   >
                     Review required: {warning}
                   </div>
@@ -678,7 +678,7 @@ function VerifiedPolicyForm({
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="text-xs font-bold text-slate-700">
+          <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
             Operating-cost type
             <select
               required
@@ -688,7 +688,7 @@ function VerifiedPolicyForm({
                   event.target.value,
                 )
               }
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
             >
               {taxWorkflow ? (
                 <option value="property_tax">
@@ -719,7 +719,7 @@ function VerifiedPolicyForm({
             </select>
           </label>
 
-          <label className="text-xs font-bold text-slate-700">
+          <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
             {isTax
               ? "Annual property tax"
               : "Annual policy premium"}
@@ -734,11 +734,11 @@ function VerifiedPolicyForm({
                   event.target.value,
                 )
               }
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
             />
           </label>
 
-          <label className="text-xs font-bold text-slate-700">
+          <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
             Provider or tax authority
             <input
               type="text"
@@ -748,11 +748,11 @@ function VerifiedPolicyForm({
                   event.target.value,
                 )
               }
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
             />
           </label>
 
-          <label className="text-xs font-bold text-slate-700">
+          <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
             {isTax
               ? "Account or parcel number"
               : "Policy reference"}
@@ -764,11 +764,11 @@ function VerifiedPolicyForm({
                   event.target.value,
                 )
               }
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
             />
           </label>
 
-          <label className="text-xs font-bold text-slate-700">
+          <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
             {isTax
               ? "Tax period starts"
               : "Coverage starts"}
@@ -781,11 +781,11 @@ function VerifiedPolicyForm({
                   event.target.value,
                 )
               }
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
             />
           </label>
 
-          <label className="text-xs font-bold text-slate-700">
+          <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
             {isTax
               ? "Tax period ends"
               : "Coverage ends"}
@@ -798,11 +798,11 @@ function VerifiedPolicyForm({
                   event.target.value,
                 )
               }
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
             />
           </label>
 
-          <label className="text-xs font-bold text-slate-700 sm:col-span-2">
+          <label className="text-xs font-bold text-slate-700 sm:col-span-2 dark:text-slate-300">
             Verification notes
             <input
               type="text"
@@ -812,19 +812,19 @@ function VerifiedPolicyForm({
                   event.target.value,
                 )
               }
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
             />
           </label>
         </div>
 
-        <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900">
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900 dark:bg-amber-950/30">
           Uploading only creates a review proposal. Taxes, insurance accruals, and NOI change only after you approve the populated fields below.
         </div>
 
         {error && (
           <div
             role="alert"
-            className="text-sm font-bold text-rose-700"
+            className="text-sm font-bold text-rose-700 dark:text-rose-400"
           >
             {error}
           </div>
@@ -1029,16 +1029,16 @@ function CoverageVerificationForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="mt-2 grid gap-3 rounded-xl border border-amber-200 bg-white p-4 sm:col-span-2 lg:col-span-4"
+      className="mt-2 grid gap-3 rounded-xl border border-amber-200 bg-white p-4 sm:col-span-2 lg:col-span-4 dark:bg-slate-900"
     >
-      <div className="text-sm font-black text-slate-950">
+      <div className="text-sm font-black text-slate-950 dark:text-slate-50">
         Verify policy coverage
       </div>
-      <div className="text-xs leading-5 text-slate-600">
+      <div className="text-xs leading-5 text-slate-600 dark:text-slate-300">
         Enter facts from the policy declaration. The premium accrues into NOI; the imported payment remains unchanged in cash flow.
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <label className="text-xs font-bold text-slate-700">
+        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
           Verified policy type
           <select
             required
@@ -1048,7 +1048,7 @@ function CoverageVerificationForm({
                 event.target.value,
               )
             }
-            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
           >
             <option value="fire_insurance">
               Fire insurance
@@ -1070,7 +1070,7 @@ function CoverageVerificationForm({
             </option>
           </select>
         </label>
-        <label className="text-xs font-bold text-slate-700">
+        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
           Annual policy premium
           <input
             type="number"
@@ -1083,10 +1083,10 @@ function CoverageVerificationForm({
                 event.target.value,
               )
             }
-            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
           />
         </label>
-        <label className="text-xs font-bold text-slate-700">
+        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
           Coverage starts
           <input
             type="date"
@@ -1097,10 +1097,10 @@ function CoverageVerificationForm({
                 event.target.value,
               )
             }
-            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
           />
         </label>
-        <label className="text-xs font-bold text-slate-700">
+        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
           Coverage ends
           <input
             type="date"
@@ -1111,10 +1111,10 @@ function CoverageVerificationForm({
                 event.target.value,
               )
             }
-            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
           />
         </label>
-        <label className="text-xs font-bold text-slate-700">
+        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
           Provider
           <input
             type="text"
@@ -1124,10 +1124,10 @@ function CoverageVerificationForm({
                 event.target.value,
               )
             }
-            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
           />
         </label>
-        <label className="text-xs font-bold text-slate-700">
+        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
           Policy reference
           <input
             type="text"
@@ -1137,10 +1137,10 @@ function CoverageVerificationForm({
                 event.target.value,
               )
             }
-            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
           />
         </label>
-        <label className="text-xs font-bold text-slate-700 sm:col-span-2 lg:col-span-1">
+        <label className="text-xs font-bold text-slate-700 sm:col-span-2 lg:col-span-1 dark:text-slate-300">
           Verification notes
           <input
             type="text"
@@ -1150,14 +1150,14 @@ function CoverageVerificationForm({
                 event.target.value,
               )
             }
-            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-700"
           />
         </label>
       </div>
       {error && (
         <div
           role="alert"
-          className="text-xs font-bold text-rose-700"
+          className="text-xs font-bold text-rose-700 dark:text-rose-400"
         >
           {error}
         </div>
@@ -1179,28 +1179,28 @@ function ObligationRow({ obligation, onVerified }) {
   const ready = obligation.recognitionStatus === "accrual_ready";
 
   return (
-    <details className="group border-b border-slate-200 last:border-b-0">
+    <details className="group border-b border-slate-200 last:border-b-0 dark:border-slate-800">
       <summary className="grid cursor-pointer list-none items-center gap-2 px-4 py-3 hover:bg-slate-50 sm:grid-cols-[minmax(180px,1.4fr)_minmax(130px,1fr)_110px_125px_20px]">
         <div className="min-w-0">
-          <div className="truncate text-sm font-black text-slate-950">
+          <div className="truncate text-sm font-black text-slate-950 dark:text-slate-50">
             {obligation.subjectLabel}
           </div>
-          <div className="truncate text-xs text-slate-500">
+          <div className="truncate text-xs text-slate-500 dark:text-slate-400">
             {obligation.propertyId || "Portfolio"}
           </div>
         </div>
-        <div className="text-xs font-bold text-slate-700">
+        <div className="text-xs font-bold text-slate-700 dark:text-slate-300">
           {displayObligationValue(obligation.obligationType)}
         </div>
-        <div className="text-sm font-black text-slate-950">
+        <div className="text-sm font-black text-slate-950 dark:text-slate-50">
           {formatCurrency(obligation.annualAmountCents)}
         </div>
-        <div className={`rounded-full border px-2 py-1 text-center text-[10px] font-black uppercase ${ready ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+        <div className={`rounded-full border px-2 py-1 text-center text-[10px] font-black uppercase ${ready ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30" : "border-amber-200 bg-amber-50 text-amber-800 dark:text-amber-300 dark:bg-amber-950/30"}`}>
           {displayObligationValue(obligation.recognitionStatus)}
         </div>
         <div className="text-slate-400 transition group-open:rotate-180">▾</div>
       </summary>
-      <div className="grid gap-3 bg-slate-50 px-4 py-4 text-xs text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 bg-slate-50 px-4 py-4 text-xs text-slate-700 sm:grid-cols-2 lg:grid-cols-4 dark:bg-slate-800/60 dark:text-slate-300">
         <div><b>Coverage:</b><br />{obligation.servicePeriodStart && obligation.servicePeriodEnd ? `${obligation.servicePeriodStart} to ${obligation.servicePeriodEnd}` : "Policy dates needed"}</div>
         <div><b>Payment:</b><br />{obligation.paymentDate || "Not recorded"} · {formatCurrency(obligation.paidAmountCents)}</div>
         <div><b>Verification:</b><br />{displayObligationValue(obligation.verificationStatus)}</div>
@@ -1389,8 +1389,8 @@ export default function PropertyOperatingCostsPanel() {
     items,
     emptyMessage,
   ) => (
-    <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-      <div className="grid gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[10px] font-black uppercase text-slate-500 sm:grid-cols-[minmax(180px,1.4fr)_minmax(130px,1fr)_110px_125px_20px]">
+    <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800">
+      <div className="grid gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[10px] font-black uppercase text-slate-500 sm:grid-cols-[minmax(180px,1.4fr)_minmax(130px,1fr)_110px_125px_20px] dark:bg-slate-800/60 dark:text-slate-400 dark:border-slate-800">
         <div>Property</div>
         <div>Category</div>
         <div>Annual</div>
@@ -1399,14 +1399,14 @@ export default function PropertyOperatingCostsPanel() {
       </div>
 
       {loading && (
-        <div className="p-5 text-sm font-bold text-slate-600">
+        <div className="p-5 text-sm font-bold text-slate-600 dark:text-slate-300">
           Loading operating costs…
         </div>
       )}
 
       {!loading &&
         items.length === 0 && (
-          <div className="p-5 text-sm text-slate-600">
+          <div className="p-5 text-sm text-slate-600 dark:text-slate-300">
             {emptyMessage}
           </div>
         )}
@@ -1470,13 +1470,13 @@ export default function PropertyOperatingCostsPanel() {
               ([label, value]) => (
                 <div
                   key={label}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-3"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:bg-slate-900 dark:border-slate-800"
                 >
-                  <div className="text-[11px] font-black uppercase text-slate-500">
+                  <div className="text-[11px] font-black uppercase text-slate-500 dark:text-slate-400">
                     {label}
                   </div>
 
-                  <div className="mt-1 text-xl font-black text-slate-950">
+                  <div className="mt-1 text-xl font-black text-slate-950 dark:text-slate-50">
                     {value}
                   </div>
                 </div>
@@ -1509,7 +1509,7 @@ export default function PropertyOperatingCostsPanel() {
           {error && (
             <div
               role="alert"
-              className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-800"
+              className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-800 dark:bg-rose-950/30"
             >
               {error}
             </div>
@@ -1518,7 +1518,7 @@ export default function PropertyOperatingCostsPanel() {
           {message && (
             <div
               role="status"
-              className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800"
+              className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800 dark:bg-emerald-950/30"
             >
               {message}
             </div>
@@ -1561,21 +1561,21 @@ export default function PropertyOperatingCostsPanel() {
             )}
 
           {workflow === "import" && (
-            <div className="mt-6 max-w-4xl rounded-2xl border border-slate-200 bg-white p-5">
-              <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+            <div className="mt-6 max-w-4xl rounded-2xl border border-slate-200 bg-white p-5 dark:bg-slate-900 dark:border-slate-800">
+              <div className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
                 Ledger Import
               </div>
 
-              <h4 className="mt-2 text-lg font-black text-slate-950">
+              <h4 className="mt-2 text-lg font-black text-slate-950 dark:text-slate-50">
                 Preview taxes and insurance
               </h4>
 
-              <p className="mt-2 text-sm leading-6 text-slate-600">
+              <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
                 Taxes use the confirmed tax year. Insurance stays outside accrued NOI until policy dates are verified.
               </p>
 
               <label className="mt-4 block">
-                <span className="text-sm font-bold text-slate-700">
+                <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
                   Category ledger CSV
                 </span>
 
@@ -1586,12 +1586,12 @@ export default function PropertyOperatingCostsPanel() {
                     handleFileChange
                   }
                   disabled={working}
-                  className="mt-2 block w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                  className="mt-2 block w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
                 />
               </label>
 
               {fileName && (
-                <div className="mt-2 text-xs font-bold text-slate-500">
+                <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
                   {fileName}
                 </div>
               )}
@@ -1615,7 +1615,7 @@ export default function PropertyOperatingCostsPanel() {
                     (item) => (
                       <div
                         key={`e-${item.rowNumber}`}
-                        className="rounded-lg bg-rose-50 p-3 text-xs font-bold text-rose-800"
+                        className="rounded-lg bg-rose-50 p-3 text-xs font-bold text-rose-800 dark:bg-rose-950/30"
                       >
                         Row {item.rowNumber}:{" "}
                         {item.message}
@@ -1627,7 +1627,7 @@ export default function PropertyOperatingCostsPanel() {
                     (item) => (
                       <div
                         key={`w-${item.rowNumber}-${item.code}`}
-                        className="rounded-lg bg-amber-50 p-3 text-xs font-bold text-amber-800"
+                        className="rounded-lg bg-amber-50 p-3 text-xs font-bold text-amber-800 dark:text-amber-300 dark:bg-amber-950/30"
                       >
                         Row {item.rowNumber}:{" "}
                         {item.message}

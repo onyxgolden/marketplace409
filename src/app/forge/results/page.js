@@ -6,10 +6,10 @@ export default function Page() {
   });
 
   return (
-    <main className="min-h-screen bg-slate-100 dark:bg-slate-950 p-4 text-slate-950 lg:p-8">
+    <main className="min-h-screen bg-slate-100 p-4 text-slate-950 dark:bg-slate-950 dark:text-slate-100 lg:p-8">
       <div className="mx-auto max-w-[1600px]">
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 text-slate-950 shadow-sm">
-          <h1 className="text-3xl font-black">Transaction Review Results</h1>
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <h1 className="text-3xl font-black dark:text-slate-50">Transaction Review Results</h1>
 
       <div>
         <p>Total Items: {collection.items.length}</p>

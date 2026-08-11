@@ -179,18 +179,18 @@ export default function FinancialImportTool() {
       )
     }
   >
-      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-2xl font-black text-slate-950">
+      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <h1 className="text-2xl font-black text-slate-950 dark:text-slate-50">
           Financial Import
         </h1>
 
-        <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-slate-600">
+        <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-slate-600 dark:text-slate-400">
           Choose a supported financial source, upload its CSV, and review the converted financial events, ledger postings, and accounting reports.
         </p>
 
         <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <label className="block">
-          <span className="text-sm font-black text-slate-700">Import Source</span>
+          <span className="text-sm font-black text-slate-700 dark:text-slate-300">Import Source</span>
           <select
             value={source}
             onChange={(event) => {
@@ -200,7 +200,7 @@ export default function FinancialImportTool() {
               setSelectedProperties({});
               setError("");
             }}
-            className="mt-3 block w-full rounded-xl border bg-gray-50 px-4 py-4"
+            className="mt-3 block w-full rounded-xl border border-slate-300 bg-gray-50 px-4 py-4 text-slate-950 focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-amber-400"
           >
             <option value="rentec">
               Rental records (Rentec CSV)
@@ -210,7 +210,7 @@ export default function FinancialImportTool() {
             </option>
           </select>
 
-          <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
+          <p className="mt-2 text-xs font-semibold leading-5 text-slate-500 dark:text-slate-400">
             {source === "rentec"
               ? "Imports a Rentec-formatted CSV containing rental income, expenses, properties, and transactions."
               : "Imports a QuickBooks-formatted CSV containing financial transactions and accounting activity."}
@@ -218,24 +218,24 @@ export default function FinancialImportTool() {
         </label>
 
         <label className="block">
-          <span className="text-sm font-black text-slate-700">Financial CSV File</span>
+          <span className="text-sm font-black text-slate-700 dark:text-slate-300">Financial CSV File</span>
           <input
             type="file"
             accept=".csv,text/csv"
             onChange={handleFileChange}
-            className="mt-3 block w-full rounded-xl border bg-gray-50 px-4 py-4"
+            className="mt-3 block w-full rounded-xl border border-slate-300 bg-gray-50 px-4 py-4 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-200 file:px-4 file:py-2 file:text-sm file:font-bold file:text-slate-700 hover:file:bg-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:file:bg-slate-700 dark:file:text-slate-100 dark:hover:file:bg-slate-600 dark:focus:ring-amber-400"
           />
         </label>
         </div>
 
         {fileName && (
-          <p className="text-sm text-gray-500 mt-4">
-            Selected file: <span className="font-semibold">{fileName}</span>
+          <p className="text-sm text-gray-500 mt-4 dark:text-slate-400">
+            Selected file: <span className="font-semibold text-slate-700 dark:text-slate-200">{fileName}</span>
           </p>
         )}
 
         {error && (
-          <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800 font-semibold">
+          <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800 font-semibold dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
             {error}
           </div>
         )}
@@ -283,8 +283,8 @@ function ImportSummary({ summary }) {
   const properties = summary.properties || [];
 
   return (
-    <div className="bg-white rounded-3xl shadow-lg p-8">
-      <h2 className="text-2xl font-bold mb-6">Import Summary</h2>
+    <div className="bg-white rounded-3xl shadow-lg p-8 dark:bg-slate-900 dark:shadow-black/40">
+      <h2 className="text-2xl font-bold mb-6 dark:text-slate-50">Import Summary</h2>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <Metric label="Total rows" value={summary.totalRows} />
@@ -298,9 +298,9 @@ function ImportSummary({ summary }) {
         />
       </div>
 
-      <div className="rounded-2xl border bg-gray-50 p-5">
-        <p className="font-bold mb-2">Imported properties</p>
-        <p className="text-gray-700">
+      <div className="rounded-2xl border bg-gray-50 p-5 dark:border-slate-700 dark:bg-slate-800/60">
+        <p className="font-bold mb-2 dark:text-slate-50">Imported properties</p>
+        <p className="text-gray-700 dark:text-slate-300">
           {properties.length > 0
             ? properties.join(", ")
             : "No properties detected."}
@@ -312,21 +312,21 @@ function ImportSummary({ summary }) {
 
 function Metric({ label, value }) {
   return (
-    <div className="rounded-2xl border bg-gray-50 p-5">
-      <p className="text-sm text-gray-500">{label}</p>
-      <p className="text-2xl font-extrabold mt-1">{value}</p>
+    <div className="rounded-2xl border bg-gray-50 p-5 dark:border-slate-700 dark:bg-slate-800/60">
+      <p className="text-sm text-gray-500 dark:text-slate-400">{label}</p>
+      <p className="text-2xl font-extrabold mt-1 dark:text-slate-50">{value}</p>
     </div>
   );
 }
 
 function ParsedRecords({ records }) {
   return (
-    <div className="bg-white rounded-3xl shadow-lg p-8">
-      <h2 className="text-2xl font-bold mb-6">Parsed Records</h2>
+    <div className="bg-white rounded-3xl shadow-lg p-8 dark:bg-slate-900 dark:shadow-black/40">
+      <h2 className="text-2xl font-bold mb-6 dark:text-slate-50">Parsed Records</h2>
 
-      <div className="overflow-x-auto rounded-2xl border">
+      <div className="overflow-x-auto rounded-2xl border dark:border-slate-700">
         <table className="w-full text-left">
-          <thead className="bg-gray-50">
+          <thead className="bg-gray-50 dark:bg-slate-800/60 dark:text-slate-300">
             <tr>
               <th className="px-4 py-3">Date</th>
               <th className="px-4 py-3">Property</th>
@@ -336,7 +336,7 @@ function ParsedRecords({ records }) {
             </tr>
           </thead>
 
-          <tbody className="divide-y">
+          <tbody className="divide-y dark:divide-slate-700 dark:text-slate-200">
             {records.map((record, index) => (
               <tr key={`${record.date}-${record.property}-${index}`}>
                 <td className="px-4 py-3">{record.date}</td>
@@ -359,19 +359,19 @@ function ParsedRecords({ records }) {
 
 function ReportCard({ title, sections }) {
   return (
-    <div className="bg-white rounded-3xl shadow-lg p-8">
-      <h2 className="text-2xl font-bold mb-6">{title}</h2>
+    <div className="bg-white rounded-3xl shadow-lg p-8 dark:bg-slate-900 dark:shadow-black/40">
+      <h2 className="text-2xl font-bold mb-6 dark:text-slate-50">{title}</h2>
 
       <div className="space-y-6">
         {sections.map((section) => (
           <div key={section.name}>
-            <h3 className="font-bold text-gray-700 mb-3">{section.name}</h3>
+            <h3 className="font-bold text-gray-700 mb-3 dark:text-slate-300">{section.name}</h3>
 
-            <div className="divide-y rounded-2xl border">
+            <div className="divide-y rounded-2xl border dark:divide-slate-700 dark:border-slate-700">
               {section.lines.map((line) => (
                 <div
                   key={`${section.name}-${line.label}`}
-                  className="flex items-center justify-between gap-4 px-4 py-3"
+                  className="flex items-center justify-between gap-4 px-4 py-3 dark:text-slate-200"
                 >
                   <span className="font-medium">{line.label}</span>
                   <span className="font-bold">
@@ -384,7 +384,7 @@ function ReportCard({ title, sections }) {
         ))}
 
         {sections.length === 0 && (
-          <p className="text-gray-500">No report lines available.</p>
+          <p className="text-gray-500 dark:text-slate-400">No report lines available.</p>
         )}
       </div>
     </div>

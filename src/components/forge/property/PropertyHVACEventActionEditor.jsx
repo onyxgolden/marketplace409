@@ -10,7 +10,7 @@ import {
 } from "@/domains/property-hvac/property-hvac.types";
 
 const INPUT_CLASS =
-  "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950";
+  "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700";
 
 function displayValue(value) {
   return String(value || "")
@@ -63,7 +63,7 @@ function Field({
   children,
 }) {
   return (
-    <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+    <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
       {label}
       {children}
     </label>
@@ -169,17 +169,17 @@ export default function PropertyHVACEventActionEditor({
   return (
     <section
       data-property-hvac-event-action-editor
-      className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4"
+      className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:bg-amber-950/30"
     >
-      <div className="text-xs font-black uppercase tracking-wide text-amber-800">
+      <div className="text-xs font-black uppercase tracking-wide text-amber-800 dark:text-amber-300">
         Component Actions
       </div>
 
-      <h6 className="mt-2 text-base font-black text-slate-950">
+      <h6 className="mt-2 text-base font-black text-slate-950 dark:text-slate-50">
         Work included in this event
       </h6>
 
-      <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+      <p className="mt-2 text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
         Add every component replacement, repair, cleaning, recharge, inspection, or test covered by the same invoice total.
       </p>
 
@@ -342,7 +342,7 @@ export default function PropertyHVACEventActionEditor({
       {message && (
         <p
           role="status"
-          className="mt-3 text-sm font-bold text-slate-600"
+          className="mt-3 text-sm font-bold text-slate-600 dark:text-slate-300"
         >
           {message}
         </p>
@@ -350,7 +350,7 @@ export default function PropertyHVACEventActionEditor({
 
       {actions.length > 0 && (
         <div className="mt-5 space-y-3">
-          <div className="text-sm font-black text-slate-950">
+          <div className="text-sm font-black text-slate-950 dark:text-slate-50">
             Pending event actions
           </div>
 
@@ -358,10 +358,10 @@ export default function PropertyHVACEventActionEditor({
             (action, index) => (
               <article
                 key={`${action.actionType}-${action.description}-${index}`}
-                className="flex items-start justify-between gap-4 rounded-xl border border-amber-200 bg-white p-4"
+                className="flex items-start justify-between gap-4 rounded-xl border border-amber-200 bg-white p-4 dark:bg-slate-900"
               >
                 <div>
-                  <div className="text-sm font-black text-slate-950">
+                  <div className="text-sm font-black text-slate-950 dark:text-slate-50">
                     {displayValue(
                       action.actionType,
                     )}
@@ -369,14 +369,14 @@ export default function PropertyHVACEventActionEditor({
                     {actionIdentity(action)}
                   </div>
 
-                  <div className="mt-1 text-sm font-semibold text-slate-600">
+                  <div className="mt-1 text-sm font-semibold text-slate-600 dark:text-slate-300">
                     {action.description}
                   </div>
 
                   {(action.quantity != null ||
                     action.allocatedCostCents !=
                       null) && (
-                    <div className="mt-2 text-xs font-bold text-slate-500">
+                    <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
                       {action.quantity != null
                         ? `${action.quantity} ${action.unit || ""}`.trim()
                         : ""}
@@ -410,7 +410,7 @@ export default function PropertyHVACEventActionEditor({
                   onClick={() =>
                     removeAction(index)
                   }
-                  className="text-xs font-black text-rose-700"
+                  className="text-xs font-black text-rose-700 dark:text-rose-400"
                 >
                   Remove
                 </button>

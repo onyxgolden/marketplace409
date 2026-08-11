@@ -11,7 +11,7 @@ export default function ForgeInformationCenter({
 }) {
   return (
     <aside className="xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:self-start">
-      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <header className="border-b border-slate-800 bg-slate-950 p-5 text-white">
           <div className="text-xs font-black uppercase tracking-[0.24em] text-amber-400">
             Information Center

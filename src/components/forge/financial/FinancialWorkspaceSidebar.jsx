@@ -39,7 +39,7 @@ export default function FinancialWorkspaceSidebar({
           Phase Guardrails
         </div>
 
-        <div className="mt-3 space-y-3 text-sm text-slate-600">
+        <div className="mt-3 space-y-3 text-sm text-slate-600 dark:text-slate-300">
           {guardrails.map((guardrail) => (
             <p key={guardrail}>{guardrail}</p>
           ))}
