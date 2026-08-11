@@ -70,6 +70,7 @@ export const PROGRAMMER_COMMANDS =
           "node scripts/orchestration/runEngineeringConversationSession.mjs <newest-validation-evidence.json>",
         ]),
       confirmationRequired: true,
+      requiresSessionReview: true,
     }),
     Object.freeze({
       id: "complete-session-closeout",
@@ -85,6 +86,7 @@ export const PROGRAMMER_COMMANDS =
           "node scripts/orchestration/runEngineeringConversationSession.mjs <newest-validation-evidence.json>",
         ]),
       confirmationRequired: true,
+      requiresSessionReview: true,
     }),
   ]);
 

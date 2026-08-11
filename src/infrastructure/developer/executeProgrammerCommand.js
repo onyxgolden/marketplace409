@@ -3,11 +3,16 @@ import {
 } from "node:child_process";
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import {
   getProgrammerCommand,
 } from "@/application/developer/ProgrammerCommandRegistry";
+
+import {
+  validateReviewedSessionMetadata,
+} from "../../../scripts/governance/reviewedSessionMetadataContract.mjs";
 
 const MAXIMUM_OUTPUT_LENGTH =
   50000;
@@ -159,9 +164,45 @@ function findLatestValidationEvidence(
   );
 }
 
+function writeReviewedMetadataFile(
+  reviewedMetadata,
+) {
+  const normalizedMetadata =
+    validateReviewedSessionMetadata(
+      reviewedMetadata,
+    );
+
+  const tempDirectory =
+    fs.mkdtempSync(
+      path.join(
+        os.tmpdir(),
+        "forge-reviewed-metadata-",
+      ),
+    );
+
+  const tempPath =
+    path.join(
+      tempDirectory,
+      "reviewed-session-metadata.json",
+    );
+
+  fs.writeFileSync(
+    tempPath,
+    JSON.stringify(
+      normalizedMetadata,
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  return tempPath;
+}
+
 function commandSteps({
   commandId,
   repositoryRoot,
+  reviewedMetadataPath,
 }) {
   switch (commandId) {
     case "repository-status":
@@ -234,6 +275,9 @@ function commandSteps({
             findLatestValidationEvidence(
               repositoryRoot,
             ),
+            ...(reviewedMetadataPath
+              ? [reviewedMetadataPath]
+              : []),
           ],
         },
       ];
@@ -255,6 +299,9 @@ function commandSteps({
           args: [
             "scripts/orchestration/runEngineeringConversationSession.mjs",
             "__LATEST_VALIDATION_EVIDENCE__",
+            ...(reviewedMetadataPath
+              ? [reviewedMetadataPath]
+              : []),
           ],
         },
       ];
@@ -274,6 +321,8 @@ export function executeProgrammerCommand({
     spawnSync,
   vercelEnvironment =
     process.env.VERCEL,
+  reviewedMetadata =
+    null,
 } = {}) {
   const definition =
     getProgrammerCommand(
@@ -314,93 +363,123 @@ export function executeProgrammerCommand({
     );
   }
 
-  const startedAt =
-    new Date();
+  let reviewedMetadataPath =
+    null;
 
-  const steps = [];
-  const definitions =
-    commandSteps({
-      commandId,
-      repositoryRoot:
-        normalizedRoot,
-    });
-
-  for (
-    const definitionStep
-    of definitions
+  if (
+    reviewedMetadata !== null &&
+    definition.requiresSessionReview
   ) {
-    const resolvedStep =
-      definitionStep.args.includes(
-        "__LATEST_VALIDATION_EVIDENCE__",
-      )
-        ? {
-            ...definitionStep,
-            args:
-              definitionStep.args.map(
-                (argument) =>
-                  argument ===
-                    "__LATEST_VALIDATION_EVIDENCE__"
-                    ? findLatestValidationEvidence(
-                        normalizedRoot,
-                      )
-                    : argument,
-              ),
-          }
-        : definitionStep;
-
-    const result =
-      runStep({
-        repositoryRoot:
-          normalizedRoot,
-        command:
-          resolvedStep.command,
-        args:
-          resolvedStep.args,
-        nodeEnvironment:
-          resolvedStep
-            .nodeEnvironment,
-        spawnSyncFn,
-      });
-
-    steps.push(result);
-
-    if (
-      result.status !==
-        "passing"
-    ) {
-      break;
-    }
+    reviewedMetadataPath =
+      writeReviewedMetadataFile(
+        reviewedMetadata,
+      );
   }
 
-  const completedAt =
-    new Date();
+  try {
+    const startedAt =
+      new Date();
 
-  const status =
-    steps.length ===
-      definitions.length &&
-    steps.every(
-      (step) =>
-        step.status ===
-          "passing",
-    )
-      ? "passing"
-      : "failing";
+    const steps = [];
+    const definitions =
+      commandSteps({
+        commandId,
+        repositoryRoot:
+          normalizedRoot,
+        reviewedMetadataPath,
+      });
 
-  return Object.freeze({
-    commandId,
-    label:
-      definition.label,
-    status,
-    startedAt:
-      startedAt.toISOString(),
-    completedAt:
-      completedAt.toISOString(),
-    steps:
-      steps.map(
+    for (
+      const definitionStep
+      of definitions
+    ) {
+      const resolvedStep =
+        definitionStep.args.includes(
+          "__LATEST_VALIDATION_EVIDENCE__",
+        )
+          ? {
+              ...definitionStep,
+              args:
+                definitionStep.args.map(
+                  (argument) =>
+                    argument ===
+                      "__LATEST_VALIDATION_EVIDENCE__"
+                      ? findLatestValidationEvidence(
+                          normalizedRoot,
+                        )
+                      : argument,
+                ),
+            }
+          : definitionStep;
+
+      const result =
+        runStep({
+          repositoryRoot:
+            normalizedRoot,
+          command:
+            resolvedStep.command,
+          args:
+            resolvedStep.args,
+          nodeEnvironment:
+            resolvedStep
+              .nodeEnvironment,
+          spawnSyncFn,
+        });
+
+      steps.push(result);
+
+      if (
+        result.status !==
+          "passing"
+      ) {
+        break;
+      }
+    }
+
+    const completedAt =
+      new Date();
+
+    const status =
+      steps.length ===
+        definitions.length &&
+      steps.every(
         (step) =>
-          Object.freeze({
-            ...step,
-          }),
-      ),
-  });
+          step.status ===
+            "passing",
+      )
+        ? "passing"
+        : "failing";
+
+    return Object.freeze({
+      commandId,
+      label:
+        definition.label,
+      status,
+      startedAt:
+        startedAt.toISOString(),
+      completedAt:
+        completedAt.toISOString(),
+      steps:
+        steps.map(
+          (step) =>
+            Object.freeze({
+              ...step,
+            }),
+        ),
+    });
+  } finally {
+    if (
+      reviewedMetadataPath
+    ) {
+      fs.rmSync(
+        path.dirname(
+          reviewedMetadataPath,
+        ),
+        {
+          recursive: true,
+          force: true,
+        },
+      );
+    }
+  }
 }

@@ -81,6 +81,13 @@ export async function POST(
     const result =
       executeProgrammerCommand({
         commandId,
+        ...(body?.reviewedMetadata !==
+          undefined
+          ? {
+              reviewedMetadata:
+                body.reviewedMetadata,
+            }
+          : {}),
       });
 
     return NextResponse.json({

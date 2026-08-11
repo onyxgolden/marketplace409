@@ -36,6 +36,7 @@ import {
 
 function request(
   commandId,
+  reviewedMetadata,
 ) {
   return new Request(
     "http://localhost/api/forge/developer/commands",
@@ -48,6 +49,10 @@ function request(
       body:
         JSON.stringify({
           commandId,
+          ...(reviewedMetadata !==
+            undefined
+            ? { reviewedMetadata }
+            : {}),
         }),
     },
   );
@@ -115,6 +120,36 @@ describe(
         ).toHaveBeenCalledWith({
           commandId:
             "repository-status",
+        });
+      },
+    );
+
+    it(
+      "forwards reviewed session metadata to the executor when supplied",
+      async () => {
+        const reviewedMetadata = {
+          phaseIdentifier: "Phase 16",
+          markSessionComplete: false,
+        };
+
+        const response =
+          await POST(
+            request(
+              "complete-session-closeout",
+              reviewedMetadata,
+            ),
+          );
+
+        expect(
+          response.status,
+        ).toBe(200);
+
+        expect(
+          mocks.executeProgrammerCommand,
+        ).toHaveBeenCalledWith({
+          commandId:
+            "complete-session-closeout",
+          reviewedMetadata,
         });
       },
     );

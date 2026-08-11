@@ -95,6 +95,29 @@ describe(
     );
 
     it(
+      "requires an owner-reviewed session-closeout form for commands that write shadow governance documents",
+      () => {
+        expect(
+          getProgrammerCommand(
+            "prepare-next-session",
+          ).requiresSessionReview,
+        ).toBe(true);
+
+        expect(
+          getProgrammerCommand(
+            "complete-session-closeout",
+          ).requiresSessionReview,
+        ).toBe(true);
+
+        expect(
+          getProgrammerCommand(
+            "repository-status",
+          ).requiresSessionReview,
+        ).toBeUndefined();
+      },
+    );
+
+    it(
       "keeps the command catalog immutable",
       () => {
         expect(
