@@ -156,6 +156,90 @@ describe(
     );
 
     it(
+      "requests every validation category resolveCompletion requires when closing out a session, not just full tests and the build",
+      () => {
+        const spawnSyncFn =
+          vi.fn().mockReturnValue({
+            status: 0,
+            stdout: "ok",
+            stderr: "",
+          });
+
+        executeProgrammerCommand({
+          commandId:
+            "complete-session-closeout",
+          repositoryRoot:
+            process.cwd(),
+          spawnSyncFn,
+          vercelEnvironment:
+            undefined,
+        });
+
+        const validationStepArgs =
+          spawnSyncFn.mock.calls[0][1];
+
+        expect(
+          validationStepArgs,
+        ).toContain("--focused");
+
+        expect(
+          validationStepArgs,
+        ).toContain("--full");
+
+        expect(
+          validationStepArgs,
+        ).toContain("--build");
+
+        // --focused must be followed by at least one real test file, not
+        // just be present as a bare flag with nothing after it.
+        const focusedFlagIndex =
+          validationStepArgs.indexOf(
+            "--focused",
+          );
+
+        expect(
+          validationStepArgs[
+            focusedFlagIndex + 1
+          ],
+        ).toMatch(
+          /\.(?:test|spec)\.(?:js|jsx|mjs|ts|tsx)$/,
+        );
+      },
+    );
+
+    it(
+      "does not change prepare-next-session's validation-evidence lookup step",
+      () => {
+        const spawnSyncFn =
+          vi.fn().mockReturnValue({
+            status: 0,
+            stdout: "ok",
+            stderr: "",
+          });
+
+        executeProgrammerCommand({
+          commandId:
+            "prepare-next-session",
+          repositoryRoot:
+            process.cwd(),
+          spawnSyncFn,
+          vercelEnvironment:
+            undefined,
+        });
+
+        const stepArgs =
+          spawnSyncFn.mock.calls[0][1];
+
+        expect(stepArgs).toEqual([
+          "scripts/orchestration/runEngineeringConversationSession.mjs",
+          expect.stringContaining(
+            "governance/validation/",
+          ),
+        ]);
+      },
+    );
+
+    it(
       "rejects an unregistered command",
       () => {
         expect(

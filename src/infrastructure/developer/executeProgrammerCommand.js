@@ -26,6 +26,20 @@ const MAXIMUM_OUTPUT_LENGTH =
   50000;
 
 /**
+ * resolveCompletion in collectSessionEvidence.mjs requires focusedTests,
+ * fullTests, and productionBuild to all be "passing" before it will honor
+ * a requested markSessionComplete. --full only populates fullTests and
+ * productionBuild (see generateValidationEvidence.mjs's parseArguments),
+ * so without an explicit --focused target this step's artifact always
+ * left focusedTests "not-run" and completion could never resolve true.
+ * The collector's own test suite is the most safety-critical file for
+ * this command to check quickly, and always exists, so it is a stable,
+ * deterministic choice for that fast focused pass.
+ */
+const CLOSEOUT_FOCUSED_TEST_PATH =
+  "scripts/governance/__tests__/collectSessionEvidence.test.mjs";
+
+/**
  * The collector's own "Reviewed session metadata applied: ..." console
  * line (see scripts/governance/collectSessionEvidence.mjs) is retained as
  * human-readable observability inside step output -- it is naturally
@@ -505,6 +519,8 @@ function commandSteps({
             process.execPath,
           args: [
             "scripts/governance/generateValidationEvidence.mjs",
+            "--focused",
+            CLOSEOUT_FOCUSED_TEST_PATH,
             "--full",
             "--build",
           ],

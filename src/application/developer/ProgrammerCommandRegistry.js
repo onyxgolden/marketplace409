@@ -82,7 +82,7 @@ export const PROGRAMMER_COMMANDS =
         "Runs full validation, creates evidence, synchronizes shadow governance documents, and generates a continuation bootstrap in one operation.",
       commandPreview:
         Object.freeze([
-          "node scripts/governance/generateValidationEvidence.mjs --full --build",
+          "node scripts/governance/generateValidationEvidence.mjs --focused scripts/governance/__tests__/collectSessionEvidence.test.mjs --full --build",
           "node scripts/orchestration/runEngineeringConversationSession.mjs <newest-validation-evidence.json>",
         ]),
       confirmationRequired: true,

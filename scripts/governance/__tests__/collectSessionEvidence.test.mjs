@@ -954,6 +954,86 @@ describe("collectSessionEvidence reviewed metadata: completion gating", () => {
     return metadataPath;
   }
 
+  test("marks the session complete when completion was requested and eligible evidence has passing focused tests, full tests, and production build", () => {
+    const repositoryRoot = createFixture();
+    temporaryRepositories.add(repositoryRoot);
+
+    const head = currentCommit(repositoryRoot);
+
+    writeValidationArtifact(
+      repositoryRoot,
+      createValidationArtifact({ head }),
+    );
+
+    // Written outside the repository (like the real dashboard flow does,
+    // see executeProgrammerCommand.js's writeReviewedMetadataFile) so this
+    // metadata file itself does not dirty the working tree and disqualify
+    // the otherwise-eligible validation artifact above.
+    const externalDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "forge-reviewed-metadata-"),
+    );
+    const metadataPath = path.join(
+      externalDirectory,
+      "reviewed-metadata.json",
+    );
+    fs.writeFileSync(
+      metadataPath,
+      JSON.stringify({ markSessionComplete: true }),
+      "utf8",
+    );
+    temporaryRepositories.add(externalDirectory);
+
+    runCollector(repositoryRoot, [metadataPath]);
+
+    const { snapshot } = readOnlySnapshot(repositoryRoot);
+
+    expect(snapshot.validation.focusedTests.status).toBe("passing");
+    expect(snapshot.validation.fullTests.status).toBe("passing");
+    expect(snapshot.validation.productionBuild.status).toBe("passing");
+    expect(snapshot.completion.workComplete).toBe(true);
+    expect(snapshot.completion.supportedByEvidence).toBe(true);
+    expect(snapshot.completion.incompleteReason).toBeNull();
+    expect(snapshot.phase.status).toBe("complete");
+  });
+
+  test("does not mark the session complete when eligible evidence never requested focused tests, even though full tests and the build passed", () => {
+    const repositoryRoot = createFixture();
+    temporaryRepositories.add(repositoryRoot);
+
+    const head = currentCommit(repositoryRoot);
+
+    const artifact = createValidationArtifact({ head });
+    artifact.commands = artifact.commands.filter(
+      (command) => command.category !== "focusedTests",
+    );
+    artifact.results.focusedTests = {
+      status: "not-run",
+      commandIndexes: [],
+      summary: null,
+    };
+    artifact.results.fullTests.commandIndexes = [0];
+    artifact.results.productionBuild.commandIndexes = [1];
+
+    writeValidationArtifact(repositoryRoot, artifact);
+
+    const metadataPath = writeReviewedMetadataFile(repositoryRoot, {
+      markSessionComplete: true,
+    });
+
+    runCollector(repositoryRoot, [
+      path.relative(repositoryRoot, metadataPath),
+    ]);
+
+    const { snapshot } = readOnlySnapshot(repositoryRoot);
+
+    expect(snapshot.validation.focusedTests.status).toBe("not-run");
+    expect(snapshot.completion.workComplete).toBe(false);
+    expect(snapshot.completion.supportedByEvidence).toBe(false);
+    expect(snapshot.completion.incompleteReason).toContain(
+      "does not yet cover a passing result",
+    );
+  });
+
   test("does not mark the session complete when no eligible validation evidence exists", () => {
     const repositoryRoot = createFixture();
     temporaryRepositories.add(repositoryRoot);
@@ -1004,7 +1084,7 @@ describe("collectSessionEvidence reviewed metadata: completion gating", () => {
     );
   });
 
-  test("does not mark the session complete when current evidence includes a failing category, even though completion was requested", () => {
+  test("does not mark the session complete when full tests are failing, even though completion was requested", () => {
     const repositoryRoot = createFixture();
     temporaryRepositories.add(repositoryRoot);
 
@@ -1027,6 +1107,50 @@ describe("collectSessionEvidence reviewed metadata: completion gating", () => {
 
     const { snapshot } = readOnlySnapshot(repositoryRoot);
 
+    expect(snapshot.completion.workComplete).toBe(false);
+    expect(snapshot.completion.supportedByEvidence).toBe(false);
+    expect(snapshot.completion.incompleteReason).toContain(
+      "does not yet cover a passing result",
+    );
+  });
+
+  test("does not mark the session complete when focused tests are failing, even though full tests and the build passed and completion was requested", () => {
+    const repositoryRoot = createFixture();
+    temporaryRepositories.add(repositoryRoot);
+
+    const head = currentCommit(repositoryRoot);
+
+    const artifact = createValidationArtifact({ head });
+    artifact.commands[0].status = "failing";
+    artifact.commands[0].exitCode = 1;
+    artifact.results.focusedTests.status = "failing";
+
+    writeValidationArtifact(repositoryRoot, artifact);
+
+    // Written outside the repository so this metadata file itself does
+    // not dirty the working tree and disqualify the otherwise-eligible
+    // (if not for the intentional focused-test failure) artifact above.
+    const externalDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "forge-reviewed-metadata-"),
+    );
+    const metadataPath = path.join(
+      externalDirectory,
+      "reviewed-metadata.json",
+    );
+    fs.writeFileSync(
+      metadataPath,
+      JSON.stringify({ markSessionComplete: true }),
+      "utf8",
+    );
+    temporaryRepositories.add(externalDirectory);
+
+    runCollector(repositoryRoot, [metadataPath]);
+
+    const { snapshot } = readOnlySnapshot(repositoryRoot);
+
+    expect(snapshot.validation.focusedTests.status).toBe("failing");
+    expect(snapshot.validation.fullTests.status).toBe("passing");
+    expect(snapshot.validation.productionBuild.status).toBe("passing");
     expect(snapshot.completion.workComplete).toBe(false);
     expect(snapshot.completion.supportedByEvidence).toBe(false);
     expect(snapshot.completion.incompleteReason).toContain(
