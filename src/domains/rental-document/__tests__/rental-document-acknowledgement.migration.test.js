@@ -1,0 +1,5 @@
+import{readFileSync}from"node:fs";import{resolve}from"node:path";import{describe,expect,it}from"vitest";
+const sql=readFileSync(resolve(process.cwd(),"supabase/migrations/20260812002200_create_rental_document_acknowledgements.sql"),"utf8").toLowerCase();
+describe("rental document acknowledgements",()=>{it("records one immutable first-receipt timestamp per tenant and document",()=>{expect(sql).toContain("primary key(owner_id,document_id,tenant_id)");expect(sql).toContain("acknowledged_at timestamptz not null default now()");expect(sql).not.toContain("acknowledged_at=excluded.acknowledged_at");});
+it("allows acknowledgement only for a visible accessible document",()=>{expect(sql).toContain("tenant_visible=true");expect(sql).toContain("rental_actor_has_lease_access(owner_id,lease_id)");expect(sql).toContain("tenant.auth_user_id=auth.uid()");});
+it("does not grant tenants direct insert update or delete policies",()=>{expect(sql).not.toContain("rental_document_ack_tenant_insert");expect(sql).not.toContain("rental_document_ack_tenant_update");expect(sql).not.toContain("rental_document_ack_tenant_delete");});});

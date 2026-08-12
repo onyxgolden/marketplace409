@@ -1,15 +1,22 @@
 import { beforeEach,describe,expect,it,vi } from "vitest";
-const from=vi.fn();const createSignedUrl=vi.fn();const upload=vi.fn();const remove=vi.fn();
-const authenticated={user:{id:"owner_1"},supabaseClient:{from,storage:{from:vi.fn(()=>({createSignedUrl,upload,remove}))}}};
+const from=vi.fn();const createSignedUrl=vi.fn();const upload=vi.fn();const remove=vi.fn();const rpc=vi.fn();
+const authenticated={user:{id:"owner_1"},supabaseClient:{from,rpc,storage:{from:vi.fn(()=>({createSignedUrl,upload,remove}))}}};
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication",()=>({createAuthenticatedForgeApplication:vi.fn(async()=>authenticated)}));
-import { GET,POST } from "./route.js";
+import { GET,PATCH,POST } from "./route.js";
 const chain=(result)=>{const value={select:vi.fn(),eq:vi.fn(),order:vi.fn(),maybeSingle:vi.fn()};Object.values(value).forEach(method=>method.mockReturnValue(value));value.order.mockResolvedValue(result);value.maybeSingle.mockResolvedValue(result);return value;};
 describe("rental documents route",()=>{
   beforeEach(()=>vi.clearAllMocks());
-  it("returns short-lived signed links for documents visible through RLS",async()=>{const query=chain({data:[{id:"document_1",bucket:"rental-documents",object_path:"owner_1/lease_1/file.pdf",title:"Lease"}],error:null});from.mockReturnValue(query);createSignedUrl.mockResolvedValue({data:{signedUrl:"https://signed.test/file"},error:null});
+  it("returns signed links and acknowledgement evidence visible through RLS",async()=>{const query=chain({data:[{owner_id:"owner_1",id:"document_1",bucket:"rental-documents",object_path:"owner_1/lease_1/file.pdf",title:"Lease"}],error:null});
+    const acknowledgementQuery=chain({data:[],error:null});acknowledgementQuery.then=(resolve)=>resolve({data:[{tenant_id:"tenant_1",acknowledged_at:"2026-08-12T12:00:00Z"}],error:null});
+    from.mockImplementation(table=>table==="rental_documents"?query:acknowledgementQuery);createSignedUrl.mockResolvedValue({data:{signedUrl:"https://signed.test/file"},error:null});
     const response=await GET();const body=await response.json();expect(response.status).toBe(200);expect(body.documents[0].download_url).toBe("https://signed.test/file");expect(createSignedUrl).toHaveBeenCalledWith("owner_1/lease_1/file.pdf",600);
+    expect(body.documents[0].acknowledgements).toHaveLength(1);
   });
   it("blocks a linked tenant from publishing documents",async()=>{const tenantQuery=chain({data:{id:"tenant_1"},error:null});from.mockReturnValue(tenantQuery);
     const response=await POST(new Request("https://example.test/api/rental/documents",{method:"POST",body:new FormData()}));expect(response.status).toBe(403);expect(upload).not.toHaveBeenCalled();
+  });
+  it("records tenant receipt through the constrained acknowledgement rpc",async()=>{rpc.mockResolvedValue({data:{document_id:"document_1",tenant_id:"tenant_1"},error:null});
+    const response=await PATCH(new Request("https://example.test/api/rental/documents",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({operation:"acknowledge-document",documentId:"document_1"})}));
+    expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("acknowledge_rental_document",{p_document_id:"document_1"});
   });
 });

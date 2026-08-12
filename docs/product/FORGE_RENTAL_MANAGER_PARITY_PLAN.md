@@ -30,7 +30,7 @@ FORGE is ready for a real tenant only when the complete operating loop is proven
 | Renters insurance | Data foundation / visible placeholder | Requirement, policy, referral, and tenant-display foundations exist. Upload, verification, renewal reminders, and compliant provider activation remain. |
 | Pet liability and pet fees | Data foundation / visible placeholder | Animal, policy, monthly fee, and assistance-animal human-review foundations exist. Owner workflow and verified tenant controls remain. |
 | Credit reporting | Data foundation / not active | Enrollment and fee foundations exist. No provider is activated and the portal correctly says unavailable. |
-| Lease documents / file library | Implemented secure first slice | Private uploads, lease scoping, explicit tenant publication, signed downloads, and tenant viewing exist. Version history, acknowledgement, e-signature, and delivery notices remain. |
+| Lease documents / file library | Secure delivery and receipt implemented | Private uploads, lease scoping, explicit publication, signed downloads, tenant viewing, and first-receipt acknowledgement exist. Version history, e-signature, and provider delivery evidence remain. |
 | Tenant communications | Auditable outbox foundation | Payment outcomes, maintenance updates, and document publication queue idempotent email messages for owner review. Provider delivery, reminders, retries, delivery history, and opt-out controls remain. |
 | Recurring autopay | Missing | One-time Stripe payments work. Tenant consent, mandate management, saved payment methods, retry controls, and cancellation are required. |
 | Late fees and delinquency | Missing | Requires jurisdiction-aware rules, grace periods, notices, waiver controls, and audit history. Must never be inferred silently. |
@@ -49,7 +49,7 @@ FORGE is ready for a real tenant only when the complete operating loop is proven
 ### Gate A — First real tenant
 
 1. Maintenance request intake and owner workflow.
-2. Complete document acknowledgements, delivery notices, and version history on the secure lease library.
+2. Complete document version history, approved email delivery evidence, and a separate compliant e-signature integration.
 3. Activate approved email delivery, retries, reminders, and failed-payment operating controls on the receipt/outbox foundation.
 4. Complete Stripe fee/balance/payout ingestion and bank matching on the gross-income posting foundation.
 5. Production Stripe readiness, support procedures, and controlled pilot.

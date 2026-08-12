@@ -9,13 +9,25 @@ const safe=(value)=>value.normalize("NFKD").replace(/[^a-zA-Z0-9._-]+/g,"-").rep
 export async function GET(){
   try{ const authenticated=await createAuthenticatedForgeApplication(); if(authenticated.response)return authenticated.response;
     const {data,error}=await authenticated.supabaseClient.from("rental_documents")
-      .select("id, lease_id, category, title, bucket, object_path, original_filename, mime_type, byte_size, tenant_visible, published_at, created_at")
+      .select("owner_id, id, lease_id, category, title, bucket, object_path, original_filename, mime_type, byte_size, tenant_visible, published_at, created_at")
       .order("created_at",{ascending:false});
     if(error)throw error;
-    const documents=await Promise.all((data||[]).map(async(document)=>{ const signed=await authenticated.supabaseClient.storage.from(document.bucket).createSignedUrl(document.object_path,600);
-      if(signed.error)throw signed.error; return {...document,download_url:signed.data.signedUrl}; }));
+    const documents=await Promise.all((data||[]).map(async(document)=>{ const [signed,acknowledgements]=await Promise.all([
+      authenticated.supabaseClient.storage.from(document.bucket).createSignedUrl(document.object_path,600),
+      authenticated.supabaseClient.from("rental_document_acknowledgements").select("tenant_id, acknowledged_at, acknowledgement_version").eq("owner_id",document.owner_id).eq("document_id",document.id)
+    ]); if(signed.error)throw signed.error;if(acknowledgements.error)throw acknowledgements.error;
+      return {...document,download_url:signed.data.signedUrl,acknowledgements:acknowledgements.data||[]}; }));
     return NextResponse.json({success:true,documents});
   }catch(error){console.error("Rental document query error",error);return NextResponse.json({error:"Unable to load rental documents."},{status:500});}
+}
+
+export async function PATCH(request){
+  try{const authenticated=await createAuthenticatedForgeApplication();if(authenticated.response)return authenticated.response;
+    const body=await request.json();if(body?.operation!=="acknowledge-document"||typeof body.documentId!=="string"||body.documentId.trim()==="")
+      return NextResponse.json({error:"A supported document acknowledgement is required."},{status:400});
+    const {data,error}=await authenticated.supabaseClient.rpc("acknowledge_rental_document",{p_document_id:body.documentId.trim()});
+    if(error)throw error;return NextResponse.json({success:true,acknowledgement:data});
+  }catch(error){console.error("Rental document acknowledgement error",error);return NextResponse.json({error:error instanceof Error?error.message:"Unable to acknowledge the rental document."},{status:500});}
 }
 
 export async function POST(request){
