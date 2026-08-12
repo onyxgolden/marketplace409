@@ -19,4 +19,10 @@ describe("RentalApplicationShell", () => {
     expect(renderToStaticMarkup(buildRentalSurface("tenants"))).toContain("Create the Kent Avenue tenant");
     expect(renderToStaticMarkup(buildRentalSurface("leases"))).toContain("Record lease and rent schedule");
   });
+  it("requires persisted unit and tenant selections instead of manual ids", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("leases"));
+    expect(markup).toContain("Select a saved unit");
+    expect(markup).toContain("Select a saved tenant");
+    expect(markup).not.toContain("Tenant ID");
+  });
 });

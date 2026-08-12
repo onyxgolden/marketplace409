@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 async function submit(operation, key, value) {
   const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
@@ -11,7 +11,20 @@ async function submit(operation, key, value) {
 
 export default function RentalSetupPanel() {
   const [message, setMessage] = useState("");
+  const [units, setUnits] = useState([]);
   const [working, setWorking] = useState(false);
+  async function loadUnits() {
+    const response = await fetch("/api/rental"); const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
+    setUnits(result.units || []);
+  }
+  useEffect(() => {
+    fetch("/api/rental").then(async (response) => {
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
+      return result.units || [];
+    }).then(setUnits).catch((error) => setMessage(error.message));
+  }, []);
   async function saveUnit(event) {
     event.preventDefault(); setWorking(true); setMessage("");
     const values = new FormData(event.currentTarget);
@@ -20,6 +33,7 @@ export default function RentalSetupPanel() {
         status: "preparing", bedrooms: Number(values.get("bedrooms")) || null, bathrooms: Number(values.get("bathrooms")) || null,
         squareFeet: Number(values.get("squareFeet")) || null, notes: values.get("notes") || null });
       setMessage(`Unit saved: ${result.unit.label} — ID: ${result.unit.id}`);
+      await loadUnits();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   return (
@@ -27,6 +41,11 @@ export default function RentalSetupPanel() {
       <div className="max-w-3xl"><p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Kent Avenue setup</p>
         <h2 className="mt-2 text-2xl font-black">Create the rental unit</h2>
         <p className="mt-2 text-sm text-slate-600">This is the first owner workflow. Tenant and lease setup unlock after the unit is persisted.</p></div>
+      {units.length > 0 && <div className="mt-5 rounded-xl border border-emerald-300 bg-emerald-50 p-4">
+        <p className="text-sm font-black text-emerald-950">Saved rental units</p>
+        <ul className="mt-2 space-y-1 text-sm text-emerald-950">{units.map((unit) =>
+          <li key={unit.id}><strong>{unit.label}</strong> · {unit.property_id} · ID: <code>{unit.id}</code></li>)}</ul>
+      </div>}
       <form className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2" onSubmit={saveUnit}>
         <label className="text-sm font-bold">Property ID<input name="propertyId" defaultValue="4800-kent-ave" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
         <label className="text-sm font-bold">Unit label<input name="label" defaultValue="Main residence" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>

@@ -4,7 +4,7 @@ vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
   createAuthenticatedRentalManagerApplication: vi.fn(async () => ({ application, user: { id: "owner_1" } })),
 }));
-import { POST } from "./route.js";
+import { GET, POST } from "./route.js";
 function request(body) { return new Request("http://localhost/api/rental", { method: "POST", body: JSON.stringify(body) }); }
 describe("Rental Manager route", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -22,4 +22,16 @@ describe("Rental Manager route", () => {
     expect(application.generateMonthlyCharge).toHaveBeenCalledWith("schedule_1", "2026-09", "owner_1");
   });
   it("rejects unsupported operations", async () => expect((await POST(request({ operation: "unknown" }))).status).toBe(400));
+  it("loads the persisted setup records needed by the lease form", async () => {
+    const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data, error: null }) });
+    const tables = { rent_charges: result([{ id: "charge_1" }]), rental_units: result([{ id: "unit_1" }]),
+      rental_tenants: result([{ id: "tenant_1" }]) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
+      supabaseClient: { from: vi.fn((table) => tables[table]) } });
+    const response = await GET(); const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ units: [{ id: "unit_1" }], tenants: [{ id: "tenant_1" }] });
+  });
 });

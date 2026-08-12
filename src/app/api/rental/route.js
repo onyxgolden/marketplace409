@@ -13,11 +13,19 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const { data, error } = await authenticated.supabaseClient.from("rent_charges")
-      .select("id, lease_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status")
-      .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true });
+    const [chargesResult, unitsResult, tenantsResult] = await Promise.all([
+      authenticated.supabaseClient.from("rent_charges")
+        .select("id, lease_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status")
+        .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
+      authenticated.supabaseClient.from("rental_units")
+        .select("id, property_id, label, status").order("label", { ascending: true }),
+      authenticated.supabaseClient.from("rental_tenants")
+        .select("id, display_name, email, status").order("display_name", { ascending: true }),
+    ]);
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error;
     if (error) throw error;
-    return NextResponse.json({ success: true, openCharges: data || [] });
+    return NextResponse.json({ success: true, openCharges: chargesResult.data || [],
+      units: unitsResult.data || [], tenants: tenantsResult.data || [] });
   } catch (error) {
     console.error("Rental Manager query error", error);
     return NextResponse.json({ error: "Unable to load open rent charges." }, { status: 500 });
