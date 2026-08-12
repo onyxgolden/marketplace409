@@ -18,7 +18,7 @@
 
 **Last Synchronization:** Not yet generated
 **Session ID:** Not recorded
-**Evidence Snapshot:** governance/snapshots/forge-session-20260717-115035.json
+**Evidence Snapshot:** governance/snapshots/forge-session-20260812-013433938.json
 **Renderer Version:** Not recorded
 **Mode:** shadow
 
@@ -30,8 +30,8 @@
 
 ## Active Phase
 
-**Phase:** 21D.15
-**Title:** Intelligence Governance Validation
+**Phase:** session-20260812-36b80f3
+**Title:** Governance session work
 **Status:** complete
 
 <!-- FORGE:SYNC:active_phase:END -->
@@ -42,7 +42,7 @@
 
 ## Current Objective
 
-Validate that intelligence workflows consume canonical application boundaries and repository-backed intelligence context without bypassing governance controls.
+Ship: collect complete closeout validation.
 
 <!-- FORGE:SYNC:current_objective:END -->
 
@@ -52,12 +52,7 @@ Validate that intelligence workflows consume canonical application boundaries an
 
 ## Last Completed Work
 
-- Canonical Intelligence Context validation
-- Canonical Explainability Projection boundary
-- Financial Intelligence validation
-- Dashboard Intelligence validation
-- Decision Intelligence validation
-- Intelligence provenance verification
+fix(governance): collect complete closeout validation
 
 <!-- FORGE:SYNC:last_completed_work:END -->
 
@@ -70,12 +65,121 @@ Validate that intelligence workflows consume canonical application boundaries an
 | Check            | Result |
 | ---------------- | ------ |
 | Branch           | main |
-| HEAD             | d998f9126610a09625e6ef35d936c00d24516efa |
-| origin/main      | d998f9126610a09625e6ef35d936c00d24516efa |
-| Working tree     | dirty |
-| Focused tests    | passing (14 files / 76 tests) |
-| Full tests       | not-run |
-| Production build | passing |
+| HEAD             | 36b80f33b349fc1cad17964ceae519ee46500f41 |
+| origin/main      | 36b80f33b349fc1cad17964ceae519ee46500f41 |
+| Working tree     | clean |
+| Focused tests    | passing — RUN  v4.1.9 /home/jason/USMarketplace/marketplace409
+
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  01:33:17
+   Duration  1.41s (transform 26ms, setup 0ms, import 39ms, tests 1.25s, environment 0ms) |
+| Full tests       | passing — RUN  v4.1.9 /home/jason/USMarketplace/marketplace409
+
+
+ Test Files  497 passed (497)
+      Tests  2616 passed (2616)
+   Start at  01:33:19
+   Duration  45.06s (transform 26.20s, setup 0ms, import 71.81s, tests 47.78s, environment 2.77s) |
+| Production build | passing — > marketplace409@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 16.4s
+  Running TypeScript ...
+  Finished TypeScript in 7.3s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/49) ...
+  Generating static pages using 7 workers (12/49)
+  Generating static pages using 7 workers (24/49)
+  Generating static pages using 7 workers (36/49)
+✓ Generating static pages using 7 workers (49/49) in 846ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /admin/business-claims
+├ ƒ /api/connection/execution-history
+├ ƒ /api/connection/operations
+├ ƒ /api/connection/read-models
+├ ƒ /api/financial/dashboard-intelligence
+├ ƒ /api/financial/explain
+├ ƒ /api/financial/import
+├ ƒ /api/financial/import/bootstrap
+├ ƒ /api/financial/operations
+├ ƒ /api/financial/read-models
+├ ƒ /api/financial/reports
+├ ƒ /api/financial/snapshot
+├ ƒ /api/financial/trace
+├ ƒ /api/forge/developer/commands
+├ ƒ /api/forge/developer/commands/closeout-proposal
+├ ƒ /api/plaid/exchange-token
+├ ƒ /api/plaid/link-token
+├ ƒ /api/property-condition-assessments
+├ ƒ /api/property-evidence
+├ ƒ /api/property-hvac
+├ ƒ /api/property-hvac/invoice-proposal
+├ ƒ /api/property-operating-obligations
+├ ƒ /api/property-operating-obligations/document-proposal
+├ ƒ /api/property-valuations
+├ ƒ /api/transactions/assign-properties
+├ ƒ /api/transactions/assign-property
+├ ○ /auth
+├ ƒ /browse
+├ ƒ /businesses
+├ ƒ /businesses/[id]
+├ ƒ /businesses/[id]/claim
+├ ○ /businesses/add
+├ ƒ /businesses/edit/[id]
+├ ○ /community
+├ ƒ /edit/[id]
+├ ƒ /financial-snapshot
+├ ƒ /forge
+├ ƒ /forge/accounts/add
+├ ƒ /forge/connections
+├ ƒ /forge/developer
+├ ƒ /forge/financial
+├ ƒ /forge/import
+├ ƒ /forge/property
+├ ƒ /forge/results
+├ ○ /import
+├ ƒ /investors
+├ ○ /investors/add-property
+├ ƒ /investors/cash-buyers
+├ ○ /investors/cash-buyers/add
+├ ƒ /investors/cash-buyers/edit/[id]
+├ ƒ /investors/contractors
+├ ƒ /investors/documents
+├ ƒ /investors/properties
+├ ƒ /investors/properties/edit/[id]
+├ ○ /investors/rehab-estimator
+├ ƒ /investors/wholesalers
+├ ○ /investors/wholesalers/add
+├ ƒ /investors/wholesalers/edit/[id]
+├ ƒ /jobs
+├ ○ /jobs/add
+├ ƒ /jobs/edit/[id]
+├ ƒ /listing/[id]
+├ ○ /my-listings
+├ ƒ /pets
+├ ○ /pets/add
+├ ƒ /pets/edit/[id]
+├ ƒ /pets/shelters
+├ ○ /post
+├ ○ /privacy
+├ ○ /saved-listings
+└ ○ /terms
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand |
 
 <!-- FORGE:SYNC:repository_health:END -->
 
@@ -95,22 +199,7 @@ None recorded.
 
 ## Starting Inspection
 
-Phase 21D.15 completed validation of the FORGE intelligence architecture.
-
-Validated paths:
-
-Canonical Intelligence Context
-        |
-        +--> Dashboard Intelligence
-        |
-        +--> Financial Intelligence
-                 |
-                 +--> Operations
-                 |
-                 +--> Decisions
-
-Next review target:
-FORGE engineering autonomy and governance evolution.
+Verify repository synchronization, confirm the latest governance snapshot/state, and inspect files related to the proposed next objective..
 
 <!-- FORGE:SYNC:starting_inspection:END -->
 

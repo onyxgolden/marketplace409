@@ -1,24 +1,26 @@
 {
   "schemaVersion": "1.0",
+  "sessionId": "forge-session-20260812-013433938",
+  "sessionDate": "2026-08-12",
+  "phase": {
+    "identifier": "session-20260812-36b80f3",
+    "title": "Governance session work",
+    "status": "complete"
+  },
+  "objective": {
+    "startingObjective": "Continue from: isolate programmer command environments",
+    "endingObjective": "Ship: collect complete closeout validation"
+  },
   "repository": {
-    "branch": "main",
     "head": "36b80f33b349fc1cad17964ceae519ee46500f41",
     "originMain": "36b80f33b349fc1cad17964ceae519ee46500f41",
+    "branch": "main",
     "workingTreeClean": true,
-    "headMatchesOriginMain": true
+    "implementationCommit": null,
+    "governanceCommit": null
   },
-  "session": {
-    "latestSnapshot": "governance/snapshots/forge-session-20260812-013433938.json",
-    "lastUpdated": "2026-08-12T06:34:33.938Z"
-  },
-  "state": {
-    "activePhase": {
-      "identifier": "session-20260812-36b80f3",
-      "title": "Governance session work",
-      "status": "complete"
-    },
-    "currentObjective": "Ship: collect complete closeout validation",
-    "completedWork": [
+  "work": {
+    "delivered": [
       "fix(forge): isolate programmer command environments",
       "fix(governance): complete session closeout handoffs",
       "feat(forge): two-column programmer dashboard with clipboard copy",
@@ -32,11 +34,8 @@
       "feat(developer): approve generated session closeouts",
       "fix(governance): collect complete closeout validation"
     ],
-    "knownWarnings": [],
-    "nextSession": {
-      "objective": "Inspect and prioritize the next FORGE roadmap objective.",
-      "startingInspection": "Verify repository synchronization, confirm the latest governance snapshot/state, and inspect files related to the proposed next objective."
-    }
+    "modifiedFiles": [],
+    "knownWarnings": []
   },
   "validation": {
     "focusedTests": {
@@ -60,16 +59,24 @@
     "supportedByEvidence": true,
     "incompleteReason": null
   },
-  "authority": {
-    "defaultAuthority": "human",
-    "promotionStateVersion": "1.0",
-    "capabilitiesVersion": "1.0",
-    "editableSectionsVersion": "1.0"
+  "nextSession": {
+    "objective": "Inspect and prioritize the next FORGE roadmap objective.",
+    "startingInspection": "Verify repository synchronization, confirm the latest governance snapshot/state, and inspect files related to the proposed next objective."
   },
-  "synchronization": {
-    "mode": "shadow",
-    "stateGeneratedAt": null,
-    "sourceSnapshot": "governance/snapshots/forge-session-20260812-013433938.json",
-    "rendererVersion": null
+  "evidence": {
+    "capturedAt": "2026-08-12T06:34:33.938Z",
+    "latestCommit": {
+      "hash": "36b80f33b349fc1cad17964ceae519ee46500f41",
+      "subject": "fix(governance): collect complete closeout validation",
+      "committedAt": "2026-08-12T01:26:58-05:00"
+    },
+    "headMatchesOriginMain": true,
+    "gitStatus": [],
+    "selectedValidationArtifact": {
+      "path": "governance/validation/forge-validation-20260812-063316.json",
+      "validationId": "forge-validation-20260812-063316",
+      "completedAt": "2026-08-12T06:34:33.691Z",
+      "repositoryHead": "36b80f33b349fc1cad17964ceae519ee46500f41"
+    }
   }
 }
