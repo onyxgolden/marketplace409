@@ -48,7 +48,7 @@ export default function TenantPortal() {
         <TenantPaymentForm returnUrl={session.returnUrl} amountLabel={money.format(session.amountCents / 100)}
           dueDate={date.format(new Date(`${session.dueDate}T00:00:00`))} onCancel={() => setSession(null)} />
       </Elements></section> : portal.rentals.map(({ lease, unit, charges, payments = [] }) => <section key={lease.id} className="rounded-2xl border bg-white p-6 shadow-sm">
-      <h2 className="text-xl font-black">{unit?.displayName || unit?.unitLabel || "Rental home"}</h2>
+      <h2 className="text-xl font-black">{unit?.label || "Rental home"}</h2>
       <p className="mt-1 text-sm text-slate-500">Lease {lease.startDate} {lease.endDate ? `through ${lease.endDate}` : "— current"}</p>
       <div className="mt-6 space-y-3">{charges.map((charge) => <div key={charge.id} className="flex items-center justify-between gap-4 rounded-xl border p-4">
         <div><p className="font-bold">{date.format(new Date(`${charge.dueDate}T00:00:00`))}</p><p className="text-sm capitalize text-slate-500">{charge.period} rent · {charge.status.replaceAll("_", " ")}</p></div>
