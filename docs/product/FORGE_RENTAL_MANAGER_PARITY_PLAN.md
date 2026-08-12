@@ -31,7 +31,7 @@ FORGE is ready for a real tenant only when the complete operating loop is proven
 | Pet liability and pet fees | Data foundation / visible placeholder | Animal, policy, monthly fee, and assistance-animal human-review foundations exist. Owner workflow and verified tenant controls remain. |
 | Credit reporting | Data foundation / not active | Enrollment and fee foundations exist. No provider is activated and the portal correctly says unavailable. |
 | Lease documents / file library | Implemented secure first slice | Private uploads, lease scoping, explicit tenant publication, signed downloads, and tenant viewing exist. Version history, acknowledgement, e-signature, and delivery notices remain. |
-| Tenant communications | Missing | Email/SMS notices, payment reminders, maintenance updates, delivery history, and opt-out controls are required. |
+| Tenant communications | Auditable outbox foundation | Payment outcomes, maintenance updates, and document publication queue idempotent email messages for owner review. Provider delivery, reminders, retries, delivery history, and opt-out controls remain. |
 | Recurring autopay | Missing | One-time Stripe payments work. Tenant consent, mandate management, saved payment methods, retry controls, and cancellation are required. |
 | Late fees and delinquency | Missing | Requires jurisdiction-aware rules, grace periods, notices, waiver controls, and audit history. Must never be inferred silently. |
 | Deposits | Missing | Security-deposit ledger, permitted deductions, disposition deadlines, evidence, and reconciliation are required. |
@@ -50,7 +50,7 @@ FORGE is ready for a real tenant only when the complete operating loop is proven
 
 1. Maintenance request intake and owner workflow.
 2. Complete document acknowledgements, delivery notices, and version history on the secure lease library.
-3. Payment receipts, notifications, and failed-payment operations.
+3. Activate approved email delivery, retries, reminders, and failed-payment operating controls on the receipt/outbox foundation.
 4. Rental-to-financial posting and settlement reconciliation.
 5. Production Stripe readiness, support procedures, and controlled pilot.
 

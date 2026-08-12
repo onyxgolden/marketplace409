@@ -13,7 +13,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -27,12 +27,15 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_maintenance_requests")
         .select("id, lease_id, unit_id, tenant_id, title, description, priority, status, permission_to_enter, contact_phone, owner_notes, submitted_at, updated_at, completed_at")
         .order("submitted_at", { ascending: false }),
+      authenticated.supabaseClient.from("rental_notification_outbox")
+        .select("id, tenant_id, lease_id, notification_type, channel, recipient, subject, body_text, status, failure_message, created_at, sent_at")
+        .order("created_at", { ascending: false }),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error;
     if (error) throw error;
     return NextResponse.json({ success: true, openCharges: chargesResult.data || [],
       units: unitsResult.data || [], tenants: tenantsResult.data || [], schedules: schedulesResult.data || [],
-      maintenanceRequests: maintenanceResult.data || [] });
+      maintenanceRequests: maintenanceResult.data || [], notifications: notificationResult.data || [] });
   } catch (error) {
     console.error("Rental Manager query error", error);
     return NextResponse.json({ error: "Unable to load open rent charges." }, { status: 500 });

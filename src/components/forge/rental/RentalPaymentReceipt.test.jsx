@@ -1,0 +1,4 @@
+import{renderToStaticMarkup}from"react-dom/server";import{describe,expect,it}from"vitest";import RentalPaymentReceipt,{buildRentalReceiptNumber}from"./RentalPaymentReceipt.jsx";
+const payment={id:"rental_payment_abcdef1234567890",amountCents:200000,status:"succeeded",paymentMethod:"card",succeededAt:"2026-08-12T12:00:00Z",receiptReference:null};
+describe("RentalPaymentReceipt",()=>{it("creates a stable receipt number when no offline reference exists",()=>expect(buildRentalReceiptNumber(payment)).toBe("FORGE-ABCDEF123456"));
+it("renders the payment evidence and print control",()=>{const markup=renderToStaticMarkup(<RentalPaymentReceipt payment={payment} tenantName="John Jones" unitLabel="Main residence"/>);expect(markup).toContain("$2,000.00");expect(markup).toContain("John Jones");expect(markup).toContain("Print or save as PDF");});});

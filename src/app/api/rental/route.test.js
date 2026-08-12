@@ -27,14 +27,16 @@ describe("Rental Manager route", () => {
       order: vi.fn().mockResolvedValue({ data, error: null }) });
     const tables = { rent_charges: result([{ id: "charge_1" }]), rental_units: result([{ id: "unit_1" }]),
       rental_tenants: result([{ id: "tenant_1" }]), rent_schedules: result([{ id: "schedule_1", status: "draft" }]),
-      rental_maintenance_requests: result([{ id: "request_1", status: "submitted" }]) };
+      rental_maintenance_requests: result([{ id: "request_1", status: "submitted" }]),
+      rental_notification_outbox: result([{ id: "notification_1", status: "queued" }]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
       supabaseClient: { from: vi.fn((table) => tables[table]) } });
     const response = await GET(); const body = await response.json();
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ units: [{ id: "unit_1" }], tenants: [{ id: "tenant_1" }],
-      schedules: [{ id: "schedule_1", status: "draft" }], maintenanceRequests: [{ id: "request_1", status: "submitted" }] });
+      schedules: [{ id: "schedule_1", status: "draft" }], maintenanceRequests: [{ id: "request_1", status: "submitted" }],
+      notifications: [{ id: "notification_1", status: "queued" }] });
   });
   it("atomically activates the authenticated owner's lease and schedule", async () => {
     const rpc = vi.fn(async () => ({ data: { leaseId: "lease_1", scheduleId: "schedule_1", status: "active" }, error: null }));

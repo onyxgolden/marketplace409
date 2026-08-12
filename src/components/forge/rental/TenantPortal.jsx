@@ -5,6 +5,7 @@ import { loadStripe } from "@stripe/stripe-js";
 import TenantPaymentForm from "./TenantPaymentForm";
 import TenantMaintenancePanel from "./TenantMaintenancePanel";
 import TenantDocumentsPanel from "./TenantDocumentsPanel";
+import RentalPaymentReceipt from "./RentalPaymentReceipt";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const date = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -21,6 +22,7 @@ export function paymentPendingForCharge(payments, chargeId) {
 export default function TenantPortal() {
   const [portal, setPortal] = useState(null); const [error, setError] = useState("");
   const [session, setSession] = useState(null); const [starting, setStarting] = useState(null);
+  const [receipt, setReceipt] = useState(null);
   const loadPortal = useCallback(() => fetch("/api/rental/portal").then(async (response) => {
     const body = await response.json(); if (!response.ok) throw new Error(body.error); return body.portal;
   }).then(setPortal), []);
@@ -63,10 +65,11 @@ export default function TenantPortal() {
       </div>)}</div>
       <div className="mt-8 border-t pt-6"><h3 className="font-black">Payment history</h3>
         {payments.length === 0 ? <p className="mt-2 text-sm text-slate-500">No payments recorded yet.</p> :
-          payments.map((payment) => <div key={payment.id} className="mt-3 flex justify-between border-b pb-3 text-sm">
+          payments.map((payment) => <div key={payment.id} className="mt-3 flex justify-between gap-4 border-b pb-3 text-sm">
             <span><span className="font-bold capitalize">{payment.paymentMethod ? payment.paymentMethod.replaceAll("_", " ") : payment.status.replaceAll("_", " ")}</span><br/><span className="text-slate-500">{date.format(new Date(payment.receivedAt || payment.createdAt))}{payment.receiptReference ? ` · Ref ${payment.receiptReference}` : ""}</span></span>
-            <span className="font-bold">{money.format(payment.amountCents / 100)}</span></div>)}</div>
+            <span className="text-right"><span className="font-bold">{money.format(payment.amountCents / 100)}</span>{payment.status==="succeeded"?<><br/><button onClick={()=>setReceipt({payment,unitLabel:unit?.label||"Rental home"})} className="mt-1 font-bold text-blue-700 underline">View receipt</button></>:null}</span></div>)}</div>
       </section>) }
+    {receipt?<RentalPaymentReceipt payment={receipt.payment} tenantName={portal.tenant.displayName} unitLabel={receipt.unitLabel} onClose={()=>setReceipt(null)}/>:null}
     {!session ? <section className="rounded-2xl border border-blue-200 bg-blue-50 p-6">
       <p className="text-sm font-bold uppercase tracking-widest text-blue-800">Optional tenant service</p>
       <h2 className="mt-2 text-xl font-black text-slate-950">Build credit with rent history</h2>

@@ -1,0 +1,5 @@
+import{readFileSync}from"node:fs";import{resolve}from"node:path";import{describe,expect,it}from"vitest";
+const sql=readFileSync(resolve(process.cwd(),"supabase/migrations/20260812002000_create_rental_notification_outbox.sql"),"utf8").toLowerCase();
+describe("rental notification outbox",()=>{it("queues auditable messages without sending inside transaction triggers",()=>{expect(sql).toContain("create table if not exists rental_notification_outbox");expect(sql).toContain("status text not null default 'queued'");expect(sql).not.toContain("http_post");});
+it("queues payment, maintenance, and document events idempotently",()=>{expect(sql).toContain("payment_succeeded");expect(sql).toContain("maintenance_updated");expect(sql).toContain("document_published");expect(sql).toContain("on conflict(event_key) do nothing");});
+it("does not grant tenant or anonymous outbox access",()=>{expect(sql).toContain("rental_notification_owner_select");expect(sql).toContain("revoke all on function queue_rental_notification() from public,anon,authenticated");});});
