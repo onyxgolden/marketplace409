@@ -9,6 +9,11 @@ import {
   validateReviewedSessionMetadata,
 } from "../../../../scripts/governance/reviewedSessionMetadataContract.mjs";
 
+import {
+  REVIEW_REQUIRED,
+  requiresHumanReview,
+} from "../../../../scripts/conversation/requiresHumanReview.mjs";
+
 function riskLabel(risk) {
   return String(risk || "")
     .split("-")
@@ -56,6 +61,18 @@ function statusClass(status) {
   return "border-slate-300 bg-slate-50 text-slate-700";
 }
 
+const VALIDATION_CATEGORIES = Object.freeze([
+  { key: "focusedTests", label: "Focused tests" },
+  { key: "fullTests", label: "Full tests" },
+  { key: "productionBuild", label: "Production build" },
+]);
+
+function validationStatusLabel(status) {
+  if (status === "passing") return "Passing";
+  if (status === "failing") return "Failing";
+  return "Not run";
+}
+
 export function buildReadableProgrammerResultText({
   execution,
   error,
@@ -94,6 +111,8 @@ export function buildReadableProgrammerResultText({
 
   return lines.join("\n");
 }
+
+const INITIAL_DELIVERED_WORK_DISPLAY_COUNT = 6;
 
 const SESSION_REVIEW_TEXT_FIELDS = Object.freeze([
   "phaseIdentifier",
@@ -154,6 +173,93 @@ export function buildReviewedSessionMetadataPayload(reviewFields) {
   return payload;
 }
 
+export function sessionReviewFieldsFromProposal(proposal) {
+  const empty = createEmptySessionReviewFields();
+
+  if (!proposal) {
+    return empty;
+  }
+
+  const nonReviewRequired = (value) =>
+    value && value !== "REVIEW_REQUIRED" ? value : "";
+
+  return {
+    ...empty,
+    phaseIdentifier: nonReviewRequired(
+      proposal.phase?.identifier,
+    ),
+    phaseTitle: nonReviewRequired(proposal.phase?.title),
+    startingObjective:
+      proposal.objective?.startingObjective || "",
+    endingObjective:
+      proposal.objective?.endingObjective || "",
+    deliveredWork: (proposal.deliveredWork || []).join("\n"),
+    knownWarnings: (proposal.knownWarnings || []).join("\n"),
+    markSessionComplete: Boolean(
+      proposal.completion?.proposedMarkSessionComplete,
+    ),
+    nextSessionObjective:
+      proposal.nextSession?.objective || "",
+    nextSessionStartingInspection:
+      proposal.nextSession?.startingInspection || "",
+  };
+}
+
+function reviewFieldOrReviewRequired(value) {
+  const trimmed = String(value || "").trim();
+  return trimmed || REVIEW_REQUIRED;
+}
+
+/**
+ * Adapts the dashboard's flat review-field shape into the
+ * { state: { activePhase, currentObjective, nextSession } } shape
+ * requiresHumanReview() expects -- the same shape
+ * buildConversationState.mjs reads from governance/state/current-
+ * governance-state.json. A blank field maps to the same REVIEW_REQUIRED
+ * sentinel the backend would leave in place, so this mirrors, rather than
+ * re-derives, what the collector actually does with an omitted field.
+ * endingObjective maps to currentObjective because
+ * generateGovernanceState.mjs sets state.currentObjective from the
+ * snapshot's objective.endingObjective.
+ */
+export function reviewFieldsToGovernanceStateShape(reviewFields) {
+  return {
+    state: {
+      activePhase: {
+        identifier: reviewFieldOrReviewRequired(
+          reviewFields?.phaseIdentifier,
+        ),
+        title: reviewFieldOrReviewRequired(
+          reviewFields?.phaseTitle,
+        ),
+      },
+      currentObjective: reviewFieldOrReviewRequired(
+        reviewFields?.endingObjective,
+      ),
+      nextSession: {
+        objective: reviewFieldOrReviewRequired(
+          reviewFields?.nextSessionObjective,
+        ),
+        startingInspection: reviewFieldOrReviewRequired(
+          reviewFields?.nextSessionStartingInspection,
+        ),
+      },
+    },
+  };
+}
+
+/**
+ * True when the current review fields would leave a policy-required
+ * governance field REVIEW_REQUIRED -- reuses requiresHumanReview so this
+ * can never drift from what the backend invariant (and the generated
+ * bootstrap) actually require.
+ */
+export function isSessionReviewIncomplete(reviewFields) {
+  return requiresHumanReview(
+    reviewFieldsToGovernanceStateShape(reviewFields),
+  );
+}
+
 export function validateSessionReviewFields(reviewFields) {
   const payload = buildReviewedSessionMetadataPayload(reviewFields);
 
@@ -191,6 +297,14 @@ export default function ProgrammerDashboard({
   );
   const [reviewValidationError, setReviewValidationError] =
     useState(null);
+  const [reviewProposalStatus, setReviewProposalStatus] =
+    useState("idle");
+  const [reviewProposal, setReviewProposal] = useState(null);
+  const [reviewProposalError, setReviewProposalError] =
+    useState("");
+  const [reviewMode, setReviewMode] = useState("summary");
+  const [showAllDeliveredWork, setShowAllDeliveredWork] =
+    useState(false);
 
   useEffect(() => {
     if (!runningStartedAt) {
@@ -340,15 +454,49 @@ export default function ProgrammerDashboard({
     }
   }
 
-  function startCommand(command) {
-    if (command.requiresSessionReview) {
-      setReviewFields(createEmptySessionReviewFields());
-      setReviewValidationError(null);
-      setReviewCommand(command);
+  async function startCommand(command) {
+    if (!command.requiresSessionReview) {
+      executeCommand(command);
       return;
     }
 
-    executeCommand(command);
+    setReviewFields(createEmptySessionReviewFields());
+    setReviewValidationError(null);
+    setReviewProposal(null);
+    setReviewProposalError("");
+    setReviewMode("summary");
+    setReviewProposalStatus("loading");
+    setShowAllDeliveredWork(false);
+    setReviewCommand(command);
+
+    try {
+      const response = await fetch(
+        "/api/forge/developer/commands/closeout-proposal",
+      );
+
+      const payload = await response.json();
+
+      if (!response.ok || !payload?.proposal) {
+        throw new Error(
+          payload?.error ||
+            "Could not build a closeout proposal.",
+        );
+      }
+
+      setReviewProposal(payload.proposal);
+      setReviewFields(
+        sessionReviewFieldsFromProposal(payload.proposal),
+      );
+      setReviewProposalStatus("ready");
+    } catch (proposalError) {
+      setReviewProposalError(
+        proposalError instanceof Error
+          ? proposalError.message
+          : "Could not build a closeout proposal.",
+      );
+      setReviewProposalStatus("error");
+      setReviewMode("edit");
+    }
   }
 
   function updateReviewField(field, value) {
@@ -362,10 +510,25 @@ export default function ProgrammerDashboard({
   function cancelSessionReview() {
     setReviewCommand(null);
     setReviewValidationError(null);
+    setReviewProposal(null);
+    setReviewProposalStatus("idle");
+    setReviewProposalError("");
+    setReviewMode("summary");
+    setShowAllDeliveredWork(false);
   }
 
-  function approveSessionReview(event) {
-    event.preventDefault();
+  function openEditDetails() {
+    setReviewMode("edit");
+  }
+
+  function submitReview() {
+    if (isSessionReviewIncomplete(reviewFields)) {
+      setReviewValidationError(
+        "This proposal is missing a required governance field (phase, objective, or next-session details). Use Edit details to fill it in before approving.",
+      );
+      setReviewMode("edit");
+      return;
+    }
 
     const validation = validateSessionReviewFields(reviewFields);
 
@@ -378,7 +541,16 @@ export default function ProgrammerDashboard({
 
     setReviewCommand(null);
     setReviewValidationError(null);
+    setReviewProposal(null);
+    setReviewProposalStatus("idle");
+    setReviewProposalError("");
+    setReviewMode("summary");
     executeCommand(command, validation.payload);
+  }
+
+  function approveSessionReview(event) {
+    event.preventDefault();
+    submitReview();
   }
 
   return (
@@ -632,7 +804,244 @@ export default function ProgrammerDashboard({
               Review before running: {reviewCommand.label}
             </h2>
 
-            <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+            {reviewProposalStatus === "loading" && (
+              <p
+                data-session-review-loading
+                className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm font-semibold text-slate-600"
+              >
+                Building a proposal from repository evidence…
+              </p>
+            )}
+
+            {reviewProposalStatus === "error" && (
+              <p
+                role="alert"
+                data-session-review-proposal-error
+                className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-900"
+              >
+                {reviewProposalError} FORGE could not build a proposal, so
+                fill in the details yourself below.
+              </p>
+            )}
+
+            {reviewMode === "summary" &&
+              reviewProposalStatus === "ready" && (
+                <div
+                  data-session-review-summary
+                  className="mt-4 space-y-4"
+                >
+                  <p className="text-sm font-semibold leading-6 text-slate-600">
+                    FORGE built this proposal from repository evidence
+                    (governance state, commits since the last session,
+                    validation results, and the synchronized roadmap).
+                    Fields marked{" "}
+                    <span className="font-black text-amber-700">
+                      Proposed
+                    </span>{" "}
+                    could not be derived from trustworthy governance
+                    history and were filled in as a starting point — review
+                    them before approving. Edit anything before approving,
+                    or approve as-is.
+                  </p>
+
+                  <div>
+                    <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wide text-slate-500">
+                      Phase
+                      {reviewProposal?.fallbackApplied?.phase && (
+                        <span
+                          data-session-review-fallback-badge="phase"
+                          className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-800"
+                        >
+                          Proposed
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-sm font-bold text-slate-900">
+                      {reviewFields.phaseIdentifier ||
+                        "REVIEW_REQUIRED"}{" "}
+                      —{" "}
+                      {reviewFields.phaseTitle ||
+                        "REVIEW_REQUIRED"}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wide text-slate-500">
+                      Objective
+                      {reviewProposal?.fallbackApplied
+                        ?.objective && (
+                        <span
+                          data-session-review-fallback-badge="objective"
+                          className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-800"
+                        >
+                          Proposed
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">
+                      {reviewFields.endingObjective ||
+                        "No objective on record. Add one below."}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">
+                      Delivered work
+                    </div>
+                    {reviewProposal?.deliveredWork?.length > 0 ? (
+                      <>
+                        <ul className="mt-1 list-disc space-y-1 pl-5 text-sm font-semibold text-slate-900">
+                          {(showAllDeliveredWork
+                            ? reviewProposal.deliveredWork
+                            : reviewProposal.deliveredWork.slice(
+                                0,
+                                INITIAL_DELIVERED_WORK_DISPLAY_COUNT,
+                              )
+                          ).map((item, index) => (
+                            <li key={`delivered-${index}`}>
+                              {item}
+                            </li>
+                          ))}
+                        </ul>
+
+                        {reviewProposal.deliveredWork.length >
+                          INITIAL_DELIVERED_WORK_DISPLAY_COUNT && (
+                          <button
+                            type="button"
+                            data-session-review-toggle-delivered-work
+                            onClick={() =>
+                              setShowAllDeliveredWork(
+                                (current) => !current,
+                              )
+                            }
+                            className="mt-2 text-xs font-black uppercase tracking-wide text-slate-600 underline decoration-dotted underline-offset-2 hover:text-slate-900"
+                          >
+                            {showAllDeliveredWork
+                              ? "Show fewer items"
+                              : `Show all ${reviewProposal.deliveredWork.length} items`}
+                          </button>
+                        )}
+
+                        {reviewProposal.generatedFrom
+                          ?.recoveryMode && (
+                          <div className="mt-2 text-xs font-semibold text-slate-500">
+                            No trustworthy prior session checkpoint
+                            was found, so this list is a bounded
+                            recovery estimate
+                            {reviewProposal.generatedFrom
+                              .excludedCommitCount > 0
+                              ? ` (${reviewProposal.generatedFrom.excludedCommitCount} older, unrelated commits were excluded)`
+                              : ""}
+                            .
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="mt-1 text-sm font-semibold text-slate-500">
+                        No commits since the last recorded session.
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">
+                      Validation result
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-2 text-xs font-black uppercase">
+                      {VALIDATION_CATEGORIES.map(
+                        ({ key, label }) => {
+                          const status =
+                            reviewProposal?.validation?.[key]
+                              ?.status;
+
+                          const displayValue = reviewProposal?.hasCurrentValidationArtifact
+                            ? validationStatusLabel(status)
+                            : "Pending closeout";
+
+                          return (
+                            <span
+                              key={key}
+                              className={[
+                                "rounded-full border px-2 py-1",
+                                statusClass(status),
+                              ].join(" ")}
+                            >
+                              {label}: {displayValue}
+                            </span>
+                          );
+                        },
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">
+                      Known warnings
+                    </div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">
+                      {reviewProposal?.knownWarnings?.length > 0
+                        ? reviewProposal.knownWarnings.join(
+                            ", ",
+                          )
+                        : "None detected."}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">
+                      Completion status
+                    </div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">
+                      {reviewFields.markSessionComplete
+                        ? "Will mark complete if closeout validation passes; otherwise it will remain incomplete."
+                        : "Proposed: leave incomplete (validation evidence does not yet fully cover this commit)."}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wide text-slate-500">
+                      Next objective
+                      {reviewProposal?.fallbackApplied
+                        ?.nextObjective && (
+                        <span
+                          data-session-review-fallback-badge="nextObjective"
+                          className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-800"
+                        >
+                          Proposed
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">
+                      {reviewFields.nextSessionObjective ||
+                        "No next objective on record. Add one below."}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wide text-slate-500">
+                      Next inspection
+                      {reviewProposal?.fallbackApplied
+                        ?.nextInspection && (
+                        <span
+                          data-session-review-fallback-badge="nextInspection"
+                          className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-800"
+                        >
+                          Proposed
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">
+                      {reviewFields
+                        .nextSessionStartingInspection ||
+                        "No starting inspection on record. Add one below."}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            {reviewMode === "edit" && (
+              <>
+            <p className="mt-4 text-sm font-semibold leading-6 text-slate-600">
               FORGE will not choose these values for you. Fill in what you
               know, or leave a field blank to keep it marked
               REVIEW_REQUIRED in the generated governance documents.
@@ -828,6 +1237,8 @@ export default function ProgrammerDashboard({
                 className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold normal-case text-slate-900"
               />
             </label>
+              </>
+            )}
 
             {reviewValidationError && (
               <p
@@ -848,12 +1259,50 @@ export default function ProgrammerDashboard({
                 Cancel
               </button>
 
-              <button
-                type="submit"
-                className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-black uppercase tracking-wide text-white transition hover:bg-slate-800"
-              >
-                Approve &amp; run
-              </button>
+              {reviewMode === "summary" &&
+                reviewProposalStatus === "ready" && (
+                  <>
+                    {isSessionReviewIncomplete(
+                      reviewFields,
+                    ) && (
+                      <span
+                        data-session-review-incomplete-hint
+                        className="text-xs font-bold text-amber-700"
+                      >
+                        Missing a required field. Use Edit
+                        details to fill it in.
+                      </span>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={openEditDetails}
+                      className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-wide text-slate-700 transition hover:bg-slate-100"
+                    >
+                      Edit details
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={submitReview}
+                      disabled={isSessionReviewIncomplete(
+                        reviewFields,
+                      )}
+                      className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-black uppercase tracking-wide text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Approve closeout
+                    </button>
+                  </>
+                )}
+
+              {reviewMode === "edit" && (
+                <button
+                  type="submit"
+                  className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-black uppercase tracking-wide text-white transition hover:bg-slate-800"
+                >
+                  Approve &amp; run
+                </button>
+              )}
             </div>
           </form>
         </div>

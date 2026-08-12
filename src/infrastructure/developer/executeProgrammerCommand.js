@@ -14,8 +14,33 @@ import {
   validateReviewedSessionMetadata,
 } from "../../../scripts/governance/reviewedSessionMetadataContract.mjs";
 
+import {
+  compareSnapshotToReviewedMetadata,
+} from "./compareSnapshotToReviewedMetadata";
+
+import {
+  requiresHumanReview,
+} from "../../../scripts/conversation/requiresHumanReview.mjs";
+
 const MAXIMUM_OUTPUT_LENGTH =
   50000;
+
+/**
+ * The collector's own "Reviewed session metadata applied: ..." console
+ * line (see scripts/governance/collectSessionEvidence.mjs) is retained as
+ * human-readable observability inside step output -- it is naturally
+ * present there because executeShadowGovernanceTransaction writes the
+ * collector's stdout straight through, with no special handling needed
+ * here. It is deliberately NOT used to gate pass/fail below: a stdout
+ * substring is easy to satisfy without the metadata actually reaching the
+ * snapshot governance state was generated from, and it says nothing about
+ * whether that snapshot is the one THIS run created versus a prior one
+ * left over from an earlier session. The structured checks below --
+ * identifying this run's own snapshot via a before/after directory diff,
+ * confirming the synced state points at it, and comparing its fields
+ * against the exact normalized payload submitted -- are the real
+ * invariant.
+ */
 
 function trimOutput(value) {
   const ansiEscapePattern =
@@ -196,7 +221,198 @@ function writeReviewedMetadataFile(
     "utf8",
   );
 
-  return tempPath;
+  return {
+    path: tempPath,
+    normalizedMetadata,
+  };
+}
+
+const SNAPSHOT_DIRECTORY_RELATIVE_PATH =
+  "governance/snapshots";
+
+const GOVERNANCE_STATE_RELATIVE_PATH =
+  "governance/state/current-governance-state.json";
+
+function listSnapshotNames(
+  repositoryRoot,
+) {
+  const snapshotDirectory =
+    path.join(
+      repositoryRoot,
+      SNAPSHOT_DIRECTORY_RELATIVE_PATH,
+    );
+
+  if (
+    !fs.existsSync(
+      snapshotDirectory,
+    )
+  ) {
+    return new Set();
+  }
+
+  return new Set(
+    fs.readdirSync(
+      snapshotDirectory,
+    ).filter((name) =>
+      name.endsWith(".json"),
+    ),
+  );
+}
+
+function readSyncedGovernanceState(
+  repositoryRoot,
+) {
+  try {
+    return JSON.parse(
+      fs.readFileSync(
+        path.join(
+          repositoryRoot,
+          GOVERNANCE_STATE_RELATIVE_PATH,
+        ),
+        "utf8",
+      ),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function readSnapshotFile(
+  repositoryRoot,
+  relativeSnapshotPath,
+) {
+  try {
+    return JSON.parse(
+      fs.readFileSync(
+        path.join(
+          repositoryRoot,
+          relativeSnapshotPath,
+        ),
+        "utf8",
+      ),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The real invariant: does the snapshot THIS run created -- identified by
+ * diffing governance/snapshots/ before and after, exactly like
+ * executeShadowGovernanceTransaction.mjs's own identifyNewSnapshot() --
+ * actually carry the reviewer's submitted payload, and does the
+ * synchronized governance state (which the bootstrap reads fresh from
+ * disk) point at that exact snapshot rather than a prior one? A stale but
+ * fully-populated state from an earlier session would fail this even
+ * though it would satisfy a naive "no REVIEW_REQUIRED values" check.
+ */
+function evaluateReviewedMetadataApplication({
+  reviewedMetadata,
+  normalizedReviewedMetadata,
+  repositoryRoot,
+  snapshotsBeforeRun,
+  listSnapshotNamesFn,
+  readSyncedGovernanceStateFn,
+  readSnapshotFn,
+}) {
+  if (reviewedMetadata === null) {
+    return [
+      "No reviewed metadata was supplied with this request.",
+    ];
+  }
+
+  const snapshotsAfterRun =
+    listSnapshotNamesFn(
+      repositoryRoot,
+    );
+
+  const newSnapshotNames = [
+    ...snapshotsAfterRun,
+  ].filter(
+    (name) =>
+      !snapshotsBeforeRun.has(
+        name,
+      ),
+  );
+
+  if (newSnapshotNames.length !== 1) {
+    return [
+      `Expected exactly one new governance snapshot from this run; found ${newSnapshotNames.length}.`,
+    ];
+  }
+
+  const newSnapshotRelativePath = `${SNAPSHOT_DIRECTORY_RELATIVE_PATH}/${newSnapshotNames[0]}`;
+
+  const snapshot =
+    readSnapshotFn(
+      repositoryRoot,
+      newSnapshotRelativePath,
+    );
+
+  if (!snapshot) {
+    return [
+      "The governance snapshot created by this run could not be read.",
+    ];
+  }
+
+  const reasons = [];
+
+  const syncedState =
+    readSyncedGovernanceStateFn(
+      repositoryRoot,
+    );
+
+  const syncedLatestSnapshot =
+    syncedState?.session
+      ?.latestSnapshot ?? null;
+
+  const syncedSourceSnapshot =
+    syncedState?.synchronization
+      ?.sourceSnapshot ?? null;
+
+  if (
+    !syncedState ||
+    syncedLatestSnapshot !==
+      newSnapshotRelativePath ||
+    syncedSourceSnapshot !==
+      newSnapshotRelativePath
+  ) {
+    reasons.push(
+      "The synchronized governance state references a different snapshot than the one this run created -- it may be stale.",
+    );
+  }
+
+  const mismatches =
+    compareSnapshotToReviewedMetadata(
+      snapshot,
+      normalizedReviewedMetadata,
+    );
+
+  for (const mismatch of mismatches) {
+    reasons.push(
+      `Field "${mismatch.field}" was not applied as submitted (expected ${mismatch.expected}, found ${mismatch.actual}).`,
+    );
+  }
+
+  // The exact-match check above proves THIS run's payload landed. It
+  // cannot, by itself, prove the payload was actually complete: a sparse
+  // submission that omits a policy-required field will match itself
+  // perfectly while leaving that field REVIEW_REQUIRED. requiresHumanReview
+  // is the same completeness policy buildConversationState.mjs applies to
+  // the generated bootstrap -- reused here, not reimplemented, so both
+  // checks can never drift apart.
+  if (
+    syncedState &&
+    requiresHumanReview(
+      syncedState,
+    )
+  ) {
+    reasons.push(
+      "The synchronized governance state still requires human review: a policy-required phase, objective, or next-session field remains REVIEW_REQUIRED.",
+    );
+  }
+
+  return reasons;
 }
 
 function commandSteps({
@@ -323,6 +539,12 @@ export function executeProgrammerCommand({
     process.env.VERCEL,
   reviewedMetadata =
     null,
+  listSnapshotNamesFn =
+    listSnapshotNames,
+  readSyncedGovernanceStateFn =
+    readSyncedGovernanceState,
+  readSnapshotFn =
+    readSnapshotFile,
 } = {}) {
   const definition =
     getProgrammerCommand(
@@ -332,6 +554,15 @@ export function executeProgrammerCommand({
   if (!definition) {
     throw new Error(
       "Programmer command is not allowlisted.",
+    );
+  }
+
+  if (
+    reviewedMetadata !== null &&
+    !definition.requiresSessionReview
+  ) {
+    throw new Error(
+      `Reviewed session metadata was supplied for "${commandId}", which is not flagged to accept it. Refusing to run.`,
     );
   }
 
@@ -366,15 +597,31 @@ export function executeProgrammerCommand({
   let reviewedMetadataPath =
     null;
 
+  let normalizedReviewedMetadata =
+    null;
+
   if (
     reviewedMetadata !== null &&
     definition.requiresSessionReview
   ) {
-    reviewedMetadataPath =
+    const written =
       writeReviewedMetadataFile(
         reviewedMetadata,
       );
+
+    reviewedMetadataPath =
+      written.path;
+
+    normalizedReviewedMetadata =
+      written.normalizedMetadata;
   }
+
+  const snapshotsBeforeRun =
+    definition.requiresSessionReview
+      ? listSnapshotNamesFn(
+          normalizedRoot,
+        )
+      : null;
 
   try {
     const startedAt =
@@ -433,6 +680,53 @@ export function executeProgrammerCommand({
           "passing"
       ) {
         break;
+      }
+    }
+
+    if (
+      definition.requiresSessionReview &&
+      steps.length ===
+        definitions.length
+    ) {
+      const finalIndex =
+        steps.length - 1;
+
+      const finalStep =
+        steps[finalIndex];
+
+      if (
+        finalStep.status ===
+          "passing"
+      ) {
+        const violationReasons =
+          evaluateReviewedMetadataApplication({
+            reviewedMetadata,
+            normalizedReviewedMetadata,
+            repositoryRoot:
+              normalizedRoot,
+            snapshotsBeforeRun,
+            listSnapshotNamesFn,
+            readSyncedGovernanceStateFn,
+            readSnapshotFn,
+          });
+
+        if (
+          violationReasons.length >
+          0
+        ) {
+          steps[finalIndex] = {
+            ...finalStep,
+            status:
+              "failing",
+            output: [
+              "FORGE INVARIANT VIOLATION: this command requires owner-reviewed session metadata.",
+              ...violationReasons,
+              "Reopen \"Review & run\", approve the proposal, and try again.",
+              "",
+              finalStep.output,
+            ].join("\n"),
+          };
+        }
       }
     }
 

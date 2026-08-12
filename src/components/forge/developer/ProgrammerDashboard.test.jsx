@@ -25,6 +25,9 @@ import ProgrammerDashboard, {
   buildReviewedSessionMetadataPayload,
   calculateProgrammerCommandProgress,
   createEmptySessionReviewFields,
+  isSessionReviewIncomplete,
+  reviewFieldsToGovernanceStateShape,
+  sessionReviewFieldsFromProposal,
   validateSessionReviewFields,
 } from "./ProgrammerDashboard";
 
@@ -357,6 +360,106 @@ describe("validateSessionReviewFields", () => {
   });
 });
 
+function fullyPopulatedReviewFields() {
+  return {
+    ...createEmptySessionReviewFields(),
+    phaseIdentifier: "16.9",
+    phaseTitle: "Reviewed closeout proposal",
+    endingObjective:
+      "Ship the deterministic closeout proposal workflow.",
+    nextSessionObjective:
+      "Visually verify the populated proposal in the dashboard.",
+    nextSessionStartingInspection:
+      "Inspect the synchronized documents.",
+  };
+}
+
+describe("reviewFieldsToGovernanceStateShape / isSessionReviewIncomplete", () => {
+  it("maps a fully populated proposal to a governanceState with no REVIEW_REQUIRED values", () => {
+    expect(
+      reviewFieldsToGovernanceStateShape(
+        fullyPopulatedReviewFields(),
+      ),
+    ).toEqual({
+      state: {
+        activePhase: {
+          identifier: "16.9",
+          title: "Reviewed closeout proposal",
+        },
+        currentObjective:
+          "Ship the deterministic closeout proposal workflow.",
+        nextSession: {
+          objective:
+            "Visually verify the populated proposal in the dashboard.",
+          startingInspection:
+            "Inspect the synchronized documents.",
+        },
+      },
+    });
+  });
+
+  it("maps a blank field to the REVIEW_REQUIRED sentinel, matching what the backend would leave in place", () => {
+    const shape = reviewFieldsToGovernanceStateShape(
+      createEmptySessionReviewFields(),
+    );
+
+    expect(shape.state.activePhase.identifier).toBe(
+      "REVIEW_REQUIRED",
+    );
+    expect(shape.state.currentObjective).toBe(
+      "REVIEW_REQUIRED",
+    );
+  });
+
+  it("reports a fully populated proposal as complete", () => {
+    expect(
+      isSessionReviewIncomplete(
+        fullyPopulatedReviewFields(),
+      ),
+    ).toBe(false);
+  });
+
+  it("reports a blank proposal as incomplete", () => {
+    expect(
+      isSessionReviewIncomplete(
+        createEmptySessionReviewFields(),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports incomplete when only phaseTitle is missing, even though every other required field is populated", () => {
+    expect(
+      isSessionReviewIncomplete({
+        ...fullyPopulatedReviewFields(),
+        phaseTitle: "",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not treat truly optional fields (deliveredWork, knownWarnings, startingObjective, incompleteReason) as required", () => {
+    expect(
+      isSessionReviewIncomplete({
+        ...fullyPopulatedReviewFields(),
+        deliveredWork: "",
+        knownWarnings: "",
+        startingObjective: "",
+        incompleteReason: "",
+      }),
+    ).toBe(false);
+  });
+
+  it("stays complete when work is legitimately incomplete (markSessionComplete false with an incompleteReason)", () => {
+    expect(
+      isSessionReviewIncomplete({
+        ...fullyPopulatedReviewFields(),
+        markSessionComplete: false,
+        incompleteReason:
+          "Focused tests were not run this session.",
+      }),
+    ).toBe(false);
+  });
+});
+
 function setNativeValue(element, value) {
   const prototype =
     element.tagName === "TEXTAREA"
@@ -436,6 +539,147 @@ function unmountDashboard({ container, root }) {
   container.remove();
 }
 
+const sampleProposal = {
+  generatedFrom: {
+    baselineTier: "snapshot",
+    recoveryMode: false,
+    excludedCommitCount: 0,
+    dominantScope: null,
+  },
+  fallbackApplied: {
+    phase: false,
+    objective: false,
+    nextObjective: false,
+    nextInspection: false,
+  },
+  phase: {
+    identifier: "16.9",
+    title: "Reviewed closeout proposal",
+  },
+  objective: {
+    startingObjective:
+      "Ship the reviewed session-closeout form.",
+    endingObjective:
+      "Ship the reviewed session-closeout form.",
+  },
+  deliveredWork: [
+    "Added client-side validation",
+    "Added interaction tests",
+  ],
+  changedFiles: [
+    "src/components/forge/developer/ProgrammerDashboard.jsx",
+  ],
+  knownWarnings: [],
+  validation: {
+    focusedTests: {
+      status: "not-run",
+      command: null,
+      summary: null,
+    },
+    fullTests: {
+      status: "passing",
+      command: "npx vitest run",
+      summary: "Full tests passed.",
+    },
+    productionBuild: {
+      status: "passing",
+      command: "npm run build",
+      summary: "Production build passed.",
+    },
+  },
+  hasCurrentValidationArtifact: true,
+  completion: {
+    eligible: false,
+    proposedMarkSessionComplete: false,
+  },
+  nextSession: {
+    objective:
+      "Visually verify the populated proposal in the dashboard.",
+    startingInspection:
+      "Review changes in: src/components/forge/developer/ProgrammerDashboard.jsx",
+  },
+  repository: {
+    head: "a".repeat(40),
+    branch: "main",
+    workingTreeClean: true,
+    headMatchesOriginMain: true,
+  },
+};
+
+function createRoutedFetchMock({
+  proposal = sampleProposal,
+  proposalOk = true,
+  executionResult,
+} = {}) {
+  return vi.fn((url) => {
+    if (
+      url === "/api/forge/developer/commands/closeout-proposal"
+    ) {
+      return Promise.resolve({
+        ok: proposalOk,
+        json: async () =>
+          proposalOk
+            ? { proposal }
+            : { error: "Could not build a proposal." },
+      });
+    }
+
+    return Promise.resolve({
+      ok: true,
+      json: async () => ({
+        result: executionResult ?? {
+          commandId: "complete-session-closeout",
+          label: "Complete session closeout",
+          status: "passing",
+          startedAt: "2026-08-10T10:00:00.000Z",
+          completedAt: "2026-08-10T10:00:05.000Z",
+          steps: [],
+        },
+      }),
+    });
+  });
+}
+
+describe("sessionReviewFieldsFromProposal", () => {
+  it("maps proposal values onto the editable review fields", () => {
+    expect(
+      sessionReviewFieldsFromProposal(sampleProposal),
+    ).toEqual({
+      phaseIdentifier: "16.9",
+      phaseTitle: "Reviewed closeout proposal",
+      startingObjective:
+        "Ship the reviewed session-closeout form.",
+      endingObjective:
+        "Ship the reviewed session-closeout form.",
+      deliveredWork:
+        "Added client-side validation\nAdded interaction tests",
+      knownWarnings: "",
+      markSessionComplete: false,
+      incompleteReason: "",
+      nextSessionObjective:
+        "Visually verify the populated proposal in the dashboard.",
+      nextSessionStartingInspection:
+        "Review changes in: src/components/forge/developer/ProgrammerDashboard.jsx",
+    });
+  });
+
+  it("returns blank fields for a REVIEW_REQUIRED phase and a missing proposal", () => {
+    expect(
+      sessionReviewFieldsFromProposal({
+        ...sampleProposal,
+        phase: {
+          identifier: "REVIEW_REQUIRED",
+          title: "REVIEW_REQUIRED",
+        },
+      }).phaseIdentifier,
+    ).toBe("");
+
+    expect(sessionReviewFieldsFromProposal(null)).toEqual(
+      createEmptySessionReviewFields(),
+    );
+  });
+});
+
 describe("ProgrammerDashboard interactions", () => {
   const interactionCommands = [
     {
@@ -487,124 +731,185 @@ describe("ProgrammerDashboard interactions", () => {
     );
   }
 
-  it("opens the review form when Review & run is clicked, without executing the command", () => {
-    vi.stubGlobal("fetch", vi.fn());
+  function commandExecutionCalls(fetchMock) {
+    return fetchMock.mock.calls.filter(
+      ([url]) => url === "/api/forge/developer/commands",
+    );
+  }
+
+  it("opens a populated proposal when Review & run is clicked, without executing the command", async () => {
+    const fetchMock = createRoutedFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
 
     mounted = mountDashboard(interactionCommands);
     const { container } = mounted;
 
     expect(getReviewForm(container)).toBeNull();
 
-    clickButton(container, "Review & run");
+    await clickButtonAndFlush(container, "Review & run");
 
-    expect(getReviewForm(container)).not.toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("allows the reviewer to populate fields", () => {
-    vi.stubGlobal("fetch", vi.fn());
-
-    mounted = mountDashboard(interactionCommands);
-    const { container } = mounted;
-
-    clickButton(container, "Review & run");
-
-    const phaseInput = container.querySelector(
-      "#review-phase-identifier",
+    const summary = container.querySelector(
+      "[data-session-review-summary]",
     );
 
-    act(() => {
-      setNativeValue(phaseInput, "Phase 16");
-    });
+    expect(summary).not.toBeNull();
+    expect(summary.textContent).toContain("16.9");
+    expect(summary.textContent).toContain(
+      "Reviewed closeout proposal",
+    );
+    expect(summary.textContent).toContain(
+      "Added client-side validation",
+    );
+    expect(summary.textContent).toContain(
+      "Added interaction tests",
+    );
 
-    expect(phaseInput.value).toBe("Phase 16");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/forge/developer/commands/closeout-proposal",
+    );
+    expect(commandExecutionCalls(fetchMock)).toHaveLength(0);
   });
 
-  it("submits the expected reviewedMetadata when Approve & run is clicked", async () => {
+  it("approves the closeout proposal with zero typing", async () => {
     vi.stubGlobal("confirm", vi.fn(() => true));
 
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        result: {
-          commandId: "complete-session-closeout",
-          label: "Complete session closeout",
-          status: "passing",
-          startedAt: "2026-08-10T10:00:00.000Z",
-          completedAt: "2026-08-10T10:00:05.000Z",
-          steps: [],
-        },
-      }),
-    });
-
+    const fetchMock = createRoutedFetchMock();
     vi.stubGlobal("fetch", fetchMock);
 
     mounted = mountDashboard(interactionCommands);
     const { container } = mounted;
 
-    clickButton(container, "Review & run");
+    await clickButtonAndFlush(container, "Review & run");
 
-    act(() => {
-      setNativeValue(
-        container.querySelector(
-          "#review-phase-identifier",
-        ),
-        "Phase 16",
-      );
+    // No field is touched here -- proving approval requires no typing.
+    await clickButtonAndFlush(container, "Approve closeout");
 
-      setNativeValue(
-        container.querySelector(
-          "#review-starting-objective",
-        ),
-        "Ship the reviewed session-closeout form",
-      );
+    const executionCalls = commandExecutionCalls(fetchMock);
+    expect(executionCalls).toHaveLength(1);
 
-      setNativeValue(
-        container.querySelector(
-          "#review-delivered-work",
-        ),
-        "Added client-side validation\nAdded interaction tests",
-      );
-    });
-
-    act(() => {
-      container
-        .querySelector("#review-mark-complete")
-        .click();
-    });
-
-    await clickButtonAndFlush(container, "Approve & run");
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    const requestBody = JSON.parse(
-      fetchMock.mock.calls[0][1].body,
-    );
+    const requestBody = JSON.parse(executionCalls[0][1].body);
 
     expect(requestBody).toEqual({
       commandId: "complete-session-closeout",
       reviewedMetadata: {
-        phaseIdentifier: "Phase 16",
+        phaseIdentifier: "16.9",
+        phaseTitle: "Reviewed closeout proposal",
         startingObjective:
-          "Ship the reviewed session-closeout form",
+          "Ship the reviewed session-closeout form.",
+        endingObjective:
+          "Ship the reviewed session-closeout form.",
         deliveredWork: [
           "Added client-side validation",
           "Added interaction tests",
         ],
-        markSessionComplete: true,
+        markSessionComplete: false,
+        nextSessionObjective:
+          "Visually verify the populated proposal in the dashboard.",
+        nextSessionStartingInspection:
+          "Review changes in: src/components/forge/developer/ProgrammerDashboard.jsx",
       },
     });
 
     expect(getReviewForm(container)).toBeNull();
   });
 
-  it("blocks submission and shows validation feedback for input that violates the shared contract, preserving entered values", () => {
-    vi.stubGlobal("fetch", vi.fn());
+  it("cannot execute Approve closeout when the proposal is missing a policy-required field -- button disabled, hint shown, no command runs", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true));
+
+    const sparseProposal = {
+      ...sampleProposal,
+      // Phase title omitted -- a policy-required field per
+      // requiresHumanReview -- while everything else stays populated.
+      phase: {
+        identifier: "16.9",
+        title: "",
+      },
+    };
+
+    const fetchMock = createRoutedFetchMock({
+      proposal: sparseProposal,
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     mounted = mountDashboard(interactionCommands);
     const { container } = mounted;
 
-    clickButton(container, "Review & run");
+    await clickButtonAndFlush(container, "Review & run");
+
+    const approveButton = findButtonByText(
+      container,
+      "Approve closeout",
+    );
+
+    expect(approveButton.disabled).toBe(true);
+
+    expect(
+      container.querySelector(
+        "[data-session-review-incomplete-hint]",
+      ),
+    ).not.toBeNull();
+
+    // Clicking a disabled button fires no click handler in a real
+    // browser; confirm that holds here too by attempting it anyway.
+    act(() => {
+      approveButton.click();
+    });
+
+    expect(commandExecutionCalls(fetchMock)).toHaveLength(0);
+    expect(getReviewForm(container)).not.toBeNull();
+  });
+
+  it("reveals the editable fields via Edit details, pre-filled from the proposal, and lets edits override it", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true));
+
+    const fetchMock = createRoutedFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountDashboard(interactionCommands);
+    const { container } = mounted;
+
+    await clickButtonAndFlush(container, "Review & run");
+
+    expect(
+      container.querySelector("#review-phase-identifier"),
+    ).toBeNull();
+
+    clickButton(container, "Edit details");
+
+    const phaseInput = container.querySelector(
+      "#review-phase-identifier",
+    );
+
+    expect(phaseInput).not.toBeNull();
+    expect(phaseInput.value).toBe("16.9");
+
+    act(() => {
+      setNativeValue(phaseInput, "16.10");
+    });
+
+    expect(phaseInput.value).toBe("16.10");
+
+    await clickButtonAndFlush(container, "Approve & run");
+
+    const executionCalls = commandExecutionCalls(fetchMock);
+    expect(executionCalls).toHaveLength(1);
+
+    const requestBody = JSON.parse(executionCalls[0][1].body);
+
+    expect(requestBody.reviewedMetadata.phaseIdentifier).toBe(
+      "16.10",
+    );
+  });
+
+  it("blocks submission in edit mode and preserves entered values when input violates the shared contract", async () => {
+    const fetchMock = createRoutedFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountDashboard(interactionCommands);
+    const { container } = mounted;
+
+    await clickButtonAndFlush(container, "Review & run");
+    clickButton(container, "Edit details");
 
     const tooLong = "a".repeat(2001);
 
@@ -630,7 +935,7 @@ describe("ProgrammerDashboard interactions", () => {
     );
     expect(alert.textContent).toContain("2000");
 
-    expect(fetch).not.toHaveBeenCalled();
+    expect(commandExecutionCalls(fetchMock)).toHaveLength(0);
     expect(getReviewForm(container)).not.toBeNull();
 
     expect(
@@ -640,19 +945,251 @@ describe("ProgrammerDashboard interactions", () => {
     ).toBe(tooLong);
   });
 
-  it("cancels the review without executing the command", () => {
-    vi.stubGlobal("fetch", vi.fn());
+  it("cancels the review without executing anything, even after the proposal has loaded", async () => {
+    const fetchMock = createRoutedFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
 
     mounted = mountDashboard(interactionCommands);
     const { container } = mounted;
 
-    clickButton(container, "Review & run");
+    await clickButtonAndFlush(container, "Review & run");
     expect(getReviewForm(container)).not.toBeNull();
 
     clickButton(container, "Cancel");
 
     expect(getReviewForm(container)).toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
+    expect(commandExecutionCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("falls back to the editable form when the proposal cannot be built", async () => {
+    const fetchMock = createRoutedFetchMock({
+      proposalOk: false,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountDashboard(interactionCommands);
+    const { container } = mounted;
+
+    await clickButtonAndFlush(container, "Review & run");
+
+    expect(
+      container.querySelector(
+        "[data-session-review-proposal-error]",
+      ),
+    ).not.toBeNull();
+
+    expect(
+      container.querySelector("#review-phase-identifier"),
+    ).not.toBeNull();
+
+    expect(commandExecutionCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("shows Pending closeout for every validation category when no current validation artifact backs the proposal", async () => {
+    const pendingProposal = {
+      ...sampleProposal,
+      hasCurrentValidationArtifact: false,
+      validation: {
+        focusedTests: {
+          status: "not-run",
+          command: null,
+          summary: null,
+        },
+        fullTests: {
+          status: "not-run",
+          command: null,
+          summary: null,
+        },
+        productionBuild: {
+          status: "not-run",
+          command: null,
+          summary: null,
+        },
+      },
+    };
+
+    const fetchMock = createRoutedFetchMock({
+      proposal: pendingProposal,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountDashboard(interactionCommands);
+    const { container } = mounted;
+
+    await clickButtonAndFlush(container, "Review & run");
+
+    const summary = container.querySelector(
+      "[data-session-review-summary]",
+    );
+
+    expect(summary.textContent).toContain(
+      "Focused tests: Pending closeout",
+    );
+    expect(summary.textContent).toContain(
+      "Full tests: Pending closeout",
+    );
+    expect(summary.textContent).toContain(
+      "Production build: Pending closeout",
+    );
+    expect(summary.textContent).not.toContain("Not run");
+  });
+
+  it("still shows the real status for a category backed by current eligible evidence, instead of Pending closeout", async () => {
+    const mixedProposal = {
+      ...sampleProposal,
+      hasCurrentValidationArtifact: true,
+      validation: {
+        focusedTests: {
+          status: "passing",
+          command: "npx vitest run",
+          summary: "Focused tests passed.",
+        },
+        fullTests: {
+          status: "failing",
+          command: "npx vitest run",
+          summary: "Full tests failed.",
+        },
+        productionBuild: {
+          status: "passing",
+          command: "npm run build",
+          summary: "Production build passed.",
+        },
+      },
+    };
+
+    const fetchMock = createRoutedFetchMock({
+      proposal: mixedProposal,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountDashboard(interactionCommands);
+    const { container } = mounted;
+
+    await clickButtonAndFlush(container, "Review & run");
+
+    const summary = container.querySelector(
+      "[data-session-review-summary]",
+    );
+
+    expect(summary.textContent).toContain(
+      "Focused tests: Passing",
+    );
+    expect(summary.textContent).toContain("Full tests: Failing");
+    expect(summary.textContent).toContain(
+      "Production build: Passing",
+    );
+    expect(summary.textContent).not.toContain("Pending closeout");
+  });
+
+  it("explains that completion depends on the closeout's own validation run when completion is requested by default", async () => {
+    const requestedCompletionProposal = {
+      ...sampleProposal,
+      completion: {
+        eligible: false,
+        proposedMarkSessionComplete: true,
+      },
+    };
+
+    const fetchMock = createRoutedFetchMock({
+      proposal: requestedCompletionProposal,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountDashboard(interactionCommands);
+    const { container } = mounted;
+
+    await clickButtonAndFlush(container, "Review & run");
+
+    const summary = container.querySelector(
+      "[data-session-review-summary]",
+    );
+
+    expect(summary.textContent).toContain(
+      "Will mark complete if closeout validation passes; otherwise it will remain incomplete.",
+    );
+  });
+
+  it("caps the delivered-work summary at 6 items with a toggle to reveal the rest", async () => {
+    const manyItemsProposal = {
+      ...sampleProposal,
+      deliveredWork: [
+        "feat(developer): item 1",
+        "feat(developer): item 2",
+        "feat(developer): item 3",
+        "feat(developer): item 4",
+        "feat(developer): item 5",
+        "feat(developer): item 6",
+        "feat(developer): item 7",
+        "feat(developer): item 8",
+      ],
+    };
+
+    const fetchMock = createRoutedFetchMock({
+      proposal: manyItemsProposal,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountDashboard(interactionCommands);
+    const { container } = mounted;
+
+    await clickButtonAndFlush(container, "Review & run");
+
+    const summary = container.querySelector(
+      "[data-session-review-summary]",
+    );
+
+    expect(summary.textContent).toContain("item 1");
+    expect(summary.textContent).toContain("item 6");
+    expect(summary.textContent).not.toContain("item 7");
+    expect(summary.textContent).not.toContain("item 8");
+
+    const toggleButton = container.querySelector(
+      "[data-session-review-toggle-delivered-work]",
+    );
+
+    expect(toggleButton).not.toBeNull();
+    expect(toggleButton.textContent).toContain("Show all 8 items");
+
+    await clickButtonAndFlush(
+      container,
+      "Show all 8 items",
+    );
+
+    expect(summary.textContent).toContain("item 7");
+    expect(summary.textContent).toContain("item 8");
+    expect(
+      container.querySelector(
+        "[data-session-review-toggle-delivered-work]",
+      ).textContent,
+    ).toContain("Show fewer items");
+  });
+
+  it("labels fallback-derived values as Proposed instead of presenting them as authoritative", async () => {
+    const fallbackProposal = {
+      ...sampleProposal,
+      fallbackApplied: {
+        phase: true,
+        objective: true,
+        nextObjective: true,
+        nextInspection: true,
+      },
+    };
+
+    const fetchMock = createRoutedFetchMock({
+      proposal: fallbackProposal,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountDashboard(interactionCommands);
+    const { container } = mounted;
+
+    await clickButtonAndFlush(container, "Review & run");
+
+    expect(
+      container.querySelectorAll(
+        "[data-session-review-fallback-badge]",
+      ).length,
+    ).toBe(4);
   });
 
   it("still executes non-review commands directly, without opening the review form", async () => {
