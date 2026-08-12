@@ -60,6 +60,17 @@ export async function POST(request) {
           activatedAt: input.activatedAt ?? null, createdAt: input.createdAt || timestamp, updatedAt: timestamp });
         return NextResponse.json({ success: true, tenant: await application.saveTenant(tenant, user.id) });
       }
+      case "update-tenant-email": {
+        if (typeof body.tenantId !== "string" || body.tenantId.trim() === "") return badRequest("tenantId is required.");
+        if (typeof body.email !== "string" || !/^\S+@\S+\.\S+$/.test(body.email.trim())) return badRequest("A valid email is required.");
+        const { data, error } = await authenticated.supabaseClient.from("rental_tenants")
+          .update({ email: body.email.trim().toLowerCase(), updated_at: timestamp })
+          .eq("owner_id", user.id).eq("id", body.tenantId.trim()).is("auth_user_id", null)
+          .select("id, display_name, email, status").maybeSingle();
+        if (error) throw error;
+        if (!data) return NextResponse.json({ error: "Only an unlinked tenant email can be changed." }, { status: 409 });
+        return NextResponse.json({ success: true, tenant: data });
+      }
       case "save-lease": {
         const input = body.lease;
         if (!input || typeof input !== "object") return badRequest("lease is required.");

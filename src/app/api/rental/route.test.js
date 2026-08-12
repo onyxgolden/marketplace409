@@ -44,6 +44,17 @@ describe("Rental Manager route", () => {
     expect(response.status).toBe(200);
     expect(rpc).toHaveBeenCalledWith("activate_rental_lease_schedule", { p_owner_id: "owner_1", p_schedule_id: "schedule_1" });
   });
+  it("updates only an unlinked owner-scoped tenant email", async () => {
+    const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(), maybeSingle: vi.fn(async () => ({ data: { id: "tenant_1", email: "owner+tenant@example.com" }, error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
+      supabaseClient: { from: vi.fn(() => query) } });
+    const response = await POST(request({ operation: "update-tenant-email", tenantId: "tenant_1", email: "Owner+Tenant@Example.com" }));
+    expect(response.status).toBe(200);
+    expect(query.update).toHaveBeenCalledWith(expect.objectContaining({ email: "owner+tenant@example.com" }));
+    expect(query.is).toHaveBeenCalledWith("auth_user_id", null);
+  });
   it("refuses a charge when its schedule is not active and effective", async () => {
     application.generateMonthlyCharge.mockResolvedValue(null);
     const response = await POST(request({ operation: "generate-charge", scheduleId: "schedule_1", period: "2026-08" }));

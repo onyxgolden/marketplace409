@@ -5,6 +5,10 @@ import { createClient } from "@/lib/supabase/client";
 import { useState } from "react";
 
 const supabase = createClient();
+function nextDestination() {
+  const requested = new URLSearchParams(window.location.search).get("next");
+  return requested?.startsWith("/") && !requested.startsWith("//") ? requested : "/forge/financial";
+}
 
 export default function AuthPage() {
   const [email, setEmail] = useState("");
@@ -19,8 +23,8 @@ export default function AuthPage() {
     if (error) {
       alert(error.message);
     } else {
-      alert("Account created. You can now post your listing.");
-      window.location.href = "/post";
+      alert("Account created. Check your email if confirmation is required, then sign in.");
+      window.location.href = nextDestination();
     }
   }
 
@@ -49,7 +53,7 @@ export default function AuthPage() {
       }`,
     );
 
-    window.location.href = "/forge/financial";
+    window.location.href = nextDestination();
   }
 
   async function signOut() {
