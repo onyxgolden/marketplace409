@@ -29,16 +29,23 @@ export function loadGovernanceState(
   }
 
   const absolutePath = path.resolve(
+    /* turbopackIgnore: true */
     repositoryRoot,
     suppliedPath,
   );
 
   const relativePath = path.relative(
+    /* turbopackIgnore: true */
     repositoryRoot,
     absolutePath,
   );
 
-  if (!fs.existsSync(absolutePath)) {
+  if (
+    !fs.existsSync(
+      /* turbopackIgnore: true */
+      absolutePath,
+    )
+  ) {
     throw new Error(
       `Governance state does not exist: ${relativePath}`,
     );
@@ -47,7 +54,11 @@ export function loadGovernanceState(
   let content;
 
   try {
-    content = fs.readFileSync(absolutePath, "utf8");
+    content = fs.readFileSync(
+      /* turbopackIgnore: true */
+      absolutePath,
+      "utf8",
+    );
   } catch (error) {
     throw new Error(
       `Governance state could not be read: ${relativePath}: ${error.message}`,
