@@ -13,7 +13,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -30,12 +30,19 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_notification_outbox")
         .select("id, tenant_id, lease_id, notification_type, channel, recipient, subject, body_text, status, failure_message, created_at, sent_at")
         .order("created_at", { ascending: false }),
+      authenticated.supabaseClient.from("rental_payments")
+        .select("id, charge_id, lease_id, tenant_id, provider, provider_payment_id, amount_cents, refunded_amount_cents, currency_code, status, payment_method, received_at, succeeded_at, created_at")
+        .order("created_at", { ascending: false }),
+      authenticated.supabaseClient.from("rental_settlements")
+        .select("id, payment_id, provider, provider_balance_transaction_id, provider_payout_id, gross_amount_cents, fee_amount_cents, net_amount_cents, currency_code, status, available_at, paid_out_at, created_at")
+        .order("created_at", { ascending: false }),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error;
     if (error) throw error;
     return NextResponse.json({ success: true, openCharges: chargesResult.data || [],
       units: unitsResult.data || [], tenants: tenantsResult.data || [], schedules: schedulesResult.data || [],
-      maintenanceRequests: maintenanceResult.data || [], notifications: notificationResult.data || [] });
+      maintenanceRequests: maintenanceResult.data || [], notifications: notificationResult.data || [],
+      payments: paymentResult.data || [], settlements: settlementResult.data || [] });
   } catch (error) {
     console.error("Rental Manager query error", error);
     return NextResponse.json({ error: "Unable to load open rent charges." }, { status: 500 });

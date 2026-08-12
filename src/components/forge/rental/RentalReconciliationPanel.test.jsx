@@ -1,0 +1,4 @@
+import{describe,expect,it}from"vitest";import{buildRentalReconciliation}from"./RentalReconciliationPanel.jsx";
+describe("rental reconciliation",()=>{it("flags successful Stripe payments until settlement arrives",()=>{expect(buildRentalReconciliation([{id:"p1",provider:"stripe",status:"succeeded"}],[])[0].reconciliationState).toBe("awaiting_settlement");});
+it("joins processor settlement by payment id",()=>{const row=buildRentalReconciliation([{id:"p1",provider:"stripe",status:"succeeded"}],[{payment_id:"p1",status:"paid_out",net_amount_cents:195000}])[0];expect(row.reconciliationState).toBe("paid_out");expect(row.settlement.net_amount_cents).toBe(195000);});
+it("does not demand processor settlement for offline payments",()=>{expect(buildRentalReconciliation([{id:"p2",provider:"offline",status:"succeeded"}],[])[0].reconciliationState).toBe("not_applicable");});});

@@ -58,7 +58,9 @@ drop trigger if exists queue_rental_payment_notification on rental_payments;
 create trigger queue_rental_payment_notification after update of status on rental_payments for each row execute function queue_rental_notification();
 drop trigger if exists queue_rental_maintenance_notification on rental_maintenance_requests;
 create trigger queue_rental_maintenance_notification after update of status,owner_notes on rental_maintenance_requests for each row execute function queue_rental_notification();
-drop trigger if exists queue_rental_document_notification on rental_documents;
-create trigger queue_rental_document_notification after insert or update of tenant_visible on rental_documents for each row execute function queue_rental_notification();
+drop trigger if exists queue_rental_document_insert_notification on rental_documents;
+create trigger queue_rental_document_insert_notification after insert on rental_documents for each row execute function queue_rental_notification();
+drop trigger if exists queue_rental_document_update_notification on rental_documents;
+create trigger queue_rental_document_update_notification after update of tenant_visible on rental_documents for each row execute function queue_rental_notification();
 
 revoke all on function queue_rental_notification() from public,anon,authenticated;

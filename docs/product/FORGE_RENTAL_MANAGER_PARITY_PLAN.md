@@ -38,7 +38,7 @@ FORGE is ready for a real tenant only when the complete operating loop is proven
 | Applications and screening | Missing | Listing/application intake, consent, screening-provider integration, adverse-action workflow, and fair-housing controls are required. |
 | Vacancy marketing | Missing | Listings, syndication, inquiries, showing workflow, and application handoff are required. |
 | Inspections | Partial outside rental workspace | Property condition/HVAC evidence foundations exist. Move-in, move-out, periodic inspection templates and tenant acknowledgement remain. |
-| Accounting and bank reconciliation | Strong shared FORGE foundation, not fully joined | Financial events, imports, transactions, and property performance exist. Rental payment/fee/deposit posting and bank settlement reconciliation need a formal bridge. |
+| Accounting and bank reconciliation | Gross rent posting implemented | Succeeded payments post idempotently to property-scoped rental income and the owner sees unreconciled Stripe payments. Processor fees, balance transactions, payout matching, refunds, disputes, and deposit accounting remain. |
 | Reports and tax support | Partial shared foundation | Property financial reporting exists. Tenant ledger, rent roll, delinquency, deposit liability, owner statement, 1099, and tax packages remain. |
 | Owner portal / trust accounting | Out of first-landlord gate | Needed for third-party property management, not for the initial owner-operated property. Requires trust-account and client-money controls before activation. |
 | Mobile access | Responsive web only | Native mobile applications and push notifications do not exist. Responsive portal remains the first target. |
@@ -51,7 +51,7 @@ FORGE is ready for a real tenant only when the complete operating loop is proven
 1. Maintenance request intake and owner workflow.
 2. Complete document acknowledgements, delivery notices, and version history on the secure lease library.
 3. Activate approved email delivery, retries, reminders, and failed-payment operating controls on the receipt/outbox foundation.
-4. Rental-to-financial posting and settlement reconciliation.
+4. Complete Stripe fee/balance/payout ingestion and bank matching on the gross-income posting foundation.
 5. Production Stripe readiness, support procedures, and controlled pilot.
 
 ### Gate B — Reliable landlord replacement
