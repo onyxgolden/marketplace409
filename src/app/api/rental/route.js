@@ -13,7 +13,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -21,11 +21,14 @@ export async function GET() {
         .select("id, property_id, label, status").order("label", { ascending: true }),
       authenticated.supabaseClient.from("rental_tenants")
         .select("id, display_name, email, status").order("display_name", { ascending: true }),
+      authenticated.supabaseClient.from("rent_schedules")
+        .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date")
+        .order("effective_start_date", { ascending: false }),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error;
     if (error) throw error;
     return NextResponse.json({ success: true, openCharges: chargesResult.data || [],
-      units: unitsResult.data || [], tenants: tenantsResult.data || [] });
+      units: unitsResult.data || [], tenants: tenantsResult.data || [], schedules: schedulesResult.data || [] });
   } catch (error) {
     console.error("Rental Manager query error", error);
     return NextResponse.json({ error: "Unable to load open rent charges." }, { status: 500 });
@@ -76,7 +79,16 @@ export async function POST(request) {
       case "generate-charge": {
         if (!body.scheduleId || !body.period) return badRequest("scheduleId and period are required.");
         const charge = await application.generateMonthlyCharge(body.scheduleId, body.period, user.id);
+        if (!charge) return NextResponse.json({ error: "The schedule must be active and effective for the selected month." }, { status: 409 });
         return NextResponse.json({ success: true, charge });
+      }
+      case "activate-lease-schedule": {
+        if (!body.scheduleId) return badRequest("scheduleId is required.");
+        const { data, error } = await authenticated.supabaseClient.rpc("activate_rental_lease_schedule", {
+          p_owner_id: user.id, p_schedule_id: body.scheduleId,
+        });
+        if (error) throw error;
+        return NextResponse.json({ success: true, activation: data });
       }
       case "record-offline-payment": {
         const input = body.payment;

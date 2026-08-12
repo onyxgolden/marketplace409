@@ -25,4 +25,9 @@ describe("RentalApplicationShell", () => {
     expect(markup).toContain("Select a saved tenant");
     expect(markup).not.toContain("Tenant ID");
   });
+  it("renders the explicit lease activation and first-charge workflow", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("charges"));
+    expect(markup).toContain("Activate lease and create first charge");
+    expect(markup).toContain("Activation starts billing");
+  });
 });

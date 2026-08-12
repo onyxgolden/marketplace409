@@ -4,13 +4,19 @@ const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD
 
 export default function RentalPaymentsPanel() {
   const [account, setAccount] = useState(undefined); const [message, setMessage] = useState(""); const [busy, setBusy] = useState(false);
-  const [charges, setCharges] = useState([]); const [saved, setSaved] = useState("");
+  const [charges, setCharges] = useState([]); const [schedules, setSchedules] = useState([]); const [saved, setSaved] = useState("");
+  async function loadRentalData() { const response = await fetch("/api/rental"); const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "Unable to load rent collection data.");
+    setCharges(body.openCharges || []); setSchedules(body.schedules || []); }
   async function load() { try { const response = await fetch("/api/rental/stripe-account"); const body = await response.json();
     if (!response.ok) throw new Error(body.error); setAccount(body.account); } catch (error) { setMessage(error.message); } }
   useEffect(() => { fetch("/api/rental/stripe-account").then(async (response) => {
     const body = await response.json(); if (!response.ok) throw new Error(body.error); return body.account;
   }).then(setAccount).catch((error) => setMessage(error.message));
-    fetch("/api/rental").then((response) => response.json()).then((body) => setCharges(body.openCharges || [])); }, []);
+    fetch("/api/rental").then(async (response) => { const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Unable to load rent collection data."); return body;
+    }).then((body) => { setCharges(body.openCharges || []); setSchedules(body.schedules || []); })
+      .catch((error) => setMessage(error.message)); }, []);
   async function connect() { setBusy(true); setMessage(""); try { const response = await fetch("/api/rental/stripe-account", { method: "POST" });
     const body = await response.json(); if (!response.ok) throw new Error(body.error); window.location.assign(body.url);
   } catch (error) { setMessage(error.message); setBusy(false); } }
@@ -25,6 +31,19 @@ export default function RentalPaymentsPanel() {
       formElement.reset(); const refreshed = await fetch("/api/rental").then((item) => item.json()); setCharges(refreshed.openCharges || []);
     } catch (error) { setMessage(error.message); } finally { setBusy(false); }
   }
+  async function activateSchedule(scheduleId) { setBusy(true); setMessage(""); setSaved(""); try {
+    const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "activate-lease-schedule", scheduleId }) });
+    const body = await response.json(); if (!response.ok) throw new Error(body.error);
+    setSaved("Lease and rent schedule activated. First-charge generation is now available."); await loadRentalData();
+  } catch (error) { setMessage(error.message); } finally { setBusy(false); } }
+  async function generateCharge(event) { event.preventDefault(); setBusy(true); setMessage(""); setSaved("");
+    const form = new FormData(event.currentTarget); try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "generate-charge", scheduleId: form.get("scheduleId"), period: form.get("period") }) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error);
+      setSaved(`Rent charge ready for ${body.charge.period}. Repeating this action will reuse the same charge.`); await loadRentalData();
+    } catch (error) { setMessage(error.message); } finally { setBusy(false); } }
   const enabled = account?.status === "enabled";
   return <section className="rounded-2xl border border-slate-200 bg-white p-7">
     <p className="text-sm font-bold uppercase tracking-widest text-amber-700">Rent collection</p>
@@ -39,6 +58,21 @@ export default function RentalPaymentsPanel() {
       <button onClick={load} className="ml-3 mt-4 rounded-xl border px-5 py-3 font-bold text-slate-700">Refresh status</button>
     </div>
     {message ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-red-800">{message}</p> : null}
+    <div className="mt-8 border-t pt-7"><h3 className="text-xl font-black">Activate lease and create first charge</h3>
+      <p className="mt-1 text-sm text-slate-600">Activation starts billing. Use it only after the lease terms are approved. Monthly charge generation is idempotent.</p>
+      {schedules.length === 0 ? <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-900">No saved rent schedule is available.</p> :
+        <div className="mt-4 space-y-3">{schedules.map((schedule) => <div key={schedule.id} className="rounded-xl border bg-slate-50 p-4">
+          <p className="font-bold">{money.format(Number(schedule.amount_cents) / 100)} monthly · due day {schedule.due_day} · Status: {schedule.status}</p>
+          <p className="mt-1 text-xs text-slate-600">Effective {schedule.effective_start_date}{schedule.effective_end_date ? ` through ${schedule.effective_end_date}` : ""}</p>
+          {schedule.status === "draft" ? <button type="button" disabled={busy} onClick={() => activateSchedule(schedule.id)}
+            className="mt-3 rounded-xl bg-slate-950 px-4 py-2 font-bold text-white disabled:opacity-50">Activate lease and schedule</button> : null}
+          {schedule.status === "active" ? <form onSubmit={generateCharge} className="mt-3 flex flex-wrap items-end gap-3">
+            <input type="hidden" name="scheduleId" value={schedule.id} /><label className="text-sm font-bold">Charge month
+              <input name="period" type="month" required defaultValue={new Date().toISOString().slice(0, 7)} className="mt-1 block rounded-xl border p-2 font-normal" /></label>
+            <button disabled={busy} className="rounded-xl bg-amber-500 px-4 py-2 font-black text-slate-950 disabled:opacity-50">Generate monthly charge</button>
+          </form> : null}
+        </div>)}</div>}
+    </div>
     <div className="mt-8 border-t pt-7"><h3 className="text-xl font-black">Record an offline payment</h3>
       <p className="mt-1 text-sm text-slate-600">Use only after cash or a cashier’s check has actually been received.</p>
       <form onSubmit={recordOffline} className="mt-5 grid gap-4 md:grid-cols-2">
