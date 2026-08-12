@@ -27,6 +27,11 @@ export const FORGE_APPLICATIONS =
       shortLabel: "P",
     }),
     Object.freeze({
+      href: "/forge/rental",
+      label: "Rental Manager",
+      shortLabel: "R",
+    }),
+    Object.freeze({
       href: "/forge/connections",
       label: "Connections",
       shortLabel: "C",

@@ -75,3 +75,5 @@ export {
   createPropertyOperatingObligationRepository,
   PropertyOperatingObligationRepositoryStorage,
 } from "./createPropertyOperatingObligationRepository.js";
+
+export { createRentalManagerRepositories } from "./createRentalManagerRepositories.js";

@@ -37,6 +37,7 @@ describe(
           "Workspace",
           "Financial",
           "Property",
+          "Rental Manager",
           "Connections",
           "Results",
           "Import",
@@ -75,7 +76,7 @@ describe(
         ).toBe(false);
 
         expect(
-          FORGE_APPLICATIONS[5].href,
+          FORGE_APPLICATIONS[6].href,
         ).toBe(
           "/forge/import",
         );
@@ -83,7 +84,7 @@ describe(
         expect(
           isForgeApplicationActive(
             "/forge/import/review",
-            FORGE_APPLICATIONS[5],
+            FORGE_APPLICATIONS[6],
           ),
         ).toBe(true);
       },
