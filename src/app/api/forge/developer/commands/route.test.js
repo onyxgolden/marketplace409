@@ -31,6 +31,7 @@ vi.mock(
 );
 
 import {
+  maxDuration,
   POST,
 } from "./route";
 
@@ -61,6 +62,14 @@ function request(
 describe(
   "POST /api/forge/developer/commands",
   () => {
+    it(
+      "stays within the Vercel Hobby serverless duration limit",
+      () => {
+        expect(maxDuration)
+          .toBeLessThanOrEqual(300);
+      },
+    );
+
     beforeEach(() => {
       vi.clearAllMocks();
 
