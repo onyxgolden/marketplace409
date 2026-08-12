@@ -39,7 +39,7 @@ FORGE is ready for a real tenant only when the complete operating loop is proven
 | Vacancy marketing | Missing | Listings, syndication, inquiries, showing workflow, and application handoff are required. |
 | Inspections | Partial outside rental workspace | Property condition/HVAC evidence foundations exist. Move-in, move-out, periodic inspection templates and tenant acknowledgement remain. |
 | Accounting and bank reconciliation | Gross rent posting implemented | Succeeded payments post idempotently to property-scoped rental income and the owner sees unreconciled Stripe payments. Processor fees, balance transactions, payout matching, refunds, disputes, and deposit accounting remain. |
-| Reports and tax support | Partial shared foundation | Property financial reporting exists. Tenant ledger, rent roll, delinquency, deposit liability, owner statement, 1099, and tax packages remain. |
+| Reports and tax support | Rent roll and ledger implemented | Owner reporting now shows scheduled rent, collections, open and overdue balances, occupancy, per-lease tenant ledger rows, and CSV export. Deposit liability, owner statements, 1099s, and tax packages remain. |
 | Owner portal / trust accounting | Out of first-landlord gate | Needed for third-party property management, not for the initial owner-operated property. Requires trust-account and client-money controls before activation. |
 | Mobile access | Responsive web only | Native mobile applications and push notifications do not exist. Responsive portal remains the first target. |
 | API and integrations | Shared FORGE strength | Connector architecture exists; rental-specific provider contracts and public API permissions remain. |

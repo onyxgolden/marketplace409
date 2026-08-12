@@ -1,0 +1,7 @@
+import{beforeEach,describe,expect,it,vi}from"vitest";const from=vi.fn();
+vi.mock("@/lib/supabase/createAuthenticatedForgeApplication",()=>({createAuthenticatedForgeApplication:vi.fn(async()=>({user:{id:"owner_1"},supabaseClient:{from}}))}));
+import{GET}from"./route.js";
+const tables={rental_units:[{id:"u1",label:"Main",status:"occupied"}],rental_tenants:[{id:"t1",display_name:"John"}],rental_leases:[{id:"l1",property_id:"kent",unit_id:"u1",status:"active",start_date:"2026-08-12",end_date:null,monthly_rent_cents:200000}],rental_lease_tenants:[{lease_id:"l1",tenant_id:"t1"}],rent_charges:[],rental_payments:[]};
+describe("rental reports route",()=>{beforeEach(()=>{vi.clearAllMocks();from.mockImplementation(table=>({select:vi.fn(async()=>({data:tables[table],error:null}))}));});
+it("returns the owner rental operating report",async()=>{const response=await GET(new Request("https://example.test/api/rental/reports"));const body=await response.json();expect(response.status).toBe(200);expect(body.report.summary.activeLeases).toBe(1);expect(from).toHaveBeenCalledWith("rental_leases");});
+it("exports the rent roll as a downloadable CSV",async()=>{const response=await GET(new Request("https://example.test/api/rental/reports?format=csv"));expect(response.headers.get("content-type")).toContain("text/csv");expect(response.headers.get("content-disposition")).toContain("forge-rental-rent-roll");expect(await response.text()).toContain('"Main"');});});
