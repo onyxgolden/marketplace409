@@ -30,7 +30,9 @@ describe("Rental Manager route", () => {
       rental_maintenance_requests: result([{ id: "request_1", status: "submitted" }]),
       rental_notification_outbox: result([{ id: "notification_1", status: "queued" }]),
       rental_payments: result([{ id: "payment_1", status: "succeeded" }]),
-      rental_settlements: result([{ id: "settlement_1", payment_id: "payment_1", status: "paid_out" }]) };
+      rental_settlements: result([{ id: "settlement_1", payment_id: "payment_1", status: "paid_out" }]),
+      rental_security_deposits: result([{ id: "deposit_1", status: "held" }]),
+      rental_security_deposit_transactions: result([{ id: "deposit_tx_1", deposit_id: "deposit_1" }]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
       supabaseClient: { from: vi.fn((table) => tables[table]) } });
@@ -39,7 +41,8 @@ describe("Rental Manager route", () => {
     expect(body).toMatchObject({ units: [{ id: "unit_1" }], tenants: [{ id: "tenant_1" }],
       schedules: [{ id: "schedule_1", status: "draft" }], maintenanceRequests: [{ id: "request_1", status: "submitted" }],
       notifications: [{ id: "notification_1", status: "queued" }], payments: [{ id: "payment_1", status: "succeeded" }],
-      settlements: [{ id: "settlement_1", payment_id: "payment_1", status: "paid_out" }] });
+      settlements: [{ id: "settlement_1", payment_id: "payment_1", status: "paid_out" }], deposits: [{ id: "deposit_1", status: "held" }],
+      depositTransactions: [{ id: "deposit_tx_1", deposit_id: "deposit_1" }] });
   });
   it("atomically activates the authenticated owner's lease and schedule", async () => {
     const rpc = vi.fn(async () => ({ data: { leaseId: "lease_1", scheduleId: "schedule_1", status: "active" }, error: null }));

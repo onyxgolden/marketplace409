@@ -26,7 +26,7 @@ export class TenantPortalQueryService {
       .eq("owner_id", tenantRow.owner_id).in("id", leaseIds).order("start_date", { ascending: false });
     if (leaseError) throw leaseError;
     const rentals = await Promise.all((leases || []).map(async (leaseRow) => {
-      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult] = await Promise.all([
+      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult] = await Promise.all([
         this.supabase.from("rental_units").select("*").eq("owner_id", tenantRow.owner_id).eq("id", leaseRow.unit_id).maybeSingle(),
         this.supabase.from("rent_schedules").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("effective_start_date", { ascending: false }),
         this.supabase.from("rent_charges").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("due_date", { ascending: false }),
@@ -38,9 +38,19 @@ export class TenantPortalQueryService {
           .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).eq("tenant_id", tenantRow.id).order("expiration_date", { ascending: false }),
         this.supabase.from("rental_maintenance_requests").select("id, title, description, priority, status, permission_to_enter, contact_phone, owner_notes, submitted_at, updated_at, completed_at")
           .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).eq("tenant_id", tenantRow.id).order("submitted_at", { ascending: false }),
+        this.supabase.from("rental_security_deposits").select("*").eq("owner_id", tenantRow.owner_id)
+          .eq("lease_id", leaseRow.id).eq("tenant_id", tenantRow.id).order("created_at", { ascending: false }),
       ]);
-      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult])
+      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult])
         if (result.error) throw result.error;
+      const depositIds = (depositResult.data || []).map(({ id }) => id);
+      let depositTransactions = [];
+      if (depositIds.length) {
+        const transactionResult = await this.supabase.from("rental_security_deposit_transactions").select("*")
+          .eq("owner_id", tenantRow.owner_id).in("deposit_id", depositIds).order("occurred_at", { ascending: false });
+        if (transactionResult.error) throw transactionResult.error;
+        depositTransactions = transactionResult.data || [];
+      }
       const membershipRows = (memberships || []).filter(({ lease_id }) => lease_id === leaseRow.id);
       return Object.freeze({ lease: mapRentalLeaseRowsToRentalLease(leaseRow, membershipRows),
         unit: unitResult.data ? mapRentalUnitRowToRentalUnit(unitResult.data) : null,
@@ -61,7 +71,14 @@ export class TenantPortalQueryService {
         maintenanceRequests: Object.freeze((maintenanceResult.data || []).map((row) => Object.freeze({ id: row.id,
           title: row.title, description: row.description, priority: row.priority, status: row.status,
           permissionToEnter: row.permission_to_enter, contactPhone: row.contact_phone, ownerNotes: row.owner_notes,
-          submittedAt: row.submitted_at, updatedAt: row.updated_at, completedAt: row.completed_at }))) });
+          submittedAt: row.submitted_at, updatedAt: row.updated_at, completedAt: row.completed_at }))),
+        securityDeposits: Object.freeze((depositResult.data || []).map((row) => Object.freeze({ id: row.id,
+          requiredAmountCents: Number(row.required_amount_cents), currencyCode: row.currency_code, status: row.status,
+          jurisdictionCode: row.jurisdiction_code, receivedDeadline: row.received_deadline,
+          dispositionDeadline: row.disposition_deadline }))),
+        securityDepositTransactions: Object.freeze(depositTransactions.map((row) => Object.freeze({ id: row.id,
+          depositId: row.deposit_id, transactionType: row.transaction_type, amountCents: Number(row.amount_cents),
+          occurredAt: row.occurred_at, description: row.description }))) });
     }));
     return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), rentals: Object.freeze(rentals) });
   }

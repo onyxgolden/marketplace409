@@ -1,0 +1,5 @@
+import{readFileSync}from"node:fs";import{resolve}from"node:path";import{describe,expect,it}from"vitest";const sql=readFileSync(resolve(process.cwd(),"supabase/migrations/20260812002300_create_rental_security_deposit_ledger.sql"),"utf8").toLowerCase();
+describe("rental security deposit ledger",()=>{it("separates deposit obligations from immutable transactions",()=>{expect(sql).toContain("create table if not exists rental_security_deposits");expect(sql).toContain("create table if not exists rental_security_deposit_transactions");expect(sql).toContain("recorded_by text not null");});
+it("prevents deductions and refunds beyond held funds",()=>{expect(sql).toContain("deposit transaction exceeds the held balance");expect(sql).toContain("for update");});
+it("keeps tenant access read-only through the lease",()=>{expect(sql).toContain("rental_deposit_tenant_select");expect(sql).not.toContain("rental_deposit_tenant_insert");expect(sql).not.toContain("rental_deposit_tenant_update");});
+it("does not post deposits as rent income",()=>{expect(sql).not.toContain("financial_events");expect(sql).not.toContain("rental_income");});});

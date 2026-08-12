@@ -6,6 +6,7 @@ import TenantPaymentForm from "./TenantPaymentForm";
 import TenantMaintenancePanel from "./TenantMaintenancePanel";
 import TenantDocumentsPanel from "./TenantDocumentsPanel";
 import RentalPaymentReceipt from "./RentalPaymentReceipt";
+import TenantDepositPanel from "./TenantDepositPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const date = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -70,6 +71,7 @@ export default function TenantPortal() {
             <span className="text-right"><span className="font-bold">{money.format(payment.amountCents / 100)}</span>{payment.status==="succeeded"?<><br/><button onClick={()=>setReceipt({payment,unitLabel:unit?.label||"Rental home"})} className="mt-1 font-bold text-blue-700 underline">View receipt</button></>:null}</span></div>)}</div>
       </section>) }
     {receipt?<RentalPaymentReceipt payment={receipt.payment} tenantName={portal.tenant.displayName} unitLabel={receipt.unitLabel} onClose={()=>setReceipt(null)}/>:null}
+    {!session ? <TenantDepositPanel rentals={portal.rentals} /> : null}
     {!session ? <section className="rounded-2xl border border-blue-200 bg-blue-50 p-6">
       <p className="text-sm font-bold uppercase tracking-widest text-blue-800">Optional tenant service</p>
       <h2 className="mt-2 text-xl font-black text-slate-950">Build credit with rent history</h2>
