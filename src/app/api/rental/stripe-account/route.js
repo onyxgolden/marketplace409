@@ -43,7 +43,7 @@ export async function POST(request) {
     if (found.error) throw found.error;
     let account = found.data;
     if (!account?.provider_account_id) {
-      const created = await provider.createConnectedAccount(ownerId, `stripe-landlord:${ownerId}`);
+      const created = await provider.createConnectedAccount(ownerId, `stripe-landlord:v2:${ownerId}`);
       const timestamp = new Date().toISOString();
       const saved = await database.from("landlord_payment_accounts").upsert({ owner_id: ownerId,
         id: account?.id || `landlord_payment_account_${crypto.randomUUID()}`, provider: "stripe",
