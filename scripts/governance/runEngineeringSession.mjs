@@ -1,6 +1,5 @@
 import {
   execFileSync,
-  spawnSync,
 } from "node:child_process";
 
 import path from "node:path";
@@ -16,10 +15,20 @@ import { runConversationPreparation } from "../conversation/runConversationPrepa
 
 export const ENGINEERING_SESSION_VERSION = "1.0";
 
+/**
+ * governancePipeline is the ONLY stage that collects session evidence
+ * (scripts/governance/collectSessionEvidence.mjs), via
+ * executeShadowGovernanceTransaction. There is deliberately no separate
+ * "sessionEvidence" stage -- an earlier version of this pipeline ran a
+ * second, independent collection here that never received
+ * reviewedMetadataPath, so the canonical governance state and synchronized
+ * documents ended up sourced from a metadata-blind snapshot even when a
+ * reviewer had supplied one. See evidence below, derived from governance's
+ * own result instead of a second collector run.
+ */
 export const ENGINEERING_SESSION_ORDER = Object.freeze([
   "repositoryInspection",
   "governancePipeline",
-  "sessionEvidence",
   "promotionEvaluation",
   "evolutionReadiness",
   "evolutionDecision",
@@ -107,47 +116,20 @@ export function inspectEngineeringRepository({
   });
 }
 
-export function collectEngineeringSessionEvidence({
-  repositoryRoot = process.cwd(),
-  scriptPath = "scripts/governance/collectSessionEvidence.mjs",
-  reviewedMetadataPath = null,
-} = {}) {
-  assertNonEmptyString(repositoryRoot, "repositoryRoot");
-  assertNonEmptyString(scriptPath, "scriptPath");
-
-  const normalizedRepositoryRoot = path.resolve(repositoryRoot);
-
-  const collectorArgs = [
-    path.resolve(normalizedRepositoryRoot, scriptPath),
-  ];
-
-  if (reviewedMetadataPath !== null) {
-    assertNonEmptyString(reviewedMetadataPath, "reviewedMetadataPath");
-    collectorArgs.push(reviewedMetadataPath);
-  }
-
-  const result = spawnSync(process.execPath, collectorArgs, {
-    cwd: normalizedRepositoryRoot,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: 20 * 1024 * 1024,
-  });
-
-  if (result.error || result.status !== 0) {
-    const detail = [result.error?.message, result.stdout, result.stderr]
-      .filter(Boolean)
-      .join("\n");
-
-    throw new Error(
-      `Session evidence collection failed${detail ? `: ${detail}` : ""}`,
-    );
-  }
-
+/**
+ * Derives the session-evidence signal that evolution readiness/decision
+ * evaluation expects from governancePipeline's own result, instead of
+ * running a second, independent collectSessionEvidence.mjs. governance.status
+ * is "completed" precisely when executeShadowGovernanceTransaction
+ * collected evidence, validated it, generated canonical governance state
+ * from it, and synchronized shadow documents from it -- all as one
+ * transaction that rolls back entirely on any failure. There is no
+ * scenario where that succeeds but evidence collection did not.
+ */
+function deriveSessionEvidence(governance) {
   return deepFreeze({
-    status: "completed",
-    exitCode: result.status,
-    stdout: result.stdout.trimEnd(),
-    stderr: result.stderr.trimEnd(),
+    status: governance?.status ?? "not-completed",
+    snapshotPath: governance?.snapshotPath ?? null,
   });
 }
 
@@ -177,7 +159,6 @@ export function runEngineeringSession({
   reviewedMetadataPath = null,
   inspectRepositoryFn = inspectEngineeringRepository,
   runGovernancePipelineFn = runGovernancePipeline,
-  collectSessionEvidenceFn = collectEngineeringSessionEvidence,
   buildPromotionEvaluationContextFn = buildPromotionEvaluationContext,
   evaluatePromotionEligibilityFn = evaluatePromotionEligibility,
   evaluateGovernanceEvolutionReadinessFn = evaluateGovernanceEvolutionReadiness,
@@ -193,7 +174,6 @@ export function runEngineeringSession({
   );
   assertFunction(inspectRepositoryFn, "inspectRepositoryFn");
   assertFunction(runGovernancePipelineFn, "runGovernancePipelineFn");
-  assertFunction(collectSessionEvidenceFn, "collectSessionEvidenceFn");
   assertFunction(
     evaluatePromotionEligibilityFn,
     "evaluatePromotionEligibilityFn",
@@ -219,12 +199,12 @@ export function runEngineeringSession({
     repositoryRoot: normalizedRepositoryRoot,
   });
 
-  const governance = runGovernancePipelineFn({ ...governancePipelineOptions });
-
-  const evidence = collectSessionEvidenceFn({
-    repositoryRoot: normalizedRepositoryRoot,
+  const governance = runGovernancePipelineFn({
+    ...governancePipelineOptions,
     reviewedMetadataPath,
   });
+
+  const evidence = deriveSessionEvidence(governance);
 
   const promotion = runPromotionEvaluation({
     repositoryRoot: normalizedRepositoryRoot,
@@ -296,15 +276,17 @@ function isDirectExecution() {
 if (isDirectExecution()) {
   try {
     const validationEvidencePath = process.argv[2];
+    const reviewedMetadataPath = process.argv[3] || null;
 
     if (!validationEvidencePath) {
       throw new Error(
-        "Usage: node scripts/governance/runEngineeringSession.mjs <validation-evidence-path>",
+        "Usage: node scripts/governance/runEngineeringSession.mjs <validation-evidence-path> [reviewed-metadata-path]",
       );
     }
 
     const result = runEngineeringSession({
       governancePipelineOptions: { validationEvidencePath },
+      reviewedMetadataPath,
     });
 
     console.log("FORGE ENGINEERING SESSION COMPLETED");

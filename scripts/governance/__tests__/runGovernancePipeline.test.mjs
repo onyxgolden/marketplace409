@@ -308,6 +308,66 @@ expect(
     );
 
     test(
+      "threads reviewedMetadataPath from the pipeline call through to the shadow pipeline",
+      () => {
+        const {
+          enforce,
+          runShadowPipeline,
+          synchronizeAuthoritative,
+        } =
+          createPipelineDependencies();
+
+        runGovernancePipeline({
+          mode:
+            "shadow",
+          validationEvidencePath:
+            "governance/validation/test-evidence.json",
+          reviewedMetadataPath:
+            "/tmp/reviewed-metadata.json",
+          enforce,
+          runShadowPipeline,
+          synchronizeAuthoritative,
+        });
+
+        expect(
+          runShadowPipeline,
+        ).toHaveBeenCalledWith({
+          reviewedMetadataPath:
+            "/tmp/reviewed-metadata.json",
+        });
+      },
+    );
+
+    test(
+      "defaults reviewedMetadataPath to null when not supplied",
+      () => {
+        const {
+          enforce,
+          runShadowPipeline,
+          synchronizeAuthoritative,
+        } =
+          createPipelineDependencies();
+
+        runGovernancePipeline({
+          mode:
+            "shadow",
+          validationEvidencePath:
+            "governance/validation/test-evidence.json",
+          enforce,
+          runShadowPipeline,
+          synchronizeAuthoritative,
+        });
+
+        expect(
+          runShadowPipeline,
+        ).toHaveBeenCalledWith({
+          reviewedMetadataPath:
+            null,
+        });
+      },
+    );
+
+    test(
       "propagates shadow pipeline failures without attempting authoritative synchronization",
       () => {
         const {

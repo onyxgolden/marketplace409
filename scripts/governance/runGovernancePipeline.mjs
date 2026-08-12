@@ -44,6 +44,8 @@ export function runGovernancePipeline(
     mode,
     validationEvidencePath,
     governanceStatePath,
+    reviewedMetadataPath =
+      null,
     enforce =
       enforceGovernance,
     runShadowPipeline =
@@ -101,6 +103,7 @@ export function runGovernancePipeline(
     mode: activeMode,
     runShadowPipeline,
     synchronizeAuthoritative,
+    reviewedMetadataPath,
   });
 }
 

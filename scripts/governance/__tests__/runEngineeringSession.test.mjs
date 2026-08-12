@@ -47,17 +47,9 @@ function createDependencies({
 
     status:
       "completed",
-  };
 
-  const evidenceResult = {
-    status:
-      "completed",
-
-    stdout:
-      "Evidence collected.",
-
-    stderr:
-      "",
+    snapshotPath:
+      "governance/snapshots/forge-session-20260811-153000123.json",
   };
 
   const promotionResult = {
@@ -112,7 +104,6 @@ function createDependencies({
     results: {
       repositoryResult,
       governanceResult,
-      evidenceResult,
       promotionResult,
       evolutionReadinessResult,
       evolutionDecisionResult,
@@ -139,17 +130,6 @@ function createDependencies({
           );
 
           return governanceResult;
-        },
-      ),
-
-    collectSessionEvidenceFn:
-      vi.fn(
-        () => {
-          executionOrder.push(
-            "sessionEvidence",
-          );
-
-          return evidenceResult;
         },
       ),
 
@@ -236,7 +216,7 @@ describe(
   "runEngineeringSession",
   () => {
     test(
-      "executes the canonical engineering stages in deterministic order",
+      "executes the canonical engineering stages in deterministic order, with exactly one governance/evidence-collecting stage",
       () => {
         const executionOrder = [];
 
@@ -281,10 +261,6 @@ describe(
               dependencies
                 .runGovernancePipelineFn,
 
-            collectSessionEvidenceFn:
-              dependencies
-                .collectSessionEvidenceFn,
-
             buildPromotionEvaluationContextFn:
               dependencies
                 .buildPromotionEvaluationContextFn,
@@ -315,6 +291,14 @@ describe(
         ).toEqual(
           ENGINEERING_SESSION_ORDER,
         );
+
+        expect(ENGINEERING_SESSION_ORDER).not.toContain(
+          "sessionEvidence",
+        );
+
+        expect(
+          dependencies.runGovernancePipelineFn,
+        ).toHaveBeenCalledTimes(1);
 
         expect(
           result.executionOrder,
@@ -350,10 +334,11 @@ describe(
 
         expect(
           result.evidence,
-        ).toBe(
-          dependencies.results
-            .evidenceResult,
-        );
+        ).toEqual({
+          status: "completed",
+          snapshotPath:
+            "governance/snapshots/forge-session-20260811-153000123.json",
+        });
 
         expect(
           result.promotion,
@@ -386,7 +371,7 @@ describe(
     );
 
     test(
-      "passes normalized repository and stage options to dependencies",
+      "passes normalized repository and stage options to dependencies, deriving evidence from governance's own result",
       () => {
         const dependencies =
           createDependencies();
@@ -435,10 +420,6 @@ describe(
             dependencies
               .runGovernancePipelineFn,
 
-          collectSessionEvidenceFn:
-            dependencies
-              .collectSessionEvidenceFn,
-
           buildPromotionEvaluationContextFn:
             dependencies
               .buildPromotionEvaluationContextFn,
@@ -480,16 +461,8 @@ describe(
         expect(
           dependencies
             .runGovernancePipelineFn,
-        ).toHaveBeenCalledWith(
-          governancePipelineOptions,
-        );
-
-        expect(
-          dependencies
-            .collectSessionEvidenceFn,
         ).toHaveBeenCalledWith({
-          repositoryRoot:
-            normalizedRepositoryRoot,
+          ...governancePipelineOptions,
           reviewedMetadataPath: null,
         });
 
@@ -532,35 +505,37 @@ describe(
         });
 
         expect(
-      dependencies
-        .buildEvolutionReviewContextFn,
-    ).toHaveBeenCalledWith({
-      repositoryEvidence:
-        dependencies.results
-          .repositoryResult,
+          dependencies
+            .buildEvolutionReviewContextFn,
+        ).toHaveBeenCalledWith({
+          repositoryEvidence:
+            dependencies.results
+              .repositoryResult,
 
-      governanceState:
-        dependencies.results
-          .governanceResult,
+          governanceState:
+            dependencies.results
+              .governanceResult,
 
-      validationEvidence:
-        dependencies.results
-          .evidenceResult,
+          validationEvidence: {
+            status: "completed",
+            snapshotPath:
+              "governance/snapshots/forge-session-20260811-153000123.json",
+          },
 
-      promotionEvaluation:
-        dependencies.results
-          .promotionResult,
+          promotionEvaluation:
+            dependencies.results
+              .promotionResult,
 
-      evolutionReadiness:
-        dependencies.results
-          .evolutionReadinessResult,
+          evolutionReadiness:
+            dependencies.results
+              .evolutionReadinessResult,
 
-      evolutionDecision:
-        dependencies.results
-          .evolutionDecisionResult,
-    });
+          evolutionDecision:
+            dependencies.results
+              .evolutionDecisionResult,
+        });
 
-    expect(
+        expect(
           dependencies
             .runConversationPreparationFn,
         ).toHaveBeenCalledWith({
@@ -605,10 +580,6 @@ describe(
             runGovernancePipelineFn:
               dependencies
                 .runGovernancePipelineFn,
-
-            collectSessionEvidenceFn:
-              dependencies
-                .collectSessionEvidenceFn,
 
             buildPromotionEvaluationContextFn:
               dependencies
@@ -712,10 +683,6 @@ describe(
                 dependencies
                   .runGovernancePipelineFn,
 
-              collectSessionEvidenceFn:
-                dependencies
-                  .collectSessionEvidenceFn,
-
               buildPromotionEvaluationContextFn:
                 dependencies
                   .buildPromotionEvaluationContextFn,
@@ -741,11 +708,6 @@ describe(
 
         expect(
           dependencies
-            .collectSessionEvidenceFn,
-        ).not.toHaveBeenCalled();
-
-        expect(
-          dependencies
             .evaluatePromotionEligibilityFn,
         ).not.toHaveBeenCalled();
 
@@ -757,7 +719,7 @@ describe(
     );
 
     test(
-      "deeply freezes the engineering session result",
+      "deeply freezes the engineering session result, including the derived evidence",
       () => {
         const dependencies =
           createDependencies();
@@ -774,10 +736,6 @@ describe(
             runGovernancePipelineFn:
               dependencies
                 .runGovernancePipelineFn,
-
-            collectSessionEvidenceFn:
-              dependencies
-                .collectSessionEvidenceFn,
 
             buildPromotionEvaluationContextFn:
               dependencies
@@ -851,6 +809,60 @@ describe(
       },
     );
 
+    test(
+      "derives a non-completed evidence status without throwing when governance yields no result (e.g. locked mode)",
+      () => {
+        const dependencies =
+          createDependencies();
+
+        dependencies.runGovernancePipelineFn =
+          vi.fn(() => undefined);
+
+        const result =
+          runEngineeringSession({
+            repositoryRoot:
+              "/tmp/forge-repository",
+
+            inspectRepositoryFn:
+              dependencies
+                .inspectRepositoryFn,
+
+            runGovernancePipelineFn:
+              dependencies
+                .runGovernancePipelineFn,
+
+            buildPromotionEvaluationContextFn:
+              dependencies
+                .buildPromotionEvaluationContextFn,
+
+            evaluatePromotionEligibilityFn:
+              dependencies
+                .evaluatePromotionEligibilityFn,
+
+            evaluateGovernanceEvolutionReadinessFn:
+              dependencies
+                .evaluateGovernanceEvolutionReadinessFn,
+
+            evaluateGovernanceEvolutionDecisionFn:
+              dependencies
+                .evaluateGovernanceEvolutionDecisionFn,
+
+            buildEvolutionReviewContextFn:
+              dependencies
+                .buildEvolutionReviewContextFn,
+
+            runConversationPreparationFn:
+              dependencies
+                .runConversationPreparationFn,
+          });
+
+        expect(result.evidence).toEqual({
+          status: "not-completed",
+          snapshotPath: null,
+        });
+      },
+    );
+
     test.each([
       [
         "inspectRepositoryFn",
@@ -859,10 +871,6 @@ describe(
       [
         "runGovernancePipelineFn",
         "runGovernancePipelineFn",
-      ],
-      [
-        "collectSessionEvidenceFn",
-        "collectSessionEvidenceFn",
       ],
       [
         "evaluatePromotionEligibilityFn",
@@ -899,10 +907,6 @@ describe(
                 dependencies
                   .runGovernancePipelineFn,
 
-              collectSessionEvidenceFn:
-                dependencies
-                  .collectSessionEvidenceFn,
-
               buildPromotionEvaluationContextFn:
                 dependencies
                   .buildPromotionEvaluationContextFn,
@@ -924,12 +928,10 @@ describe(
 );
 
 describe("runEngineeringSession reviewedMetadataPath threading", () => {
-  test("passes a supplied reviewedMetadataPath through to collectSessionEvidenceFn", () => {
-    const collectSessionEvidenceFn = vi.fn(() => ({
+  test("passes a supplied reviewedMetadataPath through to runGovernancePipelineFn, not to a second collector", () => {
+    const runGovernancePipelineFn = vi.fn(() => ({
       status: "completed",
-      exitCode: 0,
-      stdout: "",
-      stderr: "",
+      snapshotPath: "governance/snapshots/forge-session-20260811-153000123.json",
     }));
 
     const inspectRepositoryFn = vi.fn(() => ({
@@ -943,7 +945,6 @@ describe("runEngineeringSession reviewedMetadataPath threading", () => {
       gitStatus: [],
     }));
 
-    const runGovernancePipelineFn = vi.fn(() => ({}));
     const buildPromotionEvaluationContextFn = vi.fn(() => ({}));
     const evaluatePromotionEligibilityFn = vi.fn(() => ({}));
     const evaluateGovernanceEvolutionReadinessFn = vi.fn(() => ({}));
@@ -956,7 +957,6 @@ describe("runEngineeringSession reviewedMetadataPath threading", () => {
       reviewedMetadataPath: "/tmp/reviewed-metadata.json",
       inspectRepositoryFn,
       runGovernancePipelineFn,
-      collectSessionEvidenceFn,
       buildPromotionEvaluationContextFn,
       evaluatePromotionEligibilityFn,
       evaluateGovernanceEvolutionReadinessFn,
@@ -965,18 +965,17 @@ describe("runEngineeringSession reviewedMetadataPath threading", () => {
       runConversationPreparationFn,
     });
 
-    expect(collectSessionEvidenceFn).toHaveBeenCalledWith({
-      repositoryRoot: "/tmp/repo",
+    expect(runGovernancePipelineFn).toHaveBeenCalledWith({
       reviewedMetadataPath: "/tmp/reviewed-metadata.json",
     });
+
+    expect(runGovernancePipelineFn).toHaveBeenCalledTimes(1);
   });
 
   test("defaults reviewedMetadataPath to null when not supplied", () => {
-    const collectSessionEvidenceFn = vi.fn(() => ({
+    const runGovernancePipelineFn = vi.fn(() => ({
       status: "completed",
-      exitCode: 0,
-      stdout: "",
-      stderr: "",
+      snapshotPath: null,
     }));
 
     const inspectRepositoryFn = vi.fn(() => ({
@@ -990,7 +989,6 @@ describe("runEngineeringSession reviewedMetadataPath threading", () => {
       gitStatus: [],
     }));
 
-    const runGovernancePipelineFn = vi.fn(() => ({}));
     const buildPromotionEvaluationContextFn = vi.fn(() => ({}));
     const evaluatePromotionEligibilityFn = vi.fn(() => ({}));
     const evaluateGovernanceEvolutionReadinessFn = vi.fn(() => ({}));
@@ -1002,7 +1000,6 @@ describe("runEngineeringSession reviewedMetadataPath threading", () => {
       repositoryRoot: "/tmp/repo",
       inspectRepositoryFn,
       runGovernancePipelineFn,
-      collectSessionEvidenceFn,
       buildPromotionEvaluationContextFn,
       evaluatePromotionEligibilityFn,
       evaluateGovernanceEvolutionReadinessFn,
@@ -1011,8 +1008,7 @@ describe("runEngineeringSession reviewedMetadataPath threading", () => {
       runConversationPreparationFn,
     });
 
-    expect(collectSessionEvidenceFn).toHaveBeenCalledWith({
-      repositoryRoot: "/tmp/repo",
+    expect(runGovernancePipelineFn).toHaveBeenCalledWith({
       reviewedMetadataPath: null,
     });
   });

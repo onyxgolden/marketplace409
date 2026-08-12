@@ -8,7 +8,9 @@ import {
   loadGovernanceMode,
 } from "../governance/loadGovernanceMode.mjs";
 
-const REVIEW_REQUIRED = "REVIEW_REQUIRED";
+import {
+  requiresHumanReview,
+} from "./requiresHumanReview.mjs";
 
 function assertPlainObject(value, location) {
   if (
@@ -226,20 +228,6 @@ function summarizeValidation(validation) {
   }
 
   return "partial";
-}
-
-function requiresHumanReview(governanceState) {
-  const { state } = governanceState;
-
-  return [
-    state.activePhase.identifier,
-    state.activePhase.title,
-    state.currentObjective,
-    state.nextSession.objective,
-    state.nextSession.startingInspection,
-  ].some(
-    (value) => value === REVIEW_REQUIRED,
-  );
 }
 
 function buildRecommendedAction({

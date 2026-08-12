@@ -277,6 +277,87 @@ describe(
     );
 
     test(
+      "threads reviewedMetadataPath into the shadow pipeline",
+      () => {
+        const {
+          runShadowPipeline,
+          synchronizeAuthoritative,
+        } =
+          createDependencies();
+
+        dispatchGovernanceMode({
+          mode:
+            "shadow",
+          runShadowPipeline,
+          synchronizeAuthoritative,
+          reviewedMetadataPath:
+            "/tmp/reviewed-metadata.json",
+        });
+
+        expect(
+          runShadowPipeline,
+        ).toHaveBeenCalledWith({
+          reviewedMetadataPath:
+            "/tmp/reviewed-metadata.json",
+        });
+      },
+    );
+
+    test(
+      "defaults reviewedMetadataPath to null for the shadow pipeline when not supplied",
+      () => {
+        const {
+          runShadowPipeline,
+          synchronizeAuthoritative,
+        } =
+          createDependencies();
+
+        dispatchGovernanceMode({
+          mode:
+            "shadow",
+          runShadowPipeline,
+          synchronizeAuthoritative,
+        });
+
+        expect(
+          runShadowPipeline,
+        ).toHaveBeenCalledWith({
+          reviewedMetadataPath:
+            null,
+        });
+      },
+    );
+
+    test(
+      "threads reviewedMetadataPath into the shadow pipeline during hybrid dispatch",
+      () => {
+        const runShadowPipeline =
+          vi.fn();
+
+        const synchronizeAuthoritative =
+          vi.fn(() => ({
+            status: "synchronized",
+          }));
+
+        dispatchGovernanceMode({
+          mode:
+            "hybrid",
+          runShadowPipeline,
+          synchronizeAuthoritative,
+          reviewedMetadataPath:
+            "/tmp/reviewed-metadata.json",
+        });
+
+        expect(
+          runShadowPipeline,
+        ).toHaveBeenCalledWith({
+          reviewedMetadataPath:
+            "/tmp/reviewed-metadata.json",
+        });
+      },
+    );
+
+    test(
       "rejects unsupported governance modes",
       () => {
         const {

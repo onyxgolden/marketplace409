@@ -247,7 +247,9 @@ function removeCreatedSnapshots(
 }
 
 
-export function executeShadowGovernanceTransaction() {
+export function executeShadowGovernanceTransaction({
+  reviewedMetadataPath = null,
+} = {}) {
   const snapshotsBefore =
     listSnapshotNames();
 
@@ -279,6 +281,9 @@ export function executeShadowGovernanceTransaction() {
             "COLLECT SESSION EVIDENCE",
           scriptPath:
             "scripts/governance/collectSessionEvidence.mjs",
+          args: reviewedMetadataPath
+            ? [reviewedMetadataPath]
+            : [],
         },
       ],
       executeStage: runNodeScript,

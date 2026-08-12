@@ -41,6 +41,7 @@ const fixturePaths = [
   "scripts/governance/reviewedSessionMetadataContract.mjs",
   "scripts/governance/selectEligibleValidationEvidence.mjs",
   "scripts/governance/validateValidationEvidence.mjs",
+  "scripts/governance/writeSnapshotWithCollisionSafety.mjs",
   "governance/schema/session-summary.schema.json",
 ];
 
@@ -973,6 +974,64 @@ describe("collectSessionEvidence reviewed metadata: completion gating", () => {
       "does not yet cover a passing result",
     );
     expect(snapshot.phase.status).toBe("incomplete");
+  });
+
+  test("does not mark the session complete when validation evidence on disk is bound to a stale commit, even though completion was requested", () => {
+    const repositoryRoot = createFixture();
+    temporaryRepositories.add(repositoryRoot);
+
+    writeValidationArtifact(
+      repositoryRoot,
+      createValidationArtifact({
+        head: "1234567890abcdef1234567890abcdef12345678",
+      }),
+    );
+
+    const metadataPath = writeReviewedMetadataFile(repositoryRoot, {
+      markSessionComplete: true,
+    });
+
+    runCollector(repositoryRoot, [
+      path.relative(repositoryRoot, metadataPath),
+    ]);
+
+    const { snapshot } = readOnlySnapshot(repositoryRoot);
+
+    expect(snapshot.completion.workComplete).toBe(false);
+    expect(snapshot.completion.supportedByEvidence).toBe(false);
+    expect(snapshot.completion.incompleteReason).toContain(
+      "does not yet cover a passing result",
+    );
+  });
+
+  test("does not mark the session complete when current evidence includes a failing category, even though completion was requested", () => {
+    const repositoryRoot = createFixture();
+    temporaryRepositories.add(repositoryRoot);
+
+    const head = currentCommit(repositoryRoot);
+
+    const artifact = createValidationArtifact({ head });
+    artifact.commands[1].status = "failing";
+    artifact.commands[1].exitCode = 1;
+    artifact.results.fullTests.status = "failing";
+
+    writeValidationArtifact(repositoryRoot, artifact);
+
+    const metadataPath = writeReviewedMetadataFile(repositoryRoot, {
+      markSessionComplete: true,
+    });
+
+    runCollector(repositoryRoot, [
+      path.relative(repositoryRoot, metadataPath),
+    ]);
+
+    const { snapshot } = readOnlySnapshot(repositoryRoot);
+
+    expect(snapshot.completion.workComplete).toBe(false);
+    expect(snapshot.completion.supportedByEvidence).toBe(false);
+    expect(snapshot.completion.incompleteReason).toContain(
+      "does not yet cover a passing result",
+    );
   });
 });
 

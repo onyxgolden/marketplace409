@@ -11,6 +11,10 @@ import {
   validateReviewedSessionMetadata,
 } from "./reviewedSessionMetadataContract.mjs";
 
+import {
+  writeSnapshotWithCollisionSafety,
+} from "./writeSnapshotWithCollisionSafety.mjs";
+
 const repositoryRoot = process.cwd();
 const snapshotDirectory = path.join(
   repositoryRoot,
@@ -54,8 +58,9 @@ function toSessionTimestamp(date) {
   const hours = String(date.getHours()).padStart(2, "0");
   const minutes = String(date.getMinutes()).padStart(2, "0");
   const seconds = String(date.getSeconds()).padStart(2, "0");
+  const milliseconds = String(date.getMilliseconds()).padStart(3, "0");
 
-  return `${year}${month}${day}-${hours}${minutes}${seconds}`;
+  return `${year}${month}${day}-${hours}${minutes}${seconds}${milliseconds}`;
 }
 
 function parseStatusLines(statusOutput) {
@@ -274,26 +279,23 @@ if (metadataPath) {
   reviewedMetadataApplied = true;
 }
 
-fs.mkdirSync(snapshotDirectory, {
-  recursive: true,
+const allocatedSnapshot = writeSnapshotWithCollisionSafety({
+  snapshotDirectory,
+  baseSessionId: sessionId,
+  buildContent: (finalSessionId) => {
+    const finalSnapshot =
+      finalSessionId === snapshot.sessionId
+        ? snapshot
+        : {
+            ...snapshot,
+            sessionId: finalSessionId,
+          };
+
+    return `${JSON.stringify(finalSnapshot, null, 2)}\n`;
+  },
 });
 
-const snapshotPath = path.join(
-  snapshotDirectory,
-  `${sessionId}.json`,
-);
-
-if (fs.existsSync(snapshotPath)) {
-  throw new Error(
-    `Snapshot already exists: ${path.relative(repositoryRoot, snapshotPath)}`,
-  );
-}
-
-fs.writeFileSync(
-  snapshotPath,
-  `${JSON.stringify(snapshot, null, 2)}\n`,
-  "utf8",
-);
+const snapshotPath = allocatedSnapshot.snapshotPath;
 
 console.log("FORGE session evidence collected.");
 console.log(

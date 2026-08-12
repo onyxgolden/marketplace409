@@ -3,11 +3,14 @@ export function dispatchGovernanceMode(
     mode,
     runShadowPipeline,
     synchronizeAuthoritative,
+    reviewedMetadataPath = null,
   },
 ) {
   switch (mode) {
     case "shadow":
-      return runShadowPipeline();
+      return runShadowPipeline({
+        reviewedMetadataPath,
+      });
 
     case "locked":
       console.log(
@@ -20,7 +23,9 @@ export function dispatchGovernanceMode(
         "Hybrid governance pipeline initialized.",
       );
 
-      runShadowPipeline();
+      runShadowPipeline({
+        reviewedMetadataPath,
+      });
 
       const authoritativeResult =
         synchronizeAuthoritative({
