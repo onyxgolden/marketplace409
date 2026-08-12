@@ -13,7 +13,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -38,14 +38,18 @@ export async function GET() {
         .order("created_at", { ascending: false }),
       authenticated.supabaseClient.from("rental_security_deposits").select("*").order("created_at", { ascending: false }),
       authenticated.supabaseClient.from("rental_security_deposit_transactions").select("*").order("occurred_at", { ascending: false }),
+      authenticated.supabaseClient.from("rental_inspections").select("*").order("inspection_date", { ascending: false }),
+      authenticated.supabaseClient.from("rental_inspection_items").select("*").order("created_at", { ascending: true }),
+      authenticated.supabaseClient.from("rental_inspection_acknowledgements").select("*").order("acknowledged_at", { ascending: false }),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error;
     if (error) throw error;
     return NextResponse.json({ success: true, openCharges: chargesResult.data || [],
       units: unitsResult.data || [], tenants: tenantsResult.data || [], schedules: schedulesResult.data || [],
       maintenanceRequests: maintenanceResult.data || [], notifications: notificationResult.data || [],
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
-      depositTransactions: depositTransactionResult.data || [] });
+      depositTransactions: depositTransactionResult.data || [], inspections: inspectionResult.data || [],
+      inspectionItems: inspectionItemResult.data || [], inspectionAcknowledgements: inspectionAckResult.data || [] });
   } catch (error) {
     console.error("Rental Manager query error", error);
     return NextResponse.json({ error: "Unable to load open rent charges." }, { status: 500 });
@@ -162,6 +166,22 @@ export async function POST(request) {
           p_deposit_id:input.depositId,p_transaction_type:input.transactionType,p_amount_cents:amountCents,p_occurred_at:input.occurredAt,
           p_description:input.description,p_evidence_document_id:input.evidenceDocumentId||null});if(error)throw error;
         return NextResponse.json({success:true,transaction:data});
+      }
+      case "save-inspection": {
+        const input=body.inspection;const items=body.items;
+        if(!input?.leaseId||!input?.unitId||!input?.tenantId||!["move_in","move_out","periodic"].includes(input.inspectionType)||!input.inspectionDate)
+          return badRequest("Lease, unit, tenant, inspection type, and date are required.");
+        if(!Array.isArray(items)||items.length===0||items.some(item=>!item.area?.trim()||!item.component?.trim()||!["excellent","good","fair","poor","damaged","not_inspected"].includes(item.conditionRating)))
+          return badRequest("At least one complete inspection item is required.");
+        const {data,error}=await authenticated.supabaseClient.rpc("save_rental_inspection",{p_owner_id:user.id,p_inspection:input,p_items:items});
+        if(error)throw error;return NextResponse.json({success:true,inspection:data});
+      }
+      case "finalize-inspection": {
+        if(typeof body.inspectionId!=="string"||!body.inspectionId.trim())return badRequest("inspectionId is required.");
+        const {data,error}=await authenticated.supabaseClient.from("rental_inspections").update({status:"finalized",finalized_at:timestamp,updated_at:timestamp})
+          .eq("owner_id",user.id).eq("id",body.inspectionId.trim()).eq("status","draft").select("*").maybeSingle();
+        if(error)throw error;if(!data)return NextResponse.json({error:"Draft inspection was not found."},{status:404});
+        return NextResponse.json({success:true,inspection:data});
       }
       default:
         return badRequest("A supported Rental Manager operation is required.");

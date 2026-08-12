@@ -1,0 +1,2 @@
+import{describe,expect,it}from"vitest";import{compareInspectionItems}from"./RentalInspectionsPanel.jsx";
+describe("inspection comparison",()=>{it("surfaces condition changes and damage against move-in",()=>{expect(compareInspectionItems([{area:"Kitchen",component:"Overall condition",condition_rating:"good"}],[{area:"Kitchen",component:"Overall condition",condition_rating:"damaged",damage_observed:true}])).toEqual([{area:"Kitchen",component:"Overall condition",before:"good",after:"damaged",changed:true,damageObserved:true}]);});});

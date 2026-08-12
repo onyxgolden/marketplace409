@@ -40,4 +40,5 @@ describe("tenant portal route", () => {
     expect(response.status).toBe(400);
     expect(rpc).not.toHaveBeenCalled();
   });
+  it("acknowledges only a specified finalized inspection through the tenant rpc",async()=>{rpc.mockResolvedValue({data:{inspection_id:"inspection_1",acknowledged:true},error:null});const response=await POST(new Request("https://example.test/api/rental/portal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({operation:"acknowledge-inspection",inspectionId:"inspection_1"})}));expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("acknowledge_rental_inspection",{p_inspection_id:"inspection_1"});});
 });

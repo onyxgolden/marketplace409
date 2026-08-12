@@ -23,6 +23,11 @@ export async function POST(request) {
     const authenticated = await createAuthenticatedTenantPortalApplication();
     if (authenticated.response) return authenticated.response;
     const body = await request.json();
+    if(body?.operation==="acknowledge-inspection"){
+      if(typeof body.inspectionId!=="string"||!body.inspectionId.trim())return NextResponse.json({error:"inspectionId is required."},{status:400});
+      const {data,error}=await authenticated.supabaseClient.rpc("acknowledge_rental_inspection",{p_inspection_id:body.inspectionId.trim()});
+      if(error)throw error;return NextResponse.json({success:true,acknowledgement:data});
+    }
     if (body?.operation !== "submit-maintenance-request")
       return NextResponse.json({ error: "A supported tenant portal operation is required." }, { status: 400 });
     if (typeof body.leaseId !== "string" || body.leaseId.trim() === "")

@@ -26,7 +26,7 @@ export class TenantPortalQueryService {
       .eq("owner_id", tenantRow.owner_id).in("id", leaseIds).order("start_date", { ascending: false });
     if (leaseError) throw leaseError;
     const rentals = await Promise.all((leases || []).map(async (leaseRow) => {
-      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult] = await Promise.all([
+      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult] = await Promise.all([
         this.supabase.from("rental_units").select("*").eq("owner_id", tenantRow.owner_id).eq("id", leaseRow.unit_id).maybeSingle(),
         this.supabase.from("rent_schedules").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("effective_start_date", { ascending: false }),
         this.supabase.from("rent_charges").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("due_date", { ascending: false }),
@@ -40,8 +40,10 @@ export class TenantPortalQueryService {
           .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).eq("tenant_id", tenantRow.id).order("submitted_at", { ascending: false }),
         this.supabase.from("rental_security_deposits").select("*").eq("owner_id", tenantRow.owner_id)
           .eq("lease_id", leaseRow.id).eq("tenant_id", tenantRow.id).order("created_at", { ascending: false }),
+        this.supabase.from("rental_inspections").select("*").eq("owner_id",tenantRow.owner_id).eq("lease_id",leaseRow.id)
+          .eq("tenant_id",tenantRow.id).in("status",["finalized","acknowledged"]).order("inspection_date",{ascending:false}),
       ]);
-      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult])
+      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult])
         if (result.error) throw result.error;
       const depositIds = (depositResult.data || []).map(({ id }) => id);
       let depositTransactions = [];
@@ -51,6 +53,11 @@ export class TenantPortalQueryService {
         if (transactionResult.error) throw transactionResult.error;
         depositTransactions = transactionResult.data || [];
       }
+      const inspectionIds=(inspectionResult.data||[]).map(({id})=>id);let inspectionItems=[];let inspectionAcknowledgements=[];
+      if(inspectionIds.length){const[itemResult,ackResult]=await Promise.all([
+        this.supabase.from("rental_inspection_items").select("*").eq("owner_id",tenantRow.owner_id).in("inspection_id",inspectionIds).order("created_at",{ascending:true}),
+        this.supabase.from("rental_inspection_acknowledgements").select("*").eq("owner_id",tenantRow.owner_id).eq("tenant_id",tenantRow.id).in("inspection_id",inspectionIds)]);
+        if(itemResult.error)throw itemResult.error;if(ackResult.error)throw ackResult.error;inspectionItems=itemResult.data||[];inspectionAcknowledgements=ackResult.data||[];}
       const membershipRows = (memberships || []).filter(({ lease_id }) => lease_id === leaseRow.id);
       return Object.freeze({ lease: mapRentalLeaseRowsToRentalLease(leaseRow, membershipRows),
         unit: unitResult.data ? mapRentalUnitRowToRentalUnit(unitResult.data) : null,
@@ -78,7 +85,13 @@ export class TenantPortalQueryService {
           dispositionDeadline: row.disposition_deadline }))),
         securityDepositTransactions: Object.freeze(depositTransactions.map((row) => Object.freeze({ id: row.id,
           depositId: row.deposit_id, transactionType: row.transaction_type, amountCents: Number(row.amount_cents),
-          occurredAt: row.occurred_at, description: row.description }))) });
+          occurredAt: row.occurred_at, description: row.description }))),
+        inspections:Object.freeze((inspectionResult.data||[]).map(row=>Object.freeze({id:row.id,inspectionType:row.inspection_type,
+          inspectionDate:row.inspection_date,status:row.status,generalNotes:row.general_notes,finalizedAt:row.finalized_at,
+          items:Object.freeze(inspectionItems.filter(item=>item.inspection_id===row.id).map(item=>Object.freeze({id:item.id,area:item.area,
+            component:item.component,conditionRating:item.condition_rating,notes:item.notes,damageObserved:item.damage_observed,
+            depositReviewRecommended:item.deposit_review_recommended,estimatedCostCents:item.estimated_cost_cents===null?null:Number(item.estimated_cost_cents),evidenceDocumentId:item.evidence_document_id}))),
+          acknowledged:inspectionAcknowledgements.some(item=>item.inspection_id===row.id)}))) });
     }));
     return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), rentals: Object.freeze(rentals) });
   }
