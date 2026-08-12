@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import RentalApplicationShell, { buildRentalSurface, RENTAL_FUNCTIONS } from "./RentalApplicationShell.jsx";
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
-    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "setup", "tenants", "leases", "charges", "insurance", "maintenance"]);
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "setup", "tenants", "leases", "charges", "insurance", "maintenance", "documents"]);
   });
   it("renders the Kent Avenue launch overview", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
@@ -34,5 +34,10 @@ describe("RentalApplicationShell", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("maintenance"));
     expect(markup).toContain("Tenant requests");
     expect(markup).toContain("No maintenance requests have been submitted");
+  });
+  it("renders the secure rental document library", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("documents"));
+    expect(markup).toContain("Lease documents and notices");
+    expect(markup).toContain("Publish this document to the tenant portal");
   });
 });

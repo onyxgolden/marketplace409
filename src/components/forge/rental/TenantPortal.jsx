@@ -4,6 +4,7 @@ import { Elements } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 import TenantPaymentForm from "./TenantPaymentForm";
 import TenantMaintenancePanel from "./TenantMaintenancePanel";
+import TenantDocumentsPanel from "./TenantDocumentsPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const date = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -73,6 +74,7 @@ export default function TenantPortal() {
       <p className="mt-3 text-sm font-bold text-blue-900">Not yet available — no fee will be charged.</p>
     </section> : null}
     {!session ? <TenantMaintenancePanel rentals={portal.rentals} onSubmitted={loadPortal} /> : null}
+    {!session ? <TenantDocumentsPanel /> : null}
     {!session ? <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6">
       <p className="text-sm font-bold uppercase tracking-widest text-emerald-800">Renters insurance</p>
       <h2 className="mt-2 text-xl font-black text-slate-950">Coverage and verification</h2>
