@@ -17,7 +17,7 @@ export class StripeBillingProvider {
       controller: {
         stripe_dashboard: { type: "express" },
         requirement_collection: "stripe",
-        losses: { payments: "stripe" },
+        losses: { payments: "application" },
         fees: { payer: "application" },
       },
       capabilities: {

@@ -13,6 +13,19 @@ function setup() {
 }
 
 describe("StripeBillingProvider", () => {
+  it("creates an Express account with application-controlled payment losses", async () => {
+    const { provider, stripeClient } = setup();
+    await provider.createConnectedAccount("owner_1", "account-key");
+    expect(stripeClient.accounts.create).toHaveBeenCalledWith(expect.objectContaining({
+      controller: {
+        stripe_dashboard: { type: "express" },
+        requirement_collection: "stripe",
+        losses: { payments: "application" },
+        fees: { payer: "application" },
+      },
+    }), { idempotencyKey: "account-key" });
+  });
+
   it("creates the tenant customer inside the landlord connected account", async () => {
     const { provider, stripeClient } = setup();
     await provider.createCustomer({ ownerId: "owner_1", connectedAccountId: "acct_kent" },
