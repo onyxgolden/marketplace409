@@ -6,6 +6,7 @@ import RentalTenantPanel from "./RentalTenantPanel";
 import RentalLeasePanel from "./RentalLeasePanel";
 import RentalPaymentsPanel from "./RentalPaymentsPanel";
 import RentalInsurancePanel from "./RentalInsurancePanel";
+import RentalMaintenancePanel from "./RentalMaintenancePanel";
 
 export const RENTAL_FUNCTIONS = Object.freeze([
   Object.freeze({ id: "overview", label: "Launch Overview" }),
@@ -22,6 +23,7 @@ export function buildRentalSurface(id) {
   if (id === "leases") return <RentalLeasePanel />;
   if (id === "charges") return <RentalPaymentsPanel />;
   if (id === "insurance") return <RentalInsurancePanel />;
+  if (id === "maintenance") return <RentalMaintenancePanel />;
   if (id === "overview") return <RentalOverviewPanel />;
   return <section className="rounded-2xl border border-slate-200 bg-white p-8"><h2 className="text-2xl font-black">{RENTAL_FUNCTIONS.find((item) => item.id === id)?.label}</h2>
     <p className="mt-2 text-slate-600">This function unlocks as the Kent Avenue launch ladder reaches it.</p></section>;

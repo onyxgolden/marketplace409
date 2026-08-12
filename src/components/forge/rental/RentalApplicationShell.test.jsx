@@ -30,4 +30,9 @@ describe("RentalApplicationShell", () => {
     expect(markup).toContain("Activate lease and create first charge");
     expect(markup).toContain("Activation starts billing");
   });
+  it("renders the maintenance request operations surface", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("maintenance"));
+    expect(markup).toContain("Tenant requests");
+    expect(markup).toContain("No maintenance requests have been submitted");
+  });
 });

@@ -13,7 +13,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -24,11 +24,15 @@ export async function GET() {
       authenticated.supabaseClient.from("rent_schedules")
         .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date")
         .order("effective_start_date", { ascending: false }),
+      authenticated.supabaseClient.from("rental_maintenance_requests")
+        .select("id, lease_id, unit_id, tenant_id, title, description, priority, status, permission_to_enter, contact_phone, owner_notes, submitted_at, updated_at, completed_at")
+        .order("submitted_at", { ascending: false }),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error;
     if (error) throw error;
     return NextResponse.json({ success: true, openCharges: chargesResult.data || [],
-      units: unitsResult.data || [], tenants: tenantsResult.data || [], schedules: schedulesResult.data || [] });
+      units: unitsResult.data || [], tenants: tenantsResult.data || [], schedules: schedulesResult.data || [],
+      maintenanceRequests: maintenanceResult.data || [] });
   } catch (error) {
     console.error("Rental Manager query error", error);
     return NextResponse.json({ error: "Unable to load open rent charges." }, { status: 500 });
@@ -114,6 +118,20 @@ export async function POST(request) {
         });
         if (error) throw error;
         return NextResponse.json({ success: true, payment: data });
+      }
+      case "update-maintenance-request": {
+        if (typeof body.requestId !== "string" || body.requestId.trim() === "") return badRequest("requestId is required.");
+        if (!["submitted", "reviewing", "scheduled", "in_progress", "completed", "cancelled"].includes(body.status))
+          return badRequest("A supported maintenance status is required.");
+        const update = { status: body.status, updated_at: timestamp,
+          owner_notes: typeof body.ownerNotes === "string" ? body.ownerNotes.trim() || null : null,
+          completed_at: body.status === "completed" ? timestamp : null };
+        const { data, error } = await authenticated.supabaseClient.from("rental_maintenance_requests")
+          .update(update).eq("owner_id", user.id).eq("id", body.requestId.trim())
+          .select("id, status, owner_notes, updated_at, completed_at").maybeSingle();
+        if (error) throw error;
+        if (!data) return NextResponse.json({ error: "Maintenance request was not found." }, { status: 404 });
+        return NextResponse.json({ success: true, request: data });
       }
       default:
         return badRequest("A supported Rental Manager operation is required.");

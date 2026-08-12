@@ -26,14 +26,15 @@ describe("Rental Manager route", () => {
     const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
       order: vi.fn().mockResolvedValue({ data, error: null }) });
     const tables = { rent_charges: result([{ id: "charge_1" }]), rental_units: result([{ id: "unit_1" }]),
-      rental_tenants: result([{ id: "tenant_1" }]), rent_schedules: result([{ id: "schedule_1", status: "draft" }]) };
+      rental_tenants: result([{ id: "tenant_1" }]), rent_schedules: result([{ id: "schedule_1", status: "draft" }]),
+      rental_maintenance_requests: result([{ id: "request_1", status: "submitted" }]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
       supabaseClient: { from: vi.fn((table) => tables[table]) } });
     const response = await GET(); const body = await response.json();
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ units: [{ id: "unit_1" }], tenants: [{ id: "tenant_1" }],
-      schedules: [{ id: "schedule_1", status: "draft" }] });
+      schedules: [{ id: "schedule_1", status: "draft" }], maintenanceRequests: [{ id: "request_1", status: "submitted" }] });
   });
   it("atomically activates the authenticated owner's lease and schedule", async () => {
     const rpc = vi.fn(async () => ({ data: { leaseId: "lease_1", scheduleId: "schedule_1", status: "active" }, error: null }));
@@ -59,5 +60,18 @@ describe("Rental Manager route", () => {
     application.generateMonthlyCharge.mockResolvedValue(null);
     const response = await POST(request({ operation: "generate-charge", scheduleId: "schedule_1", period: "2026-08" }));
     expect(response.status).toBe(409);
+  });
+  it("updates a maintenance request only through the authenticated owner scope", async () => {
+    const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "request_1", status: "scheduled" }, error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
+      supabaseClient: { from: vi.fn(() => query) } });
+    const response = await POST(request({ operation: "update-maintenance-request", requestId: "request_1",
+      status: "scheduled", ownerNotes: "Vendor visit requested." }));
+    expect(response.status).toBe(200);
+    expect(query.eq).toHaveBeenNthCalledWith(1, "owner_id", "owner_1");
+    expect(query.eq).toHaveBeenNthCalledWith(2, "id", "request_1");
+    expect(query.update).toHaveBeenCalledWith(expect.objectContaining({ status: "scheduled", owner_notes: "Vendor visit requested." }));
   });
 });

@@ -26,7 +26,7 @@ export class TenantPortalQueryService {
       .eq("owner_id", tenantRow.owner_id).in("id", leaseIds).order("start_date", { ascending: false });
     if (leaseError) throw leaseError;
     const rentals = await Promise.all((leases || []).map(async (leaseRow) => {
-      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult] = await Promise.all([
+      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult] = await Promise.all([
         this.supabase.from("rental_units").select("*").eq("owner_id", tenantRow.owner_id).eq("id", leaseRow.unit_id).maybeSingle(),
         this.supabase.from("rent_schedules").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("effective_start_date", { ascending: false }),
         this.supabase.from("rent_charges").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("due_date", { ascending: false }),
@@ -36,8 +36,10 @@ export class TenantPortalQueryService {
           .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).maybeSingle(),
         this.supabase.from("renters_insurance_policies").select("id, carrier_name, policy_number_masked, liability_limit_cents, effective_date, expiration_date, status, verified_at, last_checked_at")
           .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).eq("tenant_id", tenantRow.id).order("expiration_date", { ascending: false }),
+        this.supabase.from("rental_maintenance_requests").select("id, title, description, priority, status, permission_to_enter, contact_phone, owner_notes, submitted_at, updated_at, completed_at")
+          .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).eq("tenant_id", tenantRow.id).order("submitted_at", { ascending: false }),
       ]);
-      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult])
+      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult])
         if (result.error) throw result.error;
       const membershipRows = (memberships || []).filter(({ lease_id }) => lease_id === leaseRow.id);
       return Object.freeze({ lease: mapRentalLeaseRowsToRentalLease(leaseRow, membershipRows),
@@ -55,7 +57,11 @@ export class TenantPortalQueryService {
         insurancePolicies: Object.freeze((insurancePolicyResult.data || []).map((row) => Object.freeze({ id: row.id,
           carrierName: row.carrier_name, policyNumberMasked: row.policy_number_masked,
           liabilityLimitCents: Number(row.liability_limit_cents), effectiveDate: row.effective_date,
-          expirationDate: row.expiration_date, status: row.status, verifiedAt: row.verified_at, lastCheckedAt: row.last_checked_at }))) });
+          expirationDate: row.expiration_date, status: row.status, verifiedAt: row.verified_at, lastCheckedAt: row.last_checked_at }))),
+        maintenanceRequests: Object.freeze((maintenanceResult.data || []).map((row) => Object.freeze({ id: row.id,
+          title: row.title, description: row.description, priority: row.priority, status: row.status,
+          permissionToEnter: row.permission_to_enter, contactPhone: row.contact_phone, ownerNotes: row.owner_notes,
+          submittedAt: row.submitted_at, updatedAt: row.updated_at, completedAt: row.completed_at }))) });
     }));
     return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), rentals: Object.freeze(rentals) });
   }
