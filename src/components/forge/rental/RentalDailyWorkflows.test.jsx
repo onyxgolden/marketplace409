@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import RentalPaymentsPanel, { buildRentActivity } from "./RentalPaymentsPanel.jsx";
+import RentalPaymentsPanel, { buildRentActivity, paymentDisplayTimestamp, paymentReceiptReference } from "./RentalPaymentsPanel.jsx";
 import RentalMaintenancePanel from "./RentalMaintenancePanel.jsx";
 import RentalDocumentsPanel from "./RentalDocumentsPanel.jsx";
 
@@ -9,6 +9,13 @@ describe("rental daily workflows", () => {
     const rows = buildRentActivity([{ id: "charge_1" }], [{ id: "payment_1" }], [{ payment_id: "payment_1", status: "available" }]);
     expect(rows.map((row) => row.id)).toEqual(["charge:charge_1", "payment:payment_1"]);
     expect(rows[1].settlement.status).toBe("available");
+  });
+
+  it("uses successful payment evidence and a short receipt reference", () => {
+    const payment = { sourceId: "rental_payment_e7f578e2-61b1-40f8-94c5-0be06b722fe3", received_at: null, succeeded_at: "2026-08-12T20:30:00Z", created_at: "2026-08-11T20:30:00Z" };
+    expect(paymentDisplayTimestamp(payment)).toBe("2026-08-12T20:30:00Z");
+    expect(paymentReceiptReference(payment)).toBe("FORGE-6B722FE3");
+    expect(paymentReceiptReference(payment)).not.toContain("rental_payment");
   });
 
   it("renders selected rent detail and hides setup and offline entry", () => {

@@ -4,6 +4,11 @@ import RentalRecordBrowser from "./RentalRecordBrowser";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => value?.replaceAll("_", " ") || "—";
+export const paymentDisplayTimestamp = (payment) => payment.received_at || payment.succeeded_at || payment.created_at || null;
+export function paymentReceiptReference(payment) {
+  const suffix = String(payment.sourceId || payment.id || "").replaceAll(/[^a-zA-Z0-9]/g, "").slice(-8).toUpperCase();
+  return suffix ? `FORGE-${suffix}` : "Recorded in FORGE";
+}
 export function buildRentActivity(charges, payments, settlements) {
   const byPayment = new Map(settlements.map((item) => [item.payment_id, item]));
   return [...charges.map((item) => ({ ...item, id: `charge:${item.id}`, sourceId: item.id, kind: "charge" })),
@@ -37,6 +42,7 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
 
 function RecordDetail({ record, onRecordPayment }) {
   if (record.kind === "charge") return <div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Selected charge</p><h3 className="mt-2 text-xl font-black">{record.period} rent</h3><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Fact term="Status" value={label(record.status)} /><Fact term="Due date" value={record.due_date} /><Fact term="Original amount" value={money.format(Number(record.amount_cents) / 100)} /><Fact term="Paid amount" value={money.format(Number(record.paid_amount_cents) / 100)} /><Fact term="Balance" value={money.format((Number(record.amount_cents) - Number(record.paid_amount_cents)) / 100)} /><Fact term="Charge type" value={label(record.charge_type)} /></dl><button type="button" onClick={onRecordPayment} className="mt-6 rounded-xl bg-amber-500 px-4 py-2 font-black">Record payment for an open charge</button></div>;
-  return <div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Selected payment</p><h3 className="mt-2 text-xl font-black">{money.format(Number(record.amount_cents) / 100)} payment</h3><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Fact term="Status" value={label(record.status)} /><Fact term="Method" value={label(record.payment_method || record.provider)} /><Fact term="Received" value={record.received_at ? new Date(record.received_at).toLocaleDateString() : "—"} /><Fact term="Refunded" value={money.format(Number(record.refunded_amount_cents || 0) / 100)} /><Fact term="Receipt" value={record.sourceId} /><Fact term="Settlement" value={record.provider === "stripe" ? label(record.settlement?.status || "awaiting settlement") : "Not applicable"} /></dl></div>;
+  const timestamp = paymentDisplayTimestamp(record);
+  return <div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Selected payment</p><h3 className="mt-2 text-xl font-black">{money.format(Number(record.amount_cents) / 100)} payment</h3><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Fact term="Status" value={label(record.status)} /><Fact term="Method" value={label(record.payment_method || record.provider)} /><Fact term="Received" value={timestamp ? new Date(timestamp).toLocaleDateString() : "—"} /><Fact term="Refunded" value={money.format(Number(record.refunded_amount_cents || 0) / 100)} /><Fact term="Receipt" value={paymentReceiptReference(record)} /><Fact term="Settlement" value={record.provider === "stripe" ? label(record.settlement?.status || "awaiting settlement") : "Not applicable"} /></dl></div>;
 }
 function Fact({ term, value }) { return <div><dt className="text-xs font-bold uppercase text-slate-500">{term}</dt><dd className="mt-1 font-bold capitalize">{value}</dd></div>; }
