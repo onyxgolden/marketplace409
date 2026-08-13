@@ -3,10 +3,10 @@ import { useCallback, useEffect, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 const requestStates=["submitted","reviewing","scheduled","in_progress","completed","cancelled"],workStates=["assigned","scheduled","in_progress","completed","cancelled"];
 const dollars=(value)=>value==null?"—":new Intl.NumberFormat("en-US",{style:"currency",currency:"USD"}).format(value/100),toCents=(value)=>value===""?null:Math.round(Number(value)*100),label=(value)=>value?.replaceAll("_"," ")||"—";
-const empty={maintenanceRequests:[],contractors:[],workOrders:[],workEvents:[]};
-export default function RentalMaintenancePanel({initialData=null}){
+const empty={maintenanceRequests:[],contractors:[],workOrders:[],workEvents:[]},identity=value=>value;
+export default function RentalMaintenancePanel({initialData=null,dataScope=identity}){
  const[data,setData]=useState(initialData||empty),[selectedId,setSelectedId]=useState(""),[showContractor,setShowContractor]=useState(false),[showWorkOrder,setShowWorkOrder]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");
- const load=useCallback(()=>fetch("/api/rental").then(async response=>{const body=await response.json();if(!response.ok)throw new Error(body.error);setData(body);}),[]);useEffect(()=>{if(!initialData)load().catch(reason=>setError(reason.message));},[initialData,load]);
+ const load=useCallback(()=>fetch("/api/rental").then(async response=>{const body=await response.json();if(!response.ok)throw new Error(body.error);setData(dataScope(body));}),[dataScope]);useEffect(()=>{if(!initialData)load().catch(reason=>setError(reason.message));},[initialData,load]);
  const activeId=data.maintenanceRequests.some(item=>item.id===selectedId)?selectedId:data.maintenanceRequests[0]?.id||"",selected=data.maintenanceRequests.find(item=>item.id===activeId);
  async function post(payload,text){setError("");setMessage("");try{const response=await fetch("/api/rental",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}),body=await response.json();if(!response.ok)throw new Error(body.error);await load();setMessage(text);return true;}catch(reason){setError(reason.message);return false;}}
  const values=(form)=>Object.fromEntries(new FormData(form));

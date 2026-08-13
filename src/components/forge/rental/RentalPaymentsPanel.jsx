@@ -15,13 +15,14 @@ export function buildRentActivity(charges, payments, settlements) {
     ...payments.map((item) => ({ ...item, id: `payment:${item.id}`, sourceId: item.id, kind: "payment", settlement: byPayment.get(item.id) || null }))];
 }
 
-export default function RentalPaymentsPanel({ initialData = null, initialAccount }) {
+const identity = (value) => value;
+export default function RentalPaymentsPanel({ initialData = null, initialAccount, dataScope = identity }) {
   const [account, setAccount] = useState(initialAccount), [data, setData] = useState(initialData || { openCharges: [], payments: [], settlements: [], schedules: [] });
   const [selectedId, setSelectedId] = useState(""), [showOffline, setShowOffline] = useState(false), [showSetup, setShowSetup] = useState(false);
   const [message, setMessage] = useState(""), [saved, setSaved] = useState(""), [busy, setBusy] = useState(false);
-  async function loadRentalData() { const response = await fetch("/api/rental"), body = await response.json(); if (!response.ok) throw new Error(body.error || "Unable to load rent collection data."); setData({ openCharges: body.openCharges || [], payments: body.payments || [], settlements: body.settlements || [], schedules: body.schedules || [] }); }
+  async function loadRentalData() { const response = await fetch("/api/rental"), body = await response.json(); if (!response.ok) throw new Error(body.error || "Unable to load rent collection data."); setData(dataScope(body)); }
   async function loadAccount() { const response = await fetch("/api/rental/stripe-account"), body = await response.json(); if (!response.ok) throw new Error(body.error); setAccount(body.account); }
-  useEffect(() => { if (initialData) return; loadRentalData().catch((error) => setMessage(error.message)); loadAccount().catch((error) => setMessage(error.message)); }, [initialData]);
+  useEffect(() => { if (!initialData) loadRentalData().catch((error) => setMessage(error.message)); if (initialAccount === undefined) loadAccount().catch((error) => setMessage(error.message)); }, [initialData, initialAccount]);
   const records = useMemo(() => buildRentActivity(data.openCharges, data.payments, data.settlements), [data]);
   const activeId = records.some((item) => item.id === selectedId) ? selectedId : records[0]?.id || "";
   const selected = records.find((item) => item.id === activeId);

@@ -1,10 +1,10 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
-const label=(value)=>value?.replaceAll("_"," ")||"—";
-export default function RentalDocumentsPanel({initialData=null}){
+const label=(value)=>value?.replaceAll("_"," ")||"—",identity=value=>value;
+export default function RentalDocumentsPanel({initialData=null,dataScope=identity}){
  const[documents,setDocuments]=useState(initialData?.documents||[]),[schedules,setSchedules]=useState(initialData?.schedules||[]),[selectedId,setSelectedId]=useState(""),[showUpload,setShowUpload]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");
- const load=useCallback(()=>Promise.all([fetch("/api/rental/documents"),fetch("/api/rental")]).then(async([documentResponse,rentalResponse])=>{const documentBody=await documentResponse.json(),rentalBody=await rentalResponse.json();if(!documentResponse.ok)throw new Error(documentBody.error);if(!rentalResponse.ok)throw new Error(rentalBody.error);setDocuments(documentBody.documents||[]);setSchedules(rentalBody.schedules||[]);}),[]);
+ const load=useCallback(()=>Promise.all([fetch("/api/rental/documents"),fetch("/api/rental")]).then(async([documentResponse,rentalResponse])=>{const documentBody=await documentResponse.json(),rentalBody=await rentalResponse.json();if(!documentResponse.ok)throw new Error(documentBody.error);if(!rentalResponse.ok)throw new Error(rentalBody.error);const scoped=dataScope({...rentalBody,documents:documentBody.documents||[]});setDocuments(scoped.documents||[]);setSchedules(scoped.schedules||[]);}),[dataScope]);
  useEffect(()=>{if(!initialData)load().catch(reason=>setError(reason.message));},[initialData,load]);
  const activeId=documents.some(item=>item.id===selectedId)?selectedId:documents[0]?.id||"",selected=documents.find(item=>item.id===activeId);
  async function upload(event){event.preventDefault();setError("");setMessage("");const element=event.currentTarget,form=new FormData(element);form.set("tenantVisible",form.get("tenantVisible")==="on"?"true":"false");try{const response=await fetch("/api/rental/documents",{method:"POST",body:form}),body=await response.json();if(!response.ok)throw new Error(body.error);element.reset();await load();setShowUpload(false);setMessage("Document uploaded and access settings saved.");}catch(reason){setError(reason.message);}}

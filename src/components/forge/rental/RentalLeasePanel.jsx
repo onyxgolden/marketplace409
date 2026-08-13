@@ -10,6 +10,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
   const [showCreate, setShowCreate] = useState((initialSetup.leases || []).length === 0);
   const [selectedId, setSelectedId] = useState(initialSetup.leases?.[0]?.id || null);
   const [working, setWorking] = useState(false);
+  const contextualPropertyId = setup.leases?.[0]?.property_id || setup.units?.[0]?.property_id || "4800-kent-ave";
   useEffect(() => { if (!loadOnMount) return; (async () => {
     const response = await fetch("/api/rental"); const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load lease setup records.");
@@ -49,10 +50,10 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       Save at least one rental unit and tenant before creating a lease.</p>}
     {(setup.leases || []).length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Add another draft lease</button>}
     {showCreate && <form onSubmit={save} className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      <label className="text-sm font-bold">Property ID<input name="propertyId" defaultValue="4800-kent-ave" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
-      <label className="text-sm font-bold">Rental unit<select name="unitId" required defaultValue="" className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3">
+      <label className="text-sm font-bold">Property ID<input name="propertyId" defaultValue={contextualPropertyId} required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
+      <label className="text-sm font-bold">Rental unit<select name="unitId" required defaultValue={setup.units.length === 1 ? setup.units[0].id : ""} className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3">
         <option value="" disabled>Select a saved unit</option>{setup.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label} — {unit.property_id}</option>)}</select></label>
-      <label className="text-sm font-bold">Tenant<select name="tenantId" required defaultValue="" className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3">
+      <label className="text-sm font-bold">Tenant<select name="tenantId" required defaultValue={setup.tenants.length === 1 ? setup.tenants[0].id : ""} className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3">
         <option value="" disabled>Select a saved tenant</option>{setup.tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.display_name} — {tenant.email}</option>)}</select></label>
       <label className="text-sm font-bold">Start date<input name="startDate" type="date" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
       <label className="text-sm font-bold">End date<input name="endDate" type="date" className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
