@@ -6,7 +6,7 @@ describe("normalizeStripeConnectEvent", () => {
     expect(normalizeStripeConnectEvent({ id: "evt_1", type: "payment_intent.processing", account: "acct_kent",
       livemode: false, data: { object: { id: "pi_1", metadata: { forge_payment_id: "payment_1" } } } })).toEqual({
       providerEventId: "evt_1", connectedAccountId: "acct_kent", eventType: "payment_intent.processing",
-      objectId: "pi_1", paymentId: "payment_1", refundedAmountCents: null, paymentIntentId:null,balanceTransactionId:null,failureCode: null, failureMessage: null,
+      objectId: "pi_1", paymentId: "payment_1", refundedAmountCents: null, paymentIntentId:null,balanceTransactionId:null,paymentMethodId:null,mandateId:null,failureCode: null, failureMessage: null,
       occurredAt: expect.any(String), supported: true, livemode: false,
     });
   });

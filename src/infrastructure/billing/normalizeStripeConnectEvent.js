@@ -25,6 +25,8 @@ export function normalizeStripeConnectEvent(event) {
     refundedAmountCents: type === "refund.updated" && Number.isSafeInteger(object?.amount) ? object.amount : null,
     paymentIntentId: typeof object?.payment_intent === "string" ? object.payment_intent : null,
     balanceTransactionId: typeof object?.balance_transaction === "string" ? object.balance_transaction : null,
+    paymentMethodId: typeof object?.payment_method === "string" ? object.payment_method : null,
+    mandateId: typeof object?.mandate === "string" ? object.mandate : null,
     failureCode: typeof object?.last_payment_error?.code === "string" ? object.last_payment_error.code : null,
     failureMessage: typeof object?.last_payment_error?.message === "string" ? object.last_payment_error.message : null,
     occurredAt: Number.isSafeInteger(event?.created) ? new Date(event.created * 1000).toISOString() : new Date().toISOString(),

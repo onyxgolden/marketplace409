@@ -45,6 +45,7 @@ export async function POST(request) {
         p_occurred_at: normalized.occurredAt,
       });
       if (projection.error) throw projection.error;
+      if(normalized.eventType==="payment_intent.succeeded"&&normalized.paymentId&&normalized.paymentMethodId){const activation=await supabase.rpc("activate_rental_autopay_from_payment",{p_connected_account_id:normalized.connectedAccountId,p_payment_id:normalized.paymentId,p_payment_method_id:normalized.paymentMethodId,p_mandate_id:normalized.mandateId});if(activation.error)throw activation.error;}
     }
     return NextResponse.json({ received: true });
   } catch (error) {
