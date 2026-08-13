@@ -35,7 +35,8 @@ describe("Rental Manager route", () => {
       rental_security_deposit_transactions: result([{ id: "deposit_tx_1", deposit_id: "deposit_1" }]),
       rental_inspections: result([{ id: "inspection_1", status: "draft" }]),
       rental_inspection_items: result([{ id: "item_1", inspection_id: "inspection_1" }]),
-      rental_inspection_acknowledgements: result([]) };
+      rental_inspection_acknowledgements: result([]),rental_leases:result([{id:"lease_1",status:"active"}]),
+      rental_lease_changes:result([{id:"change_1",status:"draft"}]),rental_late_fee_rules:result([{id:"rule_1",status:"active"}]),rental_late_fee_assessments:result([]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
       supabaseClient: { from: vi.fn((table) => tables[table]) } });
@@ -46,7 +47,7 @@ describe("Rental Manager route", () => {
       notifications: [{ id: "notification_1", status: "queued" }], payments: [{ id: "payment_1", status: "succeeded" }],
       settlements: [{ id: "settlement_1", payment_id: "payment_1", status: "paid_out" }], deposits: [{ id: "deposit_1", status: "held" }],
       depositTransactions: [{ id: "deposit_tx_1", deposit_id: "deposit_1" }], inspections: [{ id: "inspection_1", status: "draft" }],
-      inspectionItems: [{ id: "item_1", inspection_id: "inspection_1" }], inspectionAcknowledgements: [] });
+      inspectionItems: [{ id: "item_1", inspection_id: "inspection_1" }], inspectionAcknowledgements: [],leases:[{id:"lease_1",status:"active"}],leaseChanges:[{id:"change_1",status:"draft"}],lateFeeRules:[{id:"rule_1",status:"active"}],lateFeeAssessments:[] });
   });
   it("atomically activates the authenticated owner's lease and schedule", async () => {
     const rpc = vi.fn(async () => ({ data: { leaseId: "lease_1", scheduleId: "schedule_1", status: "active" }, error: null }));
@@ -87,4 +88,5 @@ describe("Rental Manager route", () => {
     expect(query.update).toHaveBeenCalledWith(expect.objectContaining({ status: "scheduled", owner_notes: "Vendor visit requested." }));
   });
   it("saves a structured inspection through the authenticated owner RPC",async()=>{const rpc=vi.fn(async()=>({data:{id:"inspection_1",status:"draft"},error:null}));const{createAuthenticatedRentalManagerApplication}=await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({application,user:{id:"owner_1"},supabaseClient:{rpc}});const response=await POST(request({operation:"save-inspection",inspection:{leaseId:"lease_1",unitId:"unit_1",tenantId:"tenant_1",inspectionType:"move_in",inspectionDate:"2026-08-12"},items:[{area:"Kitchen",component:"Overall",conditionRating:"good"}]}));expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("save_rental_inspection",expect.objectContaining({p_owner_id:"owner_1"}));});
+  it("requires explicit owner approval before a late-fee assessment",async()=>{const response=await POST(request({operation:"assess-late-fee",ruleId:"rule_1",chargeId:"charge_1",reason:"Past grace period",ownerApproved:false}));expect(response.status).toBe(400);});
 });

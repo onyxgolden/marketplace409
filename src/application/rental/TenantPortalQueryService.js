@@ -62,7 +62,7 @@ export class TenantPortalQueryService {
       return Object.freeze({ lease: mapRentalLeaseRowsToRentalLease(leaseRow, membershipRows),
         unit: unitResult.data ? mapRentalUnitRowToRentalUnit(unitResult.data) : null,
         schedules: Object.freeze((scheduleResult.data || []).map(mapRentScheduleRow)),
-        charges: Object.freeze((chargeResult.data || []).map(mapRentChargeRow)),
+        charges: Object.freeze((chargeResult.data || []).map((row)=>Object.freeze({...mapRentChargeRow(row),chargeType:row.charge_type||"rent",relatedChargeId:row.related_charge_id||null}))),
         payments: Object.freeze((paymentResult.data || []).map((row) => Object.freeze({ id: row.id, chargeId: row.charge_id,
           amountCents: Number(row.amount_cents), currencyCode: row.currency_code, status: row.status,
           paymentMethod: row.payment_method, receiptReference: row.receipt_reference,

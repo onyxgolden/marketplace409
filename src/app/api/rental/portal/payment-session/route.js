@@ -84,6 +84,7 @@ export async function POST(request) {
     return NextResponse.json({ success: true, clientSecret: session.clientSecret,
       connectedAccountId: session.connectedAccountId, paymentId, amountCents: remainingCents,
       currencyCode: charge.currency_code, dueDate: charge.due_date, period: charge.period,
+      chargeType: charge.charge_type || "rent",
       returnUrl: `${request.nextUrl.origin}/forge/rental/portal?payment=returned` });
   } catch (error) {
     console.error("Tenant payment session error", error);

@@ -13,6 +13,7 @@ import RentalReconciliationPanel from "./RentalReconciliationPanel";
 import RentalReportsPanel from "./RentalReportsPanel";
 import RentalDepositsPanel from "./RentalDepositsPanel";
 import RentalInspectionsPanel from "./RentalInspectionsPanel";
+import RentalLeaseLifecyclePanel from "./RentalLeaseLifecyclePanel";
 
 export const RENTAL_FUNCTIONS = Object.freeze([
   Object.freeze({ id: "overview", label: "Launch Overview" }),
@@ -28,6 +29,7 @@ export const RENTAL_FUNCTIONS = Object.freeze([
   Object.freeze({ id: "reports", label: "Reports" }),
   Object.freeze({ id: "deposits", label: "Deposits" }),
   Object.freeze({ id: "inspections", label: "Inspections" }),
+  Object.freeze({ id: "lease-lifecycle", label: "Lease Changes" }),
 ]);
 export function buildRentalSurface(id) {
   if (id === "setup") return <RentalSetupPanel />;
@@ -42,6 +44,7 @@ export function buildRentalSurface(id) {
   if (id === "reports") return <RentalReportsPanel />;
   if (id === "deposits") return <RentalDepositsPanel />;
   if (id === "inspections") return <RentalInspectionsPanel />;
+  if (id === "lease-lifecycle") return <RentalLeaseLifecyclePanel />;
   if (id === "overview") return <RentalOverviewPanel />;
   return <section className="rounded-2xl border border-slate-200 bg-white p-8"><h2 className="text-2xl font-black">{RENTAL_FUNCTIONS.find((item) => item.id === id)?.label}</h2>
     <p className="mt-2 text-slate-600">This function unlocks as the Kent Avenue launch ladder reaches it.</p></section>;
