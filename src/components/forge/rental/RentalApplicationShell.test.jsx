@@ -12,12 +12,12 @@ describe("RentalApplicationShell", () => {
   });
   it("renders one selected function surface", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("leases"));
-    expect(markup).toContain("Record lease and rent schedule");
+    expect(markup).toContain("Leases and rent schedules");
     expect(markup).not.toContain("4800 Kent Avenue");
   });
   it("renders functional tenant and lease setup surfaces", () => {
-    expect(renderToStaticMarkup(buildRentalSurface("tenants"))).toContain("Create the Kent Avenue tenant");
-    expect(renderToStaticMarkup(buildRentalSurface("leases"))).toContain("Record lease and rent schedule");
+    expect(renderToStaticMarkup(buildRentalSurface("tenants"))).toContain("Tenants");
+    expect(renderToStaticMarkup(buildRentalSurface("leases"))).toContain("Leases and rent schedules");
   });
   it("requires persisted unit and tenant selections instead of manual ids", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("leases"));

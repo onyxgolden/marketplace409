@@ -10,8 +10,9 @@ export function buildRentalOperatingReport({units=[],tenants=[],leases=[],member
       tenantNames:Object.freeze((tenantIdsByLease.get(lease.id)||[]).map(id=>tenantById.get(id)?.display_name||id)),status:lease.status,
       startDate:lease.start_date,endDate:lease.end_date,monthlyRentCents:Number(lease.monthly_rent_cents),balanceCents,overdueCents,
       collectedCents:leasePayments.filter(item=>item.status==="succeeded").reduce((sum,item)=>sum+Number(item.amount_cents)-Number(item.refunded_amount_cents||0),0)});});
-  return Object.freeze({generatedAt:new Date().toISOString(),asOfDate:today,summary:Object.freeze({activeLeases:rentRoll.filter(item=>item.status==="active").length,
-    occupiedUnits:units.filter(item=>item.status==="occupied").length,monthlyScheduledCents:rentRoll.filter(item=>item.status==="active").reduce((sum,item)=>sum+item.monthlyRentCents,0),
+  const activeRentRoll=rentRoll.filter(item=>item.status==="active");
+  return Object.freeze({generatedAt:new Date().toISOString(),asOfDate:today,summary:Object.freeze({activeLeases:activeRentRoll.length,
+    occupiedUnits:new Set(activeRentRoll.map(item=>item.unitId).filter(Boolean)).size,monthlyScheduledCents:activeRentRoll.reduce((sum,item)=>sum+item.monthlyRentCents,0),
     openBalanceCents:rentRoll.reduce((sum,item)=>sum+item.balanceCents,0),overdueBalanceCents:rentRoll.reduce((sum,item)=>sum+item.overdueCents,0),
     collectedCents:rentRoll.reduce((sum,item)=>sum+item.collectedCents,0)}),rentRoll:Object.freeze(rentRoll),payments:Object.freeze(payments)});
 }

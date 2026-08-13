@@ -9,9 +9,10 @@ async function submit(operation, key, value) {
   return result;
 }
 
-export default function RentalSetupPanel() {
+export default function RentalSetupPanel({ initialUnits = [] }) {
   const [message, setMessage] = useState("");
-  const [units, setUnits] = useState([]);
+  const [units, setUnits] = useState(initialUnits);
+  const [showCreate, setShowCreate] = useState(initialUnits.length === 0);
   const [working, setWorking] = useState(false);
   async function loadUnits() {
     const response = await fetch("/api/rental"); const result = await response.json();
@@ -23,7 +24,7 @@ export default function RentalSetupPanel() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
       return result.units || [];
-    }).then(setUnits).catch((error) => setMessage(error.message));
+    }).then((loadedUnits) => { setUnits(loadedUnits); setShowCreate(loadedUnits.length === 0); }).catch((error) => setMessage(error.message));
   }, []);
   async function saveUnit(event) {
     event.preventDefault(); setWorking(true); setMessage("");
@@ -39,14 +40,15 @@ export default function RentalSetupPanel() {
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-rental-setup>
       <div className="max-w-3xl"><p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Kent Avenue setup</p>
-        <h2 className="mt-2 text-2xl font-black">Create the rental unit</h2>
-        <p className="mt-2 text-sm text-slate-600">This is the first owner workflow. Tenant and lease setup unlock after the unit is persisted.</p></div>
+        <h2 className="mt-2 text-2xl font-black">Rental units</h2>
+        <p className="mt-2 text-sm text-slate-600">Review saved units first. Create another unit only as a deliberate action.</p></div>
       {units.length > 0 && <div className="mt-5 rounded-xl border border-emerald-300 bg-emerald-50 p-4">
         <p className="text-sm font-black text-emerald-950">Saved rental units</p>
         <ul className="mt-2 space-y-1 text-sm text-emerald-950">{units.map((unit) =>
           <li key={unit.id}><strong>{unit.label}</strong> · {unit.property_id} · ID: <code>{unit.id}</code></li>)}</ul>
       </div>}
-      <form className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2" onSubmit={saveUnit}>
+      {units.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Add another rental unit</button>}
+      {showCreate && <form className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2" onSubmit={saveUnit}>
         <label className="text-sm font-bold">Property ID<input name="propertyId" defaultValue="4800-kent-ave" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
         <label className="text-sm font-bold">Unit label<input name="label" defaultValue="Main residence" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
         <label className="text-sm font-bold">Bedrooms<input name="bedrooms" type="number" min="0" step="1" className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
@@ -55,7 +57,7 @@ export default function RentalSetupPanel() {
         <label className="text-sm font-bold">Notes<input name="notes" defaultValue="Remodel in progress." className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
         <div className="md:col-span-2 flex items-center gap-4"><button disabled={working} className="rounded-xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-50">{working ? "Saving…" : "Save Kent Avenue unit"}</button>
           {message && <p role="status" className="text-sm font-bold text-slate-700">{message}</p>}</div>
-      </form>
+      </form>}
     </section>
   );
 }

@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 
-export default function RentalTenantPanel() {
+export default function RentalTenantPanel({ initialTenants = [] }) {
   const [message, setMessage] = useState("");
-  const [tenants, setTenants] = useState([]);
+  const [tenants, setTenants] = useState(initialTenants);
+  const [showCreate, setShowCreate] = useState(initialTenants.length === 0);
   const [working, setWorking] = useState(false);
   async function loadTenants() {
     const response = await fetch("/api/rental");
@@ -16,7 +17,7 @@ export default function RentalTenantPanel() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to load tenants.");
       return result.tenants || [];
-    }).then(setTenants).catch((error) => setMessage(error.message));
+    }).then((loadedTenants) => { setTenants(loadedTenants); setShowCreate(loadedTenants.length === 0); }).catch((error) => setMessage(error.message));
   }, []);
   async function save(event) {
     event.preventDefault(); setWorking(true); setMessage("");
@@ -42,8 +43,8 @@ export default function RentalTenantPanel() {
   }
   return <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-rental-tenant-setup>
     <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Tenant setup</p>
-    <h2 className="mt-2 text-2xl font-black">Create the Kent Avenue tenant</h2>
-    <p className="mt-2 text-sm text-slate-600">This creates the private tenant record. Portal access remains inactive until an authenticated account is linked.</p>
+    <h2 className="mt-2 text-2xl font-black">Tenants</h2>
+    <p className="mt-2 text-sm text-slate-600">Review saved tenants first. Creation remains separate from portal access and lease assignment.</p>
     {tenants.length > 0 && <div className="mt-5 rounded-xl border border-emerald-300 bg-emerald-50 p-4">
       <p className="text-sm font-black text-emerald-950">Saved tenants</p>
       <ul className="mt-2 space-y-3 text-sm text-emerald-950">{tenants.map((tenant) =>
@@ -55,12 +56,13 @@ export default function RentalTenantPanel() {
           </form></li>)}</ul>
       <a href="/auth?next=/forge/rental/portal" className="mt-4 inline-block font-bold text-emerald-900 underline">Open tenant sign-in</a>
     </div>}
-    <form onSubmit={save} className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2">
+    {tenants.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Add another tenant</button>}
+    {showCreate && <form onSubmit={save} className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2">
       <label className="text-sm font-bold">Tenant name<input name="displayName" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
       <label className="text-sm font-bold">Email<input name="email" type="email" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
       <label className="text-sm font-bold">Phone<input name="phone" type="tel" className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
       <div className="flex items-end"><button disabled={working} className="rounded-xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-50">{working ? "Saving…" : "Save tenant"}</button></div>
       {message && <p role="status" className="md:col-span-2 text-sm font-bold text-slate-700">{message}</p>}
-    </form>
+    </form>}
   </section>;
 }
