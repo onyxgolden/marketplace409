@@ -10,6 +10,7 @@ import TenantDepositPanel from "./TenantDepositPanel";
 import TenantInspectionsPanel from "./TenantInspectionsPanel";
 import TenantAutopayPanel from "./TenantAutopayPanel";
 import TenantInsurancePanel from "./TenantInsurancePanel";
+import TenantAnimalsPanel from "./TenantAnimalsPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const date = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -86,6 +87,7 @@ export default function TenantPortal() {
     {!session ? <TenantMaintenancePanel rentals={portal.rentals} onSubmitted={loadPortal} /> : null}
     {!session ? <TenantDocumentsPanel /> : null}
     {!session ? <TenantInsurancePanel rentals={portal.rentals} onSubmitted={loadPortal} /> : null}
+    {!session ? <TenantAnimalsPanel rentals={portal.rentals} onChanged={loadPortal} /> : null}
     {!session ? <section className="rounded-2xl border border-violet-200 bg-violet-50 p-6">
       <p className="text-sm font-bold uppercase tracking-widest text-violet-800">Dog liability coverage</p>
       <h2 className="mt-2 text-xl font-black text-slate-950">Coverage for qualifying dogs</h2>

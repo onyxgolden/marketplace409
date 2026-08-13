@@ -16,6 +16,7 @@ import RentalInspectionsPanel from "./RentalInspectionsPanel";
 import RentalLeaseLifecyclePanel from "./RentalLeaseLifecyclePanel";
 import RentalLeasePreparationPanel from "./RentalLeasePreparationPanel";
 import RentalAutopayPanel from "./RentalAutopayPanel";
+import RentalAnimalsPanel from "./RentalAnimalsPanel";
 
 export const RENTAL_FUNCTIONS = Object.freeze([
   Object.freeze({ id: "overview", label: "Launch Overview" }),
@@ -34,6 +35,7 @@ export const RENTAL_FUNCTIONS = Object.freeze([
   Object.freeze({ id: "lease-lifecycle", label: "Lease Changes" }),
   Object.freeze({ id: "lease-preparation", label: "Lease Editor" }),
   Object.freeze({ id: "autopay", label: "Autopay" }),
+  Object.freeze({ id: "animals", label: "Animals" }),
 ]);
 export function buildRentalSurface(id) {
   if (id === "setup") return <RentalSetupPanel />;
@@ -51,6 +53,7 @@ export function buildRentalSurface(id) {
   if (id === "lease-lifecycle") return <RentalLeaseLifecyclePanel />;
   if (id === "lease-preparation") return <RentalLeasePreparationPanel />;
   if (id === "autopay") return <RentalAutopayPanel />;
+  if (id === "animals") return <RentalAnimalsPanel />;
   if (id === "overview") return <RentalOverviewPanel />;
   return <section className="rounded-2xl border border-slate-200 bg-white p-8"><h2 className="text-2xl font-black">{RENTAL_FUNCTIONS.find((item) => item.id === id)?.label}</h2>
     <p className="mt-2 text-slate-600">This function unlocks as the Kent Avenue launch ladder reaches it.</p></section>;

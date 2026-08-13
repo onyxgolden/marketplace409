@@ -13,7 +13,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, autopayResult, insurancePolicyResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, autopayResult, insurancePolicyResult, animalResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type, related_charge_id")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -52,8 +52,9 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_lease_preparation_versions").select("*").order("version_number",{ascending:false}),
       authenticated.supabaseClient.from("rental_autopay_enrollments").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("renters_insurance_policies").select("*").order("expiration_date",{ascending:true}),
+      authenticated.supabaseClient.from("rental_animals").select("*").order("created_at",{ascending:false}),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || autopayResult.error || insurancePolicyResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || autopayResult.error || insurancePolicyResult.error || animalResult.error;
     if (error) throw error;
     return NextResponse.json({ success: true, openCharges: chargesResult.data || [],
       units: unitsResult.data || [], tenants: tenantsResult.data || [], schedules: schedulesResult.data || [],
@@ -61,7 +62,7 @@ export async function GET() {
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
       depositTransactions: depositTransactionResult.data || [], inspections: inspectionResult.data || [],
       inspectionItems: inspectionItemResult.data || [], inspectionAcknowledgements: inspectionAckResult.data || [],
-      leases:leaseResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[] });
+      leases:leaseResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],animals:animalResult.data||[] });
   } catch (error) {
     console.error("Rental Manager query error", error);
     return NextResponse.json({ error: "Unable to load open rent charges." }, { status: 500 });
@@ -85,6 +86,7 @@ export async function POST(request) {
           squareFeet: input.squareFeet ?? null, availableAt: input.availableAt ?? null, notes: input.notes ?? null });
         return NextResponse.json({ success: true, unit: await application.saveUnit(unit, user.id) });
       }
+      case "review-animal": {if(!body.animalId||!["approved","denied"].includes(body.decision)||!body.classification||!body.approvalEvidenceId)return badRequest("Animal, decision, classification, and evidence are required.");const{data,error}=await authenticated.supabaseClient.rpc("review_rental_animal",{p_owner_id:user.id,p_animal_id:body.animalId,p_decision:body.decision,p_classification:body.classification,p_approval_evidence_id:body.approvalEvidenceId,p_monthly_fee_cents:body.monthlyFeeCents??null,p_effective_start_date:body.effectiveStartDate||null});if(error)throw error;return NextResponse.json({success:true,review:data});}
       case "save-tenant": {
         const input = body.tenant;
         if (!input || typeof input !== "object") return badRequest("tenant is required.");

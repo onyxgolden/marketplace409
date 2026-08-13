@@ -23,6 +23,7 @@ export async function POST(request) {
     const authenticated = await createAuthenticatedTenantPortalApplication();
     if (authenticated.response) return authenticated.response;
     const body = await request.json();
+    if(body?.operation==="request-animal"){if(!body.leaseId||!body.name?.trim()||!body.breedDescription?.trim()||!["pet","assistance_review_requested"].includes(body.requestType))return NextResponse.json({error:"Lease, animal details, and request type are required."},{status:400});const{data,error}=await authenticated.supabaseClient.rpc("request_rental_animal",{p_lease_id:body.leaseId,p_name:body.name.trim(),p_breed_description:body.breedDescription.trim(),p_request_type:body.requestType});if(error)throw error;return NextResponse.json({success:true,animal:data});}
     if(body?.operation==="request-autopay"){
       if(!body.leaseId||!["card","us_bank_account"].includes(body.paymentMethodType)||body.consentConfirmed!==true)return NextResponse.json({error:"Lease, payment method, and explicit consent are required."},{status:400});
       const consentText="I authorize recurring rent payments under the displayed schedule, understand Stripe payment-method and mandate setup is required before activation, and may cancel future payments.";
