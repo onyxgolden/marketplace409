@@ -62,5 +62,7 @@ v_tenant_id:=rental_actor_tenant_id(v_inspection.owner_id);if v_tenant_id is nul
 insert into rental_inspection_acknowledgements(owner_id,inspection_id,tenant_id,acknowledgement_text) values(v_inspection.owner_id,v_inspection.id,v_tenant_id,'Receipt acknowledged; acknowledgement is not agreement with findings or charges.') on conflict do nothing;
 update rental_inspections set status='acknowledged',updated_at=now() where owner_id=v_inspection.owner_id and id=v_inspection.id;
 return jsonb_build_object('inspection_id',v_inspection.id,'acknowledged',true);end;$$;
-revoke all on function save_rental_inspection(text,jsonb,jsonb),function acknowledge_rental_inspection(text) from public,anon;
-grant execute on function save_rental_inspection(text,jsonb,jsonb),function acknowledge_rental_inspection(text) to authenticated;
+revoke all on function save_rental_inspection(text,jsonb,jsonb) from public,anon;
+revoke all on function acknowledge_rental_inspection(text) from public,anon;
+grant execute on function save_rental_inspection(text,jsonb,jsonb) to authenticated;
+grant execute on function acknowledge_rental_inspection(text) to authenticated;
