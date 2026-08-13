@@ -4,18 +4,18 @@ import RentalRecordBrowser from "./RentalRecordBrowser";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
-export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [] } }) {
+export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [] }, loadOnMount = true }) {
   const [message, setMessage] = useState("");
   const [setup, setSetup] = useState(initialSetup);
   const [showCreate, setShowCreate] = useState((initialSetup.leases || []).length === 0);
   const [selectedId, setSelectedId] = useState(initialSetup.leases?.[0]?.id || null);
   const [working, setWorking] = useState(false);
-  useEffect(() => { (async () => {
+  useEffect(() => { if (!loadOnMount) return; (async () => {
     const response = await fetch("/api/rental"); const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load lease setup records.");
     const loaded = { units: result.units || [], tenants: result.tenants || [], leases: result.leases || [] };
     setSetup(loaded); setSelectedId(loaded.leases[0]?.id || null); setShowCreate(loaded.leases.length === 0);
-  })().catch((error) => setMessage(error.message)); }, []);
+  })().catch((error) => setMessage(error.message)); }, [loadOnMount]);
   async function save(event) {
     event.preventDefault(); setWorking(true); setMessage("");
     const form = new FormData(event.currentTarget);
