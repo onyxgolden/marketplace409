@@ -280,7 +280,7 @@ describe(
             buildAssessment({
               assessmentType:
                 "unknown",
-            }) as never,
+            } as never) as never,
           ),
         ).toThrow(
           "Property condition assessment requires a supported assessment type.",
@@ -297,7 +297,7 @@ describe(
                     "unknown",
                 },
               ],
-            }) as never,
+            } as never) as never,
           ),
         ).toThrow(
           "Property condition assessment item requires a supported section.",

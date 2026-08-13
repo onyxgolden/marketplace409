@@ -156,7 +156,7 @@ describe("FinancialEventImportService", () => {
     const workspaceQueryService =
       new FinancialWorkspaceQueryService({
         financialEventRepository: repository,
-      });
+      } as never);
 
     const workspace =
       await workspaceQueryService.buildWorkspace("owner-1");

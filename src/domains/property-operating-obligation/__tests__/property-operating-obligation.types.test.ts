@@ -13,9 +13,13 @@ import {
   PROPERTY_OPERATING_OBLIGATION_VERIFICATION_STATUSES,
 } from "../property-operating-obligation.types";
 
+import type {
+  PropertyOperatingObligation,
+} from "../property-operating-obligation.types";
+
 function obligation(
-  overrides = {},
-) {
+  overrides: Record<string, unknown> = {},
+): PropertyOperatingObligation {
   return {
     id:
       "property_operating_obligation_1",
@@ -63,7 +67,7 @@ function obligation(
     notes:
       "Windstorm, hurricane, and hail excluded.",
     ...overrides,
-  };
+  } as PropertyOperatingObligation;
 }
 
 describe(
