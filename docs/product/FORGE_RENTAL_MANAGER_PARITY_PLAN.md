@@ -17,6 +17,8 @@ FORGE is ready for a real tenant only when the complete operating loop is proven
 8. accounting reconciliation and export;
 9. support, incident, refund, and failed-payment procedures.
 
+The support-case workflow now records failed-payment, refund, dispute, access, and escalation follow-up with private notes, tenant-visible updates, and append-only resolution evidence. Refund execution remains an explicit Stripe action.
+
 ## Capability Matrix
 
 | Capability | FORGE state | Evidence / next boundary |
