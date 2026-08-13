@@ -27,10 +27,11 @@ describe("RentalApplicationShell", () => {
     expect(markup).toContain("Select a saved tenant");
     expect(markup).not.toContain("Tenant ID");
   });
-  it("renders the explicit lease activation and first-charge workflow", () => {
+  it("keeps lease activation and first-charge controls in secondary billing setup", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("charges"));
-    expect(markup).toContain("Activate lease and create first charge");
-    expect(markup).toContain("Activation starts billing");
+    expect(markup).toContain("Rent &amp; payments");
+    expect(markup).toContain("Billing setup");
+    expect(markup).not.toContain("Activate lease and schedule");
   });
   it("renders the maintenance request operations surface", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("maintenance"));
@@ -40,7 +41,8 @@ describe("RentalApplicationShell", () => {
   it("renders the secure rental document library", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("documents"));
     expect(markup).toContain("Lease documents and notices");
-    expect(markup).toContain("Publish this document to the tenant portal");
+    expect(markup).toContain("Upload document");
+    expect(markup).not.toContain("Publish this document to the tenant portal");
   });
   it("renders the auditable notification outbox",()=>{const markup=renderToStaticMarkup(buildRentalSurface("communications"));expect(markup).toContain("Notification outbox");expect(markup).toContain("Real email sending remains disabled");expect(markup).toContain("Queue reminder");expect(markup).toContain("Maximum attempts");});
   it("renders payment reconciliation boundaries",()=>{const markup=renderToStaticMarkup(buildRentalSurface("reconciliation"));expect(markup).toContain("Payment reconciliation");expect(markup).toContain("gross rental income posting is implemented");});

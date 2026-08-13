@@ -1,91 +1,42 @@
 "use client";
-import { useEffect, useState } from "react";
-const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+import { useEffect, useMemo, useState } from "react";
+import RentalRecordBrowser from "./RentalRecordBrowser";
 
-export default function RentalPaymentsPanel() {
-  const [account, setAccount] = useState(undefined); const [message, setMessage] = useState(""); const [busy, setBusy] = useState(false);
-  const [charges, setCharges] = useState([]); const [schedules, setSchedules] = useState([]); const [saved, setSaved] = useState("");
-  async function loadRentalData() { const response = await fetch("/api/rental"); const body = await response.json();
-    if (!response.ok) throw new Error(body.error || "Unable to load rent collection data.");
-    setCharges(body.openCharges || []); setSchedules(body.schedules || []); }
-  async function load() { try { const response = await fetch("/api/rental/stripe-account"); const body = await response.json();
-    if (!response.ok) throw new Error(body.error); setAccount(body.account); } catch (error) { setMessage(error.message); } }
-  useEffect(() => { fetch("/api/rental/stripe-account").then(async (response) => {
-    const body = await response.json(); if (!response.ok) throw new Error(body.error); return body.account;
-  }).then(setAccount).catch((error) => setMessage(error.message));
-    fetch("/api/rental").then(async (response) => { const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Unable to load rent collection data."); return body;
-    }).then((body) => { setCharges(body.openCharges || []); setSchedules(body.schedules || []); })
-      .catch((error) => setMessage(error.message)); }, []);
-  async function connect() { setBusy(true); setMessage(""); try { const response = await fetch("/api/rental/stripe-account", { method: "POST" });
-    const body = await response.json(); if (!response.ok) throw new Error(body.error); window.location.assign(body.url);
-  } catch (error) { setMessage(error.message); setBusy(false); } }
-  async function recordOffline(event) {
-    event.preventDefault(); const formElement = event.currentTarget; setBusy(true); setMessage(""); setSaved(""); const form = new FormData(formElement);
-    try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operation: "record-offline-payment", payment: { chargeId: form.get("chargeId"),
-        paymentMethod: form.get("paymentMethod"), amountCents: Math.round(Number(form.get("amount")) * 100),
-        receivedAt: new Date(`${form.get("receivedDate")}T12:00:00`).toISOString(),
-        receiptReference: form.get("receiptReference"), notes: form.get("notes") } }) });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error); setSaved("Offline payment recorded and rent balance updated.");
-      formElement.reset(); const refreshed = await fetch("/api/rental").then((item) => item.json()); setCharges(refreshed.openCharges || []);
-    } catch (error) { setMessage(error.message); } finally { setBusy(false); }
-  }
-  async function activateSchedule(scheduleId) { setBusy(true); setMessage(""); setSaved(""); try {
-    const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operation: "activate-lease-schedule", scheduleId }) });
-    const body = await response.json(); if (!response.ok) throw new Error(body.error);
-    setSaved("Lease and rent schedule activated. First-charge generation is now available."); await loadRentalData();
-  } catch (error) { setMessage(error.message); } finally { setBusy(false); } }
-  async function generateCharge(event) { event.preventDefault(); setBusy(true); setMessage(""); setSaved("");
-    const form = new FormData(event.currentTarget); try {
-      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ operation: "generate-charge", scheduleId: form.get("scheduleId"), period: form.get("period") }) });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error);
-      setSaved(`Rent charge ready for ${body.charge.period}. Repeating this action will reuse the same charge.`); await loadRentalData();
-    } catch (error) { setMessage(error.message); } finally { setBusy(false); } }
+const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const label = (value) => value?.replaceAll("_", " ") || "—";
+export function buildRentActivity(charges, payments, settlements) {
+  const byPayment = new Map(settlements.map((item) => [item.payment_id, item]));
+  return [...charges.map((item) => ({ ...item, id: `charge:${item.id}`, sourceId: item.id, kind: "charge" })),
+    ...payments.map((item) => ({ ...item, id: `payment:${item.id}`, sourceId: item.id, kind: "payment", settlement: byPayment.get(item.id) || null }))];
+}
+
+export default function RentalPaymentsPanel({ initialData = null, initialAccount }) {
+  const [account, setAccount] = useState(initialAccount), [data, setData] = useState(initialData || { openCharges: [], payments: [], settlements: [], schedules: [] });
+  const [selectedId, setSelectedId] = useState(""), [showOffline, setShowOffline] = useState(false), [showSetup, setShowSetup] = useState(false);
+  const [message, setMessage] = useState(""), [saved, setSaved] = useState(""), [busy, setBusy] = useState(false);
+  async function loadRentalData() { const response = await fetch("/api/rental"), body = await response.json(); if (!response.ok) throw new Error(body.error || "Unable to load rent collection data."); setData({ openCharges: body.openCharges || [], payments: body.payments || [], settlements: body.settlements || [], schedules: body.schedules || [] }); }
+  async function loadAccount() { const response = await fetch("/api/rental/stripe-account"), body = await response.json(); if (!response.ok) throw new Error(body.error); setAccount(body.account); }
+  useEffect(() => { if (initialData) return; loadRentalData().catch((error) => setMessage(error.message)); loadAccount().catch((error) => setMessage(error.message)); }, [initialData]);
+  const records = useMemo(() => buildRentActivity(data.openCharges, data.payments, data.settlements), [data]);
+  const activeId = records.some((item) => item.id === selectedId) ? selectedId : records[0]?.id || "";
+  const selected = records.find((item) => item.id === activeId);
+  async function connect() { setBusy(true); setMessage(""); try { const response = await fetch("/api/rental/stripe-account", { method: "POST" }), body = await response.json(); if (!response.ok) throw new Error(body.error); window.location.assign(body.url); } catch (error) { setMessage(error.message); setBusy(false); } }
+  async function post(body, success) { setBusy(true); setMessage(""); setSaved(""); try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), result = await response.json(); if (!response.ok) throw new Error(result.error); setSaved(success(result)); await loadRentalData(); return true; } catch (error) { setMessage(error.message); return false; } finally { setBusy(false); } }
+  async function recordOffline(event) { event.preventDefault(); const element = event.currentTarget, form = new FormData(element); const success = await post({ operation: "record-offline-payment", payment: { chargeId: form.get("chargeId"), paymentMethod: form.get("paymentMethod"), amountCents: Math.round(Number(form.get("amount")) * 100), receivedAt: new Date(`${form.get("receivedDate")}T12:00:00`).toISOString(), receiptReference: form.get("receiptReference"), notes: form.get("notes") } }, () => "Offline payment recorded and rent balance updated."); if (success) { element.reset(); setShowOffline(false); } }
   const enabled = account?.status === "enabled";
-  return <section className="rounded-2xl border border-slate-200 bg-white p-7">
-    <p className="text-sm font-bold uppercase tracking-widest text-amber-700">Rent collection</p>
-    <h2 className="mt-2 text-2xl font-black text-slate-950">Stripe payment account</h2>
-    <p className="mt-2 max-w-2xl text-slate-600">Connect the landlord account before inviting the Kent Avenue tenant to pay. Stripe handles identity verification and bank details.</p>
-    <div className="mt-6 rounded-xl border bg-slate-50 p-5">
-      <p className="font-bold">Status: {account === undefined ? "checking…" : account?.status?.replaceAll("_", " ") || "not connected"}</p>
-      {account?.requirements_due?.length ? <p className="mt-2 text-sm text-amber-800">Stripe still requires {account.requirements_due.length} item(s).</p> : null}
-      <button onClick={connect} disabled={busy || enabled} className="mt-4 rounded-xl bg-slate-950 px-5 py-3 font-bold text-white disabled:opacity-50">
-        {enabled ? "Stripe ready" : busy ? "Opening Stripe…" : account ? "Continue Stripe setup" : "Connect Stripe"}
-      </button>
-      <button onClick={load} className="ml-3 mt-4 rounded-xl border px-5 py-3 font-bold text-slate-700">Refresh status</button>
-    </div>
-    {message ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-red-800">{message}</p> : null}
-    <div className="mt-8 border-t pt-7"><h3 className="text-xl font-black">Activate lease and create first charge</h3>
-      <p className="mt-1 text-sm text-slate-600">Activation starts billing. Use it only after the lease terms are approved. Monthly charge generation is idempotent.</p>
-      {schedules.length === 0 ? <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-900">No saved rent schedule is available.</p> :
-        <div className="mt-4 space-y-3">{schedules.map((schedule) => <div key={schedule.id} className="rounded-xl border bg-slate-50 p-4">
-          <p className="font-bold">{money.format(Number(schedule.amount_cents) / 100)} monthly · due day {schedule.due_day} · Status: {schedule.status}</p>
-          <p className="mt-1 text-xs text-slate-600">Effective {schedule.effective_start_date}{schedule.effective_end_date ? ` through ${schedule.effective_end_date}` : ""}</p>
-          {schedule.status === "draft" ? <button type="button" disabled={busy} onClick={() => activateSchedule(schedule.id)}
-            className="mt-3 rounded-xl bg-slate-950 px-4 py-2 font-bold text-white disabled:opacity-50">Activate lease and schedule</button> : null}
-          {schedule.status === "active" ? <form onSubmit={generateCharge} className="mt-3 flex flex-wrap items-end gap-3">
-            <input type="hidden" name="scheduleId" value={schedule.id} /><label className="text-sm font-bold">Charge month
-              <input name="period" type="month" required defaultValue={new Date().toISOString().slice(0, 7)} className="mt-1 block rounded-xl border p-2 font-normal" /></label>
-            <button disabled={busy} className="rounded-xl bg-amber-500 px-4 py-2 font-black text-slate-950 disabled:opacity-50">Generate monthly charge</button>
-          </form> : null}
-        </div>)}</div>}
-    </div>
-    <div className="mt-8 border-t pt-7"><h3 className="text-xl font-black">Record an offline payment</h3>
-      <p className="mt-1 text-sm text-slate-600">Use only after cash or a cashier’s check has actually been received.</p>
-      <form onSubmit={recordOffline} className="mt-5 grid gap-4 md:grid-cols-2">
-        <label className="text-sm font-bold md:col-span-2">Open rent charge<select name="chargeId" required className="mt-1 w-full rounded-xl border p-3 font-normal">
-          <option value="">Select a charge</option>{charges.map((charge) => <option key={charge.id} value={charge.id}>{charge.period} · due {charge.due_date} · {money.format((Number(charge.amount_cents) - Number(charge.paid_amount_cents)) / 100)}</option>)}</select></label>
-        <label className="text-sm font-bold">Payment method<select name="paymentMethod" required className="mt-1 w-full rounded-xl border p-3 font-normal"><option value="cash">Cash</option><option value="cashiers_check">Cashier&apos;s check</option></select></label>
-        <label className="text-sm font-bold">Amount received<input name="amount" type="number" min="0.01" step="0.01" required className="mt-1 w-full rounded-xl border p-3 font-normal" /></label>
-        <label className="text-sm font-bold">Date received<input name="receivedDate" type="date" required className="mt-1 w-full rounded-xl border p-3 font-normal" /></label>
-        <label className="text-sm font-bold">Receipt or check number<input name="receiptReference" className="mt-1 w-full rounded-xl border p-3 font-normal" /></label>
-        <label className="text-sm font-bold md:col-span-2">Notes<input name="notes" className="mt-1 w-full rounded-xl border p-3 font-normal" /></label>
-        <button disabled={busy || charges.length === 0} className="rounded-xl bg-amber-500 px-5 py-3 font-black text-slate-950 disabled:opacity-50 md:col-span-2">{busy ? "Saving…" : "Record received payment"}</button>
-      </form>{saved ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-emerald-800">{saved}</p> : null}
-    </div>
-    <a href="/forge/rental/portal" className="mt-6 inline-block font-bold text-amber-800 underline">Open tenant portal</a>
+  return <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-bold uppercase tracking-widest text-amber-700">Rent collection</p><h2 className="mt-2 text-2xl font-black">Rent &amp; payments</h2><p className="mt-2 text-slate-600">Review charges and payment history, then act on the selected record.</p></div><div className="flex gap-2"><button type="button" onClick={() => setShowOffline((value) => !value)} className="rounded-xl bg-amber-500 px-4 py-2 font-black">{showOffline ? "Cancel offline payment" : "Record offline payment"}</button><button type="button" onClick={() => setShowSetup((value) => !value)} className="rounded-xl border px-4 py-2 font-bold">{showSetup ? "Hide billing setup" : "Billing setup"}</button></div></div>
+    {message ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-red-800">{message}</p> : null}{saved ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-emerald-800">{saved}</p> : null}
+    {showOffline ? <form aria-label="Record offline payment" onSubmit={recordOffline} className="mt-6 grid gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-5 md:grid-cols-2"><label className="text-sm font-bold md:col-span-2">Open rent charge<select name="chargeId" required className="mt-1 w-full rounded-xl border p-3 font-normal"><option value="">Select a charge</option>{data.openCharges.map((charge) => <option key={charge.id} value={charge.id}>{charge.period} · due {charge.due_date} · {money.format((Number(charge.amount_cents) - Number(charge.paid_amount_cents)) / 100)}</option>)}</select></label><label className="text-sm font-bold">Payment method<select name="paymentMethod" required className="mt-1 w-full rounded-xl border p-3 font-normal"><option value="cash">Cash</option><option value="cashiers_check">Cashier&apos;s check</option></select></label><label className="text-sm font-bold">Amount received<input name="amount" type="number" min="0.01" step="0.01" required className="mt-1 w-full rounded-xl border p-3 font-normal" /></label><label className="text-sm font-bold">Date received<input name="receivedDate" type="date" required className="mt-1 w-full rounded-xl border p-3 font-normal" /></label><label className="text-sm font-bold">Receipt or check number<input name="receiptReference" className="mt-1 w-full rounded-xl border p-3 font-normal" /></label><label className="text-sm font-bold md:col-span-2">Notes<input name="notes" className="mt-1 w-full rounded-xl border p-3 font-normal" /></label><button disabled={busy || data.openCharges.length === 0} className="rounded-xl bg-slate-950 px-5 py-3 font-bold text-white disabled:opacity-50 md:col-span-2">{busy ? "Saving…" : "Record received payment"}</button></form> : null}
+    {showSetup ? <div className="mt-6 rounded-2xl border bg-slate-50 p-5"><h3 className="text-lg font-black">Billing setup</h3><p className="mt-2 font-bold">Stripe: {account === undefined ? "checking…" : label(account?.status || "not connected")}</p>{account?.requirements_due?.length ? <p className="mt-1 text-sm text-amber-800">Stripe still requires {account.requirements_due.length} item(s).</p> : null}<button onClick={connect} disabled={busy || enabled} className="mt-3 rounded-xl bg-slate-950 px-4 py-2 font-bold text-white disabled:opacity-50">{enabled ? "Stripe ready" : account ? "Continue Stripe setup" : "Connect Stripe"}</button><button onClick={() => loadAccount().catch((error) => setMessage(error.message))} className="ml-2 mt-3 rounded-xl border px-4 py-2 font-bold">Refresh status</button><div className="mt-5 border-t pt-4"><h4 className="font-black">Lease activation and charge generation</h4><p className="mt-1 text-sm text-slate-600">Activation starts billing. Monthly charge generation is idempotent.</p>{data.schedules.length === 0 ? <p className="mt-2 text-sm text-slate-500">No saved rent schedule is available.</p> : data.schedules.map((schedule) => <div key={schedule.id} className="mt-3 rounded-xl border bg-white p-4"><p className="font-bold">{money.format(Number(schedule.amount_cents) / 100)} monthly · due day {schedule.due_day} · {label(schedule.status)}</p>{schedule.status === "draft" ? <button type="button" disabled={busy} onClick={() => post({ operation: "activate-lease-schedule", scheduleId: schedule.id }, () => "Lease and rent schedule activated.")} className="mt-3 rounded-xl bg-slate-950 px-4 py-2 font-bold text-white">Activate lease and schedule</button> : null}{schedule.status === "active" ? <form onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); post({ operation: "generate-charge", scheduleId: schedule.id, period: form.get("period") }, (body) => `Rent charge ready for ${body.charge.period}.`); }} className="mt-3 flex items-end gap-3"><label className="text-sm font-bold">Charge month<input name="period" type="month" required defaultValue={new Date().toISOString().slice(0, 7)} className="mt-1 block rounded-xl border p-2 font-normal" /></label><button disabled={busy} className="rounded-xl bg-amber-500 px-4 py-2 font-black">Generate monthly charge</button></form> : null}</div>)}</div></div> : null}
+    <RentalRecordBrowser title="Charges and payments" records={records} selectedId={activeId} onSelect={setSelectedId} getTitle={(item) => item.kind === "charge" ? `${item.period} rent charge` : `${money.format(Number(item.amount_cents) / 100)} payment`} getSubtitle={(item) => item.kind === "charge" ? `${label(item.status)} · due ${item.due_date}` : `${label(item.payment_method || item.provider)} · ${label(item.status)}`} emptyMessage="No rent charges or payments recorded.">
+      {!selected ? <p className="text-sm text-slate-500">Select a charge or payment to review its details.</p> : <RecordDetail record={selected} onRecordPayment={() => setShowOffline(true)} />}
+    </RentalRecordBrowser><a href="/forge/rental/portal" className="mt-6 inline-block font-bold text-amber-800 underline">Open tenant portal</a>
   </section>;
 }
+
+function RecordDetail({ record, onRecordPayment }) {
+  if (record.kind === "charge") return <div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Selected charge</p><h3 className="mt-2 text-xl font-black">{record.period} rent</h3><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Fact term="Status" value={label(record.status)} /><Fact term="Due date" value={record.due_date} /><Fact term="Original amount" value={money.format(Number(record.amount_cents) / 100)} /><Fact term="Paid amount" value={money.format(Number(record.paid_amount_cents) / 100)} /><Fact term="Balance" value={money.format((Number(record.amount_cents) - Number(record.paid_amount_cents)) / 100)} /><Fact term="Charge type" value={label(record.charge_type)} /></dl><button type="button" onClick={onRecordPayment} className="mt-6 rounded-xl bg-amber-500 px-4 py-2 font-black">Record payment for an open charge</button></div>;
+  return <div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Selected payment</p><h3 className="mt-2 text-xl font-black">{money.format(Number(record.amount_cents) / 100)} payment</h3><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Fact term="Status" value={label(record.status)} /><Fact term="Method" value={label(record.payment_method || record.provider)} /><Fact term="Received" value={record.received_at ? new Date(record.received_at).toLocaleDateString() : "—"} /><Fact term="Refunded" value={money.format(Number(record.refunded_amount_cents || 0) / 100)} /><Fact term="Receipt" value={record.sourceId} /><Fact term="Settlement" value={record.provider === "stripe" ? label(record.settlement?.status || "awaiting settlement") : "Not applicable"} /></dl></div>;
+}
+function Fact({ term, value }) { return <div><dt className="text-xs font-bold uppercase text-slate-500">{term}</dt><dd className="mt-1 font-bold capitalize">{value}</dd></div>; }
