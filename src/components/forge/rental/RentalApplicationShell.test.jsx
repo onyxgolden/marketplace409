@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import RentalApplicationShell, { buildRentalSurface, RENTAL_FUNCTIONS } from "./RentalApplicationShell.jsx";
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
-    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "setup", "tenants", "leases", "charges", "insurance", "maintenance", "documents", "communications", "reconciliation", "reports", "deposits", "inspections", "lease-lifecycle", "lease-preparation"]);
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "setup", "tenants", "leases", "charges", "insurance", "maintenance", "documents", "communications", "reconciliation", "reports", "deposits", "inspections", "lease-lifecycle", "lease-preparation", "autopay"]);
   });
   it("renders the Kent Avenue launch overview", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
@@ -47,4 +47,5 @@ describe("RentalApplicationShell", () => {
   it("renders controlled move-in and move-out inspections",()=>{const markup=renderToStaticMarkup(buildRentalSurface("inspections"));expect(markup).toContain("Move-in, move-out, and periodic inspections");expect(markup).toContain("never creates a deduction");});
   it("renders auditable lease changes and owner-controlled late fees",()=>{const markup=renderToStaticMarkup(buildRentalSurface("lease-lifecycle"));expect(markup).toContain("Renewals, amendments, and prorating");expect(markup).toContain("Owner-controlled late fees");});
   it("renders editable lease preparation without claiming a licensed form",()=>{const markup=renderToStaticMarkup(buildRentalSurface("lease-preparation"));expect(markup).toContain("Editable terms and version history");expect(markup).toContain("not the Texas REALTORS® form");expect(markup).toContain("Save immutable draft version");});
+  it("shows owner autopay authorization without claiming consent activates a debit",()=>{const markup=renderToStaticMarkup(buildRentalSurface("autopay"));expect(markup).toContain("Tenant authorizations");expect(markup).toContain("Consent alone never activates a debit");});
 });

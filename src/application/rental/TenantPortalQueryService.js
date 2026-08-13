@@ -26,7 +26,7 @@ export class TenantPortalQueryService {
       .eq("owner_id", tenantRow.owner_id).in("id", leaseIds).order("start_date", { ascending: false });
     if (leaseError) throw leaseError;
     const rentals = await Promise.all((leases || []).map(async (leaseRow) => {
-      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult] = await Promise.all([
+      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult, autopayResult] = await Promise.all([
         this.supabase.from("rental_units").select("*").eq("owner_id", tenantRow.owner_id).eq("id", leaseRow.unit_id).maybeSingle(),
         this.supabase.from("rent_schedules").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("effective_start_date", { ascending: false }),
         this.supabase.from("rent_charges").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("due_date", { ascending: false }),
@@ -42,8 +42,10 @@ export class TenantPortalQueryService {
           .eq("lease_id", leaseRow.id).eq("tenant_id", tenantRow.id).order("created_at", { ascending: false }),
         this.supabase.from("rental_inspections").select("*").eq("owner_id",tenantRow.owner_id).eq("lease_id",leaseRow.id)
           .eq("tenant_id",tenantRow.id).in("status",["finalized","acknowledged"]).order("inspection_date",{ascending:false}),
+        this.supabase.from("rental_autopay_enrollments").select("id, status, payment_method_type, charge_day, retry_limit, reminder_days_before, consented_at, cancelled_at")
+          .eq("owner_id",tenantRow.owner_id).eq("lease_id",leaseRow.id).eq("tenant_id",tenantRow.id).order("created_at",{ascending:false}),
       ]);
-      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult])
+      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult, autopayResult])
         if (result.error) throw result.error;
       const depositIds = (depositResult.data || []).map(({ id }) => id);
       let depositTransactions = [];
@@ -89,6 +91,7 @@ export class TenantPortalQueryService {
         securityDepositTransactions: Object.freeze(depositTransactions.map((row) => Object.freeze({ id: row.id,
           depositId: row.deposit_id, transactionType: row.transaction_type, amountCents: Number(row.amount_cents),
           occurredAt: row.occurred_at, description: row.description }))),
+        autopayEnrollments:Object.freeze((autopayResult.data||[]).map(row=>Object.freeze({id:row.id,status:row.status,paymentMethodType:row.payment_method_type,chargeDay:row.charge_day,retryLimit:row.retry_limit,reminderDaysBefore:row.reminder_days_before,consentedAt:row.consented_at,cancelledAt:row.cancelled_at}))),
         inspections:Object.freeze((inspectionResult.data||[]).map(row=>Object.freeze({id:row.id,inspectionType:row.inspection_type,
           inspectionDate:row.inspection_date,status:row.status,generalNotes:row.general_notes,finalizedAt:row.finalized_at,
           items:Object.freeze(inspectionItems.filter(item=>item.inspection_id===row.id).map(item=>Object.freeze({id:item.id,area:item.area,
