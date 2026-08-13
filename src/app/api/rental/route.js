@@ -13,7 +13,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, autopayResult, insurancePolicyResult, animalResult, supportResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, autopayResult, insurancePolicyResult, animalResult, supportResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type, related_charge_id")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -42,6 +42,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_inspection_items").select("*").order("created_at", { ascending: true }),
       authenticated.supabaseClient.from("rental_inspection_acknowledgements").select("*").order("acknowledged_at", { ascending: false }),
       authenticated.supabaseClient.from("rental_leases").select("*").order("start_date",{ascending:false}),
+      authenticated.supabaseClient.from("rental_lease_tenants").select("lease_id, tenant_id").order("lease_id",{ascending:true}),
       authenticated.supabaseClient.from("rental_lease_changes").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_late_fee_rules").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_late_fee_assessments").select("*").order("approved_at",{ascending:false}),
@@ -55,7 +56,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_animals").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_support_cases").select("*").order("opened_at",{ascending:false}),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || autopayResult.error || insurancePolicyResult.error || animalResult.error || supportResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || autopayResult.error || insurancePolicyResult.error || animalResult.error || supportResult.error;
     if (error) throw error;
     return NextResponse.json({ success: true, openCharges: chargesResult.data || [],
       units: unitsResult.data || [], tenants: tenantsResult.data || [], schedules: schedulesResult.data || [],
@@ -63,7 +64,7 @@ export async function GET() {
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
       depositTransactions: depositTransactionResult.data || [], inspections: inspectionResult.data || [],
       inspectionItems: inspectionItemResult.data || [], inspectionAcknowledgements: inspectionAckResult.data || [],
-      leases:leaseResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[] });
+      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[] });
   } catch (error) {
     console.error("Rental Manager query error", error);
     return NextResponse.json({ error: "Unable to load open rent charges." }, { status: 500 });
@@ -195,6 +196,18 @@ export async function POST(request) {
           return badRequest("Lease, unit, tenant, inspection type, and date are required.");
         if(!Array.isArray(items)||items.length===0||items.some(item=>!item.area?.trim()||!item.component?.trim()||!["excellent","good","fair","poor","damaged","not_inspected"].includes(item.conditionRating)))
           return badRequest("At least one complete inspection item is required.");
+        const [{data:lease,error:leaseError},{data:membership,error:membershipError}]=await Promise.all([
+          authenticated.supabaseClient.from("rental_leases").select("id, unit_id").eq("owner_id",user.id).eq("id",input.leaseId).maybeSingle(),
+          authenticated.supabaseClient.from("rental_lease_tenants").select("tenant_id").eq("owner_id",user.id).eq("lease_id",input.leaseId).eq("tenant_id",input.tenantId).maybeSingle(),
+        ]);
+        if(leaseError||membershipError)throw leaseError||membershipError;
+        if(!lease||lease.unit_id!==input.unitId||!membership)return badRequest("Inspection unit and tenant must belong to the selected lease.");
+        const evidenceIds=[...new Set(items.map(item=>item.evidenceDocumentId).filter(Boolean))];
+        if(evidenceIds.length){
+          const {data:evidence,error:evidenceError}=await authenticated.supabaseClient.from("rental_documents").select("id").eq("owner_id",user.id).eq("lease_id",input.leaseId).in("id",evidenceIds);
+          if(evidenceError)throw evidenceError;
+          if((evidence||[]).length!==evidenceIds.length)return badRequest("Inspection evidence must be a saved document for the selected lease.");
+        }
         const {data,error}=await authenticated.supabaseClient.rpc("save_rental_inspection",{p_owner_id:user.id,p_inspection:input,p_items:items});
         if(error)throw error;return NextResponse.json({success:true,inspection:data});
       }
