@@ -28,7 +28,7 @@ export async function GET() {
         .select("id, lease_id, unit_id, tenant_id, title, description, priority, status, permission_to_enter, contact_phone, owner_notes, submitted_at, updated_at, completed_at")
         .order("submitted_at", { ascending: false }),
       authenticated.supabaseClient.from("rental_notification_outbox")
-        .select("id, tenant_id, lease_id, notification_type, channel, recipient, subject, body_text, status, failure_message, created_at, sent_at")
+        .select("id, tenant_id, lease_id, notification_type, channel, recipient, subject, body_text, status, failure_message, scheduled_for, attempt_count, max_attempts, next_attempt_at, created_at, sent_at")
         .order("created_at", { ascending: false }),
       authenticated.supabaseClient.from("rental_payments")
         .select("id, charge_id, lease_id, tenant_id, provider, provider_payment_id, amount_cents, refunded_amount_cents, currency_code, status, payment_method, received_at, succeeded_at, created_at")
@@ -146,6 +146,12 @@ export async function POST(request) {
         });
         if (error) throw error;
         return NextResponse.json({ success: true, payment: data });
+      }
+      case "queue-rent-reminder": {
+        if(!body.chargeId||!["rent_reminder","balance_overdue"].includes(body.notificationType)||!body.scheduledFor)return badRequest("Charge, reminder type, and schedule are required.");const attempts=Number(body.maxAttempts);if(!Number.isInteger(attempts)||attempts<1||attempts>5)return badRequest("Retry limit must be between 1 and 5.");const{data,error}=await authenticated.supabaseClient.rpc("queue_rental_balance_reminder",{p_owner_id:user.id,p_charge_id:body.chargeId,p_scheduled_for:body.scheduledFor,p_notification_type:body.notificationType,p_max_attempts:attempts});if(error)throw error;return NextResponse.json({success:true,notification:data});
+      }
+      case "cancel-rent-notification": {
+        if(!body.notificationId)return badRequest("notificationId is required.");const{data,error}=await authenticated.supabaseClient.rpc("cancel_rental_notification",{p_owner_id:user.id,p_notification_id:body.notificationId});if(error)throw error;return NextResponse.json({success:true,notification:data});
       }
       case "update-maintenance-request": {
         if (typeof body.requestId !== "string" || body.requestId.trim() === "") return badRequest("requestId is required.");

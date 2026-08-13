@@ -75,6 +75,8 @@ describe("Rental Manager route", () => {
     const response = await POST(request({ operation: "generate-charge", scheduleId: "schedule_1", period: "2026-08" }));
     expect(response.status).toBe(409);
   });
+  it("queues an owner-scoped reminder with bounded retries",async()=>{const rpc=vi.fn(async()=>({data:{id:"notice_1",status:"queued"},error:null}));const{createAuthenticatedRentalManagerApplication}=await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({application,user:{id:"owner_1"},supabaseClient:{rpc}});const response=await POST(request({operation:"queue-rent-reminder",chargeId:"charge_1",notificationType:"rent_reminder",scheduledFor:"2026-09-28T12:00:00Z",maxAttempts:3}));expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("queue_rental_balance_reminder",expect.objectContaining({p_owner_id:"owner_1",p_charge_id:"charge_1",p_max_attempts:3}));});
+  it("rejects excessive reminder retries",async()=>expect((await POST(request({operation:"queue-rent-reminder",chargeId:"charge_1",notificationType:"rent_reminder",scheduledFor:"2026-09-28T12:00:00Z",maxAttempts:9}))).status).toBe(400));
   it("updates a maintenance request only through the authenticated owner scope", async () => {
     const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn(async () => ({ data: { id: "request_1", status: "scheduled" }, error: null })) };

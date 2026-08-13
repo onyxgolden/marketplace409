@@ -40,7 +40,7 @@ describe("RentalApplicationShell", () => {
     expect(markup).toContain("Lease documents and notices");
     expect(markup).toContain("Publish this document to the tenant portal");
   });
-  it("renders the auditable notification outbox",()=>{const markup=renderToStaticMarkup(buildRentalSurface("communications"));expect(markup).toContain("Notification outbox");expect(markup).toContain("Real email sending remains disabled");});
+  it("renders the auditable notification outbox",()=>{const markup=renderToStaticMarkup(buildRentalSurface("communications"));expect(markup).toContain("Notification outbox");expect(markup).toContain("Real email sending remains disabled");expect(markup).toContain("Queue reminder");expect(markup).toContain("Maximum attempts");});
   it("renders payment reconciliation boundaries",()=>{const markup=renderToStaticMarkup(buildRentalSurface("reconciliation"));expect(markup).toContain("Payment reconciliation");expect(markup).toContain("gross rental income posting is implemented");});
   it("renders rent roll and tenant ledger reporting",()=>{const markup=renderToStaticMarkup(buildRentalSurface("reports"));expect(markup).toContain("Rent roll and tenant ledger");expect(markup).toContain("Loading report");});
   it("renders a separate security-deposit liability ledger",()=>{const markup=renderToStaticMarkup(buildRentalSurface("deposits"));expect(markup).toContain("Security deposits");expect(markup).toContain("never treated as rent or NOI");});
