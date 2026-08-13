@@ -9,6 +9,7 @@ import RentalPaymentReceipt from "./RentalPaymentReceipt";
 import TenantDepositPanel from "./TenantDepositPanel";
 import TenantInspectionsPanel from "./TenantInspectionsPanel";
 import TenantAutopayPanel from "./TenantAutopayPanel";
+import TenantInsurancePanel from "./TenantInsurancePanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const date = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -84,12 +85,7 @@ export default function TenantPortal() {
     </section> : null}
     {!session ? <TenantMaintenancePanel rentals={portal.rentals} onSubmitted={loadPortal} /> : null}
     {!session ? <TenantDocumentsPanel /> : null}
-    {!session ? <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6">
-      <p className="text-sm font-bold uppercase tracking-widest text-emerald-800">Renters insurance</p>
-      <h2 className="mt-2 text-xl font-black text-slate-950">Coverage and verification</h2>
-      <p className="mt-2 text-sm leading-6 text-slate-700">Your lease requires you to maintain renters insurance. You may use any insurer whose policy meets the lease requirements. FORGE will show verified status and expiration here.</p>
-      <p className="mt-3 text-sm font-bold text-emerald-900">Coverage required · External provider links and electronic verification are not yet active. Insurance premiums are never paid to FORGE.</p>
-    </section> : null}
+    {!session ? <TenantInsurancePanel rentals={portal.rentals} onSubmitted={loadPortal} /> : null}
     {!session ? <section className="rounded-2xl border border-violet-200 bg-violet-50 p-6">
       <p className="text-sm font-bold uppercase tracking-widest text-violet-800">Dog liability coverage</p>
       <h2 className="mt-2 text-xl font-black text-slate-950">Coverage for qualifying dogs</h2>
