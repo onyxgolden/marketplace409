@@ -25,7 +25,7 @@ export const RENTAL_MIGRATIONS = Object.freeze([
   "20260813003700_activate_rental_email_delivery_controls.sql",
 ]);
 
-const CORE_ENV = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
+const CORE_ENV = ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
 const STRIPE_ENV = ["STRIPE_SECRET_KEY", "STRIPE_CONNECT_WEBHOOK_SECRET", "RENTAL_AUTOPAY_EXECUTION_SECRET"];
 const EMAIL_ENV = ["RENTAL_NOTIFICATION_DELIVERY_SECRET", "RENTAL_EMAIL_PROVIDER_URL", "RENTAL_EMAIL_PROVIDER_TOKEN"];
 
@@ -37,6 +37,8 @@ export function inspectFirstTenantReadiness({ root = process.cwd(), env = proces
   const warnings = [];
   if (!schemaOnly) {
     blockers.push(...missing(CORE_ENV, env).map((name) => `Missing core server configuration: ${name}`));
+    if (missing(["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"], env).length === 2)
+      blockers.push("Missing core server configuration: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY");
     const stripeMissing = missing(STRIPE_ENV, env);
     if (stripeMissing.length) warnings.push(`Stripe/autopay must remain disabled; missing: ${stripeMissing.join(", ")}`);
     const emailMissing = missing(EMAIL_ENV, env);
