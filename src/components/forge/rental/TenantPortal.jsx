@@ -70,7 +70,7 @@ export default function TenantPortal() {
         {payments.length === 0 ? <p className="mt-2 text-sm text-slate-500">No payments recorded yet.</p> :
           payments.map((payment) => <div key={payment.id} className="mt-3 flex justify-between gap-4 border-b pb-3 text-sm">
             <span><span className="font-bold capitalize">{payment.paymentMethod ? payment.paymentMethod.replaceAll("_", " ") : payment.status.replaceAll("_", " ")}</span><br/><span className="text-slate-500">{date.format(new Date(payment.receivedAt || payment.createdAt))}{payment.receiptReference ? ` · Ref ${payment.receiptReference}` : ""}</span></span>
-            <span className="text-right"><span className="font-bold">{money.format(payment.amountCents / 100)}</span>{payment.status==="succeeded"?<><br/><button onClick={()=>setReceipt({payment,unitLabel:unit?.label||"Rental home"})} className="mt-1 font-bold text-blue-700 underline">View receipt</button></>:null}</span></div>)}</div>
+            <span className="text-right"><span className="font-bold">{money.format(payment.amountCents / 100)}</span>{payment.refundedAmountCents?<><br/><span className="text-red-700">Refunded {money.format(payment.refundedAmountCents/100)}</span></>:null}{payment.status==="succeeded"?<><br/><button onClick={()=>setReceipt({payment,unitLabel:unit?.label||"Rental home"})} className="mt-1 font-bold text-blue-700 underline">View receipt</button></>:null}</span></div>)}</div>
       </section>) }
     {receipt?<RentalPaymentReceipt payment={receipt.payment} tenantName={portal.tenant.displayName} unitLabel={receipt.unitLabel} onClose={()=>setReceipt(null)}/>:null}
     {!session ? <TenantDepositPanel rentals={portal.rentals} /> : null}

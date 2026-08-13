@@ -28,7 +28,10 @@ export async function POST(request) {
     }, { onConflict: "provider,provider_event_id", ignoreDuplicates: true });
     if (error) throw error;
     if (normalized.supported) {
-      const projection = await supabase.rpc("process_stripe_rental_payment_event", {
+      const projection = normalized.eventType === "refund.updated" ? await supabase.rpc("process_stripe_rental_refund_event", {
+        p_provider_event_id: normalized.providerEventId, p_connected_account_id: normalized.connectedAccountId,
+        p_payment_id: normalized.paymentId, p_refunded_amount_cents: normalized.refundedAmountCents, p_occurred_at: normalized.occurredAt,
+      }) : await supabase.rpc("process_stripe_rental_payment_event", {
         p_provider_event_id: normalized.providerEventId,
         p_connected_account_id: normalized.connectedAccountId,
         p_event_type: normalized.eventType,

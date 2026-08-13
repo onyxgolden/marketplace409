@@ -30,7 +30,7 @@ export class TenantPortalQueryService {
         this.supabase.from("rental_units").select("*").eq("owner_id", tenantRow.owner_id).eq("id", leaseRow.unit_id).maybeSingle(),
         this.supabase.from("rent_schedules").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("effective_start_date", { ascending: false }),
         this.supabase.from("rent_charges").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("due_date", { ascending: false }),
-        this.supabase.from("rental_payments").select("id, charge_id, amount_cents, currency_code, status, payment_method, receipt_reference, failure_message, created_at, succeeded_at, received_at")
+        this.supabase.from("rental_payments").select("id, charge_id, amount_cents, refunded_amount_cents, currency_code, status, payment_method, receipt_reference, failure_message, created_at, succeeded_at, received_at")
           .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("created_at", { ascending: false }),
         this.supabase.from("renters_insurance_requirements").select("required, minimum_liability_cents, purchase_url, jurisdiction_code")
           .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).maybeSingle(),
@@ -68,7 +68,7 @@ export class TenantPortalQueryService {
         schedules: Object.freeze((scheduleResult.data || []).map(mapRentScheduleRow)),
         charges: Object.freeze((chargeResult.data || []).map((row)=>Object.freeze({...mapRentChargeRow(row),chargeType:row.charge_type||"rent",relatedChargeId:row.related_charge_id||null}))),
         payments: Object.freeze((paymentResult.data || []).map((row) => Object.freeze({ id: row.id, chargeId: row.charge_id,
-          amountCents: Number(row.amount_cents), currencyCode: row.currency_code, status: row.status,
+          amountCents: Number(row.amount_cents), refundedAmountCents:Number(row.refunded_amount_cents||0), currencyCode: row.currency_code, status: row.status,
           paymentMethod: row.payment_method, receiptReference: row.receipt_reference,
           failureMessage: row.failure_message, createdAt: row.created_at, succeededAt: row.succeeded_at,
           receivedAt: row.received_at }))),

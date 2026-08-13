@@ -22,6 +22,7 @@ export function normalizeStripeConnectEvent(event) {
     eventType: type,
     objectId: typeof object?.id === "string" ? object.id : null,
     paymentId: typeof object?.metadata?.forge_payment_id === "string" ? object.metadata.forge_payment_id : null,
+    refundedAmountCents: type === "refund.updated" && Number.isSafeInteger(object?.amount) ? object.amount : null,
     failureCode: typeof object?.last_payment_error?.code === "string" ? object.last_payment_error.code : null,
     failureMessage: typeof object?.last_payment_error?.message === "string" ? object.last_payment_error.message : null,
     occurredAt: Number.isSafeInteger(event?.created) ? new Date(event.created * 1000).toISOString() : new Date().toISOString(),
