@@ -1,8 +1,130 @@
 "use client";
-import{useCallback,useEffect,useState}from"react";const money=new Intl.NumberFormat("en-US",{style:"currency",currency:"USD"});
-export default function RentalReportsPanel(){const[report,setReport]=useState(null);const[error,setError]=useState("");const load=useCallback(()=>fetch("/api/rental/reports").then(async response=>{const body=await response.json();if(!response.ok)throw new Error(body.error);setReport(body.report);}),[]);useEffect(()=>{load().catch(reason=>setError(reason.message));},[load]);
-return <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><p className="text-sm font-bold uppercase tracking-widest text-amber-700">Rental reporting</p><h2 className="mt-2 text-2xl font-black">Rent roll and tenant ledger</h2><p className="mt-2 text-slate-600">See scheduled rent, collected payments, open balances, and delinquency as of today.</p>
-{error?<p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-red-800">{error}</p>:!report?<p className="mt-4 text-slate-500">Loading report…</p>:<><div className="mt-6 grid gap-3 md:grid-cols-3"><Kpi label="Monthly scheduled" value={money.format(report.summary.monthlyScheduledCents/100)}/><Kpi label="Collected" value={money.format(report.summary.collectedCents/100)}/><Kpi label="Open balance" value={money.format(report.summary.openBalanceCents/100)} attention={report.summary.openBalanceCents>0}/><Kpi label="Overdue" value={money.format(report.summary.overdueBalanceCents/100)} attention={report.summary.overdueBalanceCents>0}/><Kpi label="Active leases" value={report.summary.activeLeases}/><Kpi label="Occupied units" value={report.summary.occupiedUnits}/></div>
-<a href="/api/rental/reports?format=csv" className="mt-5 inline-block rounded-lg bg-slate-950 px-5 py-3 font-bold text-white">Download rent roll CSV</a><div className="mt-6 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-3">Unit / tenant</th><th className="p-3">Lease</th><th className="p-3">Monthly rent</th><th className="p-3">Open</th><th className="p-3">Overdue</th><th className="p-3">Collected</th></tr></thead><tbody>{report.rentRoll.map(row=><tr key={row.leaseId} className="border-b"><td className="p-3"><strong>{row.unitLabel}</strong><br/><span className="text-slate-500">{row.tenantNames.join(", ")||"No tenant"}</span></td><td className="p-3 capitalize">{row.status}<br/><span className="text-xs text-slate-500">{row.startDate}{row.endDate?` — ${row.endDate}`:" — current"}</span></td><td className="p-3">{money.format(row.monthlyRentCents/100)}</td><td className="p-3">{money.format(row.balanceCents/100)}</td><td className={`p-3 font-bold ${row.overdueCents>0?"text-red-700":""}`}>{money.format(row.overdueCents/100)}</td><td className="p-3">{money.format(row.collectedCents/100)}</td></tr>)}</tbody></table></div></>}
-</section>;}
-function Kpi({label,value,attention=false}){return <div className={`rounded-xl p-4 ${attention?"bg-red-50 text-red-900":"bg-slate-50"}`}><p className="text-xs font-bold uppercase tracking-wide">{label}</p><p className="mt-1 text-2xl font-black">{value}</p></div>;}
+import { useCallback, useEffect, useState } from "react";
+const money = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+});
+export default function RentalReportsPanel() {
+  const [report, setReport] = useState(null);
+  const [error, setError] = useState("");
+  const load = useCallback(
+    () =>
+      fetch("/api/rental/reports").then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error);
+        setReport(body.report);
+      }),
+    [],
+  );
+  useEffect(() => {
+    load().catch((reason) => setError(reason.message));
+  }, [load]);
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <p className="text-sm font-bold uppercase tracking-widest text-amber-700">
+        Rental reporting
+      </p>
+      <h2 className="mt-2 text-2xl font-black">Rent roll and tenant ledger</h2>
+      <p className="mt-2 text-slate-600">
+        See scheduled rent, collected payments, open balances, and delinquency
+        as of today.
+      </p>
+      {error ? (
+        <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-red-800">
+          {error}
+        </p>
+      ) : !report ? (
+        <p className="mt-4 text-slate-500">Loading report…</p>
+      ) : (
+        <>
+          <div className="mt-6 grid gap-3 md:grid-cols-3">
+            <Kpi
+              label="Monthly scheduled"
+              value={money.format(report.summary.monthlyScheduledCents / 100)}
+            />
+            <Kpi
+              label="Collected"
+              value={money.format(report.summary.collectedCents / 100)}
+            />
+            <Kpi
+              label="Open balance"
+              value={money.format(report.summary.openBalanceCents / 100)}
+              attention={report.summary.openBalanceCents > 0}
+            />
+            <Kpi
+              label="Overdue"
+              value={money.format(report.summary.overdueBalanceCents / 100)}
+              attention={report.summary.overdueBalanceCents > 0}
+            />
+            <Kpi label="Active leases" value={report.summary.activeLeases} />
+            <Kpi label="Occupied units" value={report.summary.occupiedUnits} />
+          </div>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <a href="/api/rental/reports?format=csv" className="rounded-lg bg-slate-950 px-5 py-3 font-bold text-white">Download rent roll CSV</a>
+            <a href={`/api/rental/reports?format=tax-csv&taxYear=${new Date().getFullYear()}`} className="rounded-lg border px-5 py-3 font-bold">Download accountant/contractor tax CSV</a>
+          </div>
+          <p className="mt-3 text-sm text-slate-600">Review package only—not a filed 1099 or an automatic eligibility decision.</p>
+          <div className="mt-6 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b">
+                  <th className="p-3">Unit / tenant</th>
+                  <th className="p-3">Lease</th>
+                  <th className="p-3">Monthly rent</th>
+                  <th className="p-3">Open</th>
+                  <th className="p-3">Overdue</th>
+                  <th className="p-3">Collected</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.rentRoll.map((row) => (
+                  <tr key={row.leaseId} className="border-b">
+                    <td className="p-3">
+                      <strong>{row.unitLabel}</strong>
+                      <br />
+                      <span className="text-slate-500">
+                        {row.tenantNames.join(", ") || "No tenant"}
+                      </span>
+                    </td>
+                    <td className="p-3 capitalize">
+                      {row.status}
+                      <br />
+                      <span className="text-xs text-slate-500">
+                        {row.startDate}
+                        {row.endDate ? ` — ${row.endDate}` : " — current"}
+                      </span>
+                    </td>
+                    <td className="p-3">
+                      {money.format(row.monthlyRentCents / 100)}
+                    </td>
+                    <td className="p-3">
+                      {money.format(row.balanceCents / 100)}
+                    </td>
+                    <td
+                      className={`p-3 font-bold ${row.overdueCents > 0 ? "text-red-700" : ""}`}
+                    >
+                      {money.format(row.overdueCents / 100)}
+                    </td>
+                    <td className="p-3">
+                      {money.format(row.collectedCents / 100)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+function Kpi({ label, value, attention = false }) {
+  return (
+    <div
+      className={`rounded-xl p-4 ${attention ? "bg-red-50 text-red-900" : "bg-slate-50"}`}
+    >
+      <p className="text-xs font-bold uppercase tracking-wide">{label}</p>
+      <p className="mt-1 text-2xl font-black">{value}</p>
+    </div>
+  );
+}
