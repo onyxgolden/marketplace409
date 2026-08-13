@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import RentalRecordBrowser from "./RentalRecordBrowser";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -7,12 +8,13 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
   const [message, setMessage] = useState("");
   const [setup, setSetup] = useState(initialSetup);
   const [showCreate, setShowCreate] = useState((initialSetup.leases || []).length === 0);
+  const [selectedId, setSelectedId] = useState(initialSetup.leases?.[0]?.id || null);
   const [working, setWorking] = useState(false);
   useEffect(() => { (async () => {
     const response = await fetch("/api/rental"); const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load lease setup records.");
     const loaded = { units: result.units || [], tenants: result.tenants || [], leases: result.leases || [] };
-    setSetup(loaded); setShowCreate(loaded.leases.length === 0);
+    setSetup(loaded); setSelectedId(loaded.leases[0]?.id || null); setShowCreate(loaded.leases.length === 0);
   })().catch((error) => setMessage(error.message)); }, []);
   async function save(event) {
     event.preventDefault(); setWorking(true); setMessage("");
@@ -38,7 +40,11 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Lease setup</p>
     <h2 className="mt-2 text-2xl font-black">Leases and rent schedules</h2>
     <p className="mt-2 text-sm text-slate-600">Review existing leases first. New schedules remain draft until the signed lease is ready.</p>
-    {(setup.leases || []).length > 0 && <div className="mt-5 rounded-xl border border-emerald-300 bg-emerald-50 p-4"><p className="text-sm font-black text-emerald-950">Saved leases</p><ul className="mt-2 space-y-2 text-sm text-emerald-950">{setup.leases.map((lease) => { const unit = setup.units.find((item) => item.id === lease.unit_id); return <li key={lease.id}><strong>{unit?.label || lease.unit_id}</strong> · <span className="capitalize">{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly · {lease.start_date}{lease.end_date ? ` to ${lease.end_date}` : " to current"}</li>; })}</ul></div>}
+    {(setup.leases || []).length > 0 && <RentalRecordBrowser title="Leases" records={setup.leases} selectedId={selectedId} onSelect={setSelectedId}
+      getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
+      getSubtitle={(lease) => `${lease.status} · ${money.format(Number(lease.monthly_rent_cents) / 100)} monthly`}>
+      {(() => { const lease = setup.leases.find((item) => item.id === selectedId) || setup.leases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id); return lease && <div data-rental-lease-detail><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700">Selected lease</p><h3 className="mt-2 text-2xl font-black">{unit?.label || lease.unit_id}</h3></div><span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black capitalize text-emerald-800">{lease.status}</span></div><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Detail label="Monthly rent" value={money.format(Number(lease.monthly_rent_cents) / 100)} /><Detail label="Due day" value={lease.rent_due_day || "Not recorded"} /><Detail label="Starts" value={lease.start_date} /><Detail label="Ends" value={lease.end_date || "Current"} /><Detail label="Property" value={lease.property_id} /><Detail label="Lease ID" value={lease.id} /></dl></div>; })()}
+    </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950">
       Save at least one rental unit and tenant before creating a lease.</p>}
     {(setup.leases || []).length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Add another draft lease</button>}
@@ -58,3 +64,5 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     </form>}
   </section>;
 }
+
+function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</dt><dd className="mt-1 break-words font-bold text-slate-800">{value}</dd></div>; }

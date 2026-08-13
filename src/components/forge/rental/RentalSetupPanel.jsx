@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import RentalRecordBrowser from "./RentalRecordBrowser";
 
 async function submit(operation, key, value) {
   const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
@@ -13,18 +14,19 @@ export default function RentalSetupPanel({ initialUnits = [] }) {
   const [message, setMessage] = useState("");
   const [units, setUnits] = useState(initialUnits);
   const [showCreate, setShowCreate] = useState(initialUnits.length === 0);
+  const [selectedId, setSelectedId] = useState(initialUnits[0]?.id || null);
   const [working, setWorking] = useState(false);
   async function loadUnits() {
     const response = await fetch("/api/rental"); const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
-    setUnits(result.units || []);
+    const loaded = result.units || []; setUnits(loaded); setSelectedId((current) => loaded.some((item) => item.id === current) ? current : loaded[0]?.id || null);
   }
   useEffect(() => {
     fetch("/api/rental").then(async (response) => {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
       return result.units || [];
-    }).then((loadedUnits) => { setUnits(loadedUnits); setShowCreate(loadedUnits.length === 0); }).catch((error) => setMessage(error.message));
+    }).then((loadedUnits) => { setUnits(loadedUnits); setSelectedId(loadedUnits[0]?.id || null); setShowCreate(loadedUnits.length === 0); }).catch((error) => setMessage(error.message));
   }, []);
   async function saveUnit(event) {
     event.preventDefault(); setWorking(true); setMessage("");
@@ -42,11 +44,9 @@ export default function RentalSetupPanel({ initialUnits = [] }) {
       <div className="max-w-3xl"><p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Kent Avenue setup</p>
         <h2 className="mt-2 text-2xl font-black">Rental units</h2>
         <p className="mt-2 text-sm text-slate-600">Review saved units first. Create another unit only as a deliberate action.</p></div>
-      {units.length > 0 && <div className="mt-5 rounded-xl border border-emerald-300 bg-emerald-50 p-4">
-        <p className="text-sm font-black text-emerald-950">Saved rental units</p>
-        <ul className="mt-2 space-y-1 text-sm text-emerald-950">{units.map((unit) =>
-          <li key={unit.id}><strong>{unit.label}</strong> · {unit.property_id} · ID: <code>{unit.id}</code></li>)}</ul>
-      </div>}
+      {units.length > 0 && <RentalRecordBrowser title="Rental units" records={units} selectedId={selectedId} onSelect={setSelectedId} getTitle={(unit) => unit.label} getSubtitle={(unit) => `${unit.property_id} · ${unit.status || "Status not set"}`}>
+        {(() => { const unit = units.find((item) => item.id === selectedId) || units[0]; return unit && <div data-rental-unit-detail><p className="text-xs font-black uppercase tracking-wide text-sky-700">Selected unit</p><h3 className="mt-2 text-2xl font-black">{unit.label}</h3><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Detail label="Property" value={unit.property_id} /><Detail label="Status" value={unit.status || "Not set"} /><Detail label="Bedrooms" value={unit.bedrooms ?? "Not recorded"} /><Detail label="Bathrooms" value={unit.bathrooms ?? "Not recorded"} /><Detail label="Square feet" value={unit.square_feet ?? "Not recorded"} /><Detail label="Notes" value={unit.notes || "No notes"} /></dl></div>; })()}
+      </RentalRecordBrowser>}
       {units.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Add another rental unit</button>}
       {showCreate && <form className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2" onSubmit={saveUnit}>
         <label className="text-sm font-bold">Property ID<input name="propertyId" defaultValue="4800-kent-ave" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
@@ -61,3 +61,5 @@ export default function RentalSetupPanel({ initialUnits = [] }) {
     </section>
   );
 }
+
+function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</dt><dd className="mt-1 font-bold text-slate-800">{value}</dd></div>; }

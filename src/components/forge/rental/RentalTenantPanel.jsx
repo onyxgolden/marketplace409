@@ -1,23 +1,25 @@
 "use client";
 import { useEffect, useState } from "react";
+import RentalRecordBrowser from "./RentalRecordBrowser";
 
 export default function RentalTenantPanel({ initialTenants = [] }) {
   const [message, setMessage] = useState("");
   const [tenants, setTenants] = useState(initialTenants);
   const [showCreate, setShowCreate] = useState(initialTenants.length === 0);
+  const [selectedId, setSelectedId] = useState(initialTenants[0]?.id || null);
   const [working, setWorking] = useState(false);
   async function loadTenants() {
     const response = await fetch("/api/rental");
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load tenants.");
-    setTenants(result.tenants || []);
+    const loaded = result.tenants || []; setTenants(loaded); setSelectedId((current) => loaded.some((item) => item.id === current) ? current : loaded[0]?.id || null);
   }
   useEffect(() => {
     fetch("/api/rental").then(async (response) => {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to load tenants.");
       return result.tenants || [];
-    }).then((loadedTenants) => { setTenants(loadedTenants); setShowCreate(loadedTenants.length === 0); }).catch((error) => setMessage(error.message));
+    }).then((loadedTenants) => { setTenants(loadedTenants); setSelectedId(loadedTenants[0]?.id || null); setShowCreate(loadedTenants.length === 0); }).catch((error) => setMessage(error.message));
   }, []);
   async function save(event) {
     event.preventDefault(); setWorking(true); setMessage("");
@@ -45,17 +47,9 @@ export default function RentalTenantPanel({ initialTenants = [] }) {
     <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Tenant setup</p>
     <h2 className="mt-2 text-2xl font-black">Tenants</h2>
     <p className="mt-2 text-sm text-slate-600">Review saved tenants first. Creation remains separate from portal access and lease assignment.</p>
-    {tenants.length > 0 && <div className="mt-5 rounded-xl border border-emerald-300 bg-emerald-50 p-4">
-      <p className="text-sm font-black text-emerald-950">Saved tenants</p>
-      <ul className="mt-2 space-y-3 text-sm text-emerald-950">{tenants.map((tenant) =>
-        <li key={tenant.id}><div><strong>{tenant.display_name}</strong> · {tenant.email} · ID: <code>{tenant.id}</code></div>
-          <form onSubmit={(event) => updateEmail(event, tenant.id)} className="mt-2 flex flex-wrap gap-2">
-            <input name="portalEmail" type="email" required defaultValue={tenant.email}
-              className="min-w-72 rounded-lg border border-emerald-300 bg-white px-3 py-2" aria-label={`Portal email for ${tenant.display_name}`} />
-            <button disabled={working} className="rounded-lg bg-emerald-900 px-3 py-2 font-bold text-white disabled:opacity-50">Update portal email</button>
-          </form></li>)}</ul>
-      <a href="/auth?next=/forge/rental/portal" className="mt-4 inline-block font-bold text-emerald-900 underline">Open tenant sign-in</a>
-    </div>}
+    {tenants.length > 0 && <RentalRecordBrowser title="Tenants" records={tenants} selectedId={selectedId} onSelect={setSelectedId} getTitle={(tenant) => tenant.display_name} getSubtitle={(tenant) => `${tenant.email} · ${tenant.status || "Status not set"}`}>
+      {(() => { const tenant = tenants.find((item) => item.id === selectedId) || tenants[0]; return tenant && <div data-rental-tenant-detail><p className="text-xs font-black uppercase tracking-wide text-sky-700">Selected tenant</p><h3 className="mt-2 text-2xl font-black">{tenant.display_name}</h3><p className="mt-2 text-sm text-slate-600">{tenant.phone || "No phone recorded"}</p><form onSubmit={(event) => updateEmail(event, tenant.id)} className="mt-5"><label className="text-sm font-bold">Portal email<input name="portalEmail" type="email" required defaultValue={tenant.email} className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" aria-label={`Portal email for ${tenant.display_name}`} /></label><button disabled={working} className="mt-3 rounded-xl bg-slate-950 px-4 py-2.5 font-bold text-white disabled:opacity-50">Update portal email</button></form><a href="/auth?next=/forge/rental/portal" className="mt-5 inline-block font-bold text-sky-700 underline">Open tenant sign-in</a></div>; })()}
+    </RentalRecordBrowser>}
     {tenants.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Add another tenant</button>}
     {showCreate && <form onSubmit={save} className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2">
       <label className="text-sm font-bold">Tenant name<input name="displayName" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
