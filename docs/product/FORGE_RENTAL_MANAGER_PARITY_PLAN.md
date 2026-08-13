@@ -33,7 +33,7 @@ The support-case workflow now records failed-payment, refund, dispute, access, a
 | Pet liability and pet fees | Controlled workflow implemented | Tenant requests, owner approval/denial, monthly pet-fee activation, and tenant status visibility exist. Assistance-animal requests require a separate human decision and database rules prohibit pet fees for every non-pet classification. |
 | Credit reporting | Data foundation / not active | Enrollment and fee foundations exist. No provider is activated and the portal correctly says unavailable. |
 | Lease documents / file library | Secure delivery and receipt implemented | Private uploads, lease scoping, explicit publication, signed downloads, tenant viewing, and first-receipt acknowledgement exist. Version history, e-signature, and provider delivery evidence remain. |
-| Tenant communications | Reminder/retry controls implemented | Payment outcomes, maintenance updates, document publication, scheduled rent reminders, overdue notices, bounded attempts, and owner cancellation are auditable. Provider delivery, verified delivery history, and tenant opt-out controls remain. |
+| Tenant communications | Delivery foundation implemented | Payment outcomes, maintenance updates, document publication, scheduled reminders, bounded exponential retries, optional-reminder opt-out, and append-only delivery evidence are modeled. Sending remains fail-closed until an owner activates a verified sender and server-side provider credentials are configured. |
 | Recurring autopay | Execution controls implemented | Tenant consent/cancellation, Stripe-confirmed reusable payment method and mandate capture, service-authenticated idempotent off-session execution, bounded failure counting, and automatic pause controls exist. Production scheduler secret and live pilot remain. |
 | Late fees and delinquency | Manual assessment control implemented | Owner records jurisdiction, rule source, grace period, calculation, and cap; FORGE checks charge eligibility and requires explicit approval for each separately labeled fee. Texas legal review, notices, waivers, reversals, and automated delinquency sequences remain. |
 | Deposits | Liability ledger implemented | Required amount, held balance, receipts, documented deductions, refunds, adjustments, evidence references, jurisdiction, and disposition dates are separated from rent/NOI. Legal deadline evaluation and bank reconciliation remain human-controlled. |
@@ -51,8 +51,8 @@ The support-case workflow now records failed-payment, refund, dispute, access, a
 ### Gate A — First real tenant
 
 1. Maintenance request intake and owner workflow.
-2. Complete document version history, approved email delivery evidence, and a separate compliant e-signature integration.
-3. Activate approved email delivery, retries, reminders, and failed-payment operating controls on the receipt/outbox foundation.
+2. Complete document version history and a separate compliant e-signature integration.
+3. Approve a provider and sender domain, configure delivery secrets, and validate bounce/complaint handling before activating email in production.
 4. Complete Stripe fee/balance/payout ingestion and bank matching on the gross-income posting foundation.
 5. Production Stripe readiness, support procedures, and controlled pilot.
 
