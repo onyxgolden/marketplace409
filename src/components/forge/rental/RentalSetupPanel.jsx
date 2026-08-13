@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
-import RentalRecordActions from "./RentalRecordActions";
+import RentalRecordActions, { labelRentalRecordContext } from "./RentalRecordActions";
 
 async function submit(operation, key, value) {
   const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
@@ -11,13 +11,14 @@ async function submit(operation, key, value) {
   return result;
 }
 
-export default function RentalSetupPanel({ initialUnits = [], onNavigate }) {
+export default function RentalSetupPanel({ initialUnits = [], onNavigate: navigate }) {
   const [message, setMessage] = useState("");
   const [units, setUnits] = useState(initialUnits);
   const [showCreate, setShowCreate] = useState(initialUnits.length === 0);
   const [selectedId, setSelectedId] = useState(initialUnits[0]?.id || null);
   const [working, setWorking] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, units, "label"));
   async function loadUnits() {
     const response = await fetch("/api/rental"); const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load rental units.");

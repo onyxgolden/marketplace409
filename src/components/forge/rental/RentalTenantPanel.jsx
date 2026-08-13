@@ -1,14 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
-import RentalRecordActions from "./RentalRecordActions";
+import RentalRecordActions, { labelRentalRecordContext } from "./RentalRecordActions";
 
-export default function RentalTenantPanel({ initialTenants = [], onNavigate }) {
+export default function RentalTenantPanel({ initialTenants = [], onNavigate: navigate }) {
   const [message, setMessage] = useState("");
   const [tenants, setTenants] = useState(initialTenants);
   const [showCreate, setShowCreate] = useState(initialTenants.length === 0);
   const [selectedId, setSelectedId] = useState(initialTenants[0]?.id || null);
   const [working, setWorking] = useState(false);
+  const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, tenants, "display_name"));
   async function loadTenants() {
     const response = await fetch("/api/rental");
     const result = await response.json();
