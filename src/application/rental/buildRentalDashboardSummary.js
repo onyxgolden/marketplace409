@@ -23,6 +23,12 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
     .filter((policy) => ["verified", "active", "approved"].includes(String(policy.status).toLowerCase()))
     .map((policy) => policy.lease_id).filter(Boolean));
   const missingInsurance = activeLeases.filter((lease) => !verifiedLeaseIds.has(lease.id));
+  const depositLeaseIds = new Set((data.deposits || []).map((deposit) => deposit.lease_id).filter(Boolean));
+  const missingDeposits = activeLeases.filter((lease) => !depositLeaseIds.has(lease.id));
+  const completedMoveInLeaseIds = new Set((data.inspections || [])
+    .filter((inspection) => inspection.inspection_type === "move_in" && inspection.status !== "draft")
+    .map((inspection) => inspection.lease_id).filter(Boolean));
+  const missingMoveInInspections = activeLeases.filter((lease) => !completedMoveInLeaseIds.has(lease.id));
   const openSupportCases = (data.supportCases || []).filter((item) =>
     !["closed", "resolved", "cancelled"].includes(String(item.status).toLowerCase()),
   );
@@ -34,6 +40,8 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
     openMaintenance: openMaintenance.length,
     awaitingSettlement: unsettledPayments.length,
     missingInsurance: missingInsurance.length,
+    missingDeposits: missingDeposits.length,
+    missingMoveInInspections: missingMoveInInspections.length,
     openSupportCases: openSupportCases.length,
     occupiedUnits: occupiedUnitIds.size,
     totalUnits: units.length,

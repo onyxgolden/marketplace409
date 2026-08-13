@@ -7,6 +7,7 @@ const EXCEPTIONS = [
   ["vacancies", "Vacancies", "setup"], ["expiringLeases", "Leases expiring in 90 days", "lease-lifecycle"],
   ["overdueBalanceCents", "Overdue rent", "charges", true], ["openMaintenance", "Open maintenance", "maintenance"],
   ["awaitingSettlement", "Awaiting settlement", "reconciliation"], ["missingInsurance", "Missing insurance", "insurance"],
+  ["missingDeposits", "Missing deposit setup", "deposits"], ["missingMoveInInspections", "Missing move-in inspection", "inspections"],
   ["openSupportCases", "Open support cases", "support"],
 ];
 
