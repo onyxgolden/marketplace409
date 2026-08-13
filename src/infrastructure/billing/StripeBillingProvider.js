@@ -94,6 +94,8 @@ export class StripeBillingProvider {
   constructWebhookEvent(rawBody, signature, secret) {
     return this.stripe.webhooks.constructEvent(rawBody, required(signature, "a webhook signature"), required(secret, "a webhook secret"));
   }
+  async retrieveBalanceTransaction(context,id){const value=await this.stripe.balanceTransactions.retrieve(required(id,"a balance transaction id"),{stripeAccount:required(context.connectedAccountId,"a connected account id")});return Object.freeze({id:value.id,grossAmountCents:value.amount,feeAmountCents:value.fee,netAmountCents:value.net,currencyCode:value.currency.toUpperCase(),status:value.status,availableAt:Number.isSafeInteger(value.available_on)?new Date(value.available_on*1000).toISOString():null});}
+  async listPayoutBalanceTransactionIds(context,payoutId){const page=await this.stripe.balanceTransactions.list({payout:required(payoutId,"a payout id"),limit:100},{stripeAccount:required(context.connectedAccountId,"a connected account id")});return Object.freeze(page.data.map(item=>item.id));}
 }
 
 export function createStripeBillingProvider(env = process.env) {

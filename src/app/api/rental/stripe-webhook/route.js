@@ -28,7 +28,10 @@ export async function POST(request) {
     }, { onConflict: "provider,provider_event_id", ignoreDuplicates: true });
     if (error) throw error;
     if (normalized.supported) {
-      const projection = normalized.eventType === "refund.updated" ? await supabase.rpc("process_stripe_rental_refund_event", {
+      let projection;
+      if(normalized.eventType==="charge.succeeded"&&normalized.paymentIntentId&&normalized.balanceTransactionId){const balance=await provider.retrieveBalanceTransaction({connectedAccountId:normalized.connectedAccountId},normalized.balanceTransactionId);projection=await supabase.rpc("record_stripe_rental_settlement",{p_provider_event_id:normalized.providerEventId,p_connected_account_id:normalized.connectedAccountId,p_payment_intent_id:normalized.paymentIntentId,p_balance_transaction_id:balance.id,p_gross_amount_cents:balance.grossAmountCents,p_fee_amount_cents:balance.feeAmountCents,p_net_amount_cents:balance.netAmountCents,p_currency_code:balance.currencyCode,p_status:balance.status,p_available_at:balance.availableAt});}
+      else if(normalized.eventType==="payout.paid"){const ids=await provider.listPayoutBalanceTransactionIds({connectedAccountId:normalized.connectedAccountId},normalized.objectId);projection=await supabase.rpc("mark_stripe_rental_settlements_paid_out",{p_provider_event_id:normalized.providerEventId,p_connected_account_id:normalized.connectedAccountId,p_payout_id:normalized.objectId,p_balance_transaction_ids:ids,p_paid_out_at:normalized.occurredAt});}
+      else projection = normalized.eventType === "refund.updated" ? await supabase.rpc("process_stripe_rental_refund_event", {
         p_provider_event_id: normalized.providerEventId, p_connected_account_id: normalized.connectedAccountId,
         p_payment_id: normalized.paymentId, p_refunded_amount_cents: normalized.refundedAmountCents, p_occurred_at: normalized.occurredAt,
       }) : await supabase.rpc("process_stripe_rental_payment_event", {
