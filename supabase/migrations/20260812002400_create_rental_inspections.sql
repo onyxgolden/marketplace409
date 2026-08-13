@@ -22,6 +22,16 @@ create table if not exists rental_inspection_acknowledgements (
   foreign key(owner_id,tenant_id) references rental_tenants(owner_id,id) on delete restrict);
 create index if not exists idx_rental_inspections_owner_lease on rental_inspections(owner_id,lease_id,inspection_date);
 create index if not exists idx_rental_inspection_items_owner_inspection on rental_inspection_items(owner_id,inspection_id);
+
+create or replace function rental_actor_tenant_id(p_owner_id text)
+returns text language sql stable security definer set search_path=public set row_security=off as $$
+  select tenant.id from rental_tenants tenant
+  where tenant.owner_id=p_owner_id and tenant.auth_user_id=auth.uid()
+  limit 1
+$$;
+revoke all on function rental_actor_tenant_id(text) from public,anon;
+grant execute on function rental_actor_tenant_id(text) to authenticated;
+
 alter table rental_inspections enable row level security;alter table rental_inspections force row level security;
 alter table rental_inspection_items enable row level security;alter table rental_inspection_items force row level security;
 alter table rental_inspection_acknowledgements enable row level security;alter table rental_inspection_acknowledgements force row level security;
