@@ -21,6 +21,7 @@ describe("RentalApplicationShell", () => {
     expect(renderToStaticMarkup(buildRentalSurface("tenants"))).toContain("Tenants");
     expect(renderToStaticMarkup(buildRentalSurface("leases"))).toContain("Leases and rent schedules");
   });
+  it("preserves selected-record context while navigating between rental surfaces",()=>{const markup=renderToStaticMarkup(<RentalApplicationShell activeFunctionId="charges" activeRecordContext={{recordType:"tenant",recordId:"tenant_1",recordLabel:"Test Tenant"}} onFunctionChange={()=>{}}/>);expect(markup).toContain('data-record-context="tenant_1"');expect(markup).toContain("Working with tenant: Test Tenant");expect(markup).toContain("Back to record")});
   it("requires persisted unit and tenant selections instead of manual ids", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("leases"));
     expect(markup).toContain("Select a saved unit");

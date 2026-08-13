@@ -18,9 +18,17 @@ describe("rental existing-record safety", () => {
     const tenantMarkup = renderToStaticMarkup(<RentalTenantPanel initialTenants={[{ id: "tenant_1", display_name: "John Jones", email: "tenant@example.com" }]} />);
     expect(unitMarkup).toContain("Add another rental unit");
     expect(unitMarkup).toContain("Selected unit");
+    expect(unitMarkup).toContain("Property actions");
+    expect(unitMarkup).toContain("Edit property details");
+    expect(unitMarkup).toContain("Work orders");
+    expect(unitMarkup).toContain("File library");
     expect(unitMarkup).not.toContain("Save Kent Avenue unit");
     expect(tenantMarkup).toContain("Add another tenant");
     expect(tenantMarkup).toContain("Selected tenant");
+    expect(tenantMarkup).toContain("Tenant actions");
+    expect(tenantMarkup).toContain("Rent &amp; payments");
+    expect(tenantMarkup).toContain("Messaging");
+    expect(tenantMarkup).toContain("File library");
     expect(tenantMarkup).not.toContain("Save tenant");
   });
 });

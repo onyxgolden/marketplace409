@@ -3,5 +3,7 @@ import { useState } from "react";
 import RentalApplicationShell from "./RentalApplicationShell";
 export default function RentalPageClient() {
   const [activeFunctionId, setActiveFunctionId] = useState("overview");
-  return <RentalApplicationShell activeFunctionId={activeFunctionId} onFunctionChange={setActiveFunctionId} />;
+  const [activeRecordContext, setActiveRecordContext] = useState(null);
+  function navigate(functionId, recordContext = null) { setActiveFunctionId(functionId); setActiveRecordContext(recordContext); }
+  return <RentalApplicationShell activeFunctionId={activeFunctionId} activeRecordContext={activeRecordContext} onFunctionChange={navigate} />;
 }
