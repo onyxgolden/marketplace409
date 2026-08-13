@@ -58,6 +58,8 @@ export class TenantPortalQueryService {
         this.supabase.from("rental_inspection_items").select("*").eq("owner_id",tenantRow.owner_id).in("inspection_id",inspectionIds).order("created_at",{ascending:true}),
         this.supabase.from("rental_inspection_acknowledgements").select("*").eq("owner_id",tenantRow.owner_id).eq("tenant_id",tenantRow.id).in("inspection_id",inspectionIds)]);
         if(itemResult.error)throw itemResult.error;if(ackResult.error)throw ackResult.error;inspectionItems=itemResult.data||[];inspectionAcknowledgements=ackResult.data||[];}
+      const workUpdateResult=await this.supabase.rpc("load_rental_maintenance_work_updates",{p_lease_id:leaseRow.id});
+      if(workUpdateResult.error)throw workUpdateResult.error;const maintenanceWorkOrders=workUpdateResult.data||[];
       const membershipRows = (memberships || []).filter(({ lease_id }) => lease_id === leaseRow.id);
       return Object.freeze({ lease: mapRentalLeaseRowsToRentalLease(leaseRow, membershipRows),
         unit: unitResult.data ? mapRentalUnitRowToRentalUnit(unitResult.data) : null,
@@ -78,7 +80,8 @@ export class TenantPortalQueryService {
         maintenanceRequests: Object.freeze((maintenanceResult.data || []).map((row) => Object.freeze({ id: row.id,
           title: row.title, description: row.description, priority: row.priority, status: row.status,
           permissionToEnter: row.permission_to_enter, contactPhone: row.contact_phone, ownerNotes: row.owner_notes,
-          submittedAt: row.submitted_at, updatedAt: row.updated_at, completedAt: row.completed_at }))),
+          submittedAt: row.submitted_at, updatedAt: row.updated_at, completedAt: row.completed_at,
+          workOrders:Object.freeze(maintenanceWorkOrders.filter(order=>order.requestId===row.id).map(order=>Object.freeze(order)))}))),
         securityDeposits: Object.freeze((depositResult.data || []).map((row) => Object.freeze({ id: row.id,
           requiredAmountCents: Number(row.required_amount_cents), currencyCode: row.currency_code, status: row.status,
           jurisdictionCode: row.jurisdiction_code, receivedDeadline: row.received_deadline,

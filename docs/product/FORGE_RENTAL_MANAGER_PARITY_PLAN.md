@@ -59,7 +59,7 @@ FORGE is ready for a real tenant only when the complete operating loop is proven
 1. Recurring autopay and reminders.
 2. Deposits and move-in/move-out inspections.
 3. Lease renewals, amendments, prorating, and jurisdiction-controlled late fees.
-4. Vendor assignment, work scheduling, costs, photos, and maintenance history.
+4. ~~Vendor assignment, work scheduling, costs, photos, and maintenance history.~~ Implemented with an owner-only contractor/W-9 readiness directory, work orders, appointment windows, public/private history, cost tracking, and invoice/completion document evidence. Contractor payout reconciliation and 1099 production remain in the reporting/tax backlog.
 5. Tenant ledger, rent roll, delinquency, and tax-ready reports.
 
 ### Gate C — Leasing and portfolio growth

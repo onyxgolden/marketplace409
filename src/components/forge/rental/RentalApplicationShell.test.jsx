@@ -32,7 +32,7 @@ describe("RentalApplicationShell", () => {
   });
   it("renders the maintenance request operations surface", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("maintenance"));
-    expect(markup).toContain("Tenant requests");
+    expect(markup).toContain("Requests and work orders");
     expect(markup).toContain("No maintenance requests have been submitted");
   });
   it("renders the secure rental document library", () => {
