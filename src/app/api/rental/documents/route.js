@@ -8,16 +8,17 @@ const safe=(value)=>value.normalize("NFKD").replace(/[^a-zA-Z0-9._-]+/g,"-").rep
 
 export async function GET(){
   try{ const authenticated=await createAuthenticatedForgeApplication(); if(authenticated.response)return authenticated.response;
-    const {data,error}=await authenticated.supabaseClient.from("rental_documents")
+    const [{data,error},{data:preparations,error:preparationError},{data:versions,error:versionError}]=await Promise.all([authenticated.supabaseClient.from("rental_documents")
       .select("owner_id, id, lease_id, category, title, bucket, object_path, original_filename, mime_type, byte_size, tenant_visible, published_at, created_at")
-      .order("created_at",{ascending:false});
-    if(error)throw error;
+      .order("created_at",{ascending:false}),authenticated.supabaseClient.from("rental_lease_preparations").select("id, lease_id, title, status, current_version, approved_version, approved_at").order("updated_at",{ascending:false}),authenticated.supabaseClient.from("rental_lease_preparation_versions").select("preparation_id, version_number, terms, change_summary, created_at").order("version_number",{ascending:false})]);
+    if(error||preparationError||versionError)throw error||preparationError||versionError;
     const documents=await Promise.all((data||[]).map(async(document)=>{ const [signed,acknowledgements]=await Promise.all([
       authenticated.supabaseClient.storage.from(document.bucket).createSignedUrl(document.object_path,600),
       authenticated.supabaseClient.from("rental_document_acknowledgements").select("tenant_id, acknowledged_at, acknowledgement_version").eq("owner_id",document.owner_id).eq("document_id",document.id)
     ]); if(signed.error)throw signed.error;if(acknowledgements.error)throw acknowledgements.error;
       return {...document,download_url:signed.data.signedUrl,acknowledgements:acknowledgements.data||[]}; }));
-    return NextResponse.json({success:true,documents});
+    const leasePreparations=(preparations||[]).map(preparation=>({...preparation,versions:(versions||[]).filter(version=>version.preparation_id===preparation.id)}));
+    return NextResponse.json({success:true,documents,leasePreparations});
   }catch(error){console.error("Rental document query error",error);return NextResponse.json({error:"Unable to load rental documents."},{status:500});}
 }
 

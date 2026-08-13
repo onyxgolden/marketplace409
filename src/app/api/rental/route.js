@@ -13,7 +13,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, contractorResult, workOrderResult, workEventResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type, related_charge_id")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -48,8 +48,10 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_contractors").select("*").order("business_name",{ascending:true}),
       authenticated.supabaseClient.from("rental_maintenance_work_orders").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_maintenance_work_events").select("*").order("occurred_at",{ascending:false}),
+      authenticated.supabaseClient.from("rental_lease_preparations").select("*").order("updated_at",{ascending:false}),
+      authenticated.supabaseClient.from("rental_lease_preparation_versions").select("*").order("version_number",{ascending:false}),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error;
     if (error) throw error;
     return NextResponse.json({ success: true, openCharges: chargesResult.data || [],
       units: unitsResult.data || [], tenants: tenantsResult.data || [], schedules: schedulesResult.data || [],
@@ -57,7 +59,7 @@ export async function GET() {
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
       depositTransactions: depositTransactionResult.data || [], inspections: inspectionResult.data || [],
       inspectionItems: inspectionItemResult.data || [], inspectionAcknowledgements: inspectionAckResult.data || [],
-      leases:leaseResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[] });
+      leases:leaseResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[] });
   } catch (error) {
     console.error("Rental Manager query error", error);
     return NextResponse.json({ error: "Unable to load open rent charges." }, { status: 500 });
@@ -215,6 +217,14 @@ export async function POST(request) {
       }
       case "update-maintenance-work-order": {
         const input=body.workOrder;if(!input?.id)return badRequest("workOrder id is required.");const cents=value=>value===null||value===undefined?null:Number(value);const {data,error}=await authenticated.supabaseClient.rpc("update_rental_maintenance_work_order",{p_owner_id:user.id,p_work_order_id:input.id,p_status:input.status,p_scheduled_start:input.scheduledStart||null,p_scheduled_end:input.scheduledEnd||null,p_estimated_cost_cents:cents(input.estimatedCostCents),p_actual_cost_cents:cents(input.actualCostCents),p_invoice_reference:input.invoiceReference||null,p_invoice_document_id:input.invoiceDocumentId||null,p_completion_document_id:input.completionDocumentId||null,p_public_note:input.publicNote||null,p_private_note:input.privateNote||null});if(error)throw error;return NextResponse.json({success:true,workOrder:data});
+      }
+      case "save-lease-preparation-version": {
+        const input=body.preparation;if(!input?.leaseId||!input?.title?.trim()||!input?.changeSummary?.trim()||!input.terms||typeof input.terms!=="object"||Array.isArray(input.terms))return badRequest("Lease, title, change summary, and structured terms are required.");
+        const {data,error}=await authenticated.supabaseClient.rpc("save_rental_lease_preparation_version",{p_owner_id:user.id,p_lease_id:input.leaseId,p_title:input.title.trim(),p_terms:input.terms,p_change_summary:input.changeSummary.trim()});if(error)throw error;return NextResponse.json({success:true,preparation:data});
+      }
+      case "approve-lease-preparation-version": {
+        const version=Number(body.versionNumber);if(!body.preparationId||!Number.isInteger(version)||version<1||body.ownerApprovalConfirmed!==true)return badRequest("Preparation, version, and explicit owner approval are required.");
+        const {data,error}=await authenticated.supabaseClient.rpc("approve_rental_lease_preparation_version",{p_owner_id:user.id,p_preparation_id:body.preparationId,p_version_number:version});if(error)throw error;return NextResponse.json({success:true,preparation:data});
       }
       default:
         return badRequest("A supported Rental Manager operation is required.");
