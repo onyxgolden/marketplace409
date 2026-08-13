@@ -1,33 +1,36 @@
-const LAUNCH_STEPS = [
-  ["Property", "Use the existing 4800 Kent Avenue property record."],
-  ["Unit", "Create the main residence and mark it preparing until remodeling is complete."],
-  ["Tenant", "Invite the selected tenant after the lease terms are confirmed."],
-  ["Lease", "Record the executed lease, rent, due day, and effective dates."],
-  ["Rent schedule", "Activate the recurring obligation only after the lease is active."],
-  ["First charge", "Generate one deterministic monthly charge before opening Stripe checkout."],
-  ["Optional credit reporting", "Select a furnisher-of-record partner, then offer tenant opt-in reporting as a separately disclosed monthly service."],
+"use client";
+import { useEffect, useState } from "react";
+import { buildRentalDashboardSummary } from "@/application/rental/buildRentalDashboardSummary";
+
+const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const EXCEPTIONS = [
+  ["vacancies", "Vacancies", "setup"], ["expiringLeases", "Leases expiring in 90 days", "lease-lifecycle"],
+  ["overdueBalanceCents", "Overdue rent", "charges", true], ["openMaintenance", "Open maintenance", "maintenance"],
+  ["awaitingSettlement", "Awaiting settlement", "reconciliation"], ["missingInsurance", "Missing insurance", "insurance"],
+  ["openSupportCases", "Open support cases", "support"],
 ];
 
-export default function RentalOverviewPanel() {
-  return (
-    <section className="space-y-6" data-rental-overview>
-      <div className="rounded-2xl border border-amber-300 bg-amber-50 p-6">
-        <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-800">First production rental</p>
-        <h2 className="mt-2 text-2xl font-black text-slate-950">4800 Kent Avenue</h2>
-        <p className="mt-2 max-w-3xl text-sm font-semibold text-slate-700">
-          Remodel underway. Target readiness: late August to early September. This workspace tracks the minimum trusted path to the first FORGE tenant.
-        </p>
-      </div>
-      <div className="grid gap-4 xl:grid-cols-2">
-        {LAUNCH_STEPS.map(([title, detail], index) => (
-          <article key={title} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start gap-4">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-sm font-black text-amber-400">{index + 1}</span>
-              <div><h3 className="font-black text-slate-950">{title}</h3><p className="mt-1 text-sm text-slate-600">{detail}</p></div>
-            </div>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
+export default function RentalOverviewPanel({ onNavigate, initialData = null, initialReport = null }) {
+  const [summary, setSummary] = useState(() => initialData ? buildRentalDashboardSummary(initialData, initialReport) : null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (initialData) return;
+    Promise.all([fetch("/api/rental"), fetch("/api/rental/reports")]).then(async ([rentalResponse, reportResponse]) => {
+      const rentalBody = await rentalResponse.json(); const reportBody = await reportResponse.json();
+      if (!rentalResponse.ok) throw new Error(rentalBody.error || "Rental summary could not be loaded.");
+      if (!reportResponse.ok) throw new Error(reportBody.error || "Rental report could not be loaded.");
+      setSummary(buildRentalDashboardSummary(rentalBody, reportBody.report));
+    }).catch((reason) => setError(reason.message));
+  }, [initialData]);
+  return <section className="space-y-5" data-rental-overview>
+    <div><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700">Rental operations</p><h2 className="mt-1 text-3xl font-black">Summary</h2>
+      <p className="mt-2 text-slate-600">Start with what needs attention, then move into the supporting record.</p></div>
+    {error ? <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">{error}</p> : !summary ? <p className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-500">Loading rental summary…</p> : <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{EXCEPTIONS.map(([key, label, destination, currency]) => { const value = summary[key]; const attention = Number(value) > 0; return <button key={key} type="button" onClick={() => onNavigate?.(destination)}
+        className={`rounded-2xl border p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md ${attention ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-white"}`}><span className="text-xs font-black uppercase tracking-wide text-slate-600">{label}</span>
+        <strong className={`mt-2 block text-3xl ${attention ? "text-amber-800" : "text-slate-950"}`}>{currency ? money.format(value / 100) : value}</strong><span className="mt-2 block text-xs font-bold text-sky-700">Open details →</span></button>; })}</div>
+      <div className="grid gap-4 lg:grid-cols-3"><Metric label="Occupancy" value={`${summary.occupiedUnits} of ${summary.totalUnits} units`} /><Metric label="Monthly scheduled" value={money.format(summary.monthlyScheduledCents / 100)} /><Metric label="Collected" value={money.format(summary.collectedCents / 100)} /></div>
+    </>}
+  </section>;
 }
+function Metric({ label, value }) { return <div className="rounded-2xl border border-slate-200 bg-slate-950 p-5 text-white"><p className="text-xs font-black uppercase tracking-wide text-slate-300">{label}</p><p className="mt-2 text-2xl font-black">{value}</p></div>; }

@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import RentalApplicationShell, { buildRentalSurface, RENTAL_FUNCTIONS } from "./RentalApplicationShell.jsx";
+import RentalApplicationShell, { buildRentalSurface, RENTAL_FUNCTIONS, RENTAL_NAVIGATION } from "./RentalApplicationShell.jsx";
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
-    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "setup", "tenants", "leases", "charges", "insurance", "maintenance", "documents", "communications", "reconciliation", "reports", "deposits", "inspections", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "setup", "tenants", "leases", "charges", "reconciliation", "deposits", "reports", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
   });
-  it("renders the Kent Avenue launch overview", () => {
+  it("renders an exception-first summary in grouped navigation", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
-    expect(markup).toContain("4800 Kent Avenue");
-    expect(markup).toContain("First production rental");
+    expect(markup).toContain("Rental operations");
+    expect(markup).toContain("Loading rental summary");
+    expect(markup).toContain('aria-label="Rental Manager functions"');
+    expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Overview", "Portfolio", "Money", "Operations", "Controls"]);
   });
   it("renders one selected function surface", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("leases"));
