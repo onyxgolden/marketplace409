@@ -18,7 +18,7 @@ describe("Rentec owner input resolution preview", () => {
       remaining: { tenantEmails: 1, rentDueDays: 1 },
     });
     expect(result.requirements).toContainEqual(expect.objectContaining({ type: "tenant_email", sourceId: "20", label: "A Tenant" }));
-    expect(result.requirements).toContainEqual(expect.objectContaining({ type: "rent_due_day", sourceId: "30", label: "1218 Wagner St" }));
+    expect(result.requirements).toContainEqual(expect.objectContaining({ type: "rent_due_day", sourceId: "31", label: "1218 Wagner St" }));
     expect(JSON.stringify(result)).not.toContain("1000");
   });
 
@@ -26,7 +26,7 @@ describe("Rentec owner input resolution preview", () => {
     const unresolved = buildRentecImportManifest(evidence);
     const ownerInputs = sanitizeRentecOwnerInputs({
       tenantEmails: { 20: "owner.supplied@example.com" },
-      leaseRentDueDays: { 30: 1 },
+      leaseRentDueDays: { 30: 1, 31: 1 },
     });
     const resolved = buildRentecImportManifest({ ...evidence, ownerInputs });
     const requirements = buildRentecOwnerInputRequirements({ ...evidence, ownerInputs });
