@@ -6,12 +6,15 @@ describe("RentecOwnerInputResolution", () => {
   it("renders bounded owner inputs without an import control", () => {
     const html = renderToStaticMarkup(<RentecOwnerInputResolution resolution={{
       requirements: [
+        { type: "tenant_classification", sourceId: "19", label: "XP Property Management, LLC", prompt: "Classify this company contact" },
         { type: "tenant_email", sourceId: "20", label: "A Tenant", prompt: "Renter email address" },
         { type: "rent_due_day", sourceId: "30", label: "1218 Wagner St", prompt: "Monthly rent due day (1–28)" },
       ],
     }}/>);
     expect(html).toContain("Resolve owner inputs");
     expect(html).toContain("A Tenant");
+    expect(html).toContain("XP Property Management, LLC");
+    expect(html).toContain("Non-renter / business tracking");
     expect(html).toContain("1218 Wagner St");
     expect(html).toContain('type="email"');
     expect(html).toContain("Exclude this record because it is not an actual renter");
