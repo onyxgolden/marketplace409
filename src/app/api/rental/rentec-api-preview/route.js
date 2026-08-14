@@ -10,7 +10,7 @@ async function loadLegacyRentecEvents(supabaseClient, ownerId) {
   const pageSize = 1000;
   for (let offset = 0; ; offset += pageSize) {
     const { data, error } = await supabaseClient.from("financial_events")
-      .select("event_date,amount,description")
+      .select("event_date,amount,description,property_id,normalized_category")
       .eq("owner_id", ownerId)
       .eq("source_system", "rentec")
       .order("event_date", { ascending: true })
@@ -24,7 +24,10 @@ async function loadLegacyRentecEvents(supabaseClient, ownerId) {
 
 function validFingerprints(value) {
   return Array.isArray(value) && value.length <= 10000 && value.every((record) =>
-    record && fingerprintPattern.test(record.exact) && fingerprintPattern.test(record.probable) && fingerprintPattern.test(record.conflict));
+    record && fingerprintPattern.test(record.exact) && fingerprintPattern.test(record.probable) && fingerprintPattern.test(record.conflict)
+      && /^\d{4}$|^Unknown year$/.test(record.year) && typeof record.property === "string" && record.property.length <= 100
+      && ["Rent", "Deposit", "Late fee", "Maintenance", "Utilities", "Taxes", "Insurance", "Management", "Financing", "Purchase", "Other"].includes(record.category)
+      && Number.isSafeInteger(record.amountCents) && record.amountCents >= 0);
 }
 
 export async function POST(request) {
