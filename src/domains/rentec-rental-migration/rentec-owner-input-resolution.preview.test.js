@@ -70,6 +70,17 @@ describe("Rentec owner input resolution preview", () => {
     expect(requirements.requirements).toEqual([]);
   });
 
+  it("does not exclude a normal renter who already has email identity", () => {
+    const ownerInputs = sanitizeRentecOwnerInputs({
+      tenantEmails: { 20: "owner.supplied@example.com" },
+      tenantExclusions: { 21: true },
+      leaseRentDueDays: { 30: 1, 31: 1 },
+    });
+    const result = buildRentecImportManifest({ ...evidence, ownerInputs });
+    expect(result.ownerExclusions).toEqual({ tenants: 0, leases: 0 });
+    expect(result.readiness.tenants).toEqual({ ready: 2, blocked: 0 });
+  });
+
   it("rejects unsafe email and due-day values", () => {
     expect(() => sanitizeRentecOwnerInputs({ tenantEmails: { 20: "not-an-email" } })).toThrow("valid renter email");
     expect(() => sanitizeRentecOwnerInputs({ leaseRentDueDays: { 30: 31 } })).toThrow("1 through 28");
