@@ -3,7 +3,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { createRentecApiClient } from "@/domains/rentec-rental-migration/rentec-api.client";
 import { previewRentecLegacyReconciliation } from "@/domains/rentec-rental-migration/rentec-legacy-reconciliation.preview";
 import { previewRentecOperationalMigration } from "@/domains/rentec-rental-migration/rentec-operational-migration.preview";
-import { buildRentecImportManifest } from "@/domains/rentec-rental-migration/rentec-import-manifest.preview";
+import { buildRentecImportManifest } from "@/domains/rentec-rental-migration/rentec-import-manifest.preview";\nimport { buildRentecOwnerInputRequirements, sanitizeRentecOwnerInputs } from "@/domains/rentec-rental-migration/rentec-owner-input-resolution.preview";
 
 const fingerprintPattern = /^[a-f0-9]{16}$/;
 
@@ -55,7 +55,8 @@ export async function POST(request) {
         forgeUnits: unitsResult.data || [], forgeTenants: tenantsResult.data || [], forgeLeases: leasesResult.data || [],
       }) });
     }
-    if (body?.operation === "manifest-preview") {
+    if (body?.operation === "manifest-preview" || body?.operation === "resolve-manifest-preview") {
+      const ownerInputs = body.operation === "resolve-manifest-preview" ? sanitizeRentecOwnerInputs(body.ownerInputs) : sanitizeRentecOwnerInputs();
       const [rentec, unitsResult, tenantsResult, leasesResult] = await Promise.all([
         client.operationalEvidence(),
         authenticated.supabaseClient.from("rental_units").select("id,property_id,label,status"),
@@ -64,10 +65,14 @@ export async function POST(request) {
       ]);
       const error = unitsResult.error || tenantsResult.error || leasesResult.error;
       if (error) throw error;
-      return NextResponse.json({ success: true, data: buildRentecImportManifest({
+      const evidence = {
         rentecProperties: rentec.properties, rentecTenants: rentec.tenants, rentecLeases: rentec.leases,
-        forgeUnits: unitsResult.data || [], forgeTenants: tenantsResult.data || [], forgeLeases: leasesResult.data || [],
-      }) });
+        forgeUnits: unitsResult.data || [], forgeTenants: tenantsResult.data || [], forgeLeases: leasesResult.data || [], ownerInputs,
+      };
+      return NextResponse.json({ success: true, data: {
+        ...buildRentecImportManifest(evidence),
+        ownerInputResolution: buildRentecOwnerInputRequirements(evidence),
+      } });
     }
     if (body?.operation === "reconcile-legacy") {
       if (!validFingerprints(body.fingerprints)) return NextResponse.json({ error: "Valid private Rentec reconciliation fingerprints are required." }, { status: 400 });
