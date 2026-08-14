@@ -57,6 +57,15 @@ export default function RentecMigrationPanel() {
     finally { setBusy(false); }
   }
 
+  async function resolveManifest(ownerInputs) {
+    setBusy(true); setMessage("");
+    try {
+      const importManifest = await apiRequest({ operation: "resolve-manifest-preview", ownerInputs });
+      setApiPreview((current) => ({ ...current, importManifest }));
+    } catch (error) { setMessage(error.message); }
+    finally { setBusy(false); }
+  }
+
   async function inspectCsv(event) {
     const selected = [...(event.target.files || [])];
     setPreview(null); setMessage("");
@@ -87,7 +96,7 @@ export default function RentecMigrationPanel() {
         <div className="rounded-xl border p-4"><h3 className="font-black">Read-only reconciliation inventory</h3><p className="mt-2 text-sm">Archived renters: {apiPreview.archivedTenants}</p><p className="mt-2 text-sm">Renters linked to transactions: {apiPreview.matchedTenantIds}</p><p className="mt-2 text-sm">Transactions without a renter link: {apiPreview.unassignedTransactions}</p><p className="mt-2 text-sm">Transaction pages read: {apiPreview.transactionPages}</p><p className="mt-2 text-sm">Net transaction value: {money(apiPreview.netTransactionCents)}</p></div>
         {reconciliation ? <div className="rounded-xl border p-4"><h3 className="font-black">Legacy Rentec export comparison</h3><p className="mt-2 text-sm">Already represented: {reconciliation.alreadyRepresented}</p><p className="mt-2 text-sm">Probable matches requiring review: {reconciliation.probableMatch}</p><p className="mt-2 text-sm">Probable matches supported by property evidence: {reconciliation.propertySupportedMatch}</p><p className="mt-2 text-sm">Conflicting amount candidates: {reconciliation.conflicting}</p><p className="mt-2 text-sm">New API transactions: {reconciliation.newFromApi}</p><p className="mt-2 text-sm">Legacy-only financial events: {reconciliation.legacyOnly}</p><p className="mt-3 text-sm font-bold text-amber-800">Dry run only: legacy financial events remain accounting history and will not be copied into Rental Manager.</p></div> : null}
         <RentecOperationalMigrationPlan plan={apiPreview.operationalPlan}/>
-        <RentecImportManifestPreview manifest={apiPreview.importManifest}/>
+        <RentecImportManifestPreview manifest={apiPreview.importManifest} busy={busy} onResolve={resolveManifest}/>
         <RentecExceptionReview review={reconciliation?.exceptionReview}/>
       </div> : null}
     </div>
