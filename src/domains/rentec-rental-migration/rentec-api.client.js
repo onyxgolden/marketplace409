@@ -73,7 +73,7 @@ export class RentecApiClient {
       records: rows.length,
       capped: rows.length >= 100,
       files: Object.freeze(rows.map((row) => Object.freeze({
-        id: String(row.file_id || row.id),
+        id: String(row.id || row.file_id),
         bytes: Math.max(0, Number(row.bytes || 0)),
         extension: extension(row.filename),
         association: fileAssociation(row),
