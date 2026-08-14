@@ -12,6 +12,7 @@ export default function RentecMigrationPanel() {
   const [apiPreview, setApiPreview] = useState(null);
   const [progress, setProgress] = useState("");
   const [message, setMessage] = useState("");
+  const [ownerInputs, setOwnerInputs] = useState({ tenantEmails: {}, leaseRentDueDays: {} });
   const [busy, setBusy] = useState(false);
 
   async function apiRequest(body) {
