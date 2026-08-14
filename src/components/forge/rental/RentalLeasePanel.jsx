@@ -4,10 +4,10 @@ import RentalRecordBrowser from "./RentalRecordBrowser";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
-export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [] }, loadOnMount = true }) {
+export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [] }, loadOnMount = true, initialShowCreate = null }) {
   const [message, setMessage] = useState("");
   const [setup, setSetup] = useState(initialSetup);
-  const [showCreate, setShowCreate] = useState((initialSetup.leases || []).length === 0);
+  const [showCreate, setShowCreate] = useState(initialShowCreate ?? (initialSetup.leases || []).length === 0);
   const [selectedId, setSelectedId] = useState(initialSetup.leases?.[0]?.id || null);
   const [working, setWorking] = useState(false);
   const contextualPropertyId = setup.leases?.[0]?.property_id || setup.units?.[0]?.property_id || "4800-kent-ave";
@@ -48,8 +48,9 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950">
       Save at least one rental unit and tenant before creating a lease.</p>}
-    {(setup.leases || []).length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Add another draft lease</button>}
+    {(setup.leases || []).length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Create future or replacement lease</button>}
     {showCreate && <form onSubmit={save} className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {(setup.leases || []).length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 md:col-span-2 xl:col-span-3"><p className="text-sm font-bold text-amber-950">An existing lease is already recorded. Continue only for a future or replacement lease.</p><button type="button" onClick={() => setShowCreate(false)} className="rounded-lg border border-amber-500 bg-white px-3 py-2 text-sm font-black text-amber-950">Cancel setup</button></div>}
       <label className="text-sm font-bold">Property ID<input name="propertyId" defaultValue={contextualPropertyId} required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
       <label className="text-sm font-bold">Rental unit<select name="unitId" required defaultValue={setup.units.length === 1 ? setup.units[0].id : ""} className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3">
         <option value="" disabled>Select a saved unit</option>{setup.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label} — {unit.property_id}</option>)}</select></label>

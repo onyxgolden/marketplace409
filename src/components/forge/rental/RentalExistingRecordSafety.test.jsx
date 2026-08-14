@@ -9,8 +9,15 @@ describe("rental existing-record safety", () => {
     const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={{ units: [{ id: "unit_1", label: "Main residence" }], tenants: [], leases: [{ id: "lease_1", unit_id: "unit_1", status: "active", monthly_rent_cents: 200000, start_date: "2026-08-12", end_date: null }] }} />);
     expect(markup).toContain("Selected lease");
     expect(markup).toContain("$2,000.00 monthly");
-    expect(markup).toContain("Add another draft lease");
+    expect(markup).toContain("Create future or replacement lease");
     expect(markup).not.toContain("Save draft lease and schedule");
+  });
+
+  it("warns about an existing lease and provides a setup cancel action", () => {
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialShowCreate initialSetup={{ units: [{ id: "unit_1", label: "Main residence" }], tenants: [{ id: "tenant_1", display_name: "John Jones" }], leases: [{ id: "lease_1", unit_id: "unit_1", status: "active", monthly_rent_cents: 200000, start_date: "2026-08-12" }] }} />);
+    expect(markup).toContain("Continue only for a future or replacement lease");
+    expect(markup).toContain("Cancel setup");
+    expect(markup).toContain("Save draft lease and schedule");
   });
 
   it("keeps unit and tenant creation behind explicit add actions", () => {
