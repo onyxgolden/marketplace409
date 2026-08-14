@@ -8,6 +8,12 @@ const extension = (filename = "") => {
   const match = String(filename).toLowerCase().match(/(\.[a-z0-9]+)$/);
   return match?.[1] || "(none)";
 };
+const propertyLabel = (row) => {
+  const id = String(row.property_id || row.id || "");
+  const name = String(row.nickname || "").trim();
+  const address = [row.address, row.city, row.state].map((value) => String(value || "").trim()).filter(Boolean).join(", ");
+  return String(name || address || `Rentec property ${id}`).slice(0, 100);
+};
 
 function fileAssociation(row) {
   if (row.renter_id) return "renter";
@@ -60,6 +66,10 @@ export class RentecApiClient {
     const leaseRows = leases.data || [];
     return Object.freeze({
       propertyIds: Object.freeze(propertyRows.map((row) => String(row.property_id || row.id)).filter(Boolean)),
+      propertyReferences: Object.freeze(propertyRows.map((row) => Object.freeze({
+        id: String(row.property_id || row.id),
+        label: propertyLabel(row),
+      })).filter((row) => row.id)),
       tenantIds: Object.freeze(tenantRows.map((row) => String(row.renter_id || row.id)).filter(Boolean)),
       leaseIds: Object.freeze(leaseRows.map((row) => String(row.lease_id || row.id)).filter(Boolean)),
       properties: propertyRows.length,
@@ -92,8 +102,9 @@ export class RentecApiClient {
     });
   }
 
-  async transactionPage({ propertyId, page = 1 }) {
+  async transactionPage({ propertyId, propertyName = "", page = 1 }) {
     if (!/^\d+$/.test(String(propertyId)) || !Number.isInteger(page) || page < 1) throw new Error("A valid Rentec property and page are required.");
+    if (typeof propertyName !== "string" || propertyName.length > 100) throw new Error("A valid Rentec property label is required.");
     const payload = await this.get("/transactions", { property_id: propertyId, start_date: "1900-01-01", page });
     const rows = payload.data || [];
     const byRenter = {};
@@ -115,7 +126,7 @@ export class RentecApiClient {
       startingBalanceCents: cents(payload.summary?.starting_balance),
       endingBalanceCents: cents(payload.summary?.ending_balance),
       fieldCoverage: buildRentecFieldCoverage({ transactions: rows }).transactions,
-      reconciliationFingerprints: Object.freeze(rows.map(buildApiTransactionReconciliationFingerprint)),
+      reconciliationFingerprints: Object.freeze(rows.map((row) => buildApiTransactionReconciliationFingerprint(row, { propertyName }))),
     });
   }
 }
