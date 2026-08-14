@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import RentecExceptionReview from "./RentecExceptionReview.jsx";
+import RentecOperationalMigrationPlan from "./RentecOperationalMigrationPlan.jsx";
 
 const money = (cents) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cents || 0) / 100);
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -43,9 +44,12 @@ export default function RentecMigrationPanel() {
         completed++;
         if (completed < inventory.propertyIds.length) await wait(1100);
       }
-      setProgress("Comparing current Rentec transactions with the legacy Rentec export…");
-      const legacyReconciliation = await apiRequest({ operation: "reconcile-legacy", fingerprints: totals.reconciliationFingerprints });
-      setApiPreview({ ...inventory, ...totals, reconciliationFingerprints: undefined, legacyReconciliation, matchedTenantIds: totals.matchedTenantIds.size });
+      setProgress("Building transaction reconciliation and operational migration plans…");
+      const [legacyReconciliation, operationalPlan] = await Promise.all([
+        apiRequest({ operation: "reconcile-legacy", fingerprints: totals.reconciliationFingerprints }),
+        apiRequest({ operation: "plan-operational" }),
+      ]);
+      setApiPreview({ ...inventory, ...totals, reconciliationFingerprints: undefined, legacyReconciliation, operationalPlan, matchedTenantIds: totals.matchedTenantIds.size });
       setProgress("");
     } catch (error) { setMessage(error.message); setProgress(""); }
     finally { setBusy(false); }
@@ -80,6 +84,7 @@ export default function RentecMigrationPanel() {
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[["Properties", apiPreview.properties], ["Renters", apiPreview.tenants], ["Leases", apiPreview.leases], ["Transactions", apiPreview.transactionRecords]].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-100 p-4"><p className="text-xs font-black uppercase text-slate-500">{label}</p><p className="mt-1 text-xl font-black">{value}</p></div>)}</div>
         <div className="rounded-xl border p-4"><h3 className="font-black">Read-only reconciliation inventory</h3><p className="mt-2 text-sm">Archived renters: {apiPreview.archivedTenants}</p><p className="mt-2 text-sm">Renters linked to transactions: {apiPreview.matchedTenantIds}</p><p className="mt-2 text-sm">Transactions without a renter link: {apiPreview.unassignedTransactions}</p><p className="mt-2 text-sm">Transaction pages read: {apiPreview.transactionPages}</p><p className="mt-2 text-sm">Net transaction value: {money(apiPreview.netTransactionCents)}</p></div>
         {reconciliation ? <div className="rounded-xl border p-4"><h3 className="font-black">Legacy Rentec export comparison</h3><p className="mt-2 text-sm">Already represented: {reconciliation.alreadyRepresented}</p><p className="mt-2 text-sm">Probable matches requiring review: {reconciliation.probableMatch}</p><p className="mt-2 text-sm">Probable matches supported by property evidence: {reconciliation.propertySupportedMatch}</p><p className="mt-2 text-sm">Conflicting amount candidates: {reconciliation.conflicting}</p><p className="mt-2 text-sm">New API transactions: {reconciliation.newFromApi}</p><p className="mt-2 text-sm">Legacy-only financial events: {reconciliation.legacyOnly}</p><p className="mt-3 text-sm font-bold text-amber-800">Dry run only: legacy financial events remain accounting history and will not be copied into Rental Manager.</p></div> : null}
+        <RentecOperationalMigrationPlan plan={apiPreview.operationalPlan}/>
         <RentecExceptionReview review={reconciliation?.exceptionReview}/>
       </div> : null}
     </div>
