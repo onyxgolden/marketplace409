@@ -8,22 +8,24 @@ export default function RentecOwnerInputResolution({ resolution, busy = false, o
 
   if (!requirements.length) return <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4">
     <h4 className="font-black text-emerald-900">Owner inputs resolved</h4>
-    <p className="mt-2 text-sm text-emerald-800">The preview checksum now covers the validated inputs and exclusions. No records were saved or imported.</p>
+    <p className="mt-2 text-sm text-emerald-800">The preview checksum now covers the validated inputs, classifications, and exclusions. No records were saved or imported.</p>
   </div>;
 
   function submit(event) {
     event.preventDefault();
     const tenantEmails = {};
     const tenantExclusions = {};
+    const tenantClassifications = {};
     const leaseRentDueDays = {};
     for (const requirement of requirements) {
+      if (requirement.type === "tenant_classification") tenantClassifications[requirement.sourceId] = values[`tenant_classification:${requirement.sourceId}`] || "";
       if (requirement.type === "tenant_email") {
         if (values[`exclude:${requirement.sourceId}`]) tenantExclusions[requirement.sourceId] = true;
         else tenantEmails[requirement.sourceId] = values[`tenant_email:${requirement.sourceId}`] || "";
       }
       if (requirement.type === "rent_due_day") leaseRentDueDays[requirement.sourceId] = Number(values[`rent_due_day:${requirement.sourceId}`] || 0);
     }
-    onResolve?.({ tenantEmails, tenantExclusions, leaseRentDueDays });
+    onResolve?.({ tenantEmails, tenantExclusions, tenantClassifications, leaseRentDueDays });
   }
 
   return <form onSubmit={submit} className="rounded-xl border border-amber-300 bg-amber-50 p-4">
@@ -34,11 +36,22 @@ export default function RentecOwnerInputResolution({ resolution, busy = false, o
         const id = `${requirement.type}:${requirement.sourceId}`;
         const excludeId = `exclude:${requirement.sourceId}`;
         const email = requirement.type === "tenant_email";
+        const classification = requirement.type === "tenant_classification";
         const excluded = Boolean(values[excludeId]);
         return <div key={id} className="rounded-lg border bg-white p-3 text-sm font-bold">
           <label htmlFor={id} className="block">{requirement.label}</label>
           <span className="mt-1 block text-xs font-medium text-slate-500">{requirement.prompt}</span>
-          <input
+          {classification ? <select
+            id={id}
+            required
+            value={values[id] || ""}
+            onChange={(event) => setValues((current) => ({ ...current, [id]: event.target.value }))}
+            className="mt-2 w-full rounded-lg border px-3 py-2 font-medium"
+          >
+            <option value="">Choose classification</option>
+            <option value="renter">Actual renter</option>
+            <option value="non_renter">Non-renter / business tracking</option>
+          </select> : <input
             id={id}
             required={!email || !excluded}
             disabled={email && excluded}
@@ -48,7 +61,7 @@ export default function RentecOwnerInputResolution({ resolution, busy = false, o
             value={values[id] || ""}
             onChange={(event) => setValues((current) => ({ ...current, [id]: event.target.value }))}
             className="mt-2 w-full rounded-lg border px-3 py-2 font-medium disabled:bg-slate-100"
-          />
+          />}
           {email ? <label className="mt-3 flex items-start gap-2 font-medium">
             <input
               type="checkbox"
