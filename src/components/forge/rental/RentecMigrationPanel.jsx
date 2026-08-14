@@ -12,7 +12,7 @@ export default function RentecMigrationPanel() {
   const [apiPreview, setApiPreview] = useState(null);
   const [progress, setProgress] = useState("");
   const [message, setMessage] = useState("");
-  const [ownerInputs, setOwnerInputs] = useState({ tenantEmails: {}, leaseRentDueDays: {} });
+  const [ownerInputs, setOwnerInputs] = useState({ tenantEmails: {}, tenantExclusions: {}, leaseRentDueDays: {} });
   const [busy, setBusy] = useState(false);
 
   async function apiRequest(body) {
@@ -23,7 +23,7 @@ export default function RentecMigrationPanel() {
   }
 
   async function inspectApi() {
-    setBusy(true); setMessage(""); setApiPreview(null); setOwnerInputs({ tenantEmails: {}, leaseRentDueDays: {} });
+    setBusy(true); setMessage(""); setApiPreview(null); setOwnerInputs({ tenantEmails: {}, tenantExclusions: {}, leaseRentDueDays: {} });
     try {
       const inventory = await apiRequest({ operation: "inventory" });
       const totals = { transactionRecords: 0, netTransactionCents: 0, unassignedTransactions: 0, transactionPages: 0, matchedTenantIds: new Set(), reconciliationFingerprints: [] };
@@ -61,6 +61,7 @@ export default function RentecMigrationPanel() {
   async function resolveManifest(nextInputs) {
     const mergedInputs = {
       tenantEmails: { ...ownerInputs.tenantEmails, ...nextInputs.tenantEmails },
+      tenantExclusions: { ...ownerInputs.tenantExclusions, ...nextInputs.tenantExclusions },
       leaseRentDueDays: { ...ownerInputs.leaseRentDueDays, ...nextInputs.leaseRentDueDays },
     };
     setBusy(true); setMessage("");
