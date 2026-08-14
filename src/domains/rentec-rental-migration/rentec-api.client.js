@@ -11,8 +11,8 @@ const extension = (filename = "") => {
 const propertyLabel = (row) => {
   const id = String(row.property_id || row.id || "");
   const name = String(row.nickname || "").trim();
-  const address = [row.address, row.city, row.state].map((value) => String(value || "").trim()).filter(Boolean).join(", ");
-  return String(name || address || `Rentec property ${id}`).slice(0, 100);
+  const address = String(row.address || "").trim();
+  return String(address || name || `Rentec property ${id}`).slice(0, 100);
 };
 
 function fileAssociation(row) {
