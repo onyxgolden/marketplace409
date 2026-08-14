@@ -20,6 +20,7 @@ export default function RentecImportManifestPreview({ manifest, busy = false, on
     </div>
     <p className="mt-4 break-all rounded-lg bg-slate-100 p-3 font-mono text-xs"><strong>Approval checksum:</strong> {manifest.checksum}</p>
     <p className="mt-3 text-sm"><strong>Dependency order:</strong> {manifest.dependencyOrder.join(" → ")}</p>
+    {manifest.ownerExclusions?.tenants ? <p className="mt-3 rounded-lg bg-sky-50 p-3 text-sm font-bold text-sky-900">Owner-excluded non-renter records: {manifest.ownerExclusions.tenants} contact and {manifest.ownerExclusions.leases} dependent lease.</p> : null}
     {manifest.blockers?.length ? <div className="mt-4 rounded-xl bg-amber-50 p-4"><h4 className="font-black text-amber-900">Blocking owner inputs</h4><div className="mt-3 space-y-2">{manifest.blockers.map((row) => <div key={row.label} className="flex justify-between gap-4 text-sm"><span>{row.label}</span><strong>{row.count}</strong></div>)}</div></div> : null}
     <RentecOwnerInputResolution resolution={manifest.ownerInputResolution} busy={busy} onResolve={onResolve}/>
     <div className="mt-4 grid gap-4 lg:grid-cols-3">
