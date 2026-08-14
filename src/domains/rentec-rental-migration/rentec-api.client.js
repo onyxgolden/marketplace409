@@ -97,6 +97,11 @@ export class RentecApiClient {
       tenants: Object.freeze((tenants.data || []).map((row) => Object.freeze({
         renter_id: String(row.renter_id || row.id || ""),
         email: String(row.email || "").trim().toLowerCase().slice(0, 254),
+        f_name: String(row.f_name || "").slice(0, 100),
+        l_name: String(row.l_name || "").slice(0, 100),
+        company: String(row.company || "").slice(0, 160),
+        phone: String(row.phone || "").slice(0, 40),
+        mphone: String(row.mphone || "").slice(0, 40),
         archived: row.archived,
       }))),
       leases: Object.freeze((leases.data || []).map((row) => Object.freeze({
