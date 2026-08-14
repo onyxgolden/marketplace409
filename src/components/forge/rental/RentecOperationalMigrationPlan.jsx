@@ -17,7 +17,7 @@ export default function RentecOperationalMigrationPlan({ plan }) {
       <Counts title="Leases" counts={plan.leases}/>
     </div>
     {plan.reviewReasons?.length ? <details className="mt-4 rounded-xl bg-amber-50 p-4">
-      <summary className="cursor-pointer font-black text-amber-900">Why records require review</summary>
+      <summary className="cursor-pointer font-black text-amber-900">Why records are skipped or require review</summary>
       <div className="mt-3 space-y-2">{plan.reviewReasons.map((reason) => <div key={reason.label} className="flex justify-between gap-4 text-sm"><span>{reason.label}</span><strong>{reason.count}</strong></div>)}</div>
     </details> : null}
     <p className="mt-4 text-sm font-bold text-amber-800">Plan only: no property, renter, lease, or membership record was written.</p>
