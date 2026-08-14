@@ -4,7 +4,12 @@ const normalize = (value) => String(value || "").trim().toLowerCase().replace(/\
 const dateOnly = (value) => String(value || "").slice(0, 10);
 const cents = (value) => Math.abs(Math.round(Number(value || 0) * 100));
 const digest = (parts) => createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
-const year = (value) => /^\d{4}/.test(String(value || "")) ? String(value).slice(0, 4) : "Unknown year";
+const year = (value) => {
+  const match = String(value || "").match(/^(\d{4})/);
+  if (!match) return "Unknown year";
+  const number = Number(match[1]);
+  return number >= 1900 && number <= 2100 ? match[1] : "Invalid year";
+};
 const property = (value, prefix = "Property") => value ? `${prefix} ${String(value).slice(0, 80)}` : "Unassigned property";
 const category = (value) => {
   const text = normalize(value);
