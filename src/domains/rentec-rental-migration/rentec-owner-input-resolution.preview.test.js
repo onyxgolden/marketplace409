@@ -81,8 +81,34 @@ describe("Rentec owner input resolution preview", () => {
     expect(result.readiness.tenants).toEqual({ ready: 2, blocked: 0 });
   });
 
+  it("requires an explicit classification for company contacts even when they have email", () => {
+    const companyEvidence = {
+      ...evidence,
+      rentecTenants: evidence.rentecTenants.map((row) => row.renter_id === 20
+        ? { ...row, f_name: "", l_name: "", company: "XP Property Management, LLC", email: "wife@example.com" }
+        : row),
+    };
+    const unresolved = buildRentecImportManifest(companyEvidence);
+    const requirements = buildRentecOwnerInputRequirements(companyEvidence);
+    expect(unresolved.blockers).toContainEqual({ label: "Company contact requires renter classification", count: 1 });
+    expect(requirements.requirements).toContainEqual(expect.objectContaining({
+      type: "tenant_classification",
+      sourceId: "20",
+      label: "XP Property Management, LLC",
+    }));
+
+    const ownerInputs = sanitizeRentecOwnerInputs({
+      tenantClassifications: { 20: "non_renter" },
+      leaseRentDueDays: { 31: 1 },
+    });
+    const resolved = buildRentecImportManifest({ ...companyEvidence, ownerInputs });
+    expect(resolved.ownerExclusions).toEqual({ tenants: 1, leases: 1 });
+    expect(resolved.blockers).toEqual([]);
+  });
+
   it("rejects unsafe email and due-day values", () => {
     expect(() => sanitizeRentecOwnerInputs({ tenantEmails: { 20: "not-an-email" } })).toThrow("valid renter email");
     expect(() => sanitizeRentecOwnerInputs({ leaseRentDueDays: { 30: 31 } })).toThrow("1 through 28");
+    expect(() => sanitizeRentecOwnerInputs({ tenantClassifications: { 20: "vendor" } })).toThrow("company-contact classification");
   });
 });
