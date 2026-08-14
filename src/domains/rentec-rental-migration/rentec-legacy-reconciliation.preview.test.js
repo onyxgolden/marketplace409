@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildApiTransactionReconciliationFingerprint, previewRentecLegacyReconciliation } from "./rentec-legacy-reconciliation.preview.js";
 
-const api = (transaction_time, amount, description, property_id = 10, category_name = "Rent") => buildApiTransactionReconciliationFingerprint({ transaction_time, amount, description, property_id, category_name });
+const api = (transaction_time, amount, description, property_id = 10, category_name = "Rent", propertyName = "") => buildApiTransactionReconciliationFingerprint({ transaction_time, amount, description, property_id, category_name }, { propertyName });
 const legacy = (event_date, amount, description, property_id = "legacy-home", normalized_category = "rent") => ({ event_date, amount, description, property_id, normalized_category });
 
 describe("Rentec legacy reconciliation preview", () => {
@@ -20,11 +20,19 @@ describe("Rentec legacy reconciliation preview", () => {
         legacy("2025-12-01", 50, "Legacy only"),
       ],
     });
-    expect(result).toMatchObject({ mode: "preview_only", canCommit: false, apiTransactions: 4, legacyRentecEvents: 4, alreadyRepresented: 1, probableMatch: 1, conflicting: 1, newFromApi: 1, legacyOnly: 1 });
+    expect(result).toMatchObject({ mode: "preview_only", canCommit: false, apiTransactions: 4, legacyRentecEvents: 4, alreadyRepresented: 1, propertySupportedMatch: 0, probableMatch: 1, conflicting: 1, newFromApi: 1, legacyOnly: 1 });
     expect(result.exceptionReview.apiOnlyByYear).toEqual([{ label: "2026", count: 1 }]);
     expect(result.exceptionReview.apiOnlyByProperty).toEqual([{ label: "Rentec property 10", count: 1 }]);
     expect(result.exceptionReview.legacyOnlyByYear).toEqual([{ label: "2025", count: 1 }]);
     expect(result.exceptionReview.conflictVarianceBands).toEqual([{ label: "$10–$99", count: 1 }]);
+  });
+
+  it("counts address-normalized property evidence inside probable matches", () => {
+    const result = previewRentecLegacyReconciliation({
+      apiRecords: [api("2026-01-02", 200, "Different wording", 10, "Rent", "1218 Wagner St")],
+      legacyEvents: [legacy("2026-01-02", 200, "Original wording", "1218-wagner")],
+    });
+    expect(result).toMatchObject({ propertySupportedMatch: 1, probableMatch: 1, alreadyRepresented: 0, newFromApi: 0 });
   });
 
   it("does not reuse one legacy event for duplicate API records", () => {
