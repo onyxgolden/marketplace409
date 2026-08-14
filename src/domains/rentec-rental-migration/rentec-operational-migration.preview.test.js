@@ -30,9 +30,9 @@ describe("Rentec operational migration preview", () => {
       mode: "preview_only", canCommit: false,
       properties: { create: 1, link: 1, skip: 1, review: 0 },
       tenants: { create: 1, link: 1, skip: 1, review: 1 },
-      leases: { create: 0, link: 1, skip: 1, review: 2 },
+      leases: { create: 1, link: 1, skip: 1, review: 1 },
     });
-    expect(result.reviewReasons).toContainEqual({ label: "Lease depends on an unresolved property or tenant", count: 2 });
+    expect(result.reviewReasons).toContainEqual({ label: "Lease depends on an unresolved property or tenant", count: 1 });
   });
 
   it("requires array inputs", () => {
