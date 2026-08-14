@@ -26,13 +26,17 @@ export function sanitizeRentecOwnerInputs(value = {}) {
     if (!emailPattern.test(email) || email.length > 254) throw new Error("A valid renter email is required.");
     tenantEmails[sourceId] = email;
   }
+  for (const [sourceId, excluded] of Object.entries(value.tenantExclusions || {})) {
+    if (!/^\d+$/.test(sourceId) || excluded !== true) throw new Error("A valid excluded Rentec renter is required.");
+    tenantExclusions[sourceId] = true;
+  }
   for (const [sourceId, rawDay] of Object.entries(value.leaseRentDueDays || {})) {
     if (!/^\d+$/.test(sourceId)) throw new Error("A valid Rentec lease ID is required.");
     const day = Number(rawDay);
     if (!Number.isInteger(day) || day < 1 || day > 28) throw new Error("Rent due day must be a whole number from 1 through 28.");
     leaseRentDueDays[sourceId] = day;
   }
-  if (Object.keys(tenantEmails).length > 25 || Object.keys(leaseRentDueDays).length > 100) {
+  if (Object.keys(tenantEmails).length > 25 || Object.keys(tenantExclusions).length > 25 || Object.keys(leaseRentDueDays).length > 100) {
     throw new Error("Too many Rentec owner inputs were supplied.");
   }
   return Object.freeze({
@@ -52,14 +56,14 @@ export function buildRentecOwnerInputRequirements({
   ]));
   const tenantIds = new Set(rentecTenants.filter((row) => {
     const sourceId = String(row.renter_id || row.id || "");
-    return !archived(row) && Boolean(normalize(row.email) || inputs.tenantEmails[sourceId]);
+    return !archived(row) && !inputs.tenantExclusions[sourceId] && Boolean(normalize(row.email) || inputs.tenantEmails[sourceId]);
   }).map((row) => String(row.renter_id || row.id || "")));
   const propertyIds = new Set(rentecProperties.filter((row) => !archived(row)).map((row) => String(row.property_id || row.id || "")));
   const requirements = [];
 
   for (const row of rentecTenants) {
     const sourceId = String(row.renter_id || row.id || "");
-    if (!sourceId || archived(row) || normalize(row.email) || inputs.tenantEmails[sourceId]) continue;
+    if (!sourceId || archived(row) || inputs.tenantExclusions[sourceId] || normalize(row.email) || inputs.tenantEmails[sourceId]) continue;
     requirements.push(Object.freeze({
       type: "tenant_email",
       sourceId,
