@@ -75,7 +75,7 @@ export default function RentecMigrationPanel() {
     <div className="rounded-2xl border bg-white p-6">
       <p className="text-sm font-bold uppercase tracking-widest text-sky-700">Migration</p>
       <h2 className="mt-2 text-2xl font-black">Import from Rentec Direct</h2>
-      <p className="mt-2 max-w-3xl text-slate-600">Connect read-only to inventory every property, renter, lease, and transaction page, then compare transaction fingerprints with the legacy Rentec financial export before any FORGE record is created.</p>
+      <p className="mt-2 max-w-3xl text-slate-600">Connect read-only to inventory every property, renter, lease, and transaction page, then compare transaction fingerprints with the legacy Rentec financial export and build a read-only operational migration plan before any FORGE record is created.</p>
       <button type="button" disabled={busy} onClick={inspectApi} className="mt-5 rounded-xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-50">{busy ? "Inspecting…" : "Inspect Rentec account"}</button>
       <p className="mt-3 text-sm font-bold text-amber-800">Preview only: this screen cannot write Rentec or FORGE records.</p>
       {progress ? <p role="status" className="mt-4">{progress}</p> : null}
