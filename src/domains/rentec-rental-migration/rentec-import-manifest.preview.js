@@ -153,7 +153,7 @@ export function buildRentecImportManifest({
     fieldMappings: FIELD_MAPPINGS,
     readiness: Object.freeze({
       units: Object.freeze({ ready: units.length, blocked: blockers.filter((label) => label === "Property identity requires review").length }),
-      tenants: Object.freeze({ ready: tenants.length, blocked: blockers.filter((label) => label.includes("renter") || label.includes("Tenant")).length }),
+      tenants: Object.freeze({ ready: tenants.length, blocked: blockers.filter((label) => label.includes("renter") || label.includes("Tenant") || label.includes("Company contact")).length }),
       leases: Object.freeze({ ready: Math.max(0, leases.length - leaseBlockers), blocked: leaseBlockers + blockers.filter((label) => label.startsWith("Active lease")).length }),
     }),
     blockers: group(blockers),
