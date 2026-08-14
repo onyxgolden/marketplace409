@@ -15,6 +15,7 @@ describe("Rentec operational migration preview", () => {
         { renter_id: 21, email: "new@example.com" },
         { renter_id: 22, email: "old@example.com", archived: true },
         { renter_id: 23, email: "" },
+        { renter_id: 24, email: "", archived: true },
       ],
       rentecLeases: [
         { property_id: 10, renter_id: 20, lease_begin: "2026-01-01", lease_end: "2026-12-31", recurring_rent: 1000 },
@@ -30,10 +31,12 @@ describe("Rentec operational migration preview", () => {
     expect(result).toMatchObject({
       mode: "preview_only", canCommit: false,
       properties: { create: 1, link: 1, skip: 1, review: 0 },
-      tenants: { create: 1, link: 1, skip: 1, review: 1 },
+      tenants: { create: 1, link: 1, skip: 2, review: 1 },
       leases: { create: 2, link: 1, skip: 1, review: 1 },
     });
     expect(result.reviewReasons).toContainEqual({ label: "Lease depends on an unresolved property or tenant", count: 1 });
+    expect(result.reviewReasons).toContainEqual({ label: "Active Rentec tenant has no email identity", count: 1 });
+    expect(result.reviewReasons).toContainEqual({ label: "Archived Rentec tenant has no FORGE match", count: 2 });
   });
 
   it("requires array inputs", () => {
