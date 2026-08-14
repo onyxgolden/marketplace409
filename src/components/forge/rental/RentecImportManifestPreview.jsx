@@ -1,4 +1,6 @@
-import RentecOwnerInputResolution from "./RentecOwnerInputResolution.jsx";\n\nfunction Readiness({ title, value }) {
+import RentecOwnerInputResolution from "./RentecOwnerInputResolution.jsx";
+
+function Readiness({ title, value }) {
   return <div className="rounded-xl border p-4"><h4 className="font-black">{title}</h4><p className="mt-2 text-sm">Ready: <strong>{value.ready}</strong></p><p className="mt-2 text-sm">Blocked: <strong>{value.blocked}</strong></p></div>;
 }
 
@@ -19,7 +21,8 @@ export default function RentecImportManifestPreview({ manifest, busy = false, on
     <p className="mt-4 break-all rounded-lg bg-slate-100 p-3 font-mono text-xs"><strong>Approval checksum:</strong> {manifest.checksum}</p>
     <p className="mt-3 text-sm"><strong>Dependency order:</strong> {manifest.dependencyOrder.join(" → ")}</p>
     {manifest.blockers?.length ? <div className="mt-4 rounded-xl bg-amber-50 p-4"><h4 className="font-black text-amber-900">Blocking owner inputs</h4><div className="mt-3 space-y-2">{manifest.blockers.map((row) => <div key={row.label} className="flex justify-between gap-4 text-sm"><span>{row.label}</span><strong>{row.count}</strong></div>)}</div></div> : null}
-    <RentecOwnerInputResolution resolution={manifest.ownerInputResolution} busy={busy} onResolve={onResolve}/>\n    <div className="mt-4 grid gap-4 lg:grid-cols-3">
+    <RentecOwnerInputResolution resolution={manifest.ownerInputResolution} busy={busy} onResolve={onResolve}/>
+    <div className="mt-4 grid gap-4 lg:grid-cols-3">
       <Mapping title="Unit field mappings" rows={manifest.fieldMappings.units}/>
       <Mapping title="Renter field mappings" rows={manifest.fieldMappings.tenants}/>
       <Mapping title="Lease field mappings" rows={manifest.fieldMappings.leases}/>
