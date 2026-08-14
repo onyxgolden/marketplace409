@@ -1,4 +1,5 @@
 import { buildRentecFieldCoverage, RENTEC_ATTACHMENT_CAPABILITIES } from "./rentec-field-coverage.js";
+import { createHash } from "node:crypto";
 
 const BASE_URL = "https://secure.rentecdirect.com/api/v3";
 const cents = (value) => Math.round(Number(value || 0) * 100);
@@ -15,6 +16,15 @@ function fileAssociation(row) {
   if (row.vendor_id) return "vendor";
   if (row.owner_id) return "owner";
   return "unlinked";
+}
+
+function fileFingerprint(row) {
+  return createHash("sha256").update(JSON.stringify([
+    String(row.filename || "").trim().toLowerCase(),
+    Math.max(0, Number(row.bytes || 0)),
+    String(row.upload_date || ""),
+    String(row.last_updated || ""),
+  ])).digest("hex");
 }
 
 export class RentecApiClient {
@@ -73,7 +83,7 @@ export class RentecApiClient {
       records: rows.length,
       capped: rows.length >= 100,
       files: Object.freeze(rows.map((row) => Object.freeze({
-        id: String(row.id || row.file_id),
+        id: fileFingerprint(row),
         bytes: Math.max(0, Number(row.bytes || 0)),
         extension: extension(row.filename),
         association: fileAssociation(row),
