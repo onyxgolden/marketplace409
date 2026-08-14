@@ -57,7 +57,7 @@ export function previewRentecOperationalMigration({
     if (matches.length === 1) { add(properties, "link"); propertyResolution.set(sourceId, matches[0]); }
     else if (matches.length > 1) { add(properties, "review"); note("Property matches multiple FORGE units"); }
     else if (archived(row)) { add(properties, "skip"); note("Archived Rentec property has no FORGE match"); }
-    else { add(properties, "create"); }
+    else { add(properties, "create"); propertyResolution.set(sourceId, "planned:create"); }
   }
 
   for (const row of rentecTenants) {
@@ -68,7 +68,7 @@ export function previewRentecOperationalMigration({
     else if (matches.length > 1) { add(tenants, "review"); note("Tenant email matches multiple FORGE tenants"); }
     else if (!key) { add(tenants, "review"); note("Rentec tenant has no email identity"); }
     else if (archived(row)) { add(tenants, "skip"); note("Archived Rentec tenant has no FORGE match"); }
-    else { add(tenants, "create"); }
+    else { add(tenants, "create"); tenantResolution.set(sourceId, "planned:create"); }
   }
 
   for (const row of rentecLeases) {
@@ -79,7 +79,7 @@ export function previewRentecOperationalMigration({
     const rentCents = cents(row.recurring_rent);
     const unitId = propertyResolution.get(propertyId);
     const tenantId = tenantResolution.get(renterId);
-    const matches = unitId ? forgeLeases.filter((lease) =>
+    const matches = unitId && unitId !== "planned:create" ? forgeLeases.filter((lease) =>
       lease.unit_id === unitId && date(lease.start_date) === startDate && Number(lease.monthly_rent_cents) === rentCents
     ) : [];
     if (matches.length === 1) add(leases, "link");
