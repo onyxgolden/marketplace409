@@ -33,4 +33,9 @@ describe("Rentec legacy reconciliation preview", () => {
     expect(result.alreadyRepresented).toBe(1);
     expect(result.newFromApi).toBe(1);
   });
+
+  it("labels impossible legacy years as data-quality exceptions", () => {
+    const result = previewRentecLegacyReconciliation({ apiRecords: [], legacyEvents: [legacy("0005-01-01", 50, "Legacy only")] });
+    expect(result.exceptionReview.legacyOnlyByYear).toEqual([{ label: "Invalid year", count: 1 }]);
+  });
 });
