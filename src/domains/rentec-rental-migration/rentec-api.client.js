@@ -1,5 +1,6 @@
 import { buildRentecFieldCoverage, RENTEC_ATTACHMENT_CAPABILITIES } from "./rentec-field-coverage.js";
 import { createHash } from "node:crypto";
+import { buildApiTransactionReconciliationFingerprint } from "./rentec-legacy-reconciliation.preview.js";
 
 const BASE_URL = "https://secure.rentecdirect.com/api/v3";
 const cents = (value) => Math.round(Number(value || 0) * 100);
@@ -114,6 +115,7 @@ export class RentecApiClient {
       startingBalanceCents: cents(payload.summary?.starting_balance),
       endingBalanceCents: cents(payload.summary?.ending_balance),
       fieldCoverage: buildRentecFieldCoverage({ transactions: rows }).transactions,
+      reconciliationFingerprints: Object.freeze(rows.map(buildApiTransactionReconciliationFingerprint)),
     });
   }
 }
