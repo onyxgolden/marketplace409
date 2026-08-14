@@ -112,12 +112,13 @@ export function buildRentecImportManifest({
     }
     const existing = forgeLeases.some((lease) => lease.unit_id === unitId && date(lease.start_date) === startDate && Number(lease.monthly_rent_cents) === rent);
     if (existing) continue;
+    const rentDueDay = Number(leaseDueDayInputs[sourceId] || 0);
     leases.push({
       id: stableId("lease", sourceId), property_id: units.find((unit) => unit.id === unitId)?.property_id || forgeUnits.find((unit) => unit.id === unitId)?.property_id || null,
       unit_id: unitId, tenant_id: tenantId, status: "draft", start_date: startDate,
-      end_date: endDate || null, monthly_rent_cents: rent, currency_code: "USD", rent_due_day: null,
+      end_date: endDate || null, monthly_rent_cents: rent, currency_code: "USD", rent_due_day: rentDueDay || null,
     });
-    blockers.push("Rent due day requires owner input");
+    if (!rentDueDay) blockers.push("Rent due day requires owner input");
   }
 
   const canonical = {
