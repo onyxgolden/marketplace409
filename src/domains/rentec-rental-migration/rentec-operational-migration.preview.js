@@ -66,8 +66,8 @@ export function previewRentecOperationalMigration({
     const matches = key ? tenantsByEmail.get(key) || [] : [];
     if (matches.length === 1) { add(tenants, "link"); tenantResolution.set(sourceId, matches[0]); }
     else if (matches.length > 1) { add(tenants, "review"); note("Tenant email matches multiple FORGE tenants"); }
-    else if (!key) { add(tenants, "review"); note("Rentec tenant has no email identity"); }
     else if (archived(row)) { add(tenants, "skip"); note("Archived Rentec tenant has no FORGE match"); }
+    else if (!key) { add(tenants, "review"); note("Active Rentec tenant has no email identity"); }
     else { add(tenants, "create"); tenantResolution.set(sourceId, "planned:create"); }
   }
 
