@@ -56,16 +56,20 @@ export function buildRentecOwnerInputRequirements({
     String(row.property_id || row.id || ""),
     normalize(row.address) || normalize(row.nickname) || `Rentec property ${String(row.property_id || row.id || "")}`,
   ]));
+  const excludedTenantIds = new Set(rentecTenants.filter((row) => {
+    const sourceId = String(row.renter_id || row.id || "");
+    return sourceId && !archived(row) && !normalize(row.email) && inputs.tenantExclusions[sourceId] === true;
+  }).map((row) => String(row.renter_id || row.id || "")));
   const tenantIds = new Set(rentecTenants.filter((row) => {
     const sourceId = String(row.renter_id || row.id || "");
-    return !archived(row) && !inputs.tenantExclusions[sourceId] && Boolean(normalize(row.email) || inputs.tenantEmails[sourceId]);
+    return !archived(row) && !excludedTenantIds.has(sourceId) && Boolean(normalize(row.email) || inputs.tenantEmails[sourceId]);
   }).map((row) => String(row.renter_id || row.id || "")));
   const propertyIds = new Set(rentecProperties.filter((row) => !archived(row)).map((row) => String(row.property_id || row.id || "")));
   const requirements = [];
 
   for (const row of rentecTenants) {
     const sourceId = String(row.renter_id || row.id || "");
-    if (!sourceId || archived(row) || inputs.tenantExclusions[sourceId] || normalize(row.email) || inputs.tenantEmails[sourceId]) continue;
+    if (!sourceId || archived(row) || excludedTenantIds.has(sourceId) || normalize(row.email) || inputs.tenantEmails[sourceId]) continue;
     requirements.push(Object.freeze({
       type: "tenant_email",
       sourceId,
