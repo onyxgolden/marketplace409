@@ -14,6 +14,7 @@ describe("RentecOwnerInputResolution", () => {
     expect(html).toContain("A Tenant");
     expect(html).toContain("1218 Wagner St");
     expect(html).toContain('type="email"');
+    expect(html).toContain("Exclude this record because it is not an actual renter");
     expect(html).toContain('max="28"');
     expect(html).toContain("Validate inputs and regenerate preview");
     expect(html).toContain("does not import");
