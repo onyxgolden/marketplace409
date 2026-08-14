@@ -3,7 +3,8 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { createRentecApiClient } from "@/domains/rentec-rental-migration/rentec-api.client";
 import { previewRentecLegacyReconciliation } from "@/domains/rentec-rental-migration/rentec-legacy-reconciliation.preview";
 import { previewRentecOperationalMigration } from "@/domains/rentec-rental-migration/rentec-operational-migration.preview";
-import { buildRentecImportManifest } from "@/domains/rentec-rental-migration/rentec-import-manifest.preview";\nimport { buildRentecOwnerInputRequirements, sanitizeRentecOwnerInputs } from "@/domains/rentec-rental-migration/rentec-owner-input-resolution.preview";
+import { buildRentecImportManifest } from "@/domains/rentec-rental-migration/rentec-import-manifest.preview";
+import { buildRentecOwnerInputRequirements, sanitizeRentecOwnerInputs } from "@/domains/rentec-rental-migration/rentec-owner-input-resolution.preview";
 
 const fingerprintPattern = /^[a-f0-9]{16}$/;
 
