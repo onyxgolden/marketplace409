@@ -19,6 +19,7 @@ export function sanitizeRentecOwnerInputs(value = {}) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Owner inputs must be an object.");
   const tenantEmails = {};
   const tenantExclusions = {};
+  const tenantClassifications = {};
   const leaseRentDueDays = {};
 
   for (const [sourceId, rawEmail] of Object.entries(value.tenantEmails || {})) {
@@ -31,18 +32,23 @@ export function sanitizeRentecOwnerInputs(value = {}) {
     if (!/^\d+$/.test(sourceId) || excluded !== true) throw new Error("A valid excluded Rentec renter is required.");
     tenantExclusions[sourceId] = true;
   }
+  for (const [sourceId, classification] of Object.entries(value.tenantClassifications || {})) {
+    if (!/^\d+$/.test(sourceId) || !["renter", "non_renter"].includes(classification)) throw new Error("A valid Rentec company-contact classification is required.");
+    tenantClassifications[sourceId] = classification;
+  }
   for (const [sourceId, rawDay] of Object.entries(value.leaseRentDueDays || {})) {
     if (!/^\d+$/.test(sourceId)) throw new Error("A valid Rentec lease ID is required.");
     const day = Number(rawDay);
     if (!Number.isInteger(day) || day < 1 || day > 28) throw new Error("Rent due day must be a whole number from 1 through 28.");
     leaseRentDueDays[sourceId] = day;
   }
-  if (Object.keys(tenantEmails).length > 25 || Object.keys(tenantExclusions).length > 25 || Object.keys(leaseRentDueDays).length > 100) {
+  if (Object.keys(tenantEmails).length > 25 || Object.keys(tenantExclusions).length > 25 || Object.keys(tenantClassifications).length > 25 || Object.keys(leaseRentDueDays).length > 100) {
     throw new Error("Too many Rentec owner inputs were supplied.");
   }
   return Object.freeze({
     tenantEmails: Object.freeze(tenantEmails),
     tenantExclusions: Object.freeze(tenantExclusions),
+    tenantClassifications: Object.freeze(tenantClassifications),
     leaseRentDueDays: Object.freeze(leaseRentDueDays),
   });
 }
@@ -58,18 +64,31 @@ export function buildRentecOwnerInputRequirements({
   ]));
   const excludedTenantIds = new Set(rentecTenants.filter((row) => {
     const sourceId = String(row.renter_id || row.id || "");
-    return sourceId && !archived(row) && !normalize(row.email) && inputs.tenantExclusions[sourceId] === true;
+    const missingEmailExclusion = !normalize(row.email) && inputs.tenantExclusions[sourceId] === true;
+    const companyExclusion = Boolean(normalize(row.company)) && inputs.tenantClassifications[sourceId] === "non_renter";
+    return sourceId && !archived(row) && (missingEmailExclusion || companyExclusion);
   }).map((row) => String(row.renter_id || row.id || "")));
   const tenantIds = new Set(rentecTenants.filter((row) => {
     const sourceId = String(row.renter_id || row.id || "");
-    return !archived(row) && !excludedTenantIds.has(sourceId) && Boolean(normalize(row.email) || inputs.tenantEmails[sourceId]);
+    const companyNeedsClassification = Boolean(normalize(row.company)) && !inputs.tenantClassifications[sourceId];
+    return !archived(row) && !companyNeedsClassification && !excludedTenantIds.has(sourceId) && Boolean(normalize(row.email) || inputs.tenantEmails[sourceId]);
   }).map((row) => String(row.renter_id || row.id || "")));
   const propertyIds = new Set(rentecProperties.filter((row) => !archived(row)).map((row) => String(row.property_id || row.id || "")));
   const requirements = [];
 
   for (const row of rentecTenants) {
     const sourceId = String(row.renter_id || row.id || "");
-    if (!sourceId || archived(row) || excludedTenantIds.has(sourceId) || normalize(row.email) || inputs.tenantEmails[sourceId]) continue;
+    if (!sourceId || archived(row) || excludedTenantIds.has(sourceId)) continue;
+    if (normalize(row.company) && !inputs.tenantClassifications[sourceId]) {
+      requirements.push(Object.freeze({
+        type: "tenant_classification",
+        sourceId,
+        label: tenantLabel(row).slice(0, 160),
+        prompt: "Classify this company contact",
+      }));
+      continue;
+    }
+    if (normalize(row.email) || inputs.tenantEmails[sourceId]) continue;
     requirements.push(Object.freeze({
       type: "tenant_email",
       sourceId,
@@ -101,6 +120,7 @@ export function buildRentecOwnerInputRequirements({
     requirements: Object.freeze(requirements.sort((a, b) => a.type.localeCompare(b.type) || a.label.localeCompare(b.label))),
     remaining: Object.freeze({
       tenantEmails: requirements.filter((row) => row.type === "tenant_email").length,
+      companyClassifications: requirements.filter((row) => row.type === "tenant_classification").length,
       rentDueDays: requirements.filter((row) => row.type === "rent_due_day").length,
     }),
     warning: "Inputs are validated in memory for this preview and are not saved.",
