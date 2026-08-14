@@ -18,6 +18,7 @@ function tenantLabel(row) {
 export function sanitizeRentecOwnerInputs(value = {}) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Owner inputs must be an object.");
   const tenantEmails = {};
+  const tenantExclusions = {};
   const leaseRentDueDays = {};
 
   for (const [sourceId, rawEmail] of Object.entries(value.tenantEmails || {})) {
@@ -41,6 +42,7 @@ export function sanitizeRentecOwnerInputs(value = {}) {
   }
   return Object.freeze({
     tenantEmails: Object.freeze(tenantEmails),
+    tenantExclusions: Object.freeze(tenantExclusions),
     leaseRentDueDays: Object.freeze(leaseRentDueDays),
   });
 }
