@@ -11,6 +11,10 @@ const year = (value) => {
   return number >= 1900 && number <= 2100 ? match[1] : "Invalid year";
 };
 const property = (value, prefix = "Property") => value ? `${prefix} ${String(value).slice(0, 80)}` : "Unassigned property";
+const propertyKey = (value) => normalize(value)
+  .replace(/^(rentec|legacy) property /, "")
+  .replace(/\b(street|st|road|rd|avenue|ave|drive|dr|lane|ln|court|ct|boulevard|blvd)\b/g, "")
+  .replace(/[^a-z0-9]+/g, "");
 const category = (value) => {
   const text = normalize(value);
   if (text.includes("rent")) return "Rent";
@@ -26,16 +30,18 @@ const category = (value) => {
   return "Other";
 };
 
-export function buildApiTransactionReconciliationFingerprint(row) {
+export function buildApiTransactionReconciliationFingerprint(row, { propertyName = "" } = {}) {
   const date = dateOnly(row.transaction_time);
   const amount = cents(row.amount);
   const description = normalize(row.description || row.category_name || row.memo);
+  const propertyLabel = propertyName || property(row.property_id, "Rentec property");
   return Object.freeze({
     exact: digest([date, amount, description]),
     probable: digest([date, amount]),
+    propertyProbable: digest([date, amount, propertyKey(propertyLabel)]),
     conflict: digest([date, description]),
     year: year(date),
-    property: property(row.property_id, "Rentec property"),
+    property: propertyLabel,
     category: category(row.category_name || row.description),
     amountCents: amount,
   });
@@ -45,12 +51,14 @@ function buildLegacyFingerprint(event) {
   const date = dateOnly(event.event_date);
   const amount = cents(event.amount);
   const description = normalize(event.description);
+  const propertyLabel = property(event.property_id, "Legacy property");
   return Object.freeze({
     exact: digest([date, amount, description]),
     probable: digest([date, amount]),
+    propertyProbable: digest([date, amount, propertyKey(propertyLabel)]),
     conflict: digest([date, description]),
     year: year(date),
-    property: property(event.property_id, "Legacy property"),
+    property: propertyLabel,
     category: category(event.normalized_category || event.description),
     amountCents: amount,
   });
@@ -94,10 +102,11 @@ export function previewRentecLegacyReconciliation({ apiRecords = [], legacyEvent
   if (!Array.isArray(apiRecords) || !Array.isArray(legacyEvents)) throw new Error("Rentec reconciliation records must be arrays.");
   const legacy = legacyEvents.map(buildLegacyFingerprint);
   const exact = queues(legacy, "exact");
+  const propertyProbable = queues(legacy, "propertyProbable");
   const probable = queues(legacy, "probable");
   const conflict = queues(legacy, "conflict");
   const used = new Set();
-  const counts = { alreadyRepresented: 0, probableMatch: 0, conflicting: 0, newFromApi: 0 };
+  const counts = { alreadyRepresented: 0, propertySupportedMatch: 0, probableMatch: 0, conflicting: 0, newFromApi: 0 };
   const probableRecords = [];
   const conflictRecords = [];
   const apiOnlyRecords = [];
@@ -105,6 +114,13 @@ export function previewRentecLegacyReconciliation({ apiRecords = [], legacyEvent
   for (const record of apiRecords) {
     if (claim(exact.get(record.exact), used) !== null) counts.alreadyRepresented++;
     else {
+      const propertyIndex = claim(propertyProbable.get(record.propertyProbable), used);
+      if (propertyIndex !== null) {
+        counts.propertySupportedMatch++;
+        counts.probableMatch++;
+        probableRecords.push(record);
+        continue;
+      }
       const probableIndex = claim(probable.get(record.probable), used);
       if (probableIndex !== null) {
         counts.probableMatch++;
