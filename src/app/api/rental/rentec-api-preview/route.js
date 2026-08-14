@@ -25,7 +25,7 @@ async function loadLegacyRentecEvents(supabaseClient, ownerId) {
 function validFingerprints(value) {
   return Array.isArray(value) && value.length <= 10000 && value.every((record) =>
     record && fingerprintPattern.test(record.exact) && fingerprintPattern.test(record.probable) && fingerprintPattern.test(record.conflict)
-      && /^\d{4}$|^Unknown year$/.test(record.year) && typeof record.property === "string" && record.property.length <= 100
+      && /^(\d{4}|Unknown year|Invalid year)$/.test(record.year) && typeof record.property === "string" && record.property.length <= 100
       && ["Rent", "Deposit", "Late fee", "Maintenance", "Utilities", "Taxes", "Insurance", "Management", "Financing", "Purchase", "Other"].includes(record.category)
       && Number.isSafeInteger(record.amountCents) && record.amountCents >= 0);
 }
