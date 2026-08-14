@@ -21,6 +21,7 @@ describe("Rentec operational migration preview", () => {
         { property_id: 10, renter_id: 20, lease_begin: "2026-02-01", lease_end: "2026-12-31", recurring_rent: 1100 },
         { property_id: 12, renter_id: 22, lease_begin: "2020-01-01", lease_end: "2020-12-31", recurring_rent: 800 },
         { property_id: 11, renter_id: 21, lease_begin: "2026-03-01", lease_end: "2027-02-28", recurring_rent: 900 },
+        { property_id: 10, renter_id: 23, lease_begin: "2026-04-01", lease_end: "2027-03-31", recurring_rent: 950 },
       ],
       forgeUnits: [{ id: "unit-1", property_id: "1218-wagner", label: "Main unit" }],
       forgeTenants: [{ id: "tenant-1", email: "LINKED@example.com" }],
@@ -30,7 +31,7 @@ describe("Rentec operational migration preview", () => {
       mode: "preview_only", canCommit: false,
       properties: { create: 1, link: 1, skip: 1, review: 0 },
       tenants: { create: 1, link: 1, skip: 1, review: 1 },
-      leases: { create: 1, link: 1, skip: 1, review: 1 },
+      leases: { create: 2, link: 1, skip: 1, review: 1 },
     });
     expect(result.reviewReasons).toContainEqual({ label: "Lease depends on an unresolved property or tenant", count: 1 });
   });
