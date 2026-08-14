@@ -12,7 +12,7 @@ describe("RentecOperationalMigrationPlan", () => {
     }}/>);
     expect(html).toContain("Operational migration plan");
     expect(html).toContain("Properties and units");
-    expect(html).toContain("Why records require review");
+    expect(html).toContain("Why records are skipped or require review");
     expect(html).toContain("no property, renter, lease, or membership record was written");
     expect(html).not.toContain("Import now");
   });
