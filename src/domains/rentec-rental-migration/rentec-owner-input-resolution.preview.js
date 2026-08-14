@@ -50,7 +50,10 @@ export function buildRentecOwnerInputRequirements({
     String(row.property_id || row.id || ""),
     normalize(row.address) || normalize(row.nickname) || `Rentec property ${String(row.property_id || row.id || "")}`,
   ]));
-  const tenantIds = new Set(rentecTenants.filter((row) => {\n    const sourceId = String(row.renter_id || row.id || "");\n    return !archived(row) && Boolean(normalize(row.email) || inputs.tenantEmails[sourceId]);\n  }).map((row) => String(row.renter_id || row.id || "")));
+  const tenantIds = new Set(rentecTenants.filter((row) => {
+    const sourceId = String(row.renter_id || row.id || "");
+    return !archived(row) && Boolean(normalize(row.email) || inputs.tenantEmails[sourceId]);
+  }).map((row) => String(row.renter_id || row.id || "")));
   const propertyIds = new Set(rentecProperties.filter((row) => !archived(row)).map((row) => String(row.property_id || row.id || "")));
   const requirements = [];
 
