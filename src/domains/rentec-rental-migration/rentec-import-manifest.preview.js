@@ -66,12 +66,15 @@ export function buildRentecImportManifest({
 
   const tenantEmailInputs = ownerInputs?.tenantEmails || {};
   const tenantExclusions = ownerInputs?.tenantExclusions || {};
+  const tenantClassifications = ownerInputs?.tenantClassifications || {};
   const leaseDueDayInputs = ownerInputs?.leaseRentDueDays || {};
   const unitIndex = indexBy(forgeUnits, (unit) => [unit.property_id, unit.label]);
   const tenantIndex = indexBy(forgeTenants, (tenant) => [tenant.email]);
   const excludedTenantIds = new Set(rentecTenants.filter((row) => {
     const sourceId = String(row.renter_id || row.id || "");
-    return sourceId && !archived(row) && !normalize(row.email) && tenantExclusions[sourceId] === true;
+    const missingEmailExclusion = !normalize(row.email) && tenantExclusions[sourceId] === true;
+    const companyExclusion = Boolean(normalize(row.company)) && tenantClassifications[sourceId] === "non_renter";
+    return sourceId && !archived(row) && (missingEmailExclusion || companyExclusion);
   }).map((row) => String(row.renter_id || row.id || "")));
   const unitResolution = new Map(), tenantResolution = new Map();
   const units = [], tenants = [], leases = [], blockers = [];
@@ -93,6 +96,10 @@ export function buildRentecImportManifest({
   for (const row of rentecTenants) {
     const sourceId = String(row.renter_id || row.id || "");
     if (excludedTenantIds.has(sourceId)) { excludedTenants++; continue; }
+    if (!archived(row) && normalize(row.company) && tenantClassifications[sourceId] !== "renter") {
+      blockers.push("Company contact requires renter classification");
+      continue;
+    }
     const normalizedEmail = normalize(tenantEmailInputs[sourceId] || row.email);
     const matches = normalizedEmail ? tenantIndex.get(key(normalizedEmail)) || [] : [];
     if (matches.length === 1) tenantResolution.set(sourceId, matches[0].id);
@@ -131,7 +138,7 @@ export function buildRentecImportManifest({
   }
 
   const canonical = {
-    ownerDecisions: { tenantExclusions: [...excludedTenantIds].sort() },
+    ownerDecisions: { tenantExclusions: [...excludedTenantIds].sort(), tenantClassifications: Object.entries(tenantClassifications).sort(([a], [b]) => a.localeCompare(b)) },
     units: [...units].sort((a, b) => a.id.localeCompare(b.id)),
     tenants: [...tenants].sort((a, b) => a.id.localeCompare(b.id)),
     leases: [...leases].sort((a, b) => a.id.localeCompare(b.id)),
