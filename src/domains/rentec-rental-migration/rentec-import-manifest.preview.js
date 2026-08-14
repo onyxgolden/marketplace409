@@ -64,7 +64,9 @@ export function buildRentecImportManifest({
     if (!Array.isArray(value)) throw new Error("Rentec import manifest records must be arrays.");
   }
 
-  const tenantEmailInputs = ownerInputs?.tenantEmails || {};\n  const leaseDueDayInputs = ownerInputs?.leaseRentDueDays || {};\n  const unitIndex = indexBy(forgeUnits, (unit) => [unit.property_id, unit.label]);
+  const tenantEmailInputs = ownerInputs?.tenantEmails || {};
+  const leaseDueDayInputs = ownerInputs?.leaseRentDueDays || {};
+  const unitIndex = indexBy(forgeUnits, (unit) => [unit.property_id, unit.label]);
   const tenantIndex = indexBy(forgeTenants, (tenant) => [tenant.email]);
   const unitResolution = new Map(), tenantResolution = new Map();
   const units = [], tenants = [], leases = [], blockers = [];
