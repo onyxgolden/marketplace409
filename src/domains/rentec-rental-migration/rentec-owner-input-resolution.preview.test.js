@@ -56,6 +56,20 @@ describe("Rentec owner input resolution preview", () => {
     expect(JSON.stringify(resolved)).not.toContain("owner.supplied@example.com");
   });
 
+  it("excludes a confirmed non-renter and its dependent lease from the manifest", () => {
+    const ownerInputs = sanitizeRentecOwnerInputs({ tenantExclusions: { 20: true }, leaseRentDueDays: { 31: 1 } });
+    const result = buildRentecImportManifest({ ...evidence, ownerInputs });
+    const requirements = buildRentecOwnerInputRequirements({ ...evidence, ownerInputs });
+
+    expect(result.readiness).toMatchObject({
+      tenants: { ready: 1, blocked: 0 },
+      leases: { ready: 1, blocked: 0 },
+    });
+    expect(result.ownerExclusions).toEqual({ tenants: 1, leases: 1 });
+    expect(result.blockers).toEqual([]);
+    expect(requirements.requirements).toEqual([]);
+  });
+
   it("rejects unsafe email and due-day values", () => {
     expect(() => sanitizeRentecOwnerInputs({ tenantEmails: { 20: "not-an-email" } })).toThrow("valid renter email");
     expect(() => sanitizeRentecOwnerInputs({ leaseRentDueDays: { 30: 31 } })).toThrow("1 through 28");
