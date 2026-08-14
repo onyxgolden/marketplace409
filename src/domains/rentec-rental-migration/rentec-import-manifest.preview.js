@@ -58,13 +58,13 @@ function group(values) {
 
 export function buildRentecImportManifest({
   rentecProperties = [], rentecTenants = [], rentecLeases = [],
-  forgeUnits = [], forgeTenants = [], forgeLeases = [], asOf = new Date().toISOString().slice(0, 10),
+  forgeUnits = [], forgeTenants = [], forgeLeases = [], ownerInputs = {}, asOf = new Date().toISOString().slice(0, 10),
 } = {}) {
   for (const value of [rentecProperties, rentecTenants, rentecLeases, forgeUnits, forgeTenants, forgeLeases]) {
     if (!Array.isArray(value)) throw new Error("Rentec import manifest records must be arrays.");
   }
 
-  const unitIndex = indexBy(forgeUnits, (unit) => [unit.property_id, unit.label]);
+  const tenantEmailInputs = ownerInputs?.tenantEmails || {};\n  const leaseDueDayInputs = ownerInputs?.leaseRentDueDays || {};\n  const unitIndex = indexBy(forgeUnits, (unit) => [unit.property_id, unit.label]);
   const tenantIndex = indexBy(forgeTenants, (tenant) => [tenant.email]);
   const unitResolution = new Map(), tenantResolution = new Map();
   const units = [], tenants = [], leases = [], blockers = [];
@@ -84,7 +84,7 @@ export function buildRentecImportManifest({
 
   for (const row of rentecTenants) {
     const sourceId = String(row.renter_id || row.id || "");
-    const normalizedEmail = normalize(row.email);
+    const normalizedEmail = normalize(tenantEmailInputs[sourceId] || row.email);
     const matches = normalizedEmail ? tenantIndex.get(key(normalizedEmail)) || [] : [];
     if (matches.length === 1) tenantResolution.set(sourceId, matches[0].id);
     else if (!archived(row) && matches.length === 0 && normalizedEmail) {
