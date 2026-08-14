@@ -22,7 +22,7 @@ export default function RentecMigrationPanel() {
   }
 
   async function inspectApi() {
-    setBusy(true); setMessage(""); setApiPreview(null);
+    setBusy(true); setMessage(""); setApiPreview(null); setOwnerInputs({ tenantEmails: {}, leaseRentDueDays: {} });
     try {
       const inventory = await apiRequest({ operation: "inventory" });
       const totals = { transactionRecords: 0, netTransactionCents: 0, unassignedTransactions: 0, transactionPages: 0, matchedTenantIds: new Set(), reconciliationFingerprints: [] };
@@ -57,10 +57,15 @@ export default function RentecMigrationPanel() {
     finally { setBusy(false); }
   }
 
-  async function resolveManifest(ownerInputs) {
+  async function resolveManifest(nextInputs) {
+    const mergedInputs = {
+      tenantEmails: { ...ownerInputs.tenantEmails, ...nextInputs.tenantEmails },
+      leaseRentDueDays: { ...ownerInputs.leaseRentDueDays, ...nextInputs.leaseRentDueDays },
+    };
     setBusy(true); setMessage("");
     try {
-      const importManifest = await apiRequest({ operation: "resolve-manifest-preview", ownerInputs });
+      const importManifest = await apiRequest({ operation: "resolve-manifest-preview", ownerInputs: mergedInputs });
+      setOwnerInputs(mergedInputs);
       setApiPreview((current) => ({ ...current, importManifest }));
     } catch (error) { setMessage(error.message); }
     finally { setBusy(false); }
