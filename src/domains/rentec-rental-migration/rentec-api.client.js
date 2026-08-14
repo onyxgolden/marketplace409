@@ -81,6 +81,37 @@ export class RentecApiClient {
     });
   }
 
+  async operationalEvidence() {
+    const [properties, tenants, leases] = await Promise.all([
+      this.get("/properties", { archived: true }),
+      this.get("/tenants", { archived: true }),
+      this.get("/leases", { start_date: "1900-01-01" }),
+    ]);
+    return Object.freeze({
+      properties: Object.freeze((properties.data || []).map((row) => Object.freeze({
+        property_id: String(row.property_id || row.id || ""),
+        address: String(row.address || "").slice(0, 100),
+        nickname: String(row.nickname || "").slice(0, 100),
+        archived: row.archived,
+      }))),
+      tenants: Object.freeze((tenants.data || []).map((row) => Object.freeze({
+        renter_id: String(row.renter_id || row.id || ""),
+        email: String(row.email || "").trim().toLowerCase().slice(0, 254),
+        archived: row.archived,
+      }))),
+      leases: Object.freeze((leases.data || []).map((row) => Object.freeze({
+        lease_id: String(row.lease_id || row.id || ""),
+        property_id: String(row.property_id || ""),
+        renter_id: String(row.renter_id || ""),
+        lease_begin: String(row.lease_begin || ""),
+        lease_end: String(row.lease_end || ""),
+        move_in: String(row.move_in || ""),
+        move_out: String(row.move_out || ""),
+        recurring_rent: Number(row.recurring_rent || 0),
+      }))),
+    });
+  }
+
   async fileInventory({ associationType = "all", associationId = "" } = {}) {
     if (!['all', 'property', 'renter'].includes(associationType)) throw new Error("A supported Rentec file association is required.");
     if (associationType !== "all" && !/^\d+$/.test(String(associationId))) throw new Error("A valid Rentec file association ID is required.");
