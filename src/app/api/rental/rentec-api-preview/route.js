@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { createRentecApiClient } from "@/domains/rentec-rental-migration/rentec-api.client";
 import { previewRentecLegacyReconciliation } from "@/domains/rentec-rental-migration/rentec-legacy-reconciliation.preview";
+import { previewRentecOperationalMigration } from "@/domains/rentec-rental-migration/rentec-operational-migration.preview";
 
 const fingerprintPattern = /^[a-f0-9]{16}$/;
 
@@ -39,6 +40,20 @@ export async function POST(request) {
     if (body?.operation === "inventory") return NextResponse.json({ success: true, data: await client.inventory() });
     if (body?.operation === "transactions") return NextResponse.json({ success: true, data: await client.transactionPage({ propertyId: String(body.propertyId || ""), propertyName: String(body.propertyName || ""), page: Number(body.page || 1) }) });
     if (body?.operation === "files") return NextResponse.json({ success: true, data: await client.fileInventory({ associationType: String(body.associationType || "all"), associationId: String(body.associationId || "") }) });
+    if (body?.operation === "plan-operational") {
+      const [rentec, unitsResult, tenantsResult, leasesResult] = await Promise.all([
+        client.operationalEvidence(),
+        authenticated.supabaseClient.from("rental_units").select("id,property_id,label,status"),
+        authenticated.supabaseClient.from("rental_tenants").select("id,email,status"),
+        authenticated.supabaseClient.from("rental_leases").select("id,unit_id,start_date,monthly_rent_cents,status"),
+      ]);
+      const error = unitsResult.error || tenantsResult.error || leasesResult.error;
+      if (error) throw error;
+      return NextResponse.json({ success: true, data: previewRentecOperationalMigration({
+        rentecProperties: rentec.properties, rentecTenants: rentec.tenants, rentecLeases: rentec.leases,
+        forgeUnits: unitsResult.data || [], forgeTenants: tenantsResult.data || [], forgeLeases: leasesResult.data || [],
+      }) });
+    }
     if (body?.operation === "reconcile-legacy") {
       if (!validFingerprints(body.fingerprints)) return NextResponse.json({ error: "Valid private Rentec reconciliation fingerprints are required." }, { status: 400 });
       const legacyEvents = await loadLegacyRentecEvents(authenticated.supabaseClient, authenticated.user.id);
