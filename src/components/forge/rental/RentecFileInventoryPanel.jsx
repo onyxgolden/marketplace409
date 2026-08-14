@@ -68,13 +68,13 @@ export default function RentecFileInventoryPanel() {
       {message ? <p role="alert" className="mt-4 text-red-700">{message}</p> : null}
       {inventory ? <div className="mt-6 space-y-4">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {[['Unique files', inventory.files], ['Total size', formatBytes(inventory.totalBytes)], ['Queries read', inventory.queries], ['Capped queries', inventory.cappedQueries]].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-100 p-4"><p className="text-xs font-black uppercase text-slate-500">{label}</p><p className="mt-1 text-xl font-black">{value}</p></div>)}
+          {[['Distinct API file records', inventory.files], ['Discovered size', formatBytes(inventory.totalBytes)], ['Queries read', inventory.queries], ['Capped queries', inventory.cappedQueries]].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-100 p-4"><p className="text-xs font-black uppercase text-slate-500">{label}</p><p className="mt-1 text-xl font-black">{value}</p></div>)}
         </div>
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-xl border p-4"><h3 className="font-black">File types</h3>{Object.entries(inventory.extensions).sort().map(([name, count]) => <p key={name} className="mt-2 text-sm">{name}: {count}</p>)}</div>
           <div className="rounded-xl border p-4"><h3 className="font-black">Record associations</h3>{Object.entries(inventory.associations).sort().map(([name, count]) => <p key={name} className="mt-2 text-sm">{name.replaceAll('_', ' ')}: {count}</p>)}</div>
         </div>
-        {inventory.cappedQueries ? <p className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-900">At least one Rentec query reached 100 files. Those associations require a reconciliation export or a narrower API strategy before import can be complete.</p> : null}
+        {inventory.cappedQueries ? <p className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-900">This is a minimum inventory. At least one Rentec query reached its non-paginated 100-record limit, so FORGE cannot claim the file inventory is complete until it is reconciled against Rentec or an export.</p> : null}
       </div> : null}
     </div>
   </section>;
