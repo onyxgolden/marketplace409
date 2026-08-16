@@ -5,58 +5,56 @@ import {
 } from "vitest";
 
 import {
-  buildForgeApplications,
   FORGE_APPLICATIONS,
-  FORGE_PROGRAMMER_APPLICATION,
+  isPromotedSubtree,
 } from "../ForgeApplicationRail";
 
 describe(
   "FORGE programmer navigation",
   () => {
     it(
-      "hides programmer tools by default",
+      "no longer lists Rental Manager or Programmer as internal Forge sub-nav items",
       () => {
-        const applications =
-          buildForgeApplications();
-
-        expect(
-          applications,
-        ).toBe(
-          FORGE_APPLICATIONS,
+        const hrefs = FORGE_APPLICATIONS.map(
+          (application) => application.href,
         );
 
-        expect(
-          applications,
-        ).not.toContain(
-          FORGE_PROGRAMMER_APPLICATION,
-        );
+        expect(hrefs).not.toContain("/forge/rental");
+        expect(hrefs).not.toContain("/forge/developer");
       },
     );
 
     it(
-      "adds programmer tools only after authorization",
+      "treats /forge/developer as a promoted subtree the rail steps aside for",
       () => {
-        const applications =
-          buildForgeApplications(
-            true,
-          );
+        expect(
+          isPromotedSubtree("/forge/developer"),
+        ).toBe(true);
 
         expect(
-          applications.at(-1),
-        ).toBe(
-          FORGE_PROGRAMMER_APPLICATION,
-        );
+          isPromotedSubtree("/forge/developer/anything"),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      "treats /forge/rental as a promoted subtree the rail steps aside for",
+      () => {
+        expect(
+          isPromotedSubtree("/forge/rental"),
+        ).toBe(true);
 
         expect(
-          applications.at(-1),
-        ).toEqual({
-          href:
-            "/forge/developer",
-          label:
-            "Programmer",
-          shortLabel:
-            "D",
-        });
+          isPromotedSubtree("/forge/rental/portal"),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      "does not treat core Forge routes as promoted",
+      () => {
+        expect(isPromotedSubtree("/forge")).toBe(false);
+        expect(isPromotedSubtree("/forge/financial")).toBe(false);
       },
     );
   },

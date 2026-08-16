@@ -1,88 +1,91 @@
-import Header from "@/components/Header";
-import HomeLaunchBanner from "@/components/home/HomeLaunchBanner";
-import HomeHero from "@/components/home/HomeHero";
-import HomeCategories from "@/components/home/HomeCategories";
-import HomePetOfWeek from "@/components/home/HomePetOfWeek";
-import HomeFeaturedListings from "@/components/home/HomeFeaturedListings";
-import HomeBusinessSpotlight from "@/components/home/HomeBusinessSpotlight";
-import HomeCommunityHub from "@/components/home/HomeCommunityHub";
-import HomeCrossPosting from "@/components/home/HomeCrossPosting";
-import HomeMarketplaceStats from "@/components/home/HomeMarketplaceStats";
-import HomeWhyLocal from "@/components/home/HomeWhyLocal";
-import HomeFooter from "@/components/home/HomeFooter";
-import HomeMobileBottomNav from "@/components/home/HomeMobileBottomNav";
+import Link from "next/link";
+import { ArrowRight, Building2, Code2, Hammer, Store } from "lucide-react";
+
 import { supabase } from "@/lib/supabase";
+import { createClient } from "@/lib/supabase/server";
+import { WORKSPACES } from "@/lib/workspaces";
 
 export const dynamic = "force-dynamic";
-export default async function Home() {
+
+const ICONS = { Store, Building2, Hammer, Code2 };
+
+async function loadWorkspaceStats() {
+  const supabaseServer = await createClient();
+  const {
+    data: { user },
+  } = await supabaseServer.auth.getUser();
+
   const { count: listingsCount } = await supabase
     .from("listings")
     .select("*", { count: "exact", head: true });
 
-  const { count: businessesCount } = await supabase
-    .from("businesses")
-    .select("*", { count: "exact", head: true });
+  const stats = {
+    marketplace:
+      listingsCount != null
+        ? `${listingsCount.toLocaleString()} active listing${listingsCount === 1 ? "" : "s"}`
+        : "Browse local listings",
+    rentals: "Sign in to view your portfolio",
+    forge: "Sign in to view your workspace",
+    dev: "Programmer tools",
+  };
 
-  const { count: petsCount } = await supabase
-    .from("pets")
-    .select("*", { count: "exact", head: true });
+  if (!user) return stats;
 
-  const { count: jobsCount } = await supabase
-    .from("jobs")
-    .select("*", { count: "exact", head: true });
+  const [{ count: leaseCount }, { count: accountCount }] = await Promise.all([
+    supabaseServer
+      .from("rental_leases")
+      .select("*", { count: "exact", head: true })
+      .eq("owner_id", user.id),
+    supabaseServer
+      .from("financial_accounts")
+      .select("*", { count: "exact", head: true })
+      .eq("owner_id", user.id),
+  ]);
 
-  const { data: featuredListings } = await supabase
-    .from("listings")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(3);
+  stats.rentals = `${leaseCount ?? 0} lease${leaseCount === 1 ? "" : "s"}`;
+  stats.forge = `${accountCount ?? 0} linked account${accountCount === 1 ? "" : "s"}`;
 
-  const { data: featuredBusinesses } = await supabase
-    .from("businesses")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(3);
+  return stats;
+}
 
-  const { data: petOfTheWeek } = await supabase
-    .from("pets")
-    .select("*")
-    .eq("pet_of_week_eligible", true)
-    .order("votes", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+export default async function HubPage() {
+  const stats = await loadWorkspaceStats();
+
   return (
-    <main className="min-h-screen bg-gray-100 text-gray-900">
-      <HomeLaunchBanner />
+    <main className="flex min-h-screen flex-col items-center justify-center bg-slate-100 px-6 py-16 text-slate-950">
+      <div className="mb-12 text-center">
+        <div className="text-sm font-black uppercase tracking-[0.3em] text-amber-500">
+          409 Marketplace
+        </div>
+        <h1 className="mt-2 text-4xl font-black tracking-tight">Choose a workspace</h1>
+        <p className="mt-3 text-slate-600">Pick where you want to work.</p>
+      </div>
 
-      <Header />
-
-      <HomeHero />
-
-          <HomeCategories />
-
-      <HomePetOfWeek petOfTheWeek={petOfTheWeek} />
-
-      <HomeFeaturedListings featuredListings={featuredListings} />
-
-      <HomeBusinessSpotlight featuredBusinesses={featuredBusinesses} />
-
-      <HomeCommunityHub />
-
-      <HomeCrossPosting />
-
-      <HomeMarketplaceStats
-        listingsCount={listingsCount}
-        businessesCount={businessesCount}
-        petsCount={petsCount}
-        jobsCount={jobsCount}
-      />
-
-      <HomeWhyLocal />
-
-      <HomeFooter />
-
-      <HomeMobileBottomNav />
-
+      <div className="grid w-full max-w-4xl gap-5 sm:grid-cols-2">
+        {WORKSPACES.map((workspace) => {
+          const Icon = ICONS[workspace.iconName];
+          return (
+            <Link
+              key={workspace.id}
+              href={workspace.href}
+              className="group flex flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-amber-400 hover:shadow-lg"
+            >
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-950 text-white">
+                <Icon aria-hidden="true" className="h-6 w-6" />
+              </div>
+              <div className="text-xl font-black">{workspace.name}</div>
+              <p className="mt-1 text-sm text-slate-600">{workspace.description}</p>
+              <div className="mt-4 flex items-center justify-between text-sm font-bold text-slate-500">
+                <span>{stats[workspace.id]}</span>
+                <ArrowRight
+                  aria-hidden="true"
+                  className="h-4 w-4 text-slate-400 transition group-hover:translate-x-1 group-hover:text-amber-500"
+                />
+              </div>
+            </Link>
+          );
+        })}
+      </div>
     </main>
   );
 }

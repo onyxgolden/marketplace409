@@ -8,6 +8,17 @@ import {
   useState,
 } from "react";
 
+import {
+  WorkspaceLinks,
+  WorkspaceRightRail,
+} from "@/components/workspace-shell";
+
+// Rental Manager and Programmer were promoted to their own sibling
+// workspaces (see src/lib/workspaces.js) — this list is now Forge's
+// *internal* sub-navigation only. Their own nested layouts
+// (forge/rental/layout.js, forge/developer/layout.js) supply the outer
+// workspace shell instead, and this rail steps aside for those subtrees
+// below (see PROMOTED_PREFIXES).
 export const FORGE_APPLICATIONS =
   Object.freeze([
     Object.freeze({
@@ -27,11 +38,6 @@ export const FORGE_APPLICATIONS =
       shortLabel: "P",
     }),
     Object.freeze({
-      href: "/forge/rental",
-      label: "Rental Manager",
-      shortLabel: "R",
-    }),
-    Object.freeze({
       href: "/forge/connections",
       label: "Connections",
       shortLabel: "C",
@@ -48,24 +54,12 @@ export const FORGE_APPLICATIONS =
     }),
   ]);
 
-export const FORGE_PROGRAMMER_APPLICATION =
-  Object.freeze({
-    href: "/forge/developer",
-    label: "Programmer",
-    shortLabel: "D",
-  });
+export const PROMOTED_PREFIXES = ["/forge/rental", "/forge/developer"];
 
-export function buildForgeApplications(
-  showDeveloperTools = false,
-) {
-  if (!showDeveloperTools) {
-    return FORGE_APPLICATIONS;
-  }
-
-  return Object.freeze([
-    ...FORGE_APPLICATIONS,
-    FORGE_PROGRAMMER_APPLICATION,
-  ]);
+export function isPromotedSubtree(pathname) {
+  return PROMOTED_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
 }
 
 export function isForgeApplicationActive(
@@ -155,8 +149,6 @@ function ForgeApplicationLinks({
 
 export default function ForgeApplicationRail({
   children,
-  showDeveloperTools =
-    false,
 }) {
   const pathname =
     usePathname();
@@ -169,10 +161,12 @@ export default function ForgeApplicationRail({
     setMobileOpen,
   ] = useState(false);
 
-  const applications =
-    buildForgeApplications(
-      showDeveloperTools,
-    );
+  // /forge/rental and /forge/developer are their own promoted workspaces
+  // now — their nested layouts already supply WorkspaceShell, so this
+  // rail must not wrap them in Forge's own chrome as well.
+  if (isPromotedSubtree(pathname)) {
+    return <>{children}</>;
+  }
 
   return (
     <div
@@ -239,41 +233,26 @@ export default function ForgeApplicationRail({
           </button>
         </div>
 
-        <ForgeApplicationLinks
-          pathname={pathname}
-          expanded={expanded}
-          applications={
-            applications
-          }
-        />
+        {/* Outer cross-workspace switcher — identical to WorkspaceShell's,
+           so switching to Rentals/Marketplace/Dev from inside Forge looks
+           and behaves the same as it does everywhere else. */}
+        <div className="mb-5">
+          <WorkspaceLinks pathname={pathname} expanded={expanded} />
+        </div>
 
-        <div className="mt-auto border-t border-white/10 pt-3">
-          <Link
-            href="/"
-            title={
-              expanded
-                ? undefined
-                : "409 Marketplace"
-            }
-            className={[
-              "flex min-h-12 items-center rounded-xl border border-white/10 bg-white/5 text-sm font-black text-slate-300 transition hover:bg-white/10 hover:text-white",
-              expanded
-                ? "gap-3 px-3"
-                : "justify-center px-2",
-            ].join(" ")}
-          >
-            <span
-              aria-hidden="true"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-black/20"
-            >
-              409
-            </span>
-            {expanded && (
-              <span>
-                409 Marketplace
-              </span>
-            )}
-          </Link>
+        <div
+          className="mb-3 border-t border-white/10 pt-3"
+          aria-hidden={!expanded}
+        >
+          {expanded && (
+            <div className="px-1 pb-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+              Forge
+            </div>
+          )}
+          <ForgeApplicationLinks
+            pathname={pathname}
+            expanded={expanded}
+          />
         </div>
       </aside>
 
@@ -331,25 +310,28 @@ export default function ForgeApplicationRail({
                 </button>
               </div>
 
-              <ForgeApplicationLinks
-                pathname={pathname}
-                expanded
-                applications={
-                  applications
-                }
-                onNavigate={() =>
-                  setMobileOpen(
-                    false,
-                  )
-                }
-              />
+              <div className="mb-5">
+                <WorkspaceLinks
+                  pathname={pathname}
+                  expanded
+                  onNavigate={() => setMobileOpen(false)}
+                />
+              </div>
 
-              <Link
-                href="/"
-                className="mt-auto rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white"
-              >
-                ← Return to 409 Marketplace
-              </Link>
+              <div className="border-t border-white/10 pt-3">
+                <div className="px-1 pb-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                  Forge
+                </div>
+                <ForgeApplicationLinks
+                  pathname={pathname}
+                  expanded
+                  onNavigate={() =>
+                    setMobileOpen(
+                      false,
+                    )
+                  }
+                />
+              </div>
             </aside>
           </div>
         )}
@@ -361,6 +343,8 @@ export default function ForgeApplicationRail({
           {children}
         </div>
       </div>
+
+      <WorkspaceRightRail />
     </div>
   );
 }

@@ -78,16 +78,27 @@ describe(
             "../ForgeNavigationBar.js",
           );
 
+        // ForgeApplicationRail no longer names its own return link — it
+        // renders the shared cross-workspace switcher (WorkspaceLinks),
+        // which includes a "Marketplace" destination pointing at /market,
+        // plus an explicit "All apps" link back to the hub. Assert the
+        // rail wires in that shared switcher rather than duplicating its
+        // own copy of the marketplace link.
         expect(
           rail,
         ).toContain(
-          "409 Marketplace",
+          "WorkspaceLinks",
         );
 
+        const shell =
+          source(
+            "../../workspace-shell.jsx",
+          );
+
         expect(
-          rail,
+          shell,
         ).toContain(
-          "Return to 409 Marketplace",
+          "All apps",
         );
 
         expect(
