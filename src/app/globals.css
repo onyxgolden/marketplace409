@@ -1,8 +1,20 @@
 @import "tailwindcss";
 
+/* Class-based dark mode: driven by the `dark` class on <html>, set by the
+   no-FOUC script in the root layout (localStorage, falling back to the
+   OS preference) rather than by prefers-color-scheme alone — that's what
+   makes it an actual user-toggleable mode instead of just following the
+   system setting. See src/contexts/ThemeContext.jsx. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #ffffff;
+  --background: #f3f4f6;
   --foreground: #171717;
+}
+
+:root.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 @theme inline {
@@ -12,20 +24,10 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
-}
-body {
-  background-color: #f3f4f6;
 }
 
 section {

@@ -10,13 +10,16 @@ import {
   Hammer,
   LayoutGrid,
   Menu,
+  Moon,
   Settings,
   Store,
+  Sun,
   UserRound,
   X,
 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
+import { useTheme } from "@/contexts/ThemeContext";
 import { WORKSPACES, isWorkspaceActive } from "@/lib/workspaces";
 
 const WORKSPACE_ICONS = { Store, Building2, Hammer, Code2 };
@@ -60,6 +63,7 @@ export function WorkspaceLinks({ pathname, expanded, onNavigate }) {
 // its existing sidebar instead of duplicating this markup.
 export function WorkspaceRightRail() {
   const [user, setUser] = useState(null);
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     let active = true;
@@ -122,6 +126,19 @@ export function WorkspaceRightRail() {
         className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/5 bg-white/5 text-slate-500"
       >
         <Settings aria-hidden="true" className="h-5 w-5" />
+      </button>
+
+      <button
+        type="button"
+        aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        onClick={toggleTheme}
+        className="mt-auto flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/5 hover:border-white/25 hover:bg-white/10"
+      >
+        {theme === "dark" ? (
+          <Sun aria-hidden="true" className="h-5 w-5" />
+        ) : (
+          <Moon aria-hidden="true" className="h-5 w-5" />
+        )}
       </button>
     </aside>
   );

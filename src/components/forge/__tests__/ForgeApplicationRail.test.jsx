@@ -22,6 +22,8 @@ import ForgeApplicationRail, {
   isForgeApplicationActive,
 } from "../ForgeApplicationRail.jsx";
 
+import { ThemeProvider } from "@/contexts/ThemeContext";
+
 describe(
   "ForgeApplicationRail",
   () => {
@@ -94,11 +96,13 @@ describe(
       () => {
         const markup =
           renderToStaticMarkup(
-            <ForgeApplicationRail>
-              <main>
-                Property workspace
-              </main>
-            </ForgeApplicationRail>,
+            <ThemeProvider>
+              <ForgeApplicationRail>
+                <main>
+                  Property workspace
+                </main>
+              </ForgeApplicationRail>
+            </ThemeProvider>,
           );
 
         expect(markup).toContain(
