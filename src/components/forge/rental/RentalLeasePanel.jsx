@@ -4,19 +4,34 @@ import RentalRecordBrowser from "./RentalRecordBrowser";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
-export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [] }, loadOnMount = true, initialShowCreate = null }) {
+export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [], schedules: [] }, loadOnMount = true, initialShowCreate = null }) {
   const [message, setMessage] = useState("");
   const [setup, setSetup] = useState(initialSetup);
   const [showCreate, setShowCreate] = useState(initialShowCreate ?? (initialSetup.leases || []).length === 0);
   const [selectedId, setSelectedId] = useState(initialSetup.leases?.[0]?.id || null);
   const [working, setWorking] = useState(false);
   const contextualPropertyId = setup.leases?.[0]?.property_id || setup.units?.[0]?.property_id || "4800-kent-ave";
-  useEffect(() => { if (!loadOnMount) return; (async () => {
+  async function reload() {
     const response = await fetch("/api/rental"); const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load lease setup records.");
-    const loaded = { units: result.units || [], tenants: result.tenants || [], leases: result.leases || [] };
-    setSetup(loaded); setSelectedId(loaded.leases[0]?.id || null); setShowCreate(loaded.leases.length === 0);
-  })().catch((error) => setMessage(error.message)); }, [loadOnMount]);
+    const loaded = { units: result.units || [], tenants: result.tenants || [], leases: result.leases || [], schedules: result.schedules || [] };
+    setSetup(loaded); setSelectedId((current) => loaded.leases.some((item) => item.id === current) ? current : loaded.leases[0]?.id || null); setShowCreate(loaded.leases.length === 0);
+    return loaded;
+  }
+  useEffect(() => { if (!loadOnMount) return; reload().catch((error) => setMessage(error.message)); }, [loadOnMount]);
+  async function activateLease(lease) {
+    const schedule = (setup.schedules || []).find((item) => item.lease_id === lease.id);
+    if (!schedule) { setMessage("No rent schedule found for this lease — save one before activating."); return; }
+    setWorking(true); setMessage("");
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "activate-lease-schedule", scheduleId: schedule.id }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to activate the lease.");
+      setMessage(`Lease activated: ${result.activation.leaseId}`);
+      await reload();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
   async function save(event) {
     event.preventDefault(); setWorking(true); setMessage("");
     const form = new FormData(event.currentTarget);
@@ -44,7 +59,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     {(setup.leases || []).length > 0 && <RentalRecordBrowser title="Leases" records={setup.leases} selectedId={selectedId} onSelect={setSelectedId}
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
       getSubtitle={(lease) => `${lease.status} · ${money.format(Number(lease.monthly_rent_cents) / 100)} monthly`}>
-      {(() => { const lease = setup.leases.find((item) => item.id === selectedId) || setup.leases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id); return lease && <div data-rental-lease-detail><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700">Selected lease</p><h3 className="mt-2 text-2xl font-black">{unit?.label || lease.unit_id}</h3></div><span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black capitalize text-emerald-800">{lease.status}</span></div><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Detail label="Monthly rent" value={money.format(Number(lease.monthly_rent_cents) / 100)} /><Detail label="Due day" value={lease.rent_due_day || "Not recorded"} /><Detail label="Starts" value={lease.start_date} /><Detail label="Ends" value={lease.end_date || "Current"} /><Detail label="Property" value={lease.property_id} /><Detail label="Lease ID" value={lease.id} /></dl></div>; })()}
+      {(() => { const lease = setup.leases.find((item) => item.id === selectedId) || setup.leases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id); return lease && <div data-rental-lease-detail><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700">Selected lease</p><h3 className="mt-2 text-2xl font-black">{unit?.label || lease.unit_id}</h3></div><span className={`rounded-full px-3 py-1 text-xs font-black capitalize ${lease.status === "active" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{lease.status}</span></div><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Detail label="Monthly rent" value={money.format(Number(lease.monthly_rent_cents) / 100)} /><Detail label="Due day" value={lease.rent_due_day || "Not recorded"} /><Detail label="Starts" value={lease.start_date} /><Detail label="Ends" value={lease.end_date || "Current"} /><Detail label="Property" value={lease.property_id} /><Detail label="Lease ID" value={lease.id} /></dl>{lease.status === "draft" && <div className="mt-5 flex items-center gap-4"><button type="button" disabled={working} onClick={() => activateLease(lease)} className="rounded-xl bg-emerald-700 px-5 py-2.5 font-black text-white disabled:opacity-50">{working ? "Activating…" : "Activate lease"}</button><p className="text-xs text-slate-500">Only activate once the lease is actually signed and in effect.</p></div>}</div>; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950">
       Save at least one rental unit and tenant before creating a lease.</p>}
