@@ -1,1 +1,24 @@
-import{describe,expect,it}from"vitest";import{renderToStaticMarkup}from"react-dom/server";import RentecMigrationPanel from"./RentecMigrationPanel.jsx";describe("RentecMigrationPanel",()=>{it("makes API reconciliation primary and CSV secondary",()=>{const html=renderToStaticMarkup(<RentecMigrationPanel/>);expect(html).toContain("Inspect Rentec account");expect(html).toContain("compare transaction fingerprints with the legacy Rentec financial export");expect(html).toContain("cannot write Rentec or FORGE records");expect(html).toContain("read-only operational migration plan");expect(html).toContain("controlled import manifest");expect(html).toContain("CSV backup and reconciliation");expect(html).not.toContain("Commit import");});});
+import { describe, expect, it } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import RentecMigrationPanel from "./RentecMigrationPanel.jsx";
+
+describe("RentecMigrationPanel", () => {
+  it("makes API reconciliation primary and CSV secondary", () => {
+    const html = renderToStaticMarkup(<RentecMigrationPanel />);
+    expect(html).toContain("Inspect Rentec account");
+    expect(html).toContain("compare transaction fingerprints with the legacy Rentec financial export");
+    expect(html).toContain("cannot write Rentec or FORGE records");
+    expect(html).toContain("read-only operational migration plan");
+    expect(html).toContain("controlled import manifest");
+    expect(html).toContain("CSV backup and reconciliation");
+    expect(html).not.toContain("Commit import");
+  });
+
+  it("does not show the single-property import/commit section before an account has been inspected", () => {
+    const html = renderToStaticMarkup(<RentecMigrationPanel />);
+    expect(html).not.toContain("Import one property");
+    expect(html).not.toContain("Approve and import");
+    expect(html).not.toContain("Confirm import");
+    expect(html).not.toContain("Choose a property");
+  });
+});

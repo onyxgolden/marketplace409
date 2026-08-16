@@ -14,6 +14,12 @@ export default function RentecMigrationPanel() {
   const [message, setMessage] = useState("");
   const [ownerInputs, setOwnerInputs] = useState({ tenantEmails: {}, tenantExclusions: {}, tenantClassifications: {}, leaseRentDueDays: {} });
   const [busy, setBusy] = useState(false);
+  const [selectedPropertyId, setSelectedPropertyId] = useState("");
+  const [propertyManifest, setPropertyManifest] = useState(null);
+  const [confirmingImport, setConfirmingImport] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [commitResult, setCommitResult] = useState(null);
+  const [commitError, setCommitError] = useState("");
 
   async function apiRequest(body) {
     const response = await fetch("/api/rental/rentec-api-preview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -24,6 +30,7 @@ export default function RentecMigrationPanel() {
 
   async function inspectApi() {
     setBusy(true); setMessage(""); setApiPreview(null); setOwnerInputs({ tenantEmails: {}, tenantExclusions: {}, tenantClassifications: {}, leaseRentDueDays: {} });
+    setSelectedPropertyId(""); setPropertyManifest(null); setCommitResult(null); setCommitError(""); setConfirmingImport(false);
     try {
       const inventory = await apiRequest({ operation: "inventory" });
       const totals = { transactionRecords: 0, netTransactionCents: 0, unassignedTransactions: 0, transactionPages: 0, matchedTenantIds: new Set(), reconciliationFingerprints: [] };
@@ -74,6 +81,52 @@ export default function RentecMigrationPanel() {
     finally { setBusy(false); }
   }
 
+  async function previewProperty(propertyId) {
+    setSelectedPropertyId(propertyId);
+    setPropertyManifest(null); setCommitResult(null); setCommitError(""); setConfirmingImport(false);
+    if (!propertyId) return;
+    setBusy(true); setMessage("");
+    try {
+      const manifest = await apiRequest({ operation: "resolve-manifest-preview", propertyId, ownerInputs });
+      setPropertyManifest(manifest);
+    } catch (error) { setMessage(error.message); }
+    finally { setBusy(false); }
+  }
+
+  async function resolvePropertyManifest(nextInputs) {
+    const mergedInputs = {
+      tenantEmails: { ...ownerInputs.tenantEmails, ...nextInputs.tenantEmails },
+      tenantExclusions: { ...ownerInputs.tenantExclusions, ...nextInputs.tenantExclusions },
+      tenantClassifications: { ...ownerInputs.tenantClassifications, ...nextInputs.tenantClassifications },
+      leaseRentDueDays: { ...ownerInputs.leaseRentDueDays, ...nextInputs.leaseRentDueDays },
+    };
+    setBusy(true); setMessage("");
+    try {
+      const manifest = await apiRequest({ operation: "resolve-manifest-preview", propertyId: selectedPropertyId, ownerInputs: mergedInputs });
+      setOwnerInputs(mergedInputs);
+      setPropertyManifest(manifest);
+    } catch (error) { setMessage(error.message); }
+    finally { setBusy(false); }
+  }
+
+  async function approveImport() {
+    if (!propertyManifest || !selectedPropertyId) return;
+    setCommitting(true); setCommitError(""); setCommitResult(null);
+    try {
+      const response = await fetch("/api/rental/rentec-commit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ propertyId: selectedPropertyId, expectedChecksum: propertyManifest.checksum, ownerInputs }),
+      });
+      const body = await response.json();
+      if (!response.ok) { setCommitError(body.error || "Unable to commit this import."); return; }
+      setCommitResult(body.result);
+      setPropertyManifest(null);
+      setConfirmingImport(false);
+    } catch (error) { setCommitError(error.message); }
+    finally { setCommitting(false); }
+  }
+
   async function inspectCsv(event) {
     const selected = [...(event.target.files || [])];
     setPreview(null); setMessage("");
@@ -90,6 +143,10 @@ export default function RentecMigrationPanel() {
   }
 
   const reconciliation = apiPreview?.legacyReconciliation;
+  const selectedPropertyLabel = apiPreview?.propertyReferences?.find((row) => row.id === selectedPropertyId)?.label || selectedPropertyId;
+  const propertyReadyToImport = propertyManifest && !propertyManifest.blockers?.length
+    && (propertyManifest.privateRecordCounts.units + propertyManifest.privateRecordCounts.tenants + propertyManifest.privateRecordCounts.leases > 0);
+
   return <section className="space-y-5">
     <div className="rounded-2xl border bg-white p-6">
       <p className="text-sm font-bold uppercase tracking-widest text-sky-700">Migration</p>
@@ -106,6 +163,51 @@ export default function RentecMigrationPanel() {
         <RentecOperationalMigrationPlan plan={apiPreview.operationalPlan}/>
         <RentecImportManifestPreview manifest={apiPreview.importManifest} busy={busy} onResolve={resolveManifest}/>
         <RentecExceptionReview review={reconciliation?.exceptionReview}/>
+
+        <div className="rounded-xl border-2 border-slate-950 p-4">
+          <h3 className="font-black">Import one property</h3>
+          <p className="mt-2 text-sm text-slate-600">Choose a single property to review and, if you approve it, actually create its records in Rental Manager. This is the only action on this page that writes anything — everything else above remains preview only.</p>
+          <label className="mt-4 block text-sm font-bold">
+            Property
+            <select
+              className="mt-1 block w-full max-w-md rounded-xl border border-slate-300 p-3 font-bold"
+              value={selectedPropertyId}
+              disabled={busy || committing}
+              onChange={(event) => previewProperty(event.target.value)}
+            >
+              <option value="">Choose a property…</option>
+              {(apiPreview.propertyReferences || []).map((property) => (
+                <option key={property.id} value={property.id}>{property.label}</option>
+              ))}
+            </select>
+          </label>
+
+          {propertyManifest ? <div className="mt-4 space-y-4">
+            <RentecImportManifestPreview manifest={propertyManifest} busy={busy} onResolve={resolvePropertyManifest}/>
+
+            {propertyManifest.blockers?.length ? (
+              <p className="rounded-xl bg-amber-50 p-4 text-sm font-bold text-amber-900">Resolve the blocking owner inputs above before this property can be imported.</p>
+            ) : !propertyReadyToImport ? (
+              <p className="rounded-xl bg-slate-100 p-4 text-sm font-bold text-slate-700">Every record for {selectedPropertyLabel} already exists in Rental Manager — there is nothing new to import.</p>
+            ) : !confirmingImport ? (
+              <button type="button" disabled={committing} onClick={() => setConfirmingImport(true)} className="rounded-xl bg-amber-500 px-5 py-3 font-black text-slate-950 disabled:opacity-50">
+                Approve and import {selectedPropertyLabel}
+              </button>
+            ) : (
+              <div className="rounded-xl border-2 border-red-700 bg-red-50 p-4">
+                <p className="font-black text-red-900">Confirm: create real Rental Manager records for {selectedPropertyLabel}?</p>
+                <p className="mt-2 text-sm text-red-800">This creates {propertyManifest.privateRecordCounts.units} unit(s), {propertyManifest.privateRecordCounts.tenants} tenant(s), and {propertyManifest.privateRecordCounts.leases} lease(s) as draft — leases stay draft and cannot activate billing, portals, or autopay. This cannot be undone from this screen.</p>
+                <div className="mt-3 flex gap-3">
+                  <button type="button" disabled={committing} onClick={approveImport} className="rounded-xl bg-red-700 px-5 py-3 font-black text-white disabled:opacity-50">{committing ? "Importing…" : "Confirm import"}</button>
+                  <button type="button" disabled={committing} onClick={() => setConfirmingImport(false)} className="rounded-xl border border-slate-300 px-5 py-3 font-black">Cancel</button>
+                </div>
+              </div>
+            )}
+          </div> : null}
+
+          {commitError ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-800">{commitError}</p> : null}
+          {commitResult ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-4 text-sm font-bold text-emerald-900">Imported {selectedPropertyLabel}: {commitResult.unitsCreated} unit(s), {commitResult.tenantsCreated} tenant(s), {commitResult.leasesCreated} lease(s) created.</p> : null}
+        </div>
       </div> : null}
     </div>
     <details className="rounded-2xl border bg-white p-6"><summary className="cursor-pointer font-black">CSV backup and reconciliation</summary><p className="mt-3 text-sm text-slate-600">Use exported tenant-list and tenant-ledger CSV files only when API records require secondary evidence.</p><input className="mt-3 block w-full" type="file" accept=".csv,text/csv" multiple onChange={inspectCsv}/>{preview ? <p className="mt-3 text-sm font-bold">Recognized {preview.inventory.tenantRows} renter rows and {preview.inventory.ledgerRows} ledger rows.</p> : null}</details>
