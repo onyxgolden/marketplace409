@@ -17,7 +17,7 @@ export default async function ForgeImportPage() {
   return (
     <main
       data-forge-import-page
-      className="min-h-screen bg-slate-100 text-slate-950"
+      className="min-h-screen bg-slate-950 text-slate-950"
     >
       <FinancialImportTool />
     </main>

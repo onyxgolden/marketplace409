@@ -1,10 +1,12 @@
+import { Store } from "lucide-react";
+
 export default function HomeBusinessSpotlight({ featuredBusinesses }) {
   return (
     <section className="max-w-6xl mx-auto py-12 px-6">
       <div className="bg-white rounded-3xl shadow-md p-8">
         <div className="flex flex-col md:flex-row justify-between gap-6 items-center">
           <div>
-            <p className="text-sm uppercase tracking-wide text-gray-500 mb-2">
+            <p className="text-sm uppercase tracking-wide text-slate-500 mb-2">
               Support Local Business
             </p>
 
@@ -12,7 +14,7 @@ export default function HomeBusinessSpotlight({ featuredBusinesses }) {
               Local Business Spotlight
             </h3>
 
-            <p className="text-gray-600 text-lg">
+            <p className="text-slate-600 text-lg">
               Featuring real Southeast Texas businesses, contractors, makers,
               farms, shelters, and service providers.
             </p>
@@ -20,16 +22,16 @@ export default function HomeBusinessSpotlight({ featuredBusinesses }) {
 
           <a
             href="/businesses"
-            className="bg-blue-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-800"
+            className="bg-slate-950 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800"
           >
             View Businesses
           </a>
         </div>
 
         {!featuredBusinesses || featuredBusinesses.length === 0 ? (
-          <div className="mt-8 bg-gray-100 rounded-2xl p-6 text-center">
+          <div className="mt-8 bg-slate-50 rounded-2xl p-6 text-center">
             <h4 className="text-2xl font-bold mb-2">No businesses yet</h4>
-            <p className="text-gray-600">
+            <p className="text-slate-600">
               Add a local business to appear in the spotlight.
             </p>
           </div>
@@ -48,18 +50,20 @@ export default function HomeBusinessSpotlight({ featuredBusinesses }) {
                     className="h-36 w-full object-cover rounded-xl mb-4"
                   />
                 ) : (
-                  <div className="text-4xl mb-3">🏪</div>
+                  <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-slate-950 text-white">
+                    <Store aria-hidden="true" className="h-5 w-5" />
+                  </div>
                 )}
 
                 <h4 className="text-xl font-bold">{business.name}</h4>
 
-                <p className="text-sm text-gray-500 mt-1">{business.city}</p>
+                <p className="text-sm text-slate-500 mt-1">{business.city}</p>
 
-                <p className="text-gray-600 mt-2 line-clamp-3">
+                <p className="text-slate-600 mt-2 line-clamp-3">
                   {business.description}
                 </p>
 
-                <p className="mt-3 text-sm font-bold text-blue-900">
+                <p className="mt-3 text-sm font-bold text-amber-600">
                   {business.category}
                 </p>
               </a>

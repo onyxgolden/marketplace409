@@ -80,9 +80,9 @@ export default function ApplicationShell({
         resolvedActiveFunctionId ||
         ""
       }
-      className="min-h-screen bg-slate-100 text-slate-950"
+      className="min-h-screen bg-slate-950 text-slate-950"
     >
-      <header className="border-b border-slate-200 bg-white">
+      <header className="border-b border-slate-200 bg-white text-slate-950">
         <div className="mx-auto max-w-[1800px] px-4 py-4 lg:px-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-4">

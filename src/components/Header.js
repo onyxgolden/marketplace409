@@ -1,6 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  Handshake,
+  HardHat,
+  Home,
+  Menu,
+  Plus,
+  ShoppingCart,
+  Store,
+  ClipboardList,
+  Hammer,
+  Building2,
+} from "lucide-react";
+
 import { supabase } from "@/lib/supabase";
 
 export default function Header() {
@@ -25,7 +38,7 @@ export default function Header() {
   }
 
   return (
-    <header className="bg-blue-900 text-white p-4 shadow-lg">
+    <header className="bg-slate-950 text-white p-4 shadow-lg">
       <div className="max-w-7xl mx-auto flex justify-between items-center">
         <a href="/" className="text-3xl font-bold">
           409Marketplace
@@ -33,61 +46,74 @@ export default function Header() {
 
         <button
           onClick={() => setMenuOpen(!menuOpen)}
-          className="md:hidden bg-white text-blue-900 px-4 py-2 rounded-xl font-bold"
+          className="md:hidden flex items-center gap-2 bg-white text-slate-950 px-4 py-2 rounded-xl font-bold"
         >
+          <Menu aria-hidden="true" className="h-4 w-4" />
           Menu
         </button>
 
         <nav className="hidden md:flex gap-6 text-lg items-center ml-12">
-          <a href="/" className="hover:text-blue-200">
-            🏠 Home
+          <a href="/" className="flex items-center gap-1.5 hover:text-amber-400">
+            <Home aria-hidden="true" className="h-4 w-4" />
+            Home
           </a>
-          <a href="/browse" className="hover:text-blue-200">
-            🛒 Buy/Sell
+          <a href="/browse" className="flex items-center gap-1.5 hover:text-amber-400">
+            <ShoppingCart aria-hidden="true" className="h-4 w-4" />
+            Buy/Sell
           </a>
-          <a href="/browse?category=Rentals" className="hover:text-blue-200">
-            🏘️ Rentals
+          <a
+            href="/browse?category=Rentals"
+            className="flex items-center gap-1.5 hover:text-amber-400"
+          >
+            <Building2 aria-hidden="true" className="h-4 w-4" />
+            Rentals
           </a>
-          <a href="/investors" className="hover:text-blue-200">
-            🏗️ Investors
+          <a href="/investors" className="flex items-center gap-1.5 hover:text-amber-400">
+            <HardHat aria-hidden="true" className="h-4 w-4" />
+            Investors
           </a>
-          <a href="/community" className="hover:text-blue-200">
-            🤝 Community
+          <a href="/community" className="flex items-center gap-1.5 hover:text-amber-400">
+            <Handshake aria-hidden="true" className="h-4 w-4" />
+            Community
           </a>
-          <a href="/businesses" className="hover:text-blue-200">
-            🏪 Businesses
+          <a href="/businesses" className="flex items-center gap-1.5 hover:text-amber-400">
+            <Store aria-hidden="true" className="h-4 w-4" />
+            Businesses
           </a>
-          <a href="/my-listings" className="hover:text-blue-200">
-            👷 My Listings
+          <a href="/my-listings" className="flex items-center gap-1.5 hover:text-amber-400">
+            <ClipboardList aria-hidden="true" className="h-4 w-4" />
+            My Listings
           </a>
 
           <a
             href="/forge"
-            className="bg-amber-400 text-slate-950 px-4 py-2 rounded-xl font-black hover:bg-amber-300"
+            className="flex items-center gap-1.5 bg-amber-400 text-slate-950 px-4 py-2 rounded-xl font-black hover:bg-amber-300"
           >
-            ⚒ Launch FORGE
+            <Hammer aria-hidden="true" className="h-4 w-4" />
+            Launch FORGE
           </a>
 
           <a
             href="/post"
-            className="bg-red-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-red-500"
+            className="flex items-center gap-1.5 bg-amber-500 text-slate-950 px-4 py-2 rounded-xl font-bold hover:bg-amber-400"
           >
-            ➕ Post Free
+            <Plus aria-hidden="true" className="h-4 w-4" />
+            Post Free
           </a>
 
           {user ? (
             <>
-              <span className="text-sm text-blue-200">{user.email}</span>
+              <span className="text-sm text-slate-300">{user.email}</span>
 
               <button
                 onClick={handleSignOut}
-                className="bg-gray-800 px-4 py-2 rounded-xl font-bold hover:bg-gray-700"
+                className="bg-slate-800 px-4 py-2 rounded-xl font-bold hover:bg-slate-700"
               >
                 Sign Out
               </button>
             </>
           ) : (
-            <a href="/auth" className="hover:text-blue-200">
+            <a href="/auth" className="hover:text-amber-400">
               Sign In
             </a>
           )}
@@ -95,58 +121,67 @@ export default function Header() {
       </div>
 
       {menuOpen && (
-        <nav className="md:hidden mt-4 bg-blue-950 rounded-2xl p-4 space-y-3">
-          <a href="/" className="block hover:text-blue-200">
+        <nav className="md:hidden mt-4 bg-slate-900 rounded-2xl p-4 space-y-3">
+          <a href="/" className="flex items-center gap-2 hover:text-amber-400">
+            <Home aria-hidden="true" className="h-4 w-4" />
             Home
           </a>
-          <a href="/browse" className="block hover:text-blue-200">
+          <a href="/browse" className="flex items-center gap-2 hover:text-amber-400">
+            <ShoppingCart aria-hidden="true" className="h-4 w-4" />
             Buy/Sell
           </a>
           <a
             href="/browse?category=Rentals"
-            className="block hover:text-blue-200"
+            className="flex items-center gap-2 hover:text-amber-400"
           >
+            <Building2 aria-hidden="true" className="h-4 w-4" />
             Rentals
           </a>
 
-          <a href="/investors" className="block hover:text-blue-200">
+          <a href="/investors" className="flex items-center gap-2 hover:text-amber-400">
+            <HardHat aria-hidden="true" className="h-4 w-4" />
             Investors
           </a>
-          <a href="/community" className="block hover:text-blue-200">
+          <a href="/community" className="flex items-center gap-2 hover:text-amber-400">
+            <Handshake aria-hidden="true" className="h-4 w-4" />
             Community
           </a>
-          <a href="/businesses" className="block hover:text-blue-200">
+          <a href="/businesses" className="flex items-center gap-2 hover:text-amber-400">
+            <Store aria-hidden="true" className="h-4 w-4" />
             Businesses
           </a>
-          <a href="/my-listings" className="block hover:text-blue-200">
+          <a href="/my-listings" className="flex items-center gap-2 hover:text-amber-400">
+            <ClipboardList aria-hidden="true" className="h-4 w-4" />
             My Listings
           </a>
           <a
             href="/forge"
-            className="block bg-amber-400 text-slate-950 px-4 py-3 rounded-xl font-black"
+            className="flex items-center gap-2 bg-amber-400 text-slate-950 px-4 py-3 rounded-xl font-black"
           >
-            ⚒ Launch FORGE
+            <Hammer aria-hidden="true" className="h-4 w-4" />
+            Launch FORGE
           </a>
           <a
             href="/post"
-            className="block bg-red-600 text-white px-4 py-3 rounded-xl font-bold"
+            className="flex items-center gap-2 bg-amber-500 text-slate-950 px-4 py-3 rounded-xl font-bold"
           >
+            <Plus aria-hidden="true" className="h-4 w-4" />
             Post Free
           </a>
 
           {user ? (
             <>
-              <p className="text-sm text-blue-200">{user.email}</p>
+              <p className="text-sm text-slate-300">{user.email}</p>
 
               <button
                 onClick={handleSignOut}
-                className="w-full text-left bg-gray-800 px-4 py-3 rounded-xl font-bold"
+                className="w-full text-left bg-slate-800 px-4 py-3 rounded-xl font-bold"
               >
                 Sign Out
               </button>
             </>
           ) : (
-            <a href="/auth" className="block hover:text-blue-200">
+            <a href="/auth" className="block hover:text-amber-400">
               Sign In
             </a>
           )}

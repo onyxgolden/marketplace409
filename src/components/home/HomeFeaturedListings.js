@@ -1,10 +1,12 @@
+import { Package } from "lucide-react";
+
 export default function HomeFeaturedListings({ featuredListings }) {
   return (
     <section className="max-w-6xl mx-auto py-12 px-6">
       <div className="flex justify-between items-center mb-8">
         <h3 className="text-3xl font-bold">Featured Local Listings</h3>
 
-        <a href="/browse" className="text-blue-900 font-bold">
+        <a href="/browse" className="text-slate-950 font-bold hover:text-amber-600">
           View All
         </a>
       </div>
@@ -12,7 +14,7 @@ export default function HomeFeaturedListings({ featuredListings }) {
       {!featuredListings || featuredListings.length === 0 ? (
         <div className="bg-white rounded-2xl shadow-md p-8 text-center">
           <h4 className="text-2xl font-bold mb-2">No listings yet</h4>
-          <p className="text-gray-600">
+          <p className="text-slate-600">
             Be the first to post something local.
           </p>
         </div>
@@ -31,13 +33,13 @@ export default function HomeFeaturedListings({ featuredListings }) {
                   className="h-44 w-full object-cover"
                 />
               ) : (
-                <div className="h-44 bg-gray-300 flex items-center justify-center text-5xl">
-                  📦
+                <div className="h-44 bg-slate-100 flex items-center justify-center">
+                  <Package aria-hidden="true" className="h-10 w-10 text-slate-400" />
                 </div>
               )}
 
               <div className="p-5">
-                <p className="text-sm text-gray-500">{listing.city}</p>
+                <p className="text-sm text-slate-500">{listing.city}</p>
 
                 <h4 className="text-xl font-bold">{listing.title}</h4>
 
@@ -45,7 +47,7 @@ export default function HomeFeaturedListings({ featuredListings }) {
                   {listing.price}
                 </p>
 
-                <p className="mt-3 text-gray-600 line-clamp-3">
+                <p className="mt-3 text-slate-600 line-clamp-3">
                   {listing.description}
                 </p>
               </div>

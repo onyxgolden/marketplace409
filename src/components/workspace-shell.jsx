@@ -133,7 +133,7 @@ export default function WorkspaceShell({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <div data-workspace-shell className="min-h-screen bg-slate-100 text-slate-950 lg:flex">
+    <div data-workspace-shell className="min-h-screen bg-slate-950 text-slate-950 lg:flex">
       <aside
         data-workspace-app-switcher
         data-expanded={expanded ? "true" : "false"}

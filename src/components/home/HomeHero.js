@@ -1,7 +1,9 @@
+import { PawPrint, Search, Shield, Home as HomeIcon, Wheat } from "lucide-react";
+
 export default function HomeHero() {
   return (
     <section className="relative py-24 px-6 overflow-hidden">
-      <div className="absolute inset-0 bg-gradient-to-r from-blue-950 via-blue-900 to-red-700 opacity-95"></div>
+      <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800"></div>
 
       <div className="relative max-w-5xl mx-auto text-center text-white">
         <div className="mb-10 rounded-3xl overflow-hidden shadow-2xl border border-white/20">
@@ -16,41 +18,45 @@ export default function HomeHero() {
           Southeast Texas Marketplace
         </h2>
 
-        <p className="text-xl text-blue-100 mb-6">
+        <p className="text-xl text-slate-300 mb-6">
           Buy Local. Sell Local. Support Community.
         </p>
 
         <div className="flex flex-wrap justify-center gap-3 mb-8">
-          <span className="bg-blue-100 text-blue-900 px-4 py-2 rounded-full font-semibold">
+          <span className="flex items-center gap-1.5 bg-white/10 border border-white/15 text-white px-4 py-2 rounded-full font-semibold">
             🇺🇸 Made in USA
           </span>
-          <span className="bg-red-100 text-red-700 px-4 py-2 rounded-full font-semibold">
-            🛠 Veteran Owned
+          <span className="flex items-center gap-1.5 bg-white/10 border border-white/15 text-white px-4 py-2 rounded-full font-semibold">
+            <Shield aria-hidden="true" className="h-4 w-4" />
+            Veteran Owned
           </span>
-          <span className="bg-green-100 text-green-700 px-4 py-2 rounded-full font-semibold">
-            🌽 Local Farms
+          <span className="flex items-center gap-1.5 bg-white/10 border border-white/15 text-white px-4 py-2 rounded-full font-semibold">
+            <Wheat aria-hidden="true" className="h-4 w-4" />
+            Local Farms
           </span>
-          <span className="bg-yellow-100 text-yellow-800 px-4 py-2 rounded-full font-semibold">
-            🏠 Local Rentals
+          <span className="flex items-center gap-1.5 bg-white/10 border border-white/15 text-white px-4 py-2 rounded-full font-semibold">
+            <HomeIcon aria-hidden="true" className="h-4 w-4" />
+            Local Rentals
           </span>
-          <span className="bg-purple-100 text-purple-800 px-4 py-2 rounded-full font-semibold">
-            🐶 Community Pets
+          <span className="flex items-center gap-1.5 bg-amber-400 text-slate-950 px-4 py-2 rounded-full font-semibold">
+            <PawPrint aria-hidden="true" className="h-4 w-4" />
+            Community Pets
           </span>
         </div>
 
         <div className="bg-white rounded-2xl shadow-2xl p-4 max-w-4xl mx-auto mb-10">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <input
-              className="border rounded-xl px-4 py-3 text-gray-900"
+              className="border rounded-xl px-4 py-3 text-slate-900"
               placeholder="What are you looking for?"
             />
 
             <input
-              className="border rounded-xl px-4 py-3 text-gray-900"
+              className="border rounded-xl px-4 py-3 text-slate-900"
               placeholder="City or ZIP"
             />
 
-            <select className="border rounded-xl px-4 py-3 text-gray-900">
+            <select className="border rounded-xl px-4 py-3 text-slate-900">
               <option>All Categories</option>
               <option>Vehicles</option>
               <option>Rentals</option>
@@ -65,7 +71,8 @@ export default function HomeHero() {
               <option>Miscellaneous</option>
             </select>
 
-            <button className="bg-red-600 text-white rounded-xl font-bold hover:bg-red-500">
+            <button className="flex items-center justify-center gap-2 bg-amber-500 text-slate-950 rounded-xl font-bold hover:bg-amber-400">
+              <Search aria-hidden="true" className="h-4 w-4" />
               Search
             </button>
           </div>
@@ -74,14 +81,14 @@ export default function HomeHero() {
         <div className="flex justify-center gap-4">
           <a
             href="/browse"
-            className="bg-blue-900 text-white px-6 py-3 rounded-xl text-lg font-semibold hover:bg-blue-800"
+            className="bg-white text-slate-950 px-6 py-3 rounded-xl text-lg font-semibold hover:bg-slate-100"
           >
             Browse Listings
           </a>
 
           <a
             href="/post"
-            className="bg-red-600 text-white px-6 py-3 rounded-xl text-lg font-semibold hover:bg-red-500"
+            className="bg-amber-500 text-slate-950 px-6 py-3 rounded-xl text-lg font-semibold hover:bg-amber-400"
           >
             Post Listing
           </a>
