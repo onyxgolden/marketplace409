@@ -11,27 +11,31 @@ const REPORTS = [
   { key: "vacant-units", label: "Vacant units" },
   { key: "tenant-contacts", label: "Tenant contact list" },
   { key: "upcoming-charges", label: "Upcoming charges due" },
+  { key: "account-ledger", label: "Account ledger" },
 ];
 export default function RentalReportsPanel() {
   const [reportKey, setReportKey] = useState("");
+  const [ledgerPropertyId, setLedgerPropertyId] = useState("");
   const [report, setReport] = useState(null);
   const [error, setError] = useState("");
-  const load = useCallback(
-    (key) =>
-      fetch(`/api/rental/reports${key ? `?report=${key}` : ""}`).then(
-        async (response) => {
-          const body = await response.json();
-          if (!response.ok) throw new Error(body.error);
-          setReport(body.report);
-        },
-      ),
-    [],
-  );
+  const load = useCallback((key, propertyId) => {
+    const params = new URLSearchParams();
+    if (key) params.set("report", key);
+    if (key === "account-ledger" && propertyId) params.set("propertyId", propertyId);
+    const query = params.toString();
+    return fetch(`/api/rental/reports${query ? `?${query}` : ""}`).then(
+      async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error);
+        setReport(body.report);
+      },
+    );
+  }, []);
   useEffect(() => {
     setReport(null);
     setError("");
-    load(reportKey).catch((reason) => setError(reason.message));
-  }, [load, reportKey]);
+    load(reportKey, ledgerPropertyId).catch((reason) => setError(reason.message));
+  }, [load, reportKey, ledgerPropertyId]);
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <p className="text-sm font-bold uppercase tracking-widest text-amber-700">
@@ -47,7 +51,10 @@ export default function RentalReportsPanel() {
           <button
             key={item.key || "rent-roll"}
             type="button"
-            onClick={() => setReportKey(item.key)}
+            onClick={() => {
+              setReportKey(item.key);
+              setLedgerPropertyId("");
+            }}
             className={`rounded-lg px-4 py-2 text-sm font-bold ${
               reportKey === item.key
                 ? "bg-slate-950 text-white"
@@ -68,7 +75,7 @@ export default function RentalReportsPanel() {
         <>
           <div className="mt-5 flex flex-wrap gap-3">
             <a
-              href={`/api/rental/reports?format=csv${reportKey ? `&report=${reportKey}` : ""}`}
+              href={`/api/rental/reports?format=csv${reportKey ? `&report=${reportKey}` : ""}${reportKey === "account-ledger" && ledgerPropertyId ? `&propertyId=${encodeURIComponent(ledgerPropertyId)}` : ""}`}
               className="rounded-lg bg-slate-950 px-5 py-3 font-bold text-white"
             >
               Download CSV
@@ -91,6 +98,13 @@ export default function RentalReportsPanel() {
           {reportKey === "vacant-units" && <VacantUnitsView report={report} />}
           {reportKey === "tenant-contacts" && <TenantContactsView report={report} />}
           {reportKey === "upcoming-charges" && <UpcomingChargesView report={report} />}
+          {reportKey === "account-ledger" && (
+            <AccountLedgerView
+              report={report}
+              propertyId={ledgerPropertyId}
+              onPropertyChange={setLedgerPropertyId}
+            />
+          )}
         </>
       )}
     </section>
@@ -386,6 +400,69 @@ function UpcomingChargesView({ report }) {
             ) : (
               <tr>
                 <td className="p-3 text-slate-500" colSpan={4}>No charges due in this window.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+function AccountLedgerView({ report, propertyId, onPropertyChange }) {
+  return (
+    <>
+      <div className="mt-6 flex flex-wrap items-end gap-3">
+        <label className="text-sm">
+          <span className="block font-bold text-slate-700">Property</span>
+          <select
+            value={propertyId}
+            onChange={(event) => onPropertyChange(event.target.value)}
+            className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
+          >
+            <option value="">All properties</option>
+            {report.availableProperties.map((id) => (
+              <option key={id} value={id}>
+                {id === "unassigned" ? "Unassigned / general" : id}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="mt-6 grid gap-3 md:grid-cols-3">
+        <Kpi label="Transactions" value={report.summary.transactionCount} />
+        <Kpi label="Total debits" value={money.format(report.summary.totalDebits)} />
+        <Kpi label="Total credits" value={money.format(report.summary.totalCredits)} />
+        <Kpi label="Ending balance" value={money.format(report.summary.endingBalance)} attention={report.summary.endingBalance < 0} />
+      </div>
+      <div className="mt-6 overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b">
+              <th className="p-3">Date</th>
+              <th className="p-3">Description</th>
+              <th className="p-3">Category</th>
+              <th className="p-3">Property</th>
+              <th className="p-3">Debit</th>
+              <th className="p-3">Credit</th>
+              <th className="p-3">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.rows.length ? (
+              report.rows.map((row) => (
+                <tr key={row.id} className="border-b">
+                  <td className="p-3">{row.date}</td>
+                  <td className="p-3">{row.description}</td>
+                  <td className="p-3 capitalize text-slate-500">{row.category.replaceAll("_", " ")}</td>
+                  <td className="p-3 text-slate-500">{row.propertyId === "unassigned" ? "Unassigned / general" : row.propertyId}</td>
+                  <td className="p-3">{row.debit ? money.format(row.debit) : ""}</td>
+                  <td className="p-3">{row.credit ? money.format(row.credit) : ""}</td>
+                  <td className={`p-3 font-bold ${row.balance < 0 ? "text-red-700" : ""}`}>{money.format(row.balance)}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="p-3 text-slate-500" colSpan={7}>No transactions in this scope.</td>
               </tr>
             )}
           </tbody>
