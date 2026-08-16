@@ -51,7 +51,7 @@ export default async function Home() {
     .limit(1)
     .maybeSingle();
   return (
-    <main className="min-h-screen bg-gray-100 text-gray-900">
+    <main className="min-h-screen bg-gray-100 text-gray-900 dark:bg-slate-950">
       <HomeLaunchBanner />
 
       <Header />

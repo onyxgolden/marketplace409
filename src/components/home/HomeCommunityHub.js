@@ -30,7 +30,7 @@ const HUB_CARDS = [
 export default function HomeCommunityHub() {
   return (
     <section className="max-w-6xl mx-auto py-12 px-6">
-      <h3 className="text-3xl font-bold mb-8">Community Hub</h3>
+      <h3 className="text-3xl font-bold mb-8 dark:text-white">Community Hub</h3>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {HUB_CARDS.map(({ href, Icon, title, description, cta }) => (

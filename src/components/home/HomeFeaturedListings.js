@@ -4,9 +4,12 @@ export default function HomeFeaturedListings({ featuredListings }) {
   return (
     <section className="max-w-6xl mx-auto py-12 px-6">
       <div className="flex justify-between items-center mb-8">
-        <h3 className="text-3xl font-bold">Featured Local Listings</h3>
+        <h3 className="text-3xl font-bold dark:text-white">Featured Local Listings</h3>
 
-        <a href="/browse" className="text-slate-950 font-bold hover:text-amber-600">
+        <a
+          href="/browse"
+          className="text-slate-950 font-bold hover:text-amber-600 dark:text-white"
+        >
           View All
         </a>
       </div>

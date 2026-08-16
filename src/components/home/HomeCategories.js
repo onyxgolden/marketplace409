@@ -11,7 +11,7 @@ const CATEGORIES = [
 export default function HomeCategories() {
   return (
     <section className="max-w-6xl mx-auto py-12 px-6">
-      <h3 className="text-3xl font-bold mb-8">Popular Categories</h3>
+      <h3 className="text-3xl font-bold mb-8 dark:text-white">Popular Categories</h3>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
         {CATEGORIES.map(({ href, label, Icon }) => (
