@@ -1,44 +1,177 @@
-import{NextResponse}from"next/server";import{createAuthenticatedForgeApplication}from"@/lib/supabase/createAuthenticatedForgeApplication";import{buildRentalOperatingReport,rentalReportToCsv}from"@/application/rental/buildRentalOperatingReport";import{buildRentalTaxPackage,rentalTaxPackageToCsv}from"@/application/rental/buildRentalTaxPackage";import{buildDelinquentTenantsReport,delinquentTenantsReportToCsv}from"@/application/rental/buildDelinquentTenantsReport";import{buildLeaseExpirationReport,leaseExpirationReportToCsv}from"@/application/rental/buildLeaseExpirationReport";import{buildVacantUnitsReport,vacantUnitsReportToCsv}from"@/application/rental/buildVacantUnitsReport";import{buildTenantContactListReport,tenantContactListReportToCsv}from"@/application/rental/buildTenantContactListReport";import{buildUpcomingChargesReport,upcomingChargesReportToCsv}from"@/application/rental/buildUpcomingChargesReport";import{buildFinancialLedgerReport,financialLedgerReportToCsv}from"@/application/financial/buildFinancialLedgerReport";import{scopeRentalDataToProperty}from"@/application/rental/scopeRentalDataToProperty";
-const REPORT_BUILDERS={
-  "":{build:(data,url)=>buildRentalOperatingReport(data,url.searchParams.get("asOfDate")||undefined),toCsv:rentalReportToCsv,filename:"rent-roll"},
-  "delinquent-tenants":{build:(data,url)=>buildDelinquentTenantsReport(data,url.searchParams.get("asOfDate")||undefined),toCsv:delinquentTenantsReportToCsv,filename:"delinquent-tenants"},
-  "lease-expiration":{build:(data,url)=>buildLeaseExpirationReport(data,{startDate:url.searchParams.get("startDate")||undefined,endDate:url.searchParams.get("endDate")||undefined}),toCsv:leaseExpirationReportToCsv,filename:"lease-expiration"},
-  "vacant-units":{build:(data,url)=>buildVacantUnitsReport(data,url.searchParams.get("asOfDate")||undefined),toCsv:vacantUnitsReportToCsv,filename:"vacant-units"},
-  "tenant-contacts":{build:(data)=>buildTenantContactListReport(data),toCsv:tenantContactListReportToCsv,filename:"tenant-contacts"},
-  "upcoming-charges":{build:(data,url)=>buildUpcomingChargesReport(data,{startDate:url.searchParams.get("startDate")||undefined,endDate:url.searchParams.get("endDate")||undefined}),toCsv:upcomingChargesReportToCsv,filename:"upcoming-charges"},
+import { NextResponse } from "next/server";
+import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
+import { buildRentalOperatingReport, rentalReportToCsv } from "@/application/rental/buildRentalOperatingReport";
+import { buildRentalTaxPackage, rentalTaxPackageToCsv } from "@/application/rental/buildRentalTaxPackage";
+import { buildDelinquentTenantsReport, delinquentTenantsReportToCsv } from "@/application/rental/buildDelinquentTenantsReport";
+import { buildLeaseExpirationReport, leaseExpirationReportToCsv } from "@/application/rental/buildLeaseExpirationReport";
+import { buildVacantUnitsReport, vacantUnitsReportToCsv } from "@/application/rental/buildVacantUnitsReport";
+import { buildTenantContactListReport, tenantContactListReportToCsv } from "@/application/rental/buildTenantContactListReport";
+import { buildUpcomingChargesReport, upcomingChargesReportToCsv } from "@/application/rental/buildUpcomingChargesReport";
+import { buildFinancialLedgerReport, financialLedgerReportToCsv } from "@/application/financial/buildFinancialLedgerReport";
+import { buildIncomeExpenseStatement, incomeExpenseStatementToCsv } from "@/application/financial/buildIncomeExpenseStatement";
+import { buildScheduleEAssistant, scheduleEAssistantToCsv } from "@/application/financial/buildScheduleEAssistant";
+import { buildSecurityDepositsReport, securityDepositsReportToCsv } from "@/application/rental/buildSecurityDepositsReport";
+import { buildRentersInsuranceComplianceReport, rentersInsuranceComplianceReportToCsv } from "@/application/rental/buildRentersInsuranceComplianceReport";
+import { buildWorkOrdersReport, workOrdersReportToCsv } from "@/application/rental/buildWorkOrdersReport";
+import { buildVendorContactListReport, vendorContactListReportToCsv } from "@/application/rental/buildVendorContactListReport";
+import { buildVendorLedgerReport, vendorLedgerReportToCsv } from "@/application/rental/buildVendorLedgerReport";
+import { scopeRentalDataToProperty } from "@/application/rental/scopeRentalDataToProperty";
+
+const CORE_RENTAL_TABLES = ["rental_units", "rental_tenants", "rental_leases", "rental_lease_tenants", "rent_charges", "rental_payments"];
+const CORE_RENTAL_KEYS = {
+  rental_units: "units",
+  rental_tenants: "tenants",
+  rental_leases: "leases",
+  rental_lease_tenants: "memberships",
+  rent_charges: "charges",
+  rental_payments: "payments",
 };
-export async function GET(request){
-  try{
-    const a=await createAuthenticatedForgeApplication();if(a.response)return a.response;
-    const url=new URL(request.url);
-    if(url.searchParams.get("format")==="tax-csv"){
-      const taxYear=Number(url.searchParams.get("taxYear"));
-      if(!Number.isInteger(taxYear)||taxYear<2000||taxYear>2100)return NextResponse.json({error:"A valid tax year is required."},{status:400});
-      const names=["rental_contractors","rental_contractor_payments","rental_1099_reviews"],values=await Promise.all(names.map(name=>a.supabaseClient.from(name).select("*"))),error=values.find(v=>v.error)?.error;
-      if(error)throw error;
-      const report=buildRentalTaxPackage({contractors:values[0].data||[],contractorPayments:values[1].data||[],reviews:values[2].data||[]},taxYear,url.searchParams.get("propertyId")||"");
-      return new Response(rentalTaxPackageToCsv(report),{headers:{"content-type":"text/csv; charset=utf-8","content-disposition":`attachment; filename="forge-rental-contractor-tax-${taxYear}.csv"`}});
+
+async function fetchTables(supabaseClient, tables, columns = {}) {
+  const results = await Promise.all(tables.map((table) => supabaseClient.from(table).select(columns[table] || "*")));
+  const error = results.find((r) => r.error)?.error;
+  if (error) throw error;
+  return Object.fromEntries(tables.map((table, index) => [table, results[index].data || []]));
+}
+
+function csvResponse(csvText, filenameBase, dateHint) {
+  return new Response(csvText, {
+    headers: {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="forge-${filenameBase}-${dateHint}.csv"`,
+    },
+  });
+}
+
+const CORE_REPORT_BUILDERS = {
+  "": { build: (data, url) => buildRentalOperatingReport(data, url.searchParams.get("asOfDate") || undefined), toCsv: rentalReportToCsv, filename: "rental-rent-roll" },
+  "delinquent-tenants": { build: (data, url) => buildDelinquentTenantsReport(data, url.searchParams.get("asOfDate") || undefined), toCsv: delinquentTenantsReportToCsv, filename: "rental-delinquent-tenants" },
+  "lease-expiration": { build: (data, url) => buildLeaseExpirationReport(data, { startDate: url.searchParams.get("startDate") || undefined, endDate: url.searchParams.get("endDate") || undefined }), toCsv: leaseExpirationReportToCsv, filename: "rental-lease-expiration" },
+  "vacant-units": { build: (data, url) => buildVacantUnitsReport(data, url.searchParams.get("asOfDate") || undefined), toCsv: vacantUnitsReportToCsv, filename: "rental-vacant-units" },
+  "tenant-contacts": { build: (data) => buildTenantContactListReport(data), toCsv: tenantContactListReportToCsv, filename: "rental-tenant-contacts" },
+  "upcoming-charges": { build: (data, url) => buildUpcomingChargesReport(data, { startDate: url.searchParams.get("startDate") || undefined, endDate: url.searchParams.get("endDate") || undefined }), toCsv: upcomingChargesReportToCsv, filename: "rental-upcoming-charges" },
+};
+
+async function loadCoreReport(a, url, reportKey) {
+  const builder = CORE_REPORT_BUILDERS[reportKey];
+  const raw = await fetchTables(a.supabaseClient, CORE_RENTAL_TABLES);
+  const data = Object.fromEntries(CORE_RENTAL_TABLES.map((table) => [CORE_RENTAL_KEYS[table], raw[table]]));
+  const availableProperties = Object.freeze([...new Set(data.units.map((unit) => unit.property_id))].filter(Boolean).sort());
+  const scoped = scopeRentalDataToProperty(data, url.searchParams.get("propertyId") || "");
+  const report = { ...builder.build(scoped, url), availableProperties };
+  return { report, toCsv: () => builder.toCsv(report), filename: builder.filename, dateHint: report.asOfDate || report.startDate || report.generatedAt.slice(0, 10) };
+}
+
+async function loadFinancialEvents(a) {
+  const { data, error } = await a.supabaseClient
+    .from("financial_events")
+    .select("id,event_date,description,amount,transaction_kind,normalized_category,property_id,status,is_deleted");
+  if (error) throw error;
+  return data || [];
+}
+
+const FINANCIAL_EVENT_HANDLERS = {
+  "account-ledger": {
+    load: async (a, url) => {
+      const events = await loadFinancialEvents(a);
+      const report = buildFinancialLedgerReport({ events }, { propertyId: url.searchParams.get("propertyId") || "", startDate: url.searchParams.get("startDate") || "", endDate: url.searchParams.get("endDate") || "" });
+      return { report, toCsv: () => financialLedgerReportToCsv(report), filename: "account-ledger", dateHint: report.generatedAt.slice(0, 10) };
+    },
+  },
+  "income-expense-statement": {
+    load: async (a, url) => {
+      const events = await loadFinancialEvents(a);
+      const report = buildIncomeExpenseStatement({ events }, { propertyId: url.searchParams.get("propertyId") || "", startDate: url.searchParams.get("startDate") || "", endDate: url.searchParams.get("endDate") || "" });
+      return { report, toCsv: () => incomeExpenseStatementToCsv(report), filename: "income-expense-statement", dateHint: report.generatedAt.slice(0, 10) };
+    },
+  },
+  "schedule-e-assistant": {
+    load: async (a, url) => {
+      const taxYear = Number(url.searchParams.get("taxYear"));
+      if (!Number.isInteger(taxYear) || taxYear < 2000 || taxYear > 2100) throw Object.assign(new Error("A valid tax year is required."), { status: 400 });
+      const events = await loadFinancialEvents(a);
+      const report = buildScheduleEAssistant({ events }, { taxYear, propertyId: url.searchParams.get("propertyId") || "" });
+      return { report, toCsv: () => scheduleEAssistantToCsv(report), filename: `schedule-e-${taxYear}`, dateHint: String(taxYear) };
+    },
+  },
+};
+
+const REPORT_HANDLERS = {
+  ...FINANCIAL_EVENT_HANDLERS,
+  "security-deposits": {
+    load: async (a, url) => {
+      const raw = await fetchTables(a.supabaseClient, [...CORE_RENTAL_TABLES, "rental_security_deposits", "rental_security_deposit_transactions"]);
+      const report = buildSecurityDepositsReport({
+        units: raw.rental_units, tenants: raw.rental_tenants, leases: raw.rental_leases, memberships: raw.rental_lease_tenants,
+        deposits: raw.rental_security_deposits, transactions: raw.rental_security_deposit_transactions,
+      }, { propertyId: url.searchParams.get("propertyId") || "" });
+      return { report, toCsv: () => securityDepositsReportToCsv(report), filename: "security-deposits", dateHint: report.generatedAt.slice(0, 10) };
+    },
+  },
+  "renters-insurance": {
+    load: async (a, url) => {
+      const raw = await fetchTables(a.supabaseClient, [...CORE_RENTAL_TABLES, "renters_insurance_evidence"]);
+      const report = buildRentersInsuranceComplianceReport({
+        units: raw.rental_units, tenants: raw.rental_tenants, leases: raw.rental_leases, memberships: raw.rental_lease_tenants,
+        evidence: raw.renters_insurance_evidence,
+      }, { propertyId: url.searchParams.get("propertyId") || "" });
+      return { report, toCsv: () => rentersInsuranceComplianceReportToCsv(report), filename: "renters-insurance", dateHint: report.generatedAt.slice(0, 10) };
+    },
+  },
+  "work-orders": {
+    load: async (a, url) => {
+      const raw = await fetchTables(a.supabaseClient, ["rental_units", "rental_maintenance_requests", "rental_maintenance_work_orders", "rental_contractors"]);
+      const report = buildWorkOrdersReport({ units: raw.rental_units, requests: raw.rental_maintenance_requests, workOrders: raw.rental_maintenance_work_orders, contractors: raw.rental_contractors }, { propertyId: url.searchParams.get("propertyId") || "" });
+      return { report, toCsv: () => workOrdersReportToCsv(report), filename: "work-orders", dateHint: report.generatedAt.slice(0, 10) };
+    },
+  },
+  "vendor-contacts": {
+    load: async (a) => {
+      const raw = await fetchTables(a.supabaseClient, ["rental_contractors"]);
+      const report = buildVendorContactListReport({ contractors: raw.rental_contractors });
+      return { report, toCsv: () => vendorContactListReportToCsv(report), filename: "vendor-contacts", dateHint: report.generatedAt.slice(0, 10) };
+    },
+  },
+  "vendor-ledger": {
+    load: async (a, url) => {
+      const raw = await fetchTables(a.supabaseClient, ["rental_contractors", "rental_contractor_payments"]);
+      const report = buildVendorLedgerReport({ contractors: raw.rental_contractors, contractorPayments: raw.rental_contractor_payments }, {
+        contractorId: url.searchParams.get("contractorId") || "", startDate: url.searchParams.get("startDate") || "", endDate: url.searchParams.get("endDate") || "",
+      });
+      return { report, toCsv: () => vendorLedgerReportToCsv(report), filename: "vendor-ledger", dateHint: report.generatedAt.slice(0, 10) };
+    },
+  },
+};
+
+export async function GET(request) {
+  try {
+    const a = await createAuthenticatedForgeApplication();
+    if (a.response) return a.response;
+    const url = new URL(request.url);
+
+    if (url.searchParams.get("format") === "tax-csv") {
+      const taxYear = Number(url.searchParams.get("taxYear"));
+      if (!Number.isInteger(taxYear) || taxYear < 2000 || taxYear > 2100) return NextResponse.json({ error: "A valid tax year is required." }, { status: 400 });
+      const raw = await fetchTables(a.supabaseClient, ["rental_contractors", "rental_contractor_payments", "rental_1099_reviews"]);
+      const report = buildRentalTaxPackage({ contractors: raw.rental_contractors, contractorPayments: raw.rental_contractor_payments, reviews: raw.rental_1099_reviews }, taxYear, url.searchParams.get("propertyId") || "");
+      return csvResponse(rentalTaxPackageToCsv(report), "rental-contractor-tax", taxYear);
     }
-    const reportKey=url.searchParams.get("report")||"";
-    if(reportKey==="account-ledger"){
-      const{data:eventRows,error:eventError}=await a.supabaseClient.from("financial_events").select("id,event_date,description,amount,transaction_kind,normalized_category,property_id,status,is_deleted");
-      if(eventError)throw eventError;
-      const report=buildFinancialLedgerReport({events:eventRows||[]},{propertyId:url.searchParams.get("propertyId")||"",startDate:url.searchParams.get("startDate")||"",endDate:url.searchParams.get("endDate")||""});
-      if(url.searchParams.get("format")==="csv")return new Response(financialLedgerReportToCsv(report),{headers:{"content-type":"text/csv; charset=utf-8","content-disposition":`attachment; filename="forge-account-ledger-${report.generatedAt.slice(0,10)}.csv"`}});
-      return NextResponse.json({success:true,report});
+
+    const reportKey = url.searchParams.get("report") || "";
+    let loaded;
+    if (REPORT_HANDLERS[reportKey]) {
+      loaded = await REPORT_HANDLERS[reportKey].load(a, url);
+    } else if (reportKey in CORE_REPORT_BUILDERS) {
+      loaded = await loadCoreReport(a, url, reportKey);
+    } else {
+      return NextResponse.json({ error: "Unknown report." }, { status: 400 });
     }
-    const builder=REPORT_BUILDERS[reportKey];
-    if(!builder)return NextResponse.json({error:"Unknown report."},{status:400});
-    const tables=["rental_units","rental_tenants","rental_leases","rental_lease_tenants","rent_charges","rental_payments"],results=await Promise.all(tables.map(table=>a.supabaseClient.from(table).select("*"))),error=results.find(item=>item.error)?.error;
-    if(error)throw error;
-    const data=Object.fromEntries(tables.map((table,index)=>[({rental_units:"units",rental_tenants:"tenants",rental_leases:"leases",rental_lease_tenants:"memberships",rent_charges:"charges",rental_payments:"payments"})[table],results[index].data||[]]));
-    const availableProperties=Object.freeze([...new Set(data.units.map(unit=>unit.property_id))].filter(Boolean).sort());
-    const scopedData=scopeRentalDataToProperty(data,url.searchParams.get("propertyId")||"");
-    const report=builder.build(scopedData,url);
-    if(url.searchParams.get("format")==="csv")return new Response(builder.toCsv(report),{headers:{"content-type":"text/csv; charset=utf-8","content-disposition":`attachment; filename="forge-rental-${builder.filename}-${report.asOfDate||report.startDate||report.generatedAt.slice(0,10)}.csv"`}});
-    return NextResponse.json({success:true,report:{...report,availableProperties}});
-  }catch(error){
-    console.error("Rental report error",error);
-    return NextResponse.json({error:"Unable to build rental reports."},{status:500});
+
+    if (url.searchParams.get("format") === "csv") return csvResponse(loaded.toCsv(), loaded.filename, loaded.dateHint);
+    return NextResponse.json({ success: true, report: loaded.report });
+  } catch (error) {
+    if (error?.status === 400) return NextResponse.json({ error: error.message }, { status: 400 });
+    console.error("Rental report error", error);
+    return NextResponse.json({ error: "Unable to build rental reports." }, { status: 500 });
   }
 }

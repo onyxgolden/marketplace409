@@ -1,0 +1,18 @@
+export const MANUAL_FINANCIAL_EVENT_CATEGORIES = Object.freeze([
+  { value: "rental_income", label: "Rental income" },
+  { value: "cam_income", label: "CAM income" },
+  { value: "advertising", label: "Advertising" },
+  { value: "auto", label: "Auto and travel" },
+  { value: "cleaning", label: "Cleaning and maintenance" },
+  { value: "commissions", label: "Commissions" },
+  { value: "insurance", label: "Insurance" },
+  { value: "legal_and_professional_fees", label: "Legal and professional fees" },
+  { value: "management_fees", label: "Management fees" },
+  { value: "mortgage_interest", label: "Mortgage interest" },
+  { value: "other_interest", label: "Other interest" },
+  { value: "property_repairs", label: "Repairs" },
+  { value: "supplies", label: "Supplies" },
+  { value: "property_tax", label: "Taxes" },
+  { value: "utilities", label: "Utilities" },
+  { value: "other", label: "Other" },
+]);
