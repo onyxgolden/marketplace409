@@ -6,8 +6,10 @@ charges:[{id:"c1",lease_id:"l1",status:"due",due_date:"2026-09-01",amount_cents:
   {id:"c3",lease_id:"l1",status:"paid",due_date:"2026-08-20",amount_cents:200000,paid_amount_cents:200000},
   {id:"c4",lease_id:"l1",status:"overdue",due_date:"2026-08-01",amount_cents:200000,paid_amount_cents:0}]};
 describe("upcoming charges report",()=>{
-  it("includes only unpaid future charges inside the window, soonest first",()=>{const report=buildUpcomingChargesReport(input,"2026-08-16",30);
+  it("defaults to a 30-day window from the start date, soonest first",()=>{const report=buildUpcomingChargesReport(input,{startDate:"2026-08-16"});
     expect(report.rows).toHaveLength(1);expect(report.rows[0]).toMatchObject({chargeId:"c1",unitLabel:"Main residence",tenantNames:["John Jones"],remainingCents:200000});});
-  it("excludes already-overdue and paid charges",()=>{const report=buildUpcomingChargesReport(input,"2026-08-16",30);expect(report.rows.map(row=>row.chargeId)).not.toContain("c3");expect(report.rows.map(row=>row.chargeId)).not.toContain("c4");});
-  it("summarizes upcoming count and total due",()=>{const report=buildUpcomingChargesReport(input,"2026-08-16",30);expect(report.summary).toMatchObject({upcomingCount:1,totalDueCents:200000});});
-  it("exports quoted CSV rows",()=>{const csv=upcomingChargesReportToCsv(buildUpcomingChargesReport(input,"2026-08-16",30));expect(csv).toContain('"John Jones"');expect(csv).toContain('"2000.00"');});});
+  it("honors an explicit end date instead of the default window",()=>{const report=buildUpcomingChargesReport(input,{startDate:"2026-08-16",endDate:"2026-12-31"});
+    expect(report.rows.map(row=>row.chargeId)).toEqual(["c1","c2"]);expect(report.endDate).toBe("2026-12-31");});
+  it("excludes already-overdue and paid charges",()=>{const report=buildUpcomingChargesReport(input,{startDate:"2026-08-16"});expect(report.rows.map(row=>row.chargeId)).not.toContain("c3");expect(report.rows.map(row=>row.chargeId)).not.toContain("c4");});
+  it("summarizes upcoming count and total due",()=>{const report=buildUpcomingChargesReport(input,{startDate:"2026-08-16"});expect(report.summary).toMatchObject({upcomingCount:1,totalDueCents:200000});});
+  it("exports quoted CSV rows",()=>{const csv=upcomingChargesReportToCsv(buildUpcomingChargesReport(input,{startDate:"2026-08-16"}));expect(csv).toContain('"John Jones"');expect(csv).toContain('"2000.00"');});});

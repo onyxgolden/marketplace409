@@ -13,29 +13,65 @@ const REPORTS = [
   { key: "upcoming-charges", label: "Upcoming charges due" },
   { key: "account-ledger", label: "Account ledger" },
 ];
+const POINT_IN_TIME_REPORTS = new Set(["", "delinquent-tenants", "vacant-units"]);
+const RANGE_REPORTS = new Set(["lease-expiration", "upcoming-charges", "account-ledger"]);
+function buildReportParams(key, filters, extra = {}) {
+  const params = new URLSearchParams();
+  if (key) params.set("report", key);
+  if (filters.propertyId) params.set("propertyId", filters.propertyId);
+  if (POINT_IN_TIME_REPORTS.has(key) && filters.asOfDate) params.set("asOfDate", filters.asOfDate);
+  if (RANGE_REPORTS.has(key)) {
+    if (filters.startDate) params.set("startDate", filters.startDate);
+    if (filters.endDate) params.set("endDate", filters.endDate);
+  }
+  for (const [k, v] of Object.entries(extra)) params.set(k, v);
+  return params;
+}
 export default function RentalReportsPanel() {
   const [reportKey, setReportKey] = useState("");
-  const [ledgerPropertyId, setLedgerPropertyId] = useState("");
-  const [report, setReport] = useState(null);
+  const [propertyId, setPropertyId] = useState("");
+  const [asOfDate, setAsOfDate] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [availableProperties, setAvailableProperties] = useState([]);
+  const [loaded, setLoaded] = useState(null);
   const [error, setError] = useState("");
-  const load = useCallback((key, propertyId) => {
-    const params = new URLSearchParams();
-    if (key) params.set("report", key);
-    if (key === "account-ledger" && propertyId) params.set("propertyId", propertyId);
-    const query = params.toString();
-    return fetch(`/api/rental/reports${query ? `?${query}` : ""}`).then(
+  const filters = { propertyId, asOfDate, startDate, endDate };
+  const load = useCallback((key, currentFilters) => {
+    const params = buildReportParams(key, currentFilters);
+    return fetch(`/api/rental/reports?${params.toString()}`).then(
       async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error);
-        setReport(body.report);
+        return body.report;
       },
     );
   }, []);
   useEffect(() => {
-    setReport(null);
+    let cancelled = false;
     setError("");
-    load(reportKey, ledgerPropertyId).catch((reason) => setError(reason.message));
-  }, [load, reportKey, ledgerPropertyId]);
+    load(reportKey, filters)
+      .then((nextReport) => {
+        if (cancelled) return;
+        setLoaded({ key: reportKey, report: nextReport });
+        if (nextReport.availableProperties) {
+          setAvailableProperties(nextReport.availableProperties);
+        }
+      })
+      .catch((reason) => {
+        if (cancelled) return;
+        setError(reason.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, reportKey, propertyId, asOfDate, startDate, endDate]);
+  // Only trust `loaded` when it was fetched for the currently-selected tab —
+  // otherwise a render can land between a tab switch and its effect running,
+  // pairing the new reportKey with a report shaped for the previous tab.
+  const report = loaded && loaded.key === reportKey ? loaded.report : null;
+  const csvHref = `/api/rental/reports?${buildReportParams(reportKey, filters, { format: "csv" }).toString()}`;
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <p className="text-sm font-bold uppercase tracking-widest text-amber-700">
@@ -53,7 +89,10 @@ export default function RentalReportsPanel() {
             type="button"
             onClick={() => {
               setReportKey(item.key);
-              setLedgerPropertyId("");
+              setPropertyId("");
+              setAsOfDate("");
+              setStartDate("");
+              setEndDate("");
             }}
             className={`rounded-lg px-4 py-2 text-sm font-bold ${
               reportKey === item.key
@@ -65,6 +104,18 @@ export default function RentalReportsPanel() {
           </button>
         ))}
       </div>
+      <FilterBar
+        reportKey={reportKey}
+        propertyId={propertyId}
+        onPropertyChange={setPropertyId}
+        availableProperties={availableProperties}
+        asOfDate={asOfDate}
+        onAsOfDateChange={setAsOfDate}
+        startDate={startDate}
+        onStartDateChange={setStartDate}
+        endDate={endDate}
+        onEndDateChange={setEndDate}
+      />
       {error ? (
         <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-red-800">
           {error}
@@ -75,7 +126,7 @@ export default function RentalReportsPanel() {
         <>
           <div className="mt-5 flex flex-wrap gap-3">
             <a
-              href={`/api/rental/reports?format=csv${reportKey ? `&report=${reportKey}` : ""}${reportKey === "account-ledger" && ledgerPropertyId ? `&propertyId=${encodeURIComponent(ledgerPropertyId)}` : ""}`}
+              href={csvHref}
               className="rounded-lg bg-slate-950 px-5 py-3 font-bold text-white"
             >
               Download CSV
@@ -98,16 +149,78 @@ export default function RentalReportsPanel() {
           {reportKey === "vacant-units" && <VacantUnitsView report={report} />}
           {reportKey === "tenant-contacts" && <TenantContactsView report={report} />}
           {reportKey === "upcoming-charges" && <UpcomingChargesView report={report} />}
-          {reportKey === "account-ledger" && (
-            <AccountLedgerView
-              report={report}
-              propertyId={ledgerPropertyId}
-              onPropertyChange={setLedgerPropertyId}
-            />
-          )}
+          {reportKey === "account-ledger" && <AccountLedgerView report={report} />}
         </>
       )}
     </section>
+  );
+}
+function propertyLabel(id) {
+  return id === "unassigned" ? "Unassigned / general" : id;
+}
+function FilterBar({
+  reportKey,
+  propertyId,
+  onPropertyChange,
+  availableProperties,
+  asOfDate,
+  onAsOfDateChange,
+  startDate,
+  onStartDateChange,
+  endDate,
+  onEndDateChange,
+}) {
+  return (
+    <div className="mt-4 flex flex-wrap items-end gap-3 rounded-xl bg-slate-50 p-3">
+      <label className="text-sm">
+        <span className="block font-bold text-slate-700">Property</span>
+        <select
+          value={propertyId}
+          onChange={(event) => onPropertyChange(event.target.value)}
+          className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
+        >
+          <option value="">All properties</option>
+          {availableProperties.map((id) => (
+            <option key={id} value={id}>
+              {propertyLabel(id)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {POINT_IN_TIME_REPORTS.has(reportKey) && (
+        <label className="text-sm">
+          <span className="block font-bold text-slate-700">As of</span>
+          <input
+            type="date"
+            value={asOfDate}
+            onChange={(event) => onAsOfDateChange(event.target.value)}
+            className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
+          />
+        </label>
+      )}
+      {RANGE_REPORTS.has(reportKey) && (
+        <>
+          <label className="text-sm">
+            <span className="block font-bold text-slate-700">From</span>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(event) => onStartDateChange(event.target.value)}
+              className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="block font-bold text-slate-700">To</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(event) => onEndDateChange(event.target.value)}
+              className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+        </>
+      )}
+    </div>
   );
 }
 function Kpi({ label, value, attention = false }) {
@@ -408,26 +521,9 @@ function UpcomingChargesView({ report }) {
     </>
   );
 }
-function AccountLedgerView({ report, propertyId, onPropertyChange }) {
+function AccountLedgerView({ report }) {
   return (
     <>
-      <div className="mt-6 flex flex-wrap items-end gap-3">
-        <label className="text-sm">
-          <span className="block font-bold text-slate-700">Property</span>
-          <select
-            value={propertyId}
-            onChange={(event) => onPropertyChange(event.target.value)}
-            className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
-          >
-            <option value="">All properties</option>
-            {report.availableProperties.map((id) => (
-              <option key={id} value={id}>
-                {id === "unassigned" ? "Unassigned / general" : id}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
       <div className="mt-6 grid gap-3 md:grid-cols-3">
         <Kpi label="Transactions" value={report.summary.transactionCount} />
         <Kpi label="Total debits" value={money.format(report.summary.totalDebits)} />
@@ -454,7 +550,7 @@ function AccountLedgerView({ report, propertyId, onPropertyChange }) {
                   <td className="p-3">{row.date}</td>
                   <td className="p-3">{row.description}</td>
                   <td className="p-3 capitalize text-slate-500">{row.category.replaceAll("_", " ")}</td>
-                  <td className="p-3 text-slate-500">{row.propertyId === "unassigned" ? "Unassigned / general" : row.propertyId}</td>
+                  <td className="p-3 text-slate-500">{propertyLabel(row.propertyId)}</td>
                   <td className="p-3">{row.debit ? money.format(row.debit) : ""}</td>
                   <td className="p-3">{row.credit ? money.format(row.credit) : ""}</td>
                   <td className={`p-3 font-bold ${row.balance < 0 ? "text-red-700" : ""}`}>{money.format(row.balance)}</td>
