@@ -28,4 +28,20 @@ describe("RentalLeasePanel", () => {
     expect(markup).toContain("Save rent schedule");
     expect(markup).toContain('value="1300.00"');
   });
+  it("shows a Cancel this lease action for a draft lease", () => {
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={draftSetup} loadOnMount={false} />);
+    expect(markup).toContain("Cancel this lease");
+  });
+  it("does not show Cancel this lease once the lease is active", () => {
+    const activeSetup = { ...draftSetup, leases: [{ ...draftSetup.leases[0], status: "active" }] };
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={activeSetup} loadOnMount={false} />);
+    expect(markup).not.toContain("Cancel this lease");
+  });
+  it("color-codes lease status in the list and detail badge", () => {
+    const activeSetup = { ...draftSetup, leases: [{ ...draftSetup.leases[0], status: "active" }] };
+    const draftMarkup = renderToStaticMarkup(<RentalLeasePanel initialSetup={draftSetup} loadOnMount={false} />);
+    const activeMarkup = renderToStaticMarkup(<RentalLeasePanel initialSetup={activeSetup} loadOnMount={false} />);
+    expect(draftMarkup).toContain("text-amber-700");
+    expect(activeMarkup).toContain("text-emerald-700");
+  });
 });

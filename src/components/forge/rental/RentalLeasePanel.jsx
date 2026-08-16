@@ -4,6 +4,8 @@ import RentalRecordBrowser from "./RentalRecordBrowser";
 import RentRollImportPanel from "./RentRollImportPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const STATUS_TEXT_COLORS = { active: "text-emerald-700", draft: "text-amber-700", cancelled: "text-slate-400 line-through", ended: "text-slate-400", terminated: "text-slate-400" };
+const STATUS_BADGE_COLORS = { active: "bg-emerald-100 text-emerald-800", draft: "bg-amber-100 text-amber-800", cancelled: "bg-slate-200 text-slate-600", ended: "bg-slate-200 text-slate-600", terminated: "bg-slate-200 text-slate-600" };
 
 export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [], schedules: [] }, loadOnMount = true, initialShowCreate = null }) {
   const [message, setMessage] = useState("");
@@ -47,6 +49,17 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       await reload();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
+  async function cancelLease(lease) {
+    setWorking(true); setMessage("");
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "cancel-lease", leaseId: lease.id }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to cancel the lease.");
+      setMessage(`Lease cancelled: ${result.lease.id}`);
+      await reload();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
   async function save(event) {
     event.preventDefault(); setWorking(true); setMessage("");
     const form = new FormData(event.currentTarget);
@@ -73,9 +86,9 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     <p className="mt-2 text-sm text-slate-600">Review existing leases first. New schedules remain draft until the signed lease is ready. If a tenant is already renting but has no lease on file (their original term expired and was never re-signed, or the record didn't import), add one below and leave the end date blank for an ongoing month-to-month tenancy.</p>
     {(setup.leases || []).length > 0 && <RentalRecordBrowser title="Leases" records={setup.leases} selectedId={selectedId} onSelect={setSelectedId}
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
-      getSubtitle={(lease) => `${lease.status} · ${money.format(Number(lease.monthly_rent_cents) / 100)} monthly`}>
+      getSubtitle={(lease) => <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly</>}>
       {(() => { const lease = setup.leases.find((item) => item.id === selectedId) || setup.leases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id);
-        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} />; })()}
+        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} onCancel={cancelLease} />; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950">
       Save at least one rental unit and tenant before creating a lease.</p>}
@@ -101,11 +114,11 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
 
 function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</dt><dd className="mt-1 break-words font-bold text-slate-800">{value}</dd></div>; }
 
-function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedule }) {
+function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedule, onCancel }) {
   return <div data-rental-lease-detail>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><p className="text-xs font-black uppercase tracking-wide text-sky-700">Selected lease</p><h3 className="mt-2 text-2xl font-black">{unit?.label || lease.unit_id}</h3></div>
-      <span className={`rounded-full px-3 py-1 text-xs font-black capitalize ${lease.status === "active" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{lease.status}</span>
+      <span className={`rounded-full px-3 py-1 text-xs font-black capitalize ${STATUS_BADGE_COLORS[lease.status] || "bg-amber-100 text-amber-800"}`}>{lease.status}</span>
     </div>
     <dl className="mt-5 grid gap-4 sm:grid-cols-2">
       <Detail label="Monthly rent" value={money.format(Number(lease.monthly_rent_cents) / 100)} />
@@ -116,7 +129,7 @@ function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedul
       <Detail label="Lease ID" value={lease.id} />
     </dl>
     {lease.status === "draft" && (schedule ? (
-      <div className="mt-5 flex items-center gap-4">
+      <div className="mt-5 flex flex-wrap items-center gap-4">
         <button type="button" disabled={working} onClick={() => onActivate(lease)} className="rounded-xl bg-emerald-700 px-5 py-2.5 font-black text-white disabled:opacity-50">{working ? "Activating…" : "Activate lease"}</button>
         <p className="text-xs text-slate-500">Only activate once the lease is actually signed and in effect.</p>
       </div>
@@ -130,5 +143,11 @@ function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedul
         <button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 font-bold text-white disabled:opacity-50 sm:col-span-2">{working ? "Saving…" : "Save rent schedule"}</button>
       </form>
     ))}
+    {lease.status === "draft" && (
+      <div className="mt-4 flex items-center gap-4 border-t border-slate-100 pt-4">
+        <button type="button" disabled={working} onClick={() => onCancel(lease)} className="rounded-lg border border-red-300 px-4 py-2 text-sm font-bold text-red-700 hover:border-red-400 disabled:opacity-50">Cancel this lease</button>
+        <p className="text-xs text-slate-500">Only cancel a genuine duplicate or one created in error — this is a real record change.</p>
+      </div>
+    )}
   </div>;
 }

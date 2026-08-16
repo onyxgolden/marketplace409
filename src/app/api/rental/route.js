@@ -136,6 +136,16 @@ export async function POST(request) {
           effectiveEndDate: input.effectiveEndDate ?? null, createdAt: input.createdAt || timestamp, updatedAt: timestamp });
         return NextResponse.json({ success: true, schedule: await application.saveSchedule(schedule, user.id) });
       }
+      case "cancel-lease": {
+        if (typeof body.leaseId !== "string" || body.leaseId.trim() === "") return badRequest("leaseId is required.");
+        const { data, error } = await authenticated.supabaseClient.from("rental_leases")
+          .update({ status: "cancelled", updated_at: timestamp })
+          .eq("owner_id", user.id).eq("id", body.leaseId.trim()).eq("status", "draft")
+          .select("id, status").maybeSingle();
+        if (error) throw error;
+        if (!data) return NextResponse.json({ error: "Only a draft lease can be cancelled." }, { status: 409 });
+        return NextResponse.json({ success: true, lease: data });
+      }
       case "generate-charge": {
         if (!body.scheduleId || !body.period) return badRequest("scheduleId and period are required.");
         const charge = await application.generateMonthlyCharge(body.scheduleId, body.period, user.id);

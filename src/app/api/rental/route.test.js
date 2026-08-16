@@ -92,6 +92,26 @@ describe("Rental Manager route", () => {
     expect(query.update).toHaveBeenCalledWith(expect.objectContaining({ email: "owner+tenant@example.com" }));
     expect(query.is).toHaveBeenCalledWith("auth_user_id", null);
   });
+  it("cancels only an owner-scoped draft lease", async () => {
+    const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", status: "cancelled" }, error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
+      supabaseClient: { from: vi.fn(() => query) } });
+    const response = await POST(request({ operation: "cancel-lease", leaseId: "lease_1" }));
+    expect(response.status).toBe(200);
+    expect(query.update).toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled" }));
+    expect(query.eq).toHaveBeenCalledWith("status", "draft");
+  });
+  it("refuses to cancel a lease that is not a draft", async () => {
+    const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: null, error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
+      supabaseClient: { from: vi.fn(() => query) } });
+    const response = await POST(request({ operation: "cancel-lease", leaseId: "lease_1" }));
+    expect(response.status).toBe(409);
+  });
   it("refuses a charge when its schedule is not active and effective", async () => {
     application.generateMonthlyCharge.mockResolvedValue(null);
     const response = await POST(request({ operation: "generate-charge", scheduleId: "schedule_1", period: "2026-08" }));
