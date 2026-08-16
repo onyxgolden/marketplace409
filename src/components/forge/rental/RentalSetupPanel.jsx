@@ -12,9 +12,20 @@ async function submit(operation, key, value) {
   return result;
 }
 
+export function tenantLabelForUnit(unit, leases, leaseMemberships, tenants) {
+  const activeLease = leases.find((lease) => lease.unit_id === unit.id && lease.status === "active");
+  if (!activeLease) return null;
+  const tenantIds = leaseMemberships.filter((membership) => membership.lease_id === activeLease.id).map((membership) => membership.tenant_id);
+  const names = tenantIds.map((id) => tenants.find((tenant) => tenant.id === id)?.display_name).filter(Boolean);
+  return names.length ? names.join(", ") : null;
+}
+
 export default function RentalSetupPanel({ initialUnits = [], onNavigate: navigate }) {
   const [message, setMessage] = useState("");
   const [units, setUnits] = useState(initialUnits);
+  const [leases, setLeases] = useState([]);
+  const [leaseMemberships, setLeaseMemberships] = useState([]);
+  const [tenants, setTenants] = useState([]);
   const [showCreate, setShowCreate] = useState(initialUnits.length === 0);
   const [selectedId, setSelectedId] = useState(initialUnits[0]?.id || null);
   const [working, setWorking] = useState(false);
@@ -24,13 +35,15 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
     const response = await fetch("/api/rental"); const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
     const loaded = result.units || []; setUnits(loaded); setSelectedId((current) => loaded.some((item) => item.id === current) ? current : loaded[0]?.id || null);
+    setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setTenants(result.tenants || []);
   }
   useEffect(() => {
     fetch("/api/rental").then(async (response) => {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
-      return result.units || [];
-    }).then((loadedUnits) => { setUnits(loadedUnits); setSelectedId(loadedUnits[0]?.id || null); setShowCreate(loadedUnits.length === 0); }).catch((error) => setMessage(error.message));
+      return result;
+    }).then((result) => { const loadedUnits = result.units || []; setUnits(loadedUnits); setSelectedId(loadedUnits[0]?.id || null); setShowCreate(loadedUnits.length === 0);
+      setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setTenants(result.tenants || []); }).catch((error) => setMessage(error.message));
   }, []);
   async function saveUnit(event) {
     event.preventDefault(); setWorking(true); setMessage("");
@@ -50,7 +63,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
       <div className="max-w-3xl"><p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Kent Avenue setup</p>
         <h2 className="mt-2 text-2xl font-black">Rental units</h2>
         <p className="mt-2 text-sm text-slate-600">Review saved units first. Create another unit only as a deliberate action.</p></div>
-      {units.length > 0 && <RentalRecordBrowser title="Rental units" records={units} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); }} getTitle={(unit) => unit.label} getSubtitle={(unit) => `${unit.property_id} · ${unit.status || "Status not set"}`} getThumbnail={(unit) => unit.photo_url}>
+      {units.length > 0 && <RentalRecordBrowser title="Rental units" records={units} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); }} getTitle={(unit) => unit.label} getSubtitle={(unit) => { const tenantLabel = tenantLabelForUnit(unit, leases, leaseMemberships, tenants); return <>{unit.property_id} · {unit.status || "Status not set"} · {tenantLabel || <span className="font-bold text-red-600">Vacant</span>}</>; }} getThumbnail={(unit) => unit.photo_url}>
         {(() => { const unit = units.find((item) => item.id === selectedId) || units[0]; const context = { recordType: "unit", recordId: unit?.id, propertyId: unit?.property_id }; return unit && <div data-rental-unit-detail><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700">Selected unit</p><h3 className="mt-2 text-2xl font-black">{unit.label}</h3></div><RentalRecordActions label="Property actions" actions={[{label:"Edit property details",onSelect:()=>setEditingId(unit.id)},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Work orders",onSelect:()=>onNavigate?.("maintenance",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)}]}/></div><div className="mt-4"><RentalPhotoUpload entityType="unit" entityId={unit.id} photoUrl={unit.photo_url} onUploaded={loadUnits} /></div>{editingId===unit.id?<UnitEditForm unit={unit} working={working} onCancel={()=>setEditingId(null)} onSave={saveUnit}/>:<dl className="mt-5 grid gap-4 sm:grid-cols-2"><Detail label="Property" value={unit.property_id} /><Detail label="Status" value={unit.status || "Not set"} /><Detail label="Bedrooms" value={unit.bedrooms ?? "Not recorded"} /><Detail label="Bathrooms" value={unit.bathrooms ?? "Not recorded"} /><Detail label="Square feet" value={unit.square_feet ?? "Not recorded"} /><Detail label="Notes" value={unit.notes || "No notes"} /></dl>}</div>; })()}
       </RentalRecordBrowser>}
       {units.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Add another rental unit</button>}
