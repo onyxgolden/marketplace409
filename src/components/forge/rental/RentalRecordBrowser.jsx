@@ -5,17 +5,17 @@ export default function RentalRecordBrowser({ title, records, selectedId, onSele
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white lg:sticky lg:top-6 lg:flex lg:max-h-[calc(100vh-3rem)] lg:flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3"><h3 className="font-black">{title}</h3><p className="text-xs text-slate-500">{records.length} record{records.length === 1 ? "" : "s"}</p></div>
       {records.length === 0 ? <p className="p-4 text-sm text-slate-500">{emptyMessage}</p> : columns ? <div className="lg:overflow-y-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="sticky top-0 bg-slate-50"><tr>{getThumbnail && <th className="w-10 px-4 py-2" aria-hidden="true" />}{columns.map((column) => <th key={column.header} className="px-2 py-2 text-xs font-black uppercase tracking-wide text-slate-500 first:pl-4">{column.header}</th>)}</tr></thead>
+        <table className="w-full table-fixed text-left text-sm">
+          <thead className="sticky top-0 bg-slate-50"><tr>{getThumbnail && <th className="w-16 px-4 py-2" aria-hidden="true" />}{columns.map((column) => <th key={column.header} className="px-2 py-2 text-xs font-black uppercase tracking-wide text-slate-500 first:pl-4">{column.header}</th>)}</tr></thead>
           <tbody className="divide-y divide-slate-200">{records.map((record) => {
             const active = record.id === selectedId;
             const thumbnail = getThumbnail?.(record);
             return <tr key={record.id} aria-current={active ? "true" : undefined} role="button" tabIndex={0}
               onClick={() => onSelect(record.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(record.id); } }}
               className={`cursor-pointer transition ${active ? "bg-sky-50 shadow-[inset_4px_0_0_#0369a1]" : "hover:bg-slate-50"}`}>
-              {getThumbnail && <td className="px-4 py-3">{thumbnail
-                ? <img src={thumbnail} alt="" className="h-10 w-10 rounded-lg object-cover" />
-                : <span className="block h-10 w-10 rounded-lg bg-slate-100" aria-hidden="true" />}</td>}
+              {getThumbnail && <td className="w-16 px-4 py-3">{thumbnail
+                ? <img src={thumbnail} alt="" className="h-12 w-12 rounded-lg object-cover" />
+                : <span className="block h-12 w-12 rounded-lg bg-slate-100" aria-hidden="true" />}</td>}
               {columns.map((column, index) => <td key={column.header} className={`px-2 py-3 align-top ${index === 0 && !getThumbnail ? "pl-4" : ""}`}>{column.render(record)}</td>)}
             </tr>;
           })}</tbody>
