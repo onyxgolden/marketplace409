@@ -56,7 +56,14 @@ function group(values) {
   return Object.freeze([...counts].map(([label, count]) => Object.freeze({ label, count })).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)));
 }
 
-export function buildRentecImportManifest({
+// Does the actual Rentec-to-FORGE matching. Returns the full result,
+// including the real candidate records (units/tenants/leases with real
+// field values, e.g. tenant emails/phones) and the canonical object the
+// checksum is derived from. NOT safe to send to a browser as-is — see
+// buildRentecImportManifest (public/preview-safe) and
+// resolveRentecImportCandidatesForCommit (server-only) below, which are
+// the only two things that should ever call this.
+function computeRentecImportCandidates({
   rentecProperties = [], rentecTenants = [], rentecLeases = [],
   forgeUnits = [], forgeTenants = [], forgeLeases = [], ownerInputs = {}, asOf = new Date().toISOString().slice(0, 10),
 } = {}) {
@@ -89,7 +96,7 @@ export function buildRentecImportManifest({
     else if (!archived(row) && matches.length === 0 && sourceId && label) {
       const id = stableId("unit", sourceId);
       unitResolution.set(sourceId, id);
-      units.push({ id, property_id: slug(address || label) || `rentec-${sourceId}`, label, status: "preparing" });
+      units.push({ id, property_id: slug(address || label) || `rentec-${sourceId}`, label, status: "preparing", source_system: "rentec", source_record_id: sourceId });
     } else if (!archived(row) && matches.length !== 1) blockers.push("Property identity requires review");
   }
 
@@ -108,7 +115,7 @@ export function buildRentecImportManifest({
       if (!displayName) { blockers.push("Active renter lacks a display identity"); continue; }
       const id = stableId("tenant", sourceId);
       tenantResolution.set(sourceId, id);
-      tenants.push({ id, display_name: displayName, email: normalizedEmail, phone: String(row.phone || row.mphone || "").trim() || null, status: "invited" });
+      tenants.push({ id, display_name: displayName, email: normalizedEmail, phone: String(row.phone || row.mphone || "").trim() || null, status: "invited", source_system: "rentec", source_record_id: sourceId });
     } else if (!archived(row)) blockers.push(normalizedEmail ? "Tenant identity requires review" : "Active renter has no email identity");
   }
 
@@ -133,6 +140,7 @@ export function buildRentecImportManifest({
       id: stableId("lease", sourceId), property_id: units.find((unit) => unit.id === unitId)?.property_id || forgeUnits.find((unit) => unit.id === unitId)?.property_id || null,
       unit_id: unitId, tenant_id: tenantId, status: "draft", start_date: startDate,
       end_date: endDate || null, monthly_rent_cents: rent, currency_code: "USD", rent_due_day: rentDueDay || null,
+      source_system: "rentec", source_record_id: sourceId,
     });
     if (!rentDueDay) blockers.push("Rent due day requires owner input");
   }
@@ -145,10 +153,12 @@ export function buildRentecImportManifest({
   };
   const leaseBlockers = blockers.filter((label) => label === "Rent due day requires owner input").length;
 
-  return Object.freeze({
-    mode: "preview_only",
-    canCommit: false,
+  return {
     checksum: digest(canonical),
+    canonical,
+    units: canonical.units,
+    tenants: canonical.tenants,
+    leases: canonical.leases,
     dependencyOrder: Object.freeze(["properties_and_units", "renters", "leases_and_memberships"]),
     fieldMappings: FIELD_MAPPINGS,
     readiness: Object.freeze({
@@ -159,10 +169,37 @@ export function buildRentecImportManifest({
     blockers: group(blockers),
     privateRecordCounts: Object.freeze({ units: units.length, tenants: tenants.length, leases: leases.length }),
     ownerExclusions: Object.freeze({ tenants: excludedTenants, leases: excludedLeases }),
+  };
+}
+
+// Public/preview-safe: identical return shape and behavior to before this
+// file was refactored. Never includes the real candidate records — only
+// counts, a checksum, and blockers. Safe to send to the browser.
+export function buildRentecImportManifest(evidence) {
+  const result = computeRentecImportCandidates(evidence);
+  return Object.freeze({
+    mode: "preview_only",
+    canCommit: false,
+    checksum: result.checksum,
+    dependencyOrder: result.dependencyOrder,
+    fieldMappings: result.fieldMappings,
+    readiness: result.readiness,
+    blockers: result.blockers,
+    privateRecordCounts: result.privateRecordCounts,
+    ownerExclusions: result.ownerExclusions,
     warnings: Object.freeze([
       "The checksum covers private server-side candidate records; those records are not returned to the browser.",
       "Imported leases remain draft and cannot activate billing, portals, or autopay.",
       "No manifest record was persisted or written to Rental Manager.",
     ]),
   });
+}
+
+// SERVER-ONLY. Returns the real candidate records (unit/tenant/lease rows
+// with real field values — names, emails, phones) so a commit step can
+// actually write them. Must never be imported by anything reachable from
+// a client component or returned directly in an API response body — only
+// a commit route should call this, and only to feed a database write.
+export function resolveRentecImportCandidatesForCommit(evidence) {
+  return computeRentecImportCandidates(evidence);
 }
