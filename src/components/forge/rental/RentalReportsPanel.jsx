@@ -74,15 +74,26 @@ export default function RentalReportsPanel() {
   const csvHref = `/api/rental/reports?${buildReportParams(reportKey, filters, { format: "csv" }).toString()}`;
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <p className="text-sm font-bold uppercase tracking-widest text-amber-700">
+      <p className="text-sm font-bold uppercase tracking-widest text-amber-700 print:hidden">
         Rental reporting
       </p>
-      <h2 className="mt-2 text-2xl font-black">Rent roll and tenant ledger</h2>
-      <p className="mt-2 text-slate-600">
+      <h2 className="mt-2 text-2xl font-black print:hidden">Rent roll and tenant ledger</h2>
+      <p className="mt-2 text-slate-600 print:hidden">
         See scheduled rent, collected payments, open balances, and delinquency
         as of today.
       </p>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="hidden print:block">
+        <h2 className="text-2xl font-black">
+          {REPORTS.find((item) => item.key === reportKey)?.label}
+        </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Generated {new Date().toLocaleString()}
+          {propertyId ? ` — ${propertyLabel(propertyId)}` : ""}
+          {asOfDate ? ` — as of ${asOfDate}` : ""}
+          {startDate || endDate ? ` — ${startDate || "…"} to ${endDate || "…"}` : ""}
+        </p>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2 print:hidden">
         {REPORTS.map((item) => (
           <button
             key={item.key || "rent-roll"}
@@ -104,18 +115,20 @@ export default function RentalReportsPanel() {
           </button>
         ))}
       </div>
-      <FilterBar
-        reportKey={reportKey}
-        propertyId={propertyId}
-        onPropertyChange={setPropertyId}
-        availableProperties={availableProperties}
-        asOfDate={asOfDate}
-        onAsOfDateChange={setAsOfDate}
-        startDate={startDate}
-        onStartDateChange={setStartDate}
-        endDate={endDate}
-        onEndDateChange={setEndDate}
-      />
+      <div className="print:hidden">
+        <FilterBar
+          reportKey={reportKey}
+          propertyId={propertyId}
+          onPropertyChange={setPropertyId}
+          availableProperties={availableProperties}
+          asOfDate={asOfDate}
+          onAsOfDateChange={setAsOfDate}
+          startDate={startDate}
+          onStartDateChange={setStartDate}
+          endDate={endDate}
+          onEndDateChange={setEndDate}
+        />
+      </div>
       {error ? (
         <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-red-800">
           {error}
@@ -124,7 +137,14 @@ export default function RentalReportsPanel() {
         <p className="mt-4 text-slate-500">Loading report…</p>
       ) : (
         <>
-          <div className="mt-5 flex flex-wrap gap-3">
+          <div className="mt-5 flex flex-wrap gap-3 print:hidden">
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="rounded-lg border border-slate-300 px-5 py-3 font-bold text-slate-700 hover:border-slate-400"
+            >
+              Print / Save as PDF
+            </button>
             <a
               href={csvHref}
               className="rounded-lg bg-slate-950 px-5 py-3 font-bold text-white"
@@ -141,7 +161,7 @@ export default function RentalReportsPanel() {
             )}
           </div>
           {!reportKey && (
-            <p className="mt-3 text-sm text-slate-600">Review package only—not a filed 1099 or an automatic eligibility decision.</p>
+            <p className="mt-3 text-sm text-slate-600 print:hidden">Review package only—not a filed 1099 or an automatic eligibility decision.</p>
           )}
           {reportKey === "" && <RentRollView report={report} />}
           {reportKey === "delinquent-tenants" && <DelinquentTenantsView report={report} />}
