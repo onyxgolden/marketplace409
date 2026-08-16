@@ -5,6 +5,7 @@ import { previewRentecLegacyReconciliation } from "@/domains/rentec-rental-migra
 import { previewRentecOperationalMigration } from "@/domains/rentec-rental-migration/rentec-operational-migration.preview";
 import { buildRentecImportManifest } from "@/domains/rentec-rental-migration/rentec-import-manifest.preview";
 import { buildRentecOwnerInputRequirements, sanitizeRentecOwnerInputs } from "@/domains/rentec-rental-migration/rentec-owner-input-resolution.preview";
+import { scopeRentecEvidenceToProperty } from "@/domains/rentec-rental-migration/rentec-single-property-scope";
 
 const fingerprintPattern = /^[a-f0-9]{16}$/;
 
@@ -66,8 +67,12 @@ export async function POST(request) {
       ]);
       const error = unitsResult.error || tenantsResult.error || leasesResult.error;
       if (error) throw error;
+      const propertyId = String(body.propertyId || "").trim();
+      const scoped = propertyId
+        ? scopeRentecEvidenceToProperty({ rentecProperties: rentec.properties, rentecTenants: rentec.tenants, rentecLeases: rentec.leases, propertyId })
+        : { rentecProperties: rentec.properties, rentecTenants: rentec.tenants, rentecLeases: rentec.leases };
       const evidence = {
-        rentecProperties: rentec.properties, rentecTenants: rentec.tenants, rentecLeases: rentec.leases,
+        ...scoped,
         forgeUnits: unitsResult.data || [], forgeTenants: tenantsResult.data || [], forgeLeases: leasesResult.data || [], ownerInputs,
       };
       return NextResponse.json({ success: true, data: {
