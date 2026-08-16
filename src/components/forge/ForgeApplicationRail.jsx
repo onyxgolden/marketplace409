@@ -171,7 +171,7 @@ export default function ForgeApplicationRail({
   return (
     <div
       data-forge-route-shell
-      className="min-h-screen bg-slate-950 text-slate-950 lg:flex"
+      className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-950 lg:flex"
     >
       <aside
         data-forge-application-rail

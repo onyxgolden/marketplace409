@@ -132,7 +132,7 @@ export function WorkspaceRightRail() {
         type="button"
         aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         onClick={toggleTheme}
-        className="mt-auto flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/5 hover:border-white/25 hover:bg-white/10"
+        className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/5 hover:border-white/25 hover:bg-white/10"
       >
         {theme === "dark" ? (
           <Sun aria-hidden="true" className="h-5 w-5" />
@@ -150,7 +150,7 @@ export default function WorkspaceShell({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <div data-workspace-shell className="min-h-screen bg-slate-950 text-slate-950 lg:flex">
+    <div data-workspace-shell className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-950 lg:flex">
       <aside
         data-workspace-app-switcher
         data-expanded={expanded ? "true" : "false"}

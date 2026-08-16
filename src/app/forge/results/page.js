@@ -6,7 +6,7 @@ export default function Page() {
   });
 
   return (
-    <main className="min-h-screen bg-slate-950 p-4 text-slate-950 lg:p-8">
+    <main className="min-h-screen bg-slate-100 dark:bg-slate-950 p-4 text-slate-950 lg:p-8">
       <div className="mx-auto max-w-[1600px]">
         <section className="rounded-3xl border border-slate-200 bg-white p-6 text-slate-950 shadow-sm">
           <h1 className="text-3xl font-black">Transaction Review Results</h1>

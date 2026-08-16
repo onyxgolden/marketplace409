@@ -1,5 +1,5 @@
 export const forgeTheme = {
-  page: "min-h-screen bg-slate-950 text-slate-950",
+  page: "min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-950",
   shell: "mx-auto flex max-w-[1600px]",
   main: "w-full space-y-6 p-4 lg:p-8",
 

@@ -556,7 +556,7 @@ export default function ProgrammerDashboard({
   return (
     <main
       data-programmer-dashboard
-      className="min-h-screen bg-slate-950 px-4 py-6 text-slate-950 lg:px-8"
+      className="min-h-screen bg-slate-100 dark:bg-slate-950 px-4 py-6 text-slate-950 lg:px-8"
     >
       <div className="mx-auto max-w-7xl">
         <header className="rounded-2xl border border-slate-200 bg-white p-5 text-slate-950 shadow-sm">

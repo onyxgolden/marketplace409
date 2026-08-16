@@ -52,13 +52,15 @@ export default async function HubPage() {
   const stats = await loadWorkspaceStats();
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-slate-100 px-6 py-16 text-slate-950">
+    <main className="flex min-h-screen flex-col items-center justify-center bg-slate-100 px-6 py-16 text-slate-950 dark:bg-slate-950">
       <div className="mb-12 text-center">
         <div className="text-sm font-black uppercase tracking-[0.3em] text-amber-500">
           409 Marketplace
         </div>
-        <h1 className="mt-2 text-4xl font-black tracking-tight">Choose a workspace</h1>
-        <p className="mt-3 text-slate-600">Pick where you want to work.</p>
+        <h1 className="mt-2 text-4xl font-black tracking-tight dark:text-white">
+          Choose a workspace
+        </h1>
+        <p className="mt-3 text-slate-600 dark:text-slate-300">Pick where you want to work.</p>
       </div>
 
       <div className="grid w-full max-w-4xl gap-5 sm:grid-cols-2">
