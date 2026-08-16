@@ -4,21 +4,34 @@ const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
 });
+const REPORTS = [
+  { key: "", label: "Rent roll" },
+  { key: "delinquent-tenants", label: "Delinquent tenants" },
+  { key: "lease-expiration", label: "Lease expiration" },
+  { key: "vacant-units", label: "Vacant units" },
+  { key: "tenant-contacts", label: "Tenant contact list" },
+  { key: "upcoming-charges", label: "Upcoming charges due" },
+];
 export default function RentalReportsPanel() {
+  const [reportKey, setReportKey] = useState("");
   const [report, setReport] = useState(null);
   const [error, setError] = useState("");
   const load = useCallback(
-    () =>
-      fetch("/api/rental/reports").then(async (response) => {
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error);
-        setReport(body.report);
-      }),
+    (key) =>
+      fetch(`/api/rental/reports${key ? `?report=${key}` : ""}`).then(
+        async (response) => {
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error);
+          setReport(body.report);
+        },
+      ),
     [],
   );
   useEffect(() => {
-    load().catch((reason) => setError(reason.message));
-  }, [load]);
+    setReport(null);
+    setError("");
+    load(reportKey).catch((reason) => setError(reason.message));
+  }, [load, reportKey]);
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <p className="text-sm font-bold uppercase tracking-widest text-amber-700">
@@ -29,6 +42,22 @@ export default function RentalReportsPanel() {
         See scheduled rent, collected payments, open balances, and delinquency
         as of today.
       </p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {REPORTS.map((item) => (
+          <button
+            key={item.key || "rent-roll"}
+            type="button"
+            onClick={() => setReportKey(item.key)}
+            className={`rounded-lg px-4 py-2 text-sm font-bold ${
+              reportKey === item.key
+                ? "bg-slate-950 text-white"
+                : "border border-slate-300 text-slate-700 hover:border-slate-400"
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
       {error ? (
         <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-red-800">
           {error}
@@ -37,82 +66,31 @@ export default function RentalReportsPanel() {
         <p className="mt-4 text-slate-500">Loading report…</p>
       ) : (
         <>
-          <div className="mt-6 grid gap-3 md:grid-cols-3">
-            <Kpi
-              label="Monthly scheduled"
-              value={money.format(report.summary.monthlyScheduledCents / 100)}
-            />
-            <Kpi
-              label="Collected"
-              value={money.format(report.summary.collectedCents / 100)}
-            />
-            <Kpi
-              label="Open balance"
-              value={money.format(report.summary.openBalanceCents / 100)}
-              attention={report.summary.openBalanceCents > 0}
-            />
-            <Kpi
-              label="Overdue"
-              value={money.format(report.summary.overdueBalanceCents / 100)}
-              attention={report.summary.overdueBalanceCents > 0}
-            />
-            <Kpi label="Active leases" value={report.summary.activeLeases} />
-            <Kpi label="Occupied units" value={report.summary.occupiedUnits} />
-          </div>
           <div className="mt-5 flex flex-wrap gap-3">
-            <a href="/api/rental/reports?format=csv" className="rounded-lg bg-slate-950 px-5 py-3 font-bold text-white">Download rent roll CSV</a>
-            <a href={`/api/rental/reports?format=tax-csv&taxYear=${new Date().getFullYear()}`} className="rounded-lg border px-5 py-3 font-bold">Download accountant/contractor tax CSV</a>
+            <a
+              href={`/api/rental/reports?format=csv${reportKey ? `&report=${reportKey}` : ""}`}
+              className="rounded-lg bg-slate-950 px-5 py-3 font-bold text-white"
+            >
+              Download CSV
+            </a>
+            {!reportKey && (
+              <a
+                href={`/api/rental/reports?format=tax-csv&taxYear=${new Date().getFullYear()}`}
+                className="rounded-lg border px-5 py-3 font-bold"
+              >
+                Download accountant/contractor tax CSV
+              </a>
+            )}
           </div>
-          <p className="mt-3 text-sm text-slate-600">Review package only—not a filed 1099 or an automatic eligibility decision.</p>
-          <div className="mt-6 overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b">
-                  <th className="p-3">Unit / tenant</th>
-                  <th className="p-3">Lease</th>
-                  <th className="p-3">Monthly rent</th>
-                  <th className="p-3">Open</th>
-                  <th className="p-3">Overdue</th>
-                  <th className="p-3">Collected</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.rentRoll.map((row) => (
-                  <tr key={row.leaseId} className="border-b">
-                    <td className="p-3">
-                      <strong>{row.unitLabel}</strong>
-                      <br />
-                      <span className="text-slate-500">
-                        {row.tenantNames.join(", ") || "No tenant"}
-                      </span>
-                    </td>
-                    <td className="p-3 capitalize">
-                      {row.status}
-                      <br />
-                      <span className="text-xs text-slate-500">
-                        {row.startDate}
-                        {row.endDate ? ` — ${row.endDate}` : " — current"}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      {money.format(row.monthlyRentCents / 100)}
-                    </td>
-                    <td className="p-3">
-                      {money.format(row.balanceCents / 100)}
-                    </td>
-                    <td
-                      className={`p-3 font-bold ${row.overdueCents > 0 ? "text-red-700" : ""}`}
-                    >
-                      {money.format(row.overdueCents / 100)}
-                    </td>
-                    <td className="p-3">
-                      {money.format(row.collectedCents / 100)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {!reportKey && (
+            <p className="mt-3 text-sm text-slate-600">Review package only—not a filed 1099 or an automatic eligibility decision.</p>
+          )}
+          {reportKey === "" && <RentRollView report={report} />}
+          {reportKey === "delinquent-tenants" && <DelinquentTenantsView report={report} />}
+          {reportKey === "lease-expiration" && <LeaseExpirationView report={report} />}
+          {reportKey === "vacant-units" && <VacantUnitsView report={report} />}
+          {reportKey === "tenant-contacts" && <TenantContactsView report={report} />}
+          {reportKey === "upcoming-charges" && <UpcomingChargesView report={report} />}
         </>
       )}
     </section>
@@ -126,5 +104,293 @@ function Kpi({ label, value, attention = false }) {
       <p className="text-xs font-bold uppercase tracking-wide">{label}</p>
       <p className="mt-1 text-2xl font-black">{value}</p>
     </div>
+  );
+}
+function RentRollView({ report }) {
+  return (
+    <>
+      <div className="mt-6 grid gap-3 md:grid-cols-3">
+        <Kpi
+          label="Monthly scheduled"
+          value={money.format(report.summary.monthlyScheduledCents / 100)}
+        />
+        <Kpi
+          label="Collected"
+          value={money.format(report.summary.collectedCents / 100)}
+        />
+        <Kpi
+          label="Open balance"
+          value={money.format(report.summary.openBalanceCents / 100)}
+          attention={report.summary.openBalanceCents > 0}
+        />
+        <Kpi
+          label="Overdue"
+          value={money.format(report.summary.overdueBalanceCents / 100)}
+          attention={report.summary.overdueBalanceCents > 0}
+        />
+        <Kpi label="Active leases" value={report.summary.activeLeases} />
+        <Kpi label="Occupied units" value={report.summary.occupiedUnits} />
+      </div>
+      <div className="mt-6 overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b">
+              <th className="p-3">Unit / tenant</th>
+              <th className="p-3">Lease</th>
+              <th className="p-3">Monthly rent</th>
+              <th className="p-3">Open</th>
+              <th className="p-3">Overdue</th>
+              <th className="p-3">Collected</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.rentRoll.map((row) => (
+              <tr key={row.leaseId} className="border-b">
+                <td className="p-3">
+                  <strong>{row.unitLabel}</strong>
+                  <br />
+                  <span className="text-slate-500">
+                    {row.tenantNames.join(", ") || "No tenant"}
+                  </span>
+                </td>
+                <td className="p-3 capitalize">
+                  {row.status}
+                  <br />
+                  <span className="text-xs text-slate-500">
+                    {row.startDate}
+                    {row.endDate ? ` — ${row.endDate}` : " — current"}
+                  </span>
+                </td>
+                <td className="p-3">
+                  {money.format(row.monthlyRentCents / 100)}
+                </td>
+                <td className="p-3">
+                  {money.format(row.balanceCents / 100)}
+                </td>
+                <td
+                  className={`p-3 font-bold ${row.overdueCents > 0 ? "text-red-700" : ""}`}
+                >
+                  {money.format(row.overdueCents / 100)}
+                </td>
+                <td className="p-3">
+                  {money.format(row.collectedCents / 100)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+function DelinquentTenantsView({ report }) {
+  return (
+    <>
+      <div className="mt-6 grid gap-3 md:grid-cols-2">
+        <Kpi label="Delinquent leases" value={report.summary.delinquentLeaseCount} />
+        <Kpi
+          label="Total overdue"
+          value={money.format(report.summary.totalOverdueCents / 100)}
+          attention={report.summary.totalOverdueCents > 0}
+        />
+      </div>
+      <div className="mt-6 overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b">
+              <th className="p-3">Unit / tenant</th>
+              <th className="p-3">Contact</th>
+              <th className="p-3">Overdue</th>
+              <th className="p-3">Overdue charges</th>
+              <th className="p-3">Oldest due date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.rows.length ? (
+              report.rows.map((row) => (
+                <tr key={row.leaseId} className="border-b">
+                  <td className="p-3">
+                    <strong>{row.unitLabel}</strong>
+                    <br />
+                    <span className="text-slate-500">{row.tenantNames.join(", ") || "No tenant"}</span>
+                  </td>
+                  <td className="p-3 text-slate-500">
+                    {row.tenantEmails.join(", ")}
+                    <br />
+                    {row.tenantPhones.filter(Boolean).join(", ")}
+                  </td>
+                  <td className="p-3 font-bold text-red-700">{money.format(row.overdueCents / 100)}</td>
+                  <td className="p-3">{row.overdueChargeCount}</td>
+                  <td className="p-3">{row.oldestDueDate}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="p-3 text-slate-500" colSpan={5}>No delinquent tenants.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+function LeaseExpirationView({ report }) {
+  return (
+    <div className="mt-6 overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="border-b">
+            <th className="p-3">Unit / tenant</th>
+            <th className="p-3">End date</th>
+            <th className="p-3">Days until expiration</th>
+            <th className="p-3">Monthly rent</th>
+          </tr>
+        </thead>
+        <tbody>
+          {report.rows.length ? (
+            report.rows.map((row) => (
+              <tr key={row.leaseId} className="border-b">
+                <td className="p-3">
+                  <strong>{row.unitLabel}</strong>
+                  <br />
+                  <span className="text-slate-500">{row.tenantNames.join(", ") || "No tenant"}</span>
+                </td>
+                <td className="p-3">{row.endDate}</td>
+                <td className={`p-3 font-bold ${row.daysUntilExpiration < 0 ? "text-red-700" : ""}`}>
+                  {row.daysUntilExpiration}
+                </td>
+                <td className="p-3">{money.format(row.monthlyRentCents / 100)}</td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td className="p-3 text-slate-500" colSpan={4}>No leases expiring in this window.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+function VacantUnitsView({ report }) {
+  return (
+    <>
+      <div className="mt-6 grid gap-3 md:grid-cols-2">
+        <Kpi label="Vacant units" value={report.summary.vacantUnitCount} />
+        <Kpi label="Total units" value={report.summary.totalUnitCount} />
+      </div>
+      <div className="mt-6 overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b">
+              <th className="p-3">Unit</th>
+              <th className="p-3">Status</th>
+              <th className="p-3">Beds / baths / sqft</th>
+              <th className="p-3">Available since</th>
+              <th className="p-3">Days vacant</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.rows.length ? (
+              report.rows.map((row) => (
+                <tr key={row.unitId} className="border-b">
+                  <td className="p-3">
+                    <strong>{row.unitLabel}</strong>
+                  </td>
+                  <td className="p-3 capitalize">{row.status}</td>
+                  <td className="p-3">
+                    {row.bedrooms ?? "—"} / {row.bathrooms ?? "—"} / {row.squareFeet ?? "—"}
+                  </td>
+                  <td className="p-3">{row.availableAt || "—"}</td>
+                  <td className="p-3 font-bold">{row.daysVacant ?? "—"}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="p-3 text-slate-500" colSpan={5}>No vacant units.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+function TenantContactsView({ report }) {
+  return (
+    <div className="mt-6 overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="border-b">
+            <th className="p-3">Tenant</th>
+            <th className="p-3">Contact</th>
+            <th className="p-3">Status</th>
+            <th className="p-3">Current unit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {report.rows.map((row) => (
+            <tr key={row.tenantId} className="border-b">
+              <td className="p-3">
+                <strong>{row.displayName}</strong>
+              </td>
+              <td className="p-3 text-slate-500">
+                {row.email}
+                {row.phone ? <><br />{row.phone}</> : null}
+              </td>
+              <td className="p-3 capitalize">{row.status}</td>
+              <td className="p-3">
+                {row.unitLabel || "—"}
+                {row.unitLabel ? <br /> : null}
+                <span className="text-xs text-slate-500">{row.propertyId}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+function UpcomingChargesView({ report }) {
+  return (
+    <>
+      <div className="mt-6 grid gap-3 md:grid-cols-2">
+        <Kpi label="Upcoming charges" value={report.summary.upcomingCount} />
+        <Kpi label="Total due" value={money.format(report.summary.totalDueCents / 100)} />
+      </div>
+      <div className="mt-6 overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b">
+              <th className="p-3">Unit / tenant</th>
+              <th className="p-3">Due date</th>
+              <th className="p-3">Amount due</th>
+              <th className="p-3">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.rows.length ? (
+              report.rows.map((row) => (
+                <tr key={row.chargeId} className="border-b">
+                  <td className="p-3">
+                    <strong>{row.unitLabel}</strong>
+                    <br />
+                    <span className="text-slate-500">{row.tenantNames.join(", ") || "No tenant"}</span>
+                  </td>
+                  <td className="p-3">{row.dueDate}</td>
+                  <td className="p-3">{money.format(row.remainingCents / 100)}</td>
+                  <td className="p-3 capitalize">{row.status}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="p-3 text-slate-500" colSpan={4}>No charges due in this window.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
