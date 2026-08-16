@@ -13,14 +13,14 @@ export default function ForgeExecutiveHero({ riskSummary }) {
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-300 bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-slate-500">
+        <div className="rounded-2xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 p-4">
+          <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
             Overall Risk
           </div>
-          <div className="mt-1 text-3xl font-black uppercase text-amber-600">
+          <div className="mt-1 text-3xl font-black uppercase text-amber-600 dark:text-amber-400">
             {riskSummary.severity}
           </div>
-          <div className="text-sm text-slate-600">
+          <div className="text-sm text-slate-600 dark:text-slate-300">
             Score {riskSummary.score} · {riskSummary.findingCount} findings
           </div>
         </div>

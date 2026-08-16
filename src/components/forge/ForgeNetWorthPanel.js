@@ -5,7 +5,7 @@ export default function ForgeNetWorthPanel({
   formatCurrency,
 }) {
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white p-6">
+    <section className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-950 dark:text-white">
       <h2 className="text-2xl font-black">Net Worth Snapshot</h2>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         <ForgeDashboardCard

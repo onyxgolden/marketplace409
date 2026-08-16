@@ -24,10 +24,10 @@ export default function ForgeQuickActions({ setView, variant = "default" }) {
   return (
     <section
       className={
-        embedded ? "" : "rounded-3xl border border-slate-200 bg-white p-6"
+        embedded ? "" : "rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6"
       }
     >
-      <div className="text-xs font-black uppercase tracking-wide text-slate-500">
+      <div className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
         Quick Actions
       </div>
 
@@ -38,10 +38,10 @@ export default function ForgeQuickActions({ setView, variant = "default" }) {
               key={action.label}
               type="button"
               onClick={() => setView("audit")}
-              className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-slate-400 hover:bg-white"
+              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 text-left transition hover:border-slate-400 dark:hover:border-slate-500 hover:bg-white dark:hover:bg-slate-900"
             >
-              <div className="font-black text-slate-950">{action.label}</div>
-              <div className="mt-1 text-sm leading-6 text-slate-600">
+              <div className="font-black text-slate-950 dark:text-white">{action.label}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400">
                 {action.detail}
               </div>
             </button>
@@ -49,10 +49,10 @@ export default function ForgeQuickActions({ setView, variant = "default" }) {
             <Link
               key={action.label}
               href={action.href}
-              className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-slate-400 hover:bg-white"
+              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 text-left transition hover:border-slate-400 dark:hover:border-slate-500 hover:bg-white dark:hover:bg-slate-900"
             >
-              <div className="font-black text-slate-950">{action.label}</div>
-              <div className="mt-1 text-sm leading-6 text-slate-600">
+              <div className="font-black text-slate-950 dark:text-white">{action.label}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400">
                 {action.detail}
               </div>
             </Link>

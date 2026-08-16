@@ -4,7 +4,7 @@ export default function ForgeDashboardCard({ label, value, detail }) {
   return (
     <div className={forgeTheme.cardCompact}>
       <div className={forgeTheme.labelSmall}>{label}</div>
-      <div className="mt-3 text-3xl font-black text-slate-950">{value}</div>
+      <div className="mt-3 text-3xl font-black text-slate-950 dark:text-white">{value}</div>
       {detail && <div className={`mt-2 ${forgeTheme.textSmall}`}>{detail}</div>}
     </div>
   );
