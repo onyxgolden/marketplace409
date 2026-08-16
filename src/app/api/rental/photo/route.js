@@ -51,3 +51,37 @@ export async function POST(request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to upload the photo." }, { status: 500 });
   }
 }
+
+export async function DELETE(request) {
+  try {
+    const authenticated = await createAuthenticatedForgeApplication();
+    if (authenticated.response) return authenticated.response;
+
+    const body = await request.json();
+    const entityType = String(body.entityType || "");
+    const entityId = String(body.entityId || "").trim();
+    const table = ENTITY_TABLES[entityType];
+
+    if (!table) return NextResponse.json({ error: "entityType must be unit or tenant." }, { status: 400 });
+    if (!entityId) return NextResponse.json({ error: "entityId is required." }, { status: 400 });
+
+    const { data: entity, error: entityError } = await authenticated.supabaseClient
+      .from(table).select("photo_bucket, photo_object_path").eq("owner_id", authenticated.user.id).eq("id", entityId).maybeSingle();
+    if (entityError) throw entityError;
+    if (!entity) return NextResponse.json({ error: `${entityType === "unit" ? "Unit" : "Tenant"} was not found.` }, { status: 404 });
+    if (!entity.photo_object_path) return NextResponse.json({ success: true });
+
+    const updated = await authenticated.supabaseClient.from(table)
+      .update({ photo_bucket: null, photo_object_path: null, updated_at: new Date().toISOString() })
+      .eq("owner_id", authenticated.user.id).eq("id", entityId).select("id").maybeSingle();
+    if (updated.error) throw updated.error;
+
+    const removal = await authenticated.supabaseClient.storage.from(entity.photo_bucket).remove([entity.photo_object_path]);
+    if (removal.error) console.error("Rental photo storage cleanup error", removal.error);
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Rental photo removal error", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to remove the photo." }, { status: 500 });
+  }
+}

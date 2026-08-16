@@ -5,7 +5,7 @@ const upload = vi.fn();
 const remove = vi.fn();
 const authenticated = { user: { id: "owner_1" }, supabaseClient: { from, storage: { from: vi.fn(() => ({ createSignedUrl, upload, remove })) } } };
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication", () => ({ createAuthenticatedForgeApplication: vi.fn(async () => authenticated) }));
-import { POST } from "./route.js";
+import { DELETE, POST } from "./route.js";
 
 const chain = (result) => {
   const value = { select: vi.fn(), eq: vi.fn(), update: vi.fn(), maybeSingle: vi.fn() };
@@ -83,5 +83,51 @@ describe("rental photo upload route", () => {
     const response = await POST(photoRequest());
     expect(response.status).toBe(500);
     expect(remove).toHaveBeenCalled();
+  });
+});
+
+function deleteRequest(body) {
+  return new Request("https://example.test/api/rental/photo", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+}
+
+describe("rental photo removal route", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("clears the photo columns and removes the storage object", async () => {
+    from.mockReturnValue(chain({ data: { photo_bucket: "rental-photos", photo_object_path: "owner_1/units/unit_1/x.jpg" }, error: null }));
+    remove.mockResolvedValue({ data: {}, error: null });
+
+    const response = await DELETE(deleteRequest({ entityType: "unit", entityId: "unit_1" }));
+    expect(response.status).toBe(200);
+    const [updateChainCall] = from.mock.results;
+    expect(updateChainCall.value.update).toHaveBeenCalledWith(expect.objectContaining({ photo_bucket: null, photo_object_path: null }));
+    expect(remove).toHaveBeenCalledWith(["owner_1/units/unit_1/x.jpg"]);
+  });
+
+  it("rejects an unsupported entity type", async () => {
+    const response = await DELETE(deleteRequest({ entityType: "property", entityId: "unit_1" }));
+    expect(response.status).toBe(400);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("404s when the unit or tenant does not belong to the owner", async () => {
+    from.mockReturnValue(chain({ data: null, error: null }));
+    const response = await DELETE(deleteRequest({ entityType: "unit", entityId: "unit_1" }));
+    expect(response.status).toBe(404);
+  });
+
+  it("is a no-op success when there is no photo to remove", async () => {
+    from.mockReturnValue(chain({ data: { photo_bucket: null, photo_object_path: null }, error: null }));
+    const response = await DELETE(deleteRequest({ entityType: "unit", entityId: "unit_1" }));
+    expect(response.status).toBe(200);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("still succeeds if storage cleanup fails after the row is cleared", async () => {
+    from.mockReturnValue(chain({ data: { photo_bucket: "rental-photos", photo_object_path: "owner_1/units/unit_1/x.jpg" }, error: null }));
+    remove.mockResolvedValue({ data: null, error: new Error("storage cleanup failed") });
+
+    const response = await DELETE(deleteRequest({ entityType: "unit", entityId: "unit_1" }));
+    expect(response.status).toBe(200);
   });
 });
