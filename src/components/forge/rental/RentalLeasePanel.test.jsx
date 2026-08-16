@@ -20,4 +20,12 @@ describe("RentalLeasePanel", () => {
     const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={activeSetup} loadOnMount={false} />);
     expect(markup).not.toContain("Activate lease");
   });
+  it("shows a rent schedule setup form instead of Activate lease when the lease has no schedule yet", () => {
+    const noScheduleSetup = { ...draftSetup, schedules: [] };
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={noScheduleSetup} loadOnMount={false} />);
+    expect(markup).not.toContain("Activate lease");
+    expect(markup).toContain("No rent schedule yet");
+    expect(markup).toContain("Save rent schedule");
+    expect(markup).toContain('value="1300.00"');
+  });
 });
