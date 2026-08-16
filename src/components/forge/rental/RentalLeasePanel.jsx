@@ -69,7 +69,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
   return <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-rental-lease-setup>
     <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Lease setup</p>
     <h2 className="mt-2 text-2xl font-black">Leases and rent schedules</h2>
-    <p className="mt-2 text-sm text-slate-600">Review existing leases first. New schedules remain draft until the signed lease is ready.</p>
+    <p className="mt-2 text-sm text-slate-600">Review existing leases first. New schedules remain draft until the signed lease is ready. If a tenant is already renting but has no lease on file (their original term expired and was never re-signed, or the record didn't import), add one below and leave the end date blank for an ongoing month-to-month tenancy.</p>
     {(setup.leases || []).length > 0 && <RentalRecordBrowser title="Leases" records={setup.leases} selectedId={selectedId} onSelect={setSelectedId}
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
       getSubtitle={(lease) => `${lease.status} · ${money.format(Number(lease.monthly_rent_cents) / 100)} monthly`}>
@@ -78,19 +78,19 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950">
       Save at least one rental unit and tenant before creating a lease.</p>}
-    {(setup.leases || []).length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Create future or replacement lease</button>}
+    {(setup.leases || []).length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Add a lease for an existing tenant</button>}
     {showCreate && <form onSubmit={save} className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {(setup.leases || []).length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 md:col-span-2 xl:col-span-3"><p className="text-sm font-bold text-amber-950">An existing lease is already recorded. Continue only for a future or replacement lease.</p><button type="button" onClick={() => setShowCreate(false)} className="rounded-lg border border-amber-500 bg-white px-3 py-2 text-sm font-black text-amber-950">Cancel setup</button></div>}
+      {(setup.leases || []).length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 md:col-span-2 xl:col-span-3"><p className="text-sm font-bold text-amber-950">Other leases already exist. This adds a new one — for a future/replacement term, or to attach a currently-renting tenant who has no lease on file yet.</p><button type="button" onClick={() => setShowCreate(false)} className="rounded-lg border border-amber-500 bg-white px-3 py-2 text-sm font-black text-amber-950">Cancel setup</button></div>}
       <label className="text-sm font-bold">Property ID<input name="propertyId" defaultValue={contextualPropertyId} required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
       <label className="text-sm font-bold">Rental unit<select name="unitId" required defaultValue={setup.units.length === 1 ? setup.units[0].id : ""} className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3">
         <option value="" disabled>Select a saved unit</option>{setup.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label} — {unit.property_id}</option>)}</select></label>
       <label className="text-sm font-bold">Tenant<select name="tenantId" required defaultValue={setup.tenants.length === 1 ? setup.tenants[0].id : ""} className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3">
         <option value="" disabled>Select a saved tenant</option>{setup.tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.display_name} — {tenant.email}</option>)}</select></label>
       <label className="text-sm font-bold">Start date<input name="startDate" type="date" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
-      <label className="text-sm font-bold">End date<input name="endDate" type="date" className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
+      <label className="text-sm font-bold">End date<input name="endDate" type="date" className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /><span className="mt-1 block text-xs font-normal text-slate-500">Leave blank for an ongoing month-to-month tenancy.</span></label>
       <label className="text-sm font-bold">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
       <label className="text-sm font-bold">Due day<input name="dueDay" type="number" min="1" max="28" defaultValue="1" required className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
-      <label className="text-sm font-bold xl:col-span-2">Notes<input name="notes" className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
+      <label className="text-sm font-bold xl:col-span-2">Notes<input name="notes" placeholder="e.g. Month-to-month after original 1-year term expired" className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
       <div className="md:col-span-2 xl:col-span-3 flex items-center gap-4"><button disabled={working || setup.units.length === 0 || setup.tenants.length === 0} className="rounded-xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-50">{working ? "Saving…" : "Save draft lease and schedule"}</button>
         {message && <p role="status" className="text-sm font-bold text-slate-700">{message}</p>}</div>
     </form>}
