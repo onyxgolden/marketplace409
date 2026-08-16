@@ -51,6 +51,27 @@ describe("Rental Manager route", () => {
       depositTransactions: [{ id: "deposit_tx_1", deposit_id: "deposit_1" }], inspections: [{ id: "inspection_1", status: "draft" }],
       inspectionItems: [{ id: "item_1", inspection_id: "inspection_1" }], inspectionAcknowledgements: [],leases:[{id:"lease_1",status:"active"}],leaseMemberships:[{lease_id:"lease_1",tenant_id:"tenant_1"}],leaseChanges:[{id:"change_1",status:"draft"}],lateFeeRules:[{id:"rule_1",status:"active"}],lateFeeAssessments:[],contractors:[{id:"contractor_1",business_name:"Reliable Plumbing"}],workOrders:[{id:"work_1",request_id:"request_1"}],workEvents:[{id:"event_1",work_order_id:"work_1"}],leasePreparations:[{id:"prep_1",lease_id:"lease_1",current_version:1}],leasePreparationVersions:[{preparation_id:"prep_1",version_number:1}],autopayEnrollments:[{id:"autopay_1",status:"setup_required"}],insurancePolicies:[{id:"policy_1",status:"pending_verification"}],animals:[{id:"animal_1",classification:"pet",approval_status:"requested"}],supportCases:[{id:"case_1",case_type:"failed_payment",status:"open"}] });
   });
+  it("attaches signed photo URLs to units and tenants that have one, and null otherwise", async () => {
+    const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data, error: null }) });
+    const tables = { rent_charges: result([]), rental_units: result([{ id: "unit_1", photo_bucket: "rental-photos", photo_object_path: "owner_1/units/unit_1/x.jpg" }]),
+      rental_tenants: result([{ id: "tenant_1", photo_bucket: null, photo_object_path: null }]), rent_schedules: result([]),
+      rental_maintenance_requests: result([]), rental_notification_outbox: result([]), rental_payments: result([]), rental_settlements: result([]),
+      rental_security_deposits: result([]), rental_security_deposit_transactions: result([]), rental_inspections: result([]), rental_inspection_items: result([]),
+      rental_inspection_acknowledgements: result([]), rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
+      rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
+      rental_maintenance_work_events: result([]), rental_lease_preparations: result([]), rental_lease_preparation_versions: result([]),
+      rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), rental_animals: result([]), rental_support_cases: result([]) };
+    const createSignedUrl = vi.fn(async () => ({ data: { signedUrl: "https://signed.test/unit-photo" }, error: null }));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
+      supabaseClient: { from: vi.fn((table) => tables[table]), storage: { from: vi.fn(() => ({ createSignedUrl })) } } });
+    const response = await GET(); const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.units[0].photo_url).toBe("https://signed.test/unit-photo");
+    expect(body.tenants[0].photo_url).toBeNull();
+    expect(createSignedUrl).toHaveBeenCalledWith("owner_1/units/unit_1/x.jpg", 3600);
+  });
   it("atomically activates the authenticated owner's lease and schedule", async () => {
     const rpc = vi.fn(async () => ({ data: { leaseId: "lease_1", scheduleId: "schedule_1", status: "active" }, error: null }));
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");

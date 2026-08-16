@@ -9,6 +9,14 @@ function badRequest(message) { return NextResponse.json({ error: message }, { st
 function now() { return new Date().toISOString(); }
 function id(prefix, supplied) { return supplied?.trim() || `${prefix}_${crypto.randomUUID()}`; }
 
+async function withPhotoUrls(supabaseClient, records) {
+  return Promise.all(records.map(async (record) => {
+    if (!record.photo_bucket || !record.photo_object_path) return { ...record, photo_url: null };
+    const { data, error } = await supabaseClient.storage.from(record.photo_bucket).createSignedUrl(record.photo_object_path, 3600);
+    return { ...record, photo_url: error ? null : data.signedUrl };
+  }));
+}
+
 export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
@@ -18,9 +26,9 @@ export async function GET() {
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type, related_charge_id")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
       authenticated.supabaseClient.from("rental_units")
-        .select("id, property_id, label, status").order("label", { ascending: true }),
+        .select("id, property_id, label, status, photo_bucket, photo_object_path").order("label", { ascending: true }),
       authenticated.supabaseClient.from("rental_tenants")
-        .select("id, display_name, email, status").order("display_name", { ascending: true }),
+        .select("id, display_name, email, status, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
       authenticated.supabaseClient.from("rent_schedules")
         .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date")
         .order("effective_start_date", { ascending: false }),
@@ -58,8 +66,12 @@ export async function GET() {
     ]);
     const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || autopayResult.error || insurancePolicyResult.error || animalResult.error || supportResult.error;
     if (error) throw error;
+    const [unitsWithPhotos, tenantsWithPhotos] = await Promise.all([
+      withPhotoUrls(authenticated.supabaseClient, unitsResult.data || []),
+      withPhotoUrls(authenticated.supabaseClient, tenantsResult.data || []),
+    ]);
     return NextResponse.json({ success: true, openCharges: chargesResult.data || [],
-      units: unitsResult.data || [], tenants: tenantsResult.data || [], schedules: schedulesResult.data || [],
+      units: unitsWithPhotos, tenants: tenantsWithPhotos, schedules: schedulesResult.data || [],
       maintenanceRequests: maintenanceResult.data || [], notifications: notificationResult.data || [],
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
       depositTransactions: depositTransactionResult.data || [], inspections: inspectionResult.data || [],
