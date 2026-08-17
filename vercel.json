@@ -1,0 +1,6 @@
+{
+  "crons": [
+    { "path": "/api/rental/cron/generate-charges", "schedule": "0 6 * * *" },
+    { "path": "/api/rental/cron/autopay-sweep", "schedule": "0 7 * * *" }
+  ]
+}
