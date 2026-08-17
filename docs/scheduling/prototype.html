@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Wall Board — Project Timeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0f1420;
+    --ink-2:#1b2333;
+    --paper:#f4f5f3;
+    --paper-line:#dfe1de;
+    --edge:#c9cdc8;
+    --text:#1b2333;
+    --muted:#6b7280;
+    --gov:#7c5cff;
+    --eng:#0fa38f;
+    --proc:#dd9a2e;
+    --field:#2f6fed;
+    --field-b:#c9622a;
+    --field-c:#4c8b5a;
+    --shut:#e0483f;
+    --milestone:#f0b429;
+    --radius:6px;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    font-family:'IBM Plex Sans',sans-serif;
+    color:var(--text);
+    background:var(--ink);
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+    overflow:hidden;
+  }
+  h1,h2,h3{font-family:'Space Grotesk',sans-serif; margin:0;}
+
+  /* ---------- Top bar ---------- */
+  #topbar{
+    background:var(--ink);
+    color:#fff;
+    padding:10px 16px;
+    display:flex;
+    align-items:center;
+    gap:18px;
+    flex-wrap:wrap;
+    border-bottom:1px solid #2a3348;
+    flex-shrink:0;
+  }
+  #topbar .brand{
+    display:flex; align-items:baseline; gap:8px; margin-right:6px;
+  }
+  #topbar .brand h1{font-size:17px; letter-spacing:0.02em;}
+  #topbar .brand span{font-family:'IBM Plex Mono',monospace; font-size:11px; color:#8b93a8;}
+  .field-group{display:flex; flex-direction:column; gap:2px;}
+  .field-group label{font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:#8b93a8;}
+  .field-group input, .field-group select{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12.5px;
+    background:#1b2333;
+    border:1px solid #333f5c;
+    color:#fff;
+    border-radius:4px;
+    padding:5px 7px;
+  }
+  #projectName{font-family:'IBM Plex Sans',sans-serif; min-width:180px;}
+  .btn{
+    font-family:'IBM Plex Sans',sans-serif;
+    font-size:12.5px;
+    font-weight:500;
+    background:#28324a;
+    color:#fff;
+    border:1px solid #3a4666;
+    border-radius:4px;
+    padding:7px 12px;
+    cursor:pointer;
+    white-space:nowrap;
+  }
+  .btn:hover{background:#334063;}
+  .btn.primary{background:var(--eng); border-color:var(--eng);}
+  .btn.primary:hover{filter:brightness(1.08);}
+  .btn.danger{background:#3a1c1c; border-color:#5c2a2a;}
+  .btn.danger:hover{background:#4a2222;}
+  #topbar .spacer{flex:1;}
+  #saveIndicator{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    color:#6fcf97;
+    min-width:70px;
+  }
+  input[type=range]{width:90px;}
+
+  /* ---------- Main layout ---------- */
+  #main{flex:1; display:flex; overflow:hidden;}
+
+  /* ---------- Sidebar / palette ---------- */
+  #sidebar{
+    width:240px;
+    flex-shrink:0;
+    background:#181f30;
+    color:#dfe3ee;
+    overflow-y:auto;
+    border-right:1px solid #2a3348;
+    padding:10px 10px 24px;
+  }
+  #sidebar h2{font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:#8b93a8; margin:14px 4px 8px;}
+  details{margin-bottom:6px; border-radius:6px; overflow:hidden;}
+  details summary{
+    cursor:pointer;
+    list-style:none;
+    padding:8px 10px;
+    background:#212a41;
+    border-radius:6px;
+    font-size:12.5px;
+    font-weight:600;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  details summary::-webkit-details-marker{display:none;}
+  details summary .dot{width:9px; height:9px; border-radius:2px; display:inline-block; transform:rotate(45deg);}
+  details[open] summary{border-bottom-left-radius:0; border-bottom-right-radius:0;}
+  .chip-list{padding:8px; display:flex; flex-direction:column; gap:6px; background:#161d2c;}
+  .chip{
+    display:flex;
+    align-items:center;
+    gap:7px;
+    padding:6px 8px;
+    border-radius:5px;
+    font-size:12px;
+    cursor:grab;
+    color:#0c0c0c;
+    font-weight:600;
+    line-height:1.25;
+    box-shadow:0 1px 0 rgba(0,0,0,0.25);
+  }
+  .chip:active{cursor:grabbing;}
+  .chip .ms-mark{
+    width:9px; height:9px; background:rgba(0,0,0,0.35); transform:rotate(45deg); flex-shrink:0; border-radius:1px;
+  }
+  #customAdd{
+    margin-top:16px;
+    background:#212a41;
+    border-radius:6px;
+    padding:10px;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  #customAdd label{font-size:10px; text-transform:uppercase; letter-spacing:0.05em; color:#8b93a8;}
+  #customAdd input, #customAdd select{
+    font-family:'IBM Plex Sans',sans-serif;
+    font-size:12px;
+    padding:6px 7px;
+    border-radius:4px;
+    border:1px solid #3a4666;
+    background:#0f1420;
+    color:#fff;
+  }
+  #customAdd .row{display:flex; gap:6px; align-items:center;}
+  #customAdd .row label.inline{display:flex; align-items:center; gap:5px; font-size:11px; color:#c7cbe0; text-transform:none;}
+
+  /* ---------- Board ---------- */
+  #boardWrap{flex:1; overflow:auto; background:var(--paper); position:relative;}
+  #board{
+    display:grid;
+    /* grid-template-columns/rows set via JS */
+  }
+  .corner-cell{
+    position:sticky; top:0; left:0; z-index:5;
+    background:var(--ink);
+    border-right:1px solid #2a3348;
+    border-bottom:1px solid #2a3348;
+  }
+  .week-cell{
+    position:sticky; top:0; z-index:4;
+    background:var(--ink);
+    color:#c7cbe0;
+    border-right:1px solid #29314a;
+    border-bottom:1px solid #2a3348;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:2px;
+    text-align:center;
+    line-height:1.2;
+  }
+  .week-cell.today-col{background:#26304a;}
+  .lane-cell{
+    position:sticky; left:0; z-index:3;
+    background:#eceee9;
+    border-right:1px solid var(--edge);
+    border-bottom:1px solid var(--paper-line);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:0 8px 0 10px;
+    font-size:12px;
+    font-weight:600;
+    gap:4px;
+  }
+  .lane-cell .lane-del{
+    font-size:14px;
+    color:#a8ada6;
+    cursor:pointer;
+    padding:0 3px;
+  }
+  .lane-cell .lane-del:hover{color:#c0392b;}
+  #canvas{
+    grid-row:2 / -1;
+    grid-column:2 / -1;
+    position:relative;
+    background-image:
+      repeating-linear-gradient(to right, var(--paper-line) 0, var(--paper-line) 1px, transparent 1px, transparent var(--weekpx)),
+      repeating-linear-gradient(to bottom, var(--paper-line) 0, var(--paper-line) 1px, transparent 1px, transparent var(--rowpx));
+  }
+  .block{
+    position:absolute;
+    border-radius:5px;
+    display:flex;
+    align-items:center;
+    padding:0 8px;
+    font-size:11.5px;
+    font-weight:600;
+    color:#0c0c0c;
+    cursor:grab;
+    user-select:none;
+    box-shadow:0 1px 2px rgba(0,0,0,0.25);
+    border:1px solid rgba(0,0,0,0.15);
+    overflow:hidden;
+    white-space:nowrap;
+    text-overflow:ellipsis;
+  }
+  .block:active{cursor:grabbing;}
+  .block.dragging{opacity:0.75; z-index:20; box-shadow:0 4px 10px rgba(0,0,0,0.35);}
+  .block .resize-handle{
+    position:absolute; right:0; top:0; bottom:0; width:9px; cursor:ew-resize;
+  }
+  .block .del-x{
+    position:absolute; top:-6px; right:-6px;
+    width:16px; height:16px; border-radius:50%;
+    background:#20263a; color:#fff; font-size:11px; line-height:16px; text-align:center;
+    display:none; cursor:pointer; font-weight:700;
+  }
+  .block:hover .del-x{display:block;}
+  .block.milestone{
+    background:transparent !important;
+    box-shadow:none;
+    border:none;
+    padding:0;
+    justify-content:center;
+  }
+  .block.milestone .diamond{
+    width:20px; height:20px;
+    background:var(--milestone);
+    border:1px solid rgba(0,0,0,0.35);
+    transform:rotate(45deg);
+    box-shadow:0 1px 2px rgba(0,0,0,0.25);
+  }
+  .block.milestone .ms-label{
+    position:absolute;
+    left:26px;
+    font-size:11px;
+    color:#1b2333;
+    font-weight:600;
+    white-space:nowrap;
+    background:rgba(244,245,243,0.85);
+    padding:0 4px;
+    border-radius:3px;
+  }
+  #addLaneBtn{
+    margin:8px 10px 4px;
+  }
+  #emptyHint{
+    position:absolute; top:12px; left:12px; font-size:12px; color:var(--muted);
+    background:rgba(255,255,255,0.85); padding:6px 10px; border-radius:5px; pointer-events:none;
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">
+    <h1>Wall Board</h1>
+    <span>drag-and-drop timeline</span>
+  </div>
+
+  <div class="field-group">
+    <label>Project</label>
+    <input id="projectName" type="text" value="New Project">
+  </div>
+  <div class="field-group">
+    <label>Start date</label>
+    <input id="startDate" type="date">
+  </div>
+  <div class="field-group">
+    <label>End date</label>
+    <input id="endDate" type="date">
+  </div>
+  <button class="btn primary" id="regenBtn">Apply dates</button>
+
+  <div class="field-group">
+    <label>Zoom</label>
+    <input id="zoom" type="range" min="50" max="160" value="90">
+  </div>
+
+  <div class="spacer"></div>
+  <span id="saveIndicator"></span>
+  <button class="btn" id="exportBtn">Export JSON</button>
+  <button class="btn" id="importBtn">Import JSON</button>
+  <input type="file" id="importFile" accept="application/json" style="display:none;">
+  <button class="btn danger" id="resetBtn">Reset board</button>
+</div>
+
+<div id="main">
+  <div id="sidebar">
+    <h2>Starter objects — drag onto the board</h2>
+    <div id="paletteRoot"></div>
+
+    <div id="customAdd">
+      <label>Add a custom block to the palette</label>
+      <input id="customLabel" type="text" placeholder="Block label">
+      <div class="row">
+        <select id="customCategory">
+          <option value="gov">Governance</option>
+          <option value="eng">Engineering</option>
+          <option value="proc">Procurement</option>
+          <option value="field">Field Execution</option>
+          <option value="shut">Shutdown &amp; Startup</option>
+        </select>
+        <input id="customDuration" type="number" min="0" max="52" value="4" style="width:56px;" title="Default duration (weeks)">
+      </div>
+      <div class="row">
+        <label class="inline"><input type="checkbox" id="customMilestone"> Milestone (0-duration)</label>
+      </div>
+      <button class="btn primary" id="addChipBtn">Add to palette</button>
+    </div>
+  </div>
+
+  <div id="boardWrap">
+    <div id="board">
+      <div class="corner-cell"></div>
+      <!-- week header cells + lane cells + canvas injected by JS -->
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+
+  /* ---------------- constants ---------------- */
+  const LANE_LABEL_W = 170;
+  const ROW_H = 46;
+  const CATEGORY_COLORS = {gov:'#7c5cff', eng:'#0fa38f', proc:'#dd9a2e', field:'#2f6fed', shut:'#e0483f'};
+  const CATEGORY_NAMES = {gov:'Project Governance', eng:'Project Engineering', proc:'Procurement', field:'Field Execution', shut:'Shutdown & Startup'};
+
+  const DEFAULT_CHIPS = [
+    // Governance
+    {label:'Kickoff', category:'gov', duration:0, milestone:true},
+    {label:'Charter Approval', category:'gov', duration:1, milestone:false},
+    {label:'Stage Gate Review', category:'gov', duration:1, milestone:false},
+    {label:'Investment / Funding Approval', category:'gov', duration:0, milestone:true},
+    {label:'Steering Committee Review', category:'gov', duration:1, milestone:false},
+    {label:'Management of Change (MOC)', category:'gov', duration:2, milestone:false},
+
+    // Engineering
+    {label:'Conceptual Design', category:'eng', duration:4, milestone:false},
+    {label:'Feasibility / FEED', category:'eng', duration:6, milestone:false},
+    {label:'Detailed Design', category:'eng', duration:8, milestone:false},
+    {label:'Civil Engineering', category:'eng', duration:5, milestone:false},
+    {label:'Mechanical Engineering', category:'eng', duration:5, milestone:false},
+    {label:'Electrical Engineering', category:'eng', duration:5, milestone:false},
+    {label:'Instrumentation Engineering', category:'eng', duration:5, milestone:false},
+    {label:'Process Engineering', category:'eng', duration:5, milestone:false},
+
+    // Procurement
+    {label:'RFQ Issued', category:'proc', duration:0, milestone:true},
+    {label:'Bid Evaluation', category:'proc', duration:3, milestone:false},
+    {label:'PO Issued', category:'proc', duration:0, milestone:true},
+    {label:'Long-Lead Equipment Fabrication', category:'proc', duration:12, milestone:false},
+    {label:'Vendor Data Review', category:'proc', duration:4, milestone:false},
+    {label:'Equipment Delivery', category:'proc', duration:0, milestone:true},
+
+    // Field Execution
+    {label:'Site Mobilization', category:'field', duration:0, milestone:true},
+    {label:'Civil / Foundations', category:'field', duration:4, milestone:false},
+    {label:'Structural Steel', category:'field', duration:5, milestone:false},
+    {label:'Piping Install', category:'field', duration:6, milestone:false},
+    {label:'Electrical Install', category:'field', duration:5, milestone:false},
+    {label:'Instrumentation Install', category:'field', duration:4, milestone:false},
+    {label:'Mechanical Install', category:'field', duration:5, milestone:false},
+    {label:'Insulation & Paint', category:'field', duration:3, milestone:false},
+
+    // Shutdown & Startup
+    {label:'Turnaround Window', category:'shut', duration:3, milestone:false},
+    {label:'Pre-Job Safety Walkdown', category:'shut', duration:1, milestone:false},
+    {label:'Commissioning', category:'shut', duration:3, milestone:false},
+    {label:'Startup', category:'shut', duration:2, milestone:false},
+    {label:'Pre-Startup Safety Review (PSSR)', category:'shut', duration:0, milestone:true},
+    {label:'Return to Service', category:'shut', duration:0, milestone:true},
+  ];
+
+  const DEFAULT_LANES = [
+    {id:'lane_ms', name:'Milestones'},
+    {id:'lane_gov', name:'Governance'},
+    {id:'lane_eng', name:'Engineering'},
+    {id:'lane_proc', name:'Procurement'},
+    {id:'lane_field1', name:'Field Execution'},
+    {id:'lane_field2', name:'Field Execution (cont.)'},
+    {id:'lane_shut', name:'Shutdown & Startup'},
+  ];
+
+  function todayISO(offsetDays){
+    const d = new Date();
+    d.setDate(d.getDate() + (offsetDays||0));
+    return d.toISOString().slice(0,10);
+  }
+
+  function defaultState(){
+    return {
+      projectName:'New Project',
+      startDate: todayISO(0),
+      endDate: todayISO(364),
+      weekWidth: 90,
+      lanes: DEFAULT_LANES.map(l=>({...l})),
+      blocks: [],
+      customChips: [],
+      nextId: 1
+    };
+  }
+
+  let state = defaultState();
+  let weeks = []; // array of Date objects, one per week column
+
+  /* ---------------- persistence ---------------- */
+  let saveTimer = null;
+  function scheduleSave(){
+    clearTimeout(saveTimer);
+    setSaveIndicator('Saving…');
+    saveTimer = setTimeout(saveState, 500);
+  }
+  async function saveState(){
+    try{
+      const res = await window.storage.set('wallboard:state', JSON.stringify(state), false);
+      setSaveIndicator(res ? 'Saved' : 'Save failed');
+    }catch(e){
+      console.error('Storage error', e);
+      setSaveIndicator('Save failed');
+    }
+  }
+  async function loadState(){
+    try{
+      const res = await window.storage.get('wallboard:state');
+      if(res && res.value){
+        const parsed = JSON.parse(res.value);
+        state = Object.assign(defaultState(), parsed);
+      }
+    }catch(e){
+      // no saved state yet — that's fine, use defaults
+    }
+  }
+  function setSaveIndicator(text){
+    document.getElementById('saveIndicator').textContent = text;
+    if(text === 'Saved'){
+      setTimeout(()=>{ if(document.getElementById('saveIndicator').textContent==='Saved') document.getElementById('saveIndicator').textContent=''; }, 1800);
+    }
+  }
+
+  /* ---------------- week / date helpers ---------------- */
+  function parseISO(s){ const [y,m,d]=s.split('-').map(Number); return new Date(y,m-1,d); }
+  function fmt(d){
+    return (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2);
+  }
+  function computeWeeks(){
+    weeks = [];
+    let cur = parseISO(state.startDate);
+    const end = parseISO(state.endDate);
+    let guard = 0;
+    while(cur <= end && guard < 400){
+      weeks.push(new Date(cur));
+      cur = new Date(cur); cur.setDate(cur.getDate()+7);
+      guard++;
+    }
+    if(weeks.length === 0) weeks.push(parseISO(state.startDate));
+  }
+
+  /* ---------------- palette rendering ---------------- */
+  function renderPalette(){
+    const root = document.getElementById('paletteRoot');
+    root.innerHTML = '';
+    const allChips = DEFAULT_CHIPS.concat(state.customChips);
+    Object.keys(CATEGORY_NAMES).forEach(cat=>{
+      const chips = allChips.filter(c=>c.category===cat);
+      const det = document.createElement('details');
+      det.open = true;
+      const sum = document.createElement('summary');
+      sum.innerHTML = '<span class="dot" style="background:'+CATEGORY_COLORS[cat]+'"></span>' + CATEGORY_NAMES[cat];
+      det.appendChild(sum);
+      const list = document.createElement('div');
+      list.className = 'chip-list';
+      chips.forEach(chip=>{
+        const el = document.createElement('div');
+        el.className = 'chip';
+        el.draggable = true;
+        el.style.background = CATEGORY_COLORS[cat];
+        el.innerHTML = (chip.milestone ? '<span class="ms-mark"></span>' : '') + '<span>'+escapeHtml(chip.label)+'</span>';
+        el.addEventListener('dragstart', (e)=>{
+          e.dataTransfer.setData('application/json', JSON.stringify(chip));
+          e.dataTransfer.effectAllowed = 'copy';
+        });
+        list.appendChild(el);
+      });
+      det.appendChild(list);
+      root.appendChild(det);
+    });
+  }
+
+  function escapeHtml(s){
+    return s.replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+
+  /* ---------------- board rendering ---------------- */
+  function renderBoard(){
+    computeWeeks();
+    const board = document.getElementById('board');
+    board.style.setProperty('--weekpx', state.weekWidth+'px');
+    board.style.setProperty('--rowpx', ROW_H+'px');
+    board.style.gridTemplateColumns = LANE_LABEL_W+'px ' + weeks.map(()=>state.weekWidth+'px').join(' ');
+    board.style.gridTemplateRows = '40px ' + state.lanes.map(()=>ROW_H+'px').join(' ');
+
+    board.innerHTML = '<div class="corner-cell"></div>';
+
+    const todayStr = todayISO(0);
+
+    // week header cells
+    weeks.forEach((wd)=>{
+      const cell = document.createElement('div');
+      cell.className = 'week-cell';
+      cell.textContent = fmt(wd);
+      board.appendChild(cell);
+    });
+
+    // lane label cells (row by row) -- grid auto-places in row-major order,
+    // so we must interleave: for each lane row, one label cell then it spans... 
+    // Simpler: place all lane-cells first at column 1 across rows 2..N,
+    // then a single canvas div spanning column2..end / row2..end.
+    state.lanes.forEach((lane)=>{
+      const cell = document.createElement('div');
+      cell.className = 'lane-cell';
+      cell.style.gridColumn = '1';
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = lane.name;
+      nameSpan.title = 'Double-click to rename';
+      nameSpan.addEventListener('dblclick', ()=>{
+        const nv = prompt('Rename lane', lane.name);
+        if(nv && nv.trim()){ lane.name = nv.trim(); renderBoard(); scheduleSave(); }
+      });
+      const del = document.createElement('span');
+      del.className = 'lane-del';
+      del.textContent = '✕';
+      del.title = 'Delete lane';
+      del.addEventListener('click', ()=>{
+        if(confirm('Delete lane "'+lane.name+'" and any blocks placed on it?')){
+          state.blocks = state.blocks.filter(b=>b.laneId!==lane.id);
+          state.lanes = state.lanes.filter(l=>l.id!==lane.id);
+          renderBoard(); scheduleSave();
+        }
+      });
+      cell.appendChild(nameSpan);
+      cell.appendChild(del);
+      board.appendChild(cell);
+    });
+
+    // canvas
+    const canvas = document.createElement('div');
+    canvas.id = 'canvas';
+    canvas.style.gridRow = '2 / span ' + state.lanes.length;
+    canvas.style.gridColumn = '2 / span ' + weeks.length;
+    canvas.style.width = (weeks.length*state.weekWidth)+'px';
+    canvas.style.height = (state.lanes.length*ROW_H)+'px';
+
+    canvas.addEventListener('dragover', (e)=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy'; });
+    canvas.addEventListener('drop', (e)=>{
+      e.preventDefault();
+      const raw = e.dataTransfer.getData('application/json');
+      if(!raw) return;
+      const chip = JSON.parse(raw);
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      let weekIdx = Math.floor(x/state.weekWidth);
+      let laneIdx = Math.floor(y/ROW_H);
+      weekIdx = Math.max(0, Math.min(weeks.length-1, weekIdx));
+      laneIdx = Math.max(0, Math.min(state.lanes.length-1, laneIdx));
+      addBlock(chip, weekIdx, laneIdx);
+    });
+
+    state.blocks.forEach(b=> canvas.appendChild(renderBlockEl(b)) );
+
+    if(state.blocks.length===0){
+      const hint = document.createElement('div');
+      hint.id = 'emptyHint';
+      hint.textContent = 'Drag a block from the left panel onto the grid to place it.';
+      canvas.appendChild(hint);
+    }
+
+    board.appendChild(canvas);
+  }
+
+  function addBlock(chip, weekIdx, laneIdx){
+    const b = {
+      id: 'b'+(state.nextId++),
+      label: chip.label,
+      category: chip.category,
+      milestone: !!chip.milestone,
+      duration: chip.milestone ? 0 : Math.max(1, chip.duration||1),
+      startIdx: weekIdx,
+      laneId: state.lanes[laneIdx].id
+    };
+    state.blocks.push(b);
+    renderBoard();
+    scheduleSave();
+  }
+
+  function laneIndexOf(laneId){
+    return state.lanes.findIndex(l=>l.id===laneId);
+  }
+
+  function renderBlockEl(b){
+    const laneIdx = laneIndexOf(b.laneId);
+    const el = document.createElement('div');
+    el.dataset.id = b.id;
+
+    if(b.milestone){
+      el.className = 'block milestone';
+      el.style.left = (b.startIdx*state.weekWidth) + 'px';
+      el.style.top = (laneIdx*ROW_H)+'px';
+      el.style.width = state.weekWidth+'px';
+      el.style.height = ROW_H+'px';
+      el.innerHTML = '<div class="diamond" style="background:'+colorForCategory(b.category)+'"></div>'+
+                      '<div class="ms-label">'+escapeHtml(b.label)+'</div>'+
+                      '<div class="del-x">✕</div>';
+    } else {
+      el.className = 'block';
+      el.style.left = (b.startIdx*state.weekWidth+2) + 'px';
+      el.style.top = (laneIdx*ROW_H+5)+'px';
+      el.style.width = (b.duration*state.weekWidth-4)+'px';
+      el.style.height = (ROW_H-10)+'px';
+      el.style.background = colorForCategory(b.category);
+      el.innerHTML = '<span class="lbl">'+escapeHtml(b.label)+'</span>'+
+                      '<div class="resize-handle"></div>'+
+                      '<div class="del-x">✕</div>';
+    }
+
+    // delete
+    el.querySelector('.del-x').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      state.blocks = state.blocks.filter(x=>x.id!==b.id);
+      renderBoard(); scheduleSave();
+    });
+
+    // rename
+    const labelEl = el.querySelector('.lbl') || el.querySelector('.ms-label');
+    if(labelEl){
+      labelEl.addEventListener('dblclick', (e)=>{
+        e.stopPropagation();
+        const nv = prompt('Rename block', b.label);
+        if(nv && nv.trim()){ b.label = nv.trim(); renderBoard(); scheduleSave(); }
+      });
+    }
+
+    // move (mousedown drag)
+    el.addEventListener('mousedown', (e)=>{
+      if(e.target.classList.contains('resize-handle') || e.target.classList.contains('del-x')) return;
+      e.preventDefault();
+      const startX = e.clientX, startY = e.clientY;
+      const origLeft = parseFloat(el.style.left);
+      const origTop = parseFloat(el.style.top);
+      el.classList.add('dragging');
+      function onMove(ev){
+        const dx = ev.clientX-startX, dy = ev.clientY-startY;
+        el.style.left = (origLeft+dx)+'px';
+        el.style.top = (origTop+dy)+'px';
+      }
+      function onUp(ev){
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        el.classList.remove('dragging');
+        const dx = ev.clientX-startX, dy = ev.clientY-startY;
+        let newWeekIdx = Math.round((origLeft+dx)/state.weekWidth);
+        let newLaneIdx = Math.round((origTop+dy)/ROW_H);
+        newWeekIdx = Math.max(0, Math.min(weeks.length-1, newWeekIdx));
+        newLaneIdx = Math.max(0, Math.min(state.lanes.length-1, newLaneIdx));
+        b.startIdx = newWeekIdx;
+        b.laneId = state.lanes[newLaneIdx].id;
+        renderBoard(); scheduleSave();
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    // resize
+    const handle = el.querySelector('.resize-handle');
+    if(handle){
+      handle.addEventListener('mousedown', (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        const startX = e.clientX;
+        const origDuration = b.duration;
+        function onMove(ev){
+          const dx = ev.clientX-startX;
+          const proposed = Math.max(1, origDuration + Math.round(dx/state.weekWidth));
+          el.style.width = (proposed*state.weekWidth-4)+'px';
+        }
+        function onUp(ev){
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          const dx = ev.clientX-startX;
+          b.duration = Math.max(1, origDuration + Math.round(dx/state.weekWidth));
+          renderBoard(); scheduleSave();
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    }
+
+    return el;
+  }
+
+  function colorForCategory(cat){ return CATEGORY_COLORS[cat] || '#999'; }
+
+  /* ---------------- top bar wiring ---------------- */
+  function wireTopbar(){
+    const pn = document.getElementById('projectName');
+    pn.value = state.projectName;
+    pn.addEventListener('change', ()=>{ state.projectName = pn.value; document.title = pn.value+' — Wall Board'; scheduleSave(); });
+
+    document.getElementById('startDate').value = state.startDate;
+    document.getElementById('endDate').value = state.endDate;
+
+    document.getElementById('regenBtn').addEventListener('click', ()=>{
+      const sd = document.getElementById('startDate').value;
+      const ed = document.getElementById('endDate').value;
+      if(!sd || !ed){ alert('Please set both a start and end date.'); return; }
+      if(parseISO(ed) <= parseISO(sd)){ alert('End date must be after start date.'); return; }
+      state.startDate = sd; state.endDate = ed;
+      renderBoard(); scheduleSave();
+    });
+
+    const zoom = document.getElementById('zoom');
+    zoom.value = state.weekWidth;
+    zoom.addEventListener('input', ()=>{ state.weekWidth = parseInt(zoom.value,10); renderBoard(); });
+    zoom.addEventListener('change', scheduleSave);
+
+    document.getElementById('exportBtn').addEventListener('click', ()=>{
+      const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (state.projectName||'wallboard').replace(/[^a-z0-9\-_]+/gi,'_')+'.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    document.getElementById('importBtn').addEventListener('click', ()=>{
+      document.getElementById('importFile').click();
+    });
+    document.getElementById('importFile').addEventListener('change', (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = ()=>{
+        try{
+          const parsed = JSON.parse(reader.result);
+          state = Object.assign(defaultState(), parsed);
+          document.getElementById('projectName').value = state.projectName;
+          document.getElementById('startDate').value = state.startDate;
+          document.getElementById('endDate').value = state.endDate;
+          document.getElementById('zoom').value = state.weekWidth;
+          renderPalette();
+          renderBoard();
+          scheduleSave();
+        }catch(err){
+          alert('That file could not be read as a wall board JSON export.');
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', ()=>{
+      if(confirm('Reset the board? This clears all placed blocks, lanes, and custom chips.')){
+        state = defaultState();
+        document.getElementById('projectName').value = state.projectName;
+        document.getElementById('startDate').value = state.startDate;
+        document.getElementById('endDate').value = state.endDate;
+        document.getElementById('zoom').value = state.weekWidth;
+        renderPalette();
+        renderBoard();
+        scheduleSave();
+      }
+    });
+  }
+
+  /* ---------------- sidebar add-lane / add-chip ---------------- */
+  function wireSidebarExtras(){
+    // add-lane button lives in board area for visibility; simplest: add a button under palette
+    const addLaneBtn = document.createElement('button');
+    addLaneBtn.className = 'btn primary';
+    addLaneBtn.id = 'addLaneBtn';
+    addLaneBtn.textContent = '+ Add lane';
+    addLaneBtn.style.width = '100%';
+    addLaneBtn.addEventListener('click', ()=>{
+      const nm = prompt('New lane name', 'New Lane');
+      if(nm && nm.trim()){
+        state.lanes.push({id:'lane_'+(state.nextId++), name:nm.trim()});
+        renderBoard(); scheduleSave();
+      }
+    });
+    document.getElementById('sidebar').insertBefore(addLaneBtn, document.getElementById('customAdd'));
+
+    document.getElementById('addChipBtn').addEventListener('click', ()=>{
+      const label = document.getElementById('customLabel').value.trim();
+      if(!label){ alert('Enter a label for the block.'); return; }
+      const category = document.getElementById('customCategory').value;
+      const milestone = document.getElementById('customMilestone').checked;
+      const duration = milestone ? 0 : Math.max(1, parseInt(document.getElementById('customDuration').value,10)||1);
+      state.customChips.push({label, category, duration, milestone});
+      document.getElementById('customLabel').value = '';
+      renderPalette();
+      scheduleSave();
+    });
+  }
+
+  /* ---------------- init ---------------- */
+  async function init(){
+    setSaveIndicator('Loading…');
+    await loadState();
+    setSaveIndicator('');
+    document.title = (state.projectName||'Wall Board')+' — Wall Board';
+    wireTopbar();
+    wireSidebarExtras();
+    renderPalette();
+    renderBoard();
+  }
+
+  init();
+
+})();
+</script>
+</body>
+</html>
