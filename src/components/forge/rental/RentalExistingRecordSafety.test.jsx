@@ -23,14 +23,14 @@ describe("rental existing-record safety", () => {
   it("keeps unit and tenant creation behind explicit add actions", () => {
     const unitMarkup = renderToStaticMarkup(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "Main residence", property_id: "4800-kent-ave" }]} />);
     const tenantMarkup = renderToStaticMarkup(<RentalTenantPanel initialTenants={[{ id: "tenant_1", display_name: "John Jones", email: "tenant@example.com" }]} />);
-    expect(unitMarkup).toContain("Add another rental unit");
+    expect(unitMarkup).toContain("Add a new property / unit");
     expect(unitMarkup).toContain("Selected unit");
     expect(unitMarkup).toContain("Property actions");
     expect(unitMarkup).toContain("Edit property details");
     expect(unitMarkup).toContain("Work orders");
     expect(unitMarkup).toContain("File library");
     expect(unitMarkup).not.toContain("Save Kent Avenue unit");
-    expect(tenantMarkup).toContain("Add another tenant");
+    expect(tenantMarkup).toContain("Add a new tenant");
     expect(tenantMarkup).toContain("Selected tenant");
     expect(tenantMarkup).toContain("Tenant actions");
     expect(tenantMarkup).toContain("Rent &amp; payments");

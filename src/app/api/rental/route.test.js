@@ -22,6 +22,20 @@ describe("Rental Manager route", () => {
     expect(application.generateMonthlyCharge).toHaveBeenCalledWith("schedule_1", "2026-09", "owner_1");
   });
   it("rejects unsupported operations", async () => expect((await POST(request({ operation: "unknown" }))).status).toBe(400));
+  it("surfaces a Supabase-style error's message instead of a generic fallback", async () => {
+    application.saveTenant.mockRejectedValue({ message: "column \"phone\" violates check constraint", code: "23514" });
+    const response = await POST(request({ operation: "save-tenant", tenant: { displayName: "Ashley George", email: "ashley@example.com" } }));
+    const body = await response.json();
+    expect(response.status).toBe(500);
+    expect(body.error).toBe('column "phone" violates check constraint');
+  });
+  it("gives a friendly message for a duplicate-identity error", async () => {
+    application.saveTenant.mockRejectedValue({ message: "duplicate key value violates unique constraint \"rental_tenants_owner_id_email_key\"", code: "23505" });
+    const response = await POST(request({ operation: "save-tenant", tenant: { displayName: "Ashley George", email: "ashley@example.com" } }));
+    const body = await response.json();
+    expect(response.status).toBe(500);
+    expect(body.error).toContain("already exists");
+  });
   it("loads the persisted setup records needed by the lease form", async () => {
     const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
       order: vi.fn().mockResolvedValue({ data, error: null }) });

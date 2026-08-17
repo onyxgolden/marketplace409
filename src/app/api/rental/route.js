@@ -280,6 +280,9 @@ export async function POST(request) {
     }
   } catch (error) {
     console.error("Rental Manager operation error", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to complete Rental Manager operation." }, { status: 500 });
+    const message = error?.code === "23505"
+      ? "A record with that same identity already exists (e.g. a tenant with this email, or a duplicate lease import)."
+      : error?.message || "Unable to complete Rental Manager operation.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

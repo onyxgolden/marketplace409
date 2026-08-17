@@ -92,7 +92,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950">
       Save at least one rental unit and tenant before creating a lease.</p>}
-    {(setup.leases || []).length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black">Add a lease for an existing tenant</button>}
+    {(setup.leases || []).length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className="mt-5 rounded-xl bg-slate-950 px-5 py-3 font-black text-white">+ Add a lease for an existing tenant</button>}
     <RentRollImportPanel units={setup.units} tenants={setup.tenants} leases={setup.leases} onImported={reload} />
     {showCreate && <form onSubmit={save} className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {(setup.leases || []).length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 md:col-span-2 xl:col-span-3"><p className="text-sm font-bold text-amber-950">Other leases already exist. This adds a new one — for a future/replacement term, or to attach a currently-renting tenant who has no lease on file yet.</p><button type="button" onClick={() => setShowCreate(false)} className="rounded-lg border border-amber-500 bg-white px-3 py-2 text-sm font-black text-amber-950">Cancel setup</button></div>}
