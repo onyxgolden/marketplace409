@@ -5,9 +5,10 @@ import {
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
   addBlock, addCustomChip, addDependency, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, deleteLane,
-  fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock, moveBlocksBy, pixelToIndex,
-  removeBlock, removeDependency, renameBlock, renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState,
-  setBlockTextStyle, setProjectDates, suggestPredecessors, visibleWeekIndices,
+  emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock, moveBlocksBy,
+  pixelToIndex, recordHistory, redoHistory, removeBlock, removeDependency, renameBlock, renameLane, resizeBlock,
+  resizeBlockFromStart, serializeBoardState, setBlockTextStyle, setProjectDates, suggestPredecessors, undoHistory,
+  visibleWeekIndices,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -51,6 +52,7 @@ export default function SchedulingBoard() {
   const [customChipDraft, setCustomChipDraft] = useState({ label: "", category: "gov", durationWeeks: 4, milestone: false });
   const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const [hideEmptyWeeks, setHideEmptyWeeks] = useState(false);
+  const [history, setHistory] = useState(emptyHistory);
   const canvasRef = useRef(null);
   const boardScrollRef = useRef(null);
   const laneListRef = useRef(null);
@@ -65,6 +67,33 @@ export default function SchedulingBoard() {
     if (laneListRef.current && boardScrollRef.current) {
       laneListRef.current.style.transform = `translateY(-${boardScrollRef.current.scrollTop}px)`;
     }
+  }
+
+  // Routes a discrete content edit (placing/moving/resizing/deleting a block, lane or
+  // dependency changes, text style, project dates, import/reset) through undo history.
+  // Continuous view-only changes -- the zoom slider, typing the project name, "Fit to
+  // project" -- call setBoard directly instead, so undo stays about content, not every
+  // pixel of a drag or keystroke.
+  function commitBoard(updater) {
+    setBoard((current) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      if (next !== current) setHistory((h) => recordHistory(h, current));
+      return next;
+    });
+  }
+  function handleUndo() {
+    setHistory((h) => {
+      const result = undoHistory(h, board);
+      if (result.board !== board) setBoard(result.board);
+      return result.history;
+    });
+  }
+  function handleRedo() {
+    setHistory((h) => {
+      const result = redoHistory(h, board);
+      if (result.board !== board) setBoard(result.board);
+      return result.history;
+    });
   }
 
   useEffect(() => {
@@ -142,7 +171,7 @@ export default function SchedulingBoard() {
     const rect = canvasRef.current.getBoundingClientRect();
     const weekIdx = pixelToRealWeekIdx(event.clientX - rect.left);
     const laneIdx = clampIndex(pixelToIndex(event.clientY - rect.top, ROW_HEIGHT_PX), 0, board.lanes.length - 1);
-    setBoard((current) => addBlock(current, chip, weekIdx, laneIdx));
+    commitBoard((current) => addBlock(current, chip, weekIdx, laneIdx));
   }
 
   function toggleMultiSelect(blockId) {
@@ -225,9 +254,9 @@ export default function SchedulingBoard() {
       if (isGroupDrag) {
         const weekDelta = anchorWeekIdx - block.startIdx;
         const laneDelta = anchorLaneIdx - laneIndexOf(board, block.laneId);
-        setBoard((current) => moveBlocksBy(current, groupIds, weekDelta, laneDelta));
+        commitBoard((current) => moveBlocksBy(current, groupIds, weekDelta, laneDelta));
       } else {
-        setBoard((current) => moveBlock(current, block.id, anchorWeekIdx, anchorLaneIdx));
+        commitBoard((current) => moveBlock(current, block.id, anchorWeekIdx, anchorLaneIdx));
         setSelectedBlockIds([block.id]);
       }
     }
@@ -237,7 +266,7 @@ export default function SchedulingBoard() {
 
   function handleLinkSelectedInOrder() {
     if (selectedBlockIds.length < 2) return;
-    setBoard((current) => linkBlocksInOrder(current, selectedBlockIds));
+    commitBoard((current) => linkBlocksInOrder(current, selectedBlockIds));
     setSelectedBlockIds([]);
   }
 
@@ -255,7 +284,7 @@ export default function SchedulingBoard() {
     if (!clip) return;
     const laneIdx = laneIndexOf(board, clip.laneId);
     if (laneIdx < 0) return;
-    setBoard((current) => addBlock(current, clip.chip, clip.nextStartIdx, laneIdx));
+    commitBoard((current) => addBlock(current, clip.chip, clip.nextStartIdx, laneIdx));
     clipboardRef.current = { ...clip, nextStartIdx: clip.nextStartIdx + Math.max(1, clip.chip.durationWeeks) };
     flashClipboardStatus("Pasted");
   }
@@ -263,7 +292,13 @@ export default function SchedulingBoard() {
   useEffect(() => {
     function onKeyDown(event) {
       if (!(event.ctrlKey || event.metaKey) || isTypingTarget(document.activeElement)) return;
-      if (event.key === "c" || event.key === "C") {
+      if (event.key === "z" || event.key === "Z") {
+        event.preventDefault();
+        if (event.shiftKey) handleRedo(); else handleUndo();
+      } else if (event.key === "y" || event.key === "Y") {
+        event.preventDefault();
+        handleRedo();
+      } else if (event.key === "c" || event.key === "C") {
         if (selectedBlockIds.length !== 1) return; // ambiguous with a multi-selection -- use the Link button instead
         const block = board.blocks.find((b) => b.id === selectedBlockIds[0]);
         if (block) { event.preventDefault(); copyBlockToClipboard(block); }
@@ -273,7 +308,7 @@ export default function SchedulingBoard() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [board, selectedBlockIds]);
+  }, [board, selectedBlockIds, history]);
 
   function startResizeBlock(event, block) {
     event.preventDefault();
@@ -289,7 +324,7 @@ export default function SchedulingBoard() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       const proposed = Math.max(1, origDuration + Math.round((ev.clientX - startX) / board.weekWidth));
-      setBoard((current) => resizeBlock(current, block.id, proposed));
+      commitBoard((current) => resizeBlock(current, block.id, proposed));
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
@@ -316,7 +351,7 @@ export default function SchedulingBoard() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       const deltaColumns = Math.round((ev.clientX - startX) / board.weekWidth);
-      setBoard((current) => resizeBlockFromStart(current, block.id, block.startIdx + deltaColumns));
+      commitBoard((current) => resizeBlockFromStart(current, block.id, block.startIdx + deltaColumns));
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
@@ -324,40 +359,40 @@ export default function SchedulingBoard() {
 
   function handleAddLane() {
     const name = window.prompt("New lane name", "New Lane");
-    if (name) setBoard((current) => addLane(current, name));
+    if (name) commitBoard((current) => addLane(current, name));
   }
   function handleInsertLaneBefore(lane) {
     const name = window.prompt(`New lane name (inserted above "${lane.name}")`, "New Lane");
-    if (name) setBoard((current) => addLane(current, name, laneIndexOf(current, lane.id)));
+    if (name) commitBoard((current) => addLane(current, name, laneIndexOf(current, lane.id)));
   }
   function handleRenameLane(lane) {
     const name = window.prompt("Rename lane", lane.name);
-    if (name) setBoard((current) => renameLane(current, lane.id, name));
+    if (name) commitBoard((current) => renameLane(current, lane.id, name));
   }
   function handleDeleteLane(lane) {
     if (window.confirm(`Delete lane "${lane.name}" and any blocks placed on it?`)) {
       const removedIds = new Set(board.blocks.filter((block) => block.laneId === lane.id).map((block) => block.id));
-      setBoard((current) => deleteLane(current, lane.id));
+      commitBoard((current) => deleteLane(current, lane.id));
       setSelectedBlockIds((current) => current.filter((id) => !removedIds.has(id)));
     }
   }
   function handleRemoveBlock(block) {
-    setBoard((current) => removeBlock(current, block.id));
+    commitBoard((current) => removeBlock(current, block.id));
     setSelectedBlockIds((current) => current.filter((id) => id !== block.id));
   }
   function handleRenameBlock(block) {
     const label = window.prompt("Rename block", block.label);
-    if (label) setBoard((current) => renameBlock(current, block.id, label));
+    if (label) commitBoard((current) => renameBlock(current, block.id, label));
   }
   function handleApplyDates(event) {
     const form = new FormData(event.currentTarget);
     const next = setProjectDates(board, form.get("startDate"), form.get("endDate"));
     if (next === board) window.alert("End date must be after start date.");
-    setBoard(next);
+    commitBoard(next);
   }
   function handleAddCustomChip() {
     if (!customChipDraft.label.trim()) { window.alert("Enter a label for the block."); return; }
-    setBoard((current) => addCustomChip(current, customChipDraft));
+    commitBoard((current) => addCustomChip(current, customChipDraft));
     setCustomChipDraft((current) => ({ ...current, label: "" }));
   }
   function handleExport() {
@@ -375,7 +410,7 @@ export default function SchedulingBoard() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        setBoard(deserializeBoardState(reader.result));
+        commitBoard(deserializeBoardState(reader.result));
       } catch {
         window.alert("That file could not be read as a schedule JSON export.");
       }
@@ -385,7 +420,7 @@ export default function SchedulingBoard() {
   }
   function handleReset() {
     if (window.confirm("Reset the board? This clears all placed blocks, lanes, and custom chips.")) {
-      setBoard(defaultBoardState());
+      commitBoard(defaultBoardState());
     }
   }
 
@@ -419,10 +454,16 @@ export default function SchedulingBoard() {
         <TextStyleToolbar
           disabled={selectedBlockIds.length === 0}
           activeBlock={selectedBlockIds.length ? board.blocks.find((block) => block.id === selectedBlockIds[0]) : null}
-          onChange={(patch) => selectedBlockIds.length && setBoard((current) => setBlockTextStyle(current, selectedBlockIds, patch))} />
+          onChange={(patch) => selectedBlockIds.length && commitBoard((current) => setBlockTextStyle(current, selectedBlockIds, patch))} />
         <div className="flex-1" />
         <span role="status" className="min-w-[60px] font-mono text-xs text-sky-400">{clipboardStatus}</span>
         <span role="status" className="min-w-[70px] font-mono text-xs text-emerald-400">{saveStatus}</span>
+        <div className="flex items-center gap-1">
+          <button type="button" onClick={handleUndo} disabled={history.past.length === 0} title="Undo (Ctrl+Z)"
+            className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold disabled:opacity-40">Undo</button>
+          <button type="button" onClick={handleRedo} disabled={history.future.length === 0} title="Redo (Ctrl+Shift+Z)"
+            className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold disabled:opacity-40">Redo</button>
+        </div>
         <button type="button" onClick={handleExport} className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">Export JSON</button>
         <label className="cursor-pointer rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">
           Import JSON<input type="file" accept="application/json" className="hidden" onChange={handleImport} />
@@ -561,8 +602,8 @@ export default function SchedulingBoard() {
       {selectedBlock && (
         <DependencyDrawer board={board} block={selectedBlock} onClose={() => setSelectedBlockIds([])}
           onAddDependency={(predecessorId, successorId, relationshipType, lagDays) =>
-            setBoard((current) => addDependency(current, predecessorId, successorId, relationshipType, lagDays))}
-          onRemoveDependency={(dependencyId) => setBoard((current) => removeDependency(current, dependencyId))} />
+            commitBoard((current) => addDependency(current, predecessorId, successorId, relationshipType, lagDays))}
+          onRemoveDependency={(dependencyId) => commitBoard((current) => removeDependency(current, dependencyId))} />
       )}
     </section>
   );

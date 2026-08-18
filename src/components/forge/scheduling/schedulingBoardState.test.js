@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  BASE_BLOCK_FONT_SIZE_PX, MIN_BLOCK_FONT_SIZE_PX,
+  BASE_BLOCK_FONT_SIZE_PX, HISTORY_LIMIT, MIN_BLOCK_FONT_SIZE_PX,
   addBlock, addCustomChip, addDependency, addLane, blockAnchorPoint, blockToChip, chipsByCategory, computeWeeks,
-  deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, fitBlockFontSizePx,
-  fitWeekWidthPx, linkBlocksInOrder, moveBlock, moveBlocksBy, occupiedWeekIndices, removeBlock, removeDependency,
-  renameBlock, renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState, setBlockTextStyle, setProjectDates,
-  suggestPredecessors, visibleWeekIndices,
+  deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, emptyHistory,
+  fitBlockFontSizePx, fitWeekWidthPx, linkBlocksInOrder, moveBlock, moveBlocksBy, occupiedWeekIndices, recordHistory,
+  redoHistory, removeBlock, removeDependency, renameBlock, renameLane, resizeBlock, resizeBlockFromStart,
+  serializeBoardState, setBlockTextStyle, setProjectDates, suggestPredecessors, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -519,5 +519,82 @@ describe("fitWeekWidthPx", () => {
     expect(fitWeekWidthPx(0, 30)).toBe(1);
     expect(fitWeekWidthPx(900, 0)).toBe(1);
     expect(fitWeekWidthPx(NaN, 30, 6)).toBe(6);
+  });
+});
+
+describe("undo/redo history", () => {
+  it("starts empty", () => {
+    expect(emptyHistory()).toEqual({ past: [], future: [] });
+  });
+
+  it("records the replaced board onto the undo stack and clears redo", () => {
+    let history = emptyHistory();
+    history = recordHistory(history, "board-v1");
+    expect(history.past).toEqual(["board-v1"]);
+    expect(history.future).toEqual([]);
+  });
+
+  it("a new edit clears any existing redo history", () => {
+    let history = recordHistory(emptyHistory(), "board-v1");
+    history = { ...history, future: Object.freeze(["board-v3"]) }; // pretend an undo happened
+    history = recordHistory(history, "board-v2");
+    expect(history.future).toEqual([]);
+  });
+
+  it("undo moves the top of the undo stack to current, pushing current onto redo", () => {
+    let history = recordHistory(emptyHistory(), "board-v1");
+    const result = undoHistory(history, "board-v2");
+    expect(result.board).toBe("board-v1");
+    expect(result.history.past).toEqual([]);
+    expect(result.history.future).toEqual(["board-v2"]);
+  });
+
+  it("is a no-op when there's nothing to undo", () => {
+    const history = emptyHistory();
+    const result = undoHistory(history, "board-current");
+    expect(result.board).toBe("board-current");
+    expect(result.history).toBe(history);
+  });
+
+  it("redo moves the front of the redo stack back to current, pushing current onto undo", () => {
+    const history = Object.freeze({ past: Object.freeze([]), future: Object.freeze(["board-v2"]) });
+    const result = redoHistory(history, "board-v1");
+    expect(result.board).toBe("board-v2");
+    expect(result.history.past).toEqual(["board-v1"]);
+    expect(result.history.future).toEqual([]);
+  });
+
+  it("is a no-op when there's nothing to redo", () => {
+    const history = emptyHistory();
+    const result = redoHistory(history, "board-current");
+    expect(result.board).toBe("board-current");
+    expect(result.history).toBe(history);
+  });
+
+  it("undo followed by redo round-trips back to the original board", () => {
+    let history = recordHistory(emptyHistory(), "board-v1");
+    const undone = undoHistory(history, "board-v2");
+    const redone = redoHistory(undone.history, undone.board);
+    expect(redone.board).toBe("board-v2");
+  });
+
+  it("caps the undo stack at HISTORY_LIMIT, dropping the oldest entries first", () => {
+    let history = emptyHistory();
+    for (let i = 0; i < HISTORY_LIMIT + 5; i += 1) history = recordHistory(history, `board-v${i}`);
+    expect(history.past).toHaveLength(HISTORY_LIMIT);
+    expect(history.past[0]).toBe("board-v5"); // the oldest 5 were dropped
+    expect(history.past.at(-1)).toBe(`board-v${HISTORY_LIMIT + 4}`);
+  });
+
+  it("caps the redo stack at HISTORY_LIMIT too", () => {
+    let history = emptyHistory();
+    for (let i = 0; i < HISTORY_LIMIT + 5; i += 1) history = recordHistory(history, `board-v${i}`);
+    let current = `board-v${HISTORY_LIMIT + 5}`;
+    for (let i = 0; i < HISTORY_LIMIT + 5; i += 1) {
+      const result = undoHistory(history, current);
+      history = result.history;
+      current = result.board;
+    }
+    expect(history.future.length).toBeLessThanOrEqual(HISTORY_LIMIT);
   });
 });

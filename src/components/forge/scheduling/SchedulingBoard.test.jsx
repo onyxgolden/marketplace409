@@ -98,4 +98,11 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain('style="width:170px"');
     expect(markup.match(/sticky top-0 z-30/g)?.length).toBe(53); // only the week header row is sticky now
   });
+
+  it("renders Undo and Redo disabled with an empty history", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain('title="Undo (Ctrl+Z)"');
+    expect(markup).toContain('title="Redo (Ctrl+Shift+Z)"');
+    expect(markup.match(/disabled=""/g)?.length ?? 0).toBeGreaterThanOrEqual(5); // +2 for Undo/Redo, on top of the disabled text-style toolbar
+  });
 });

@@ -487,3 +487,35 @@ export function deserializeBoardState(json) {
     ...merged, nextTaskNumber, blocks: Object.freeze(blocks), dependencies: Object.freeze(merged.dependencies || []),
   });
 }
+
+// Undo/redo history is session-only UI state, deliberately kept separate from `board`
+// itself (never persisted to localStorage, never exported/imported) -- these are pure
+// stack operations the component wires up around its own board state.
+export const HISTORY_LIMIT = 50;
+
+export function emptyHistory() {
+  return Object.freeze({ past: Object.freeze([]), future: Object.freeze([]) });
+}
+
+// Records `previousBoard` (the state a discrete edit just replaced) onto the undo stack
+// and clears redo -- any new edit invalidates whatever redo history existed before it.
+export function recordHistory(history, previousBoard) {
+  const past = history.past.length >= HISTORY_LIMIT ? [...history.past.slice(1), previousBoard] : [...history.past, previousBoard];
+  return Object.freeze({ past: Object.freeze(past), future: Object.freeze([]) });
+}
+
+// Returns { history, board }: the board to restore (or currentBoard unchanged if there's
+// nothing to undo) and the updated stacks.
+export function undoHistory(history, currentBoard) {
+  if (history.past.length === 0) return { history, board: currentBoard };
+  const board = history.past[history.past.length - 1];
+  const future = history.future.length >= HISTORY_LIMIT ? [currentBoard, ...history.future.slice(0, -1)] : [currentBoard, ...history.future];
+  return { history: Object.freeze({ past: Object.freeze(history.past.slice(0, -1)), future: Object.freeze(future) }), board };
+}
+
+export function redoHistory(history, currentBoard) {
+  if (history.future.length === 0) return { history, board: currentBoard };
+  const board = history.future[0];
+  const past = history.past.length >= HISTORY_LIMIT ? [...history.past.slice(1), currentBoard] : [...history.past, currentBoard];
+  return { history: Object.freeze({ past: Object.freeze(past), future: Object.freeze(history.future.slice(1)) }), board };
+}
