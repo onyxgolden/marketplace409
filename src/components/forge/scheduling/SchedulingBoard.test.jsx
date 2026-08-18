@@ -31,4 +31,10 @@ describe("SchedulingBoard", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).toContain("Drag a block from the left panel onto the grid to place it.");
   });
+
+  it("renders the canvas grid lines as a tiling repeating-linear-gradient, not a single static gradient", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toMatch(/repeating-linear-gradient\(to right, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent 90px\)/);
+    expect(markup).toMatch(/repeating-linear-gradient\(to bottom, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent 46px\)/);
+  });
 });

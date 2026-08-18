@@ -2,10 +2,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, ROW_HEIGHT_PX,
-  addBlock, addCustomChip, addLane, chipsByCategory, clampIndex, colorForCategory, computeWeeks,
+  addBlock, addCustomChip, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory, computeWeeks,
   defaultBoardState, deserializeBoardState, deleteLane, laneIndexOf, moveBlock, pixelToIndex, removeBlock,
   renameBlock, renameLane, resizeBlock, serializeBoardState, setProjectDates,
 } from "./schedulingBoardState";
+
+function isTypingTarget(el) {
+  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+}
 
 const STORAGE_KEY = "forge-scheduling-board-state";
 
@@ -27,9 +31,12 @@ function formatWeek(iso) {
 export default function SchedulingBoard() {
   const [board, setBoard] = useState(defaultBoardState);
   const [saveStatus, setSaveStatus] = useState("");
+  const [clipboardStatus, setClipboardStatus] = useState("");
+  const [selectedBlockId, setSelectedBlockId] = useState(null);
   const [customChipDraft, setCustomChipDraft] = useState({ label: "", category: "gov", durationWeeks: 4, milestone: false });
   const canvasRef = useRef(null);
   const saveTimer = useRef(null);
+  const clipboardRef = useRef(null);
 
   useEffect(() => {
     const stored = loadStoredBoard();
@@ -84,10 +91,44 @@ export default function SchedulingBoard() {
       const weekIdx = clampIndex(Math.round((origLeft + (ev.clientX - startX)) / board.weekWidth), 0, weeks.length - 1);
       const laneIdx = clampIndex(Math.round((origTop + (ev.clientY - startY)) / ROW_HEIGHT_PX), 0, board.lanes.length - 1);
       setBoard((current) => moveBlock(current, block.id, weekIdx, laneIdx));
+      setSelectedBlockId(block.id);
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
   }
+
+  function flashClipboardStatus(text) {
+    setClipboardStatus(text);
+    setTimeout(() => setClipboardStatus((current) => (current === text ? "" : current)), 1200);
+  }
+  function copyBlockToClipboard(block) {
+    clipboardRef.current = { chip: blockToChip(block), laneId: block.laneId, nextStartIdx: block.startIdx + Math.max(1, block.duration) };
+    setSelectedBlockId(block.id);
+    flashClipboardStatus("Copied");
+  }
+  function pasteFromClipboard() {
+    const clip = clipboardRef.current;
+    if (!clip) return;
+    const laneIdx = laneIndexOf(board, clip.laneId);
+    if (laneIdx < 0) return;
+    setBoard((current) => addBlock(current, clip.chip, clip.nextStartIdx, laneIdx));
+    clipboardRef.current = { ...clip, nextStartIdx: clip.nextStartIdx + Math.max(1, clip.chip.durationWeeks) };
+    flashClipboardStatus("Pasted");
+  }
+
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (!(event.ctrlKey || event.metaKey) || isTypingTarget(document.activeElement)) return;
+      if (event.key === "c" || event.key === "C") {
+        const block = board.blocks.find((b) => b.id === selectedBlockId);
+        if (block) { event.preventDefault(); copyBlockToClipboard(block); }
+      } else if (event.key === "v" || event.key === "V") {
+        if (clipboardRef.current) { event.preventDefault(); pasteFromClipboard(); }
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [board, selectedBlockId]);
 
   function startResizeBlock(event, block) {
     event.preventDefault();
@@ -182,6 +223,7 @@ export default function SchedulingBoard() {
         <Field label="Zoom"><input type="range" min={MIN_ZOOM_PX} max={MAX_ZOOM_PX} value={board.weekWidth}
           onChange={(e) => setBoard((c) => ({ ...c, weekWidth: Number(e.target.value) }))} /></Field>
         <div className="flex-1" />
+        <span role="status" className="min-w-[60px] font-mono text-xs text-sky-400">{clipboardStatus}</span>
         <span role="status" className="min-w-[70px] font-mono text-xs text-emerald-400">{saveStatus}</span>
         <button type="button" onClick={handleExport} className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">Export JSON</button>
         <label className="cursor-pointer rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">
@@ -251,10 +293,15 @@ export default function SchedulingBoard() {
               </div>
             ))}
             <div ref={canvasRef} data-scheduling-canvas
-              style={{ gridRow: `2 / span ${board.lanes.length}`, gridColumn: `2 / span ${weeks.length}`, width: weeks.length * board.weekWidth, height: board.lanes.length * ROW_HEIGHT_PX }}
-              className="relative bg-[linear-gradient(to_right,theme(colors.slate.300)_1px,transparent_1px),linear-gradient(to_bottom,theme(colors.slate.300)_1px,transparent_1px)]"
+              style={{
+                gridRow: `2 / span ${board.lanes.length}`, gridColumn: `2 / span ${weeks.length}`,
+                width: weeks.length * board.weekWidth, height: board.lanes.length * ROW_HEIGHT_PX,
+                backgroundImage: `repeating-linear-gradient(to right, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${board.weekWidth}px), repeating-linear-gradient(to bottom, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${ROW_HEIGHT_PX}px)`,
+              }}
+              className="relative"
               onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
-              onDrop={dropChipOnCanvas}>
+              onDrop={dropChipOnCanvas}
+              onClick={(e) => { if (e.target === e.currentTarget) setSelectedBlockId(null); }}>
               {board.blocks.length === 0 && (
                 <div className="pointer-events-none absolute top-3 left-3 rounded bg-white/85 px-2.5 py-1.5 text-xs text-slate-500">
                   Drag a block from the left panel onto the grid to place it.
@@ -262,8 +309,10 @@ export default function SchedulingBoard() {
               )}
               {board.blocks.map((block) => (
                 <BlockElement key={block.id} block={block} weekWidth={board.weekWidth} laneIdx={laneIndexOf(board, block.laneId)}
+                  selected={block.id === selectedBlockId}
                   onMouseDownMove={(e) => startMoveBlock(e, block)} onMouseDownResize={(e) => startResizeBlock(e, block)}
-                  onRename={() => handleRenameBlock(block)} onDelete={() => setBoard((current) => removeBlock(current, block.id))} />
+                  onRename={() => handleRenameBlock(block)} onDelete={() => setBoard((current) => removeBlock(current, block.id))}
+                  onCopy={() => copyBlockToClipboard(block)} />
               ))}
             </div>
           </div>
@@ -277,13 +326,18 @@ function Field({ label, children }) {
   return <div className="flex flex-col gap-0.5"><label className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</label>{children}</div>;
 }
 
-function BlockElement({ block, weekWidth, laneIdx, onMouseDownMove, onMouseDownResize, onRename, onDelete }) {
+function BlockElement({ block, weekWidth, laneIdx, selected, onMouseDownMove, onMouseDownResize, onRename, onDelete, onCopy }) {
+  const selectedRing = selected ? "ring-2 ring-sky-500 ring-offset-1" : "";
+  function handleContextMenu(event) {
+    event.preventDefault();
+    onCopy();
+  }
   if (block.milestone) {
     return (
-      <div data-block-id={block.id} onMouseDown={onMouseDownMove}
+      <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
         className="group absolute flex cursor-grab items-center justify-center"
         style={{ left: block.startIdx * weekWidth, top: laneIdx * ROW_HEIGHT_PX, width: weekWidth, height: ROW_HEIGHT_PX }}>
-        <div className="h-5 w-5 rotate-45 rounded-[1px] border border-black/35 shadow" style={{ background: MILESTONE_COLOR }} />
+        <div className={`h-5 w-5 rotate-45 rounded-[1px] border border-black/35 shadow ${selectedRing}`} style={{ background: MILESTONE_COLOR }} />
         <div onDoubleClick={onRename} className="absolute left-[26px] rounded bg-white/85 px-1 text-[11px] font-bold whitespace-nowrap text-slate-800">{block.label}</div>
         <span data-role="delete" onClick={(e) => { e.stopPropagation(); onDelete(); }}
           className="absolute -top-1.5 -right-1.5 hidden h-4 w-4 cursor-pointer rounded-full bg-slate-800 text-center text-[11px] leading-4 text-white group-hover:block">✕</span>
@@ -291,8 +345,8 @@ function BlockElement({ block, weekWidth, laneIdx, onMouseDownMove, onMouseDownR
     );
   }
   return (
-    <div data-block-id={block.id} onMouseDown={onMouseDownMove}
-      className="group absolute flex cursor-grab items-center overflow-hidden rounded-md border border-black/15 px-2 text-[11.5px] font-bold whitespace-nowrap text-slate-950 shadow"
+    <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
+      className={`group absolute flex cursor-grab items-center overflow-hidden rounded-md border border-black/15 px-2 text-[11.5px] font-bold whitespace-nowrap text-slate-950 shadow ${selectedRing}`}
       style={{ left: block.startIdx * weekWidth + 2, top: laneIdx * ROW_HEIGHT_PX + 5, width: block.duration * weekWidth - 4, height: ROW_HEIGHT_PX - 10, background: colorForCategory(block.category) }}>
       <span onDoubleClick={onRename} className="overflow-hidden text-ellipsis">{block.label}</span>
       <div data-role="resize-handle" onMouseDown={onMouseDownResize} className="absolute top-0 right-0 bottom-0 w-2.5 cursor-ew-resize" />

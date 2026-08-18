@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addBlock, addCustomChip, addLane, chipsByCategory, computeWeeks, deleteLane, defaultBoardState,
+  addBlock, addCustomChip, addLane, blockToChip, chipsByCategory, computeWeeks, deleteLane, defaultBoardState,
   deserializeBoardState, moveBlock, removeBlock, renameBlock, renameLane, resizeBlock, serializeBoardState,
   setProjectDates,
 } from "./schedulingBoardState";
@@ -137,5 +137,23 @@ describe("serializeBoardState / deserializeBoardState", () => {
     const restored = deserializeBoardState(JSON.stringify({ projectName: "Imported" }));
     expect(restored.projectName).toBe("Imported");
     expect(restored.lanes).toHaveLength(7);
+  });
+});
+
+describe("blockToChip", () => {
+  it("converts a placed task block back into pasteable chip shape", () => {
+    let state = addBlock(defaultBoardState(), TASK_CHIP, 2, 1);
+    expect(blockToChip(state.blocks[0])).toEqual({ label: "Detailed Design", category: "eng", milestone: false, durationWeeks: 8 });
+  });
+  it("keeps a milestone's duration at zero", () => {
+    let state = addBlock(defaultBoardState(), CHIP, 0, 0);
+    expect(blockToChip(state.blocks[0])).toEqual({ label: "Kickoff", category: "gov", milestone: true, durationWeeks: 0 });
+  });
+  it("round-trips through addBlock so a copied block can be pasted back in", () => {
+    let state = addBlock(defaultBoardState(), TASK_CHIP, 0, 0);
+    const chip = blockToChip(state.blocks[0]);
+    state = addBlock(state, chip, 10, 1);
+    expect(state.blocks).toHaveLength(2);
+    expect(state.blocks[1]).toMatchObject({ label: "Detailed Design", duration: 8, startIdx: 10, laneId: "lane_gov" });
   });
 });

@@ -220,6 +220,14 @@ export function setProjectDates(state, startDate, endDate) {
   return Object.freeze({ ...state, startDate, endDate });
 }
 
+// Converts a placed block back into chip shape so copy/paste can reuse addBlock().
+export function blockToChip(block) {
+  return Object.freeze({
+    label: block.label, category: block.category, milestone: block.milestone,
+    durationWeeks: block.milestone ? 0 : block.duration,
+  });
+}
+
 export function serializeBoardState(state) {
   return JSON.stringify(state, null, 2);
 }
