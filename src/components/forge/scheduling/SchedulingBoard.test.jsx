@@ -113,4 +113,10 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain('href="/forge/scheduling"');
     expect(markup).toContain("All Projects");
   });
+
+  it("renders a help button but not the help modal until it's opened", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain('title="Help &amp; keyboard shortcuts"');
+    expect(markup).not.toContain("data-scheduling-help");
+  });
 });

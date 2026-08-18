@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import SchedulingHelpModal from "./SchedulingHelpModal";
 import {
   CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
@@ -53,6 +54,7 @@ export default function SchedulingBoard({ projectId }) {
   const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const [hideEmptyWeeks, setHideEmptyWeeks] = useState(false);
   const [history, setHistory] = useState(emptyHistory);
+  const [showHelp, setShowHelp] = useState(false);
   const canvasRef = useRef(null);
   const boardScrollRef = useRef(null);
   const laneListRef = useRef(null);
@@ -478,6 +480,8 @@ export default function SchedulingBoard({ projectId }) {
             <Link href="/forge/scheduling" className="block rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">All Projects</Link>
           </div>
         </details>
+        <button type="button" onClick={() => setShowHelp(true)} title="Help & keyboard shortcuts"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-700 text-sm font-black hover:bg-slate-800">?</button>
         <button type="button" onClick={handleReset} className="rounded border border-red-800 bg-red-950 px-3 py-1.5 text-sm font-bold">Reset board</button>
       </div>
 
@@ -615,6 +619,7 @@ export default function SchedulingBoard({ projectId }) {
             commitBoard((current) => addDependency(current, predecessorId, successorId, relationshipType, lagDays))}
           onRemoveDependency={(dependencyId) => commitBoard((current) => removeDependency(current, dependencyId))} />
       )}
+      {showHelp && <SchedulingHelpModal onClose={() => setShowHelp(false)} />}
     </section>
   );
 }
