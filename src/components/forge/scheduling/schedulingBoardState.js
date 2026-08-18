@@ -181,11 +181,15 @@ export function removeBlock(state, blockId) {
   return Object.freeze({ ...state, blocks: Object.freeze(state.blocks.filter((block) => block.id !== blockId)) });
 }
 
-export function addLane(state, name) {
+// `index` inserts before that position (0 = new first lane); omitted appends at the end.
+export function addLane(state, name, index) {
   const trimmed = name?.trim();
   if (!trimmed) return state;
   const lane = Object.freeze({ id: `lane_${state.nextId}`, name: trimmed });
-  return Object.freeze({ ...state, nextId: state.nextId + 1, lanes: Object.freeze([...state.lanes, lane]) });
+  const insertAt = Number.isInteger(index) ? clampIndex(index, 0, state.lanes.length) : state.lanes.length;
+  const lanes = [...state.lanes];
+  lanes.splice(insertAt, 0, lane);
+  return Object.freeze({ ...state, nextId: state.nextId + 1, lanes: Object.freeze(lanes) });
 }
 
 export function renameLane(state, laneId, name) {

@@ -154,6 +154,10 @@ export default function SchedulingBoard() {
     const name = window.prompt("New lane name", "New Lane");
     if (name) setBoard((current) => addLane(current, name));
   }
+  function handleInsertLaneBefore(lane) {
+    const name = window.prompt(`New lane name (inserted above "${lane.name}")`, "New Lane");
+    if (name) setBoard((current) => addLane(current, name, laneIndexOf(current, lane.id)));
+  }
   function handleRenameLane(lane) {
     const name = window.prompt("Rename lane", lane.name);
     if (name) setBoard((current) => renameLane(current, lane.id, name));
@@ -289,7 +293,10 @@ export default function SchedulingBoard() {
             {board.lanes.map((lane) => (
               <div key={lane.id} style={{ gridColumn: 1 }} className="sticky left-0 z-[3] flex items-center justify-between border-r border-b border-slate-300 bg-slate-200 px-2.5 py-0 text-xs font-bold">
                 <span onDoubleClick={() => handleRenameLane(lane)} title="Double-click to rename">{lane.name}</span>
-                <span onClick={() => handleDeleteLane(lane)} title="Delete lane" className="cursor-pointer px-1 text-slate-400 hover:text-red-600">✕</span>
+                <span className="flex items-center gap-1">
+                  <span onClick={() => handleInsertLaneBefore(lane)} title="Insert lane above" className="cursor-pointer px-1 text-slate-400 hover:text-emerald-600">+</span>
+                  <span onClick={() => handleDeleteLane(lane)} title="Delete lane" className="cursor-pointer px-1 text-slate-400 hover:text-red-600">✕</span>
+                </span>
               </div>
             ))}
             <div ref={canvasRef} data-scheduling-canvas

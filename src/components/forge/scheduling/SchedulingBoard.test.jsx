@@ -37,4 +37,9 @@ describe("SchedulingBoard", () => {
     expect(markup).toMatch(/repeating-linear-gradient\(to right, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent 90px\)/);
     expect(markup).toMatch(/repeating-linear-gradient\(to bottom, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent 46px\)/);
   });
+
+  it("gives every lane an insert-above affordance, not just an append-at-the-end button", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup.match(/title="Insert lane above"/g)).toHaveLength(7); // one per default lane
+  });
 });

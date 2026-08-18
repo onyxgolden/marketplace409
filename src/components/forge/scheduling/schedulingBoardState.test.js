@@ -86,9 +86,25 @@ describe("renameBlock / removeBlock", () => {
 });
 
 describe("lane management", () => {
-  it("adds a lane with a generated id", () => {
+  it("appends a lane with a generated id when no index is given", () => {
     const state = addLane(defaultBoardState(), "Commissioning");
     expect(state.lanes.at(-1)).toMatchObject({ name: "Commissioning" });
+  });
+  it("inserts a lane between two existing lanes at the given index", () => {
+    const state = addLane(defaultBoardState(), "Site Prep", 2); // between lane_gov and lane_eng
+    expect(state.lanes.map((l) => l.name)).toEqual([
+      "Milestones", "Governance", "Site Prep", "Engineering", "Procurement",
+      "Field Execution", "Field Execution (cont.)", "Shutdown & Startup",
+    ]);
+  });
+  it("inserts as the new first lane at index 0", () => {
+    const state = addLane(defaultBoardState(), "Pre-Kickoff", 0);
+    expect(state.lanes[0].name).toBe("Pre-Kickoff");
+    expect(state.lanes).toHaveLength(8);
+  });
+  it("clamps an out-of-range index to the end", () => {
+    const state = addLane(defaultBoardState(), "Overflow", 999);
+    expect(state.lanes.at(-1).name).toBe("Overflow");
   });
   it("renames a lane", () => {
     const state = renameLane(defaultBoardState(), "lane_gov", "Governance & Controls");
