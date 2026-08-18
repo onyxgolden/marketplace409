@@ -57,6 +57,7 @@ export const HELP_SECTIONS = Object.freeze([
   {
     title: "View controls",
     items: [
+      { label: "Drag across the week header", description: "Measures the day span between two dates -- shows a day-count badge in the header and highlights the range on the grid, handy for figuring out how far out to place an activity. Click empty canvas to clear it." },
       { label: "Zoom", description: "Slider controls how wide each week column renders." },
       { label: "Fit to project", description: "Shrinks the board so the entire project date range fits on screen without scrolling." },
       { label: "Hide empty weeks", description: "Collapses out any week with nothing scheduled in it, in any lane." },

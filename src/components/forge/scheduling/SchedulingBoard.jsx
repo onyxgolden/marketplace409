@@ -57,6 +57,10 @@ export default function SchedulingBoard({ projectId }) {
   const [showHelp, setShowHelp] = useState(false);
   const [showCriticalPath, setShowCriticalPath] = useState(false);
   const [contextMenu, setContextMenu] = useState(null); // { x, y } in viewport coords, or null when hidden
+  // Drag-to-measure a day span on the header row -- view-only, not undoable, cleared on
+  // the next measurement or an empty-canvas click. Real (uncompressed) week indices, so
+  // the day count stays correct even while "hide empty weeks" is compressing the timeline.
+  const [measure, setMeasure] = useState(null); // { anchorRealIdx, hoverRealIdx } | null
   const canvasRef = useRef(null);
   const boardScrollRef = useRef(null);
   const laneListRef = useRef(null);
@@ -151,6 +155,13 @@ export default function SchedulingBoard({ projectId }) {
   const columnForWeekIdx = useMemo(() => new Map(displayIndices.map((real, compressed) => [real, compressed])), [displayIndices]);
   const resolveColumn = (realIdx) => columnForWeekIdx.get(realIdx) ?? realIdx;
 
+  // Real (uncompressed) week indices, so the day count stays accurate to actual calendar
+  // time spanned even while "hide empty weeks" is compressing which columns render.
+  const measureBounds = measure
+    ? { minRealIdx: Math.min(measure.anchorRealIdx, measure.hoverRealIdx), maxRealIdx: Math.max(measure.anchorRealIdx, measure.hoverRealIdx) }
+    : null;
+  const measureDays = measureBounds ? (measureBounds.maxRealIdx - measureBounds.minRealIdx + 1) * 7 : 0;
+
   const arrowSegments = useMemo(() => board.dependencies
     .map((dependency) => ({ dependency, points: dependencyArrowPoints(board, dependency, board.weekWidth, resolveColumn) }))
     .filter((segment) => segment.points), [board, columnForWeekIdx]);
@@ -170,6 +181,24 @@ export default function SchedulingBoard({ projectId }) {
   function roundedPixelToRealWeekIdx(px) {
     const compressed = clampIndex(Math.round(px / board.weekWidth), 0, displayIndices.length - 1);
     return displayIndices[compressed];
+  }
+
+  function startMeasure(event, realIdx) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    setMeasure({ anchorRealIdx: realIdx, hoverRealIdx: realIdx });
+    function onMove(ev) {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const hoverRealIdx = pixelToRealWeekIdx(ev.clientX - rect.left);
+      setMeasure((current) => (current ? { ...current, hoverRealIdx } : current));
+    }
+    function onUp() {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   }
 
   function handleFitToProject() {
@@ -583,11 +612,21 @@ export default function SchedulingBoard({ projectId }) {
 
         <div ref={boardScrollRef} className="flex-1 overflow-auto bg-slate-100" onScroll={syncLaneListScroll}>
           <div style={{ display: "grid", gridTemplateColumns: `${displayIndices.map(() => `${board.weekWidth}px`).join(" ")}`, gridTemplateRows: `40px ${board.lanes.map(() => `${ROW_HEIGHT_PX}px`).join(" ")}` }}>
-            {displayIndices.map((realIdx) => (
-              <div key={weeks[realIdx]} className="sticky top-0 z-30 flex items-center justify-center border-r border-b border-slate-800 bg-slate-950 font-mono text-[10.5px] text-slate-300">
-                {formatWeek(weeks[realIdx])}
+            {displayIndices.map((realIdx) => {
+              const isMeasured = measureBounds && realIdx >= measureBounds.minRealIdx && realIdx <= measureBounds.maxRealIdx;
+              return (
+                <div key={weeks[realIdx]} onMouseDown={(e) => startMeasure(e, realIdx)} title="Drag to measure a day span"
+                  className={`sticky top-0 z-30 flex cursor-crosshair items-center justify-center border-r border-b border-slate-800 font-mono text-[10.5px] select-none ${isMeasured ? "bg-amber-600 text-slate-950" : "bg-slate-950 text-slate-300"}`}>
+                  {formatWeek(weeks[realIdx])}
+                </div>
+              );
+            })}
+            {measureBounds && (
+              <div style={{ gridRow: "1", gridColumn: `${resolveColumn(measureBounds.minRealIdx) + 1} / ${resolveColumn(measureBounds.maxRealIdx) + 2}` }}
+                className="pointer-events-none sticky top-0 z-40 flex items-center justify-center" data-scheduling-measure-badge>
+                <span className="rounded-full bg-amber-400 px-2.5 py-1 text-[11px] font-black text-slate-950 shadow">{measureDays} days</span>
               </div>
-            ))}
+            )}
             <div ref={canvasRef} data-scheduling-canvas
               style={{
                 gridRow: `2 / span ${board.lanes.length}`, gridColumn: `1 / span ${displayIndices.length}`,
@@ -597,11 +636,18 @@ export default function SchedulingBoard({ projectId }) {
               className="relative"
               onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
               onDrop={dropChipOnCanvas}
-              onClick={(e) => { if (e.target === e.currentTarget) setSelectedBlockIds([]); }}>
+              onClick={(e) => { if (e.target === e.currentTarget) { setSelectedBlockIds([]); setMeasure(null); } }}>
               {board.blocks.length === 0 && (
                 <div className="pointer-events-none absolute top-3 left-3 rounded bg-white/85 px-2.5 py-1.5 text-xs text-slate-500">
                   Drag a block from the left panel onto the grid to place it.
                 </div>
+              )}
+              {measureBounds && (
+                <div className="pointer-events-none absolute top-0 bottom-0 bg-amber-400/25" data-scheduling-measure-band
+                  style={{
+                    left: resolveColumn(measureBounds.minRealIdx) * board.weekWidth,
+                    width: (resolveColumn(measureBounds.maxRealIdx) - resolveColumn(measureBounds.minRealIdx) + 1) * board.weekWidth,
+                  }} />
               )}
               <svg className="pointer-events-none absolute inset-0" width={displayIndices.length * board.weekWidth} height={board.lanes.length * ROW_HEIGHT_PX}>
                 <defs>

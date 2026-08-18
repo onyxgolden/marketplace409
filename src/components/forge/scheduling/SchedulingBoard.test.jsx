@@ -131,4 +131,11 @@ describe("SchedulingBoard", () => {
     expect(markup).not.toContain("data-scheduling-context-menu");
     expect(markup).not.toContain("Link activities");
   });
+
+  it("makes every week header draggable for measuring a day span, but shows no badge or band until one is dragged", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup.match(/title="Drag to measure a day span"/g)).toHaveLength(53);
+    expect(markup).not.toContain("data-scheduling-measure-badge");
+    expect(markup).not.toContain("data-scheduling-measure-band");
+  });
 });
