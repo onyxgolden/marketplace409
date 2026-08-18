@@ -3,9 +3,10 @@ import {
   BASE_BLOCK_FONT_SIZE_PX, HISTORY_LIMIT, MIN_BLOCK_FONT_SIZE_PX,
   addBlock, addCustomChip, addDependency, addLane, blockAnchorPoint, blockToChip, chipsByCategory, computeWeeks,
   deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, emptyHistory,
-  fitBlockFontSizePx, fitWeekWidthPx, linkBlocksInOrder, moveBlock, moveBlocksBy, occupiedWeekIndices, recordHistory,
-  redoHistory, removeBlock, removeDependency, renameBlock, renameLane, resizeBlock, resizeBlockFromStart,
-  serializeBoardState, setBlockTextStyle, setProjectDates, suggestPredecessors, undoHistory, visibleWeekIndices,
+  fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, linkBlocksInOrder, moveBlock, moveBlocksBy,
+  occupiedWeekIndices, projectSummaryFromBoard, projectStorageKey, recordHistory, redoHistory, removeBlock,
+  removeDependency, renameBlock, renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState,
+  setBlockTextStyle, setProjectDates, suggestPredecessors, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -25,6 +26,39 @@ describe("defaultBoardState", () => {
     const state = defaultBoardState();
     expect(state.lanes).toHaveLength(7);
     expect(state.blocks).toHaveLength(0);
+  });
+  it("generates a fresh id and createdAt/updatedAt timestamps when none is given", () => {
+    const a = defaultBoardState();
+    const b = defaultBoardState();
+    expect(a.id).toBeTruthy();
+    expect(a.id).not.toBe(b.id); // each new project gets its own identity
+    expect(a.createdAt).toBe(a.updatedAt); // freshly created: never modified since
+  });
+  it("uses the given id instead of generating one", () => {
+    expect(defaultBoardState("schedule_project_fixed").id).toBe("schedule_project_fixed");
+  });
+});
+
+describe("generateProjectId", () => {
+  it("produces a project-prefixed, unique id", () => {
+    expect(generateProjectId()).toMatch(/^schedule_project_/);
+    expect(generateProjectId()).not.toBe(generateProjectId());
+  });
+});
+
+describe("projectStorageKey", () => {
+  it("namespaces a project id for localStorage", () => {
+    expect(projectStorageKey("schedule_project_1")).toBe("forge-scheduling-project:schedule_project_1");
+  });
+});
+
+describe("projectSummaryFromBoard", () => {
+  it("projects just the columns the Projects list shows", () => {
+    const board = defaultBoardState("schedule_project_1");
+    expect(projectSummaryFromBoard(board)).toEqual({
+      id: "schedule_project_1", name: board.projectName, startDate: board.startDate,
+      endDate: board.endDate, createdAt: board.createdAt, updatedAt: board.updatedAt,
+    });
   });
 });
 
@@ -202,6 +236,18 @@ describe("serializeBoardState / deserializeBoardState", () => {
     const restored = deserializeBoardState(JSON.stringify({ projectName: "Imported" }));
     expect(restored.projectName).toBe("Imported");
     expect(restored.lanes).toHaveLength(7);
+  });
+  it("keeps a project's own id and timestamps across a save/load round-trip", () => {
+    const state = defaultBoardState("schedule_project_fixed");
+    const restored = deserializeBoardState(serializeBoardState(state));
+    expect(restored.id).toBe("schedule_project_fixed");
+    expect(restored.createdAt).toBe(state.createdAt);
+  });
+  it("generates an id and timestamps for a save from before they existed", () => {
+    const restored = deserializeBoardState(JSON.stringify({ projectName: "Legacy save" }));
+    expect(restored.id).toBeTruthy();
+    expect(restored.createdAt).toBeTruthy();
+    expect(restored.updatedAt).toBeTruthy();
   });
 });
 

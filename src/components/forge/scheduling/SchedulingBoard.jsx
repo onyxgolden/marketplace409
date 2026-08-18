@@ -1,27 +1,27 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
   addBlock, addCustomChip, addDependency, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, deleteLane,
   emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock, moveBlocksBy,
-  pixelToIndex, recordHistory, redoHistory, removeBlock, removeDependency, renameBlock, renameLane, resizeBlock,
-  resizeBlockFromStart, serializeBoardState, setBlockTextStyle, setProjectDates, suggestPredecessors, undoHistory,
-  visibleWeekIndices,
+  pixelToIndex, projectStorageKey, recordHistory, redoHistory, removeBlock, removeDependency, renameBlock,
+  renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState, setBlockTextStyle, setProjectDates,
+  suggestPredecessors, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
 }
 
-const STORAGE_KEY = "forge-scheduling-board-state";
 const PALETTE_COLLAPSE_STORAGE_KEY = "forge-scheduling-palette-collapsed";
 
-function loadStoredBoard() {
+function loadStoredBoard(projectId) {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(projectStorageKey(projectId));
     return raw ? deserializeBoardState(raw) : null;
   } catch {
     return null;
@@ -42,8 +42,8 @@ function formatWeek(iso) {
   return `${Number(m)}/${Number(d)}/${y.slice(2)}`;
 }
 
-export default function SchedulingBoard() {
-  const [board, setBoard] = useState(defaultBoardState);
+export default function SchedulingBoard({ projectId }) {
+  const [board, setBoard] = useState(() => defaultBoardState(projectId));
   const [saveStatus, setSaveStatus] = useState("");
   const [clipboardStatus, setClipboardStatus] = useState("");
   // Ordered, not a Set: Ctrl/Cmd+click appends to build up a chain, and "Link in order"
@@ -97,10 +97,10 @@ export default function SchedulingBoard() {
   }
 
   useEffect(() => {
-    const stored = loadStoredBoard();
+    const stored = loadStoredBoard(projectId);
     if (stored) setBoard(stored);
     setPaletteCollapsed(loadPaletteCollapsed());
-  }, []);
+  }, [projectId]);
 
   function togglePaletteCollapsed() {
     setPaletteCollapsed((current) => {
@@ -118,7 +118,11 @@ export default function SchedulingBoard() {
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       try {
-        window.localStorage.setItem(STORAGE_KEY, serializeBoardState(board));
+        // updatedAt reflects when the persisted copy actually changed (what the Projects
+        // list shows as "Last Modified"), not every in-memory edit -- bumped only here,
+        // right before the write, rather than kept in sync on `board` itself.
+        const toSave = { ...board, updatedAt: new Date().toISOString() };
+        window.localStorage.setItem(projectStorageKey(board.id), serializeBoardState(toSave));
         setSaveStatus("Saved");
         setTimeout(() => setSaveStatus((current) => (current === "Saved" ? "" : current)), 1800);
       } catch {
@@ -427,7 +431,7 @@ export default function SchedulingBoard() {
   return (
     <section className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" data-scheduling-board>
       <div className="flex flex-wrap items-center gap-4 border-b border-slate-200 bg-slate-950 px-4 py-3 text-white">
-        <div className="mr-2"><h1 className="text-base font-black">Scheduling</h1><span className="font-mono text-[11px] text-slate-400">drag-and-drop timeline</span></div>
+        <div className="mr-2"><h1 className="text-base font-black">Gantt Chart</h1><span className="font-mono text-[11px] text-slate-400">drag-and-drop timeline</span></div>
         <Field label="Project"><input value={board.projectName} onChange={(e) => setBoard((c) => ({ ...c, projectName: e.target.value }))}
           className="min-w-[180px] rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-white" /></Field>
         <form className="flex items-end gap-2" onSubmit={(e) => { e.preventDefault(); handleApplyDates(e); }}>
@@ -468,6 +472,12 @@ export default function SchedulingBoard() {
         <label className="cursor-pointer rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">
           Import JSON<input type="file" accept="application/json" className="hidden" onChange={handleImport} />
         </label>
+        <details className="relative" data-scheduling-menu>
+          <summary className="cursor-pointer list-none rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">Menu</summary>
+          <div className="absolute left-0 z-50 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 text-slate-950 shadow-xl">
+            <Link href="/forge/scheduling" className="block rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">All Projects</Link>
+          </div>
+        </details>
         <button type="button" onClick={handleReset} className="rounded border border-red-800 bg-red-950 px-3 py-1.5 text-sm font-bold">Reset board</button>
       </div>
 

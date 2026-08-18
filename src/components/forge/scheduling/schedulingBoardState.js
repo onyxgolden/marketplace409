@@ -102,8 +102,16 @@ export function colorForCategory(category) {
 export const FIRST_TASK_NUMBER = 1010;
 export const TASK_NUMBER_STEP = 10;
 
-export function defaultBoardState() {
+export function generateProjectId() {
+  return `schedule_project_${crypto.randomUUID()}`;
+}
+
+// `id` is a param (not always freshly generated) so deserializeBoardState can rebuild a
+// saved project's exact defaults rather than handing it a new random identity.
+export function defaultBoardState(id = generateProjectId()) {
+  const now = new Date().toISOString();
   return Object.freeze({
+    id,
     projectName: "New Project",
     startDate: todayISO(0),
     endDate: todayISO(364),
@@ -114,6 +122,26 @@ export function defaultBoardState() {
     customChips: Object.freeze([]),
     nextId: 1,
     nextTaskNumber: FIRST_TASK_NUMBER,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+// Shared storage-key scheme -- both SchedulingBoard (loads/saves the one project it's
+// showing) and ProjectsScreen (scans for every saved project) need to agree on this.
+export const PROJECT_STORAGE_PREFIX = "forge-scheduling-project:";
+export const LEGACY_BOARD_STORAGE_KEY = "forge-scheduling-board-state";
+
+export function projectStorageKey(id) {
+  return `${PROJECT_STORAGE_PREFIX}${id}`;
+}
+
+// Projection for the Projects list screen -- the list reads saved boards directly (each
+// board is its own source of truth), this just picks out the columns it displays.
+export function projectSummaryFromBoard(board) {
+  return Object.freeze({
+    id: board.id, name: board.projectName, startDate: board.startDate, endDate: board.endDate,
+    createdAt: board.createdAt, updatedAt: board.updatedAt,
   });
 }
 
@@ -470,7 +498,10 @@ export function serializeBoardState(state) {
 // task numbering existed) rather than leaving blocks with a blank taskCode.
 export function deserializeBoardState(json) {
   const parsed = JSON.parse(json);
-  const merged = { ...defaultBoardState(), ...parsed };
+  // Passing parsed.id through (undefined falls back to a fresh id via the default param)
+  // means an existing project keeps its identity across saves; only a save from before
+  // ids existed gets a newly-generated one, same backfill spirit as taskCode below.
+  const merged = { ...defaultBoardState(parsed.id), ...parsed };
   let nextTaskNumber = Number.isInteger(merged.nextTaskNumber) ? merged.nextTaskNumber : FIRST_TASK_NUMBER;
   const blocks = (merged.blocks || []).map((block) => {
     let next = block;

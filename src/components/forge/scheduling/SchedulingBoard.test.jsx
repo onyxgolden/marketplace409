@@ -105,4 +105,12 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain('title="Redo (Ctrl+Shift+Z)"');
     expect(markup.match(/disabled=""/g)?.length ?? 0).toBeGreaterThanOrEqual(5); // +2 for Undo/Redo, on top of the disabled text-style toolbar
   });
+
+  it("titles the view Gantt Chart and offers a Menu with a link back to the Projects list", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain(">Gantt Chart<");
+    expect(markup).toContain("data-scheduling-menu");
+    expect(markup).toContain('href="/forge/scheduling"');
+    expect(markup).toContain("All Projects");
+  });
 });
