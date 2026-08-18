@@ -159,20 +159,58 @@ export default function SchedulingBoard() {
       .map((el) => { el.classList.add("opacity-75", "z-20"); return { el, left: parseFloat(el.style.left), top: parseFloat(el.style.top) }; });
     const anchor = groupOrigins.find((origin) => origin.el.dataset.blockId === block.id) || groupOrigins[0];
     const startX = event.clientX, startY = event.clientY;
-    function onMove(ev) {
-      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    const scrollEl = boardScrollRef.current;
+    const initialScrollLeft = scrollEl?.scrollLeft || 0;
+    let lastDx = 0, lastDy = 0;
+    let autoScrollDirection = 0;
+    let autoScrollStartedAt = 0;
+    let autoScrollFrame = null;
+
+    // Canvas-relative movement = raw mouse delta plus however far auto-scroll has since
+    // shifted the content -- without adding scrollDelta back in, the dragged block would
+    // visually lag behind while the timeline scrolls out from under a stationary cursor.
+    function applyPositions() {
+      const scrollDelta = (scrollEl?.scrollLeft || 0) - initialScrollLeft;
       for (const origin of groupOrigins) {
-        origin.el.style.left = `${origin.left + dx}px`;
-        origin.el.style.top = `${origin.top + dy}px`;
+        origin.el.style.left = `${origin.left + lastDx + scrollDelta}px`;
+        origin.el.style.top = `${origin.top + lastDy}px`;
       }
     }
-    function onUp(ev) {
+    function stepAutoScroll(now) {
+      if (autoScrollDirection === 0 || !scrollEl) { autoScrollFrame = null; return; }
+      // Slow to start, ramping up to full speed after ~2s of continuous edge-holding.
+      const speed = now - autoScrollStartedAt < 2000 ? 3 : 14;
+      scrollEl.scrollLeft += autoScrollDirection * speed;
+      applyPositions();
+      autoScrollFrame = requestAnimationFrame(stepAutoScroll);
+    }
+    function updateAutoScrollDirection(clientX) {
+      if (!scrollEl) return;
+      const rect = scrollEl.getBoundingClientRect();
+      const EDGE_ZONE_PX = 48;
+      let direction = 0;
+      if (clientX < rect.left + EDGE_ZONE_PX) direction = -1;
+      else if (clientX > rect.right - EDGE_ZONE_PX) direction = 1;
+      if (direction === autoScrollDirection) return;
+      autoScrollDirection = direction;
+      autoScrollStartedAt = performance.now();
+      if (direction !== 0 && autoScrollFrame === null) autoScrollFrame = requestAnimationFrame(stepAutoScroll);
+    }
+    function onMove(ev) {
+      lastDx = ev.clientX - startX;
+      lastDy = ev.clientY - startY;
+      applyPositions();
+      updateAutoScrollDirection(ev.clientX);
+    }
+    function onUp() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
+      if (autoScrollFrame !== null) cancelAnimationFrame(autoScrollFrame);
       for (const origin of groupOrigins) origin.el.classList.remove("opacity-75", "z-20");
-      const dx = ev.clientX - startX, dy = ev.clientY - startY;
-      const anchorWeekIdx = roundedPixelToRealWeekIdx(anchor.left + dx);
-      const anchorLaneIdx = clampIndex(Math.round((anchor.top + dy) / ROW_HEIGHT_PX), 0, board.lanes.length - 1);
+      const scrollDelta = (scrollEl?.scrollLeft || 0) - initialScrollLeft;
+      const totalDx = lastDx + scrollDelta;
+      const anchorWeekIdx = roundedPixelToRealWeekIdx(anchor.left + totalDx);
+      const anchorLaneIdx = clampIndex(Math.round((anchor.top + lastDy) / ROW_HEIGHT_PX), 0, board.lanes.length - 1);
       if (isGroupDrag) {
         const weekDelta = anchorWeekIdx - block.startIdx;
         const laneDelta = anchorLaneIdx - laneIndexOf(board, block.laneId);
