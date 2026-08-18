@@ -401,19 +401,40 @@ describe("blockAnchorPoint / dependencyArrowPoints", () => {
     expect(blockAnchorPoint(task, 1, 90, "start")).toEqual({ x: 1 * 90 + 2, y: 46 + 23 });
     expect(blockAnchorPoint(task, 1, 90, "finish")).toEqual({ x: 4 * 90 - 2, y: 46 + 23 });
   });
-  it("connects predecessor-finish to successor-start for an FS link", () => {
+  it("connects predecessor-finish to successor-start for an FS link, elbowed 90 degrees across lanes", () => {
     const state = addDependency(twoBlockState(), "b1", "b2", "FS");
     const points = dependencyArrowPoints(state, state.dependencies[0], 90);
     const predecessor = blockAnchorPoint(state.blocks[0], 1, 90, "finish");
     const successor = blockAnchorPoint(state.blocks[1], 2, 90, "start");
-    expect(points).toEqual({ x1: predecessor.x, y1: predecessor.y, x2: successor.x, y2: successor.y });
+    expect(points.x1).toBe(predecessor.x);
+    expect(points.y1).toBe(predecessor.y);
+    expect(points.x2).toBe(successor.x);
+    expect(points.y2).toBe(successor.y);
+    // Finish edge exits forward (+x), turns down into the successor's lane, then runs
+    // straight in -- so it lands squarely on the successor's front edge, not on a diagonal.
+    const midX = predecessor.x + 14;
+    expect(points.d).toBe(`M${predecessor.x},${predecessor.y} L${midX},${predecessor.y} L${midX},${successor.y} L${successor.x},${successor.y}`);
   });
-  it("connects start-to-start for an SS link", () => {
+  it("connects start-to-start for an SS link, elbowed the other direction", () => {
     const state = addDependency(twoBlockState(), "b1", "b2", "SS");
     const points = dependencyArrowPoints(state, state.dependencies[0], 90);
     const predecessor = blockAnchorPoint(state.blocks[0], 1, 90, "start");
     const successor = blockAnchorPoint(state.blocks[1], 2, 90, "start");
-    expect(points).toEqual({ x1: predecessor.x, y1: predecessor.y, x2: successor.x, y2: successor.y });
+    expect(points.x1).toBe(predecessor.x);
+    expect(points.y1).toBe(predecessor.y);
+    expect(points.x2).toBe(successor.x);
+    expect(points.y2).toBe(successor.y);
+    // Start edge exits backward (-x) before turning into the successor's lane.
+    const midX = predecessor.x - 14;
+    expect(points.d).toBe(`M${predecessor.x},${predecessor.y} L${midX},${predecessor.y} L${midX},${successor.y} L${successor.x},${successor.y}`);
+  });
+  it("stays a straight line when predecessor and successor share a lane", () => {
+    let state = twoBlockState();
+    state = { ...state, blocks: state.blocks.map((b) => (b.id === "b2" ? { ...b, laneId: state.blocks[0].laneId } : b)) };
+    state = addDependency(state, "b1", "b2", "FS");
+    const points = dependencyArrowPoints(state, state.dependencies[0], 90);
+    expect(points.y1).toBe(points.y2);
+    expect(points.d).toBe(`M${points.x1},${points.y1} L${points.x2},${points.y2}`);
   });
   it("returns null when either linked block no longer exists", () => {
     const state = addDependency(twoBlockState(), "b1", "b2");

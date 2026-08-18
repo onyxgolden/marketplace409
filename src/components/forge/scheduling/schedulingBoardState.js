@@ -449,9 +449,18 @@ const RELATIONSHIP_ANCHORS = Object.freeze({
   FF: Object.freeze(["finish", "finish"]), SF: Object.freeze(["start", "finish"]),
 });
 
-// Returns {x1,y1,x2,y2} canvas-pixel coordinates for drawing a dependency's arrow, or null
+// How far the line travels away from the predecessor before turning down/up toward the
+// successor's lane -- keeps the elbow's final leg (the one that determines the arrowhead's
+// orientation) comfortably clear of the predecessor block it just left.
+const DEPENDENCY_ELBOW_STUB_PX = 14;
+
+// Returns {x1,y1,x2,y2,d} canvas-pixel coordinates for drawing a dependency's arrow, or null
 // if either linked block no longer exists (shouldn't happen given the cascade-delete above,
-// but arrow rendering should never throw on stale data).
+// but arrow rendering should never throw on stale data). x1/y1/x2/y2 are the predecessor/
+// successor anchor points; `d` is the SVG path to actually render: a straight line when both
+// blocks share a lane, otherwise a 90-degree elbow (out from the predecessor, across to the
+// successor's lane, then straight in) so the arrow always lands square-on at the successor's
+// edge instead of cutting across it diagonally.
 export function dependencyArrowPoints(state, dependency, weekWidth, resolveColumn = (idx) => idx) {
   const predecessor = state.blocks.find((block) => block.id === dependency.predecessorId);
   const successor = state.blocks.find((block) => block.id === dependency.successorId);
@@ -459,7 +468,13 @@ export function dependencyArrowPoints(state, dependency, weekWidth, resolveColum
   const [predEdge, succEdge] = RELATIONSHIP_ANCHORS[dependency.relationshipType] || RELATIONSHIP_ANCHORS.FS;
   const from = blockAnchorPoint(predecessor, laneIndexOf(state, predecessor.laneId), weekWidth, predEdge, resolveColumn);
   const to = blockAnchorPoint(successor, laneIndexOf(state, successor.laneId), weekWidth, succEdge, resolveColumn);
-  return Object.freeze({ x1: from.x, y1: from.y, x2: to.x, y2: to.y });
+  if (from.y === to.y) return Object.freeze({ x1: from.x, y1: from.y, x2: to.x, y2: to.y, d: `M${from.x},${from.y} L${to.x},${to.y}` });
+  // Exit the predecessor in the direction its edge naturally points (finish -> forward,
+  // start -> backward), then drop/rise to the successor's lane, then run straight in.
+  const stubDirection = predEdge === "finish" ? 1 : -1;
+  const midX = from.x + stubDirection * DEPENDENCY_ELBOW_STUB_PX;
+  const d = `M${from.x},${from.y} L${midX},${from.y} L${midX},${to.y} L${to.x},${to.y}`;
+  return Object.freeze({ x1: from.x, y1: from.y, x2: to.x, y2: to.y, d });
 }
 
 // A simplified stand-in for real CPM critical-path analysis (which needs calendars and

@@ -661,7 +661,7 @@ export default function SchedulingBoard({ projectId }) {
                 {arrowSegments.map(({ dependency, points }) => {
                   const isCritical = criticalDependencyIds.has(dependency.id);
                   return (
-                    <line key={dependency.id} x1={points.x1} y1={points.y1} x2={points.x2} y2={points.y2}
+                    <path key={dependency.id} d={points.d} fill="none"
                       stroke={isCritical ? "#dc2626" : "#64748b"} strokeWidth={isCritical ? "2.5" : "1.5"}
                       markerEnd={`url(#scheduling-dependency-arrow${isCritical ? "-critical" : ""})`} />
                   );
