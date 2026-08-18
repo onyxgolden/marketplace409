@@ -56,6 +56,7 @@ export default function SchedulingBoard({ projectId }) {
   const [history, setHistory] = useState(emptyHistory);
   const [showHelp, setShowHelp] = useState(false);
   const [showCriticalPath, setShowCriticalPath] = useState(false);
+  const [contextMenu, setContextMenu] = useState(null); // { x, y } in viewport coords, or null when hidden
   const canvasRef = useRef(null);
   const boardScrollRef = useRef(null);
   const laneListRef = useRef(null);
@@ -291,6 +292,16 @@ export default function SchedulingBoard({ projectId }) {
     clipboardRef.current = { chip: blockToChip(block), laneId: block.laneId, nextStartIdx: block.startIdx + Math.max(1, block.duration) };
     setSelectedBlockIds([block.id]);
     flashClipboardStatus("Copied");
+  }
+  // Right-clicking a block that's part of the current multi-selection opens a menu for
+  // the whole group (currently just "Link activities"); right-clicking any other block
+  // keeps the plain single-block copy behavior, same as before multi-select existed.
+  function handleBlockContextMenu(event, block) {
+    if (selectedBlockIds.length > 1 && selectedBlockIds.includes(block.id)) {
+      setContextMenu({ x: event.clientX, y: event.clientY });
+    } else {
+      copyBlockToClipboard(block);
+    }
   }
   function pasteFromClipboard() {
     const clip = clipboardRef.current;
@@ -619,7 +630,7 @@ export default function SchedulingBoard({ projectId }) {
                     onMouseDownMove={(e) => startMoveBlock(e, block)} onMouseDownResize={(e) => startResizeBlock(e, block)}
                     onMouseDownResizeStart={(e) => startResizeBlockFromStart(e, block)}
                     onRename={() => handleRenameBlock(block)} onDelete={() => handleRemoveBlock(block)}
-                    onCopy={() => copyBlockToClipboard(block)} />
+                    onContextMenu={(event) => handleBlockContextMenu(event, block)} />
                 );
               })}
             </div>
@@ -638,6 +649,18 @@ export default function SchedulingBoard({ projectId }) {
           onRemoveDependency={(dependencyId) => commitBoard((current) => removeDependency(current, dependencyId))} />
       )}
       {showHelp && <SchedulingHelpModal onClose={() => setShowHelp(false)} />}
+      {contextMenu && (
+        <div className="fixed inset-0 z-[90]" onClick={() => setContextMenu(null)}
+          onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} data-scheduling-context-menu>
+          <div style={{ left: contextMenu.x, top: contextMenu.y }} className="fixed z-[91] w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-xl"
+            onClick={(e) => e.stopPropagation()}>
+            <button type="button" onClick={() => { handleLinkSelectedInOrder(); setContextMenu(null); }}
+              className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold text-slate-950 hover:bg-slate-100">
+              Link activities ({selectedBlockIds.length})
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -693,12 +716,12 @@ function MultiSelectLinkBar({ board, selectedBlockIds, onLink, onClear }) {
   );
 }
 
-function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, selectionOrder, onCriticalPath, onMouseDownMove, onMouseDownResize, onMouseDownResizeStart, onRename, onDelete, onCopy }) {
+function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, selectionOrder, onCriticalPath, onMouseDownMove, onMouseDownResize, onMouseDownResizeStart, onRename, onDelete, onContextMenu }) {
   const selectedRing = selected ? "ring-2 ring-sky-500 ring-offset-1" : "";
   const criticalBorder = onCriticalPath ? "border-red-600" : "border-slate-900";
   function handleContextMenu(event) {
     event.preventDefault();
-    onCopy();
+    onContextMenu(event);
   }
   if (block.milestone) {
     return (

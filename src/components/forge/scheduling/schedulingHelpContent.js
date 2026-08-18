@@ -31,6 +31,7 @@ export const HELP_SECTIONS = Object.freeze([
       { label: "Ctrl/Cmd + click blocks", description: "Build an ordered multi-selection -- each selected block shows a numbered badge." },
       { label: "Drag a selected block", description: "With 2+ blocks selected, dragging any of them moves the whole group together, keeping their relative spacing." },
       { label: "Link in order (FS)", description: "Appears once 2+ blocks are selected -- chains them as Finish-to-Start dependencies in the order you clicked, not a fan-out from the first one." },
+      { label: "Right-click a selected block", description: "With 2+ blocks selected, right-clicking one of them opens a menu with \"Link activities\" -- same result as the Link in order button." },
     ],
   },
   {

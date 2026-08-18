@@ -125,4 +125,10 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain("Critical path");
     expect(markup).toContain('id="scheduling-dependency-arrow-critical"');
   });
+
+  it("does not render the right-click context menu until a multi-selected block is right-clicked", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).not.toContain("data-scheduling-context-menu");
+    expect(markup).not.toContain("Link activities");
+  });
 });
