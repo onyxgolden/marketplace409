@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BASE_BLOCK_FONT_SIZE_PX, CALENDAR_PRESETS, HISTORY_LIMIT, MIN_BLOCK_FONT_SIZE_PX,
-  addBlock, addBlackoutWindow, addCalendar, addCustomChip, addDependency, addLane, baseWeekday, blackoutDayRuns,
+  addBlock, addBlackoutWindow, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
   blockAnchorPoint, blockToChip, calendarById, calendarForLane, chipsByCategory, computeWeeks,
   criticalPath, deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
   emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, linkBlocksInOrder, moveBlock, moveBlocksBy,
@@ -466,25 +466,33 @@ describe("work calendars", () => {
     expect(calendarForLane(state, laneId).id).toBe("cal_7_10s");
   });
 
-  it("computes baseWeekday from the project start date", () => {
-    expect(baseWeekday("2024-01-01")).toBe(1); // Monday
-    expect(baseWeekday("2024-01-07")).toBe(0); // Sunday, one week later
-  });
-
-  it("finds Fri-Sat-Sun as one non-working run for 4-10s when the week starts on Monday", () => {
+  it("finds Fri-Sat-Sun as one non-working run for 4-10s, trailing the column (offsets 4-6)", () => {
     const calendar = calendarById(defaultBoardState(), "cal_4_10s");
-    expect(nonWorkingDayRuns(calendar, 1)).toEqual([[4, 6]]);
+    expect(nonWorkingDayRuns(calendar)).toEqual([[4, 6]]);
   });
 
-  it("shifts the run to wherever Sunday falls when the week starts on Wednesday (6-10s)", () => {
+  it("finds Sat-Sun as one non-working run for 5-10s, ending exactly at offset 6 (Sunday)", () => {
+    const calendar = calendarById(defaultBoardState(), "cal_5_10s");
+    expect(nonWorkingDayRuns(calendar)).toEqual([[5, 6]]);
+  });
+
+  it("leaves only Sunday (offset 6, the column's last day) off for 6-10s", () => {
     const calendar = calendarById(defaultBoardState(), "cal_6_10s");
-    // baseDow=3 (Wed): offsets 0-6 land on Wed,Thu,Fri,Sat,Sun,Mon,Tue -- only Sunday (offset 4) is off.
-    expect(nonWorkingDayRuns(calendar, 3)).toEqual([[4, 4]]);
+    expect(nonWorkingDayRuns(calendar)).toEqual([[6, 6]]);
   });
 
   it("returns no runs for a 7-10s calendar (every day worked)", () => {
     const calendar = calendarById(defaultBoardState(), "cal_7_10s");
-    expect(nonWorkingDayRuns(calendar, 0)).toEqual([]);
+    expect(nonWorkingDayRuns(calendar)).toEqual([]);
+  });
+
+  it("never leaves Sunday (offset 6) as a working day for any preset except 7-10s -- the work week always ends on Sunday", () => {
+    for (const calendar of CALENDAR_PRESETS) {
+      if (calendar.id === "cal_7_10s") continue;
+      const runs = nonWorkingDayRuns(calendar);
+      const lastRunEnd = runs[runs.length - 1]?.[1];
+      expect(lastRunEnd).toBe(6);
+    }
   });
 
   it("adds a custom calendar built from arbitrary working days, and can set it as default", () => {

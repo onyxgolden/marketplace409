@@ -378,23 +378,19 @@ export function calendarForLane(state, laneId) {
   return calendarById(state, lane?.calendarId) || calendarById(state, state.defaultCalendarId) || state.calendars[0] || null;
 }
 
-// The weekday (0=Sun..6=Sat) that day-offset 0 of every week column lands on. Every column
-// starts exactly 7 days after the last, so this one value is constant for the whole
-// project -- a calendar's off days form the same pattern in every week column, and this is
-// the only per-project input nonWorkingDayRuns needs to place that pattern correctly.
-export function baseWeekday(startDate) {
-  return parseISODate(startDate).getDay();
-}
-
-// Contiguous runs of non-working day-offsets (0-6, relative to a week column's own start)
-// for a calendar, so the board can gray out a lane's regular days off without recomputing
-// per-column dates -- the pattern is identical in every week column given `baseWeekday`.
-export function nonWorkingDayRuns(calendar, baseDow) {
+// Contiguous runs of non-working day-offsets (0-6) within a week column for a calendar.
+// Every column is treated as running Monday (offset 0) through Sunday (offset 6) for
+// calendar purposes, regardless of which weekday the project's actual start date falls
+// on -- so a lane's off days always land in the same place every week (Saturday/Sunday
+// trailing the column for a standard calendar) instead of wherever the project happened
+// to kick off. This is deliberately independent of any real date, which is also why the
+// pattern is identical in every column and doesn't need to be recomputed per column.
+export function nonWorkingDayRuns(calendar) {
   if (!calendar) return [];
   const runs = [];
   let runStart = null;
   for (let d = 0; d <= 6; d += 1) {
-    const working = calendar.workingDays.includes((baseDow + d) % 7);
+    const working = calendar.workingDays.includes((d + 1) % 7); // offset 0=Mon..6=Sun
     if (!working && runStart === null) runStart = d;
     if (working && runStart !== null) { runs.push([runStart, d - 1]); runStart = null; }
   }
@@ -465,7 +461,7 @@ export function removeBlackoutWindow(state, blackoutId) {
 // Contiguous runs of day-offsets (0-6) within one specific week column that fall inside
 // any blackout window. Unlike nonWorkingDayRuns this genuinely needs that column's real
 // calendar date -- blackouts are one-off date ranges (a TA freeze, a holiday shutdown),
-// not a recurring weekly pattern -- so it takes the column's own start date, not baseWeekday.
+// not a recurring weekly pattern -- so, unlike nonWorkingDayRuns, it takes the column's own real start date.
 export function blackoutDayRuns(state, weekStartIso) {
   if (!state.blackoutWindows.length) return [];
   const weekStart = parseISODate(weekStartIso);

@@ -6,7 +6,7 @@ import SchedulingCalendarsModal from "./SchedulingCalendarsModal";
 import {
   CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
-  addBlackoutWindow, addBlock, addCalendar, addCustomChip, addDependency, addLane, baseWeekday, blackoutDayRuns,
+  addBlackoutWindow, addBlock, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
   blockToChip, calendarById, calendarForLane, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, criticalPath, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
   deleteLane, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock,
@@ -170,14 +170,14 @@ export default function SchedulingBoard({ projectId }) {
     .map((dependency) => ({ dependency, points: dependencyArrowPoints(board, dependency, board.weekWidth, resolveColumn) }))
     .filter((segment) => segment.points), [board, columnForWeekIdx]);
 
-  // Calendar off-days recur identically in every week column (see baseWeekday's doc
-  // comment), so this is computed once per lane rather than once per lane per column.
+  // Calendar off-days recur identically in every week column (see nonWorkingDayRuns' doc
+  // comment -- every column runs Monday through Sunday for this purpose), so this is
+  // computed once per lane rather than once per lane per column.
   const calendarShadingRects = useMemo(() => {
     const dayWidth = board.weekWidth / 7;
-    const dow = baseWeekday(board.startDate);
     const rects = [];
     board.lanes.forEach((lane, laneIdx) => {
-      const runs = nonWorkingDayRuns(calendarForLane(board, lane.id), dow);
+      const runs = nonWorkingDayRuns(calendarForLane(board, lane.id));
       if (!runs.length) return;
       displayIndices.forEach((realIdx) => {
         const colX = resolveColumn(realIdx) * board.weekWidth;
