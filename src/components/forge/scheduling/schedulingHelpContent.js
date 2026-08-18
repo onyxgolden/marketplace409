@@ -65,6 +65,7 @@ export const HELP_SECTIONS = Object.freeze([
       { label: "Hide / Show (palette)", description: "Collapses the \"Starter objects\" panel to free up space." },
       { label: "Text (Size / Color / B)", description: "Applies to whatever block(s) are currently selected." },
       { label: "Critical path", description: "Highlights the longest dependency-linked chain by duration in red. A simplified stand-in for real CPM until calendars and constraints exist -- not tied to actual float or scheduling logic yet." },
+      { label: "Data date line", description: "A solid blue vertical line marking today's date on the grid, same idea as P6's data date. Only shows when today falls within the project's own start/end dates." },
     ],
   },
   {

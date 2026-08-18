@@ -171,4 +171,10 @@ describe("SchedulingBoard", () => {
     expect(markup).not.toContain("data-scheduling-load-error");
     expect(markup).not.toContain("data-scheduling-readonly-badge");
   });
+
+  it("renders the data date line at the very start of a fresh board (today is both its start date and today)", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain("data-scheduling-data-date-line");
+    expect(markup).toMatch(/left:\s?0(px|["'])/); // day-offset 0 of week 0 -- the board's own start date
+  });
 });

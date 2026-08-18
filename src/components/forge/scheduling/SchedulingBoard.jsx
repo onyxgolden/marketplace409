@@ -8,12 +8,12 @@ import {
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
   addBlackoutWindow, addBlock, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
   blockToChip, calendarById, calendarForLane, chipsByCategory, clampIndex, colorForCategory,
-  computeWeeks, criticalPath, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
+  computeWeeks, criticalPath, dataDateOffset, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
   deleteLane, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock,
   moveBlocksBy, nonWorkingDayRuns, pixelToIndex, recordHistory, redoHistory, removeBlackoutWindow,
   removeBlock, removeCalendar, removeDependency, renameBlock, renameLane, resizeBlock, resizeBlockFromStart,
   serializeBoardState, setBlockTextStyle, setDefaultCalendar, setLaneCalendar, setProjectDates, suggestPredecessors,
-  suggestSuccessors, undoHistory, visibleWeekIndices,
+  suggestSuccessors, todayISO, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -240,6 +240,15 @@ export default function SchedulingBoard({ projectId }) {
     });
     return rects;
   }, [board, displayIndices, weeks, columnForWeekIdx]);
+
+  // The data date line's x position -- null (nothing rendered) when today is outside the
+  // project's date range, or its week has been compressed away by "hide empty weeks".
+  const dataDateLineX = useMemo(() => {
+    const offset = dataDateOffset(board.startDate, board.endDate);
+    if (!offset || !columnForWeekIdx.has(offset.realIdx)) return null;
+    const dayWidth = board.weekWidth / 7;
+    return resolveColumn(offset.realIdx) * board.weekWidth + offset.dayOffset * dayWidth;
+  }, [board.startDate, board.endDate, board.weekWidth, columnForWeekIdx]);
 
   // Simplified stand-in for real CPM (no calendars/constraints yet) -- longest chain of
   // dependency-linked blocks by summed duration, just to eyeball the dependency graph.
@@ -808,6 +817,10 @@ export default function SchedulingBoard({ projectId }) {
                     onContextMenu={(event) => handleBlockContextMenu(event, block)} />
                 );
               })}
+              {dataDateLineX !== null && (
+                <div className="pointer-events-none absolute top-0 bottom-0 w-0.5 bg-blue-600" data-scheduling-data-date-line
+                  title={`Data date: ${formatWeek(todayISO(0))}`} style={{ left: dataDateLineX }} />
+              )}
             </div>
           </div>
         </div>

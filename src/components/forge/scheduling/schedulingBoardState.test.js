@@ -3,12 +3,12 @@ import {
   BASE_BLOCK_FONT_SIZE_PX, CALENDAR_PRESETS, HISTORY_LIMIT, MIN_BLOCK_FONT_SIZE_PX,
   addBlock, addBlackoutWindow, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
   blockAnchorPoint, blockToChip, calendarById, calendarForLane, chipsByCategory, computeWeeks,
-  criticalPath, deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
-  emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, hydrateBoardState, linkBlocksInOrder, moveBlock,
-  moveBlocksBy, nonWorkingDayRuns, occupiedWeekIndices, projectSummaryFromBoard, recordHistory, redoHistory,
-  removeBlackoutWindow, removeBlock, removeCalendar, removeDependency, renameBlock, renameLane, resizeBlock,
-  resizeBlockFromStart, serializeBoardState, setBlockTextStyle, setDefaultCalendar, setLaneCalendar, setProjectDates,
-  suggestPredecessors, suggestSuccessors, undoHistory, visibleWeekIndices,
+  criticalPath, dataDateOffset, deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints,
+  deserializeBoardState, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, hydrateBoardState,
+  linkBlocksInOrder, moveBlock, moveBlocksBy, nonWorkingDayRuns, occupiedWeekIndices, projectSummaryFromBoard,
+  recordHistory, redoHistory, removeBlackoutWindow, removeBlock, removeCalendar, removeDependency, renameBlock,
+  renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState, setBlockTextStyle, setDefaultCalendar,
+  setLaneCalendar, setProjectDates, suggestPredecessors, suggestSuccessors, todayISO, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -560,6 +560,27 @@ describe("TA blackout windows", () => {
   it("returns no runs for a week entirely outside every blackout window", () => {
     const state = addBlackoutWindow(defaultBoardState(), { label: "Freeze", startDate: "2024-01-03", endDate: "2024-01-04" });
     expect(blackoutDayRuns(state, "2024-02-05")).toEqual([]);
+  });
+});
+
+describe("dataDateOffset", () => {
+  it("places today at the start of the project (week 0, day 0) when they're the same date", () => {
+    expect(dataDateOffset("2026-08-18", "2027-08-17", "2026-08-18")).toEqual({ realIdx: 0, dayOffset: 0 });
+  });
+
+  it("finds the real week column and day-offset for a date partway through the project", () => {
+    // 10 days after the 2026-08-18 start: week 1 (days 7-13), day-offset 3.
+    expect(dataDateOffset("2026-08-18", "2027-08-17", "2026-08-28")).toEqual({ realIdx: 1, dayOffset: 3 });
+  });
+
+  it("returns null when the date falls before the project start or after its end", () => {
+    expect(dataDateOffset("2026-08-18", "2027-08-17", "2026-08-17")).toBeNull();
+    expect(dataDateOffset("2026-08-18", "2027-08-17", "2027-08-18")).toBeNull();
+  });
+
+  it("defaults to today when no date is given", () => {
+    const todayIso = todayISO(0);
+    expect(dataDateOffset(todayISO(-5), todayISO(5))).toEqual(dataDateOffset(todayISO(-5), todayISO(5), todayIso));
   });
 });
 

@@ -471,6 +471,20 @@ export function blackoutDayRuns(state, weekStartIso) {
   return runs;
 }
 
+// Where the "data date" line (P6's term for the current/as-of date -- today, by default)
+// falls on the grid: which real week column, and the day-offset (0-6) within that column's
+// own real start date -- same real-date basis as blackoutDayRuns, not the calendar-shading
+// convention in nonWorkingDayRuns. Returns null when the date is outside the project's own
+// date range entirely, so the board draws no line rather than one off the edge of the grid.
+export function dataDateOffset(startDate, endDate, todayIso = todayISO()) {
+  const start = parseISODate(startDate);
+  const end = parseISODate(endDate);
+  const today = parseISODate(todayIso);
+  if (today < start || today > end) return null;
+  const diffDays = Math.round((today - start) / (24 * 60 * 60 * 1000));
+  return Object.freeze({ realIdx: Math.floor(diffDays / 7), dayOffset: diffDays % 7 });
+}
+
 export function addCustomChip(state, { label, category, durationWeeks, milestone }) {
   const trimmed = label?.trim();
   if (!trimmed || !CATEGORY_NAMES[category]) return state;
