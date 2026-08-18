@@ -4,8 +4,8 @@ import {
   CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
   addBlock, addCustomChip, addDependency, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, deleteLane,
-  fitBlockFontSizePx, laneIndexOf, linkBlocksInOrder, moveBlock, pixelToIndex, removeBlock, removeDependency,
-  renameBlock, renameLane, resizeBlock, serializeBoardState, setProjectDates, suggestPredecessors,
+  fitBlockFontSizePx, laneIndexOf, linkBlocksInOrder, moveBlock, moveBlocksBy, pixelToIndex, removeBlock,
+  removeDependency, renameBlock, renameLane, resizeBlock, serializeBoardState, setProjectDates, suggestPredecessors,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -95,22 +95,39 @@ export default function SchedulingBoard() {
       return;
     }
     event.preventDefault();
-    const el = event.currentTarget;
+    // Dragging a block that's already part of a multi-selection moves the whole group
+    // together, preserving everyone's relative offset; dragging any other block is a plain
+    // single-block move and (as before) collapses the selection down to just that block.
+    const isGroupDrag = selectedBlockIds.length > 1 && selectedBlockIds.includes(block.id);
+    const groupIds = isGroupDrag ? selectedBlockIds : [block.id];
+    const groupOrigins = groupIds
+      .map((id) => canvasRef.current?.querySelector(`[data-block-id="${id}"]`))
+      .filter(Boolean)
+      .map((el) => { el.classList.add("opacity-75", "z-20"); return { el, left: parseFloat(el.style.left), top: parseFloat(el.style.top) }; });
+    const anchor = groupOrigins.find((origin) => origin.el.dataset.blockId === block.id) || groupOrigins[0];
     const startX = event.clientX, startY = event.clientY;
-    const origLeft = parseFloat(el.style.left), origTop = parseFloat(el.style.top);
-    el.classList.add("opacity-75", "z-20");
     function onMove(ev) {
-      el.style.left = `${origLeft + (ev.clientX - startX)}px`;
-      el.style.top = `${origTop + (ev.clientY - startY)}px`;
+      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      for (const origin of groupOrigins) {
+        origin.el.style.left = `${origin.left + dx}px`;
+        origin.el.style.top = `${origin.top + dy}px`;
+      }
     }
     function onUp(ev) {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      el.classList.remove("opacity-75", "z-20");
-      const weekIdx = clampIndex(Math.round((origLeft + (ev.clientX - startX)) / board.weekWidth), 0, weeks.length - 1);
-      const laneIdx = clampIndex(Math.round((origTop + (ev.clientY - startY)) / ROW_HEIGHT_PX), 0, board.lanes.length - 1);
-      setBoard((current) => moveBlock(current, block.id, weekIdx, laneIdx));
-      setSelectedBlockIds([block.id]);
+      for (const origin of groupOrigins) origin.el.classList.remove("opacity-75", "z-20");
+      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      const anchorWeekIdx = clampIndex(Math.round((anchor.left + dx) / board.weekWidth), 0, weeks.length - 1);
+      const anchorLaneIdx = clampIndex(Math.round((anchor.top + dy) / ROW_HEIGHT_PX), 0, board.lanes.length - 1);
+      if (isGroupDrag) {
+        const weekDelta = anchorWeekIdx - block.startIdx;
+        const laneDelta = anchorLaneIdx - laneIndexOf(board, block.laneId);
+        setBoard((current) => moveBlocksBy(current, groupIds, weekDelta, laneDelta));
+      } else {
+        setBoard((current) => moveBlock(current, block.id, anchorWeekIdx, anchorLaneIdx));
+        setSelectedBlockIds([block.id]);
+      }
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);

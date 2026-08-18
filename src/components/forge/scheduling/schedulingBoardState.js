@@ -191,6 +191,21 @@ export function moveBlock(state, blockId, weekIdx, laneIdx) {
   });
 }
 
+// Shifts every listed block by the SAME week/lane delta, so a multi-selected group keeps
+// its relative spacing when dragged together (as opposed to moveBlock's per-block absolute
+// target, which would need each block's own destination computed and could desync a group).
+export function moveBlocksBy(state, blockIds, weekDelta, laneDelta) {
+  const idSet = new Set(blockIds);
+  return Object.freeze({
+    ...state,
+    blocks: Object.freeze(state.blocks.map((block) => {
+      if (!idSet.has(block.id)) return block;
+      const nextLaneIdx = clampIndex(laneIndexOf(state, block.laneId) + laneDelta, 0, state.lanes.length - 1);
+      return Object.freeze({ ...block, startIdx: Math.max(0, block.startIdx + weekDelta), laneId: state.lanes[nextLaneIdx].id });
+    })),
+  });
+}
+
 export function resizeBlock(state, blockId, duration) {
   const nextDuration = Math.max(1, duration);
   return Object.freeze({

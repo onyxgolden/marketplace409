@@ -3,8 +3,8 @@ import {
   BASE_BLOCK_FONT_SIZE_PX, MIN_BLOCK_FONT_SIZE_PX,
   addBlock, addCustomChip, addDependency, addLane, blockAnchorPoint, blockToChip, chipsByCategory, computeWeeks,
   deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, fitBlockFontSizePx,
-  linkBlocksInOrder, moveBlock, removeBlock, removeDependency, renameBlock, renameLane, resizeBlock, serializeBoardState,
-  setProjectDates, suggestPredecessors,
+  linkBlocksInOrder, moveBlock, moveBlocksBy, removeBlock, removeDependency, renameBlock, renameLane, resizeBlock,
+  serializeBoardState, setProjectDates, suggestPredecessors,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -358,5 +358,41 @@ describe("linkBlocksInOrder", () => {
     const thirdBlockId = state.blocks.at(-1).id; // the shared id counter advanced past "b3" when the dependency above was created
     state = linkBlocksInOrder(state, ["b1", "b2", thirdBlockId]);
     expect(state.dependencies).toHaveLength(2); // the pre-existing b1->b2, plus the new b2->thirdBlockId
+  });
+});
+
+describe("moveBlocksBy", () => {
+  it("shifts every listed block by the same week and lane delta", () => {
+    // b1: lane_gov (idx 1), startIdx 0 -- b2: lane_eng (idx 2), startIdx 10
+    const state = moveBlocksBy(twoBlockState(), ["b1", "b2"], 3, 1);
+    expect(state.blocks[0]).toMatchObject({ startIdx: 3, laneId: "lane_eng" }); // idx 1+1=2
+    expect(state.blocks[1]).toMatchObject({ startIdx: 13, laneId: "lane_proc" }); // idx 2+1=3
+  });
+  it("preserves the group's relative week and lane spacing", () => {
+    const before = twoBlockState();
+    const after = moveBlocksBy(before, ["b1", "b2"], 3, 1);
+    const laneGap = (block, state) => state.lanes.findIndex((l) => l.id === block.laneId);
+    const beforeWeekGap = before.blocks[1].startIdx - before.blocks[0].startIdx;
+    const afterWeekGap = after.blocks[1].startIdx - after.blocks[0].startIdx;
+    const beforeLaneGap = laneGap(before.blocks[1], before) - laneGap(before.blocks[0], before);
+    const afterLaneGap = laneGap(after.blocks[1], after) - laneGap(after.blocks[0], after);
+    expect(afterWeekGap).toBe(beforeWeekGap);
+    expect(afterLaneGap).toBe(beforeLaneGap);
+  });
+  it("leaves blocks outside the group untouched", () => {
+    let state = addBlock(twoBlockState(), { ...TASK_CHIP, category: "proc" }, 20, 3);
+    const untouchedId = state.blocks.at(-1).id;
+    state = moveBlocksBy(state, ["b1", "b2"], 5, 0);
+    expect(state.blocks.find((b) => b.id === untouchedId).startIdx).toBe(20);
+  });
+  it("never lets a shifted block go before the first week", () => {
+    const state = moveBlocksBy(twoBlockState(), ["b1"], -10, 0);
+    expect(state.blocks[0].startIdx).toBe(0);
+  });
+  it("clamps a lane shift at the first and last lane", () => {
+    const state = moveBlocksBy(twoBlockState(), ["b1", "b2"], 0, -99);
+    expect(state.blocks.every((block) => block.laneId === "lane_ms")).toBe(true);
+    const shiftedFar = moveBlocksBy(twoBlockState(), ["b1", "b2"], 0, 99);
+    expect(shiftedFar.blocks.every((block) => block.laneId === "lane_shut")).toBe(true);
   });
 });
