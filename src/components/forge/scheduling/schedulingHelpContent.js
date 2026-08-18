@@ -58,6 +58,7 @@ export const HELP_SECTIONS = Object.freeze([
       { label: "Hide empty weeks", description: "Collapses out any week with nothing scheduled in it, in any lane." },
       { label: "Hide / Show (palette)", description: "Collapses the \"Starter objects\" panel to free up space." },
       { label: "Text (Size / Color / B)", description: "Applies to whatever block(s) are currently selected." },
+      { label: "Critical path", description: "Highlights the longest dependency-linked chain by duration in red. A simplified stand-in for real CPM until calendars and constraints exist -- not tied to actual float or scheduling logic yet." },
     ],
   },
   {

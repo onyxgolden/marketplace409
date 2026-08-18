@@ -119,4 +119,10 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain('title="Help &amp; keyboard shortcuts"');
     expect(markup).not.toContain("data-scheduling-help");
   });
+
+  it("renders the critical path toggle and the (unused, until linked) red arrow marker", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain("Critical path");
+    expect(markup).toContain('id="scheduling-dependency-arrow-critical"');
+  });
 });

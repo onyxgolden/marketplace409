@@ -6,11 +6,11 @@ import {
   CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
   addBlock, addCustomChip, addDependency, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory,
-  computeWeeks, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, deleteLane,
-  emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock, moveBlocksBy,
-  pixelToIndex, projectStorageKey, recordHistory, redoHistory, removeBlock, removeDependency, renameBlock,
-  renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState, setBlockTextStyle, setProjectDates,
-  suggestPredecessors, undoHistory, visibleWeekIndices,
+  computeWeeks, criticalPath, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
+  deleteLane, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock,
+  moveBlocksBy, pixelToIndex, projectStorageKey, recordHistory, redoHistory, removeBlock, removeDependency,
+  renameBlock, renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState, setBlockTextStyle,
+  setProjectDates, suggestPredecessors, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -55,6 +55,7 @@ export default function SchedulingBoard({ projectId }) {
   const [hideEmptyWeeks, setHideEmptyWeeks] = useState(false);
   const [history, setHistory] = useState(emptyHistory);
   const [showHelp, setShowHelp] = useState(false);
+  const [showCriticalPath, setShowCriticalPath] = useState(false);
   const canvasRef = useRef(null);
   const boardScrollRef = useRef(null);
   const laneListRef = useRef(null);
@@ -152,6 +153,12 @@ export default function SchedulingBoard({ projectId }) {
   const arrowSegments = useMemo(() => board.dependencies
     .map((dependency) => ({ dependency, points: dependencyArrowPoints(board, dependency, board.weekWidth, resolveColumn) }))
     .filter((segment) => segment.points), [board, columnForWeekIdx]);
+
+  // Simplified stand-in for real CPM (no calendars/constraints yet) -- longest chain of
+  // dependency-linked blocks by summed duration, just to eyeball the dependency graph.
+  const criticalPathInfo = useMemo(() => (showCriticalPath ? criticalPath(board) : null), [board, showCriticalPath]);
+  const criticalBlockIds = useMemo(() => new Set(criticalPathInfo?.blockIds || []), [criticalPathInfo]);
+  const criticalDependencyIds = useMemo(() => new Set(criticalPathInfo?.dependencyIds || []), [criticalPathInfo]);
 
   function pixelToRealWeekIdx(px) {
     const compressed = clampIndex(pixelToIndex(px, board.weekWidth), 0, displayIndices.length - 1);
@@ -455,6 +462,10 @@ export default function SchedulingBoard({ projectId }) {
               <input type="checkbox" checked={hideEmptyWeeks} onChange={(e) => setHideEmptyWeeks(e.target.checked)} />
               Hide empty weeks
             </label>
+            <label className="flex items-center gap-1 text-xs text-slate-300" title="Longest dependency-linked chain by duration -- a stand-in for real CPM, not tied to calendars/constraints yet">
+              <input type="checkbox" checked={showCriticalPath} onChange={(e) => setShowCriticalPath(e.target.checked)} />
+              Critical path
+            </label>
           </div>
         </Field>
         <TextStyleToolbar
@@ -586,17 +597,24 @@ export default function SchedulingBoard({ projectId }) {
                   <marker id="scheduling-dependency-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M0,0 L10,5 L0,10 z" fill="#64748b" />
                   </marker>
+                  <marker id="scheduling-dependency-arrow-critical" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M0,0 L10,5 L0,10 z" fill="#dc2626" />
+                  </marker>
                 </defs>
-                {arrowSegments.map(({ dependency, points }) => (
-                  <line key={dependency.id} x1={points.x1} y1={points.y1} x2={points.x2} y2={points.y2}
-                    stroke="#64748b" strokeWidth="1.5" markerEnd="url(#scheduling-dependency-arrow)" />
-                ))}
+                {arrowSegments.map(({ dependency, points }) => {
+                  const isCritical = criticalDependencyIds.has(dependency.id);
+                  return (
+                    <line key={dependency.id} x1={points.x1} y1={points.y1} x2={points.x2} y2={points.y2}
+                      stroke={isCritical ? "#dc2626" : "#64748b"} strokeWidth={isCritical ? "2.5" : "1.5"}
+                      markerEnd={`url(#scheduling-dependency-arrow${isCritical ? "-critical" : ""})`} />
+                  );
+                })}
               </svg>
               {board.blocks.map((block) => {
                 const selectionIndex = selectedBlockIds.indexOf(block.id);
                 return (
                   <BlockElement key={block.id} block={block} weekWidth={board.weekWidth} laneIdx={laneIndexOf(board, block.laneId)}
-                    startColumn={resolveColumn(block.startIdx)}
+                    startColumn={resolveColumn(block.startIdx)} onCriticalPath={criticalBlockIds.has(block.id)}
                     selected={selectionIndex !== -1} selectionOrder={selectedBlockIds.length > 1 && selectionIndex !== -1 ? selectionIndex + 1 : null}
                     onMouseDownMove={(e) => startMoveBlock(e, block)} onMouseDownResize={(e) => startResizeBlock(e, block)}
                     onMouseDownResizeStart={(e) => startResizeBlockFromStart(e, block)}
@@ -675,8 +693,9 @@ function MultiSelectLinkBar({ board, selectedBlockIds, onLink, onClear }) {
   );
 }
 
-function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, selectionOrder, onMouseDownMove, onMouseDownResize, onMouseDownResizeStart, onRename, onDelete, onCopy }) {
+function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, selectionOrder, onCriticalPath, onMouseDownMove, onMouseDownResize, onMouseDownResizeStart, onRename, onDelete, onCopy }) {
   const selectedRing = selected ? "ring-2 ring-sky-500 ring-offset-1" : "";
+  const criticalBorder = onCriticalPath ? "border-red-600" : "border-slate-900";
   function handleContextMenu(event) {
     event.preventDefault();
     onCopy();
@@ -686,7 +705,7 @@ function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, select
       <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
         className="group absolute flex cursor-grab items-center justify-center"
         style={{ left: startColumn * weekWidth, top: laneIdx * ROW_HEIGHT_PX, width: weekWidth, height: ROW_HEIGHT_PX }}>
-        <div className={`h-5 w-5 rotate-45 rounded-[1px] border-2 border-slate-900 shadow ${selectedRing}`} style={{ background: MILESTONE_COLOR }} />
+        <div className={`h-5 w-5 rotate-45 rounded-[1px] border-2 ${criticalBorder} shadow ${selectedRing}`} style={{ background: MILESTONE_COLOR }} />
         <div onDoubleClick={onRename} className="absolute left-[26px] rounded bg-white/85 px-1 whitespace-nowrap"
           style={{ fontSize: `${block.fontSize || 11}px`, fontWeight: block.bold ? 700 : 400, color: block.textColor || "#1e293b" }}>
           <span className="mr-1 font-mono opacity-70">{block.taskCode}</span>{block.label}
@@ -702,7 +721,7 @@ function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, select
   const fontSize = fitBlockFontSizePx(block.label, barWidth, barHeight, block.fontSize);
   return (
     <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
-      className={`group absolute flex cursor-grab items-center rounded-md border border-black/15 px-2 text-slate-950 shadow ${selectedRing}`}
+      className={`group absolute flex cursor-grab items-center rounded-md px-2 text-slate-950 shadow ${onCriticalPath ? "border-2 border-red-600" : "border border-black/15"} ${selectedRing}`}
       style={{ left: startColumn * weekWidth + 2, top: laneIdx * ROW_HEIGHT_PX + 5, width: barWidth, height: barHeight, background: colorForCategory(block.category) }}>
       {/* min-w-0 lets this flex child actually shrink below its unwrapped text width -- without it,
           flexbox's default min-width:auto keeps it at max-content size and text never wraps. */}
