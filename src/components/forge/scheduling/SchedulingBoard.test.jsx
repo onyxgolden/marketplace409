@@ -84,6 +84,16 @@ describe("SchedulingBoard", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     // Default project window is 365 days -> 53 week columns; an empty board must never
     // collapse to zero columns just because nothing has been placed yet.
-    expect(markup.match(/sticky top-0 z-\[4\]/g)?.length).toBe(53);
+    expect(markup.match(/sticky top-0 z-30/g)?.length).toBe(53);
+  });
+
+  it("keeps the sticky lane labels and week headers above a dragging block's z-20", () => {
+    // A block being dragged gets "z-20" (see startMoveBlock). If the sticky chrome's
+    // z-index isn't higher, the dragged block visually covers the lane labels/headers
+    // whenever it crosses that screen region -- this locks in the fix for that.
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain("z-40"); // corner cell
+    expect(markup).toContain("z-30"); // week headers + lane labels
+    expect(markup).not.toMatch(/sticky[^"]*z-\[?[0-9]\]?["\s]/); // no leftover single-digit sticky z-index
   });
 });

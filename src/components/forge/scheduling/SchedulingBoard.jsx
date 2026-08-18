@@ -446,14 +446,16 @@ export default function SchedulingBoard() {
 
         <div ref={boardScrollRef} className="flex-1 overflow-auto bg-slate-100">
           <div style={{ display: "grid", gridTemplateColumns: `${LANE_LABEL_WIDTH_PX}px ${displayIndices.map(() => `${board.weekWidth}px`).join(" ")}`, gridTemplateRows: `40px ${board.lanes.map(() => `${ROW_HEIGHT_PX}px`).join(" ")}` }}>
-            <div className="sticky top-0 left-0 z-[5] border-r border-b border-slate-800 bg-slate-950" />
+            {/* Sticky chrome must outrank a dragging block's z-20 (below), or the block visually
+                covers the lane labels/headers whenever a drag crosses over that screen region. */}
+            <div className="sticky top-0 left-0 z-40 border-r border-b border-slate-800 bg-slate-950" />
             {displayIndices.map((realIdx) => (
-              <div key={weeks[realIdx]} className="sticky top-0 z-[4] flex items-center justify-center border-r border-b border-slate-800 bg-slate-950 font-mono text-[10.5px] text-slate-300">
+              <div key={weeks[realIdx]} className="sticky top-0 z-30 flex items-center justify-center border-r border-b border-slate-800 bg-slate-950 font-mono text-[10.5px] text-slate-300">
                 {formatWeek(weeks[realIdx])}
               </div>
             ))}
             {board.lanes.map((lane) => (
-              <div key={lane.id} style={{ gridColumn: 1 }} className="sticky left-0 z-[3] flex items-center justify-between border-r border-b border-slate-300 bg-slate-200 px-2.5 py-0 text-xs font-bold">
+              <div key={lane.id} style={{ gridColumn: 1 }} className="sticky left-0 z-30 flex items-center justify-between border-r border-b border-slate-300 bg-slate-200 px-2.5 py-0 text-xs font-bold">
                 <span onDoubleClick={() => handleRenameLane(lane)} title="Double-click to rename">{lane.name}</span>
                 <span className="flex items-center gap-1">
                   <span onClick={() => handleInsertLaneBefore(lane)} title="Insert lane above" className="cursor-pointer px-1 text-slate-400 hover:text-emerald-600">+</span>
