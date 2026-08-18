@@ -66,4 +66,11 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain('title="Toggle bold"');
     expect(markup.match(/disabled=""/g)?.length ?? 0).toBeGreaterThanOrEqual(3); // size + color selects + bold button
   });
+
+  it("shows the prebuilt-activities palette expanded by default with a collapse toggle", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain(">Hide<");
+    expect(markup).toContain("Governance"); // category list still rendered while expanded
+  });
 });

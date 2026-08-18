@@ -15,6 +15,7 @@ function isTypingTarget(el) {
 }
 
 const STORAGE_KEY = "forge-scheduling-board-state";
+const PALETTE_COLLAPSE_STORAGE_KEY = "forge-scheduling-palette-collapsed";
 
 function loadStoredBoard() {
   if (typeof window === "undefined") return null;
@@ -23,6 +24,15 @@ function loadStoredBoard() {
     return raw ? deserializeBoardState(raw) : null;
   } catch {
     return null;
+  }
+}
+
+function loadPaletteCollapsed() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(PALETTE_COLLAPSE_STORAGE_KEY) === "true";
+  } catch {
+    return false;
   }
 }
 
@@ -39,6 +49,7 @@ export default function SchedulingBoard() {
   // connects consecutive pairs in exactly this order (see handleLinkSelectedInOrder).
   const [selectedBlockIds, setSelectedBlockIds] = useState([]);
   const [customChipDraft, setCustomChipDraft] = useState({ label: "", category: "gov", durationWeeks: 4, milestone: false });
+  const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const canvasRef = useRef(null);
   const saveTimer = useRef(null);
   const clipboardRef = useRef(null);
@@ -46,7 +57,18 @@ export default function SchedulingBoard() {
   useEffect(() => {
     const stored = loadStoredBoard();
     if (stored) setBoard(stored);
+    setPaletteCollapsed(loadPaletteCollapsed());
   }, []);
+
+  function togglePaletteCollapsed() {
+    setPaletteCollapsed((current) => {
+      const next = !current;
+      if (typeof window !== "undefined") {
+        try { window.localStorage.setItem(PALETTE_COLLAPSE_STORAGE_KEY, String(next)); } catch {}
+      }
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -293,8 +315,14 @@ export default function SchedulingBoard() {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-slate-50 p-3">
-          <h2 className="mb-2 px-1 text-xs font-black uppercase tracking-widest text-slate-500">Starter objects — drag onto the board</h2>
-          {Object.keys(CATEGORY_NAMES).map((category) => (
+          <div className="mb-2 flex items-center justify-between px-1">
+            <h2 className="text-xs font-black uppercase tracking-widest text-slate-500">Starter objects — drag onto the board</h2>
+            <button type="button" onClick={togglePaletteCollapsed} aria-expanded={!paletteCollapsed}
+              className="shrink-0 text-xs font-bold text-slate-400 hover:text-slate-700">
+              {paletteCollapsed ? "Show" : "Hide"}
+            </button>
+          </div>
+          {!paletteCollapsed && Object.keys(CATEGORY_NAMES).map((category) => (
             <details key={category} open className="mb-1.5 overflow-hidden rounded-lg">
               <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg bg-slate-200 px-2.5 py-2 text-xs font-bold">
                 <span className="inline-block h-2.5 w-2.5 rotate-45 rounded-sm" style={{ background: colorForCategory(category) }} />
