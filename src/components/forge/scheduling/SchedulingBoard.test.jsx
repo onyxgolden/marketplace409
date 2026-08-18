@@ -138,4 +138,22 @@ describe("SchedulingBoard", () => {
     expect(markup).not.toContain("data-scheduling-measure-badge");
     expect(markup).not.toContain("data-scheduling-measure-band");
   });
+
+  it("renders a Calendars menu entry but not the calendars modal until it's opened", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain(">Calendars<");
+    expect(markup).not.toContain("data-scheduling-calendars");
+  });
+
+  it("shows a work-calendar dropdown under every lane, defaulting to the project's default calendar", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup.match(/data-scheduling-lane-calendar/g)).toHaveLength(7); // one per default lane
+    expect(markup).toContain("Default (5-10s)");
+  });
+
+  it("grays out the default calendar's non-working days on a fresh board, but shows no blackout bands until one is added", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain("data-scheduling-calendar-band");
+    expect(markup).not.toContain("data-scheduling-blackout-band");
+  });
 });

@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  BASE_BLOCK_FONT_SIZE_PX, HISTORY_LIMIT, MIN_BLOCK_FONT_SIZE_PX,
-  addBlock, addCustomChip, addDependency, addLane, blockAnchorPoint, blockToChip, chipsByCategory, computeWeeks,
+  BASE_BLOCK_FONT_SIZE_PX, CALENDAR_PRESETS, HISTORY_LIMIT, MIN_BLOCK_FONT_SIZE_PX,
+  addBlock, addBlackoutWindow, addCalendar, addCustomChip, addDependency, addLane, baseWeekday, blackoutDayRuns,
+  blockAnchorPoint, blockToChip, calendarById, calendarForLane, chipsByCategory, computeWeeks,
   criticalPath, deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
   emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, linkBlocksInOrder, moveBlock, moveBlocksBy,
-  occupiedWeekIndices, projectSummaryFromBoard, projectStorageKey, recordHistory, redoHistory, removeBlock,
-  removeDependency, renameBlock, renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState,
-  setBlockTextStyle, setProjectDates, suggestPredecessors, suggestSuccessors, undoHistory, visibleWeekIndices,
+  nonWorkingDayRuns, occupiedWeekIndices, projectSummaryFromBoard, projectStorageKey, recordHistory, redoHistory,
+  removeBlackoutWindow, removeBlock, removeCalendar, removeDependency, renameBlock, renameLane, resizeBlock,
+  resizeBlockFromStart, serializeBoardState, setBlockTextStyle, setDefaultCalendar, setLaneCalendar, setProjectDates,
+  suggestPredecessors, suggestSuccessors, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -441,6 +443,103 @@ describe("blockAnchorPoint / dependencyArrowPoints", () => {
     const stale = removeBlock(state, "b2");
     const dependency = state.dependencies[0]; // stale.dependencies is already empty via cascade, so use the pre-removal record
     expect(dependencyArrowPoints(stale, dependency, 90)).toBeNull();
+  });
+});
+
+describe("work calendars", () => {
+  it("seeds every new board with the calendar presets and a 5-10s default", () => {
+    const state = defaultBoardState();
+    expect(state.calendars).toEqual(CALENDAR_PRESETS);
+    expect(calendarById(state, state.defaultCalendarId).name).toBe("5-10s");
+  });
+
+  it("resolves a lane with no calendarId of its own to the project default", () => {
+    const state = addLane(defaultBoardState(), "Crew A");
+    const laneId = state.lanes[state.lanes.length - 1].id;
+    expect(calendarForLane(state, laneId).id).toBe(state.defaultCalendarId);
+  });
+
+  it("lets a lane override the project default", () => {
+    let state = addLane(defaultBoardState(), "Crew A");
+    const laneId = state.lanes[state.lanes.length - 1].id;
+    state = setLaneCalendar(state, laneId, "cal_7_10s");
+    expect(calendarForLane(state, laneId).id).toBe("cal_7_10s");
+  });
+
+  it("computes baseWeekday from the project start date", () => {
+    expect(baseWeekday("2024-01-01")).toBe(1); // Monday
+    expect(baseWeekday("2024-01-07")).toBe(0); // Sunday, one week later
+  });
+
+  it("finds Fri-Sat-Sun as one non-working run for 4-10s when the week starts on Monday", () => {
+    const calendar = calendarById(defaultBoardState(), "cal_4_10s");
+    expect(nonWorkingDayRuns(calendar, 1)).toEqual([[4, 6]]);
+  });
+
+  it("shifts the run to wherever Sunday falls when the week starts on Wednesday (6-10s)", () => {
+    const calendar = calendarById(defaultBoardState(), "cal_6_10s");
+    // baseDow=3 (Wed): offsets 0-6 land on Wed,Thu,Fri,Sat,Sun,Mon,Tue -- only Sunday (offset 4) is off.
+    expect(nonWorkingDayRuns(calendar, 3)).toEqual([[4, 4]]);
+  });
+
+  it("returns no runs for a 7-10s calendar (every day worked)", () => {
+    const calendar = calendarById(defaultBoardState(), "cal_7_10s");
+    expect(nonWorkingDayRuns(calendar, 0)).toEqual([]);
+  });
+
+  it("adds a custom calendar built from arbitrary working days, and can set it as default", () => {
+    let state = addCalendar(defaultBoardState(), { name: "3-12s", workingDays: [3, 1, 2] });
+    const custom = state.calendars.find((c) => c.name === "3-12s");
+    expect(custom.workingDays).toEqual([1, 2, 3]); // sorted, deduped
+    state = setDefaultCalendar(state, custom.id);
+    expect(state.defaultCalendarId).toBe(custom.id);
+  });
+
+  it("refuses to add a calendar with no name or no working days", () => {
+    const state = defaultBoardState();
+    expect(addCalendar(state, { name: "", workingDays: [1] })).toBe(state);
+    expect(addCalendar(state, { name: "Empty", workingDays: [] })).toBe(state);
+  });
+
+  it("refuses to delete the current default calendar", () => {
+    const state = defaultBoardState();
+    expect(removeCalendar(state, state.defaultCalendarId)).toBe(state);
+  });
+
+  it("falls a lane back to the project default when the calendar it was pinned to is deleted", () => {
+    let state = addLane(defaultBoardState(), "Crew A");
+    const laneId = state.lanes[state.lanes.length - 1].id;
+    state = setLaneCalendar(state, laneId, "cal_7_10s");
+    state = removeCalendar(state, "cal_7_10s");
+    expect(state.calendars.some((c) => c.id === "cal_7_10s")).toBe(false);
+    expect(calendarForLane(state, laneId).id).toBe(state.defaultCalendarId);
+  });
+});
+
+describe("TA blackout windows", () => {
+  it("adds a blackout window and rejects an inverted or incomplete range", () => {
+    const state = addBlackoutWindow(defaultBoardState(), { label: "Contract freeze", startDate: "2026-12-20", endDate: "2027-01-02" });
+    expect(state.blackoutWindows).toHaveLength(1);
+    expect(state.blackoutWindows[0]).toMatchObject({ label: "Contract freeze", startDate: "2026-12-20", endDate: "2027-01-02" });
+    expect(addBlackoutWindow(state, { label: "Bad", startDate: "2027-01-02", endDate: "2026-12-20" })).toBe(state);
+    expect(addBlackoutWindow(state, { label: "", startDate: "2026-12-20", endDate: "2027-01-02" })).toBe(state);
+  });
+
+  it("removes a blackout window", () => {
+    let state = addBlackoutWindow(defaultBoardState(), { label: "Freeze", startDate: "2026-12-20", endDate: "2027-01-02" });
+    state = removeBlackoutWindow(state, state.blackoutWindows[0].id);
+    expect(state.blackoutWindows).toHaveLength(0);
+  });
+
+  it("finds the day-offset run inside a week column that falls inside a blackout window", () => {
+    // Week column starting Mon 2024-01-01; blackout covers Wed-Thu (offsets 2-3).
+    const state = addBlackoutWindow(defaultBoardState(), { label: "Freeze", startDate: "2024-01-03", endDate: "2024-01-04" });
+    expect(blackoutDayRuns(state, "2024-01-01")).toEqual([[2, 3]]);
+  });
+
+  it("returns no runs for a week entirely outside every blackout window", () => {
+    const state = addBlackoutWindow(defaultBoardState(), { label: "Freeze", startDate: "2024-01-03", endDate: "2024-01-04" });
+    expect(blackoutDayRuns(state, "2024-02-05")).toEqual([]);
   });
 });
 

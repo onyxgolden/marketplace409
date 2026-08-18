@@ -59,6 +59,20 @@ export const DEFAULT_LANES = Object.freeze([
   { id: "lane_shut", name: "Shutdown & Startup" },
 ].map((lane) => Object.freeze({ ...lane })));
 
+// Presets seed every new board's calendar list; the builder UI lets a project add more
+// (or delete these) from there, they're just a starting point, not a fixed enum. Working
+// days are stored as JS Date.getDay() values (0=Sun..6=Sat), not week-column offsets, so
+// they're independent of any particular project's start date.
+export const CALENDAR_PRESETS = Object.freeze([
+  Object.freeze({ id: "cal_4_10s", name: "4-10s", workingDays: Object.freeze([1, 2, 3, 4]) }),
+  Object.freeze({ id: "cal_4_10s_8", name: "4-10s + 8", workingDays: Object.freeze([1, 2, 3, 4, 5]) }),
+  Object.freeze({ id: "cal_5_10s", name: "5-10s", workingDays: Object.freeze([1, 2, 3, 4, 5]) }),
+  Object.freeze({ id: "cal_6_10s", name: "6-10s", workingDays: Object.freeze([1, 2, 3, 4, 5, 6]) }),
+  Object.freeze({ id: "cal_7_10s", name: "7-10s", workingDays: Object.freeze([0, 1, 2, 3, 4, 5, 6]) }),
+]);
+
+export const WEEKDAY_LABELS = Object.freeze(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
+
 export const ROW_HEIGHT_PX = 46;
 export const LANE_LABEL_WIDTH_PX = 170;
 export const MIN_ZOOM_PX = 50;
@@ -120,6 +134,9 @@ export function defaultBoardState(id = generateProjectId()) {
     blocks: Object.freeze([]),
     dependencies: Object.freeze([]),
     customChips: Object.freeze([]),
+    calendars: CALENDAR_PRESETS,
+    defaultCalendarId: "cal_5_10s",
+    blackoutWindows: Object.freeze([]),
     nextId: 1,
     nextTaskNumber: FIRST_TASK_NUMBER,
     createdAt: now,
@@ -145,7 +162,7 @@ export function projectSummaryFromBoard(board) {
   });
 }
 
-function parseISODate(value) {
+export function parseISODate(value) {
   const [y, m, d] = value.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
@@ -347,6 +364,123 @@ export function deleteLane(state, laneId) {
     blocks: Object.freeze(state.blocks.filter((block) => block.laneId !== laneId)),
     dependencies: Object.freeze(removeDependenciesTouching(state.dependencies, removedBlockIds)),
   });
+}
+
+export function calendarById(state, calendarId) {
+  return state.calendars.find((calendar) => calendar.id === calendarId) || null;
+}
+
+// A lane with no calendarId of its own inherits the project's default -- set at addLane
+// time never, deliberately, so changing the project default retroactively affects every
+// lane that hasn't been explicitly overridden.
+export function calendarForLane(state, laneId) {
+  const lane = state.lanes.find((item) => item.id === laneId);
+  return calendarById(state, lane?.calendarId) || calendarById(state, state.defaultCalendarId) || state.calendars[0] || null;
+}
+
+// The weekday (0=Sun..6=Sat) that day-offset 0 of every week column lands on. Every column
+// starts exactly 7 days after the last, so this one value is constant for the whole
+// project -- a calendar's off days form the same pattern in every week column, and this is
+// the only per-project input nonWorkingDayRuns needs to place that pattern correctly.
+export function baseWeekday(startDate) {
+  return parseISODate(startDate).getDay();
+}
+
+// Contiguous runs of non-working day-offsets (0-6, relative to a week column's own start)
+// for a calendar, so the board can gray out a lane's regular days off without recomputing
+// per-column dates -- the pattern is identical in every week column given `baseWeekday`.
+export function nonWorkingDayRuns(calendar, baseDow) {
+  if (!calendar) return [];
+  const runs = [];
+  let runStart = null;
+  for (let d = 0; d <= 6; d += 1) {
+    const working = calendar.workingDays.includes((baseDow + d) % 7);
+    if (!working && runStart === null) runStart = d;
+    if (working && runStart !== null) { runs.push([runStart, d - 1]); runStart = null; }
+  }
+  if (runStart !== null) runs.push([runStart, 6]);
+  return runs;
+}
+
+export function addCalendar(state, { name, workingDays }) {
+  const trimmed = name?.trim();
+  if (!trimmed || !Array.isArray(workingDays) || workingDays.length === 0) return state;
+  const calendar = Object.freeze({
+    id: `cal_${state.nextId}`, name: trimmed,
+    workingDays: Object.freeze([...new Set(workingDays)].sort((a, b) => a - b)),
+  });
+  return Object.freeze({ ...state, nextId: state.nextId + 1, calendars: Object.freeze([...state.calendars, calendar]) });
+}
+
+export function updateCalendar(state, calendarId, { name, workingDays } = {}) {
+  return Object.freeze({
+    ...state,
+    calendars: Object.freeze(state.calendars.map((calendar) => {
+      if (calendar.id !== calendarId) return calendar;
+      const nextName = name?.trim() || calendar.name;
+      const nextDays = Array.isArray(workingDays) && workingDays.length > 0
+        ? Object.freeze([...new Set(workingDays)].sort((a, b) => a - b)) : calendar.workingDays;
+      return Object.freeze({ ...calendar, name: nextName, workingDays: nextDays });
+    })),
+  });
+}
+
+// Refuses to delete the project's current default (pick a new default first) so the board
+// is never left without one; any lane pinned to the deleted calendar falls back to
+// inheriting the default rather than keeping a dangling calendarId.
+export function removeCalendar(state, calendarId) {
+  if (calendarId === state.defaultCalendarId) return state;
+  return Object.freeze({
+    ...state,
+    calendars: Object.freeze(state.calendars.filter((calendar) => calendar.id !== calendarId)),
+    lanes: Object.freeze(state.lanes.map((lane) =>
+      (lane.calendarId === calendarId ? Object.freeze({ ...lane, calendarId: null }) : lane))),
+  });
+}
+
+export function setDefaultCalendar(state, calendarId) {
+  if (!state.calendars.some((calendar) => calendar.id === calendarId)) return state;
+  return Object.freeze({ ...state, defaultCalendarId: calendarId });
+}
+
+export function setLaneCalendar(state, laneId, calendarId) {
+  return Object.freeze({
+    ...state,
+    lanes: Object.freeze(state.lanes.map((lane) =>
+      (lane.id === laneId ? Object.freeze({ ...lane, calendarId: calendarId || null }) : lane))),
+  });
+}
+
+export function addBlackoutWindow(state, { label, startDate, endDate }) {
+  const trimmed = label?.trim();
+  if (!trimmed || !startDate || !endDate || parseISODate(endDate) < parseISODate(startDate)) return state;
+  const blackout = Object.freeze({ id: `blackout_${state.nextId}`, label: trimmed, startDate, endDate });
+  return Object.freeze({ ...state, nextId: state.nextId + 1, blackoutWindows: Object.freeze([...state.blackoutWindows, blackout]) });
+}
+
+export function removeBlackoutWindow(state, blackoutId) {
+  return Object.freeze({ ...state, blackoutWindows: Object.freeze(state.blackoutWindows.filter((b) => b.id !== blackoutId)) });
+}
+
+// Contiguous runs of day-offsets (0-6) within one specific week column that fall inside
+// any blackout window. Unlike nonWorkingDayRuns this genuinely needs that column's real
+// calendar date -- blackouts are one-off date ranges (a TA freeze, a holiday shutdown),
+// not a recurring weekly pattern -- so it takes the column's own start date, not baseWeekday.
+export function blackoutDayRuns(state, weekStartIso) {
+  if (!state.blackoutWindows.length) return [];
+  const weekStart = parseISODate(weekStartIso);
+  const windows = state.blackoutWindows.map((w) => [parseISODate(w.startDate), parseISODate(w.endDate)]);
+  const runs = [];
+  let runStart = null;
+  for (let d = 0; d <= 6; d += 1) {
+    const date = new Date(weekStart);
+    date.setDate(date.getDate() + d);
+    const blacked = windows.some(([start, end]) => date >= start && date <= end);
+    if (blacked && runStart === null) runStart = d;
+    if (!blacked && runStart !== null) { runs.push([runStart, d - 1]); runStart = null; }
+  }
+  if (runStart !== null) runs.push([runStart, 6]);
+  return runs;
 }
 
 export function addCustomChip(state, { label, category, durationWeeks, milestone }) {

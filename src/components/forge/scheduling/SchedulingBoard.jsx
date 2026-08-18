@@ -2,15 +2,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import SchedulingHelpModal from "./SchedulingHelpModal";
+import SchedulingCalendarsModal from "./SchedulingCalendarsModal";
 import {
   CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
-  addBlock, addCustomChip, addDependency, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory,
+  addBlackoutWindow, addBlock, addCalendar, addCustomChip, addDependency, addLane, baseWeekday, blackoutDayRuns,
+  blockToChip, calendarById, calendarForLane, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, criticalPath, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
   deleteLane, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock,
-  moveBlocksBy, pixelToIndex, projectStorageKey, recordHistory, redoHistory, removeBlock, removeDependency,
-  renameBlock, renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState, setBlockTextStyle,
-  setProjectDates, suggestPredecessors, suggestSuccessors, undoHistory, visibleWeekIndices,
+  moveBlocksBy, nonWorkingDayRuns, pixelToIndex, projectStorageKey, recordHistory, redoHistory, removeBlackoutWindow,
+  removeBlock, removeCalendar, removeDependency, renameBlock, renameLane, resizeBlock, resizeBlockFromStart,
+  serializeBoardState, setBlockTextStyle, setDefaultCalendar, setLaneCalendar, setProjectDates, suggestPredecessors,
+  suggestSuccessors, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -55,6 +58,7 @@ export default function SchedulingBoard({ projectId }) {
   const [hideEmptyWeeks, setHideEmptyWeeks] = useState(false);
   const [history, setHistory] = useState(emptyHistory);
   const [showHelp, setShowHelp] = useState(false);
+  const [showCalendars, setShowCalendars] = useState(false);
   const [showCriticalPath, setShowCriticalPath] = useState(false);
   const [contextMenu, setContextMenu] = useState(null); // { x, y } in viewport coords, or null when hidden
   // Drag-to-measure a day span on the header row -- view-only, not undoable, cleared on
@@ -165,6 +169,44 @@ export default function SchedulingBoard({ projectId }) {
   const arrowSegments = useMemo(() => board.dependencies
     .map((dependency) => ({ dependency, points: dependencyArrowPoints(board, dependency, board.weekWidth, resolveColumn) }))
     .filter((segment) => segment.points), [board, columnForWeekIdx]);
+
+  // Calendar off-days recur identically in every week column (see baseWeekday's doc
+  // comment), so this is computed once per lane rather than once per lane per column.
+  const calendarShadingRects = useMemo(() => {
+    const dayWidth = board.weekWidth / 7;
+    const dow = baseWeekday(board.startDate);
+    const rects = [];
+    board.lanes.forEach((lane, laneIdx) => {
+      const runs = nonWorkingDayRuns(calendarForLane(board, lane.id), dow);
+      if (!runs.length) return;
+      displayIndices.forEach((realIdx) => {
+        const colX = resolveColumn(realIdx) * board.weekWidth;
+        runs.forEach(([start, end]) => {
+          rects.push({
+            key: `cal-${lane.id}-${realIdx}-${start}`, x: colX + start * dayWidth,
+            y: laneIdx * ROW_HEIGHT_PX, width: (end - start + 1) * dayWidth,
+          });
+        });
+      });
+    });
+    return rects;
+  }, [board, displayIndices, columnForWeekIdx]);
+
+  // Blackout windows are one-off date ranges, not a recurring weekly pattern, so (unlike
+  // calendar shading) this does need each column's own real date.
+  const blackoutShadingRects = useMemo(() => {
+    if (!board.blackoutWindows.length) return [];
+    const dayWidth = board.weekWidth / 7;
+    const rects = [];
+    displayIndices.forEach((realIdx) => {
+      const runs = blackoutDayRuns(board, weeks[realIdx]);
+      const colX = resolveColumn(realIdx) * board.weekWidth;
+      runs.forEach(([start, end]) => {
+        rects.push({ key: `blackout-${realIdx}-${start}`, x: colX + start * dayWidth, width: (end - start + 1) * dayWidth });
+      });
+    });
+    return rects;
+  }, [board, displayIndices, weeks, columnForWeekIdx]);
 
   // Simplified stand-in for real CPM (no calendars/constraints yet) -- longest chain of
   // dependency-linked blocks by summed duration, just to eyeball the dependency graph.
@@ -529,6 +571,7 @@ export default function SchedulingBoard({ projectId }) {
           <summary className="cursor-pointer list-none rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">Menu</summary>
           <div className="absolute left-0 z-50 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 text-slate-950 shadow-xl">
             <Link href="/forge/scheduling" className="block rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">All Projects</Link>
+            <button type="button" onClick={() => setShowCalendars(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Calendars</button>
           </div>
         </details>
         <button type="button" onClick={() => setShowHelp(true)} title="Help & keyboard shortcuts"
@@ -598,12 +641,20 @@ export default function SchedulingBoard({ projectId }) {
           <div className="flex-1 overflow-hidden">
             <div ref={laneListRef}>
               {board.lanes.map((lane) => (
-                <div key={lane.id} style={{ height: ROW_HEIGHT_PX }} className="flex items-center justify-between border-b border-slate-300 bg-slate-200 px-2.5 text-xs font-bold">
-                  <span onDoubleClick={() => handleRenameLane(lane)} title="Double-click to rename">{lane.name}</span>
-                  <span className="flex items-center gap-1">
-                    <span onClick={() => handleInsertLaneBefore(lane)} title="Insert lane above" className="cursor-pointer px-1 text-slate-400 hover:text-emerald-600">+</span>
-                    <span onClick={() => handleDeleteLane(lane)} title="Delete lane" className="cursor-pointer px-1 text-slate-400 hover:text-red-600">✕</span>
-                  </span>
+                <div key={lane.id} style={{ height: ROW_HEIGHT_PX }} className="flex flex-col justify-center gap-0.5 border-b border-slate-300 bg-slate-200 px-2.5 text-xs font-bold">
+                  <div className="flex items-center justify-between">
+                    <span onDoubleClick={() => handleRenameLane(lane)} title="Double-click to rename">{lane.name}</span>
+                    <span className="flex items-center gap-1">
+                      <span onClick={() => handleInsertLaneBefore(lane)} title="Insert lane above" className="cursor-pointer px-1 text-slate-400 hover:text-emerald-600">+</span>
+                      <span onClick={() => handleDeleteLane(lane)} title="Delete lane" className="cursor-pointer px-1 text-slate-400 hover:text-red-600">✕</span>
+                    </span>
+                  </div>
+                  <select value={lane.calendarId || ""} title="Work calendar for this lane" data-scheduling-lane-calendar
+                    onChange={(e) => commitBoard((current) => setLaneCalendar(current, lane.id, e.target.value || null))}
+                    className="w-full rounded border border-slate-400 bg-white px-1 text-[9.5px] font-semibold text-slate-600">
+                    <option value="">Default ({calendarById(board, board.defaultCalendarId)?.name})</option>
+                    {board.calendars.map((calendar) => (<option key={calendar.id} value={calendar.id}>{calendar.name}</option>))}
+                  </select>
                 </div>
               ))}
             </div>
@@ -642,6 +693,14 @@ export default function SchedulingBoard({ projectId }) {
                   Drag a block from the left panel onto the grid to place it.
                 </div>
               )}
+              {calendarShadingRects.map((rect) => (
+                <div key={rect.key} className="pointer-events-none absolute bg-slate-400/30" data-scheduling-calendar-band
+                  style={{ left: rect.x, top: rect.y, width: rect.width, height: ROW_HEIGHT_PX }} />
+              ))}
+              {blackoutShadingRects.map((rect) => (
+                <div key={rect.key} className="pointer-events-none absolute top-0 bg-red-400/20" data-scheduling-blackout-band
+                  style={{ left: rect.x, width: rect.width, height: board.lanes.length * ROW_HEIGHT_PX }} />
+              ))}
               {measureBounds && (
                 <div className="pointer-events-none absolute top-0 bottom-0 bg-amber-400/25" data-scheduling-measure-band
                   style={{
@@ -697,6 +756,14 @@ export default function SchedulingBoard({ projectId }) {
           onSelectBlock={(id) => setSelectedBlockIds([id])} />
       )}
       {showHelp && <SchedulingHelpModal onClose={() => setShowHelp(false)} />}
+      {showCalendars && (
+        <SchedulingCalendarsModal board={board} onClose={() => setShowCalendars(false)}
+          onAddCalendar={(input) => commitBoard((current) => addCalendar(current, input))}
+          onRemoveCalendar={(calendarId) => commitBoard((current) => removeCalendar(current, calendarId))}
+          onSetDefaultCalendar={(calendarId) => commitBoard((current) => setDefaultCalendar(current, calendarId))}
+          onAddBlackout={(input) => commitBoard((current) => addBlackoutWindow(current, input))}
+          onRemoveBlackout={(blackoutId) => commitBoard((current) => removeBlackoutWindow(current, blackoutId))} />
+      )}
       {contextMenu && (
         <div className="fixed inset-0 z-[90]" onClick={() => setContextMenu(null)}
           onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} data-scheduling-context-menu>

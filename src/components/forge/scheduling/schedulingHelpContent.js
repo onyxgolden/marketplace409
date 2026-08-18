@@ -52,6 +52,7 @@ export const HELP_SECTIONS = Object.freeze([
       { label: "+ next to a lane name", description: "Inserts a new lane directly above that one." },
       { label: "Double-click a lane name", description: "Rename the lane." },
       { label: "✕ next to a lane", description: "Delete the lane and any blocks placed on it." },
+      { label: "Calendar dropdown under a lane name", description: "Assigns that lane's work calendar (4-10s, 5-10s, etc.). Leave it on \"Default\" to follow the project's default calendar instead." },
     ],
   },
   {
@@ -73,6 +74,7 @@ export const HELP_SECTIONS = Object.freeze([
       { label: "Export / Import JSON", description: "Save the current project to a file, or load one back in." },
       { label: "Reset board", description: "Clears everything -- undoable if you didn't mean to." },
       { label: "Menu -> All Projects", description: "Back to the list of saved projects." },
+      { label: "Menu -> Calendars", description: "Build custom work calendars (which days of the week are worked) and set the project's default. Also where TA blackout windows are added -- date ranges no lane works, grayed out across the whole board regardless of calendar." },
     ],
   },
 ]);
