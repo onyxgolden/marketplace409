@@ -66,11 +66,16 @@ export default function SchedulingBoard({ projectId }) {
   const laneListRef = useRef(null);
   const saveTimer = useRef(null);
   const clipboardRef = useRef(null);
-  // The load effect flips this true right before handing the fetched board to setBoard, so
-  // the save effect's very next run (that same board arriving) skips writing it straight
-  // back -- a load isn't an edit, and every project open would otherwise cost a redundant
-  // PUT of exactly what was just read.
-  const skipNextSaveRef = useRef(true);
+  // The exact board object last received from the placeholder default or a load -- not a
+  // one-shot "skip the next save" flag, because React (in Strict Mode) re-invokes an effect
+  // body a second time with unchanged deps purely to check it's idempotent, and a flag
+  // that's consumed on first invocation isn't: the second invocation would see it already
+  // cleared and (wrongly) proceed to save. Comparing board identity is safe under that
+  // replay -- it keeps comparing equal no matter how many times the effect body reruns,
+  // and only a genuine edit (a new object from commitBoard) ever changes the outcome. null
+  // means "nothing loaded yet", so the placeholder board never gets saved before the fetch
+  // resolves either.
+  const lastLoadedBoardRef = useRef(null);
   // Set by startMeasure's own mousemove handler, so the canvas's empty-click handler (which
   // otherwise clears any active measurement) can tell a genuine drag-to-measure gesture on
   // the canvas itself apart from a plain click -- a plain click never fires mousemove.
@@ -126,7 +131,7 @@ export default function SchedulingBoard({ projectId }) {
         }
         const body = await response.json();
         if (cancelled) return;
-        skipNextSaveRef.current = true;
+        lastLoadedBoardRef.current = body.board;
         setBoard(body.board);
         setIsOwner(body.isOwner);
       } catch {
@@ -149,7 +154,11 @@ export default function SchedulingBoard({ projectId }) {
 
   useEffect(() => {
     if (loadError) return;
-    if (skipNextSaveRef.current) { skipNextSaveRef.current = false; return; }
+    // Nothing loaded yet (null) -- true before the very first fetch resolves, and matters:
+    // without this, a slow load could let the debounce timer fire on the placeholder default
+    // board first, overwriting real content with a blank one -- or this IS the load landing,
+    // not an edit.
+    if (!lastLoadedBoardRef.current || board === lastLoadedBoardRef.current) return;
     if (!isOwner) return; // the shared example, or anything else not ours -- nothing to persist
     setSaveStatus("Saving…");
     clearTimeout(saveTimer.current);
