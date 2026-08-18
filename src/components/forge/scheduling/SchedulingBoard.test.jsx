@@ -139,6 +139,11 @@ describe("SchedulingBoard", () => {
     expect(markup).not.toContain("data-scheduling-measure-band");
   });
 
+  it("also makes the empty grid body itself draggable for measuring, not just the header row", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toMatch(/<div[^>]*data-scheduling-canvas[^>]*class="relative cursor-crosshair"[^>]*>/);
+  });
+
   it("renders a Calendars menu entry but not the calendars modal until it's opened", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).toContain(">Calendars<");

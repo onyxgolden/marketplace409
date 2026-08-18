@@ -70,6 +70,10 @@ export default function SchedulingBoard({ projectId }) {
   const laneListRef = useRef(null);
   const saveTimer = useRef(null);
   const clipboardRef = useRef(null);
+  // Set by startMeasure's own mousemove handler, so the canvas's empty-click handler (which
+  // otherwise clears any active measurement) can tell a genuine drag-to-measure gesture on
+  // the canvas itself apart from a plain click -- a plain click never fires mousemove.
+  const measureDraggedRef = useRef(false);
 
   // The lane-label column lives outside the horizontally-scrolling grid entirely (see the
   // render below) so it can't be affected by position:sticky failing in that nested
@@ -228,11 +232,20 @@ export default function SchedulingBoard({ projectId }) {
   function startMeasure(event, realIdx) {
     if (event.button !== 0) return;
     event.preventDefault();
+    measureDraggedRef.current = false;
     setMeasure({ anchorRealIdx: realIdx, hoverRealIdx: realIdx });
     function onMove(ev) {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (!rect) return;
       const hoverRealIdx = pixelToRealWeekIdx(ev.clientX - rect.left);
+      // Compared directly against the closed-over anchor (not against measure state read
+      // inside the setMeasure updater below) so this flips synchronously, in the same tick
+      // as the native mousemove -- the updater only runs when React gets around to flushing
+      // it, which can land after the click that follows mouseup, too late for that click's
+      // handler to see it. A plain click's own mouseup can still dispatch a same-spot
+      // mousemove (a physical mouse's sub-pixel jitter, or a trackpad/automation click),
+      // which shouldn't be enough to make the canvas's empty-click-clears-it logic misfire.
+      if (hoverRealIdx !== realIdx) measureDraggedRef.current = true;
       setMeasure((current) => (current ? { ...current, hoverRealIdx } : current));
     }
     function onUp() {
@@ -241,6 +254,15 @@ export default function SchedulingBoard({ projectId }) {
     }
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+  }
+  // Lets dragging on the empty grid body (not just the header row) measure a day span too --
+  // computes the starting column from the click's own x position, then reuses startMeasure
+  // exactly as the header cells do.
+  function startMeasureOnCanvas(event) {
+    if (event.target !== event.currentTarget) return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    startMeasure(event, pixelToRealWeekIdx(event.clientX - rect.left));
   }
 
   function handleFitToProject() {
@@ -684,10 +706,16 @@ export default function SchedulingBoard({ projectId }) {
                 width: displayIndices.length * board.weekWidth, height: board.lanes.length * ROW_HEIGHT_PX,
                 backgroundImage: `repeating-linear-gradient(to right, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${board.weekWidth}px), repeating-linear-gradient(to bottom, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${ROW_HEIGHT_PX}px)`,
               }}
-              className="relative"
+              className="relative cursor-crosshair"
               onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
               onDrop={dropChipOnCanvas}
-              onClick={(e) => { if (e.target === e.currentTarget) { setSelectedBlockIds([]); setMeasure(null); } }}>
+              onMouseDown={startMeasureOnCanvas}
+              onClick={(e) => {
+                if (e.target !== e.currentTarget) return;
+                setSelectedBlockIds([]);
+                if (measureDraggedRef.current) { measureDraggedRef.current = false; return; }
+                setMeasure(null);
+              }}>
               {board.blocks.length === 0 && (
                 <div className="pointer-events-none absolute top-3 left-3 rounded bg-white/85 px-2.5 py-1.5 text-xs text-slate-500">
                   Drag a block from the left panel onto the grid to place it.
