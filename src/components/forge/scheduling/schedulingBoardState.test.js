@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  BASE_BLOCK_FONT_SIZE_PX, MIN_BLOCK_FONT_SIZE_PX,
   addBlock, addCustomChip, addDependency, addLane, blockAnchorPoint, blockToChip, chipsByCategory, computeWeeks,
-  deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, moveBlock,
-  removeBlock, removeDependency, renameBlock, renameLane, resizeBlock, serializeBoardState, setProjectDates,
-  suggestPredecessors,
+  deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, fitBlockFontSizePx,
+  linkBlocksInOrder, moveBlock, removeBlock, removeDependency, renameBlock, renameLane, resizeBlock, serializeBoardState,
+  setProjectDates, suggestPredecessors,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -305,5 +306,57 @@ describe("blockAnchorPoint / dependencyArrowPoints", () => {
     const stale = removeBlock(state, "b2");
     const dependency = state.dependencies[0]; // stale.dependencies is already empty via cascade, so use the pre-removal record
     expect(dependencyArrowPoints(stale, dependency, 90)).toBeNull();
+  });
+});
+
+describe("fitBlockFontSizePx", () => {
+  it("keeps the base size when a short label comfortably fits", () => {
+    expect(fitBlockFontSizePx("Kickoff", 86, 36)).toBe(BASE_BLOCK_FONT_SIZE_PX);
+  });
+  it("shrinks a long label on a narrow bar", () => {
+    const size = fitBlockFontSizePx("Long-Lead Equipment Fabrication", 86, 36);
+    expect(size).toBeLessThan(BASE_BLOCK_FONT_SIZE_PX);
+    expect(size).toBeGreaterThanOrEqual(MIN_BLOCK_FONT_SIZE_PX);
+  });
+  it("never returns smaller than the floor even for an extremely narrow bar", () => {
+    expect(fitBlockFontSizePx("Long-Lead Equipment Fabrication", 20, 20)).toBe(MIN_BLOCK_FONT_SIZE_PX);
+  });
+  it("shrinks further as the same label gets a narrower box", () => {
+    const wide = fitBlockFontSizePx("Detailed Design", 200, 36);
+    const narrow = fitBlockFontSizePx("Detailed Design", 60, 36);
+    expect(narrow).toBeLessThanOrEqual(wide);
+  });
+  it("treats a blank label as fully fitting", () => {
+    expect(fitBlockFontSizePx("", 10, 10)).toBe(BASE_BLOCK_FONT_SIZE_PX);
+  });
+});
+
+describe("linkBlocksInOrder", () => {
+  it("chains consecutive pairs in exactly the given order, not a fan-out from the first block", () => {
+    let state = twoBlockState();
+    state = addBlock(state, { ...TASK_CHIP, category: "proc" }, 20, 3); // b3
+    state = linkBlocksInOrder(state, ["b1", "b2", "b3"]);
+    expect(state.dependencies).toHaveLength(2);
+    expect(state.dependencies.map((d) => [d.predecessorId, d.successorId])).toEqual([["b1", "b2"], ["b2", "b3"]]);
+  });
+  it("defaults to a Finish-to-Start link with no lag", () => {
+    const state = linkBlocksInOrder(twoBlockState(), ["b1", "b2"]);
+    expect(state.dependencies[0]).toMatchObject({ relationshipType: "FS", lagDays: 0 });
+  });
+  it("honors an explicit relationship type and lag", () => {
+    const state = linkBlocksInOrder(twoBlockState(), ["b1", "b2"], "SS", 3);
+    expect(state.dependencies[0]).toMatchObject({ relationshipType: "SS", lagDays: 3 });
+  });
+  it("does nothing for fewer than two blocks", () => {
+    const state = twoBlockState();
+    expect(linkBlocksInOrder(state, ["b1"])).toBe(state);
+    expect(linkBlocksInOrder(state, [])).toBe(state);
+  });
+  it("skips a pair that's already linked instead of erroring, and still links the rest", () => {
+    let state = addDependency(twoBlockState(), "b1", "b2");
+    state = addBlock(state, { ...TASK_CHIP, category: "proc" }, 20, 3);
+    const thirdBlockId = state.blocks.at(-1).id; // the shared id counter advanced past "b3" when the dependency above was created
+    state = linkBlocksInOrder(state, ["b1", "b2", thirdBlockId]);
+    expect(state.dependencies).toHaveLength(2); // the pre-existing b1->b2, plus the new b2->thirdBlockId
   });
 });

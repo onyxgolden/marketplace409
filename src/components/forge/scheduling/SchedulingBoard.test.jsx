@@ -52,4 +52,10 @@ describe("SchedulingBoard", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).not.toContain("data-scheduling-drawer");
   });
+
+  it("does not render the multi-select link bar until 2+ blocks are Ctrl-selected", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).not.toContain("data-scheduling-multi-select-bar");
+    expect(markup).not.toContain("Link in order");
+  });
 });

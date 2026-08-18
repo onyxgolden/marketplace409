@@ -4,8 +4,8 @@ import {
   CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
   addBlock, addCustomChip, addDependency, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, deleteLane,
-  laneIndexOf, moveBlock, pixelToIndex, removeBlock, removeDependency, renameBlock, renameLane, resizeBlock,
-  serializeBoardState, setProjectDates, suggestPredecessors,
+  fitBlockFontSizePx, laneIndexOf, linkBlocksInOrder, moveBlock, pixelToIndex, removeBlock, removeDependency,
+  renameBlock, renameLane, resizeBlock, serializeBoardState, setProjectDates, suggestPredecessors,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -33,7 +33,9 @@ export default function SchedulingBoard() {
   const [board, setBoard] = useState(defaultBoardState);
   const [saveStatus, setSaveStatus] = useState("");
   const [clipboardStatus, setClipboardStatus] = useState("");
-  const [selectedBlockId, setSelectedBlockId] = useState(null);
+  // Ordered, not a Set: Ctrl/Cmd+click appends to build up a chain, and "Link in order"
+  // connects consecutive pairs in exactly this order (see handleLinkSelectedInOrder).
+  const [selectedBlockIds, setSelectedBlockIds] = useState([]);
   const [customChipDraft, setCustomChipDraft] = useState({ label: "", category: "gov", durationWeeks: 4, milestone: false });
   const canvasRef = useRef(null);
   const saveTimer = useRef(null);
@@ -62,7 +64,8 @@ export default function SchedulingBoard() {
 
   const weeks = useMemo(() => computeWeeks(board.startDate, board.endDate), [board.startDate, board.endDate]);
   const groupedChips = useMemo(() => chipsByCategory(board), [board]);
-  const selectedBlock = board.blocks.find((block) => block.id === selectedBlockId) || null;
+  const selectedBlock = selectedBlockIds.length === 1
+    ? board.blocks.find((block) => block.id === selectedBlockIds[0]) || null : null;
   const arrowSegments = useMemo(() => board.dependencies
     .map((dependency) => ({ dependency, points: dependencyArrowPoints(board, dependency, board.weekWidth) }))
     .filter((segment) => segment.points), [board]);
@@ -78,8 +81,19 @@ export default function SchedulingBoard() {
     setBoard((current) => addBlock(current, chip, weekIdx, laneIdx));
   }
 
+  function toggleMultiSelect(blockId) {
+    setSelectedBlockIds((current) => (current.includes(blockId) ? current.filter((id) => id !== blockId) : [...current, blockId]));
+  }
+
   function startMoveBlock(event, block) {
     if (event.target.dataset.role === "resize-handle" || event.target.dataset.role === "delete") return;
+    // Ctrl/Cmd+click never drags -- it's purely a multi-select toggle, so the click order
+    // (what "Link in order" chains through) stays exactly what the user clicked.
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      toggleMultiSelect(block.id);
+      return;
+    }
     event.preventDefault();
     const el = event.currentTarget;
     const startX = event.clientX, startY = event.clientY;
@@ -96,10 +110,16 @@ export default function SchedulingBoard() {
       const weekIdx = clampIndex(Math.round((origLeft + (ev.clientX - startX)) / board.weekWidth), 0, weeks.length - 1);
       const laneIdx = clampIndex(Math.round((origTop + (ev.clientY - startY)) / ROW_HEIGHT_PX), 0, board.lanes.length - 1);
       setBoard((current) => moveBlock(current, block.id, weekIdx, laneIdx));
-      setSelectedBlockId(block.id);
+      setSelectedBlockIds([block.id]);
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
+  }
+
+  function handleLinkSelectedInOrder() {
+    if (selectedBlockIds.length < 2) return;
+    setBoard((current) => linkBlocksInOrder(current, selectedBlockIds));
+    setSelectedBlockIds([]);
   }
 
   function flashClipboardStatus(text) {
@@ -108,7 +128,7 @@ export default function SchedulingBoard() {
   }
   function copyBlockToClipboard(block) {
     clipboardRef.current = { chip: blockToChip(block), laneId: block.laneId, nextStartIdx: block.startIdx + Math.max(1, block.duration) };
-    setSelectedBlockId(block.id);
+    setSelectedBlockIds([block.id]);
     flashClipboardStatus("Copied");
   }
   function pasteFromClipboard() {
@@ -125,7 +145,8 @@ export default function SchedulingBoard() {
     function onKeyDown(event) {
       if (!(event.ctrlKey || event.metaKey) || isTypingTarget(document.activeElement)) return;
       if (event.key === "c" || event.key === "C") {
-        const block = board.blocks.find((b) => b.id === selectedBlockId);
+        if (selectedBlockIds.length !== 1) return; // ambiguous with a multi-selection -- use the Link button instead
+        const block = board.blocks.find((b) => b.id === selectedBlockIds[0]);
         if (block) { event.preventDefault(); copyBlockToClipboard(block); }
       } else if (event.key === "v" || event.key === "V") {
         if (clipboardRef.current) { event.preventDefault(); pasteFromClipboard(); }
@@ -133,7 +154,7 @@ export default function SchedulingBoard() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [board, selectedBlockId]);
+  }, [board, selectedBlockIds]);
 
   function startResizeBlock(event, block) {
     event.preventDefault();
@@ -169,14 +190,14 @@ export default function SchedulingBoard() {
   }
   function handleDeleteLane(lane) {
     if (window.confirm(`Delete lane "${lane.name}" and any blocks placed on it?`)) {
-      const removingSelected = board.blocks.some((block) => block.id === selectedBlockId && block.laneId === lane.id);
+      const removedIds = new Set(board.blocks.filter((block) => block.laneId === lane.id).map((block) => block.id));
       setBoard((current) => deleteLane(current, lane.id));
-      if (removingSelected) setSelectedBlockId(null);
+      setSelectedBlockIds((current) => current.filter((id) => !removedIds.has(id)));
     }
   }
   function handleRemoveBlock(block) {
     setBoard((current) => removeBlock(current, block.id));
-    if (selectedBlockId === block.id) setSelectedBlockId(null);
+    setSelectedBlockIds((current) => current.filter((id) => id !== block.id));
   }
   function handleRenameBlock(block) {
     const label = window.prompt("Rename block", block.label);
@@ -319,7 +340,7 @@ export default function SchedulingBoard() {
               className="relative"
               onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
               onDrop={dropChipOnCanvas}
-              onClick={(e) => { if (e.target === e.currentTarget) setSelectedBlockId(null); }}>
+              onClick={(e) => { if (e.target === e.currentTarget) setSelectedBlockIds([]); }}>
               {board.blocks.length === 0 && (
                 <div className="pointer-events-none absolute top-3 left-3 rounded bg-white/85 px-2.5 py-1.5 text-xs text-slate-500">
                   Drag a block from the left panel onto the grid to place it.
@@ -336,20 +357,27 @@ export default function SchedulingBoard() {
                     stroke="#64748b" strokeWidth="1.5" markerEnd="url(#scheduling-dependency-arrow)" />
                 ))}
               </svg>
-              {board.blocks.map((block) => (
-                <BlockElement key={block.id} block={block} weekWidth={board.weekWidth} laneIdx={laneIndexOf(board, block.laneId)}
-                  selected={block.id === selectedBlockId}
-                  onMouseDownMove={(e) => startMoveBlock(e, block)} onMouseDownResize={(e) => startResizeBlock(e, block)}
-                  onRename={() => handleRenameBlock(block)} onDelete={() => handleRemoveBlock(block)}
-                  onCopy={() => copyBlockToClipboard(block)} />
-              ))}
+              {board.blocks.map((block) => {
+                const selectionIndex = selectedBlockIds.indexOf(block.id);
+                return (
+                  <BlockElement key={block.id} block={block} weekWidth={board.weekWidth} laneIdx={laneIndexOf(board, block.laneId)}
+                    selected={selectionIndex !== -1} selectionOrder={selectedBlockIds.length > 1 && selectionIndex !== -1 ? selectionIndex + 1 : null}
+                    onMouseDownMove={(e) => startMoveBlock(e, block)} onMouseDownResize={(e) => startResizeBlock(e, block)}
+                    onRename={() => handleRenameBlock(block)} onDelete={() => handleRemoveBlock(block)}
+                    onCopy={() => copyBlockToClipboard(block)} />
+                );
+              })}
             </div>
           </div>
         </div>
       </div>
 
+      {selectedBlockIds.length > 1 && (
+        <MultiSelectLinkBar board={board} selectedBlockIds={selectedBlockIds}
+          onLink={handleLinkSelectedInOrder} onClear={() => setSelectedBlockIds([])} />
+      )}
       {selectedBlock && (
-        <DependencyDrawer board={board} block={selectedBlock} onClose={() => setSelectedBlockId(null)}
+        <DependencyDrawer board={board} block={selectedBlock} onClose={() => setSelectedBlockIds([])}
           onAddDependency={(predecessorId, successorId, relationshipType, lagDays) =>
             setBoard((current) => addDependency(current, predecessorId, successorId, relationshipType, lagDays))}
           onRemoveDependency={(dependencyId) => setBoard((current) => removeDependency(current, dependencyId))} />
@@ -362,7 +390,25 @@ function Field({ label, children }) {
   return <div className="flex flex-col gap-0.5"><label className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</label>{children}</div>;
 }
 
-function BlockElement({ block, weekWidth, laneIdx, selected, onMouseDownMove, onMouseDownResize, onRename, onDelete, onCopy }) {
+function MultiSelectLinkBar({ board, selectedBlockIds, onLink, onClear }) {
+  const blockById = (id) => board.blocks.find((candidate) => candidate.id === id);
+  const chain = selectedBlockIds.map((id) => blockById(id)).filter(Boolean);
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-slate-200 bg-slate-50 px-4 py-2.5" data-scheduling-multi-select-bar>
+      <span className="text-xs font-bold text-slate-600">{chain.length} blocks selected in order:</span>
+      <span className="flex flex-wrap items-center gap-1 font-mono text-xs text-slate-500">
+        {chain.map((block, index) => (
+          <span key={block.id}>{block.taskCode}{index < chain.length - 1 ? " →" : ""}</span>
+        ))}
+      </span>
+      <div className="flex-1" />
+      <button type="button" onClick={onLink} className="rounded bg-slate-950 px-3 py-1.5 text-xs font-bold text-white">Link in order (FS)</button>
+      <button type="button" onClick={onClear} className="text-xs font-bold text-slate-400 hover:text-slate-700">Clear selection</button>
+    </div>
+  );
+}
+
+function BlockElement({ block, weekWidth, laneIdx, selected, selectionOrder, onMouseDownMove, onMouseDownResize, onRename, onDelete, onCopy }) {
   const selectedRing = selected ? "ring-2 ring-sky-500 ring-offset-1" : "";
   function handleContextMenu(event) {
     event.preventDefault();
@@ -377,20 +423,37 @@ function BlockElement({ block, weekWidth, laneIdx, selected, onMouseDownMove, on
         <div onDoubleClick={onRename} className="absolute left-[26px] rounded bg-white/85 px-1 text-[11px] font-bold whitespace-nowrap text-slate-800">
           <span className="mr-1 font-mono text-slate-500">{block.taskCode}</span>{block.label}
         </div>
+        {selectionOrder && <SelectionOrderBadge order={selectionOrder} />}
         <span data-role="delete" onClick={(e) => { e.stopPropagation(); onDelete(); }}
           className="absolute -top-1.5 -right-1.5 hidden h-4 w-4 cursor-pointer rounded-full bg-slate-800 text-center text-[11px] leading-4 text-white group-hover:block">✕</span>
       </div>
     );
   }
+  const barWidth = block.duration * weekWidth - 4;
+  const barHeight = ROW_HEIGHT_PX - 10;
+  const fontSize = fitBlockFontSizePx(block.label, barWidth, barHeight);
   return (
     <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
-      className={`group absolute flex cursor-grab items-center overflow-hidden rounded-md border border-black/15 px-2 text-[11.5px] font-bold whitespace-nowrap text-slate-950 shadow ${selectedRing}`}
-      style={{ left: block.startIdx * weekWidth + 2, top: laneIdx * ROW_HEIGHT_PX + 5, width: block.duration * weekWidth - 4, height: ROW_HEIGHT_PX - 10, background: colorForCategory(block.category) }}>
-      <span onDoubleClick={onRename} className="overflow-hidden text-ellipsis"><span className="mr-1 font-mono opacity-60">{block.taskCode}</span>{block.label}</span>
+      className={`group absolute flex cursor-grab items-center rounded-md border border-black/15 px-2 font-bold text-slate-950 shadow ${selectedRing}`}
+      style={{ left: block.startIdx * weekWidth + 2, top: laneIdx * ROW_HEIGHT_PX + 5, width: barWidth, height: barHeight, background: colorForCategory(block.category) }}>
+      {/* min-w-0 lets this flex child actually shrink below its unwrapped text width -- without it,
+          flexbox's default min-width:auto keeps it at max-content size and text never wraps. */}
+      <span onDoubleClick={onRename} className="min-w-0 break-words" style={{ fontSize: `${fontSize}px`, lineHeight: 1.15 }}>
+        <span className="mr-1 font-mono opacity-60">{block.taskCode}</span>{block.label}
+      </span>
       <div data-role="resize-handle" onMouseDown={onMouseDownResize} className="absolute top-0 right-0 bottom-0 w-2.5 cursor-ew-resize" />
+      {selectionOrder && <SelectionOrderBadge order={selectionOrder} />}
       <span data-role="delete" onClick={(e) => { e.stopPropagation(); onDelete(); }}
         className="absolute -top-1.5 -right-1.5 hidden h-4 w-4 cursor-pointer rounded-full bg-slate-800 text-center text-[11px] leading-4 text-white group-hover:block">✕</span>
     </div>
+  );
+}
+
+function SelectionOrderBadge({ order }) {
+  return (
+    <span className="absolute -top-1.5 -left-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-sky-600 text-[10px] font-black text-white">
+      {order}
+    </span>
   );
 }
 

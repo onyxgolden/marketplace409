@@ -64,6 +64,28 @@ export const LANE_LABEL_WIDTH_PX = 170;
 export const MIN_ZOOM_PX = 50;
 export const MAX_ZOOM_PX = 160;
 
+export const BASE_BLOCK_FONT_SIZE_PX = 11.5;
+export const MIN_BLOCK_FONT_SIZE_PX = 8;
+const AVG_CHAR_WIDTH_RATIO = 0.58; // rough glyph width as a fraction of font-size, for bold sans-serif
+const LINE_HEIGHT_RATIO = 1.2;
+
+// How large a bar's label can render before it needs to shrink to fit, given the bar's
+// own box. Without real text measurement (no DOM in the pure-state layer), this estimates
+// character capacity from width/height at the base size and scales the font down toward
+// MIN_BLOCK_FONT_SIZE_PX -- never below it. If even the floor size wouldn't fit, this still
+// returns the floor; the component lets the label overflow the bar visually rather than
+// clip it, per the "never smaller than 8, let it overrun instead" requirement.
+export function fitBlockFontSizePx(label, widthPx, heightPx = ROW_HEIGHT_PX - 10) {
+  const text = (label || "").trim();
+  if (!text || widthPx <= 0 || heightPx <= 0) return BASE_BLOCK_FONT_SIZE_PX;
+  const maxLines = Math.max(1, Math.floor(heightPx / (BASE_BLOCK_FONT_SIZE_PX * LINE_HEIGHT_RATIO)));
+  const charsPerLineAtBase = Math.max(1, Math.floor(widthPx / (BASE_BLOCK_FONT_SIZE_PX * AVG_CHAR_WIDTH_RATIO)));
+  const budgetAtBase = charsPerLineAtBase * maxLines;
+  if (text.length <= budgetAtBase) return BASE_BLOCK_FONT_SIZE_PX;
+  const scale = Math.sqrt(budgetAtBase / text.length);
+  return Math.max(MIN_BLOCK_FONT_SIZE_PX, Math.min(BASE_BLOCK_FONT_SIZE_PX, BASE_BLOCK_FONT_SIZE_PX * scale));
+}
+
 export function todayISO(offsetDays = 0) {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
@@ -263,6 +285,17 @@ export function addDependency(state, predecessorId, successorId, relationshipTyp
 
 export function removeDependency(state, dependencyId) {
   return Object.freeze({ ...state, dependencies: Object.freeze(state.dependencies.filter((dependency) => dependency.id !== dependencyId)) });
+}
+
+// Chains consecutive pairs in `blockIds` as dependencies, in exactly the order given --
+// e.g. [b1, b2, b3] links b1->b2 and b2->b3, not a fan-out from b1. Backs the "Link in
+// order" multi-select action: Ctrl-click builds this ordered list, then this connects it.
+export function linkBlocksInOrder(state, blockIds, relationshipType = "FS", lagDays = 0) {
+  let next = state;
+  for (let i = 0; i < blockIds.length - 1; i += 1) {
+    next = addDependency(next, blockIds[i], blockIds[i + 1], relationshipType, lagDays);
+  }
+  return next;
 }
 
 export function dependenciesForBlock(state, blockId) {
