@@ -6,8 +6,8 @@ import {
   addBlock, addCustomChip, addDependency, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, deleteLane,
   fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock, moveBlocksBy, pixelToIndex,
-  removeBlock, removeDependency, renameBlock, renameLane, resizeBlock, serializeBoardState, setBlockTextStyle,
-  setProjectDates, suggestPredecessors, visibleWeekIndices,
+  removeBlock, removeDependency, renameBlock, renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState,
+  setBlockTextStyle, setProjectDates, suggestPredecessors, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -53,8 +53,19 @@ export default function SchedulingBoard() {
   const [hideEmptyWeeks, setHideEmptyWeeks] = useState(false);
   const canvasRef = useRef(null);
   const boardScrollRef = useRef(null);
+  const laneListRef = useRef(null);
   const saveTimer = useRef(null);
   const clipboardRef = useRef(null);
+
+  // The lane-label column lives outside the horizontally-scrolling grid entirely (see the
+  // render below) so it can't be affected by position:sticky failing in that nested
+  // scroll context. Its vertical position is mirrored from the main scroll area directly
+  // via a DOM mutation, not React state, so scrolling doesn't re-render the whole board.
+  function syncLaneListScroll() {
+    if (laneListRef.current && boardScrollRef.current) {
+      laneListRef.current.style.transform = `translateY(-${boardScrollRef.current.scrollTop}px)`;
+    }
+  }
 
   useEffect(() => {
     const stored = loadStoredBoard();
@@ -139,7 +150,7 @@ export default function SchedulingBoard() {
   }
 
   function startMoveBlock(event, block) {
-    if (event.target.dataset.role === "resize-handle" || event.target.dataset.role === "delete") return;
+    if (["resize-handle", "resize-handle-start", "delete"].includes(event.target.dataset.role)) return;
     // Ctrl/Cmd+click never drags -- it's purely a multi-select toggle, so the click order
     // (what "Link in order" chains through) stays exactly what the user clicked.
     if (event.ctrlKey || event.metaKey) {
@@ -279,6 +290,33 @@ export default function SchedulingBoard() {
       document.removeEventListener("mouseup", onUp);
       const proposed = Math.max(1, origDuration + Math.round((ev.clientX - startX) / board.weekWidth));
       setBoard((current) => resizeBlock(current, block.id, proposed));
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  // Left-edge resize: the finish week stays put, the start moves -- mirrors
+  // startResizeBlock but grows/shrinks from the other end (see resizeBlockFromStart).
+  function startResizeBlockFromStart(event, block) {
+    event.preventDefault();
+    event.stopPropagation();
+    const el = event.currentTarget.parentElement;
+    const startX = event.clientX;
+    const origLeft = parseFloat(el.style.left);
+    const origWidth = parseFloat(el.style.width);
+    const origDuration = block.duration;
+    function onMove(ev) {
+      const deltaColumns = Math.round((ev.clientX - startX) / board.weekWidth);
+      const proposedDuration = Math.max(1, origDuration - deltaColumns);
+      const widthDelta = (origDuration - proposedDuration) * board.weekWidth;
+      el.style.left = `${origLeft + widthDelta}px`;
+      el.style.width = `${origWidth - widthDelta}px`;
+    }
+    function onUp(ev) {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      const deltaColumns = Math.round((ev.clientX - startX) / board.weekWidth);
+      setBoard((current) => resizeBlockFromStart(current, block.id, block.startIdx + deltaColumns));
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
@@ -444,28 +482,38 @@ export default function SchedulingBoard() {
           </div>
         </div>
 
-        <div ref={boardScrollRef} className="flex-1 overflow-auto bg-slate-100">
-          <div style={{ display: "grid", gridTemplateColumns: `${LANE_LABEL_WIDTH_PX}px ${displayIndices.map(() => `${board.weekWidth}px`).join(" ")}`, gridTemplateRows: `40px ${board.lanes.map(() => `${ROW_HEIGHT_PX}px`).join(" ")}` }}>
-            {/* Sticky chrome must outrank a dragging block's z-20 (below), or the block visually
-                covers the lane labels/headers whenever a drag crosses over that screen region. */}
-            <div className="sticky top-0 left-0 z-40 border-r border-b border-slate-800 bg-slate-950" />
+        {/* Frozen lane-label column: a real sibling outside the horizontally-scrolling grid,
+            not a sticky item inside it. position:sticky on a grid item is confined to its own
+            grid track's width (170px here) -- once scrollLeft passes that, there's no room
+            left for it to "stick" within and it scrolls away with everything else. Living
+            outside the scroller entirely sidesteps that limit rather than fighting it. */}
+        <div className="flex shrink-0 flex-col border-r border-slate-300" style={{ width: LANE_LABEL_WIDTH_PX }}>
+          <div style={{ height: 40 }} className="shrink-0 border-b border-slate-800 bg-slate-950" />
+          <div className="flex-1 overflow-hidden">
+            <div ref={laneListRef}>
+              {board.lanes.map((lane) => (
+                <div key={lane.id} style={{ height: ROW_HEIGHT_PX }} className="flex items-center justify-between border-b border-slate-300 bg-slate-200 px-2.5 text-xs font-bold">
+                  <span onDoubleClick={() => handleRenameLane(lane)} title="Double-click to rename">{lane.name}</span>
+                  <span className="flex items-center gap-1">
+                    <span onClick={() => handleInsertLaneBefore(lane)} title="Insert lane above" className="cursor-pointer px-1 text-slate-400 hover:text-emerald-600">+</span>
+                    <span onClick={() => handleDeleteLane(lane)} title="Delete lane" className="cursor-pointer px-1 text-slate-400 hover:text-red-600">✕</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div ref={boardScrollRef} className="flex-1 overflow-auto bg-slate-100" onScroll={syncLaneListScroll}>
+          <div style={{ display: "grid", gridTemplateColumns: `${displayIndices.map(() => `${board.weekWidth}px`).join(" ")}`, gridTemplateRows: `40px ${board.lanes.map(() => `${ROW_HEIGHT_PX}px`).join(" ")}` }}>
             {displayIndices.map((realIdx) => (
               <div key={weeks[realIdx]} className="sticky top-0 z-30 flex items-center justify-center border-r border-b border-slate-800 bg-slate-950 font-mono text-[10.5px] text-slate-300">
                 {formatWeek(weeks[realIdx])}
               </div>
             ))}
-            {board.lanes.map((lane) => (
-              <div key={lane.id} style={{ gridColumn: 1 }} className="sticky left-0 z-30 flex items-center justify-between border-r border-b border-slate-300 bg-slate-200 px-2.5 py-0 text-xs font-bold">
-                <span onDoubleClick={() => handleRenameLane(lane)} title="Double-click to rename">{lane.name}</span>
-                <span className="flex items-center gap-1">
-                  <span onClick={() => handleInsertLaneBefore(lane)} title="Insert lane above" className="cursor-pointer px-1 text-slate-400 hover:text-emerald-600">+</span>
-                  <span onClick={() => handleDeleteLane(lane)} title="Delete lane" className="cursor-pointer px-1 text-slate-400 hover:text-red-600">✕</span>
-                </span>
-              </div>
-            ))}
             <div ref={canvasRef} data-scheduling-canvas
               style={{
-                gridRow: `2 / span ${board.lanes.length}`, gridColumn: `2 / span ${displayIndices.length}`,
+                gridRow: `2 / span ${board.lanes.length}`, gridColumn: `1 / span ${displayIndices.length}`,
                 width: displayIndices.length * board.weekWidth, height: board.lanes.length * ROW_HEIGHT_PX,
                 backgroundImage: `repeating-linear-gradient(to right, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${board.weekWidth}px), repeating-linear-gradient(to bottom, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${ROW_HEIGHT_PX}px)`,
               }}
@@ -496,6 +544,7 @@ export default function SchedulingBoard() {
                     startColumn={resolveColumn(block.startIdx)}
                     selected={selectionIndex !== -1} selectionOrder={selectedBlockIds.length > 1 && selectionIndex !== -1 ? selectionIndex + 1 : null}
                     onMouseDownMove={(e) => startMoveBlock(e, block)} onMouseDownResize={(e) => startResizeBlock(e, block)}
+                    onMouseDownResizeStart={(e) => startResizeBlockFromStart(e, block)}
                     onRename={() => handleRenameBlock(block)} onDelete={() => handleRemoveBlock(block)}
                     onCopy={() => copyBlockToClipboard(block)} />
                 );
@@ -570,7 +619,7 @@ function MultiSelectLinkBar({ board, selectedBlockIds, onLink, onClear }) {
   );
 }
 
-function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, selectionOrder, onMouseDownMove, onMouseDownResize, onRename, onDelete, onCopy }) {
+function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, selectionOrder, onMouseDownMove, onMouseDownResize, onMouseDownResizeStart, onRename, onDelete, onCopy }) {
   const selectedRing = selected ? "ring-2 ring-sky-500 ring-offset-1" : "";
   function handleContextMenu(event) {
     event.preventDefault();
@@ -581,7 +630,7 @@ function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, select
       <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
         className="group absolute flex cursor-grab items-center justify-center"
         style={{ left: startColumn * weekWidth, top: laneIdx * ROW_HEIGHT_PX, width: weekWidth, height: ROW_HEIGHT_PX }}>
-        <div className={`h-5 w-5 rotate-45 rounded-[1px] border border-black/35 shadow ${selectedRing}`} style={{ background: MILESTONE_COLOR }} />
+        <div className={`h-5 w-5 rotate-45 rounded-[1px] border-2 border-slate-900 shadow ${selectedRing}`} style={{ background: MILESTONE_COLOR }} />
         <div onDoubleClick={onRename} className="absolute left-[26px] rounded bg-white/85 px-1 whitespace-nowrap"
           style={{ fontSize: `${block.fontSize || 11}px`, fontWeight: block.bold ? 700 : 400, color: block.textColor || "#1e293b" }}>
           <span className="mr-1 font-mono opacity-70">{block.taskCode}</span>{block.label}
@@ -605,6 +654,7 @@ function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, select
         style={{ fontSize: `${fontSize}px`, lineHeight: 1.15, fontWeight: block.bold ? 700 : 400, color: block.textColor || undefined }}>
         <span className="mr-1 font-mono opacity-60">{block.taskCode}</span>{block.label}
       </span>
+      <div data-role="resize-handle-start" onMouseDown={onMouseDownResizeStart} className="absolute top-0 bottom-0 left-0 w-2.5 cursor-ew-resize" />
       <div data-role="resize-handle" onMouseDown={onMouseDownResize} className="absolute top-0 right-0 bottom-0 w-2.5 cursor-ew-resize" />
       {selectionOrder && <SelectionOrderBadge order={selectionOrder} />}
       <span data-role="delete" onClick={(e) => { e.stopPropagation(); onDelete(); }}

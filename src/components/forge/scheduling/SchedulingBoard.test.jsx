@@ -87,13 +87,15 @@ describe("SchedulingBoard", () => {
     expect(markup.match(/sticky top-0 z-30/g)?.length).toBe(53);
   });
 
-  it("keeps the sticky lane labels and week headers above a dragging block's z-20", () => {
-    // A block being dragged gets "z-20" (see startMoveBlock). If the sticky chrome's
-    // z-index isn't higher, the dragged block visually covers the lane labels/headers
-    // whenever it crosses that screen region -- this locks in the fix for that.
+  it("renders the lane-label column as a real frozen sibling, not a sticky grid item", () => {
+    // position:sticky on a CSS grid item is confined to its own grid track's width (170px
+    // here) -- once scrollLeft passes that, it has no room left to "stick" within and
+    // scrolls away with everything else. Living outside the horizontally-scrolling grid
+    // entirely (its own sibling div, kept in sync on scroll via syncLaneListScroll)
+    // sidesteps that limit instead of fighting it.
     const markup = renderToStaticMarkup(<SchedulingBoard />);
-    expect(markup).toContain("z-40"); // corner cell
-    expect(markup).toContain("z-30"); // week headers + lane labels
-    expect(markup).not.toMatch(/sticky[^"]*z-\[?[0-9]\]?["\s]/); // no leftover single-digit sticky z-index
+    expect(markup).not.toContain("sticky left-0");
+    expect(markup).toContain('style="width:170px"');
+    expect(markup.match(/sticky top-0 z-30/g)?.length).toBe(53); // only the week header row is sticky now
   });
 });

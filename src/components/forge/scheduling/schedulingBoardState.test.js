@@ -4,8 +4,8 @@ import {
   addBlock, addCustomChip, addDependency, addLane, blockAnchorPoint, blockToChip, chipsByCategory, computeWeeks,
   deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, fitBlockFontSizePx,
   fitWeekWidthPx, linkBlocksInOrder, moveBlock, moveBlocksBy, occupiedWeekIndices, removeBlock, removeDependency,
-  renameBlock, renameLane, resizeBlock, serializeBoardState, setBlockTextStyle, setProjectDates, suggestPredecessors,
-  visibleWeekIndices,
+  renameBlock, renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState, setBlockTextStyle, setProjectDates,
+  suggestPredecessors, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -84,6 +84,34 @@ describe("resizeBlock", () => {
     let state = addBlock(defaultBoardState(), CHIP, 0, 0);
     state = resizeBlock(state, "b1", 5);
     expect(state.blocks[0].duration).toBe(0);
+  });
+});
+
+describe("resizeBlockFromStart", () => {
+  it("moves the start earlier and grows duration, keeping the finish week fixed", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4 }, 10, 0); // weeks 10-14
+    state = resizeBlockFromStart(state, "b1", 6);
+    expect(state.blocks[0]).toMatchObject({ startIdx: 6, duration: 8 }); // still finishes at week 14
+  });
+  it("moves the start later and shrinks duration, keeping the finish week fixed", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4 }, 10, 0); // weeks 10-14
+    state = resizeBlockFromStart(state, "b1", 12);
+    expect(state.blocks[0]).toMatchObject({ startIdx: 12, duration: 2 });
+  });
+  it("never lets the start reach or pass the finish week (minimum 1 week duration)", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4 }, 10, 0); // finishes at week 14
+    state = resizeBlockFromStart(state, "b1", 20);
+    expect(state.blocks[0]).toMatchObject({ startIdx: 13, duration: 1 });
+  });
+  it("never lets the start go before the first week", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4 }, 10, 0);
+    state = resizeBlockFromStart(state, "b1", -50);
+    expect(state.blocks[0]).toMatchObject({ startIdx: 0, duration: 14 });
+  });
+  it("never resizes a milestone", () => {
+    let state = addBlock(defaultBoardState(), CHIP, 5, 0);
+    state = resizeBlockFromStart(state, "b1", 0);
+    expect(state.blocks[0]).toMatchObject({ startIdx: 5, duration: 0 });
   });
 });
 

@@ -253,6 +253,21 @@ export function resizeBlock(state, blockId, duration) {
   });
 }
 
+// Resizing from the left edge: the finish week (startIdx + duration) stays fixed, and
+// startIdx moves to `newStartIdx` -- clamped to [0, finish - 1] so duration never drops
+// below 1 and the block never starts before the project's first week.
+export function resizeBlockFromStart(state, blockId, newStartIdx) {
+  return Object.freeze({
+    ...state,
+    blocks: Object.freeze(state.blocks.map((block) => {
+      if (block.id !== blockId || block.milestone) return block;
+      const finishIdx = block.startIdx + block.duration;
+      const nextStartIdx = Math.max(0, Math.min(newStartIdx, finishIdx - 1));
+      return Object.freeze({ ...block, startIdx: nextStartIdx, duration: finishIdx - nextStartIdx });
+    })),
+  });
+}
+
 export function renameBlock(state, blockId, label) {
   const trimmed = label?.trim();
   if (!trimmed) return state;
