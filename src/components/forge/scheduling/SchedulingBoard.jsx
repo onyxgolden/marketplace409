@@ -5,9 +5,9 @@ import {
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
   addBlock, addCustomChip, addDependency, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, deleteLane,
-  fitBlockFontSizePx, laneIndexOf, linkBlocksInOrder, moveBlock, moveBlocksBy, pixelToIndex, removeBlock,
-  removeDependency, renameBlock, renameLane, resizeBlock, serializeBoardState, setBlockTextStyle, setProjectDates,
-  suggestPredecessors,
+  fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock, moveBlocksBy, pixelToIndex,
+  removeBlock, removeDependency, renameBlock, renameLane, resizeBlock, serializeBoardState, setBlockTextStyle,
+  setProjectDates, suggestPredecessors, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -50,7 +50,9 @@ export default function SchedulingBoard() {
   const [selectedBlockIds, setSelectedBlockIds] = useState([]);
   const [customChipDraft, setCustomChipDraft] = useState({ label: "", category: "gov", durationWeeks: 4, milestone: false });
   const [paletteCollapsed, setPaletteCollapsed] = useState(false);
+  const [hideEmptyWeeks, setHideEmptyWeeks] = useState(false);
   const canvasRef = useRef(null);
+  const boardScrollRef = useRef(null);
   const saveTimer = useRef(null);
   const clipboardRef = useRef(null);
 
@@ -90,9 +92,36 @@ export default function SchedulingBoard() {
   const groupedChips = useMemo(() => chipsByCategory(board), [board]);
   const selectedBlock = selectedBlockIds.length === 1
     ? board.blocks.find((block) => block.id === selectedBlockIds[0]) || null : null;
+
+  // Which real week indices actually render as columns. Hiding empty weeks compresses the
+  // timeline (no gap columns for weeks nothing is scheduled in) without touching any
+  // block's real startIdx -- that stays real-week-indexed everywhere in `board`.
+  const rawVisibleIndices = useMemo(() => visibleWeekIndices(board, weeks.length), [board, weeks.length]);
+  const displayIndices = useMemo(() => (
+    hideEmptyWeeks && rawVisibleIndices.length > 0 ? rawVisibleIndices : weeks.map((_, i) => i)
+  ), [hideEmptyWeeks, rawVisibleIndices, weeks]);
+  const columnForWeekIdx = useMemo(() => new Map(displayIndices.map((real, compressed) => [real, compressed])), [displayIndices]);
+  const resolveColumn = (realIdx) => columnForWeekIdx.get(realIdx) ?? realIdx;
+
   const arrowSegments = useMemo(() => board.dependencies
-    .map((dependency) => ({ dependency, points: dependencyArrowPoints(board, dependency, board.weekWidth) }))
-    .filter((segment) => segment.points), [board]);
+    .map((dependency) => ({ dependency, points: dependencyArrowPoints(board, dependency, board.weekWidth, resolveColumn) }))
+    .filter((segment) => segment.points), [board, columnForWeekIdx]);
+
+  function pixelToRealWeekIdx(px) {
+    const compressed = clampIndex(pixelToIndex(px, board.weekWidth), 0, displayIndices.length - 1);
+    return displayIndices[compressed];
+  }
+  // Same idea but snapping to the nearest column (rounding) rather than the containing one
+  // (flooring) -- used when a drag ends mid-column and should settle on the closest week.
+  function roundedPixelToRealWeekIdx(px) {
+    const compressed = clampIndex(Math.round(px / board.weekWidth), 0, displayIndices.length - 1);
+    return displayIndices[compressed];
+  }
+
+  function handleFitToProject() {
+    const availableWidth = (boardScrollRef.current?.clientWidth || 0) - LANE_LABEL_WIDTH_PX;
+    setBoard((current) => ({ ...current, weekWidth: fitWeekWidthPx(availableWidth, displayIndices.length, 1) }));
+  }
 
   function dropChipOnCanvas(event) {
     event.preventDefault();
@@ -100,7 +129,7 @@ export default function SchedulingBoard() {
     if (!raw) return;
     const chip = JSON.parse(raw);
     const rect = canvasRef.current.getBoundingClientRect();
-    const weekIdx = clampIndex(pixelToIndex(event.clientX - rect.left, board.weekWidth), 0, weeks.length - 1);
+    const weekIdx = pixelToRealWeekIdx(event.clientX - rect.left);
     const laneIdx = clampIndex(pixelToIndex(event.clientY - rect.top, ROW_HEIGHT_PX), 0, board.lanes.length - 1);
     setBoard((current) => addBlock(current, chip, weekIdx, laneIdx));
   }
@@ -142,7 +171,7 @@ export default function SchedulingBoard() {
       document.removeEventListener("mouseup", onUp);
       for (const origin of groupOrigins) origin.el.classList.remove("opacity-75", "z-20");
       const dx = ev.clientX - startX, dy = ev.clientY - startY;
-      const anchorWeekIdx = clampIndex(Math.round((anchor.left + dx) / board.weekWidth), 0, weeks.length - 1);
+      const anchorWeekIdx = roundedPixelToRealWeekIdx(anchor.left + dx);
       const anchorLaneIdx = clampIndex(Math.round((anchor.top + dy) / ROW_HEIGHT_PX), 0, board.lanes.length - 1);
       if (isGroupDrag) {
         const weekDelta = anchorWeekIdx - block.startIdx;
@@ -299,6 +328,18 @@ export default function SchedulingBoard() {
         </form>
         <Field label="Zoom"><input type="range" min={MIN_ZOOM_PX} max={MAX_ZOOM_PX} value={board.weekWidth}
           onChange={(e) => setBoard((c) => ({ ...c, weekWidth: Number(e.target.value) }))} /></Field>
+        <Field label="Project view">
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={handleFitToProject}
+              className="rounded border border-slate-700 px-2.5 py-1 text-xs font-bold" title="Shrink the board so the whole project fits on screen">
+              Fit to project
+            </button>
+            <label className="flex items-center gap-1 text-xs text-slate-300">
+              <input type="checkbox" checked={hideEmptyWeeks} onChange={(e) => setHideEmptyWeeks(e.target.checked)} />
+              Hide empty weeks
+            </label>
+          </div>
+        </Field>
         <TextStyleToolbar
           disabled={selectedBlockIds.length === 0}
           activeBlock={selectedBlockIds.length ? board.blocks.find((block) => block.id === selectedBlockIds[0]) : null}
@@ -365,12 +406,12 @@ export default function SchedulingBoard() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto bg-slate-100">
-          <div style={{ display: "grid", gridTemplateColumns: `${LANE_LABEL_WIDTH_PX}px ${weeks.map(() => `${board.weekWidth}px`).join(" ")}`, gridTemplateRows: `40px ${board.lanes.map(() => `${ROW_HEIGHT_PX}px`).join(" ")}` }}>
+        <div ref={boardScrollRef} className="flex-1 overflow-auto bg-slate-100">
+          <div style={{ display: "grid", gridTemplateColumns: `${LANE_LABEL_WIDTH_PX}px ${displayIndices.map(() => `${board.weekWidth}px`).join(" ")}`, gridTemplateRows: `40px ${board.lanes.map(() => `${ROW_HEIGHT_PX}px`).join(" ")}` }}>
             <div className="sticky top-0 left-0 z-[5] border-r border-b border-slate-800 bg-slate-950" />
-            {weeks.map((week) => (
-              <div key={week} className="sticky top-0 z-[4] flex items-center justify-center border-r border-b border-slate-800 bg-slate-950 font-mono text-[10.5px] text-slate-300">
-                {formatWeek(week)}
+            {displayIndices.map((realIdx) => (
+              <div key={weeks[realIdx]} className="sticky top-0 z-[4] flex items-center justify-center border-r border-b border-slate-800 bg-slate-950 font-mono text-[10.5px] text-slate-300">
+                {formatWeek(weeks[realIdx])}
               </div>
             ))}
             {board.lanes.map((lane) => (
@@ -384,8 +425,8 @@ export default function SchedulingBoard() {
             ))}
             <div ref={canvasRef} data-scheduling-canvas
               style={{
-                gridRow: `2 / span ${board.lanes.length}`, gridColumn: `2 / span ${weeks.length}`,
-                width: weeks.length * board.weekWidth, height: board.lanes.length * ROW_HEIGHT_PX,
+                gridRow: `2 / span ${board.lanes.length}`, gridColumn: `2 / span ${displayIndices.length}`,
+                width: displayIndices.length * board.weekWidth, height: board.lanes.length * ROW_HEIGHT_PX,
                 backgroundImage: `repeating-linear-gradient(to right, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${board.weekWidth}px), repeating-linear-gradient(to bottom, #cbd5e1 0, #cbd5e1 1px, transparent 1px, transparent ${ROW_HEIGHT_PX}px)`,
               }}
               className="relative"
@@ -397,7 +438,7 @@ export default function SchedulingBoard() {
                   Drag a block from the left panel onto the grid to place it.
                 </div>
               )}
-              <svg className="pointer-events-none absolute inset-0" width={weeks.length * board.weekWidth} height={board.lanes.length * ROW_HEIGHT_PX}>
+              <svg className="pointer-events-none absolute inset-0" width={displayIndices.length * board.weekWidth} height={board.lanes.length * ROW_HEIGHT_PX}>
                 <defs>
                   <marker id="scheduling-dependency-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M0,0 L10,5 L0,10 z" fill="#64748b" />
@@ -412,6 +453,7 @@ export default function SchedulingBoard() {
                 const selectionIndex = selectedBlockIds.indexOf(block.id);
                 return (
                   <BlockElement key={block.id} block={block} weekWidth={board.weekWidth} laneIdx={laneIndexOf(board, block.laneId)}
+                    startColumn={resolveColumn(block.startIdx)}
                     selected={selectionIndex !== -1} selectionOrder={selectedBlockIds.length > 1 && selectionIndex !== -1 ? selectionIndex + 1 : null}
                     onMouseDownMove={(e) => startMoveBlock(e, block)} onMouseDownResize={(e) => startResizeBlock(e, block)}
                     onRename={() => handleRenameBlock(block)} onDelete={() => handleRemoveBlock(block)}
@@ -488,7 +530,7 @@ function MultiSelectLinkBar({ board, selectedBlockIds, onLink, onClear }) {
   );
 }
 
-function BlockElement({ block, weekWidth, laneIdx, selected, selectionOrder, onMouseDownMove, onMouseDownResize, onRename, onDelete, onCopy }) {
+function BlockElement({ block, weekWidth, laneIdx, startColumn, selected, selectionOrder, onMouseDownMove, onMouseDownResize, onRename, onDelete, onCopy }) {
   const selectedRing = selected ? "ring-2 ring-sky-500 ring-offset-1" : "";
   function handleContextMenu(event) {
     event.preventDefault();
@@ -498,7 +540,7 @@ function BlockElement({ block, weekWidth, laneIdx, selected, selectionOrder, onM
     return (
       <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
         className="group absolute flex cursor-grab items-center justify-center"
-        style={{ left: block.startIdx * weekWidth, top: laneIdx * ROW_HEIGHT_PX, width: weekWidth, height: ROW_HEIGHT_PX }}>
+        style={{ left: startColumn * weekWidth, top: laneIdx * ROW_HEIGHT_PX, width: weekWidth, height: ROW_HEIGHT_PX }}>
         <div className={`h-5 w-5 rotate-45 rounded-[1px] border border-black/35 shadow ${selectedRing}`} style={{ background: MILESTONE_COLOR }} />
         <div onDoubleClick={onRename} className="absolute left-[26px] rounded bg-white/85 px-1 whitespace-nowrap"
           style={{ fontSize: `${block.fontSize || 11}px`, fontWeight: block.bold ? 700 : 400, color: block.textColor || "#1e293b" }}>
@@ -516,7 +558,7 @@ function BlockElement({ block, weekWidth, laneIdx, selected, selectionOrder, onM
   return (
     <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
       className={`group absolute flex cursor-grab items-center rounded-md border border-black/15 px-2 text-slate-950 shadow ${selectedRing}`}
-      style={{ left: block.startIdx * weekWidth + 2, top: laneIdx * ROW_HEIGHT_PX + 5, width: barWidth, height: barHeight, background: colorForCategory(block.category) }}>
+      style={{ left: startColumn * weekWidth + 2, top: laneIdx * ROW_HEIGHT_PX + 5, width: barWidth, height: barHeight, background: colorForCategory(block.category) }}>
       {/* min-w-0 lets this flex child actually shrink below its unwrapped text width -- without it,
           flexbox's default min-width:auto keeps it at max-content size and text never wraps. */}
       <span onDoubleClick={onRename} className="min-w-0 break-words"

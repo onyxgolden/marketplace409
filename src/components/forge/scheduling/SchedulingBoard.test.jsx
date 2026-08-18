@@ -73,4 +73,17 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain(">Hide<");
     expect(markup).toContain("Governance"); // category list still rendered while expanded
   });
+
+  it("renders the fit-to-project button and hide-empty-weeks toggle beside Zoom", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain("Fit to project");
+    expect(markup).toContain("Hide empty weeks");
+  });
+
+  it("renders the full week grid (no columns collapsed) when the board has no blocks yet", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    // Default project window is 365 days -> 53 week columns; an empty board must never
+    // collapse to zero columns just because nothing has been placed yet.
+    expect(markup.match(/sticky top-0 z-\[4\]/g)?.length).toBe(53);
+  });
 });

@@ -3,8 +3,9 @@ import {
   BASE_BLOCK_FONT_SIZE_PX, MIN_BLOCK_FONT_SIZE_PX,
   addBlock, addCustomChip, addDependency, addLane, blockAnchorPoint, blockToChip, chipsByCategory, computeWeeks,
   deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, fitBlockFontSizePx,
-  linkBlocksInOrder, moveBlock, moveBlocksBy, removeBlock, removeDependency, renameBlock, renameLane, resizeBlock,
-  serializeBoardState, setBlockTextStyle, setProjectDates, suggestPredecessors,
+  fitWeekWidthPx, linkBlocksInOrder, moveBlock, moveBlocksBy, occupiedWeekIndices, removeBlock, removeDependency,
+  renameBlock, renameLane, resizeBlock, serializeBoardState, setBlockTextStyle, setProjectDates, suggestPredecessors,
+  visibleWeekIndices,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -453,5 +454,42 @@ describe("fitBlockFontSizePx with a preferred base size", () => {
   it("falls back to the constant default for an invalid preferred size", () => {
     expect(fitBlockFontSizePx("Kickoff", 200, 36, null)).toBe(BASE_BLOCK_FONT_SIZE_PX);
     expect(fitBlockFontSizePx("Kickoff", 200, 36, 0)).toBe(BASE_BLOCK_FONT_SIZE_PX);
+  });
+});
+
+describe("occupiedWeekIndices / visibleWeekIndices", () => {
+  it("marks only a milestone's own week as occupied", () => {
+    const state = addBlock(defaultBoardState(), CHIP, 5, 0);
+    expect([...occupiedWeekIndices(state)]).toEqual([5]);
+  });
+  it("marks a task's full span as occupied, not just its start week", () => {
+    const state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 3 }, 2, 1);
+    expect([...occupiedWeekIndices(state)].sort((a, b) => a - b)).toEqual([2, 3, 4]);
+  });
+  it("returns only occupied indices, in ascending order, within a given week count", () => {
+    let state = addBlock(defaultBoardState(), CHIP, 1, 0);
+    state = addBlock(state, { ...TASK_CHIP, durationWeeks: 2 }, 8, 1);
+    expect(visibleWeekIndices(state, 12)).toEqual([1, 8, 9]);
+  });
+  it("returns an empty list for a board with no blocks", () => {
+    expect(visibleWeekIndices(defaultBoardState(), 52)).toEqual([]);
+  });
+});
+
+describe("fitWeekWidthPx", () => {
+  it("divides the available width evenly across the column count", () => {
+    expect(fitWeekWidthPx(900, 30)).toBe(30);
+  });
+  it("floors a non-exact division", () => {
+    expect(fitWeekWidthPx(100, 3)).toBe(33);
+  });
+  it("never returns below the given minimum, even for a huge column count", () => {
+    expect(fitWeekWidthPx(900, 5000)).toBe(1);
+    expect(fitWeekWidthPx(900, 5000, 4)).toBe(4);
+  });
+  it("falls back to the minimum for invalid inputs", () => {
+    expect(fitWeekWidthPx(0, 30)).toBe(1);
+    expect(fitWeekWidthPx(900, 0)).toBe(1);
+    expect(fitWeekWidthPx(NaN, 30, 6)).toBe(6);
   });
 });

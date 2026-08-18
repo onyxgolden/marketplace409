@@ -146,6 +146,37 @@ export function pixelToIndex(px, cellSize) {
   return Math.floor(px / cellSize);
 }
 
+// Every week index a block occupies: a task spans [startIdx, startIdx+duration), a
+// milestone occupies just its own week. Backs "hide empty weeks" -- a week with nothing
+// in it, in any lane, is a candidate to collapse out of the timeline.
+export function occupiedWeekIndices(state) {
+  const occupied = new Set();
+  for (const block of state.blocks) {
+    const span = block.milestone ? 1 : Math.max(1, block.duration);
+    for (let i = 0; i < span; i += 1) occupied.add(block.startIdx + i);
+  }
+  return occupied;
+}
+
+// Indices into a `weeksLength`-long week array that have at least one block occupying
+// them, in ascending order. Rendering only these columns compresses out empty gaps
+// without touching any block's actual startIdx -- it's a view concern, not a data edit.
+export function visibleWeekIndices(state, weeksLength) {
+  const occupied = occupiedWeekIndices(state);
+  const indices = [];
+  for (let i = 0; i < weeksLength; i += 1) if (occupied.has(i)) indices.push(i);
+  return Object.freeze(indices);
+}
+
+// weekWidth (clamped to at least minWeekPx) so `columnCount` week columns fit exactly
+// within availableWidthPx -- what "Fit to project" uses to zoom out to the whole timeline.
+export function fitWeekWidthPx(availableWidthPx, columnCount, minWeekPx = 1) {
+  if (!Number.isFinite(availableWidthPx) || availableWidthPx <= 0 || !Number.isFinite(columnCount) || columnCount <= 0) {
+    return minWeekPx;
+  }
+  return Math.max(minWeekPx, Math.floor(availableWidthPx / columnCount));
+}
+
 function allChips(state) {
   return [...DEFAULT_CHIPS, ...state.customChips];
 }
@@ -342,11 +373,16 @@ export function suggestPredecessors(state, blockId, { thresholdWeeks = 1 } = {})
   }));
 }
 
-export function blockAnchorPoint(block, laneIdx, weekWidth, edge) {
+// `resolveColumn` maps a real week index to the column it actually renders in -- identity
+// unless "hide empty weeks" is compressing the timeline, in which case a block's own span
+// is still contiguous in compressed space (compression only removes weeks nothing touches),
+// so only the start column needs resolving; the span width in columns is unaffected.
+export function blockAnchorPoint(block, laneIdx, weekWidth, edge, resolveColumn = (idx) => idx) {
   const y = laneIdx * ROW_HEIGHT_PX + ROW_HEIGHT_PX / 2;
-  if (block.milestone) return Object.freeze({ x: block.startIdx * weekWidth + weekWidth / 2, y });
-  const startX = block.startIdx * weekWidth + 2;
-  const finishX = (block.startIdx + block.duration) * weekWidth - 2;
+  const startCol = resolveColumn(block.startIdx);
+  if (block.milestone) return Object.freeze({ x: startCol * weekWidth + weekWidth / 2, y });
+  const startX = startCol * weekWidth + 2;
+  const finishX = (startCol + block.duration) * weekWidth - 2;
   return Object.freeze({ x: edge === "start" ? startX : finishX, y });
 }
 
@@ -358,13 +394,13 @@ const RELATIONSHIP_ANCHORS = Object.freeze({
 // Returns {x1,y1,x2,y2} canvas-pixel coordinates for drawing a dependency's arrow, or null
 // if either linked block no longer exists (shouldn't happen given the cascade-delete above,
 // but arrow rendering should never throw on stale data).
-export function dependencyArrowPoints(state, dependency, weekWidth) {
+export function dependencyArrowPoints(state, dependency, weekWidth, resolveColumn = (idx) => idx) {
   const predecessor = state.blocks.find((block) => block.id === dependency.predecessorId);
   const successor = state.blocks.find((block) => block.id === dependency.successorId);
   if (!predecessor || !successor) return null;
   const [predEdge, succEdge] = RELATIONSHIP_ANCHORS[dependency.relationshipType] || RELATIONSHIP_ANCHORS.FS;
-  const from = blockAnchorPoint(predecessor, laneIndexOf(state, predecessor.laneId), weekWidth, predEdge);
-  const to = blockAnchorPoint(successor, laneIndexOf(state, successor.laneId), weekWidth, succEdge);
+  const from = blockAnchorPoint(predecessor, laneIndexOf(state, predecessor.laneId), weekWidth, predEdge, resolveColumn);
+  const to = blockAnchorPoint(successor, laneIndexOf(state, successor.laneId), weekWidth, succEdge, resolveColumn);
   return Object.freeze({ x1: from.x, y1: from.y, x2: to.x, y2: to.y });
 }
 
