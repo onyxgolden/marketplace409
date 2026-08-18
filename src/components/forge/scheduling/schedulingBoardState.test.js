@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  addBlock, addCustomChip, addLane, blockToChip, chipsByCategory, computeWeeks, deleteLane, defaultBoardState,
-  deserializeBoardState, moveBlock, removeBlock, renameBlock, renameLane, resizeBlock, serializeBoardState,
-  setProjectDates,
+  addBlock, addCustomChip, addDependency, addLane, blockAnchorPoint, blockToChip, chipsByCategory, computeWeeks,
+  deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, moveBlock,
+  removeBlock, removeDependency, renameBlock, renameLane, resizeBlock, serializeBoardState, setProjectDates,
+  suggestPredecessors,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -44,6 +45,17 @@ describe("addBlock", () => {
     let state = addBlock(defaultBoardState(), CHIP, 0, 0);
     state = addBlock(state, TASK_CHIP, 1, 1);
     expect(state.blocks.map((b) => b.id)).toEqual(["b1", "b2"]);
+  });
+  it("assigns an immutable, sequential task code to every block", () => {
+    let state = addBlock(defaultBoardState(), CHIP, 0, 0);
+    state = addBlock(state, TASK_CHIP, 1, 1);
+    expect(state.blocks.map((b) => b.taskCode)).toEqual(["A1010", "A1020"]);
+  });
+  it("never reuses a task code once a block is deleted", () => {
+    let state = addBlock(defaultBoardState(), CHIP, 0, 0); // A1010
+    state = removeBlock(state, "b1");
+    state = addBlock(state, TASK_CHIP, 0, 0);
+    expect(state.blocks[0].taskCode).toBe("A1020");
   });
 });
 
@@ -116,6 +128,13 @@ describe("lane management", () => {
     expect(state.lanes.some((l) => l.id === "lane_gov")).toBe(false);
     expect(state.blocks).toHaveLength(0);
   });
+  it("deleting a lane also removes dependencies touching any block it took with it", () => {
+    let state = addBlock(defaultBoardState(), CHIP, 0, 0); // lane_ms, b1
+    state = addBlock(state, { ...TASK_CHIP, category: "gov" }, 1, 1); // lane_gov, b2
+    state = addDependency(state, "b1", "b2");
+    state = deleteLane(state, "lane_gov");
+    expect(state.dependencies).toHaveLength(0);
+  });
 });
 
 describe("addCustomChip", () => {
@@ -171,5 +190,120 @@ describe("blockToChip", () => {
     state = addBlock(state, chip, 10, 1);
     expect(state.blocks).toHaveLength(2);
     expect(state.blocks[1]).toMatchObject({ label: "Detailed Design", duration: 8, startIdx: 10, laneId: "lane_gov" });
+  });
+});
+
+function twoBlockState() {
+  let state = addBlock(defaultBoardState(), { ...TASK_CHIP, category: "gov" }, 0, 1); // b1, lane_gov, weeks 0-8
+  state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 10, 2); // b2, lane_eng, weeks 10-18
+  return state;
+}
+
+describe("addDependency / removeDependency / dependenciesForBlock", () => {
+  it("links a predecessor to a successor", () => {
+    const state = addDependency(twoBlockState(), "b1", "b2", "FS", 2);
+    expect(state.dependencies).toHaveLength(1);
+    expect(state.dependencies[0]).toMatchObject({ predecessorId: "b1", successorId: "b2", relationshipType: "FS", lagDays: 2 });
+  });
+  it("rejects a block linking to itself", () => {
+    const state = twoBlockState();
+    expect(addDependency(state, "b1", "b1")).toBe(state);
+  });
+  it("rejects an unsupported relationship type", () => {
+    const state = twoBlockState();
+    expect(addDependency(state, "b1", "b2", "NOPE")).toBe(state);
+  });
+  it("rejects a link to a block that doesn't exist", () => {
+    const state = twoBlockState();
+    expect(addDependency(state, "b1", "b99")).toBe(state);
+  });
+  it("rejects an exact duplicate link", () => {
+    let state = addDependency(twoBlockState(), "b1", "b2");
+    state = addDependency(state, "b1", "b2");
+    expect(state.dependencies).toHaveLength(1);
+  });
+  it("removes a dependency by id", () => {
+    let state = addDependency(twoBlockState(), "b1", "b2");
+    const depId = state.dependencies[0].id;
+    expect(removeDependency(state, depId).dependencies).toHaveLength(0);
+  });
+  it("splits predecessors and successors for a given block", () => {
+    let state = addBlock(twoBlockState(), { ...TASK_CHIP, category: "proc" }, 20, 3); // b3
+    state = addDependency(state, "b1", "b2");
+    state = addDependency(state, "b2", "b3");
+    const { predecessors, successors } = dependenciesForBlock(state, "b2");
+    expect(predecessors).toHaveLength(1);
+    expect(predecessors[0].predecessorId).toBe("b1");
+    expect(successors).toHaveLength(1);
+    expect(successors[0].successorId).toBe("b3");
+  });
+});
+
+describe("removeBlock cascades to its dependencies", () => {
+  it("drops any dependency touching the removed block", () => {
+    let state = addDependency(twoBlockState(), "b1", "b2");
+    state = removeBlock(state, "b1");
+    expect(state.dependencies).toHaveLength(0);
+  });
+});
+
+describe("suggestPredecessors", () => {
+  it("suggests a same-lane block that finishes at the new block's start", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4, category: "eng" }, 0, 2); // b1: weeks 0-4, lane_eng
+    state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 4, 2); // b2: starts week 4, lane_eng
+    const suggestions = suggestPredecessors(state, "b2");
+    expect(suggestions.map((b) => b.id)).toEqual(["b1"]);
+  });
+  it("suggests an adjacent-lane block but not one two lanes away", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4, category: "gov" }, 0, 1); // b1: lane_gov
+    state = addBlock(state, { ...TASK_CHIP, durationWeeks: 4, category: "shut" }, 0, 6); // b2: lane_shut, far away
+    state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 4, 2); // b3: lane_eng (adjacent to lane_gov)
+    const suggestions = suggestPredecessors(state, "b3");
+    expect(suggestions.map((b) => b.id)).toEqual(["b1"]);
+  });
+  it("excludes candidates outside the finish-proximity threshold", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4, category: "eng" }, 0, 2); // finishes week 4
+    state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 10, 2); // starts week 10 -- far from week 4
+    expect(suggestPredecessors(state, "b2")).toHaveLength(0);
+  });
+  it("never suggests the block itself or an already-linked predecessor", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4, category: "eng" }, 0, 2);
+    state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 4, 2);
+    state = addDependency(state, "b1", "b2");
+    expect(suggestPredecessors(state, "b2")).toHaveLength(0);
+    expect(suggestPredecessors(state, "b1").some((b) => b.id === "b1")).toBe(false);
+  });
+});
+
+describe("blockAnchorPoint / dependencyArrowPoints", () => {
+  it("anchors a milestone at the horizontal center of its week cell", () => {
+    const milestone = { startIdx: 2, milestone: true, duration: 0 };
+    expect(blockAnchorPoint(milestone, 0, 90, "start")).toEqual({ x: 2 * 90 + 45, y: 23 });
+    expect(blockAnchorPoint(milestone, 0, 90, "finish")).toEqual({ x: 2 * 90 + 45, y: 23 });
+  });
+  it("anchors a task's start/finish edges to match how it's rendered", () => {
+    const task = { startIdx: 1, milestone: false, duration: 3 };
+    expect(blockAnchorPoint(task, 1, 90, "start")).toEqual({ x: 1 * 90 + 2, y: 46 + 23 });
+    expect(blockAnchorPoint(task, 1, 90, "finish")).toEqual({ x: 4 * 90 - 2, y: 46 + 23 });
+  });
+  it("connects predecessor-finish to successor-start for an FS link", () => {
+    const state = addDependency(twoBlockState(), "b1", "b2", "FS");
+    const points = dependencyArrowPoints(state, state.dependencies[0], 90);
+    const predecessor = blockAnchorPoint(state.blocks[0], 1, 90, "finish");
+    const successor = blockAnchorPoint(state.blocks[1], 2, 90, "start");
+    expect(points).toEqual({ x1: predecessor.x, y1: predecessor.y, x2: successor.x, y2: successor.y });
+  });
+  it("connects start-to-start for an SS link", () => {
+    const state = addDependency(twoBlockState(), "b1", "b2", "SS");
+    const points = dependencyArrowPoints(state, state.dependencies[0], 90);
+    const predecessor = blockAnchorPoint(state.blocks[0], 1, 90, "start");
+    const successor = blockAnchorPoint(state.blocks[1], 2, 90, "start");
+    expect(points).toEqual({ x1: predecessor.x, y1: predecessor.y, x2: successor.x, y2: successor.y });
+  });
+  it("returns null when either linked block no longer exists", () => {
+    const state = addDependency(twoBlockState(), "b1", "b2");
+    const stale = removeBlock(state, "b2");
+    const dependency = state.dependencies[0]; // stale.dependencies is already empty via cascade, so use the pre-removal record
+    expect(dependencyArrowPoints(stale, dependency, 90)).toBeNull();
   });
 });

@@ -74,6 +74,9 @@ export function colorForCategory(category) {
   return CATEGORY_COLORS[category] || "#999999";
 }
 
+export const FIRST_TASK_NUMBER = 1010;
+export const TASK_NUMBER_STEP = 10;
+
 export function defaultBoardState() {
   return Object.freeze({
     projectName: "New Project",
@@ -82,8 +85,10 @@ export function defaultBoardState() {
     weekWidth: 90,
     lanes: DEFAULT_LANES,
     blocks: Object.freeze([]),
+    dependencies: Object.freeze([]),
     customChips: Object.freeze([]),
     nextId: 1,
+    nextTaskNumber: FIRST_TASK_NUMBER,
   });
 }
 
@@ -137,6 +142,9 @@ export function addBlock(state, chip, weekIdx, laneIdx) {
   if (!lane) return state;
   const block = Object.freeze({
     id: `b${state.nextId}`,
+    // Immutable once assigned, never reused (matches SPEC.md §2.4 task_code) — the counter
+    // only ever increases, even across deletes, so a code is never handed out twice.
+    taskCode: `A${state.nextTaskNumber}`,
     label: chip.label,
     category: chip.category,
     milestone: !!chip.milestone,
@@ -144,7 +152,10 @@ export function addBlock(state, chip, weekIdx, laneIdx) {
     startIdx: Math.max(0, weekIdx),
     laneId: lane.id,
   });
-  return Object.freeze({ ...state, nextId: state.nextId + 1, blocks: Object.freeze([...state.blocks, block]) });
+  return Object.freeze({
+    ...state, nextId: state.nextId + 1, nextTaskNumber: state.nextTaskNumber + TASK_NUMBER_STEP,
+    blocks: Object.freeze([...state.blocks, block]),
+  });
 }
 
 export function moveBlock(state, blockId, weekIdx, laneIdx) {
@@ -177,8 +188,17 @@ export function renameBlock(state, blockId, label) {
   });
 }
 
+function removeDependenciesTouching(dependencies, blockIds) {
+  const idSet = new Set(blockIds);
+  return dependencies.filter((dependency) => !idSet.has(dependency.predecessorId) && !idSet.has(dependency.successorId));
+}
+
 export function removeBlock(state, blockId) {
-  return Object.freeze({ ...state, blocks: Object.freeze(state.blocks.filter((block) => block.id !== blockId)) });
+  return Object.freeze({
+    ...state,
+    blocks: Object.freeze(state.blocks.filter((block) => block.id !== blockId)),
+    dependencies: Object.freeze(removeDependenciesTouching(state.dependencies, [blockId])),
+  });
 }
 
 // `index` inserts before that position (0 = new first lane); omitted appends at the end.
@@ -202,10 +222,12 @@ export function renameLane(state, laneId, name) {
 }
 
 export function deleteLane(state, laneId) {
+  const removedBlockIds = state.blocks.filter((block) => block.laneId === laneId).map((block) => block.id);
   return Object.freeze({
     ...state,
     lanes: Object.freeze(state.lanes.filter((lane) => lane.id !== laneId)),
     blocks: Object.freeze(state.blocks.filter((block) => block.laneId !== laneId)),
+    dependencies: Object.freeze(removeDependenciesTouching(state.dependencies, removedBlockIds)),
   });
 }
 
@@ -224,6 +246,73 @@ export function setProjectDates(state, startDate, endDate) {
   return Object.freeze({ ...state, startDate, endDate });
 }
 
+export const RELATIONSHIP_TYPES = Object.freeze(["FS", "SS", "FF", "SF"]);
+
+// predecessorId finishes/starts before successorId starts/finishes, per relationshipType.
+export function addDependency(state, predecessorId, successorId, relationshipType = "FS", lagDays = 0) {
+  if (predecessorId === successorId) return state;
+  if (!RELATIONSHIP_TYPES.includes(relationshipType)) return state;
+  if (!state.blocks.some((block) => block.id === predecessorId) || !state.blocks.some((block) => block.id === successorId)) return state;
+  if (state.dependencies.some((dependency) => dependency.predecessorId === predecessorId && dependency.successorId === successorId)) return state;
+  const dependency = Object.freeze({
+    id: `dep${state.nextId}`, predecessorId, successorId, relationshipType,
+    lagDays: Number.isInteger(lagDays) ? lagDays : 0,
+  });
+  return Object.freeze({ ...state, nextId: state.nextId + 1, dependencies: Object.freeze([...state.dependencies, dependency]) });
+}
+
+export function removeDependency(state, dependencyId) {
+  return Object.freeze({ ...state, dependencies: Object.freeze(state.dependencies.filter((dependency) => dependency.id !== dependencyId)) });
+}
+
+export function dependenciesForBlock(state, blockId) {
+  return Object.freeze({
+    predecessors: Object.freeze(state.dependencies.filter((dependency) => dependency.successorId === blockId)),
+    successors: Object.freeze(state.dependencies.filter((dependency) => dependency.predecessorId === blockId)),
+  });
+}
+
+// Candidate predecessors for `blockId`: blocks in the same or an adjacent lane that finish
+// at or near (within `thresholdWeeks`) the block's start — never auto-linked, just surfaced.
+export function suggestPredecessors(state, blockId, { thresholdWeeks = 1 } = {}) {
+  const block = state.blocks.find((item) => item.id === blockId);
+  if (!block) return Object.freeze([]);
+  const laneIdx = laneIndexOf(state, block.laneId);
+  const alreadyLinked = new Set(state.dependencies.filter((d) => d.successorId === blockId).map((d) => d.predecessorId));
+  return Object.freeze(state.blocks.filter((candidate) => {
+    if (candidate.id === blockId || alreadyLinked.has(candidate.id)) return false;
+    if (Math.abs(laneIndexOf(state, candidate.laneId) - laneIdx) > 1) return false;
+    const candidateEnd = candidate.startIdx + (candidate.milestone ? 0 : candidate.duration);
+    return Math.abs(candidateEnd - block.startIdx) <= thresholdWeeks;
+  }));
+}
+
+export function blockAnchorPoint(block, laneIdx, weekWidth, edge) {
+  const y = laneIdx * ROW_HEIGHT_PX + ROW_HEIGHT_PX / 2;
+  if (block.milestone) return Object.freeze({ x: block.startIdx * weekWidth + weekWidth / 2, y });
+  const startX = block.startIdx * weekWidth + 2;
+  const finishX = (block.startIdx + block.duration) * weekWidth - 2;
+  return Object.freeze({ x: edge === "start" ? startX : finishX, y });
+}
+
+const RELATIONSHIP_ANCHORS = Object.freeze({
+  FS: Object.freeze(["finish", "start"]), SS: Object.freeze(["start", "start"]),
+  FF: Object.freeze(["finish", "finish"]), SF: Object.freeze(["start", "finish"]),
+});
+
+// Returns {x1,y1,x2,y2} canvas-pixel coordinates for drawing a dependency's arrow, or null
+// if either linked block no longer exists (shouldn't happen given the cascade-delete above,
+// but arrow rendering should never throw on stale data).
+export function dependencyArrowPoints(state, dependency, weekWidth) {
+  const predecessor = state.blocks.find((block) => block.id === dependency.predecessorId);
+  const successor = state.blocks.find((block) => block.id === dependency.successorId);
+  if (!predecessor || !successor) return null;
+  const [predEdge, succEdge] = RELATIONSHIP_ANCHORS[dependency.relationshipType] || RELATIONSHIP_ANCHORS.FS;
+  const from = blockAnchorPoint(predecessor, laneIndexOf(state, predecessor.laneId), weekWidth, predEdge);
+  const to = blockAnchorPoint(successor, laneIndexOf(state, successor.laneId), weekWidth, succEdge);
+  return Object.freeze({ x1: from.x, y1: from.y, x2: to.x, y2: to.y });
+}
+
 // Converts a placed block back into chip shape so copy/paste can reuse addBlock().
 export function blockToChip(block) {
   return Object.freeze({
@@ -236,7 +325,19 @@ export function serializeBoardState(state) {
   return JSON.stringify(state, null, 2);
 }
 
+// Backfills fields missing from an older export/localStorage save (e.g. one made before
+// task numbering existed) rather than leaving blocks with a blank taskCode.
 export function deserializeBoardState(json) {
   const parsed = JSON.parse(json);
-  return Object.freeze({ ...defaultBoardState(), ...parsed });
+  const merged = { ...defaultBoardState(), ...parsed };
+  let nextTaskNumber = Number.isInteger(merged.nextTaskNumber) ? merged.nextTaskNumber : FIRST_TASK_NUMBER;
+  const blocks = (merged.blocks || []).map((block) => {
+    if (block.taskCode) return block;
+    const taskCode = `A${nextTaskNumber}`;
+    nextTaskNumber += TASK_NUMBER_STEP;
+    return { ...block, taskCode };
+  });
+  return Object.freeze({
+    ...merged, nextTaskNumber, blocks: Object.freeze(blocks), dependencies: Object.freeze(merged.dependencies || []),
+  });
 }

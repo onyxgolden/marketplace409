@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, ROW_HEIGHT_PX,
-  addBlock, addCustomChip, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory, computeWeeks,
-  defaultBoardState, deserializeBoardState, deleteLane, laneIndexOf, moveBlock, pixelToIndex, removeBlock,
-  renameBlock, renameLane, resizeBlock, serializeBoardState, setProjectDates,
+  CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
+  addBlock, addCustomChip, addDependency, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory,
+  computeWeeks, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, deleteLane,
+  laneIndexOf, moveBlock, pixelToIndex, removeBlock, removeDependency, renameBlock, renameLane, resizeBlock,
+  serializeBoardState, setProjectDates, suggestPredecessors,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -61,6 +62,10 @@ export default function SchedulingBoard() {
 
   const weeks = useMemo(() => computeWeeks(board.startDate, board.endDate), [board.startDate, board.endDate]);
   const groupedChips = useMemo(() => chipsByCategory(board), [board]);
+  const selectedBlock = board.blocks.find((block) => block.id === selectedBlockId) || null;
+  const arrowSegments = useMemo(() => board.dependencies
+    .map((dependency) => ({ dependency, points: dependencyArrowPoints(board, dependency, board.weekWidth) }))
+    .filter((segment) => segment.points), [board]);
 
   function dropChipOnCanvas(event) {
     event.preventDefault();
@@ -164,8 +169,14 @@ export default function SchedulingBoard() {
   }
   function handleDeleteLane(lane) {
     if (window.confirm(`Delete lane "${lane.name}" and any blocks placed on it?`)) {
+      const removingSelected = board.blocks.some((block) => block.id === selectedBlockId && block.laneId === lane.id);
       setBoard((current) => deleteLane(current, lane.id));
+      if (removingSelected) setSelectedBlockId(null);
     }
+  }
+  function handleRemoveBlock(block) {
+    setBoard((current) => removeBlock(current, block.id));
+    if (selectedBlockId === block.id) setSelectedBlockId(null);
   }
   function handleRenameBlock(block) {
     const label = window.prompt("Rename block", block.label);
@@ -314,17 +325,35 @@ export default function SchedulingBoard() {
                   Drag a block from the left panel onto the grid to place it.
                 </div>
               )}
+              <svg className="pointer-events-none absolute inset-0" width={weeks.length * board.weekWidth} height={board.lanes.length * ROW_HEIGHT_PX}>
+                <defs>
+                  <marker id="scheduling-dependency-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M0,0 L10,5 L0,10 z" fill="#64748b" />
+                  </marker>
+                </defs>
+                {arrowSegments.map(({ dependency, points }) => (
+                  <line key={dependency.id} x1={points.x1} y1={points.y1} x2={points.x2} y2={points.y2}
+                    stroke="#64748b" strokeWidth="1.5" markerEnd="url(#scheduling-dependency-arrow)" />
+                ))}
+              </svg>
               {board.blocks.map((block) => (
                 <BlockElement key={block.id} block={block} weekWidth={board.weekWidth} laneIdx={laneIndexOf(board, block.laneId)}
                   selected={block.id === selectedBlockId}
                   onMouseDownMove={(e) => startMoveBlock(e, block)} onMouseDownResize={(e) => startResizeBlock(e, block)}
-                  onRename={() => handleRenameBlock(block)} onDelete={() => setBoard((current) => removeBlock(current, block.id))}
+                  onRename={() => handleRenameBlock(block)} onDelete={() => handleRemoveBlock(block)}
                   onCopy={() => copyBlockToClipboard(block)} />
               ))}
             </div>
           </div>
         </div>
       </div>
+
+      {selectedBlock && (
+        <DependencyDrawer board={board} block={selectedBlock} onClose={() => setSelectedBlockId(null)}
+          onAddDependency={(predecessorId, successorId, relationshipType, lagDays) =>
+            setBoard((current) => addDependency(current, predecessorId, successorId, relationshipType, lagDays))}
+          onRemoveDependency={(dependencyId) => setBoard((current) => removeDependency(current, dependencyId))} />
+      )}
     </section>
   );
 }
@@ -345,7 +374,9 @@ function BlockElement({ block, weekWidth, laneIdx, selected, onMouseDownMove, on
         className="group absolute flex cursor-grab items-center justify-center"
         style={{ left: block.startIdx * weekWidth, top: laneIdx * ROW_HEIGHT_PX, width: weekWidth, height: ROW_HEIGHT_PX }}>
         <div className={`h-5 w-5 rotate-45 rounded-[1px] border border-black/35 shadow ${selectedRing}`} style={{ background: MILESTONE_COLOR }} />
-        <div onDoubleClick={onRename} className="absolute left-[26px] rounded bg-white/85 px-1 text-[11px] font-bold whitespace-nowrap text-slate-800">{block.label}</div>
+        <div onDoubleClick={onRename} className="absolute left-[26px] rounded bg-white/85 px-1 text-[11px] font-bold whitespace-nowrap text-slate-800">
+          <span className="mr-1 font-mono text-slate-500">{block.taskCode}</span>{block.label}
+        </div>
         <span data-role="delete" onClick={(e) => { e.stopPropagation(); onDelete(); }}
           className="absolute -top-1.5 -right-1.5 hidden h-4 w-4 cursor-pointer rounded-full bg-slate-800 text-center text-[11px] leading-4 text-white group-hover:block">✕</span>
       </div>
@@ -355,10 +386,101 @@ function BlockElement({ block, weekWidth, laneIdx, selected, onMouseDownMove, on
     <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
       className={`group absolute flex cursor-grab items-center overflow-hidden rounded-md border border-black/15 px-2 text-[11.5px] font-bold whitespace-nowrap text-slate-950 shadow ${selectedRing}`}
       style={{ left: block.startIdx * weekWidth + 2, top: laneIdx * ROW_HEIGHT_PX + 5, width: block.duration * weekWidth - 4, height: ROW_HEIGHT_PX - 10, background: colorForCategory(block.category) }}>
-      <span onDoubleClick={onRename} className="overflow-hidden text-ellipsis">{block.label}</span>
+      <span onDoubleClick={onRename} className="overflow-hidden text-ellipsis"><span className="mr-1 font-mono opacity-60">{block.taskCode}</span>{block.label}</span>
       <div data-role="resize-handle" onMouseDown={onMouseDownResize} className="absolute top-0 right-0 bottom-0 w-2.5 cursor-ew-resize" />
       <span data-role="delete" onClick={(e) => { e.stopPropagation(); onDelete(); }}
         className="absolute -top-1.5 -right-1.5 hidden h-4 w-4 cursor-pointer rounded-full bg-slate-800 text-center text-[11px] leading-4 text-white group-hover:block">✕</span>
+    </div>
+  );
+}
+
+function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDependency }) {
+  const [direction, setDirection] = useState("predecessor");
+  const [targetId, setTargetId] = useState("");
+  const [relationshipType, setRelationshipType] = useState("FS");
+  const [lagDays, setLagDays] = useState(0);
+
+  const { predecessors, successors } = dependenciesForBlock(board, block.id);
+  const suggestions = suggestPredecessors(board, block.id);
+  const blockById = (id) => board.blocks.find((candidate) => candidate.id === id);
+  const excluded = new Set((direction === "predecessor" ? predecessors : successors)
+    .map((dependency) => (direction === "predecessor" ? dependency.predecessorId : dependency.successorId)));
+  const candidates = board.blocks.filter((candidate) => candidate.id !== block.id && !excluded.has(candidate.id));
+
+  function handleAdd() {
+    if (!targetId) return;
+    if (direction === "predecessor") onAddDependency(targetId, block.id, relationshipType, Number(lagDays) || 0);
+    else onAddDependency(block.id, targetId, relationshipType, Number(lagDays) || 0);
+    setTargetId("");
+  }
+
+  return (
+    <div className="max-h-64 shrink-0 overflow-y-auto border-t border-slate-200 bg-white p-4" data-scheduling-drawer>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-black"><span className="mr-2 font-mono text-slate-500">{block.taskCode}</span>{block.label}</h3>
+        <button type="button" onClick={onClose} className="text-xs font-bold text-slate-400 hover:text-slate-700">Close ✕</button>
+      </div>
+      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+        <DependencyList title="Predecessors" dependencies={predecessors} blockById={blockById} idField="predecessorId" onRemove={onRemoveDependency} />
+        <DependencyList title="Successors" dependencies={successors} blockById={blockById} idField="successorId" onRemove={onRemoveDependency} />
+      </div>
+      {suggestions.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Suggested predecessors</p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {suggestions.map((candidate) => (
+              <button key={candidate.id} type="button" onClick={() => onAddDependency(candidate.id, block.id, "FS", 0)}
+                className="rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100">
+                + {candidate.taskCode} {candidate.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg bg-slate-50 p-2.5">
+        <Field label="Add as">
+          <select value={direction} onChange={(e) => setDirection(e.target.value)} className="rounded border border-slate-300 px-2 py-1.5 text-xs">
+            <option value="predecessor">Predecessor of this</option>
+            <option value="successor">Successor of this</option>
+          </select>
+        </Field>
+        <Field label="Block">
+          <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className="min-w-[180px] rounded border border-slate-300 px-2 py-1.5 text-xs">
+            <option value="">Select a block…</option>
+            {candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.taskCode} {candidate.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Type">
+          <select value={relationshipType} onChange={(e) => setRelationshipType(e.target.value)} className="rounded border border-slate-300 px-2 py-1.5 text-xs">
+            {RELATIONSHIP_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+        </Field>
+        <Field label="Lag (days)">
+          <input type="number" value={lagDays} onChange={(e) => setLagDays(e.target.value)} className="w-16 rounded border border-slate-300 px-2 py-1.5 text-xs" />
+        </Field>
+        <button type="button" onClick={handleAdd} disabled={!targetId} className="rounded bg-slate-950 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">Add link</button>
+      </div>
+    </div>
+  );
+}
+
+function DependencyList({ title, dependencies, blockById, idField, onRemove }) {
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{title}</p>
+      {dependencies.length === 0 ? <p className="mt-1 text-xs text-slate-400">None yet.</p> : (
+        <ul className="mt-1 flex flex-col gap-1">
+          {dependencies.map((dependency) => {
+            const linked = blockById(dependency[idField]);
+            return (
+              <li key={dependency.id} className="flex items-center justify-between gap-2 rounded border border-slate-200 px-2 py-1 text-xs">
+                <span><span className="font-mono text-slate-500">{linked?.taskCode || "?"}</span> {linked?.label || "Deleted block"} · {dependency.relationshipType}{dependency.lagDays ? ` +${dependency.lagDays}d` : ""}</span>
+                <button type="button" onClick={() => onRemove(dependency.id)} className="font-bold text-slate-400 hover:text-red-600">✕</button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

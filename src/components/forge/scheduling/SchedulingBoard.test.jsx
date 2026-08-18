@@ -42,4 +42,14 @@ describe("SchedulingBoard", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup.match(/title="Insert lane above"/g)).toHaveLength(7); // one per default lane
   });
+
+  it("always renders the dependency-arrow marker so links can draw as soon as they exist", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain('id="scheduling-dependency-arrow"');
+  });
+
+  it("does not render the dependency drawer until a block is selected", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).not.toContain("data-scheduling-drawer");
+  });
 });
