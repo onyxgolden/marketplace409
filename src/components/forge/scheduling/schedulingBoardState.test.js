@@ -4,8 +4,8 @@ import {
   addBlock, addBlackoutWindow, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
   blockAnchorPoint, blockToChip, calendarById, calendarForLane, chipsByCategory, computeWeeks,
   criticalPath, deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
-  emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, linkBlocksInOrder, moveBlock, moveBlocksBy,
-  nonWorkingDayRuns, occupiedWeekIndices, projectSummaryFromBoard, projectStorageKey, recordHistory, redoHistory,
+  emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, hydrateBoardState, linkBlocksInOrder, moveBlock,
+  moveBlocksBy, nonWorkingDayRuns, occupiedWeekIndices, projectSummaryFromBoard, recordHistory, redoHistory,
   removeBlackoutWindow, removeBlock, removeCalendar, removeDependency, renameBlock, renameLane, resizeBlock,
   resizeBlockFromStart, serializeBoardState, setBlockTextStyle, setDefaultCalendar, setLaneCalendar, setProjectDates,
   suggestPredecessors, suggestSuccessors, undoHistory, visibleWeekIndices,
@@ -45,12 +45,6 @@ describe("generateProjectId", () => {
   it("produces a project-prefixed, unique id", () => {
     expect(generateProjectId()).toMatch(/^schedule_project_/);
     expect(generateProjectId()).not.toBe(generateProjectId());
-  });
-});
-
-describe("projectStorageKey", () => {
-  it("namespaces a project id for localStorage", () => {
-    expect(projectStorageKey("schedule_project_1")).toBe("forge-scheduling-project:schedule_project_1");
   });
 });
 
@@ -250,6 +244,24 @@ describe("serializeBoardState / deserializeBoardState", () => {
     expect(restored.id).toBeTruthy();
     expect(restored.createdAt).toBeTruthy();
     expect(restored.updatedAt).toBeTruthy();
+  });
+});
+
+describe("hydrateBoardState", () => {
+  it("applies the same backfill as deserializeBoardState, given an already-parsed object", () => {
+    // What a jsonb column comes back as from supabase-js -- a plain object, not a string.
+    const fromApi = { id: "schedule_project_from_db", projectName: "From API", blocks: [
+      { id: "b1", label: "Kickoff", category: "gov", milestone: true, duration: 0, startIdx: 0, laneId: "lane_ms" },
+    ] };
+    const hydrated = hydrateBoardState(fromApi);
+    expect(hydrated.id).toBe("schedule_project_from_db");
+    expect(hydrated.blocks[0].taskCode).toBeTruthy();
+    expect(hydrated.blocks[0].bold).toBe(true);
+  });
+  it("agrees with deserializeBoardState on the same input, parsed either way", () => {
+    const state = addBlock(defaultBoardState("schedule_project_fixed"), TASK_CHIP, 1, 1);
+    const json = serializeBoardState(state);
+    expect(hydrateBoardState(JSON.parse(json))).toEqual(deserializeBoardState(json));
   });
 });
 

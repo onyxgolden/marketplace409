@@ -144,17 +144,9 @@ export function defaultBoardState(id = generateProjectId()) {
   });
 }
 
-// Shared storage-key scheme -- both SchedulingBoard (loads/saves the one project it's
-// showing) and ProjectsScreen (scans for every saved project) need to agree on this.
-export const PROJECT_STORAGE_PREFIX = "forge-scheduling-project:";
-export const LEGACY_BOARD_STORAGE_KEY = "forge-scheduling-board-state";
-
-export function projectStorageKey(id) {
-  return `${PROJECT_STORAGE_PREFIX}${id}`;
-}
-
-// Projection for the Projects list screen -- the list reads saved boards directly (each
-// board is its own source of truth), this just picks out the columns it displays.
+// Projection for the Projects list screen -- picks out just the columns it displays,
+// used server-side (src/app/api/forge/scheduling/route.js) to avoid shipping every
+// project's full board down to the list view.
 export function projectSummaryFromBoard(board) {
   return Object.freeze({
     id: board.id, name: board.projectName, startDate: board.startDate, endDate: board.endDate,
@@ -705,10 +697,12 @@ export function serializeBoardState(state) {
   return JSON.stringify(state, null, 2);
 }
 
-// Backfills fields missing from an older export/localStorage save (e.g. one made before
-// task numbering existed) rather than leaving blocks with a blank taskCode.
-export function deserializeBoardState(json) {
-  const parsed = JSON.parse(json);
+// Backfills fields missing from an older export/save (e.g. one made before task numbering
+// existed) rather than leaving blocks with a blank taskCode. Takes an already-parsed
+// object, not a JSON string -- shared by deserializeBoardState (JSON file import) and the
+// scheduling API routes (a jsonb column comes back from supabase-js as a plain object
+// already, needing the exact same backfill without a redundant parse/stringify round trip).
+export function hydrateBoardState(parsed) {
   // Passing parsed.id through (undefined falls back to a fresh id via the default param)
   // means an existing project keeps its identity across saves; only a save from before
   // ids existed gets a newly-generated one, same backfill spirit as taskCode below.
@@ -728,6 +722,10 @@ export function deserializeBoardState(json) {
   return Object.freeze({
     ...merged, nextTaskNumber, blocks: Object.freeze(blocks), dependencies: Object.freeze(merged.dependencies || []),
   });
+}
+
+export function deserializeBoardState(json) {
+  return hydrateBoardState(JSON.parse(json));
 }
 
 // Undo/redo history is session-only UI state, deliberately kept separate from `board`

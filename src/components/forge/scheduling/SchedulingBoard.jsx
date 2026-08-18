@@ -10,7 +10,7 @@ import {
   blockToChip, calendarById, calendarForLane, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, criticalPath, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
   deleteLane, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock,
-  moveBlocksBy, nonWorkingDayRuns, pixelToIndex, projectStorageKey, recordHistory, redoHistory, removeBlackoutWindow,
+  moveBlocksBy, nonWorkingDayRuns, pixelToIndex, recordHistory, redoHistory, removeBlackoutWindow,
   removeBlock, removeCalendar, removeDependency, renameBlock, renameLane, resizeBlock, resizeBlockFromStart,
   serializeBoardState, setBlockTextStyle, setDefaultCalendar, setLaneCalendar, setProjectDates, suggestPredecessors,
   suggestSuccessors, undoHistory, visibleWeekIndices,
@@ -21,16 +21,6 @@ function isTypingTarget(el) {
 }
 
 const PALETTE_COLLAPSE_STORAGE_KEY = "forge-scheduling-palette-collapsed";
-
-function loadStoredBoard(projectId) {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(projectStorageKey(projectId));
-    return raw ? deserializeBoardState(raw) : null;
-  } catch {
-    return null;
-  }
-}
 
 function loadPaletteCollapsed() {
   if (typeof window === "undefined") return false;
@@ -48,6 +38,12 @@ function formatWeek(iso) {
 
 export default function SchedulingBoard({ projectId }) {
   const [board, setBoard] = useState(() => defaultBoardState(projectId));
+  // True until the initial GET tells us otherwise -- the shared "Example project" (and
+  // anything else not owned by the current user) comes back with isOwner: false, at which
+  // point the save effect below stops writing entirely rather than repeatedly hitting the
+  // 404 the API returns for a save it would just have to reject anyway.
+  const [isOwner, setIsOwner] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [saveStatus, setSaveStatus] = useState("");
   const [clipboardStatus, setClipboardStatus] = useState("");
   // Ordered, not a Set: Ctrl/Cmd+click appends to build up a chain, and "Link in order"
@@ -70,6 +66,11 @@ export default function SchedulingBoard({ projectId }) {
   const laneListRef = useRef(null);
   const saveTimer = useRef(null);
   const clipboardRef = useRef(null);
+  // The load effect flips this true right before handing the fetched board to setBoard, so
+  // the save effect's very next run (that same board arriving) skips writing it straight
+  // back -- a load isn't an edit, and every project open would otherwise cost a redundant
+  // PUT of exactly what was just read.
+  const skipNextSaveRef = useRef(true);
   // Set by startMeasure's own mousemove handler, so the canvas's empty-click handler (which
   // otherwise clears any active measurement) can tell a genuine drag-to-measure gesture on
   // the canvas itself apart from a plain click -- a plain click never fires mousemove.
@@ -113,9 +114,27 @@ export default function SchedulingBoard({ projectId }) {
   }
 
   useEffect(() => {
-    const stored = loadStoredBoard(projectId);
-    if (stored) setBoard(stored);
     setPaletteCollapsed(loadPaletteCollapsed());
+    let cancelled = false;
+    async function load() {
+      try {
+        const response = await fetch(`/api/forge/scheduling/${projectId}`);
+        if (cancelled) return;
+        if (!response.ok) {
+          setLoadError(response.status === 404 ? "Project not found." : "Unable to load this project.");
+          return;
+        }
+        const body = await response.json();
+        if (cancelled) return;
+        skipNextSaveRef.current = true;
+        setBoard(body.board);
+        setIsOwner(body.isOwner);
+      } catch {
+        if (!cancelled) setLoadError("Unable to load this project.");
+      }
+    }
+    load();
+    return () => { cancelled = true; };
   }, [projectId]);
 
   function togglePaletteCollapsed() {
@@ -129,16 +148,17 @@ export default function SchedulingBoard({ projectId }) {
   }
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (loadError) return;
+    if (skipNextSaveRef.current) { skipNextSaveRef.current = false; return; }
+    if (!isOwner) return; // the shared example, or anything else not ours -- nothing to persist
     setSaveStatus("Saving…");
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
+    saveTimer.current = setTimeout(async () => {
       try {
-        // updatedAt reflects when the persisted copy actually changed (what the Projects
-        // list shows as "Last Modified"), not every in-memory edit -- bumped only here,
-        // right before the write, rather than kept in sync on `board` itself.
-        const toSave = { ...board, updatedAt: new Date().toISOString() };
-        window.localStorage.setItem(projectStorageKey(board.id), serializeBoardState(toSave));
+        const response = await fetch(`/api/forge/scheduling/${board.id}`, {
+          method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(board),
+        });
+        if (!response.ok) throw new Error("save failed");
         setSaveStatus("Saved");
         setTimeout(() => setSaveStatus((current) => (current === "Saved" ? "" : current)), 1800);
       } catch {
@@ -146,7 +166,7 @@ export default function SchedulingBoard({ projectId }) {
       }
     }, 500);
     return () => clearTimeout(saveTimer.current);
-  }, [board]);
+  }, [board, isOwner, loadError]);
 
   const weeks = useMemo(() => computeWeeks(board.startDate, board.endDate), [board.startDate, board.endDate]);
   const groupedChips = useMemo(() => chipsByCategory(board), [board]);
@@ -541,6 +561,15 @@ export default function SchedulingBoard({ projectId }) {
     }
   }
 
+  if (loadError) {
+    return (
+      <section className="flex h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white shadow-sm" data-scheduling-board data-scheduling-load-error>
+        <p className="text-sm font-bold text-slate-600">{loadError}</p>
+        <Link href="/forge/scheduling" className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold hover:bg-slate-100">Back to Projects</Link>
+      </section>
+    );
+  }
+
   return (
     <section className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" data-scheduling-board>
       <div className="flex flex-wrap items-center gap-4 border-b border-slate-200 bg-slate-950 px-4 py-3 text-white">
@@ -579,6 +608,10 @@ export default function SchedulingBoard({ projectId }) {
         <div className="flex-1" />
         <span role="status" className="min-w-[60px] font-mono text-xs text-sky-400">{clipboardStatus}</span>
         <span role="status" className="min-w-[70px] font-mono text-xs text-emerald-400">{saveStatus}</span>
+        {!isOwner && (
+          <span title="A shared reference example -- your edits here won't be saved" data-scheduling-readonly-badge
+            className="rounded-full bg-amber-900/60 px-2.5 py-1 text-[11px] font-bold text-amber-200">Read-only example</span>
+        )}
         <div className="flex items-center gap-1">
           <button type="button" onClick={handleUndo} disabled={history.past.length === 0} title="Undo (Ctrl+Z)"
             className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold disabled:opacity-40">Undo</button>

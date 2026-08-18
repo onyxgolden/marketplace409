@@ -161,4 +161,14 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain("data-scheduling-calendar-band");
     expect(markup).not.toContain("data-scheduling-blackout-band");
   });
+
+  it("renders the board (not a load-error screen) and no read-only badge before the API load effect has run", () => {
+    // renderToStaticMarkup never runs effects, so this documents the pre-fetch render: the
+    // full board shows immediately (isOwner defaults true, loadError defaults null) rather
+    // than a loading gate -- matches how the page always rendered before persistence moved
+    // server-side, just with the placeholder board swapped for the real one once fetched.
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).not.toContain("data-scheduling-load-error");
+    expect(markup).not.toContain("data-scheduling-readonly-badge");
+  });
 });
