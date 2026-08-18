@@ -6,7 +6,7 @@ import {
   emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, linkBlocksInOrder, moveBlock, moveBlocksBy,
   occupiedWeekIndices, projectSummaryFromBoard, projectStorageKey, recordHistory, redoHistory, removeBlock,
   removeDependency, renameBlock, renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState,
-  setBlockTextStyle, setProjectDates, suggestPredecessors, undoHistory, visibleWeekIndices,
+  setBlockTextStyle, setProjectDates, suggestPredecessors, suggestSuccessors, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -359,6 +359,34 @@ describe("suggestPredecessors", () => {
     state = addDependency(state, "b1", "b2");
     expect(suggestPredecessors(state, "b2")).toHaveLength(0);
     expect(suggestPredecessors(state, "b1").some((b) => b.id === "b1")).toBe(false);
+  });
+});
+
+describe("suggestSuccessors", () => {
+  it("suggests a same-lane block that starts at the block's finish", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4, category: "eng" }, 0, 2); // b1: weeks 0-4, lane_eng
+    state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 4, 2); // b2: starts week 4, lane_eng
+    const suggestions = suggestSuccessors(state, "b1");
+    expect(suggestions.map((b) => b.id)).toEqual(["b2"]);
+  });
+  it("suggests an adjacent-lane block but not one two lanes away", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4, category: "gov" }, 0, 1); // b1: lane_gov, finishes week 4
+    state = addBlock(state, { ...TASK_CHIP, durationWeeks: 4, category: "shut" }, 4, 6); // b2: lane_shut, far away
+    state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 4, 2); // b3: lane_eng (adjacent to lane_gov)
+    const suggestions = suggestSuccessors(state, "b1");
+    expect(suggestions.map((b) => b.id)).toEqual(["b3"]);
+  });
+  it("excludes candidates outside the start-proximity threshold", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4, category: "eng" }, 0, 2); // finishes week 4
+    state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 10, 2); // starts week 10 -- far from week 4
+    expect(suggestSuccessors(state, "b1")).toHaveLength(0);
+  });
+  it("never suggests the block itself or an already-linked successor", () => {
+    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 4, category: "eng" }, 0, 2);
+    state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 4, 2);
+    state = addDependency(state, "b1", "b2");
+    expect(suggestSuccessors(state, "b1")).toHaveLength(0);
+    expect(suggestSuccessors(state, "b2").some((b) => b.id === "b2")).toBe(false);
   });
 });
 

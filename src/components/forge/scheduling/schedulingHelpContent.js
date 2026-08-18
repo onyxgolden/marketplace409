@@ -38,8 +38,11 @@ export const HELP_SECTIONS = Object.freeze([
     title: "Dependencies",
     items: [
       { label: "Select a block", description: "Opens a drawer listing its Predecessors and Successors, each with a relationship type (FS/SS/FF/SF) and lag." },
+      { label: "Duration field (drawer)", description: "Type a new duration in weeks, then press Enter or click away to resize the bar -- same as dragging the right edge. Disabled for milestones (always 0)." },
       { label: "Add link (drawer)", description: "Pick any other block, a direction, a relationship type, and lag days, then Add." },
-      { label: "Suggested predecessors", description: "One-click chips for blocks that finish right where the selected block starts -- never added automatically, only suggested." },
+      { label: "Click a Predecessor/Successor row", description: "Jumps the drawer to that linked block, so you can walk a chain and add or remove links along the way." },
+      { label: "✕ on a Predecessor/Successor row", description: "Removes that relationship." },
+      { label: "Suggested predecessors / successors", description: "One-click chips for blocks that finish right where the selected block starts, or start right where it finishes -- never added automatically, only suggested." },
     ],
   },
   {

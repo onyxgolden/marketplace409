@@ -416,6 +416,21 @@ export function suggestPredecessors(state, blockId, { thresholdWeeks = 1 } = {})
   }));
 }
 
+// Candidate successors for `blockId`: blocks in the same or an adjacent lane that start
+// at or near (within `thresholdWeeks`) the block's finish — never auto-linked, just surfaced.
+export function suggestSuccessors(state, blockId, { thresholdWeeks = 1 } = {}) {
+  const block = state.blocks.find((item) => item.id === blockId);
+  if (!block) return Object.freeze([]);
+  const laneIdx = laneIndexOf(state, block.laneId);
+  const blockEnd = block.startIdx + (block.milestone ? 0 : block.duration);
+  const alreadyLinked = new Set(state.dependencies.filter((d) => d.predecessorId === blockId).map((d) => d.successorId));
+  return Object.freeze(state.blocks.filter((candidate) => {
+    if (candidate.id === blockId || alreadyLinked.has(candidate.id)) return false;
+    if (Math.abs(laneIndexOf(state, candidate.laneId) - laneIdx) > 1) return false;
+    return Math.abs(candidate.startIdx - blockEnd) <= thresholdWeeks;
+  }));
+}
+
 // `resolveColumn` maps a real week index to the column it actually renders in -- identity
 // unless "hide empty weeks" is compressing the timeline, in which case a block's own span
 // is still contiguous in compressed space (compression only removes weeks nothing touches),

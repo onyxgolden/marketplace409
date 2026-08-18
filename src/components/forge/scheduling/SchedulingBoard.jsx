@@ -10,7 +10,7 @@ import {
   deleteLane, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock,
   moveBlocksBy, pixelToIndex, projectStorageKey, recordHistory, redoHistory, removeBlock, removeDependency,
   renameBlock, renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState, setBlockTextStyle,
-  setProjectDates, suggestPredecessors, undoHistory, visibleWeekIndices,
+  setProjectDates, suggestPredecessors, suggestSuccessors, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -646,7 +646,9 @@ export default function SchedulingBoard({ projectId }) {
         <DependencyDrawer board={board} block={selectedBlock} onClose={() => setSelectedBlockIds([])}
           onAddDependency={(predecessorId, successorId, relationshipType, lagDays) =>
             commitBoard((current) => addDependency(current, predecessorId, successorId, relationshipType, lagDays))}
-          onRemoveDependency={(dependencyId) => commitBoard((current) => removeDependency(current, dependencyId))} />
+          onRemoveDependency={(dependencyId) => commitBoard((current) => removeDependency(current, dependencyId))}
+          onChangeDuration={(duration) => commitBoard((current) => resizeBlock(current, selectedBlock.id, duration))}
+          onSelectBlock={(id) => setSelectedBlockIds([id])} />
       )}
       {showHelp && <SchedulingHelpModal onClose={() => setShowHelp(false)} />}
       {contextMenu && (
@@ -769,14 +771,18 @@ function SelectionOrderBadge({ order }) {
   );
 }
 
-function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDependency }) {
+function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDependency, onChangeDuration, onSelectBlock }) {
   const [direction, setDirection] = useState("predecessor");
   const [targetId, setTargetId] = useState("");
   const [relationshipType, setRelationshipType] = useState("FS");
   const [lagDays, setLagDays] = useState(0);
+  const [durationDraft, setDurationDraft] = useState(String(block.duration));
+
+  useEffect(() => setDurationDraft(String(block.duration)), [block.id, block.duration]);
 
   const { predecessors, successors } = dependenciesForBlock(board, block.id);
   const suggestions = suggestPredecessors(board, block.id);
+  const successorSuggestions = suggestSuccessors(board, block.id);
   const blockById = (id) => board.blocks.find((candidate) => candidate.id === id);
   const excluded = new Set((direction === "predecessor" ? predecessors : successors)
     .map((dependency) => (direction === "predecessor" ? dependency.predecessorId : dependency.successorId)));
@@ -789,27 +795,64 @@ function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDepe
     setTargetId("");
   }
 
+  function commitDuration() {
+    const parsed = Math.max(1, Number(durationDraft) || 1);
+    if (parsed !== block.duration) onChangeDuration(parsed);
+    setDurationDraft(String(parsed));
+  }
+
   return (
     <div className="max-h-64 shrink-0 overflow-y-auto border-t border-slate-200 bg-white p-4" data-scheduling-drawer>
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-black"><span className="mr-2 font-mono text-slate-500">{block.taskCode}</span>{block.label}</h3>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <h3 className="text-sm font-black"><span className="mr-2 font-mono text-slate-500">{block.taskCode}</span>{block.label}</h3>
+          {block.milestone ? (
+            <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Milestone · 0 duration</span>
+          ) : (
+            <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+              Duration
+              <input type="number" min={1} value={durationDraft} onChange={(e) => setDurationDraft(e.target.value)}
+                onBlur={commitDuration}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitDuration(); e.currentTarget.blur(); } }}
+                className="w-16 rounded border border-slate-300 px-2 py-1 text-xs" data-scheduling-duration-input />
+              wk
+            </label>
+          )}
+        </div>
         <button type="button" onClick={onClose} className="text-xs font-bold text-slate-400 hover:text-slate-700">Close ✕</button>
       </div>
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
-        <DependencyList title="Predecessors" dependencies={predecessors} blockById={blockById} idField="predecessorId" onRemove={onRemoveDependency} />
-        <DependencyList title="Successors" dependencies={successors} blockById={blockById} idField="successorId" onRemove={onRemoveDependency} />
+        <DependencyList title="Predecessors" dependencies={predecessors} blockById={blockById} idField="predecessorId" onRemove={onRemoveDependency} onGoTo={onSelectBlock} />
+        <DependencyList title="Successors" dependencies={successors} blockById={blockById} idField="successorId" onRemove={onRemoveDependency} onGoTo={onSelectBlock} />
       </div>
-      {suggestions.length > 0 && (
-        <div className="mt-3">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Suggested predecessors</p>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            {suggestions.map((candidate) => (
-              <button key={candidate.id} type="button" onClick={() => onAddDependency(candidate.id, block.id, "FS", 0)}
-                className="rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100">
-                + {candidate.taskCode} {candidate.label}
-              </button>
-            ))}
-          </div>
+      {(suggestions.length > 0 || successorSuggestions.length > 0) && (
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {suggestions.length > 0 && (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Suggested predecessors</p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {suggestions.map((candidate) => (
+                  <button key={candidate.id} type="button" onClick={() => onAddDependency(candidate.id, block.id, "FS", 0)}
+                    className="rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100">
+                    + {candidate.taskCode} {candidate.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {successorSuggestions.length > 0 && (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Suggested successors</p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {successorSuggestions.map((candidate) => (
+                  <button key={candidate.id} type="button" onClick={() => onAddDependency(block.id, candidate.id, "FS", 0)}
+                    className="rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100">
+                    + {candidate.taskCode} {candidate.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
       <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg bg-slate-50 p-2.5">
@@ -839,7 +882,7 @@ function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDepe
   );
 }
 
-function DependencyList({ title, dependencies, blockById, idField, onRemove }) {
+function DependencyList({ title, dependencies, blockById, idField, onRemove, onGoTo }) {
   return (
     <div>
       <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{title}</p>
@@ -849,8 +892,14 @@ function DependencyList({ title, dependencies, blockById, idField, onRemove }) {
             const linked = blockById(dependency[idField]);
             return (
               <li key={dependency.id} className="flex items-center justify-between gap-2 rounded border border-slate-200 px-2 py-1 text-xs">
-                <span><span className="font-mono text-slate-500">{linked?.taskCode || "?"}</span> {linked?.label || "Deleted block"} · {dependency.relationshipType}{dependency.lagDays ? ` +${dependency.lagDays}d` : ""}</span>
-                <button type="button" onClick={() => onRemove(dependency.id)} className="font-bold text-slate-400 hover:text-red-600">✕</button>
+                {linked ? (
+                  <button type="button" onClick={() => onGoTo(linked.id)} title="Go to this block" className="text-left hover:underline">
+                    <span className="font-mono text-slate-500">{linked.taskCode}</span> {linked.label} · {dependency.relationshipType}{dependency.lagDays ? ` +${dependency.lagDays}d` : ""}
+                  </button>
+                ) : (
+                  <span className="text-slate-400">Deleted block · {dependency.relationshipType}{dependency.lagDays ? ` +${dependency.lagDays}d` : ""}</span>
+                )}
+                <button type="button" onClick={() => onRemove(dependency.id)} title="Remove this relationship" className="font-bold text-slate-400 hover:text-red-600">✕</button>
               </li>
             );
           })}
