@@ -58,4 +58,12 @@ describe("SchedulingBoard", () => {
     expect(markup).not.toContain("data-scheduling-multi-select-bar");
     expect(markup).not.toContain("Link in order");
   });
+
+  it("renders the text style toolbar disabled when nothing is selected", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain("Size…");
+    expect(markup).toContain(">Default<");
+    expect(markup).toContain('title="Toggle bold"');
+    expect(markup.match(/disabled=""/g)?.length ?? 0).toBeGreaterThanOrEqual(3); // size + color selects + bold button
+  });
 });

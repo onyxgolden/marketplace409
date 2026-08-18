@@ -4,7 +4,7 @@ import {
   addBlock, addCustomChip, addDependency, addLane, blockAnchorPoint, blockToChip, chipsByCategory, computeWeeks,
   deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, fitBlockFontSizePx,
   linkBlocksInOrder, moveBlock, moveBlocksBy, removeBlock, removeDependency, renameBlock, renameLane, resizeBlock,
-  serializeBoardState, setProjectDates, suggestPredecessors,
+  serializeBoardState, setBlockTextStyle, setProjectDates, suggestPredecessors,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -179,11 +179,22 @@ describe("serializeBoardState / deserializeBoardState", () => {
 describe("blockToChip", () => {
   it("converts a placed task block back into pasteable chip shape", () => {
     let state = addBlock(defaultBoardState(), TASK_CHIP, 2, 1);
-    expect(blockToChip(state.blocks[0])).toEqual({ label: "Detailed Design", category: "eng", milestone: false, durationWeeks: 8 });
+    expect(blockToChip(state.blocks[0])).toEqual({
+      label: "Detailed Design", category: "eng", milestone: false, durationWeeks: 8,
+      fontSize: null, textColor: null, bold: true,
+    });
   });
   it("keeps a milestone's duration at zero", () => {
     let state = addBlock(defaultBoardState(), CHIP, 0, 0);
-    expect(blockToChip(state.blocks[0])).toEqual({ label: "Kickoff", category: "gov", milestone: true, durationWeeks: 0 });
+    expect(blockToChip(state.blocks[0])).toEqual({
+      label: "Kickoff", category: "gov", milestone: true, durationWeeks: 0,
+      fontSize: null, textColor: null, bold: true,
+    });
+  });
+  it("preserves a copied block's text style so paste keeps its formatting", () => {
+    let state = addBlock(defaultBoardState(), TASK_CHIP, 0, 0);
+    state = setBlockTextStyle(state, ["b1"], { fontSize: 18, textColor: "#dc2626", bold: false });
+    expect(blockToChip(state.blocks[0])).toMatchObject({ fontSize: 18, textColor: "#dc2626", bold: false });
   });
   it("round-trips through addBlock so a copied block can be pasted back in", () => {
     let state = addBlock(defaultBoardState(), TASK_CHIP, 0, 0);
@@ -394,5 +405,53 @@ describe("moveBlocksBy", () => {
     expect(state.blocks.every((block) => block.laneId === "lane_ms")).toBe(true);
     const shiftedFar = moveBlocksBy(twoBlockState(), ["b1", "b2"], 0, 99);
     expect(shiftedFar.blocks.every((block) => block.laneId === "lane_shut")).toBe(true);
+  });
+});
+
+describe("addBlock text style defaults", () => {
+  it("defaults every new block to the unstyled state", () => {
+    const state = addBlock(defaultBoardState(), TASK_CHIP, 0, 0);
+    expect(state.blocks[0]).toMatchObject({ fontSize: null, textColor: null, bold: true });
+  });
+});
+
+describe("setBlockTextStyle", () => {
+  it("applies a partial patch to every listed block", () => {
+    const state = setBlockTextStyle(twoBlockState(), ["b1", "b2"], { bold: false });
+    expect(state.blocks.every((block) => block.bold === false)).toBe(true);
+  });
+  it("only touches the fields provided in the patch", () => {
+    let state = setBlockTextStyle(twoBlockState(), ["b1"], { textColor: "#dc2626" });
+    state = setBlockTextStyle(state, ["b1"], { bold: false });
+    expect(state.blocks[0]).toMatchObject({ textColor: "#dc2626", bold: false, fontSize: null });
+  });
+  it("leaves blocks outside the target list unchanged", () => {
+    const state = setBlockTextStyle(twoBlockState(), ["b1"], { bold: false });
+    expect(state.blocks[1].bold).toBe(true);
+  });
+  it("is a no-op for an empty selection or an empty patch", () => {
+    const state = twoBlockState();
+    expect(setBlockTextStyle(state, [], { bold: false })).toBe(state);
+    expect(setBlockTextStyle(state, ["b1"], {})).toBe(state);
+  });
+  it("allows explicitly resetting a color back to default (null)", () => {
+    let state = setBlockTextStyle(twoBlockState(), ["b1"], { textColor: "#dc2626" });
+    state = setBlockTextStyle(state, ["b1"], { textColor: null });
+    expect(state.blocks[0].textColor).toBeNull();
+  });
+});
+
+describe("fitBlockFontSizePx with a preferred base size", () => {
+  it("uses the preferred size instead of the constant default when it fits", () => {
+    expect(fitBlockFontSizePx("Kickoff", 200, 36, 18)).toBe(18);
+  });
+  it("still shrinks a large preferred size toward the floor on a narrow bar", () => {
+    const size = fitBlockFontSizePx("Long-Lead Equipment Fabrication", 46, 20, 18);
+    expect(size).toBeLessThan(18);
+    expect(size).toBeGreaterThanOrEqual(MIN_BLOCK_FONT_SIZE_PX);
+  });
+  it("falls back to the constant default for an invalid preferred size", () => {
+    expect(fitBlockFontSizePx("Kickoff", 200, 36, null)).toBe(BASE_BLOCK_FONT_SIZE_PX);
+    expect(fitBlockFontSizePx("Kickoff", 200, 36, 0)).toBe(BASE_BLOCK_FONT_SIZE_PX);
   });
 });

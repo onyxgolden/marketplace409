@@ -75,15 +75,18 @@ const LINE_HEIGHT_RATIO = 1.2;
 // MIN_BLOCK_FONT_SIZE_PX -- never below it. If even the floor size wouldn't fit, this still
 // returns the floor; the component lets the label overflow the bar visually rather than
 // clip it, per the "never smaller than 8, let it overrun instead" requirement.
-export function fitBlockFontSizePx(label, widthPx, heightPx = ROW_HEIGHT_PX - 10) {
+// `baseFontSizePx` is the user's preferred size (from the text toolbar's size dropdown,
+// per-block) -- shrinking still starts from there and floors at MIN_BLOCK_FONT_SIZE_PX.
+export function fitBlockFontSizePx(label, widthPx, heightPx = ROW_HEIGHT_PX - 10, baseFontSizePx = BASE_BLOCK_FONT_SIZE_PX) {
   const text = (label || "").trim();
-  if (!text || widthPx <= 0 || heightPx <= 0) return BASE_BLOCK_FONT_SIZE_PX;
-  const maxLines = Math.max(1, Math.floor(heightPx / (BASE_BLOCK_FONT_SIZE_PX * LINE_HEIGHT_RATIO)));
-  const charsPerLineAtBase = Math.max(1, Math.floor(widthPx / (BASE_BLOCK_FONT_SIZE_PX * AVG_CHAR_WIDTH_RATIO)));
+  const base = Number.isFinite(baseFontSizePx) && baseFontSizePx > 0 ? baseFontSizePx : BASE_BLOCK_FONT_SIZE_PX;
+  if (!text || widthPx <= 0 || heightPx <= 0) return base;
+  const maxLines = Math.max(1, Math.floor(heightPx / (base * LINE_HEIGHT_RATIO)));
+  const charsPerLineAtBase = Math.max(1, Math.floor(widthPx / (base * AVG_CHAR_WIDTH_RATIO)));
   const budgetAtBase = charsPerLineAtBase * maxLines;
-  if (text.length <= budgetAtBase) return BASE_BLOCK_FONT_SIZE_PX;
+  if (text.length <= budgetAtBase) return base;
   const scale = Math.sqrt(budgetAtBase / text.length);
-  return Math.max(MIN_BLOCK_FONT_SIZE_PX, Math.min(BASE_BLOCK_FONT_SIZE_PX, BASE_BLOCK_FONT_SIZE_PX * scale));
+  return Math.max(MIN_BLOCK_FONT_SIZE_PX, Math.min(base, base * scale));
 }
 
 export function todayISO(offsetDays = 0) {
@@ -173,6 +176,10 @@ export function addBlock(state, chip, weekIdx, laneIdx) {
     duration: chip.milestone ? 0 : Math.max(1, chip.durationWeeks || 1),
     startIdx: Math.max(0, weekIdx),
     laneId: lane.id,
+    // Text toolbar overrides -- null/true means "use the default", not "unset".
+    fontSize: chip.fontSize ?? null,
+    textColor: chip.textColor ?? null,
+    bold: chip.bold ?? true,
   });
   return Object.freeze({
     ...state, nextId: state.nextId + 1, nextTaskNumber: state.nextTaskNumber + TASK_NUMBER_STEP,
@@ -361,11 +368,46 @@ export function dependencyArrowPoints(state, dependency, weekWidth) {
   return Object.freeze({ x1: from.x, y1: from.y, x2: to.x, y2: to.y });
 }
 
-// Converts a placed block back into chip shape so copy/paste can reuse addBlock().
+// Converts a placed block back into chip shape so copy/paste can reuse addBlock() --
+// including its text style, so a copied block keeps its formatting.
 export function blockToChip(block) {
   return Object.freeze({
     label: block.label, category: block.category, milestone: block.milestone,
     durationWeeks: block.milestone ? 0 : block.duration,
+    fontSize: block.fontSize ?? null, textColor: block.textColor ?? null, bold: block.bold ?? true,
+  });
+}
+
+export const TEXT_SIZE_OPTIONS = Object.freeze([
+  Object.freeze({ label: "Small", value: 9 }),
+  Object.freeze({ label: "Medium", value: BASE_BLOCK_FONT_SIZE_PX }),
+  Object.freeze({ label: "Large", value: 14 }),
+  Object.freeze({ label: "X-Large", value: 18 }),
+]);
+
+export const TEXT_COLOR_OPTIONS = Object.freeze([
+  Object.freeze({ label: "Default", value: null }),
+  Object.freeze({ label: "Black", value: "#0f172a" }),
+  Object.freeze({ label: "White", value: "#ffffff" }),
+  Object.freeze({ label: "Red", value: "#dc2626" }),
+  Object.freeze({ label: "Blue", value: "#1d4ed8" }),
+  Object.freeze({ label: "Green", value: "#15803d" }),
+  Object.freeze({ label: "Amber", value: "#b45309" }),
+]);
+
+const TEXT_STYLE_KEYS = Object.freeze(["fontSize", "textColor", "bold"]);
+
+// Applies a partial text-style patch (fontSize/textColor/bold) to every listed block --
+// backs the topbar's size/color/bold toolbar, which can target a multi-selection at once.
+export function setBlockTextStyle(state, blockIds, patch) {
+  const idSet = new Set(blockIds);
+  const cleanPatch = {};
+  for (const key of TEXT_STYLE_KEYS) if (key in patch) cleanPatch[key] = patch[key];
+  if (idSet.size === 0 || Object.keys(cleanPatch).length === 0) return state;
+  return Object.freeze({
+    ...state,
+    blocks: Object.freeze(state.blocks.map((block) =>
+      idSet.has(block.id) ? Object.freeze({ ...block, ...cleanPatch }) : block)),
   });
 }
 
@@ -380,10 +422,15 @@ export function deserializeBoardState(json) {
   const merged = { ...defaultBoardState(), ...parsed };
   let nextTaskNumber = Number.isInteger(merged.nextTaskNumber) ? merged.nextTaskNumber : FIRST_TASK_NUMBER;
   const blocks = (merged.blocks || []).map((block) => {
-    if (block.taskCode) return block;
-    const taskCode = `A${nextTaskNumber}`;
-    nextTaskNumber += TASK_NUMBER_STEP;
-    return { ...block, taskCode };
+    let next = block;
+    if (!next.taskCode) {
+      next = { ...next, taskCode: `A${nextTaskNumber}` };
+      nextTaskNumber += TASK_NUMBER_STEP;
+    }
+    if (!("fontSize" in next) || !("textColor" in next) || !("bold" in next)) {
+      next = { ...next, fontSize: next.fontSize ?? null, textColor: next.textColor ?? null, bold: next.bold ?? true };
+    }
+    return next;
   });
   return Object.freeze({
     ...merged, nextTaskNumber, blocks: Object.freeze(blocks), dependencies: Object.freeze(merged.dependencies || []),

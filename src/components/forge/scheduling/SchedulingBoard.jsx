@@ -2,10 +2,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
+  TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
   addBlock, addCustomChip, addDependency, addLane, blockToChip, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState, deleteLane,
   fitBlockFontSizePx, laneIndexOf, linkBlocksInOrder, moveBlock, moveBlocksBy, pixelToIndex, removeBlock,
-  removeDependency, renameBlock, renameLane, resizeBlock, serializeBoardState, setProjectDates, suggestPredecessors,
+  removeDependency, renameBlock, renameLane, resizeBlock, serializeBoardState, setBlockTextStyle, setProjectDates,
+  suggestPredecessors,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -275,6 +277,10 @@ export default function SchedulingBoard() {
         </form>
         <Field label="Zoom"><input type="range" min={MIN_ZOOM_PX} max={MAX_ZOOM_PX} value={board.weekWidth}
           onChange={(e) => setBoard((c) => ({ ...c, weekWidth: Number(e.target.value) }))} /></Field>
+        <TextStyleToolbar
+          disabled={selectedBlockIds.length === 0}
+          activeBlock={selectedBlockIds.length ? board.blocks.find((block) => block.id === selectedBlockIds[0]) : null}
+          onChange={(patch) => selectedBlockIds.length && setBoard((current) => setBlockTextStyle(current, selectedBlockIds, patch))} />
         <div className="flex-1" />
         <span role="status" className="min-w-[60px] font-mono text-xs text-sky-400">{clipboardStatus}</span>
         <span role="status" className="min-w-[70px] font-mono text-xs text-emerald-400">{saveStatus}</span>
@@ -407,6 +413,35 @@ function Field({ label, children }) {
   return <div className="flex flex-col gap-0.5"><label className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</label>{children}</div>;
 }
 
+// Sits to the right of Zoom in the topbar. Dropdowns (not a full swatch grid or a size
+// stepper) to keep it compact -- applies to every currently selected block at once.
+function TextStyleToolbar({ disabled, activeBlock, onChange }) {
+  const activeFontSize = activeBlock?.fontSize ?? "";
+  const activeColor = activeBlock?.textColor ?? "";
+  const activeBold = activeBlock?.bold ?? true;
+  const selectClass = "rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-white disabled:opacity-40";
+  return (
+    <Field label="Text">
+      <div className="flex items-center gap-1.5">
+        <select disabled={disabled} value={activeFontSize} title="Text size"
+          onChange={(e) => onChange({ fontSize: e.target.value === "" ? null : Number(e.target.value) })} className={selectClass}>
+          <option value="">Size…</option>
+          {TEXT_SIZE_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}
+        </select>
+        <select disabled={disabled} value={activeColor} title="Text color"
+          onChange={(e) => onChange({ textColor: e.target.value === "" ? null : e.target.value })} className={selectClass}>
+          {TEXT_COLOR_OPTIONS.map((option) => <option key={option.label} value={option.value ?? ""}>{option.label}</option>)}
+        </select>
+        <button type="button" disabled={disabled} title="Toggle bold" aria-pressed={activeBold}
+          onClick={() => onChange({ bold: !activeBold })}
+          className={`rounded border px-2.5 py-1 text-xs font-black disabled:opacity-40 ${activeBold ? "border-amber-400 bg-amber-500 text-slate-950" : "border-slate-700 bg-slate-800 text-white"}`}>
+          B
+        </button>
+      </div>
+    </Field>
+  );
+}
+
 function MultiSelectLinkBar({ board, selectedBlockIds, onLink, onClear }) {
   const blockById = (id) => board.blocks.find((candidate) => candidate.id === id);
   const chain = selectedBlockIds.map((id) => blockById(id)).filter(Boolean);
@@ -437,8 +472,9 @@ function BlockElement({ block, weekWidth, laneIdx, selected, selectionOrder, onM
         className="group absolute flex cursor-grab items-center justify-center"
         style={{ left: block.startIdx * weekWidth, top: laneIdx * ROW_HEIGHT_PX, width: weekWidth, height: ROW_HEIGHT_PX }}>
         <div className={`h-5 w-5 rotate-45 rounded-[1px] border border-black/35 shadow ${selectedRing}`} style={{ background: MILESTONE_COLOR }} />
-        <div onDoubleClick={onRename} className="absolute left-[26px] rounded bg-white/85 px-1 text-[11px] font-bold whitespace-nowrap text-slate-800">
-          <span className="mr-1 font-mono text-slate-500">{block.taskCode}</span>{block.label}
+        <div onDoubleClick={onRename} className="absolute left-[26px] rounded bg-white/85 px-1 whitespace-nowrap"
+          style={{ fontSize: `${block.fontSize || 11}px`, fontWeight: block.bold ? 700 : 400, color: block.textColor || "#1e293b" }}>
+          <span className="mr-1 font-mono opacity-70">{block.taskCode}</span>{block.label}
         </div>
         {selectionOrder && <SelectionOrderBadge order={selectionOrder} />}
         <span data-role="delete" onClick={(e) => { e.stopPropagation(); onDelete(); }}
@@ -448,14 +484,15 @@ function BlockElement({ block, weekWidth, laneIdx, selected, selectionOrder, onM
   }
   const barWidth = block.duration * weekWidth - 4;
   const barHeight = ROW_HEIGHT_PX - 10;
-  const fontSize = fitBlockFontSizePx(block.label, barWidth, barHeight);
+  const fontSize = fitBlockFontSizePx(block.label, barWidth, barHeight, block.fontSize);
   return (
     <div data-block-id={block.id} onMouseDown={onMouseDownMove} onContextMenu={handleContextMenu}
-      className={`group absolute flex cursor-grab items-center rounded-md border border-black/15 px-2 font-bold text-slate-950 shadow ${selectedRing}`}
+      className={`group absolute flex cursor-grab items-center rounded-md border border-black/15 px-2 text-slate-950 shadow ${selectedRing}`}
       style={{ left: block.startIdx * weekWidth + 2, top: laneIdx * ROW_HEIGHT_PX + 5, width: barWidth, height: barHeight, background: colorForCategory(block.category) }}>
       {/* min-w-0 lets this flex child actually shrink below its unwrapped text width -- without it,
           flexbox's default min-width:auto keeps it at max-content size and text never wraps. */}
-      <span onDoubleClick={onRename} className="min-w-0 break-words" style={{ fontSize: `${fontSize}px`, lineHeight: 1.15 }}>
+      <span onDoubleClick={onRename} className="min-w-0 break-words"
+        style={{ fontSize: `${fontSize}px`, lineHeight: 1.15, fontWeight: block.bold ? 700 : 400, color: block.textColor || undefined }}>
         <span className="mr-1 font-mono opacity-60">{block.taskCode}</span>{block.label}
       </span>
       <div data-role="resize-handle" onMouseDown={onMouseDownResize} className="absolute top-0 right-0 bottom-0 w-2.5 cursor-ew-resize" />
