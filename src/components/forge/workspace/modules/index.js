@@ -11,9 +11,5 @@ export {
 } from "./PropertyPortfolioWorkspaceModule";
 
 export {
-  SchedulingWorkspaceModule,
-} from "./SchedulingWorkspaceModule";
-
-export {
   TransactionReviewWorkspaceModule,
 } from "./TransactionReviewWorkspaceModule";

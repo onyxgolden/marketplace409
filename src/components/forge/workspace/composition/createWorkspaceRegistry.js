@@ -4,7 +4,6 @@ import {
   FinancialWorkspaceModule,
   ForgeOperatingSystemWorkspaceModule,
   PropertyPortfolioWorkspaceModule,
-  SchedulingWorkspaceModule,
   TransactionReviewWorkspaceModule,
 } from "../modules/index.js";
 
@@ -21,10 +20,6 @@ export function createWorkspaceRegistry() {
 
   registry.register(
     PropertyPortfolioWorkspaceModule,
-  );
-
-  registry.register(
-    SchedulingWorkspaceModule,
   );
 
   registry.register(

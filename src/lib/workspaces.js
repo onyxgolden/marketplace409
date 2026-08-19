@@ -24,6 +24,13 @@ export const WORKSPACES = Object.freeze([
     description: "Financial operations, properties, and connections.",
   }),
   Object.freeze({
+    id: "scheduling",
+    name: "Scheduling",
+    href: "/forge/scheduling",
+    iconName: "GanttChart",
+    description: "Gantt chart wall-boards, calendars, and project templates.",
+  }),
+  Object.freeze({
     id: "dev",
     name: "Dev",
     href: "/forge/developer",
@@ -32,10 +39,12 @@ export const WORKSPACES = Object.freeze([
   }),
 ]);
 
-// Forge's own routes (financial/property/connections/results/import) are
-// nested under /forge/*, but /forge/rental and /forge/developer have been
-// promoted to their own sibling workspaces, so "Forge" must not read as
-// active on those two subtrees even though they share the URL prefix.
+// Subtrees promoted out of Forge's own ForgeApplicationRail into their own
+// sibling workspace (see that file's PROMOTED_PREFIXES) -- "Forge" must not
+// read as active on any of these even though they share the /forge/* URL
+// prefix, or the wrong tile would highlight.
+const PROMOTED_OUT_OF_FORGE = ["/forge/rental", "/forge/developer", "/forge/scheduling"];
+
 export function isWorkspaceActive(pathname, workspace) {
   if (!pathname) return false;
 
@@ -43,8 +52,9 @@ export function isWorkspaceActive(pathname, workspace) {
     if (pathname === "/forge") return true;
     return (
       pathname.startsWith("/forge/") &&
-      !pathname.startsWith("/forge/rental") &&
-      !pathname.startsWith("/forge/developer")
+      !PROMOTED_OUT_OF_FORGE.some(
+        (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+      )
     );
   }
 

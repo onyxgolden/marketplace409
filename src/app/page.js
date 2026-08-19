@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Building2, Code2, Hammer, Store } from "lucide-react";
+import { ArrowRight, Building2, Code2, GanttChart, Hammer, Store } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
 import { createClient } from "@/lib/supabase/server";
@@ -7,7 +7,7 @@ import { WORKSPACES } from "@/lib/workspaces";
 
 export const dynamic = "force-dynamic";
 
-const ICONS = { Store, Building2, Hammer, Code2 };
+const ICONS = { Store, Building2, Hammer, GanttChart, Code2 };
 
 async function loadWorkspaceStats() {
   const supabaseServer = await createClient();
@@ -26,6 +26,7 @@ async function loadWorkspaceStats() {
         : "Browse local listings",
     rentals: "Sign in to view your portfolio",
     forge: "Sign in to view your workspace",
+    scheduling: "Gantt chart wall-boards",
     dev: "Programmer tools",
   };
 
@@ -70,14 +71,14 @@ export default async function HubPage() {
             <Link
               key={workspace.id}
               href={workspace.href}
-              className="group flex flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-amber-400 hover:shadow-lg"
+              className="group flex flex-col rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-amber-400 hover:shadow-lg"
             >
-              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-950 text-white">
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-950 dark:bg-amber-400 text-white dark:text-slate-950">
                 <Icon aria-hidden="true" className="h-6 w-6" />
               </div>
-              <div className="text-xl font-black">{workspace.name}</div>
-              <p className="mt-1 text-sm text-slate-600">{workspace.description}</p>
-              <div className="mt-4 flex items-center justify-between text-sm font-bold text-slate-500">
+              <div className="text-xl font-black dark:text-white">{workspace.name}</div>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{workspace.description}</p>
+              <div className="mt-4 flex items-center justify-between text-sm font-bold text-slate-500 dark:text-slate-400">
                 <span>{stats[workspace.id]}</span>
                 <ArrowRight
                   aria-hidden="true"

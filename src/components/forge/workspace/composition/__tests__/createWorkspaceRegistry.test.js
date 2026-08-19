@@ -86,7 +86,6 @@ describe("createWorkspaceRegistry", () => {
       "financial-position",
       "transaction-review",
       "property-portfolio",
-      "scheduling",
       "forge-operating-system",
     ]);
   });

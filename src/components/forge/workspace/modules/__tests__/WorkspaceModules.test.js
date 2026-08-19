@@ -46,7 +46,6 @@ import {
   FinancialWorkspaceModule,
   ForgeOperatingSystemWorkspaceModule,
   PropertyPortfolioWorkspaceModule,
-  SchedulingWorkspaceModule,
   TransactionReviewWorkspaceModule,
 } from "../index.js";
 
@@ -86,18 +85,6 @@ const modules = [
       "property",
     priority:
       30,
-  },
-  {
-    workspaceModule:
-      SchedulingWorkspaceModule,
-    moduleIdentity:
-      "scheduling",
-    displayName:
-      "Scheduling",
-    category:
-      "scheduling",
-    priority:
-      35,
   },
   {
     workspaceModule:
@@ -192,7 +179,6 @@ describe("production workspace modules", () => {
       10,
       20,
       30,
-      35,
       40,
     ]);
 
