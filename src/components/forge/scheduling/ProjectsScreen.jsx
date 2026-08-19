@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { PROJECT_TEMPLATES } from "./schedulingBoardState";
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
 const timestampFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
@@ -27,6 +28,7 @@ export default function ProjectsScreen() {
   const [projects, setProjects] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [templateId, setTemplateId] = useState(PROJECT_TEMPLATES[0].id);
 
   async function refresh() {
     setProjects(await fetchProjects());
@@ -39,7 +41,9 @@ export default function ProjectsScreen() {
   async function handleCreateProject() {
     setCreating(true);
     try {
-      const response = await fetch("/api/forge/scheduling", { method: "POST" });
+      const response = await fetch("/api/forge/scheduling", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ templateId }),
+      });
       if (!response.ok) { window.alert("Unable to create a new project."); return; }
       const body = await response.json();
       router.push(`/forge/scheduling/${body.id}`);
@@ -57,12 +61,20 @@ export default function ProjectsScreen() {
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-scheduling-projects>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Scheduling</p>
-          <h1 className="mt-2 text-2xl font-black">Projects</h1>
-          <p className="mt-2 text-sm text-slate-600">Every saved Gantt Chart. Open one to keep working, or start a new one.</p>
-        </div>
+      <div>
+        <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Scheduling</p>
+        <h1 className="mt-2 text-2xl font-black">Projects</h1>
+        <p className="mt-2 text-sm text-slate-600">Every saved Gantt Chart. Open one to keep working, or start a new one.</p>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+          Template
+          <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} title={PROJECT_TEMPLATES.find((t) => t.id === templateId)?.description}
+            className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold text-slate-950">
+            {PROJECT_TEMPLATES.map((template) => (<option key={template.id} value={template.id}>{template.name}</option>))}
+          </select>
+        </label>
         <button type="button" onClick={handleCreateProject} disabled={creating}
           className="shrink-0 rounded-xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-50">+ New Project</button>
       </div>

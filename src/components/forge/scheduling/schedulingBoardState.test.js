@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  BASE_BLOCK_FONT_SIZE_PX, CALENDAR_PRESETS, HISTORY_LIMIT, MIN_BLOCK_FONT_SIZE_PX,
+  BASE_BLOCK_FONT_SIZE_PX, CALENDAR_PRESETS, HISTORY_LIMIT, MIN_BLOCK_FONT_SIZE_PX, PROJECT_TEMPLATES,
   addBlock, addBlackoutWindow, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
   blockAnchorPoint, blockToChip, calendarById, calendarForLane, chipsByCategory, computeWeeks,
   criticalPath, dataDateOffset, deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints,
   deserializeBoardState, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, hydrateBoardState,
   linkBlocksInOrder, moveBlock, moveBlocksBy, nonWorkingDayRuns, occupiedWeekIndices, projectSummaryFromBoard,
-  recordHistory, redoHistory, removeBlackoutWindow, removeBlock, removeCalendar, removeDependency, renameBlock,
-  renameLane, resizeBlock, resizeBlockFromStart, serializeBoardState, setBlockTextStyle, setDefaultCalendar,
-  setLaneCalendar, setProjectDates, suggestPredecessors, suggestSuccessors, todayISO, undoHistory, visibleWeekIndices,
+  projectTemplateById, recordHistory, redoHistory, removeBlackoutWindow, removeBlock, removeCalendar,
+  removeDependency, renameBlock, renameLane, resetBoard, resizeBlock, resizeBlockFromStart, serializeBoardState,
+  setBlockTextStyle, setDefaultCalendar, setLaneCalendar, setProjectDates, suggestPredecessors, suggestSuccessors,
+  todayISO, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -38,6 +39,72 @@ describe("defaultBoardState", () => {
   });
   it("uses the given id instead of generating one", () => {
     expect(defaultBoardState("schedule_project_fixed").id).toBe("schedule_project_fixed");
+  });
+  it("defaults to the capital template for backward compatibility with callers that predate templates", () => {
+    const state = defaultBoardState();
+    expect(state.templateId).toBe("capital");
+    expect(state.lanes.map((l) => l.name)).toContain("Governance");
+    expect(state.categoryNames.gov).toBe("Project Governance");
+  });
+  it("seeds lanes, categoryNames, and starterChips from the requested template", () => {
+    const state = defaultBoardState(undefined, "home_remodel");
+    expect(state.templateId).toBe("home_remodel");
+    expect(state.lanes.map((l) => l.name)).toContain("Demolition");
+    expect(state.categoryNames.gov).toBe("Planning & Permitting");
+    expect(state.starterChips.some((c) => c.label === "Punch List")).toBe(true);
+  });
+  it("falls back to the catalog's first template for an unknown templateId", () => {
+    const state = defaultBoardState(undefined, "not-a-real-template");
+    expect(state.templateId).toBe(PROJECT_TEMPLATES[0].id);
+  });
+});
+
+describe("PROJECT_TEMPLATES / projectTemplateById", () => {
+  it("gives every template a unique id, a name, a description, at least one lane, and at least one chip per category", () => {
+    const ids = new Set();
+    for (const template of PROJECT_TEMPLATES) {
+      expect(ids.has(template.id)).toBe(false);
+      ids.add(template.id);
+      expect(template.name.length).toBeGreaterThan(0);
+      expect(template.description.length).toBeGreaterThan(0);
+      expect(template.lanes.length).toBeGreaterThan(0);
+      expect(Object.keys(template.categoryNames)).toEqual(["gov", "eng", "proc", "field", "shut"]);
+      for (const category of Object.keys(template.categoryNames)) {
+        expect(template.chips.some((chip) => chip.category === category)).toBe(true);
+      }
+    }
+  });
+  it("includes the four requested project types", () => {
+    const ids = PROJECT_TEMPLATES.map((t) => t.id);
+    expect(ids).toEqual(expect.arrayContaining(["standard", "capital", "home_remodel", "home_construction", "commercial_construction"]));
+  });
+  it("looks up a template by id", () => {
+    expect(projectTemplateById("home_construction").name).toBe("New Home Construction");
+  });
+  it("falls back to the first template for an unknown id", () => {
+    expect(projectTemplateById("nope")).toBe(PROJECT_TEMPLATES[0]);
+  });
+});
+
+describe("resetBoard", () => {
+  it("clears blocks, dependencies, and custom chips, and reverts lanes to the board's own template", () => {
+    let state = defaultBoardState(undefined, "home_remodel");
+    state = addBlock(state, CHIP, 0, 0);
+    state = addCustomChip(state, { label: "Custom Step", category: "field", durationWeeks: 1, milestone: false });
+    state = renameLane(state, state.lanes[0].id, "Renamed Lane");
+    const reset = resetBoard(state);
+    expect(reset.blocks).toHaveLength(0);
+    expect(reset.customChips).toHaveLength(0);
+    expect(reset.lanes.map((l) => l.name)).not.toContain("Renamed Lane");
+    expect(reset.lanes.map((l) => l.name)).toContain("Demolition"); // back to the home_remodel template, not capital
+  });
+  it("preserves the project's own id, name, dates, and calendar setup", () => {
+    let state = defaultBoardState("schedule_project_keep_me", "capital");
+    state = { ...state, projectName: "My Renovation", defaultCalendarId: "cal_7_10s" };
+    const reset = resetBoard(state);
+    expect(reset.id).toBe("schedule_project_keep_me");
+    expect(reset.projectName).toBe("My Renovation");
+    expect(reset.defaultCalendarId).toBe("cal_7_10s");
   });
 });
 
@@ -205,6 +272,12 @@ describe("addCustomChip", () => {
   it("rejects an unknown category", () => {
     const state = addCustomChip(defaultBoardState(), { label: "Bad", category: "nope", durationWeeks: 1, milestone: false });
     expect(state.customChips).toHaveLength(0);
+  });
+  it("accepts any of the 5 fixed category slots regardless of this board's own categoryNames labels", () => {
+    // "proc" reads as "Materials & Procurement" on a home_remodel board, not "Procurement" --
+    // the slot itself is still valid even though the display name differs from the default.
+    const state = addCustomChip(defaultBoardState(undefined, "home_remodel"), { label: "Extra Materials", category: "proc", durationWeeks: 1, milestone: false });
+    expect(state.customChips).toHaveLength(1);
   });
 });
 

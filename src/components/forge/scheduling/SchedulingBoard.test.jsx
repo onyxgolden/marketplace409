@@ -177,4 +177,13 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain("data-scheduling-data-date-line");
     expect(markup).toMatch(/left:\s?0(px|["'])/); // day-offset 0 of week 0 -- the board's own start date
   });
+
+  it("labels the starter-object palette with the board's own template category names, not a fixed global set", () => {
+    // A bare <SchedulingBoard /> (no projectId, no template fetched) still falls back to the
+    // capital template's names via defaultBoardState's own default -- this just confirms the
+    // palette reads board.categoryNames rather than an import that can't vary per project.
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain("Project Governance");
+    expect(markup).toContain("Project Engineering");
+  });
 });

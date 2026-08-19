@@ -73,8 +73,8 @@ export const HELP_SECTIONS = Object.freeze([
     items: [
       { label: "Apply dates", description: "Changes the project's overall start/end date range." },
       { label: "Export / Import JSON", description: "Save the current project to a file, or load one back in." },
-      { label: "Reset board", description: "Clears everything -- undoable if you didn't mean to." },
-      { label: "Menu -> All Projects", description: "Back to the list of saved projects." },
+      { label: "Reset board", description: "Clears placed blocks, dependencies, and custom chips, and reverts lanes to this project's own template -- undoable if you didn't mean to. Keeps the project's name, dates, and calendar setup as they were." },
+      { label: "Menu -> All Projects", description: "Back to the list of saved projects. A template (Standard, Capital/Industrial, Home Remodel, New Home Construction, or Commercial) is picked there when starting a new one -- it sets the starting lanes, category labels, and starter chip palette." },
       { label: "Menu -> Calendars", description: "Build custom work calendars (which days of the week are worked) and set the project's default. Also where TA blackout windows are added -- date ranges no lane works, grayed out across the whole board regardless of calendar." },
     ],
   },

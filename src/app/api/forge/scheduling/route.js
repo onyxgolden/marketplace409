@@ -29,11 +29,16 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(request) {
   try {
     const authenticated = await authenticatedContext();
     if (authenticated.response) return authenticated.response;
-    const board = defaultBoardState();
+    const body = await request.json().catch(() => ({}));
+    // A bogus templateId falls back to the catalog's first template (see
+    // projectTemplateById); an absent one falls back to defaultBoardState's own default
+    // ("capital", for compatibility with callers that predate templates) -- either way,
+    // never an error, just some reasonable starter content.
+    const board = defaultBoardState(undefined, body.templateId);
     const record = {
       owner_id: authenticated.user.id, id: board.id, project_name: board.projectName,
       start_date: board.startDate, end_date: board.endDate, board,

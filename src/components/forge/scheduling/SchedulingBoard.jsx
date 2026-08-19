@@ -4,14 +4,14 @@ import Link from "next/link";
 import SchedulingHelpModal from "./SchedulingHelpModal";
 import SchedulingCalendarsModal from "./SchedulingCalendarsModal";
 import {
-  CATEGORY_NAMES, LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
+  LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
   addBlackoutWindow, addBlock, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
   blockToChip, calendarById, calendarForLane, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, criticalPath, dataDateOffset, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
   deleteLane, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock,
   moveBlocksBy, nonWorkingDayRuns, pixelToIndex, recordHistory, redoHistory, removeBlackoutWindow,
-  removeBlock, removeCalendar, removeDependency, renameBlock, renameLane, resizeBlock, resizeBlockFromStart,
+  removeBlock, removeCalendar, removeDependency, renameBlock, renameLane, resetBoard, resizeBlock, resizeBlockFromStart,
   serializeBoardState, setBlockTextStyle, setDefaultCalendar, setLaneCalendar, setProjectDates, suggestPredecessors,
   suggestSuccessors, todayISO, undoHistory, visibleWeekIndices,
 } from "./schedulingBoardState";
@@ -575,7 +575,7 @@ export default function SchedulingBoard({ projectId }) {
   }
   function handleReset() {
     if (window.confirm("Reset the board? This clears all placed blocks, lanes, and custom chips.")) {
-      commitBoard(defaultBoardState());
+      commitBoard(resetBoard(board));
     }
   }
 
@@ -661,11 +661,11 @@ export default function SchedulingBoard({ projectId }) {
               {paletteCollapsed ? "Show" : "Hide"}
             </button>
           </div>
-          {!paletteCollapsed && Object.keys(CATEGORY_NAMES).map((category) => (
+          {!paletteCollapsed && Object.keys(board.categoryNames).map((category) => (
             <details key={category} open className="mb-1.5 overflow-hidden rounded-lg">
               <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg bg-slate-200 px-2.5 py-2 text-xs font-bold">
                 <span className="inline-block h-2.5 w-2.5 rotate-45 rounded-sm" style={{ background: colorForCategory(category) }} />
-                {CATEGORY_NAMES[category]}
+                {board.categoryNames[category]}
               </summary>
               <div className="flex flex-col gap-1.5 bg-slate-100 p-2">
                 {groupedChips[category].map((chip) => (
@@ -690,7 +690,7 @@ export default function SchedulingBoard({ projectId }) {
             <div className="flex items-center gap-1.5">
               <select value={customChipDraft.category} onChange={(e) => setCustomChipDraft((c) => ({ ...c, category: e.target.value }))}
                 className="rounded border border-slate-300 px-2 py-1.5 text-xs">
-                {Object.entries(CATEGORY_NAMES).map(([key, name]) => <option key={key} value={key}>{name}</option>)}
+                {Object.entries(board.categoryNames).map(([key, name]) => <option key={key} value={key}>{name}</option>)}
               </select>
               <input type="number" min={0} max={52} value={customChipDraft.durationWeeks} title="Default duration (weeks)"
                 onChange={(e) => setCustomChipDraft((c) => ({ ...c, durationWeeks: Number(e.target.value) }))}

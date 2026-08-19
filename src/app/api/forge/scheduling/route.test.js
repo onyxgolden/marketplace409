@@ -13,6 +13,11 @@ function insertQuery(row) {
   const query = { insert: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), single };
   return { client: { from: vi.fn(() => query) }, query };
 }
+function postRequest(body) {
+  return new Request("https://test/api/forge/scheduling", {
+    method: "POST", headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
 
 describe("GET /api/forge/scheduling", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -43,12 +48,24 @@ describe("GET /api/forge/scheduling", () => {
 describe("POST /api/forge/scheduling", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("creates a new project owned by the caller and returns its id", async () => {
+  it("creates a new project owned by the caller and returns its id, defaulting to the capital template with no body", async () => {
     const db = insertQuery({ id: "schedule_project_new" });
     createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
-    const response = await POST();
+    const response = await POST(postRequest(undefined));
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ success: true, id: "schedule_project_new" });
     expect(db.query.insert).toHaveBeenCalledWith(expect.objectContaining({ owner_id: "user_1", project_name: "New Project" }));
+    const savedBoard = db.query.insert.mock.calls[0][0].board;
+    expect(savedBoard.templateId).toBe("capital");
+  });
+
+  it("seeds the requested template's lanes and starter chips", async () => {
+    const db = insertQuery({ id: "schedule_project_new" });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    const response = await POST(postRequest({ templateId: "home_remodel" }));
+    expect(response.status).toBe(200);
+    const savedBoard = db.query.insert.mock.calls[0][0].board;
+    expect(savedBoard.templateId).toBe("home_remodel");
+    expect(savedBoard.lanes.map((l) => l.name)).toContain("Demolition");
   });
 });

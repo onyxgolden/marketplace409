@@ -59,6 +59,216 @@ export const DEFAULT_LANES = Object.freeze([
   { id: "lane_shut", name: "Shutdown & Startup" },
 ].map((lane) => Object.freeze({ ...lane })));
 
+// Every template reuses the same 5 category slots (fixed colors, see CATEGORY_COLORS) with
+// different display names and lane sets appropriate to that kind of project -- e.g. "proc"
+// means long-lead equipment procurement for a capital project, but land/lot purchasing for
+// a new-build home. This keeps all the existing category-keyed rendering (palette grouping,
+// block colors, the custom-chip category dropdown) working unchanged across templates; only
+// the labels and starter content differ, both carried on the board itself once created (see
+// defaultBoardState) so a project stays self-contained even if this registry changes later.
+function lanes(...names) {
+  return Object.freeze(names.map((name, i) => Object.freeze({ id: `lane_${i}`, name })));
+}
+function chip(label, category, durationWeeks, milestone = false) {
+  return Object.freeze({ label, category, durationWeeks: milestone ? 0 : durationWeeks, milestone });
+}
+
+export const PROJECT_TEMPLATES = Object.freeze([
+  Object.freeze({
+    id: "standard", name: "Standard Project",
+    description: "A domain-neutral starting point -- planning, design, procurement, execution, and closeout -- for anything the other templates don't fit.",
+    categoryNames: Object.freeze({
+      gov: "Planning & Approvals", eng: "Design & Engineering", proc: "Procurement", field: "Execution", shut: "Closeout",
+    }),
+    lanes: lanes("Milestones", "Planning & Approvals", "Design & Engineering", "Procurement", "Execution", "Execution (cont.)", "Closeout"),
+    chips: Object.freeze([
+      chip("Project Kickoff", "gov", 0, true),
+      chip("Charter / Scope Approval", "gov", 1),
+      chip("Stakeholder Review", "gov", 1),
+      chip("Funding / Budget Approval", "gov", 0, true),
+      chip("Change Management Review", "gov", 1),
+      chip("Requirements Gathering", "eng", 2),
+      chip("Conceptual Design", "eng", 3),
+      chip("Detailed Design", "eng", 4),
+      chip("Design Review", "eng", 1),
+      chip("Design Approval", "eng", 0, true),
+      chip("RFQ Issued", "proc", 0, true),
+      chip("Bid Evaluation", "proc", 2),
+      chip("PO Issued", "proc", 0, true),
+      chip("Vendor / Material Lead Time", "proc", 4),
+      chip("Delivery Received", "proc", 0, true),
+      chip("Mobilization", "field", 0, true),
+      chip("Phase 1 Execution", "field", 3),
+      chip("Phase 2 Execution", "field", 3),
+      chip("Installation / Build", "field", 4),
+      chip("Testing", "field", 2),
+      chip("Quality Inspection", "field", 1),
+      chip("Progress Review", "field", 1),
+      chip("Punch List", "shut", 1),
+      chip("Final Inspection", "shut", 0, true),
+      chip("Documentation Handover", "shut", 1),
+      chip("Client / Stakeholder Sign-off", "shut", 0, true),
+      chip("Project Closeout", "shut", 0, true),
+    ]),
+  }),
+  Object.freeze({
+    id: "capital", name: "Capital / Industrial Project",
+    description: "Turnarounds, plant outages, and capital projects -- governance, engineering, procurement, field execution, shutdown/startup.",
+    categoryNames: CATEGORY_NAMES,
+    lanes: DEFAULT_LANES,
+    chips: DEFAULT_CHIPS,
+  }),
+  Object.freeze({
+    id: "home_remodel", name: "Home Remodel",
+    description: "Planning and permitting through demo, rough-in, finishes, and closeout for a residential remodel.",
+    categoryNames: Object.freeze({
+      gov: "Planning & Permitting", eng: "Design", proc: "Materials & Procurement", field: "Construction", shut: "Closeout",
+    }),
+    lanes: lanes("Milestones", "Planning & Permitting", "Design", "Demolition", "Rough-In", "Finishes", "Closeout"),
+    chips: Object.freeze([
+      chip("Design / Scope Finalized", "gov", 0, true),
+      chip("Contractor Selected", "gov", 0, true),
+      chip("Permit Application Submitted", "gov", 1),
+      chip("Permit Approved", "gov", 0, true),
+      chip("Material Selections Finalized", "gov", 1),
+      chip("Measure & Design", "eng", 2),
+      chip("Structural Engineering Review", "eng", 1),
+      chip("Plan Revisions", "eng", 1),
+      chip("Cabinet Order", "proc", 1),
+      chip("Countertop Template & Order", "proc", 1),
+      chip("Fixture & Appliance Selection", "proc", 1),
+      chip("Flooring Material Order", "proc", 1),
+      chip("Site Protection Setup", "field", 1),
+      chip("Demolition", "field", 1),
+      chip("Framing Modifications", "field", 1),
+      chip("Rough Plumbing", "field", 1),
+      chip("Rough Electrical", "field", 1),
+      chip("Rough HVAC", "field", 1),
+      chip("Rough-In Inspection", "field", 0, true),
+      chip("Insulation", "field", 1),
+      chip("Drywall Hang", "field", 1),
+      chip("Drywall Finish", "field", 1),
+      chip("Interior Paint", "field", 1),
+      chip("Flooring Install", "field", 1),
+      chip("Cabinet Install", "field", 1),
+      chip("Countertop Install", "field", 1),
+      chip("Trim & Millwork", "field", 1),
+      chip("Tile Work", "field", 1),
+      chip("Fixture Install", "field", 1),
+      chip("Appliance Install", "field", 1),
+      chip("Final Cleaning", "shut", 1),
+      chip("Punch List", "shut", 1),
+      chip("Final Inspection", "shut", 0, true),
+      chip("Owner Walkthrough", "shut", 0, true),
+    ]),
+  }),
+  Object.freeze({
+    id: "home_construction", name: "New Home Construction",
+    description: "Lot purchase and house plans through site work, foundation, framing, MEP, finishes, and closeout for a from-scratch build.",
+    categoryNames: Object.freeze({
+      gov: "Land & Permitting", eng: "Design & Engineering", proc: "Procurement", field: "Construction", shut: "Closeout",
+    }),
+    lanes: lanes("Milestones", "Land & Permitting", "Design & Engineering", "Site Work", "Foundation",
+      "Framing & Shell", "Rough-In (MEP)", "Interior & Exterior Finishes", "Closeout"),
+    chips: Object.freeze([
+      chip("Lot / Land Search", "gov", 2),
+      chip("Land Purchase Contract", "gov", 1),
+      chip("Land Closing", "gov", 0, true),
+      chip("Building Permit Submitted", "gov", 1),
+      chip("Building Permit Approved", "gov", 0, true),
+      chip("Architectural Plans", "eng", 3),
+      chip("Structural Engineering", "eng", 2),
+      chip("Civil / Site Engineering", "eng", 2),
+      chip("Plan Review & Revisions", "eng", 1),
+      chip("Lumber Package Order", "proc", 1),
+      chip("Windows & Doors Order", "proc", 1),
+      chip("Cabinet & Countertop Order", "proc", 1),
+      chip("Appliance Order", "proc", 1),
+      chip("Site Clearing & Grading", "field", 1),
+      chip("Utility Installation", "field", 1),
+      chip("Footings", "field", 1),
+      chip("Foundation Walls / Slab", "field", 1),
+      chip("Foundation Inspection", "field", 0, true),
+      chip("Framing", "field", 3),
+      chip("Roof Trusses & Sheathing", "field", 1),
+      chip("Roofing", "field", 1),
+      chip("Windows & Exterior Doors", "field", 1),
+      chip("Dry-In", "field", 0, true),
+      chip("Rough Plumbing", "field", 1),
+      chip("Rough Electrical", "field", 1),
+      chip("Rough HVAC", "field", 1),
+      chip("Rough-In Inspection", "field", 0, true),
+      chip("Insulation", "field", 1),
+      chip("Drywall", "field", 2),
+      chip("Siding / Exterior Finish", "field", 2),
+      chip("Interior Paint", "field", 1),
+      chip("Flooring", "field", 1),
+      chip("Cabinets & Countertops", "field", 1),
+      chip("Trim & Interior Doors", "field", 1),
+      chip("Fixtures & Appliances", "field", 1),
+      chip("Driveway & Landscaping", "field", 1),
+      chip("Final Grade", "shut", 1),
+      chip("Final Inspection", "shut", 0, true),
+      chip("Certificate of Occupancy", "shut", 0, true),
+      chip("Closing / Owner Walkthrough", "shut", 0, true),
+    ]),
+  }),
+  Object.freeze({
+    id: "commercial_construction", name: "Commercial Building / Property",
+    description: "Entitlements and design through site work, structural shell, MEP, build-out, and life-safety closeout for a commercial property.",
+    categoryNames: Object.freeze({
+      gov: "Entitlements & Design", eng: "Structural & Engineering", proc: "Procurement", field: "Construction", shut: "Life Safety & Closeout",
+    }),
+    lanes: lanes("Milestones", "Entitlements & Design", "Site Work", "Structural & Shell",
+      "MEP Systems", "Interior Build-Out", "Life Safety & Commissioning", "Closeout"),
+    chips: Object.freeze([
+      chip("Site Selection", "gov", 2),
+      chip("Zoning / Entitlement Approval", "gov", 0, true),
+      chip("Architectural Design", "gov", 4),
+      chip("Permit Submission", "gov", 1),
+      chip("Permit Approval", "gov", 0, true),
+      chip("Structural Engineering", "eng", 3),
+      chip("Civil Engineering", "eng", 2),
+      chip("MEP Engineering Design", "eng", 2),
+      chip("Value Engineering Review", "eng", 1),
+      chip("Structural Steel Order", "proc", 1),
+      chip("Curtain Wall / Facade Package", "proc", 1),
+      chip("MEP Equipment Order", "proc", 1),
+      chip("Elevator Order", "proc", 1),
+      chip("Site Clearing & Grading", "field", 1),
+      chip("Utility Installation", "field", 1),
+      chip("Paving & Parking Lot", "field", 1),
+      chip("Stormwater Management", "field", 1),
+      chip("Foundation", "field", 2),
+      chip("Structural Steel / Concrete Frame", "field", 4),
+      chip("Roofing", "field", 2),
+      chip("Building Envelope / Facade", "field", 3),
+      chip("Weathertight", "field", 0, true),
+      chip("Mechanical (HVAC) Rough-In", "field", 2),
+      chip("Electrical Rough-In", "field", 2),
+      chip("Plumbing Rough-In", "field", 2),
+      chip("Fire Sprinkler Rough-In", "field", 1),
+      chip("Interior Framing", "field", 2),
+      chip("Drywall & Ceilings", "field", 2),
+      chip("Flooring", "field", 1),
+      chip("Paint & Finishes", "field", 1),
+      chip("Tenant Improvements", "field", 2),
+      chip("Fire Alarm System", "shut", 1),
+      chip("Fire Sprinkler Final", "shut", 1),
+      chip("Elevator Install & Inspection", "shut", 1),
+      chip("Life Safety Inspection", "shut", 0, true),
+      chip("Final Inspections", "shut", 1),
+      chip("Certificate of Occupancy", "shut", 0, true),
+      chip("Substantial Completion", "shut", 0, true),
+      chip("Tenant Move-In / Turnover", "shut", 0, true),
+    ]),
+  }),
+]);
+
+export function projectTemplateById(templateId) {
+  return PROJECT_TEMPLATES.find((template) => template.id === templateId) || PROJECT_TEMPLATES[0];
+}
+
 // Presets seed every new board's calendar list; the builder UI lets a project add more
 // (or delete these) from there, they're just a starting point, not a fixed enum. Working
 // days are stored as JS Date.getDay() values (0=Sun..6=Sat), not week-column offsets, so
@@ -121,16 +331,24 @@ export function generateProjectId() {
 }
 
 // `id` is a param (not always freshly generated) so deserializeBoardState can rebuild a
-// saved project's exact defaults rather than handing it a new random identity.
-export function defaultBoardState(id = generateProjectId()) {
+// saved project's exact defaults rather than handing it a new random identity. `templateId`
+// only matters at creation time -- lanes, starterChips, and categoryNames are copied onto
+// the board itself here, not looked up by templateId on every read, so a project stays
+// exactly as it started even if PROJECT_TEMPLATES changes later (a later edit to a template
+// is a change to the catalog, not a retroactive edit to every project built from it).
+export function defaultBoardState(id = generateProjectId(), templateId = "capital") {
   const now = new Date().toISOString();
+  const template = projectTemplateById(templateId);
   return Object.freeze({
     id,
     projectName: "New Project",
+    templateId: template.id,
     startDate: todayISO(0),
     endDate: todayISO(364),
     weekWidth: 90,
-    lanes: DEFAULT_LANES,
+    lanes: template.lanes,
+    categoryNames: template.categoryNames,
+    starterChips: template.chips,
     blocks: Object.freeze([]),
     dependencies: Object.freeze([]),
     customChips: Object.freeze([]),
@@ -141,6 +359,26 @@ export function defaultBoardState(id = generateProjectId()) {
     nextTaskNumber: FIRST_TASK_NUMBER,
     createdAt: now,
     updatedAt: now,
+  });
+}
+
+// "Reset board" clears placed content and reverts lanes to this board's own template's
+// starting set -- but keeps the project's own identity (id, name, dates) and its calendar/
+// blackout setup, neither of which a content reset is meant to touch. Deliberately not just
+// defaultBoardState(state.id) again: that would also mint a fresh random templateId-less
+// board, discarding categoryNames/starterChips/calendars, and (worse) if called with no id
+// override at all would silently swap in a brand new id, breaking every future autosave for
+// this project since the URL/API calls still target the original one.
+export function resetBoard(state) {
+  const template = projectTemplateById(state.templateId);
+  return Object.freeze({
+    ...state,
+    lanes: template.lanes,
+    blocks: Object.freeze([]),
+    dependencies: Object.freeze([]),
+    customChips: Object.freeze([]),
+    nextId: 1,
+    nextTaskNumber: FIRST_TASK_NUMBER,
   });
 }
 
@@ -215,13 +453,13 @@ export function fitWeekWidthPx(availableWidthPx, columnCount, minWeekPx = 1) {
 }
 
 function allChips(state) {
-  return [...DEFAULT_CHIPS, ...state.customChips];
+  return [...(state.starterChips || DEFAULT_CHIPS), ...state.customChips];
 }
 export function chipsByCategory(state) {
   const grouped = {};
-  for (const category of Object.keys(CATEGORY_NAMES)) grouped[category] = [];
-  for (const chip of allChips(state)) {
-    if (grouped[chip.category]) grouped[chip.category].push(chip);
+  for (const category of Object.keys(state.categoryNames || CATEGORY_NAMES)) grouped[category] = [];
+  for (const item of allChips(state)) {
+    if (grouped[item.category]) grouped[item.category].push(item);
   }
   return grouped;
 }
@@ -487,7 +725,11 @@ export function dataDateOffset(startDate, endDate, todayIso = todayISO()) {
 
 export function addCustomChip(state, { label, category, durationWeeks, milestone }) {
   const trimmed = label?.trim();
-  if (!trimmed || !CATEGORY_NAMES[category]) return state;
+  // Validated against the fixed 5 category slots (CATEGORY_COLORS), not this board's own
+  // categoryNames -- the slots themselves are permanent across every template, only their
+  // display names vary, and a board without categoryNames yet (an older save) should still
+  // accept a chip in any of the 5 slots.
+  if (!trimmed || !CATEGORY_COLORS[category]) return state;
   const chip = Object.freeze({
     label: trimmed, category, milestone: !!milestone,
     durationWeeks: milestone ? 0 : Math.max(1, durationWeeks || 1),
