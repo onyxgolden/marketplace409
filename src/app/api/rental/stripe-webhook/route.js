@@ -6,13 +6,31 @@ import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookCli
 
 export const runtime = "nodejs";
 
+function configuredWebhookSecrets(env = process.env) {
+  return [env.STRIPE_CONNECT_WEBHOOK_SECRET, env.STRIPE_WEBHOOK_SECRET_PLATFORM]
+    .filter((secret) => typeof secret === "string" && secret.trim() !== "");
+}
+
+function verifyStripeWebhookEvent(provider, rawBody, signature, secrets) {
+  if (secrets.length === 0) throw new Error("No Stripe webhook secret is configured.");
+  let lastError;
+  for (const secret of secrets) {
+    try {
+      return provider.constructWebhookEvent(rawBody, signature, secret);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 export async function POST(request) {
   const rawBody = await request.text();
   const signature = request.headers.get("stripe-signature");
   if (!signature) return NextResponse.json({ error: "Missing Stripe signature." }, { status: 400 });
   try {
     const provider = createStripeBillingProvider();
-    const event = provider.constructWebhookEvent(rawBody, signature, process.env.STRIPE_CONNECT_WEBHOOK_SECRET);
+    const event = verifyStripeWebhookEvent(provider, rawBody, signature, configuredWebhookSecrets());
     const normalized = normalizeStripeConnectEvent(event);
     const payloadHash = createHash("sha256").update(rawBody).digest("hex");
     const supabase = createRentalWebhookClient();

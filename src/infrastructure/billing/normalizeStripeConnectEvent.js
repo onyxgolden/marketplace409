@@ -7,15 +7,28 @@ const SUPPORTED_EVENTS = new Set([
   "payment_method.automatically_updated", "account.updated", "person.updated",
 ]);
 
+const PLATFORM_PAYMENT_INTENT_EVENTS = new Set([
+  "payment_intent.processing", "payment_intent.succeeded", "payment_intent.payment_failed",
+]);
+
 function required(value, name) {
   if (typeof value !== "string" || value.trim() === "") throw new Error(`Stripe Connect event requires ${name}.`);
   return value.trim();
 }
 
+function resolveConnectedAccountId(event, type, object) {
+  if (typeof event?.account === "string" && event.account.trim() !== "") return event.account.trim();
+  const destination = object?.transfer_data?.destination;
+  if (PLATFORM_PAYMENT_INTENT_EVENTS.has(type) && typeof destination === "string" && destination.trim() !== "") {
+    return destination.trim();
+  }
+  return required(undefined, "a connected account id");
+}
+
 export function normalizeStripeConnectEvent(event) {
   const type = required(event?.type, "an event type");
-  const connectedAccountId = required(event?.account, "a connected account id");
   const object = event?.data?.object;
+  const connectedAccountId = resolveConnectedAccountId(event, type, object);
   return Object.freeze({
     providerEventId: required(event?.id, "an event id"),
     connectedAccountId,
