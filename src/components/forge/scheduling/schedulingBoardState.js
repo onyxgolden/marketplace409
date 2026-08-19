@@ -355,6 +355,12 @@ export function defaultBoardState(id = generateProjectId(), templateId = "capita
     calendars: CALENDAR_PRESETS,
     defaultCalendarId: "cal_5_10s",
     blackoutWindows: Object.freeze([]),
+    // Work Breakdown Structure -- a separate view of this same project (see WbsPage.jsx),
+    // for projects that track activities in an outline instead of (or alongside) the
+    // lane-based Gantt chart. Lives on the board so it persists through the same
+    // /api/forge/scheduling/[projectId] GET/PUT the Gantt view already uses -- no new
+    // storage or endpoint needed.
+    wbs: Object.freeze({ nodes: Object.freeze([]), activities: Object.freeze([]) }),
     nextId: 1,
     nextTaskNumber: FIRST_TASK_NUMBER,
     createdAt: now,

@@ -3,12 +3,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import SchedulingHelpModal from "./SchedulingHelpModal";
 import SchedulingCalendarsModal from "./SchedulingCalendarsModal";
+import { usePersistedBoard } from "./usePersistedBoard";
 import {
   LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
   addBlackoutWindow, addBlock, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
   blockToChip, calendarById, calendarForLane, chipsByCategory, clampIndex, colorForCategory,
-  computeWeeks, criticalPath, dataDateOffset, defaultBoardState, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
+  computeWeeks, criticalPath, dataDateOffset, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
   deleteLane, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock,
   moveBlocksBy, nonWorkingDayRuns, pixelToIndex, recordHistory, redoHistory, removeBlackoutWindow,
   removeBlock, removeCalendar, removeDependency, renameBlock, renameLane, resetBoard, resizeBlock, resizeBlockFromStart,
@@ -37,14 +38,7 @@ function formatWeek(iso) {
 }
 
 export default function SchedulingBoard({ projectId }) {
-  const [board, setBoard] = useState(() => defaultBoardState(projectId));
-  // True until the initial GET tells us otherwise -- the shared "Example project" (and
-  // anything else not owned by the current user) comes back with isOwner: false, at which
-  // point the save effect below stops writing entirely rather than repeatedly hitting the
-  // 404 the API returns for a save it would just have to reject anyway.
-  const [isOwner, setIsOwner] = useState(true);
-  const [loadError, setLoadError] = useState(null);
-  const [saveStatus, setSaveStatus] = useState("");
+  const { board, setBoard, isOwner, loadError, saveStatus } = usePersistedBoard(projectId);
   const [clipboardStatus, setClipboardStatus] = useState("");
   // Ordered, not a Set: Ctrl/Cmd+click appends to build up a chain, and "Link in order"
   // connects consecutive pairs in exactly this order (see handleLinkSelectedInOrder).
@@ -64,18 +58,7 @@ export default function SchedulingBoard({ projectId }) {
   const canvasRef = useRef(null);
   const boardScrollRef = useRef(null);
   const laneListRef = useRef(null);
-  const saveTimer = useRef(null);
   const clipboardRef = useRef(null);
-  // The exact board object last received from the placeholder default or a load -- not a
-  // one-shot "skip the next save" flag, because React (in Strict Mode) re-invokes an effect
-  // body a second time with unchanged deps purely to check it's idempotent, and a flag
-  // that's consumed on first invocation isn't: the second invocation would see it already
-  // cleared and (wrongly) proceed to save. Comparing board identity is safe under that
-  // replay -- it keeps comparing equal no matter how many times the effect body reruns,
-  // and only a genuine edit (a new object from commitBoard) ever changes the outcome. null
-  // means "nothing loaded yet", so the placeholder board never gets saved before the fetch
-  // resolves either.
-  const lastLoadedBoardRef = useRef(null);
   // Set by startMeasure's own mousemove handler, so the canvas's empty-click handler (which
   // otherwise clears any active measurement) can tell a genuine drag-to-measure gesture on
   // the canvas itself apart from a plain click -- a plain click never fires mousemove.
@@ -120,27 +103,7 @@ export default function SchedulingBoard({ projectId }) {
 
   useEffect(() => {
     setPaletteCollapsed(loadPaletteCollapsed());
-    let cancelled = false;
-    async function load() {
-      try {
-        const response = await fetch(`/api/forge/scheduling/${projectId}`);
-        if (cancelled) return;
-        if (!response.ok) {
-          setLoadError(response.status === 404 ? "Project not found." : "Unable to load this project.");
-          return;
-        }
-        const body = await response.json();
-        if (cancelled) return;
-        lastLoadedBoardRef.current = body.board;
-        setBoard(body.board);
-        setIsOwner(body.isOwner);
-      } catch {
-        if (!cancelled) setLoadError("Unable to load this project.");
-      }
-    }
-    load();
-    return () => { cancelled = true; };
-  }, [projectId]);
+  }, []);
 
   function togglePaletteCollapsed() {
     setPaletteCollapsed((current) => {
@@ -151,31 +114,6 @@ export default function SchedulingBoard({ projectId }) {
       return next;
     });
   }
-
-  useEffect(() => {
-    if (loadError) return;
-    // Nothing loaded yet (null) -- true before the very first fetch resolves, and matters:
-    // without this, a slow load could let the debounce timer fire on the placeholder default
-    // board first, overwriting real content with a blank one -- or this IS the load landing,
-    // not an edit.
-    if (!lastLoadedBoardRef.current || board === lastLoadedBoardRef.current) return;
-    if (!isOwner) return; // the shared example, or anything else not ours -- nothing to persist
-    setSaveStatus("Saving…");
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        const response = await fetch(`/api/forge/scheduling/${board.id}`, {
-          method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(board),
-        });
-        if (!response.ok) throw new Error("save failed");
-        setSaveStatus("Saved");
-        setTimeout(() => setSaveStatus((current) => (current === "Saved" ? "" : current)), 1800);
-      } catch {
-        setSaveStatus("Save failed");
-      }
-    }, 500);
-    return () => clearTimeout(saveTimer.current);
-  }, [board, isOwner, loadError]);
 
   const weeks = useMemo(() => computeWeeks(board.startDate, board.endDate), [board.startDate, board.endDate]);
   const groupedChips = useMemo(() => chipsByCategory(board), [board]);
@@ -644,6 +582,7 @@ export default function SchedulingBoard({ projectId }) {
           <summary className="cursor-pointer list-none rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">Menu</summary>
           <div className="absolute left-0 z-50 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 text-slate-950 shadow-xl">
             <Link href="/forge/scheduling" className="block rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">All Projects</Link>
+            <Link href={`/forge/scheduling/${projectId}/wbs`} className="block rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">WBS</Link>
             <button type="button" onClick={() => setShowCalendars(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Calendars</button>
           </div>
         </details>
