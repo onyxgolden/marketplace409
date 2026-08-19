@@ -37,7 +37,7 @@ function formatWeek(iso) {
   return `${Number(m)}/${Number(d)}/${y.slice(2)}`;
 }
 
-export default function SchedulingBoard({ projectId }) {
+export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   const { board, setBoard, isOwner, loadError, saveStatus } = usePersistedBoard(projectId);
   const [clipboardStatus, setClipboardStatus] = useState("");
   // Ordered, not a Set: Ctrl/Cmd+click appends to build up a chain, and "Link in order"
@@ -582,7 +582,9 @@ export default function SchedulingBoard({ projectId }) {
           <summary className="cursor-pointer list-none rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">Menu</summary>
           <div className="absolute left-0 z-50 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 text-slate-950 shadow-xl">
             <Link href="/forge/scheduling" className="block rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">All Projects</Link>
-            <Link href={`/forge/scheduling/${projectId}/wbs`} className="block rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">WBS</Link>
+            {wbsEnabled && (
+              <Link href={`/forge/scheduling/${projectId}/wbs`} className="block rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">WBS</Link>
+            )}
             <button type="button" onClick={() => setShowCalendars(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Calendars</button>
           </div>
         </details>

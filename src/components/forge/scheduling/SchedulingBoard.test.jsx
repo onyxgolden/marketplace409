@@ -114,10 +114,16 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain("All Projects");
   });
 
-  it("offers a WBS link under Menu, into this same project's WBS page", () => {
-    const markup = renderToStaticMarkup(<SchedulingBoard projectId="schedule_project_1" />);
+  it("offers a WBS link under Menu when explicitly enabled, into this same project's WBS page", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard projectId="schedule_project_1" wbsEnabled />);
     expect(markup).toContain('href="/forge/scheduling/schedule_project_1/wbs"');
     expect(markup).toContain(">WBS<");
+  });
+
+  it("hides the WBS link by default (held back from production until it's ready)", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard projectId="schedule_project_1" />);
+    expect(markup).not.toContain("/wbs");
+    expect(markup).not.toContain(">WBS<");
   });
 
   it("renders a help button but not the help modal until it's opened", () => {
