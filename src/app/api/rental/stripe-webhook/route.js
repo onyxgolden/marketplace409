@@ -64,7 +64,36 @@ export async function POST(request) {
         return NextResponse.json({ received: true, ignored: true });
       }
       let projection;
-      if(normalized.eventType==="charge.succeeded"&&normalized.paymentIntentId&&normalized.balanceTransactionId){const balance=await provider.retrieveBalanceTransaction({connectedAccountId:normalized.connectedAccountId},normalized.balanceTransactionId);projection=await supabase.rpc("record_stripe_rental_settlement",{p_provider_event_id:normalized.providerEventId,p_connected_account_id:normalized.connectedAccountId,p_payment_intent_id:normalized.paymentIntentId,p_balance_transaction_id:balance.id,p_gross_amount_cents:balance.grossAmountCents,p_fee_amount_cents:balance.feeAmountCents,p_net_amount_cents:balance.netAmountCents,p_currency_code:balance.currencyCode,p_status:balance.status,p_available_at:balance.availableAt});}
+      if (
+        (normalized.eventType === "charge.succeeded" || normalized.eventType === "charge.updated")
+        && normalized.objectId
+      ) {
+        const charge = await provider.retrieveCharge(
+          { connectedAccountId: normalized.connectedAccountId },
+          normalized.objectId,
+        );
+        const paymentIntentId = normalized.paymentIntentId || charge.paymentIntentId;
+        const balanceTransactionId = normalized.balanceTransactionId || charge.balanceTransactionId;
+        if (!paymentIntentId || !balanceTransactionId) {
+          throw new Error(`Stripe charge ${normalized.objectId} is not ready for settlement reconciliation.`);
+        }
+        const balance = await provider.retrieveBalanceTransaction(
+          { connectedAccountId: normalized.connectedAccountId },
+          balanceTransactionId,
+        );
+        projection = await supabase.rpc("record_stripe_rental_settlement", {
+          p_provider_event_id: normalized.providerEventId,
+          p_connected_account_id: normalized.connectedAccountId,
+          p_payment_intent_id: paymentIntentId,
+          p_balance_transaction_id: balance.id,
+          p_gross_amount_cents: balance.grossAmountCents,
+          p_fee_amount_cents: balance.feeAmountCents,
+          p_net_amount_cents: balance.netAmountCents,
+          p_currency_code: balance.currencyCode,
+          p_status: balance.status,
+          p_available_at: balance.availableAt,
+        });
+      }
       else if(normalized.eventType==="payout.paid"){const ids=await provider.listPayoutBalanceTransactionIds({connectedAccountId:normalized.connectedAccountId},normalized.objectId);projection=await supabase.rpc("mark_stripe_rental_settlements_paid_out",{p_provider_event_id:normalized.providerEventId,p_connected_account_id:normalized.connectedAccountId,p_payout_id:normalized.objectId,p_balance_transaction_ids:ids,p_paid_out_at:normalized.occurredAt});}
       else projection = normalized.eventType === "refund.updated" ? await supabase.rpc("process_stripe_rental_refund_event", {
         p_provider_event_id: normalized.providerEventId, p_connected_account_id: normalized.connectedAccountId,
