@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import RentalPaymentsPanel, { resolveScheduleContext } from "./RentalPaymentsPanel";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import RentalPaymentsPanel, { defaultChargeMonth, resolveScheduleContext } from "./RentalPaymentsPanel";
 
 const baseData = {
   openCharges: [], payments: [], settlements: [],
@@ -71,6 +74,28 @@ describe("resolveScheduleContext", () => {
   });
 });
 
+describe("defaultChargeMonth", () => {
+  it("defaults to the current month when the schedule was already effective before it", () => {
+    const schedule = { due_day: 1, effective_start_date: "2026-07-01" };
+    expect(defaultChargeMonth(schedule, new Date("2026-08-19T12:00:00Z"))).toBe("2026-08");
+  });
+
+  it("rolls forward to next month when the current month's due date falls before the schedule's effective start", () => {
+    const schedule = { due_day: 1, effective_start_date: "2026-08-19" };
+    expect(defaultChargeMonth(schedule, new Date("2026-08-19T12:00:00Z"))).toBe("2026-09");
+  });
+
+  it("rolls forward correctly across a year boundary", () => {
+    const schedule = { due_day: 1, effective_start_date: "2026-12-19" };
+    expect(defaultChargeMonth(schedule, new Date("2026-12-19T12:00:00Z"))).toBe("2027-01");
+  });
+
+  it("uses the current month when the schedule has no recorded effective start date", () => {
+    const schedule = { due_day: 1, effective_start_date: null };
+    expect(defaultChargeMonth(schedule, new Date("2026-08-19T12:00:00Z"))).toBe("2026-08");
+  });
+});
+
 describe("RentalPaymentsPanel charge-generation identity", () => {
   it("shows tenant, unit, and property for every charge-generation row, distinguishing identical-rent leases", () => {
     const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={baseData} initialAccount={null} initialShowSetup />);
@@ -93,5 +118,105 @@ describe("RentalPaymentsPanel charge-generation identity", () => {
     expect(markup).toContain("Unknown tenant");
     expect(markup).toContain("Unknown unit");
     expect(markup).toContain("Unknown property");
+  });
+});
+
+function findButtonByText(container, text) {
+  const button = Array.from(container.querySelectorAll("button")).find((candidate) => candidate.textContent === text);
+  if (!button) throw new Error(`No button found with text "${text}"`);
+  return button;
+}
+function findAllButtonsByText(container, text) {
+  return Array.from(container.querySelectorAll("button")).filter((candidate) => candidate.textContent === text);
+}
+function clickButton(button) {
+  act(() => { button.click(); });
+}
+async function clickButtonAndFlush(button) {
+  await act(async () => {
+    button.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+function mountPanel(ui) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => { root.render(ui); });
+  return { container, root };
+}
+function unmountPanel({ container, root }) {
+  act(() => { root.unmount(); });
+  container.remove();
+}
+
+describe("RentalPaymentsPanel Generate monthly charge interaction", () => {
+  let mounted;
+
+  afterEach(() => {
+    if (mounted) { unmountPanel(mounted); mounted = null; }
+    vi.unstubAllGlobals();
+  });
+
+  it("submits the correct schedule id for the clicked row, even when two leases share identical rent and due day", async () => {
+    const fetchMock = vi.fn((url, options) => {
+      if (options?.method === "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, charge: { id: "charge_1", period: "2026-08" } }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => baseData });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountPanel(<RentalPaymentsPanel initialData={baseData} initialAccount={{ status: "enabled", requirements_due: [] }} />);
+    const { container } = mounted;
+
+    clickButton(findButtonByText(container, "Billing setup"));
+
+    const generateButtons = findAllButtonsByText(container, "Generate monthly charge");
+    expect(generateButtons).toHaveLength(2);
+
+    await clickButtonAndFlush(generateButtons[1]);
+
+    const postCall = fetchMock.mock.calls.find(([, options]) => options?.method === "POST");
+    expect(postCall).toBeTruthy();
+    const body = JSON.parse(postCall[1].body);
+    expect(body).toMatchObject({ operation: "generate-charge", scheduleId: "schedule_2" });
+  });
+
+  it("reproduces and fixes the reported failure: a schedule activated today with due_day 1 must not default to today's month", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-19T12:00:00Z"));
+    try {
+      const freshlyActivatedData = {
+        ...baseData,
+        leases: [baseData.leases[0]],
+        units: [baseData.units[0]],
+        tenants: [baseData.tenants[0]],
+        leaseMemberships: [baseData.leaseMemberships[0]],
+        schedules: [{ id: "schedule_1", lease_id: "lease_1", amount_cents: 130000, due_day: 1, status: "active", effective_start_date: "2026-08-19" }],
+      };
+      const fetchMock = vi.fn((url, options) => {
+        if (options?.method === "POST") return Promise.resolve({ ok: true, json: async () => ({ success: true, charge: { id: "charge_1", period: "2026-09" } }) });
+        return Promise.resolve({ ok: true, json: async () => freshlyActivatedData });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      mounted = mountPanel(<RentalPaymentsPanel initialData={freshlyActivatedData} initialAccount={{ status: "enabled", requirements_due: [] }} />);
+      const { container } = mounted;
+      clickButton(findButtonByText(container, "Billing setup"));
+
+      const periodInput = container.querySelector('input[name="period"]');
+      expect(periodInput.value).toBe("2026-09");
+
+      await clickButtonAndFlush(findButtonByText(container, "Generate monthly charge"));
+
+      const postCall = fetchMock.mock.calls.find(([, options]) => options?.method === "POST");
+      const body = JSON.parse(postCall[1].body);
+      expect(body).toMatchObject({ operation: "generate-charge", scheduleId: "schedule_1", period: "2026-09" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
