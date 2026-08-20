@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { executeAutopayAttempt } from "@/application/rental/executeAutopayAttempt";
+import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
+import { reconcileMissingStripeSettlements } from "../settlement-reconciliation/route.js";
 
 export const runtime = "nodejs";
 
@@ -43,7 +45,8 @@ export async function GET(request) {
         console.error("Autopay sweep attempt failed", pair, attemptError);
       }
     }
-    return NextResponse.json({ success: true, candidates: pairs.length, succeeded, failed });
+    const settlements = await reconcileMissingStripeSettlements(db, createStripeBillingProvider());
+    return NextResponse.json({ success: true, candidates: pairs.length, succeeded, failed, settlements });
   } catch (error) {
     console.error("Autopay sweep cron error", error);
     return NextResponse.json({ error: "Unable to run autopay sweep." }, { status: 500 });
