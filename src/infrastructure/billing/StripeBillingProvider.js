@@ -92,7 +92,7 @@ export class StripeBillingProvider {
   }
 
   async retrievePaymentIntent(context, id) {
-    const intent = await this.stripe.paymentIntents.retrieve(required(id, "a payment intent id"),
+    const intent = await this.stripe.paymentIntents.retrieve(required(id, "a payment intent id"), {},
       { stripeAccount: required(context.connectedAccountId, "a connected account id") });
     return Object.freeze({ id: intent.id, clientSecret: intent.client_secret, status: intent.status });
   }

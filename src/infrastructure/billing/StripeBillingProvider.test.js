@@ -61,7 +61,7 @@ describe("StripeBillingProvider", () => {
   it("retrieves an existing PaymentIntent for resume without ever calling create", async () => {
     const { provider, stripeClient } = setup();
     const result = await provider.retrievePaymentIntent({ connectedAccountId: "acct_kent" }, "pi_existing");
-    expect(stripeClient.paymentIntents.retrieve).toHaveBeenCalledWith("pi_existing", { stripeAccount: "acct_kent" });
+    expect(stripeClient.paymentIntents.retrieve).toHaveBeenCalledWith("pi_existing", {}, { stripeAccount: "acct_kent" });
     expect(stripeClient.paymentIntents.create).not.toHaveBeenCalled();
     expect(result).toEqual({ id: "pi_rent", clientSecret: "pi_rent_secret_test", status: "requires_payment_method" });
   });
