@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
+import { finalizeCronRun, startCronRun } from "@/application/rental/cronAudit";
 
 export const runtime = "nodejs";
+
+const JOB_NAME = "settlement-reconciliation";
+const ROUTE_PATH = "/api/rental/cron/settlement-reconciliation";
 
 export async function reconcileMissingStripeSettlements(db, provider) {
   const { data: payments, error: paymentError } = await db
@@ -82,15 +86,19 @@ export async function GET(request) {
   if (!process.env.CRON_SECRET || request.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
-
+  const db = createRentalWebhookClient();
+  const run = await startCronRun(db, { jobName: JOB_NAME, routePath: ROUTE_PATH, request });
   try {
-    const result = await reconcileMissingStripeSettlements(
-      createRentalWebhookClient(),
-      createStripeBillingProvider(),
-    );
-    return NextResponse.json({ success: true, ...result });
+    const result = await reconcileMissingStripeSettlements(db, createStripeBillingProvider());
+    const summary = { success: true, ...result };
+    await finalizeCronRun(db, run, {
+      processedCount: result.candidates, succeededCount: result.reconciled,
+      pendingCount: result.pending, failedCount: result.failed, summary,
+    });
+    return NextResponse.json(summary);
   } catch (error) {
     console.error("Rental settlement reconciliation cron error", error);
+    await finalizeCronRun(db, run, { status: "failed", failedCount: 1, errorCode: error?.code || null, errorMessage: error?.message });
     return NextResponse.json({ error: "Unable to reconcile rental settlements." }, { status: 500 });
   }
 }

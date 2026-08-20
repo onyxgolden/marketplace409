@@ -3,8 +3,12 @@ import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookCli
 import { executeAutopayAttempt } from "@/application/rental/executeAutopayAttempt";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { reconcileMissingStripeSettlements } from "../settlement-reconciliation/route.js";
+import { finalizeCronRun, startCronRun } from "@/application/rental/cronAudit";
 
 export const runtime = "nodejs";
+
+const JOB_NAME = "autopay-sweep";
+const ROUTE_PATH = "/api/rental/cron/autopay-sweep";
 
 // Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically when
 // CRON_SECRET is set in the project env — see vercel.json for the schedule.
@@ -13,8 +17,9 @@ export const runtime = "nodejs";
 export async function GET(request) {
   if (!process.env.CRON_SECRET || request.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`)
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  const db = createRentalWebhookClient();
+  const run = await startCronRun(db, { jobName: JOB_NAME, routePath: ROUTE_PATH, request });
   try {
-    const db = createRentalWebhookClient();
     const today = new Date().toISOString().slice(0, 10);
     const [{ data: enrollments, error: enrollmentError }, { data: charges, error: chargeError }] = await Promise.all([
       db.from("rental_autopay_enrollments").select("id, owner_id, lease_id").eq("status", "active"),
@@ -46,9 +51,14 @@ export async function GET(request) {
       }
     }
     const settlements = await reconcileMissingStripeSettlements(db, createStripeBillingProvider());
-    return NextResponse.json({ success: true, candidates: pairs.length, succeeded, failed, settlements });
+    const summary = { success: true, candidates: pairs.length, succeeded, failed, settlements };
+    await finalizeCronRun(db, run, {
+      processedCount: pairs.length, succeededCount: succeeded, failedCount: failed, summary,
+    });
+    return NextResponse.json(summary);
   } catch (error) {
     console.error("Autopay sweep cron error", error);
+    await finalizeCronRun(db, run, { status: "failed", failedCount: 1, errorCode: error?.code || null, errorMessage: error?.message });
     return NextResponse.json({ error: "Unable to run autopay sweep." }, { status: 500 });
   }
 }
