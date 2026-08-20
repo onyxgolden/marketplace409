@@ -9,6 +9,10 @@ function setup() {
     charges: { retrieve: vi.fn(async () => ({
       id: "ch_rent", payment_intent: "pi_rent", balance_transaction: "txn_rent",
     })) },
+    balanceTransactions: { retrieve: vi.fn(async () => ({
+      id: "txn_rent", amount: 2000, fee: 0, net: 2000,
+      currency: "usd", status: "pending", available_on: 1787798400,
+    })) },
     paymentIntents: { create: vi.fn(async () => ({ id: "pi_rent", client_secret: "pi_rent_secret_test",status:"succeeded" })),
       retrieve: vi.fn(async () => ({
         id: "pi_rent", client_secret: "pi_rent_secret_test", status: "requires_payment_method",
@@ -85,6 +89,24 @@ describe("StripeBillingProvider", () => {
     );
     expect(result).toEqual({
       id: "ch_rent", paymentIntentId: "pi_rent", balanceTransactionId: "txn_rent",
+    });
+  });
+
+  it("passes the connected account as request options when retrieving a balance transaction", async () => {
+    const { provider, stripeClient } = setup();
+    const result = await provider.retrieveBalanceTransaction(
+      { connectedAccountId: "acct_kent" }, "txn_rent",
+    );
+    expect(stripeClient.balanceTransactions.retrieve).toHaveBeenCalledWith(
+      "txn_rent", {}, { stripeAccount: "acct_kent" },
+    );
+    expect(result).toMatchObject({
+      id: "txn_rent",
+      grossAmountCents: 2000,
+      feeAmountCents: 0,
+      netAmountCents: 2000,
+      currencyCode: "USD",
+      status: "pending",
     });
   });
 
