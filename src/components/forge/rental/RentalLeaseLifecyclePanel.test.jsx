@@ -1,4 +1,9 @@
+// @vitest-environment jsdom
 import{describe,expect,it}from"vitest";import{renderToStaticMarkup}from"react-dom/server";import RentalLeaseLifecyclePanel,{calculateProrationCents,resolveLeaseIdentity,leaseOptionLabel}from"./RentalLeaseLifecyclePanel.jsx";describe("RentalLeaseLifecyclePanel",()=>{it("requires owner-controlled changes and fees",()=>{const html=renderToStaticMarkup(<RentalLeaseLifecyclePanel/>);expect(html).toContain("Renewals, amendments, and prorating");expect(html).toContain("only an explicit owner action");expect(html).toContain("qualified Texas counsel");});it("calculates and rounds daily proration deterministically",()=>{expect(calculateProrationCents(200000,10,31)).toBe(64516);expect(calculateProrationCents(200000,32,31)).toBeNull();});});
+
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { vi } from "vitest";
 
 const SANDBOX_LEASE_ID = "rental_lease_c151ed02-8b18-4534-baaa-b9aaf4aca219";
 const OTHER_LEASE_ID = "rental_lease_a9f2b311-7c44-4e9a-9b1d-2a6e5f0c8d13";
@@ -111,5 +116,167 @@ describe("RentalLeaseLifecyclePanel Lease Changes selector", () => {
     expect(markup).toContain("Unknown tenant");
     expect(markup).toContain("Unknown unit");
     expect(markup).toContain("Unknown property");
+  });
+});
+
+function mountPanel(ui) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => { root.render(ui); });
+  return { container, root };
+}
+function unmountPanel({ container, root }) {
+  act(() => { root.unmount(); });
+  container.remove();
+}
+function findButtonByText(container, text) {
+  const button = Array.from(container.querySelectorAll("button")).find((candidate) => candidate.textContent === text);
+  if (!button) throw new Error(`No button found with text "${text}"`);
+  return button;
+}
+async function clickButtonAndFlush(button) {
+  await act(async () => {
+    button.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+function setControlledSelectValue(select, value) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+  setter.call(select, value);
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+const leaseData = {
+  leases: [{ id: "rental_lease_1", unit_id: "unit_1", property_id: "property-1", status: "active", monthly_rent_cents: 130000 }],
+  units: [{ id: "unit_1", label: "Main residence", property_id: "property-1" }],
+  tenants: [{ id: "tenant_1", display_name: "Anthony Babino" }],
+  leaseMemberships: [{ lease_id: "rental_lease_1", tenant_id: "tenant_1" }],
+  schedules: [], leaseChanges: [], lateFeeRules: [], openCharges: [],
+};
+
+describe("RentalLeaseLifecyclePanel Lease Changes field labeling", () => {
+  it("gives every Lease Changes field a persistent visible label, not just a placeholder", () => {
+    const mounted = mountPanel(<RentalLeaseLifecyclePanel initialData={leaseData} />);
+    const { container } = mounted;
+    const labelTexts = Array.from(container.querySelectorAll("form")[0].querySelectorAll("label")).map((label) => label.textContent);
+    expect(labelTexts.some((text) => text.includes("Lease"))).toBe(true);
+    expect(labelTexts.some((text) => text.includes("Change type"))).toBe(true);
+    expect(labelTexts.some((text) => text.includes("Effective date"))).toBe(true);
+    expect(labelTexts.some((text) => text.includes("New lease end date"))).toBe(true);
+    expect(labelTexts.some((text) => text.includes("New monthly rent"))).toBe(true);
+    expect(labelTexts.some((text) => text.includes("New rent due day"))).toBe(true);
+    expect(labelTexts.some((text) => text.includes("Supporting document ID"))).toBe(true);
+    expect(labelTexts.some((text) => text.includes("Reason"))).toBe(true);
+    unmountPanel(mounted);
+  });
+
+  it("marks the New lease end date field as clearly optional", () => {
+    const mounted = mountPanel(<RentalLeaseLifecyclePanel initialData={leaseData} />);
+    const { container } = mounted;
+    const endDateLabel = Array.from(container.querySelectorAll("label")).find((label) => label.textContent.includes("New lease end date"));
+    expect(endDateLabel).toBeTruthy();
+    expect(endDateLabel.textContent.toLowerCase()).toContain("optional");
+    unmountPanel(mounted);
+  });
+
+  it("distinguishes Effective date from New lease end date instead of leaving either date unlabeled", () => {
+    const mounted = mountPanel(<RentalLeaseLifecyclePanel initialData={leaseData} />);
+    const { container } = mounted;
+    const dateInputs = Array.from(container.querySelectorAll('input[type="date"]'));
+    expect(dateInputs).toHaveLength(2);
+    const [effectiveDateInput, endDateInput] = dateInputs;
+    expect(effectiveDateInput.closest("label").textContent).toContain("Effective date");
+    expect(endDateInput.closest("label").textContent).toContain("New lease end date");
+    unmountPanel(mounted);
+  });
+
+  it("does not present the amendment's effective date as starting a new lease", () => {
+    const mounted = mountPanel(<RentalLeaseLifecyclePanel initialData={leaseData} />);
+    const { container } = mounted;
+    const dateInputs = Array.from(container.querySelectorAll('input[type="date"]'));
+    const [effectiveDateInput] = dateInputs;
+    const effectiveDateLabelText = effectiveDateInput.closest("label").textContent.toLowerCase();
+    expect(effectiveDateLabelText).not.toContain("start");
+    expect(effectiveDateLabelText).not.toContain("new lease");
+    unmountPanel(mounted);
+  });
+
+  it("explains that an amendment modifies the existing lease rather than starting a new one", () => {
+    const markup = renderToStaticMarkup(<RentalLeaseLifecyclePanel initialData={leaseData} />);
+    expect(markup.toLowerCase()).toContain("does not start a new lease");
+  });
+});
+
+describe("RentalLeaseLifecyclePanel Lease Changes conditional fields", () => {
+  it("shows rent, due-day, and end-date fields (and hides proration amount) for the default Renewal type", () => {
+    const mounted = mountPanel(<RentalLeaseLifecyclePanel initialData={leaseData} />);
+    const { container } = mounted;
+    expect(container.querySelector('input[name="monthlyRent"]')).toBeTruthy();
+    expect(container.querySelector('input[name="rentDueDay"]')).toBeTruthy();
+    expect(container.querySelector('input[name="endDate"]')).toBeTruthy();
+    expect(container.querySelector('input[name="prorationAmount"]')).toBeNull();
+    unmountPanel(mounted);
+  });
+
+  it("shows rent, due-day, and end-date fields (and hides proration amount) for Amendment", () => {
+    const mounted = mountPanel(<RentalLeaseLifecyclePanel initialData={leaseData} />);
+    const { container } = mounted;
+    act(() => { setControlledSelectValue(container.querySelector('select[name="changeType"]'), "amendment"); });
+    expect(container.querySelector('input[name="monthlyRent"]')).toBeTruthy();
+    expect(container.querySelector('input[name="rentDueDay"]')).toBeTruthy();
+    expect(container.querySelector('input[name="endDate"]')).toBeTruthy();
+    expect(container.querySelector('input[name="prorationAmount"]')).toBeNull();
+    unmountPanel(mounted);
+  });
+
+  it("hides rent, due-day, and end-date fields and shows a required proration amount field for Proration", () => {
+    const mounted = mountPanel(<RentalLeaseLifecyclePanel initialData={leaseData} />);
+    const { container } = mounted;
+    act(() => { setControlledSelectValue(container.querySelector('select[name="changeType"]'), "proration"); });
+    expect(container.querySelector('input[name="monthlyRent"]')).toBeNull();
+    expect(container.querySelector('input[name="rentDueDay"]')).toBeNull();
+    expect(container.querySelector('input[name="endDate"]')).toBeNull();
+    const prorationInput = container.querySelector('input[name="prorationAmount"]');
+    expect(prorationInput).toBeTruthy();
+    expect(prorationInput.required).toBe(true);
+    unmountPanel(mounted);
+  });
+});
+
+describe("RentalLeaseLifecyclePanel Lease Changes submission contract", () => {
+  it("submits the exact same leaseId and payload shape as before when saving an amendment", async () => {
+    const fetchMock = vi.fn((url, options) => {
+      if (options?.method === "POST") return Promise.resolve({ ok: true, json: async () => ({ success: true, change: { id: "change_1" } }) });
+      return Promise.resolve({ ok: true, json: async () => leaseData });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const mounted = mountPanel(<RentalLeaseLifecyclePanel initialData={leaseData} />);
+    const { container } = mounted;
+
+    container.querySelector('select[name="leaseId"]').value = "rental_lease_1";
+    act(() => { setControlledSelectValue(container.querySelector('select[name="changeType"]'), "amendment"); });
+    container.querySelector('input[name="effectiveDate"]').value = "2026-09-01";
+    container.querySelector('input[name="endDate"]').value = "2027-09-01";
+    container.querySelector('input[name="monthlyRent"]').value = "20.00";
+    container.querySelector('input[name="rentDueDay"]').value = "5";
+    container.querySelector('input[name="reason"]').value = "Test amendment reason";
+
+    await clickButtonAndFlush(findButtonByText(container, "Save draft change"));
+
+    const postCall = fetchMock.mock.calls.find(([, options]) => options?.method === "POST");
+    expect(postCall).toBeTruthy();
+    const body = JSON.parse(postCall[1].body);
+    expect(body).toEqual({
+      operation: "save-lease-change",
+      change: {
+        leaseId: "rental_lease_1", changeType: "amendment", effectiveDate: "2026-09-01", endDate: "2027-09-01",
+        monthlyRentCents: 2000, rentDueDay: 5, amountCents: null, reason: "Test amendment reason", documentEvidenceId: null,
+      },
+    });
+    vi.unstubAllGlobals();
+    unmountPanel(mounted);
   });
 });
