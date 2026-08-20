@@ -34,8 +34,9 @@ export async function POST(request) {
     const normalized = normalizeStripeConnectEvent(event);
     const payloadHash = createHash("sha256").update(rawBody).digest("hex");
     const supabase = createRentalWebhookClient();
+    const eventRowId = `stripe_webhook_${normalized.providerEventId}`;
     const { error } = await supabase.from("payment_webhook_events").upsert({
-      id: `stripe_webhook_${normalized.providerEventId}`,
+      id: eventRowId,
       provider: "stripe",
       provider_event_id: normalized.providerEventId,
       event_type: normalized.eventType,
@@ -46,6 +47,22 @@ export async function POST(request) {
     }, { onConflict: "provider,provider_event_id", ignoreDuplicates: true });
     if (error) throw error;
     if (normalized.supported) {
+      const { data: landlordAccount, error: ownerLookupError } = await supabase
+        .from("landlord_payment_accounts")
+        .select("owner_id")
+        .eq("provider", "stripe")
+        .eq("provider_account_id", normalized.connectedAccountId)
+        .maybeSingle();
+      if (ownerLookupError) throw ownerLookupError;
+      if (!landlordAccount) {
+        const { error: ignoreError } = await supabase.from("payment_webhook_events").update({
+          status: "ignored",
+          processed_at: new Date().toISOString(),
+          failure_message: `Unknown Stripe connected account: ${normalized.connectedAccountId}.`,
+        }).eq("id", eventRowId);
+        if (ignoreError) throw ignoreError;
+        return NextResponse.json({ received: true, ignored: true });
+      }
       let projection;
       if(normalized.eventType==="charge.succeeded"&&normalized.paymentIntentId&&normalized.balanceTransactionId){const balance=await provider.retrieveBalanceTransaction({connectedAccountId:normalized.connectedAccountId},normalized.balanceTransactionId);projection=await supabase.rpc("record_stripe_rental_settlement",{p_provider_event_id:normalized.providerEventId,p_connected_account_id:normalized.connectedAccountId,p_payment_intent_id:normalized.paymentIntentId,p_balance_transaction_id:balance.id,p_gross_amount_cents:balance.grossAmountCents,p_fee_amount_cents:balance.feeAmountCents,p_net_amount_cents:balance.netAmountCents,p_currency_code:balance.currencyCode,p_status:balance.status,p_available_at:balance.availableAt});}
       else if(normalized.eventType==="payout.paid"){const ids=await provider.listPayoutBalanceTransactionIds({connectedAccountId:normalized.connectedAccountId},normalized.objectId);projection=await supabase.rpc("mark_stripe_rental_settlements_paid_out",{p_provider_event_id:normalized.providerEventId,p_connected_account_id:normalized.connectedAccountId,p_payout_id:normalized.objectId,p_balance_transaction_ids:ids,p_paid_out_at:normalized.occurredAt});}
