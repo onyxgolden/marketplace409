@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   constructWebhookEvent: vi.fn(),
+  retrieveCharge: vi.fn(),
   retrieveBalanceTransaction: vi.fn(),
   listPayoutBalanceTransactionIds: vi.fn(),
   upsert: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({
   createStripeBillingProvider: () => ({
     constructWebhookEvent: mocks.constructWebhookEvent,
+    retrieveCharge: mocks.retrieveCharge,
     retrieveBalanceTransaction: mocks.retrieveBalanceTransaction,
     listPayoutBalanceTransactionIds: mocks.listPayoutBalanceTransactionIds,
   }),
@@ -63,6 +65,16 @@ const unknownAccountPaymentIntent = {
   data: { object: { id: "pi_unknown", metadata: { forge_payment_id: "payment_x" } } },
 };
 
+const delayedChargeSucceeded = {
+  id: "evt_charge_succeeded_delayed", type: "charge.succeeded", account: "acct_landlord", livemode: false,
+  data: { object: { id: "ch_delayed", payment_intent: "pi_delayed", balance_transaction: null } },
+};
+
+const chargeUpdatedWithSettlement = {
+  id: "evt_charge_updated_ready", type: "charge.updated", account: "acct_landlord", livemode: false,
+  data: { object: { id: "ch_delayed", payment_intent: "pi_delayed", balance_transaction: "txn_delayed" } },
+};
+
 const unknownAccountChargeSucceeded = {
   id: "evt_unknown_charge_1", type: "charge.succeeded", account: "acct_unknown", livemode: false,
   data: { object: { id: "ch_1", payment_intent: "pi_9", balance_transaction: "txn_9" } },
@@ -101,6 +113,9 @@ describe("Stripe rental webhook route", () => {
     mocks.landlordMaybeSingle.mockResolvedValue({ data: { owner_id: "owner_1" }, error: null });
 
     mocks.rpc.mockResolvedValue({ error: null, data: {} });
+    mocks.retrieveCharge.mockResolvedValue({
+      id: "ch_delayed", paymentIntentId: "pi_delayed", balanceTransactionId: "txn_delayed",
+    });
     mocks.retrieveBalanceTransaction.mockResolvedValue({
       id: "txn_1", grossAmountCents: 1000, feeAmountCents: 30, netAmountCents: 970,
       currencyCode: "USD", status: "available", availableAt: null,
@@ -161,6 +176,50 @@ describe("Stripe rental webhook route", () => {
       expect.objectContaining({ p_connected_account_id: "acct_landlord" }));
   });
 
+  it("recovers a balance transaction that was attached after charge.succeeded was emitted", async () => {
+    signsOnlyWith(CONNECT_SECRET, delayedChargeSucceeded);
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(mocks.retrieveCharge).toHaveBeenCalledWith(
+      { connectedAccountId: "acct_landlord" }, "ch_delayed",
+    );
+    expect(mocks.retrieveBalanceTransaction).toHaveBeenCalledWith(
+      { connectedAccountId: "acct_landlord" }, "txn_delayed",
+    );
+    expect(mocks.rpc).toHaveBeenCalledWith("record_stripe_rental_settlement",
+      expect.objectContaining({
+        p_provider_event_id: "evt_charge_succeeded_delayed",
+        p_payment_intent_id: "pi_delayed",
+        p_balance_transaction_id: "txn_1",
+      }));
+  });
+
+  it("records settlement from charge.updated instead of silently ignoring it", async () => {
+    signsOnlyWith(CONNECT_SECRET, chargeUpdatedWithSettlement);
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(mocks.retrieveCharge).toHaveBeenCalledWith(
+      { connectedAccountId: "acct_landlord" }, "ch_delayed",
+    );
+    expect(mocks.rpc).toHaveBeenCalledWith("record_stripe_rental_settlement",
+      expect.objectContaining({
+        p_provider_event_id: "evt_charge_updated_ready",
+        p_payment_intent_id: "pi_delayed",
+        p_balance_transaction_id: "txn_1",
+      }));
+    expect(mocks.rpc).not.toHaveBeenCalledWith("process_stripe_rental_payment_event", expect.anything());
+  });
+
+  it("returns a retryable failure while Stripe has not attached settlement identifiers", async () => {
+    mocks.retrieveCharge.mockResolvedValue({
+      id: "ch_delayed", paymentIntentId: "pi_delayed", balanceTransactionId: null,
+    });
+    signsOnlyWith(CONNECT_SECRET, delayedChargeSucceeded);
+    const response = await POST(request());
+    expect(response.status).toBe(400);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
   it("returns 200 for a validly-signed event from an unknown/retired connected account", async () => {
     mocks.landlordMaybeSingle.mockResolvedValue({ data: null, error: null });
     signsOnlyWith(CONNECT_SECRET, unknownAccountPersonUpdated);
@@ -203,6 +262,7 @@ describe("Stripe rental webhook route", () => {
     signsOnlyWith(CONNECT_SECRET, unknownAccountChargeSucceeded);
     const response = await POST(request());
     expect(response.status).toBe(200);
+    expect(mocks.retrieveCharge).not.toHaveBeenCalled();
     expect(mocks.retrieveBalanceTransaction).not.toHaveBeenCalled();
     expect(mocks.listPayoutBalanceTransactionIds).not.toHaveBeenCalled();
     expect(mocks.rpc).not.toHaveBeenCalled();
