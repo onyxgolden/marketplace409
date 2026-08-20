@@ -6,6 +6,9 @@ function setup() {
     accounts: { create: vi.fn(async () => ({ id: "acct_kent" })), retrieve: vi.fn() },
     accountLinks: { create: vi.fn() },
     customers: { create: vi.fn(async () => ({ id: "cus_tenant" })) },
+    charges: { retrieve: vi.fn(async () => ({
+      id: "ch_rent", payment_intent: "pi_rent", balance_transaction: "txn_rent",
+    })) },
     paymentIntents: { create: vi.fn(async () => ({ id: "pi_rent", client_secret: "pi_rent_secret_test",status:"succeeded" })),
       retrieve: vi.fn(async () => ({ id: "pi_rent", client_secret: "pi_rent_secret_test", status: "requires_payment_method" })) },
     webhooks: { constructEvent: vi.fn(() => ({ id: "evt_1" })) },
@@ -57,6 +60,17 @@ describe("StripeBillingProvider", () => {
     expect(stripeClient.webhooks.constructEvent).toHaveBeenCalledWith("raw-body", "signature", "whsec_test");
   });
   it("creates an idempotent confirmed off-session payment",async()=>{const{provider,stripeClient}=setup();await provider.createOffSessionPayment({connectedAccountId:"acct_kent"},{paymentId:"pay_1",chargeId:"charge_1",enrollmentId:"auto_1",customerId:"cus_tenant",paymentMethodId:"pm_1",amountCents:125000,currencyCode:"USD"},"autopay:auto_1:charge_1");expect(stripeClient.paymentIntents.create).toHaveBeenCalledWith(expect.objectContaining({off_session:true,confirm:true,payment_method:"pm_1"}),{stripeAccount:"acct_kent",idempotencyKey:"autopay:auto_1:charge_1"});});
+
+  it("retrieves the current Charge to recover an asynchronously attached balance transaction", async () => {
+    const { provider, stripeClient } = setup();
+    const result = await provider.retrieveCharge({ connectedAccountId: "acct_kent" }, "ch_rent");
+    expect(stripeClient.charges.retrieve).toHaveBeenCalledWith(
+      "ch_rent", {}, { stripeAccount: "acct_kent" },
+    );
+    expect(result).toEqual({
+      id: "ch_rent", paymentIntentId: "pi_rent", balanceTransactionId: "txn_rent",
+    });
+  });
 
   it("retrieves an existing PaymentIntent for resume without ever calling create", async () => {
     const { provider, stripeClient } = setup();
