@@ -80,7 +80,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
         <label className="text-sm font-bold">Bathrooms<input name="bathrooms" type="number" min="0" step="0.5" className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
         <label className="text-sm font-bold">Square feet<input name="squareFeet" type="number" min="0" className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
         <label className="text-sm font-bold">Notes<input name="notes" defaultValue="Remodel in progress." className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3" /></label>
-        <div className="md:col-span-2 flex items-center gap-4"><button disabled={working} className="rounded-xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-50">{working ? "Saving…" : "Save Kent Avenue unit"}</button>
+        <div className="md:col-span-2 flex items-center gap-4"><button disabled={working} className="rounded-xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-50">{working ? "Saving…" : "Save new unit"}</button>
           {message && <p role="status" className="text-sm font-bold text-slate-700">{message}</p>}</div>
       </form>}
     </section>

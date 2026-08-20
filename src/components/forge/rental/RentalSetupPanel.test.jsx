@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { tenantLabelForUnit } from "./RentalSetupPanel";
+import { renderToStaticMarkup } from "react-dom/server";
+import RentalSetupPanel, { tenantLabelForUnit } from "./RentalSetupPanel";
 
 const leases = [
   { id: "lease_1", unit_id: "unit_1", status: "active" },
@@ -20,5 +21,13 @@ describe("tenantLabelForUnit", () => {
   });
   it("returns null when an active lease has no tenant membership recorded", () => {
     expect(tenantLabelForUnit({ id: "unit_1" }, leases, [], tenants)).toBeNull();
+  });
+});
+
+describe("RentalSetupPanel new-unit creation", () => {
+  it("labels the create action generically instead of naming a specific property", () => {
+    const markup = renderToStaticMarkup(<RentalSetupPanel />);
+    expect(markup).toContain("Save new unit");
+    expect(markup).not.toContain("Save Kent Avenue unit");
   });
 });

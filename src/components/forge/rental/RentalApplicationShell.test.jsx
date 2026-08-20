@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import RentalApplicationShell, { buildRentalSurface, RENTAL_FUNCTIONS, RENTAL_NAVIGATION } from "./RentalApplicationShell.jsx";
+import RentalLeasePanel from "./RentalLeasePanel.jsx";
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
     expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "deposits", "reports", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
@@ -29,6 +30,12 @@ describe("RentalApplicationShell", () => {
     expect(markup).toContain("Select a saved unit");
     expect(markup).toContain("Select a saved tenant");
     expect(markup).not.toContain("Tenant ID");
+  });
+  it("routes tenant-scoped lease navigation directly to RentalLeasePanel instead of the tenant-filtered contextual surface, so the full unit list stays available", () => {
+    const recordContext = { recordType: "tenant", recordId: "tenant_brandy", recordLabel: "Brandy Morgan" };
+    const element = buildRentalSurface("leases", { recordContext });
+    expect(element.type).toBe(RentalLeasePanel);
+    expect(element.props.recordContext).toEqual(recordContext);
   });
   it("keeps lease activation and first-charge controls in secondary billing setup", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("charges"));
