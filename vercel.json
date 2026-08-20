@@ -1,6 +1,16 @@
 {
   "crons": [
-    { "path": "/api/rental/cron/generate-charges", "schedule": "0 6 * * *" },
-    { "path": "/api/rental/cron/autopay-sweep", "schedule": "0 7 * * *" }
+    {
+      "path": "/api/rental/cron/generate-charges",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/rental/cron/autopay-sweep",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/rental/cron/settlement-reconciliation",
+      "schedule": "0 8 * * *"
+    }
   ]
 }
