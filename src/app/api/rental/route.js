@@ -152,6 +152,15 @@ export async function POST(request) {
         if (!charge) return NextResponse.json({ error: "The schedule must be active and effective for the selected month." }, { status: 409 });
         return NextResponse.json({ success: true, charge });
       }
+      case "void-charge": {
+        if (typeof body.chargeId !== "string" || body.chargeId.trim() === "") return badRequest("chargeId is required.");
+        if (typeof body.reason !== "string" || body.reason.trim() === "") return badRequest("A reason is required to void a charge.");
+        const { data, error } = await authenticated.supabaseClient.rpc("void_rental_rent_charge",
+          { p_owner_id: user.id, p_charge_id: body.chargeId.trim(), p_reason: body.reason.trim() });
+        if (error) throw error;
+        if (!data || !data.id) return NextResponse.json({ error: "Only an unpaid, not-yet-voided charge can be voided." }, { status: 409 });
+        return NextResponse.json({ success: true, charge: data });
+      }
       case "activate-lease-schedule": {
         if (!body.scheduleId) return badRequest("scheduleId is required.");
         const { data, error } = await authenticated.supabaseClient.rpc("activate_rental_lease_schedule", {

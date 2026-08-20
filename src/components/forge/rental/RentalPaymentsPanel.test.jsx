@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import RentalPaymentsPanel, { defaultChargeMonth, resolveScheduleContext } from "./RentalPaymentsPanel";
+import RentalPaymentsPanel, { defaultChargeMonth, isChargeVoidable, resolveChargeIdentity, resolveScheduleContext } from "./RentalPaymentsPanel";
 
 const baseData = {
   openCharges: [], payments: [], settlements: [],
@@ -218,5 +218,157 @@ describe("RentalPaymentsPanel Generate monthly charge interaction", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("isChargeVoidable", () => {
+  it("allows voiding an unpaid, not-yet-void charge", () => {
+    expect(isChargeVoidable({ status: "due", paid_amount_cents: 0 })).toBe(true);
+  });
+  it("refuses to void a charge with any payment recorded", () => {
+    expect(isChargeVoidable({ status: "partially_paid", paid_amount_cents: 50000 })).toBe(false);
+    expect(isChargeVoidable({ status: "paid", paid_amount_cents: 130000 })).toBe(false);
+  });
+  it("refuses to void an already-void charge", () => {
+    expect(isChargeVoidable({ status: "void", paid_amount_cents: 0 })).toBe(false);
+  });
+});
+
+describe("RentalPaymentsPanel Void charge action", () => {
+  const voidableCharge = { id: "charge_1", lease_id: "lease_1", schedule_id: "schedule_1", period: "2026-08",
+    due_date: "2026-08-01", amount_cents: 130000, paid_amount_cents: 0, currency_code: "USD", status: "due", charge_type: "rent" };
+  const withCharge = { ...baseData, openCharges: [voidableCharge] };
+  let mounted;
+
+  afterEach(() => {
+    if (mounted) { unmountPanel(mounted); mounted = null; }
+    vi.unstubAllGlobals();
+  });
+
+  it("shows a Void charge action for an unpaid open charge", () => {
+    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={withCharge} initialAccount={null} />);
+    expect(markup).toContain("Void charge");
+  });
+
+  it("does not show a Void charge action for an already-paid charge", () => {
+    const paidData = { ...baseData, openCharges: [{ ...voidableCharge, status: "paid", paid_amount_cents: 130000 }] };
+    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={paidData} initialAccount={null} />);
+    expect(markup).not.toContain("Void charge");
+  });
+
+  it("requires an explicit confirmation step before a reason and confirmed void request can be submitted", async () => {
+    const fetchMock = vi.fn((url, options) => {
+      if (options?.method === "POST") return Promise.resolve({ ok: true, json: async () => ({ success: true, charge: { id: "charge_1", status: "void" } }) });
+      return Promise.resolve({ ok: true, json: async () => ({ ...withCharge, openCharges: [] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountPanel(<RentalPaymentsPanel initialData={withCharge} initialAccount={{ status: "enabled", requirements_due: [] }} />);
+    const { container } = mounted;
+
+    expect(container.querySelector('form[aria-label="Void charge"]')).toBeNull();
+    clickButton(findButtonByText(container, "Void charge"));
+    const voidForm = container.querySelector('form[aria-label="Void charge"]');
+    expect(voidForm).toBeTruthy();
+    expect(voidForm.querySelector('input[name="reason"]')).toBeTruthy();
+    expect(voidForm.querySelector('input[name="confirmed"][type="checkbox"]')).toBeTruthy();
+
+    voidForm.querySelector('input[name="reason"]').value = "Generated against the wrong lease.";
+    voidForm.querySelector('input[name="confirmed"]').checked = true;
+
+    await act(async () => {
+      voidForm.querySelector('button[type="submit"]').click();
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    const postCall = fetchMock.mock.calls.find(([, options]) => options?.method === "POST");
+    expect(postCall).toBeTruthy();
+    const body = JSON.parse(postCall[1].body);
+    expect(body).toEqual({ operation: "void-charge", chargeId: "charge_1", reason: "Generated against the wrong lease." });
+  });
+
+  it("disappears from open charges once voided, without any client-side deletion of the record", async () => {
+    const fetchMock = vi.fn((url, options) => {
+      if (options?.method === "POST") return Promise.resolve({ ok: true, json: async () => ({ success: true, charge: { id: "charge_1", status: "void" } }) });
+      return Promise.resolve({ ok: true, json: async () => ({ ...withCharge, openCharges: [] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountPanel(<RentalPaymentsPanel initialData={withCharge} initialAccount={{ status: "enabled", requirements_due: [] }} />);
+    const { container } = mounted;
+
+    clickButton(findButtonByText(container, "Void charge"));
+    const voidForm = container.querySelector('form[aria-label="Void charge"]');
+    voidForm.querySelector('input[name="reason"]').value = "Generated against the wrong lease.";
+    voidForm.querySelector('input[name="confirmed"]').checked = true;
+    await act(async () => {
+      voidForm.querySelector('button[type="submit"]').click();
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("No rent charges or payments recorded.");
+  });
+});
+
+describe("resolveChargeIdentity", () => {
+  it("resolves tenant, unit, and property through charge.lease_id, not by guessing from amount or unit", () => {
+    expect(resolveChargeIdentity({ lease_id: "lease_2" }, baseData)).toMatchObject({
+      leaseId: "lease_2", tenantLabel: "Brandy Morgan", unitLabel: "TEST-", propertyLabel: "property-2",
+    });
+  });
+
+  it("shows explicit Unknown warnings instead of silently omitting identity", () => {
+    expect(resolveChargeIdentity({ lease_id: "lease_missing" }, baseData)).toMatchObject({
+      tenantLabel: "Unknown tenant", unitLabel: "Unknown unit", propertyLabel: "Unknown property",
+    });
+  });
+});
+
+describe("RentalPaymentsPanel charge identity safety (regression)", () => {
+  const REAL_LEASE_ID = "rental_lease_rentec_1628399";
+  const SANDBOX_LEASE_ID = "rental_lease_c151ed02-8b18-4534-baaa-b9aaf4aca219";
+
+  const identityData = {
+    openCharges: [{
+      id: "rent_charge_rent_schedule_e6569d58-3382-496b-9667-3cd8c0f3582a_202608",
+      lease_id: REAL_LEASE_ID, schedule_id: "rent_schedule_e6569d58-3382-496b-9667-3cd8c0f3582a",
+      period: "2026-08", due_date: "2026-08-01", amount_cents: 130000, paid_amount_cents: 0,
+      currency_code: "USD", status: "due", charge_type: "rent",
+    }],
+    payments: [], settlements: [],
+    leases: [
+      { id: REAL_LEASE_ID, unit_id: "unit_real", property_id: "4800-kent-ave", status: "active" },
+      { id: SANDBOX_LEASE_ID, unit_id: "unit_sandbox", property_id: "FORGE SANDBOX TEST PROPERTY", status: "active" },
+    ],
+    units: [
+      { id: "unit_real", label: "Main residence", property_id: "4800-kent-ave" },
+      { id: "unit_sandbox", label: "TEST-", property_id: "FORGE SANDBOX TEST PROPERTY" },
+    ],
+    tenants: [
+      { id: "tenant_real", display_name: "Existing Tenant" },
+      { id: "tenant_sandbox", display_name: "Brandy Morgan" },
+    ],
+    leaseMemberships: [
+      { lease_id: REAL_LEASE_ID, tenant_id: "tenant_real" },
+      { lease_id: SANDBOX_LEASE_ID, tenant_id: "tenant_sandbox" },
+    ],
+    schedules: [],
+  };
+
+  it("proves a $1,300 charge on the real lease cannot be visually mistaken for the sandbox lease", () => {
+    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={identityData} initialAccount={null} />);
+    // The charge must clearly identify the real tenant/lease it actually belongs to.
+    expect(markup).toContain("Existing Tenant");
+    expect(markup).toContain(REAL_LEASE_ID);
+    // It must never carry the sandbox tenant's name or the sandbox lease id anywhere.
+    expect(markup).not.toContain("Brandy Morgan");
+    expect(markup).not.toContain(SANDBOX_LEASE_ID);
+    // The sandbox property/unit labels must not appear attached to this charge either.
+    expect(markup).not.toContain("FORGE SANDBOX TEST PROPERTY");
+  });
+
+  it("the sandbox lease itself has no charges to confuse with the real one", () => {
+    const sandboxCharges = identityData.openCharges.filter((charge) => charge.lease_id === SANDBOX_LEASE_ID);
+    expect(sandboxCharges).toHaveLength(0);
   });
 });

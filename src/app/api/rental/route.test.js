@@ -133,6 +133,31 @@ describe("Rental Manager route", () => {
   });
   it("queues an owner-scoped reminder with bounded retries",async()=>{const rpc=vi.fn(async()=>({data:{id:"notice_1",status:"queued"},error:null}));const{createAuthenticatedRentalManagerApplication}=await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({application,user:{id:"owner_1"},supabaseClient:{rpc}});const response=await POST(request({operation:"queue-rent-reminder",chargeId:"charge_1",notificationType:"rent_reminder",scheduledFor:"2026-09-28T12:00:00Z",maxAttempts:3}));expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("queue_rental_balance_reminder",expect.objectContaining({p_owner_id:"owner_1",p_charge_id:"charge_1",p_max_attempts:3}));});
   it("rejects excessive reminder retries",async()=>expect((await POST(request({operation:"queue-rent-reminder",chargeId:"charge_1",notificationType:"rent_reminder",scheduledFor:"2026-09-28T12:00:00Z",maxAttempts:9}))).status).toBe(400));
+  it("voids an owner-scoped unpaid charge with a reason", async () => {
+    const rpc = vi.fn(async () => ({ data: { id: "charge_1", status: "void", voided_at: "2026-08-20T00:00:00Z" }, error: null }));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { rpc } });
+    const response = await POST(request({ operation: "void-charge", chargeId: "charge_1", reason: "Generated against the wrong lease." }));
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith("void_rental_rent_charge", { p_owner_id: "owner_1", p_charge_id: "charge_1", p_reason: "Generated against the wrong lease." });
+    const body = await response.json();
+    expect(body.charge).toEqual({ id: "charge_1", status: "void", voided_at: "2026-08-20T00:00:00Z" });
+  });
+  it("refuses to void a charge that is already paid or already void", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: null }));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { rpc } });
+    const response = await POST(request({ operation: "void-charge", chargeId: "charge_1", reason: "Mistake." }));
+    expect(response.status).toBe(409);
+  });
+  it("requires a chargeId to void a charge", async () => {
+    const response = await POST(request({ operation: "void-charge", reason: "Mistake." }));
+    expect(response.status).toBe(400);
+  });
+  it("requires a reason to void a charge", async () => {
+    const response = await POST(request({ operation: "void-charge", chargeId: "charge_1" }));
+    expect(response.status).toBe(400);
+  });
   it("updates a maintenance request only through the authenticated owner scope", async () => {
     const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn(async () => ({ data: { id: "request_1", status: "scheduled" }, error: null })) };
