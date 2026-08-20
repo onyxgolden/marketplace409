@@ -2,9 +2,16 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/supabase/createRentalWebhookClient", () => ({ createRentalWebhookClient: vi.fn() }));
 vi.mock("@/application/rental/executeAutopayAttempt", () => ({ executeAutopayAttempt: vi.fn() }));
+vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({
+  createStripeBillingProvider: vi.fn(() => ({ provider: "stripe" })),
+}));
+vi.mock("../settlement-reconciliation/route.js", () => ({
+  reconcileMissingStripeSettlements: vi.fn(),
+}));
 
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { executeAutopayAttempt } from "@/application/rental/executeAutopayAttempt";
+import { reconcileMissingStripeSettlements } from "../settlement-reconciliation/route.js";
 import { GET } from "./route.js";
 
 function request(headers = {}) { return new Request("https://test/api", { headers }); }
@@ -14,7 +21,13 @@ function chain(result) {
   return node;
 }
 
-beforeEach(() => { process.env.CRON_SECRET = "cron-secret"; vi.clearAllMocks(); });
+beforeEach(() => {
+  process.env.CRON_SECRET = "cron-secret";
+  vi.clearAllMocks();
+  reconcileMissingStripeSettlements.mockResolvedValue({
+    candidates: 0, reconciled: 0, pending: 0, failed: 0,
+  });
+});
 
 describe("autopay sweep cron", () => {
   it("rejects callers without the cron secret", async () => {
@@ -41,6 +54,9 @@ describe("autopay sweep cron", () => {
     expect(body.failed).toBe(0);
     expect(executeAutopayAttempt).toHaveBeenCalledTimes(1);
     expect(executeAutopayAttempt).toHaveBeenCalledWith(expect.anything(), "enrollment_1", "charge_1");
+    expect(reconcileMissingStripeSettlements).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ provider: "stripe" }),
+    );
   });
 
   it("counts a failed attempt without aborting the sweep", async () => {
