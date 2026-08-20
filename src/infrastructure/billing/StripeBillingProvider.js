@@ -101,6 +101,22 @@ export class StripeBillingProvider {
     return this.stripe.webhooks.constructEvent(rawBody, required(signature, "a webhook signature"), required(secret, "a webhook secret"));
   }
 
+  async retrievePaymentIntentSettlement(context, id) {
+    const intent = await this.stripe.paymentIntents.retrieve(
+      required(id, "a payment intent id"),
+      { expand: ["latest_charge"] },
+      { stripeAccount: required(context.connectedAccountId, "a connected account id") },
+    );
+    const charge = typeof intent.latest_charge === "object" ? intent.latest_charge : null;
+    return Object.freeze({
+      paymentIntentId: intent.id,
+      chargeId: typeof intent.latest_charge === "string" ? intent.latest_charge : charge?.id || null,
+      balanceTransactionId: typeof charge?.balance_transaction === "string"
+        ? charge.balance_transaction
+        : charge?.balance_transaction?.id || null,
+    });
+  }
+
   async retrieveCharge(context, id) {
     const charge = await this.stripe.charges.retrieve(
       required(id, "a charge id"),
