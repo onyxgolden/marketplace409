@@ -6,7 +6,8 @@ function setup() {
     accounts: { create: vi.fn(async () => ({ id: "acct_kent" })), retrieve: vi.fn() },
     accountLinks: { create: vi.fn() },
     customers: { create: vi.fn(async () => ({ id: "cus_tenant" })) },
-    paymentIntents: { create: vi.fn(async () => ({ id: "pi_rent", client_secret: "pi_rent_secret_test",status:"succeeded" })) },
+    paymentIntents: { create: vi.fn(async () => ({ id: "pi_rent", client_secret: "pi_rent_secret_test",status:"succeeded" })),
+      retrieve: vi.fn(async () => ({ id: "pi_rent", client_secret: "pi_rent_secret_test", status: "requires_payment_method" })) },
     webhooks: { constructEvent: vi.fn(() => ({ id: "evt_1" })) },
   };
   return { stripeClient, provider: new StripeBillingProvider({ stripeClient }) };
@@ -56,4 +57,12 @@ describe("StripeBillingProvider", () => {
     expect(stripeClient.webhooks.constructEvent).toHaveBeenCalledWith("raw-body", "signature", "whsec_test");
   });
   it("creates an idempotent confirmed off-session payment",async()=>{const{provider,stripeClient}=setup();await provider.createOffSessionPayment({connectedAccountId:"acct_kent"},{paymentId:"pay_1",chargeId:"charge_1",enrollmentId:"auto_1",customerId:"cus_tenant",paymentMethodId:"pm_1",amountCents:125000,currencyCode:"USD"},"autopay:auto_1:charge_1");expect(stripeClient.paymentIntents.create).toHaveBeenCalledWith(expect.objectContaining({off_session:true,confirm:true,payment_method:"pm_1"}),{stripeAccount:"acct_kent",idempotencyKey:"autopay:auto_1:charge_1"});});
+
+  it("retrieves an existing PaymentIntent for resume without ever calling create", async () => {
+    const { provider, stripeClient } = setup();
+    const result = await provider.retrievePaymentIntent({ connectedAccountId: "acct_kent" }, "pi_existing");
+    expect(stripeClient.paymentIntents.retrieve).toHaveBeenCalledWith("pi_existing", { stripeAccount: "acct_kent" });
+    expect(stripeClient.paymentIntents.create).not.toHaveBeenCalled();
+    expect(result).toEqual({ id: "pi_rent", clientSecret: "pi_rent_secret_test", status: "requires_payment_method" });
+  });
 });
