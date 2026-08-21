@@ -13,6 +13,7 @@ vi.mock("@/lib/supabase/createRentalWebhookClient", () => ({
 
 vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({
   createStripeBillingProvider: () => ({
+    mode: "test",
     retrievePaymentIntentSettlement: mocks.retrievePaymentIntentSettlement,
     retrieveBalanceTransaction: mocks.retrieveBalanceTransaction,
   }),
@@ -93,7 +94,26 @@ describe("rental settlement reconciliation cron", () => {
         p_balance_transaction_id: "txn_20",
         p_gross_amount_cents: 2000,
         p_net_amount_cents: 2000,
+        p_provider_mode: "test",
       }));
+  });
+
+  it("scopes both the payment-candidate query and the landlord-account query to the server's provider_mode — a live run excludes sandbox payments", async () => {
+    const tables = {
+      rental_payments: query({ data: [
+        { id: "payment_20", owner_id: "owner_1", provider_payment_id: "pi_20" },
+      ], error: null }),
+      rental_settlements: query({ data: [], error: null }),
+      landlord_payment_accounts: query({ data: [
+        { owner_id: "owner_1", provider_account_id: "acct_landlord" },
+      ], error: null }),
+    };
+    mocks.createRentalWebhookClient.mockReturnValue({ from: vi.fn((table) => tables[table]), rpc: mocks.rpc });
+
+    await GET(request({ authorization: "Bearer cron-secret" }));
+
+    expect(tables.rental_payments.eq).toHaveBeenCalledWith("provider_mode", "test");
+    expect(tables.landlord_payment_accounts.eq).toHaveBeenCalledWith("provider_mode", "test");
   });
 
   it("skips payments that already have settlement rows", async () => {

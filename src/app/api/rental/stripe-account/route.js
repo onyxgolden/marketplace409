@@ -2,12 +2,8 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
+import { buildLandlordPaymentAccountUpdate } from "@/application/rental/landlordPaymentAccountStatus";
 
-function statusOf(value) {
-  if (value.chargesEnabled && value.payoutsEnabled) return "enabled";
-  if (!value.detailsSubmitted) return "onboarding";
-  return "restricted";
-}
 async function authenticate() {
   const authenticated = await createAuthenticatedForgeApplication();
   if (authenticated.response) return authenticated;
@@ -16,19 +12,21 @@ async function authenticate() {
 async function syncAccount(database, provider, ownerId, row) {
   if (!row?.provider_account_id) return row;
   const current = await provider.retrieveAccountStatus({ ownerId, connectedAccountId: row.provider_account_id });
-  const saved = await database.from("landlord_payment_accounts").update({ status: statusOf(current),
-    details_submitted: current.detailsSubmitted, charges_enabled: current.chargesEnabled,
-    payouts_enabled: current.payoutsEnabled, ach_debit_enabled: current.achDebitEnabled,
-    card_payments_enabled: current.cardPaymentsEnabled, requirements_due: current.requirementsDue,
-    updated_at: new Date().toISOString() }).eq("owner_id", ownerId).eq("provider", "stripe").select("*").single();
+  // Scoped by provider_mode too: once a live row can coexist with a preserved sandbox row for the
+  // same owner, `owner_id + provider` alone is no longer guaranteed to match exactly one row.
+  const saved = await database.from("landlord_payment_accounts").update(buildLandlordPaymentAccountUpdate(current))
+    .eq("owner_id", ownerId).eq("provider", "stripe").eq("provider_mode", provider.mode).select("*").single();
   if (saved.error) throw saved.error;
   return saved.data;
 }
 export async function GET() {
   try {
     const authenticated = await authenticate(); if (authenticated.response) return authenticated.response;
+    // The server's own configured mode is the only thing this lookup trusts — a landlord viewing
+    // status while Production runs on live keys must only ever see (and sync) their live row,
+    // even if a preserved sandbox row for the same owner still exists.
     const found = await authenticated.database.from("landlord_payment_accounts").select("*")
-      .eq("owner_id", authenticated.user.id).eq("provider", "stripe").maybeSingle();
+      .eq("owner_id", authenticated.user.id).eq("provider", "stripe").eq("provider_mode", authenticated.provider.mode).maybeSingle();
     if (found.error) throw found.error;
     const account = await syncAccount(authenticated.database, authenticated.provider, authenticated.user.id, found.data);
     return NextResponse.json({ success: true, account });
@@ -39,16 +37,26 @@ export async function POST(request) {
   try {
     const authenticated = await authenticate(); if (authenticated.response) return authenticated.response;
     const database = authenticated.database; const provider = authenticated.provider; const ownerId = authenticated.user.id;
-    let found = await database.from("landlord_payment_accounts").select("*").eq("owner_id", ownerId).eq("provider", "stripe").maybeSingle();
+    if (typeof authenticated.user.email !== "string" || authenticated.user.email.trim() === "") {
+      // The only trustworthy contact email FORGE has for a landlord is their authenticated
+      // account email — never guess or leave it silently blank.
+      return NextResponse.json({ error: "A verified account email is required before starting Stripe onboarding." }, { status: 409 });
+    }
+    let found = await database.from("landlord_payment_accounts").select("*")
+      .eq("owner_id", ownerId).eq("provider", "stripe").eq("provider_mode", provider.mode).maybeSingle();
     if (found.error) throw found.error;
     let account = found.data;
     if (!account?.provider_account_id) {
-      const created = await provider.createConnectedAccount(ownerId, `stripe-landlord:v3:${ownerId}`);
+      // v4: the account shape changed from Accounts v1 to V2 Core Accounts — bumping the
+      // idempotency-key namespace avoids Stripe ever returning a cached v1-shaped response for
+      // a key that may have been used against the old call shape. The mode is folded into the
+      // key too, so a landlord's test and live onboarding attempts can never collide.
+      const created = await provider.createConnectedAccount(ownerId, `stripe-landlord:v4:${provider.mode}:${ownerId}`, { contactEmail: authenticated.user.email });
       const timestamp = new Date().toISOString();
       const saved = await database.from("landlord_payment_accounts").upsert({ owner_id: ownerId,
-        id: account?.id || `landlord_payment_account_${crypto.randomUUID()}`, provider: "stripe",
+        id: account?.id || `landlord_payment_account_${crypto.randomUUID()}`, provider: "stripe", provider_mode: provider.mode,
         provider_account_id: created.connectedAccountId, status: "onboarding", created_at: account?.created_at || timestamp,
-        updated_at: timestamp }, { onConflict: "owner_id,provider" }).select("*").single();
+        updated_at: timestamp }, { onConflict: "owner_id,provider,provider_mode" }).select("*").single();
       if (saved.error) throw saved.error; account = saved.data;
     }
     const origin = request.nextUrl.origin;

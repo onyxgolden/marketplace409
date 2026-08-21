@@ -17,7 +17,12 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   if (existing.error) throw existing.error;
   if (existing.data) return { httpStatus: 200, body: { success: true, duplicate: true, attempt: existing.data } };
 
-  const account = await db.from("landlord_payment_accounts").select("*").eq("owner_id", enrollment.owner_id).eq("provider", "stripe").single();
+  // Scoped to the *enrollment's own* provider_mode, not just the current server mode: a payment
+  // method/mandate token is only ever valid within the mode it was created under, so the
+  // connected account charged here must always match that same mode — this is what makes it
+  // impossible for a sandbox payment method to ever be charged against a live connected account.
+  const account = await db.from("landlord_payment_accounts").select("*")
+    .eq("owner_id", enrollment.owner_id).eq("provider", "stripe").eq("provider_mode", enrollment.provider_mode).single();
   if (account.error || !account.data?.provider_account_id) throw account.error || new Error("Stripe account missing");
 
   const remaining = Number(charge.amount_cents) - Number(charge.paid_amount_cents);
@@ -27,14 +32,14 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
 
   const payment = await db.from("rental_payments").insert({
     owner_id: enrollment.owner_id, id: paymentId, charge_id: charge.id, lease_id: charge.lease_id, tenant_id: enrollment.tenant_id,
-    provider: "stripe", provider_customer_id: enrollment.provider_customer_id, amount_cents: remaining, refunded_amount_cents: 0,
+    provider: "stripe", provider_mode: enrollment.provider_mode, provider_customer_id: enrollment.provider_customer_id, amount_cents: remaining, refunded_amount_cents: 0,
     currency_code: charge.currency_code, status: "created", idempotency_key: key, created_at: timestamp, updated_at: timestamp,
   }).select("*").single();
   if (payment.error) throw payment.error;
 
   const attempt = await db.from("rental_autopay_attempts").insert({
     owner_id: enrollment.owner_id, id: `rental_autopay_attempt_${crypto.randomUUID()}`, enrollment_id: enrollment.id,
-    charge_id: charge.id, payment_id: paymentId, status: "created", idempotency_key: key,
+    charge_id: charge.id, payment_id: paymentId, provider_mode: enrollment.provider_mode, status: "created", idempotency_key: key,
   }).select("*").single();
   if (attempt.error) throw attempt.error;
 

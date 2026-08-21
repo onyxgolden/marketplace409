@@ -36,6 +36,7 @@ const CHARGE = { id: "charge_1", owner_id: "owner_1", lease_id: "lease_1", due_d
 const ACCOUNT = { provider_account_id: "acct_1", status: "enabled", charges_enabled: true, payouts_enabled: true };
 
 function setup({ paymentRow, tenantRow = TENANT, accountRow = ACCOUNT, chargeRow = CHARGE, retrievePaymentIntent } = {}) {
+  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = "pk_test_fixture";
   const tables = {
     rental_tenants: chain({ data: tenantRow, error: null }),
     rental_payments: chain({ data: paymentRow, error: null }),
@@ -46,7 +47,7 @@ function setup({ paymentRow, tenantRow = TENANT, accountRow = ACCOUNT, chargeRow
   createRentalWebhookClient.mockReturnValue({ from: (table) => tables[table] });
   const retrieve = retrievePaymentIntent || vi.fn(async () => ({ id: "pi_existing", status: "requires_payment_method", clientSecret: "pi_existing_secret" }));
   const createPaymentSession = vi.fn();
-  createStripeBillingProvider.mockReturnValue({ retrievePaymentIntent: retrieve, createPaymentSession });
+  createStripeBillingProvider.mockReturnValue({ mode: "test", retrievePaymentIntent: retrieve, createPaymentSession });
   return { tables, retrieve, createPaymentSession };
 }
 
@@ -63,6 +64,14 @@ describe("Tenant payment resume route", () => {
     expect(body).toMatchObject({ success: true, clientSecret: "pi_existing_secret", connectedAccountId: "acct_1",
       paymentId: "rental_payment_1", amountCents: 2000, dueDate: "2026-09-01", period: "2026-09" });
     expect(retrieve).toHaveBeenCalledWith({ connectedAccountId: "acct_1" }, "pi_existing");
+  });
+
+  it("scopes the landlord account lookup by the server's configured provider_mode", async () => {
+    const paymentRow = { id: "rental_payment_1", owner_id: "owner_1", tenant_id: "tenant_1", charge_id: "charge_1",
+      status: "requires_payment_method", provider_payment_id: "pi_existing", amount_cents: 2000, currency_code: "USD" };
+    const { tables } = setup({ paymentRow });
+    await POST(request({ paymentId: "rental_payment_1" }));
+    expect(tables.landlord_payment_accounts.eq).toHaveBeenCalledWith("provider_mode", "test");
   });
 
   it("never creates a second PaymentIntent during resume", async () => {
@@ -126,6 +135,17 @@ describe("Tenant payment resume route", () => {
     const { retrieve } = setup({ paymentRow: null });
     const response = await POST(request({ paymentId: "rental_payment_missing" }));
     expect(response.status).toBe(404);
+    expect(retrieve).not.toHaveBeenCalled();
+  });
+
+  it("fails before any database or Stripe call when the publishable key does not match the server's mode", async () => {
+    const paymentRow = { id: "rental_payment_1", owner_id: "owner_1", tenant_id: "tenant_1", charge_id: "charge_1",
+      status: "requires_payment_method", provider_payment_id: "pi_existing", amount_cents: 2000, currency_code: "USD" };
+    const { tables, retrieve } = setup({ paymentRow });
+    process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = "pk_live_mismatched"; // server mode is "test"
+    const response = await POST(request({ paymentId: "rental_payment_1" }));
+    expect(response.status).toBe(500);
+    expect(tables.rental_tenants.select).not.toHaveBeenCalled();
     expect(retrieve).not.toHaveBeenCalled();
   });
 });

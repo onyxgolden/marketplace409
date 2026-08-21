@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
+import { validatePublishableKeyMode } from "@/infrastructure/billing/stripeMode";
 
 function failure(message, status) { return NextResponse.json({ error: message }, { status }); }
 
@@ -14,6 +15,8 @@ export async function POST(request) {
     const { paymentId } = await request.json();
     if (typeof paymentId !== "string" || paymentId.trim() === "") return failure("paymentId is required.", 400);
     const database = createRentalWebhookClient();
+    const provider = createStripeBillingProvider();
+    validatePublishableKeyMode(provider.mode);
     const { data: tenant, error: tenantError } = await database.from("rental_tenants").select("*")
       .eq("auth_user_id", authenticated.user.id).maybeSingle();
     if (tenantError) throw tenantError;
@@ -32,11 +35,10 @@ export async function POST(request) {
     if (!charge) return failure("The rent charge for this payment was not found.", 404);
 
     const { data: account, error: accountError } = await database.from("landlord_payment_accounts").select("*")
-      .eq("owner_id", tenant.owner_id).eq("provider", "stripe").maybeSingle();
+      .eq("owner_id", tenant.owner_id).eq("provider", "stripe").eq("provider_mode", provider.mode).maybeSingle();
     if (accountError) throw accountError;
     if (!account?.provider_account_id) return failure("The landlord payment account is not ready.", 409);
 
-    const provider = createStripeBillingProvider();
     const intent = await provider.retrievePaymentIntent({ connectedAccountId: account.provider_account_id }, payment.provider_payment_id);
     if (!intent.clientSecret) return failure("Stripe did not return a payment client secret.", 502);
 

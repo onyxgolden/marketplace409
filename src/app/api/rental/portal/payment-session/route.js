@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
+import { validatePublishableKeyMode } from "@/infrastructure/billing/stripeMode";
 
 function failure(message, status) { return NextResponse.json({ error: message }, { status }); }
 
@@ -12,6 +13,11 @@ export async function POST(request) {
     const { chargeId } = await request.json();
     if (typeof chargeId !== "string" || chargeId.trim() === "") return failure("chargeId is required.", 400);
     const database = createRentalWebhookClient();
+    const provider = createStripeBillingProvider();
+    // Fails before any database or Stripe work — a mismatched publishable key would otherwise
+    // only surface once the tenant's browser tries to confirm the Payment Element, with a
+    // confusing error, and by then a rental_payments row may already exist.
+    validatePublishableKeyMode(provider.mode);
     const { data: tenant, error: tenantError } = await database.from("rental_tenants").select("*")
       .eq("auth_user_id", authenticated.user.id).maybeSingle();
     if (tenantError) throw tenantError;
@@ -31,23 +37,25 @@ export async function POST(request) {
     if (pending.error) throw pending.error;
     if (pending.data) return failure("A payment for this charge is already pending.", 409);
 
+    // Scoped by provider_mode: a live tenant payment must only ever find the landlord's live
+    // connected account and live customer reference — a preserved sandbox row for the same
+    // owner/tenant must never be selected here, in either direction.
     const { data: account, error: accountError } = await database.from("landlord_payment_accounts").select("*")
-      .eq("owner_id", tenant.owner_id).eq("provider", "stripe").maybeSingle();
+      .eq("owner_id", tenant.owner_id).eq("provider", "stripe").eq("provider_mode", provider.mode).maybeSingle();
     if (accountError) throw accountError;
     if (!account?.provider_account_id || account.status !== "enabled" || !account.charges_enabled || !account.payouts_enabled)
       return failure("The landlord payment account is not ready.", 409);
 
-    const provider = createStripeBillingProvider();
     let { data: customer, error: customerError } = await database.from("billing_customer_references").select("*")
-      .eq("owner_id", tenant.owner_id).eq("tenant_id", tenant.id).eq("provider", "stripe").maybeSingle();
+      .eq("owner_id", tenant.owner_id).eq("tenant_id", tenant.id).eq("provider", "stripe").eq("provider_mode", provider.mode).maybeSingle();
     if (customerError) throw customerError;
     if (!customer) {
       const created = await provider.createCustomer({ ownerId: tenant.owner_id, connectedAccountId: account.provider_account_id },
         { tenantId: tenant.id, email: tenant.email, displayName: tenant.display_name },
-        `billing-customer:${tenant.owner_id}:${tenant.id}:stripe`);
+        `billing-customer:${provider.mode}:${tenant.owner_id}:${tenant.id}:stripe`);
       const saved = await database.from("billing_customer_references").upsert({ owner_id: tenant.owner_id,
-        tenant_id: tenant.id, provider: "stripe", connected_account_id: account.provider_account_id,
-        customer_id: created.customerId }, { onConflict: "owner_id,tenant_id,provider" }).select("*").single();
+        tenant_id: tenant.id, provider: "stripe", provider_mode: provider.mode, connected_account_id: account.provider_account_id,
+        customer_id: created.customerId }, { onConflict: "owner_id,tenant_id,provider,provider_mode" }).select("*").single();
       if (saved.error) throw saved.error;
       customer = saved.data;
     }
@@ -57,7 +65,7 @@ export async function POST(request) {
     const idempotencyKey = `rent:${charge.id}:${paymentId}`;
     const timestamp = new Date().toISOString();
     const inserted = await database.from("rental_payments").insert({ owner_id: tenant.owner_id, id: paymentId,
-      charge_id: charge.id, lease_id: charge.lease_id, tenant_id: tenant.id, provider: "stripe",
+      charge_id: charge.id, lease_id: charge.lease_id, tenant_id: tenant.id, provider: "stripe", provider_mode: provider.mode,
       provider_customer_id: customer.customer_id, amount_cents: remainingCents, refunded_amount_cents: 0,
       currency_code: charge.currency_code, status: "created", idempotency_key: idempotencyKey,
       created_at: timestamp, updated_at: timestamp }).select("*").single();

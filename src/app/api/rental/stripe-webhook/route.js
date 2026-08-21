@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { normalizeStripeConnectEvent } from "@/infrastructure/billing/normalizeStripeConnectEvent";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
+import { isWebhookEventAlreadySettled, webhookLivemodeMatchesServerMode } from "@/application/rental/stripeWebhookLedger";
 
 export const runtime = "nodejs";
 
@@ -28,29 +29,46 @@ export async function POST(request) {
   const rawBody = await request.text();
   const signature = request.headers.get("stripe-signature");
   if (!signature) return NextResponse.json({ error: "Missing Stripe signature." }, { status: 400 });
+  const supabase = createRentalWebhookClient();
+  let eventRowId = null;
   try {
     const provider = createStripeBillingProvider();
     const event = verifyStripeWebhookEvent(provider, rawBody, signature, configuredWebhookSecrets());
     const normalized = normalizeStripeConnectEvent(event);
+    eventRowId = `stripe_webhook_${normalized.providerEventId}`;
+
+    const modeMatches = webhookLivemodeMatchesServerMode(normalized.livemode, provider.mode);
+
+    const { data: existing, error: lookupExistingError } = await supabase.from("payment_webhook_events")
+      .select("status").eq("provider", "stripe").eq("provider_event_id", normalized.providerEventId).maybeSingle();
+    if (lookupExistingError) throw lookupExistingError;
+    if (existing && isWebhookEventAlreadySettled(existing.status)) {
+      return NextResponse.json({ received: true, duplicate: true });
+    }
+
     const payloadHash = createHash("sha256").update(rawBody).digest("hex");
-    const supabase = createRentalWebhookClient();
-    const eventRowId = `stripe_webhook_${normalized.providerEventId}`;
+    const supported = normalized.supported && modeMatches;
     const { error } = await supabase.from("payment_webhook_events").upsert({
       id: eventRowId,
       provider: "stripe",
+      provider_mode: provider.mode,
       provider_event_id: normalized.providerEventId,
       event_type: normalized.eventType,
       object_id: normalized.objectId,
-      status: normalized.supported ? "received" : "ignored",
+      status: supported ? "received" : "ignored",
       payload_hash: payloadHash,
-      processed_at: normalized.supported ? null : new Date().toISOString(),
-    }, { onConflict: "provider,provider_event_id", ignoreDuplicates: true });
+      processed_at: supported ? null : new Date().toISOString(),
+      failure_message: modeMatches ? null : "Event livemode does not match the server's configured Stripe mode.",
+    }, { onConflict: "provider,provider_event_id" });
     if (error) throw error;
-    if (normalized.supported) {
+    if (supported) {
+      // Scoped by provider_mode: a live event must only ever find (and mutate) the matching
+      // owner's live-mode connected account, never a preserved sandbox row for the same owner.
       const { data: landlordAccount, error: ownerLookupError } = await supabase
         .from("landlord_payment_accounts")
         .select("owner_id")
         .eq("provider", "stripe")
+        .eq("provider_mode", provider.mode)
         .eq("provider_account_id", normalized.connectedAccountId)
         .maybeSingle();
       if (ownerLookupError) throw ownerLookupError;
@@ -92,12 +110,14 @@ export async function POST(request) {
           p_currency_code: balance.currencyCode,
           p_status: balance.status,
           p_available_at: balance.availableAt,
+          p_provider_mode: provider.mode,
         });
       }
-      else if(normalized.eventType==="payout.paid"){const ids=await provider.listPayoutBalanceTransactionIds({connectedAccountId:normalized.connectedAccountId},normalized.objectId);projection=await supabase.rpc("mark_stripe_rental_settlements_paid_out",{p_provider_event_id:normalized.providerEventId,p_connected_account_id:normalized.connectedAccountId,p_payout_id:normalized.objectId,p_balance_transaction_ids:ids,p_paid_out_at:normalized.occurredAt});}
+      else if(normalized.eventType==="payout.paid"){const ids=await provider.listPayoutBalanceTransactionIds({connectedAccountId:normalized.connectedAccountId},normalized.objectId);projection=await supabase.rpc("mark_stripe_rental_settlements_paid_out",{p_provider_event_id:normalized.providerEventId,p_connected_account_id:normalized.connectedAccountId,p_payout_id:normalized.objectId,p_balance_transaction_ids:ids,p_paid_out_at:normalized.occurredAt,p_provider_mode:provider.mode});}
       else projection = normalized.eventType === "refund.updated" ? await supabase.rpc("process_stripe_rental_refund_event", {
         p_provider_event_id: normalized.providerEventId, p_connected_account_id: normalized.connectedAccountId,
         p_payment_id: normalized.paymentId, p_refunded_amount_cents: normalized.refundedAmountCents, p_occurred_at: normalized.occurredAt,
+        p_provider_mode: provider.mode,
       }) : await supabase.rpc("process_stripe_rental_payment_event", {
         p_provider_event_id: normalized.providerEventId,
         p_connected_account_id: normalized.connectedAccountId,
@@ -107,13 +127,21 @@ export async function POST(request) {
         p_failure_code: normalized.failureCode,
         p_failure_message: normalized.failureMessage,
         p_occurred_at: normalized.occurredAt,
+        p_provider_mode: provider.mode,
       });
       if (projection.error) throw projection.error;
-      if(normalized.eventType==="payment_intent.succeeded"&&normalized.paymentId&&normalized.paymentMethodId){const activation=await supabase.rpc("activate_rental_autopay_from_payment",{p_connected_account_id:normalized.connectedAccountId,p_payment_id:normalized.paymentId,p_payment_method_id:normalized.paymentMethodId,p_mandate_id:normalized.mandateId});if(activation.error)throw activation.error;}
+      if(normalized.eventType==="payment_intent.succeeded"&&normalized.paymentId&&normalized.paymentMethodId){const activation=await supabase.rpc("activate_rental_autopay_from_payment",{p_connected_account_id:normalized.connectedAccountId,p_payment_id:normalized.paymentId,p_payment_method_id:normalized.paymentMethodId,p_mandate_id:normalized.mandateId,p_provider_mode:provider.mode});if(activation.error)throw activation.error;}
     }
     return NextResponse.json({ received: true });
   } catch (error) {
-    console.error("Stripe Connect webhook rejected", error);
+    // Never log a raw Stripe/Postgres error message — it can carry object ids, URLs, or other
+    // request detail. Only a coarse error classification is recorded.
+    console.error("Stripe Connect webhook rejected", { name: error?.name || "Error", eventRowId });
+    if (eventRowId) {
+      await supabase.from("payment_webhook_events").update({
+        status: "failed", failure_message: "Processing failed.",
+      }).eq("id", eventRowId).then(() => {}, () => {});
+    }
     return NextResponse.json({ error: "Invalid Stripe webhook." }, { status: 400 });
   }
 }

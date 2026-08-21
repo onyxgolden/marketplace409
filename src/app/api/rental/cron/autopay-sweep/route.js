@@ -15,9 +15,14 @@ export async function GET(request) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   try {
     const db = createRentalWebhookClient();
+    const provider = createStripeBillingProvider();
     const today = new Date().toISOString().slice(0, 10);
+    // Scoped by provider_mode: a preserved sandbox enrollment (even one still marked 'active'
+    // from test-key usage) must never be picked up by a live-mode sweep, and vice versa — a
+    // landlord/tenant must set up autopay again for live payments rather than it silently
+    // carrying over.
     const [{ data: enrollments, error: enrollmentError }, { data: charges, error: chargeError }] = await Promise.all([
-      db.from("rental_autopay_enrollments").select("id, owner_id, lease_id").eq("status", "active"),
+      db.from("rental_autopay_enrollments").select("id, owner_id, lease_id").eq("status", "active").eq("provider_mode", provider.mode),
       db.from("rent_charges").select("id, owner_id, lease_id").in("status", ["due", "partially_paid", "overdue"]).lte("due_date", today),
     ]);
     if (enrollmentError) throw enrollmentError;
@@ -45,7 +50,7 @@ export async function GET(request) {
         console.error("Autopay sweep attempt failed", pair, attemptError);
       }
     }
-    const settlements = await reconcileMissingStripeSettlements(db, createStripeBillingProvider());
+    const settlements = await reconcileMissingStripeSettlements(db, provider);
     return NextResponse.json({ success: true, candidates: pairs.length, succeeded, failed, settlements });
   } catch (error) {
     console.error("Autopay sweep cron error", error);

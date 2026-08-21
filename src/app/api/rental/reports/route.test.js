@@ -1,6 +1,8 @@
 import{beforeEach,describe,expect,it,vi}from"vitest";const from=vi.fn();
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication",()=>({createAuthenticatedForgeApplication:vi.fn(async()=>({user:{id:"owner_1"},supabaseClient:{from}}))}));
+vi.mock("@/infrastructure/billing/StripeBillingProvider",()=>({createStripeBillingProvider:vi.fn(()=>({mode:"test"}))}));
 import{GET}from"./route.js";
+import{excludeOffModeStripePayments}from"./route.js";
 const tables={
   rental_units:[{id:"u1",label:"Main",status:"occupied",property_id:"kent"},{id:"u2",label:"Second",status:"available",property_id:"rachal"}],
   rental_tenants:[{id:"t1",display_name:"John"},{id:"t2",display_name:"Jane"}],
@@ -37,4 +39,51 @@ it("returns the renters insurance compliance report",async()=>{const response=aw
 it("returns the work orders report",async()=>{const response=await GET(new Request("https://example.test/api/rental/reports?report=work-orders"));const body=await response.json();expect(response.status).toBe(200);expect(body.report.summary).toMatchObject({openCount:1,closedCount:0});expect(body.report.rows[0].contractorName).toBe("Gulf Coast Plumbing");});
 it("returns the vendor contact list report",async()=>{const response=await GET(new Request("https://example.test/api/rental/reports?report=vendor-contacts"));const body=await response.json();expect(response.status).toBe(200);expect(body.report.rows[0]).toMatchObject({businessName:"Gulf Coast Plumbing"});});
 it("returns the vendor ledger report",async()=>{const response=await GET(new Request("https://example.test/api/rental/reports?report=vendor-ledger"));const body=await response.json();expect(response.status).toBe(200);expect(body.report.summary).toMatchObject({paymentCount:1,totalPaidCents:72080});});
+});
+
+describe("rental operating report — mixed live/test/manual payments in one fixture",()=>{
+  const mixedPayments=[
+    {id:"pay_live",lease_id:"l1",provider:"stripe",provider_mode:"live",status:"succeeded",amount_cents:10000,refunded_amount_cents:0},
+    {id:"pay_test",lease_id:"l1",provider:"stripe",provider_mode:"test",status:"succeeded",amount_cents:2000,refunded_amount_cents:0},
+    {id:"pay_manual",lease_id:"l1",provider:"offline",status:"succeeded",amount_cents:5000,refunded_amount_cents:0},
+  ];
+  it("a live-mode server counts the live Stripe payment and the manual payment, but excludes the test Stripe payment, in collectedCents",async()=>{
+    const {createStripeBillingProvider}=await import("@/infrastructure/billing/StripeBillingProvider");
+    createStripeBillingProvider.mockReturnValueOnce({mode:"live"});
+    from.mockImplementation(table=>({select:vi.fn(async()=>({data:table==="rental_payments"?mixedPayments:tables[table],error:null}))}));
+    const response=await GET(new Request("https://example.test/api/rental/reports"));
+    const body=await response.json();
+    expect(response.status).toBe(200);
+    expect(body.report.summary.collectedCents).toBe(15000); // live (10000) + manual (5000), never the test 2000
+    const l1Row=body.report.rentRoll.find(r=>r.leaseId==="l1");
+    expect(l1Row.collectedCents).toBe(15000);
+  });
+  it("a test-mode server counts only the test Stripe payment, never the live one", async()=>{
+    const {createStripeBillingProvider}=await import("@/infrastructure/billing/StripeBillingProvider");
+    createStripeBillingProvider.mockReturnValueOnce({mode:"test"});
+    from.mockImplementation(table=>({select:vi.fn(async()=>({data:table==="rental_payments"?mixedPayments:tables[table],error:null}))}));
+    const response=await GET(new Request("https://example.test/api/rental/reports"));
+    const body=await response.json();
+    expect(body.report.summary.collectedCents).toBe(7000); // test (2000) + manual (5000), never the live 10000
+  });
+  it("never removes the historical sandbox payment from the raw, unfiltered per-record list used by the audit/transaction views", async()=>{
+    // /api/rental (the individual-transaction list powering RentalPaymentsPanel) is a
+    // deliberately separate, unfiltered query — confirmed here only by contract, not by
+    // re-testing that route: the reports route's own filtering must never touch rental_payments
+    // in the database, only the in-memory copy it builds a report from.
+    expect(excludeOffModeStripePayments(mixedPayments,"live").some(p=>p.id==="pay_test")).toBe(false);
+    expect(mixedPayments.some(p=>p.id==="pay_test")).toBe(true); // the source array itself is untouched
+  });
+});
+
+describe("excludeOffModeStripePayments",()=>{
+  it("keeps a Stripe payment only when its provider_mode matches the server's current mode",()=>{
+    const payments=[{id:"p1",provider:"stripe",provider_mode:"live"},{id:"p2",provider:"stripe",provider_mode:"test"}];
+    expect(excludeOffModeStripePayments(payments,"live").map(p=>p.id)).toEqual(["p1"]);
+    expect(excludeOffModeStripePayments(payments,"test").map(p=>p.id)).toEqual(["p2"]);
+  });
+  it("never excludes an offline/manual payment, regardless of server mode",()=>{
+    const payments=[{id:"offline1",provider:"offline"},{id:"stripe_test",provider:"stripe",provider_mode:"test"}];
+    expect(excludeOffModeStripePayments(payments,"live").map(p=>p.id)).toEqual(["offline1"]);
+  });
 });

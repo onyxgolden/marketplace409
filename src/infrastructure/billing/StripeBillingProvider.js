@@ -1,5 +1,6 @@
 import Stripe from "stripe";
 import { validateBillingCheckoutInput } from "@/domains/billing-provider";
+import { resolveStripeMode } from "./stripeMode";
 
 function required(value, name) {
   if (typeof value !== "string" || value.trim() === "") throw new Error(`Stripe billing requires ${name}.`);
@@ -7,51 +8,113 @@ function required(value, name) {
 }
 
 export class StripeBillingProvider {
-  constructor({ secretKey, stripeClient } = {}) {
+  // `mode` ("test" | "live") is the single source of truth callers use to scope every
+  // landlord_payment_accounts / billing_customer_references / rental_payments / rental_settlements
+  // / autopay row they write or query — never inferred from a Stripe object id's own prefix.
+  constructor({ secretKey, stripeClient, mode = null } = {}) {
     this.provider = "stripe";
+    this.mode = mode;
     this.stripe = stripeClient || new Stripe(required(secretKey, "a secret key"));
   }
 
-  async createConnectedAccount(ownerId, idempotencyKey) {
-    const account = await this.stripe.accounts.create({
-      controller: {
-        stripe_dashboard: { type: "express" },
-        requirement_collection: "stripe",
-        losses: { payments: "application" },
-        fees: { payer: "application" },
-      },
-      capabilities: {
-        card_payments: { requested: true },
-        transfers: { requested: true },
-        us_bank_account_ach_payments: { requested: true },
+  // V2 Core Account. Fields verified directly against the installed stripe-node 22.5.0 type
+  // definitions and https://docs.stripe.com/connect/accounts-v2/connected-account-configuration —
+  // not copied from a generic sample. `dashboard: "express"` matches the Dashboard's confirmed
+  // Express selection (the SDK's Dashboard type is 'express' | 'full' | 'none' — "full" would be
+  // wrong here). `fees_collector`/`losses_collector` are both "stripe": for direct charges,
+  // Stripe's own integration guidance recommends Stripe hold negative-balance liability, and
+  // FORGE charges a $0 application fee today, so `fees_collector: "application"` would mean
+  // FORGE gets billed for Stripe's processing fees with no way to recover them from the
+  // landlord — "stripe" keeps both fees and losses off FORGE, matching the confirmed Dashboard
+  // fact that Stripe manages risk/loss by default. `requirements_collector` is intentionally
+  // omitted — Stripe computes it from the two responsibilities above and rejects it if set.
+  async createConnectedAccount(ownerId, idempotencyKey, { contactEmail } = {}) {
+    const params = {
+      dashboard: "express",
+      identity: { country: "US" }, // FORGE only operates in the US (Southeast Texas marketplace)
+      defaults: { responsibilities: { fees_collector: "stripe", losses_collector: "stripe" } },
+      configuration: {
+        merchant: {
+          capabilities: {
+            card_payments: { requested: true },
+            ach_debit_payments: { requested: true },
+          },
+        },
       },
       metadata: { forge_owner_id: required(ownerId, "an owner id") },
-    }, { idempotencyKey: required(idempotencyKey, "an idempotency key") });
+    };
+    // display_name is intentionally left unset — Stripe's hosted onboarding collects the
+    // landlord's real business name directly; FORGE never has independently-verified business
+    // identity data of its own to supply here.
+    if (contactEmail) params.contact_email = contactEmail;
+    const account = await this.stripe.v2.core.accounts.create(params, { idempotencyKey: required(idempotencyKey, "an idempotency key") });
     return Object.freeze({ connectedAccountId: account.id });
   }
 
   async createOnboardingLink(context, returnUrl, refreshUrl) {
-    const link = await this.stripe.accountLinks.create({
+    const link = await this.stripe.v2.core.accountLinks.create({
       account: required(context.connectedAccountId, "a connected account id"),
-      type: "account_onboarding",
-      return_url: required(returnUrl, "an onboarding return URL"),
-      refresh_url: required(refreshUrl, "an onboarding refresh URL"),
+      use_case: {
+        type: "account_onboarding",
+        account_onboarding: {
+          configurations: ["merchant"],
+          return_url: required(returnUrl, "an onboarding return URL"),
+          refresh_url: required(refreshUrl, "an onboarding refresh URL"),
+        },
+      },
     });
     return Object.freeze({ url: link.url });
   }
 
+  // `include` is required to get capability/requirement detail on a V2 retrieve — an
+  // unqualified retrieve returns a near-empty account. Capability `status` values are
+  // 'active' | 'pending' | 'restricted' | 'unsupported' (verified from the installed SDK types),
+  // not V1's `charges_enabled`/`payouts_enabled` booleans, so those are derived here rather than
+  // read directly. `stripe_balance.payouts` is Stripe-managed (not a capability FORGE requests)
+  // and is the truthful payouts signal for a Merchant-configured account doing direct charges.
   async retrieveAccountStatus(context) {
-    const account = await this.stripe.accounts.retrieve(required(context.connectedAccountId, "a connected account id"));
+    const account = await this.stripe.v2.core.accounts.retrieve(
+      required(context.connectedAccountId, "a connected account id"),
+      { include: ["configuration.merchant", "requirements"] },
+    );
+    const capabilities = account.configuration?.merchant?.capabilities || {};
+    const cardStatus = capabilities.card_payments?.status;
+    const achStatus = capabilities.ach_debit_payments?.status;
+    const payoutsStatus = capabilities.stripe_balance?.payouts?.status;
+    const requirementsDue = Object.freeze((account.requirements?.entries || []).map((entry) => Object.freeze({
+      description: entry.description,
+      dueBy: entry.minimum_deadline?.status || "eventually_due",
+    })));
     return Object.freeze({
       provider: this.provider,
+      mode: this.mode,
       connectedAccountId: account.id,
-      detailsSubmitted: account.details_submitted === true,
-      chargesEnabled: account.charges_enabled === true,
-      payoutsEnabled: account.payouts_enabled === true,
-      achDebitEnabled: account.capabilities?.us_bank_account_ach_payments === "active",
-      cardPaymentsEnabled: account.capabilities?.card_payments === "active",
-      requirementsDue: Object.freeze([...(account.requirements?.currently_due || [])]),
+      accountClosed: account.closed === true,
+      chargesEnabled: cardStatus === "active",
+      payoutsEnabled: payoutsStatus === "active",
+      achDebitEnabled: achStatus === "active",
+      cardPaymentsEnabled: cardStatus === "active",
+      // True once Stripe has anything to report about this account (a pending/active/restricted
+      // capability, or any requirement entry) — false only for a brand-new account where
+      // onboarding hasn't been touched yet. There is no V2 equivalent of V1's single
+      // `details_submitted` boolean.
+      onboardingStarted: requirementsDue.length > 0 || ["active", "restricted"].includes(cardStatus),
+      requirementsDue,
+      requirementsPastDue: requirementsDue.some((entry) => entry.dueBy === "past_due"),
     });
+  }
+
+  // Thin-event entry point for the V2 account webhook. `parseEventNotificationAsync` is the
+  // current SDK method (not `parseThinEvent`, which does not exist in stripe-node 22.5.0) — it
+  // verifies the signature from the raw body and returns a typed EventNotification. Per Stripe's
+  // guidance for thin payloads, `fetchEvent()` retrieves the full V2 Event before any state is
+  // applied — callers must await this method's result before acting on the notification.
+  async parseAccountWebhookNotification(rawBody, signature, secret) {
+    const notification = await this.stripe.parseEventNotificationAsync(
+      rawBody, required(signature, "a webhook signature"), required(secret, "an account webhook secret"),
+    );
+    await notification.fetchEvent();
+    return notification;
   }
 
   async createCustomer(context, input, idempotencyKey) {
@@ -138,5 +201,6 @@ export class StripeBillingProvider {
 }
 
 export function createStripeBillingProvider(env = process.env) {
-  return new StripeBillingProvider({ secretKey: required(env.STRIPE_SECRET_KEY, "STRIPE_SECRET_KEY") });
+  const { mode, secretKey } = resolveStripeMode(env);
+  return new StripeBillingProvider({ secretKey, mode });
 }

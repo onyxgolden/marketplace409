@@ -5,11 +5,16 @@ const mocks = vi.hoisted(() => ({
   retrieveCharge: vi.fn(),
   retrieveBalanceTransaction: vi.fn(),
   listPayoutBalanceTransactionIds: vi.fn(),
+  eventsSelect: vi.fn(),
+  eventsSelectEqProvider: vi.fn(),
+  eventsSelectEqEventId: vi.fn(),
+  eventsMaybeSingle: vi.fn(),
   upsert: vi.fn(),
   update: vi.fn(),
   updateEq: vi.fn(),
   landlordSelect: vi.fn(),
   landlordEqProvider: vi.fn(),
+  landlordEqMode: vi.fn(),
   landlordEqAccount: vi.fn(),
   landlordMaybeSingle: vi.fn(),
   rpc: vi.fn(),
@@ -17,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({
   createStripeBillingProvider: () => ({
+    mode: "test",
     constructWebhookEvent: mocks.constructWebhookEvent,
     retrieveCharge: mocks.retrieveCharge,
     retrieveBalanceTransaction: mocks.retrieveBalanceTransaction,
@@ -27,7 +33,7 @@ vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({
 vi.mock("@/lib/supabase/createRentalWebhookClient", () => ({
   createRentalWebhookClient: () => ({
     from: (table) => {
-      if (table === "payment_webhook_events") return { upsert: mocks.upsert, update: mocks.update };
+      if (table === "payment_webhook_events") return { select: mocks.eventsSelect, upsert: mocks.upsert, update: mocks.update };
       if (table === "landlord_payment_accounts") return { select: mocks.landlordSelect };
       throw new Error(`Unexpected table: ${table}`);
     },
@@ -103,12 +109,18 @@ describe("Stripe rental webhook route", () => {
     process.env.STRIPE_CONNECT_WEBHOOK_SECRET = CONNECT_SECRET;
     process.env.STRIPE_WEBHOOK_SECRET_PLATFORM = PLATFORM_SECRET;
 
+    mocks.eventsSelect.mockImplementation(() => ({ eq: mocks.eventsSelectEqProvider }));
+    mocks.eventsSelectEqProvider.mockImplementation(() => ({ eq: mocks.eventsSelectEqEventId }));
+    mocks.eventsSelectEqEventId.mockImplementation(() => ({ maybeSingle: mocks.eventsMaybeSingle }));
+    mocks.eventsMaybeSingle.mockResolvedValue({ data: null, error: null }); // no prior delivery of this event
+
     mocks.upsert.mockResolvedValue({ error: null });
     mocks.update.mockImplementation(() => ({ eq: mocks.updateEq }));
     mocks.updateEq.mockResolvedValue({ error: null });
 
     mocks.landlordSelect.mockImplementation(() => ({ eq: mocks.landlordEqProvider }));
-    mocks.landlordEqProvider.mockImplementation(() => ({ eq: mocks.landlordEqAccount }));
+    mocks.landlordEqProvider.mockImplementation(() => ({ eq: mocks.landlordEqMode }));
+    mocks.landlordEqMode.mockImplementation(() => ({ eq: mocks.landlordEqAccount }));
     mocks.landlordEqAccount.mockImplementation(() => ({ maybeSingle: mocks.landlordMaybeSingle }));
     mocks.landlordMaybeSingle.mockResolvedValue({ data: { owner_id: "owner_1" }, error: null });
 
@@ -294,5 +306,86 @@ describe("Stripe rental webhook route", () => {
     const response = await POST(request());
     expect(response.status).toBe(400);
     expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("scopes the landlord lookup by the server's configured provider_mode", async () => {
+    signsOnlyWith(CONNECT_SECRET, connectEvent);
+    await POST(request());
+    expect(mocks.landlordEqMode).toHaveBeenCalledWith("provider_mode", "test");
+  });
+
+  it("threads the server's provider_mode into record_stripe_rental_settlement and activate_rental_autopay_from_payment", async () => {
+    signsOnlyWith(CONNECT_SECRET, delayedChargeSucceeded);
+    await POST(request());
+    expect(mocks.rpc).toHaveBeenCalledWith("record_stripe_rental_settlement", expect.objectContaining({ p_provider_mode: "test" }));
+
+    mocks.rpc.mockClear();
+    signsOnlyWith(PLATFORM_SECRET, platformEvent);
+    await POST(request());
+    expect(mocks.rpc).toHaveBeenCalledWith("activate_rental_autopay_from_payment", expect.objectContaining({ p_provider_mode: "test" }));
+  });
+
+  it("threads the server's provider_mode into process_stripe_rental_payment_event, process_stripe_rental_refund_event, and mark_stripe_rental_settlements_paid_out", async () => {
+    signsOnlyWith(CONNECT_SECRET, knownAccountBalanceAvailable);
+    await POST(request());
+    expect(mocks.rpc).toHaveBeenCalledWith("process_stripe_rental_payment_event", expect.objectContaining({ p_provider_mode: "test" }));
+
+    mocks.rpc.mockClear();
+    signsOnlyWith(CONNECT_SECRET, {
+      id: "evt_refund_1", type: "refund.updated", account: "acct_landlord", livemode: false,
+      data: { object: { id: "re_1", amount: 5000, metadata: { forge_payment_id: "payment_1" } } },
+    });
+    await POST(request());
+    expect(mocks.rpc).toHaveBeenCalledWith("process_stripe_rental_refund_event", expect.objectContaining({ p_provider_mode: "test" }));
+
+    mocks.rpc.mockClear();
+    signsOnlyWith(CONNECT_SECRET, {
+      id: "evt_payout_1", type: "payout.paid", account: "acct_landlord", livemode: false,
+      data: { object: { id: "po_1" } },
+    });
+    await POST(request());
+    expect(mocks.rpc).toHaveBeenCalledWith("mark_stripe_rental_settlements_paid_out", expect.objectContaining({ p_provider_mode: "test" }));
+  });
+
+  it("a livemode mismatch (a live event delivered to a test-configured server) performs zero business mutations", async () => {
+    signsOnlyWith(CONNECT_SECRET, { ...connectEvent, livemode: true }); // server mode is "test"
+    const response = await POST(request());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ received: true });
+    expect(mocks.landlordSelect).not.toHaveBeenCalled();
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      status: "ignored", failure_message: "Event livemode does not match the server's configured Stripe mode.",
+    }), expect.anything());
+  });
+
+  it("a duplicate delivery of an already-processed event short-circuits without re-touching business tables", async () => {
+    mocks.eventsMaybeSingle.mockResolvedValue({ data: { status: "processed" }, error: null });
+    signsOnlyWith(CONNECT_SECRET, connectEvent);
+    const response = await POST(request());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ received: true, duplicate: true });
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("a retry after a transient failure (row stuck at 'received') is allowed to run and can succeed", async () => {
+    mocks.eventsMaybeSingle.mockResolvedValue({ data: { status: "received" }, error: null });
+    signsOnlyWith(CONNECT_SECRET, connectEvent);
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("process_stripe_rental_payment_event", expect.anything());
+  });
+
+  it("never logs the raw error message, only a coarse classification", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.constructWebhookEvent.mockImplementation(() => { throw new Error("signature mismatch for acct_secret123"); });
+    await POST(request());
+    const logged = JSON.stringify(consoleSpy.mock.calls.flat());
+    expect(logged).not.toContain("acct_secret123");
+    expect(logged).not.toContain("signature mismatch");
+    consoleSpy.mockRestore();
   });
 });

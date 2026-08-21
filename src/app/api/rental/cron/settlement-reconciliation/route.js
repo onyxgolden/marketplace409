@@ -5,10 +5,13 @@ import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookCli
 export const runtime = "nodejs";
 
 export async function reconcileMissingStripeSettlements(db, provider) {
+  // Scoped to the server's configured provider_mode: a live-mode cron run must never surface a
+  // preserved sandbox payment as a reconciliation candidate, and vice versa.
   const { data: payments, error: paymentError } = await db
     .from("rental_payments")
     .select("id, owner_id, provider_payment_id")
     .eq("provider", "stripe")
+    .eq("provider_mode", provider.mode)
     .eq("status", "succeeded")
     .not("provider_payment_id", "is", null)
     .limit(100);
@@ -23,7 +26,8 @@ export async function reconcileMissingStripeSettlements(db, provider) {
   const { data: accounts, error: accountError } = await db
     .from("landlord_payment_accounts")
     .select("owner_id, provider_account_id")
-    .eq("provider", "stripe");
+    .eq("provider", "stripe")
+    .eq("provider_mode", provider.mode);
   if (accountError) throw accountError;
 
   const settledPaymentIds = new Set((settlements || []).map((row) => row.payment_id));
@@ -66,6 +70,7 @@ export async function reconcileMissingStripeSettlements(db, provider) {
         p_currency_code: balance.currencyCode,
         p_status: balance.status,
         p_available_at: balance.availableAt,
+        p_provider_mode: provider.mode,
       });
       if (result.error) throw result.error;
       reconciled += 1;

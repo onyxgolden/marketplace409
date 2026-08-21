@@ -16,6 +16,7 @@ import { buildWorkOrdersReport, workOrdersReportToCsv } from "@/application/rent
 import { buildVendorContactListReport, vendorContactListReportToCsv } from "@/application/rental/buildVendorContactListReport";
 import { buildVendorLedgerReport, vendorLedgerReportToCsv } from "@/application/rental/buildVendorLedgerReport";
 import { scopeRentalDataToProperty } from "@/application/rental/scopeRentalDataToProperty";
+import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 
 const CORE_RENTAL_TABLES = ["rental_units", "rental_tenants", "rental_leases", "rental_lease_tenants", "rent_charges", "rental_payments"];
 const CORE_RENTAL_KEYS = {
@@ -52,9 +53,17 @@ const CORE_REPORT_BUILDERS = {
   "upcoming-charges": { build: (data, url) => buildUpcomingChargesReport(data, { startDate: url.searchParams.get("startDate") || undefined, endDate: url.searchParams.get("endDate") || undefined }), toCsv: upcomingChargesReportToCsv, filename: "rental-upcoming-charges" },
 };
 
+// Operational reports (rent roll, delinquency, upcoming charges) must never count a preserved
+// sandbox payment as live rent, and must never hide a real 'offline'/manual payment (which has no
+// Stripe mode at all) just because the server happens to be running in live mode.
+export function excludeOffModeStripePayments(payments, currentMode) {
+  return payments.filter((payment) => payment.provider !== "stripe" || payment.provider_mode === currentMode);
+}
+
 async function loadCoreReport(a, url, reportKey) {
   const builder = CORE_REPORT_BUILDERS[reportKey];
   const raw = await fetchTables(a.supabaseClient, CORE_RENTAL_TABLES);
+  raw.rental_payments = excludeOffModeStripePayments(raw.rental_payments, createStripeBillingProvider().mode);
   const data = Object.fromEntries(CORE_RENTAL_TABLES.map((table) => [CORE_RENTAL_KEYS[table], raw[table]]));
   const availableProperties = Object.freeze([...new Set(data.units.map((unit) => unit.property_id))].filter(Boolean).sort());
   const scoped = scopeRentalDataToProperty(data, url.searchParams.get("propertyId") || "");

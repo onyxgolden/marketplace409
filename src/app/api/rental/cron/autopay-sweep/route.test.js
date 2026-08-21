@@ -3,7 +3,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 vi.mock("@/lib/supabase/createRentalWebhookClient", () => ({ createRentalWebhookClient: vi.fn() }));
 vi.mock("@/application/rental/executeAutopayAttempt", () => ({ executeAutopayAttempt: vi.fn() }));
 vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({
-  createStripeBillingProvider: vi.fn(() => ({ provider: "stripe" })),
+  createStripeBillingProvider: vi.fn(() => ({ provider: "stripe", mode: "test" })),
 }));
 vi.mock("../settlement-reconciliation/route.js", () => ({
   reconcileMissingStripeSettlements: vi.fn(),
@@ -57,6 +57,14 @@ describe("autopay sweep cron", () => {
     expect(reconcileMissingStripeSettlements).toHaveBeenCalledWith(
       expect.anything(), expect.objectContaining({ provider: "stripe" }),
     );
+  });
+
+  it("scopes the active-enrollment query to the server's provider_mode — a preserved sandbox enrollment is never a live sweep candidate", async () => {
+    const enrollments = chain({ data: [], error: null });
+    const charges = chain({ data: [], error: null });
+    createRentalWebhookClient.mockReturnValue({ from: vi.fn((table) => (table === "rental_autopay_enrollments" ? enrollments : charges)) });
+    await GET(request({ authorization: "Bearer cron-secret" }));
+    expect(enrollments.eq).toHaveBeenCalledWith("provider_mode", "test");
   });
 
   it("counts a failed attempt without aborting the sweep", async () => {
