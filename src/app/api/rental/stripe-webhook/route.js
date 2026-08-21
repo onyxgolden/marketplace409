@@ -40,7 +40,7 @@ export async function POST(request) {
     const modeMatches = webhookLivemodeMatchesServerMode(normalized.livemode, provider.mode);
 
     const { data: existing, error: lookupExistingError } = await supabase.from("payment_webhook_events")
-      .select("status").eq("provider", "stripe").eq("provider_event_id", normalized.providerEventId).maybeSingle();
+      .select("status").eq("provider", "stripe").eq("provider_mode", provider.mode).eq("provider_event_id", normalized.providerEventId).maybeSingle();
     if (lookupExistingError) throw lookupExistingError;
     if (existing && isWebhookEventAlreadySettled(existing.status)) {
       return NextResponse.json({ received: true, duplicate: true });
@@ -59,7 +59,7 @@ export async function POST(request) {
       payload_hash: payloadHash,
       processed_at: supported ? null : new Date().toISOString(),
       failure_message: modeMatches ? null : "Event livemode does not match the server's configured Stripe mode.",
-    }, { onConflict: "provider,provider_event_id" });
+    }, { onConflict: "provider,provider_mode,provider_event_id" });
     if (error) throw error;
     if (supported) {
       // Scoped by provider_mode: a live event must only ever find (and mutate) the matching

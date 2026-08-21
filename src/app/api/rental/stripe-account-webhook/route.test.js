@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   parseAccountWebhookNotification: vi.fn(),
   retrieveAccountStatus: vi.fn(),
   eventsSelectEqProvider: vi.fn(),
+  eventsSelectEqMode: vi.fn(),
   eventsSelectEqEventId: vi.fn(),
   eventsMaybeSingle: vi.fn(),
   eventsUpsert: vi.fn(async () => ({ error: null })),
@@ -65,12 +66,14 @@ function accountStatus(overrides = {}) {
   };
 }
 function wireNoExistingLedgerRow() {
-  mocks.eventsSelectEqProvider.mockReturnValue({ eq: mocks.eventsSelectEqEventId });
+  mocks.eventsSelectEqProvider.mockReturnValue({ eq: mocks.eventsSelectEqMode });
+  mocks.eventsSelectEqMode.mockReturnValue({ eq: mocks.eventsSelectEqEventId });
   mocks.eventsSelectEqEventId.mockReturnValue({ maybeSingle: mocks.eventsMaybeSingle });
   mocks.eventsMaybeSingle.mockResolvedValue({ data: null, error: null });
 }
 function wireExistingLedgerRow(status) {
-  mocks.eventsSelectEqProvider.mockReturnValue({ eq: mocks.eventsSelectEqEventId });
+  mocks.eventsSelectEqProvider.mockReturnValue({ eq: mocks.eventsSelectEqMode });
+  mocks.eventsSelectEqMode.mockReturnValue({ eq: mocks.eventsSelectEqEventId });
   mocks.eventsSelectEqEventId.mockReturnValue({ maybeSingle: mocks.eventsMaybeSingle });
   mocks.eventsMaybeSingle.mockResolvedValue({ data: { status }, error: null });
 }
@@ -120,6 +123,24 @@ describe("stripe account thin-event webhook", () => {
     expect(mocks.retrieveAccountStatus).toHaveBeenCalledWith({ ownerId: "owner_1", connectedAccountId: "acct_kent" });
     expect(mocks.landlordUpdateEqOwner).toHaveBeenCalledWith("owner_id", "owner_1");
     expect(mocks.landlordUpdateEqMode).toHaveBeenCalledWith("provider_mode", "test");
+  });
+
+  it("scopes the duplicate-delivery lookup by the server's configured provider_mode, not just provider and provider_event_id", async () => {
+    mocks.parseAccountWebhookNotification.mockResolvedValue(notification());
+    mocks.retrieveAccountStatus.mockResolvedValue(accountStatus());
+    wireLandlordLookup({ data: { owner_id: "owner_1" }, error: null });
+    await POST(request({ "stripe-signature": "t=1,v1=ok" }));
+    expect(mocks.eventsSelectEqProvider).toHaveBeenCalledWith("provider", "stripe");
+    expect(mocks.eventsSelectEqMode).toHaveBeenCalledWith("provider_mode", "test");
+    expect(mocks.eventsSelectEqEventId).toHaveBeenCalledWith("provider_event_id", "evt_thin_1");
+  });
+
+  it("upserts payment_webhook_events with the three-column post-migration conflict target", async () => {
+    mocks.parseAccountWebhookNotification.mockResolvedValue(notification());
+    mocks.retrieveAccountStatus.mockResolvedValue(accountStatus());
+    wireLandlordLookup({ data: { owner_id: "owner_1" }, error: null });
+    await POST(request({ "stripe-signature": "t=1,v1=ok" }));
+    expect(mocks.eventsUpsert).toHaveBeenCalledWith(expect.anything(), { onConflict: "provider,provider_mode,provider_event_id" });
   });
 
   it("a livemode mismatch (live event on a test server) performs zero business mutations", async () => {

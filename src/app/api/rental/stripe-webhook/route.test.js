@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   listPayoutBalanceTransactionIds: vi.fn(),
   eventsSelect: vi.fn(),
   eventsSelectEqProvider: vi.fn(),
+  eventsSelectEqMode: vi.fn(),
   eventsSelectEqEventId: vi.fn(),
   eventsMaybeSingle: vi.fn(),
   upsert: vi.fn(),
@@ -110,7 +111,8 @@ describe("Stripe rental webhook route", () => {
     process.env.STRIPE_WEBHOOK_SECRET_PLATFORM = PLATFORM_SECRET;
 
     mocks.eventsSelect.mockImplementation(() => ({ eq: mocks.eventsSelectEqProvider }));
-    mocks.eventsSelectEqProvider.mockImplementation(() => ({ eq: mocks.eventsSelectEqEventId }));
+    mocks.eventsSelectEqProvider.mockImplementation(() => ({ eq: mocks.eventsSelectEqMode }));
+    mocks.eventsSelectEqMode.mockImplementation(() => ({ eq: mocks.eventsSelectEqEventId }));
     mocks.eventsSelectEqEventId.mockImplementation(() => ({ maybeSingle: mocks.eventsMaybeSingle }));
     mocks.eventsMaybeSingle.mockResolvedValue({ data: null, error: null }); // no prior delivery of this event
 
@@ -306,6 +308,20 @@ describe("Stripe rental webhook route", () => {
     const response = await POST(request());
     expect(response.status).toBe(400);
     expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("scopes the duplicate-delivery lookup by the server's configured provider_mode, not just provider and provider_event_id", async () => {
+    signsOnlyWith(CONNECT_SECRET, connectEvent);
+    await POST(request());
+    expect(mocks.eventsSelectEqProvider).toHaveBeenCalledWith("provider", "stripe");
+    expect(mocks.eventsSelectEqMode).toHaveBeenCalledWith("provider_mode", "test");
+    expect(mocks.eventsSelectEqEventId).toHaveBeenCalledWith("provider_event_id", connectEvent.id);
+  });
+
+  it("upserts payment_webhook_events with the three-column post-migration conflict target", async () => {
+    signsOnlyWith(CONNECT_SECRET, connectEvent);
+    await POST(request());
+    expect(mocks.upsert).toHaveBeenCalledWith(expect.anything(), { onConflict: "provider,provider_mode,provider_event_id" });
   });
 
   it("scopes the landlord lookup by the server's configured provider_mode", async () => {
