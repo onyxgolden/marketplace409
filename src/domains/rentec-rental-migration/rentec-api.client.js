@@ -138,6 +138,30 @@ export class RentecApiClient {
     });
   }
 
+  // Unlike transactionPage() (which deliberately discards per-row identity behind privacy-preserving
+  // fingerprints, for the legacy CSV-reconciliation flow), payment-reconciliation import needs the
+  // transaction's own stable identity to match and de-duplicate against — so this method returns real
+  // rows, but still only the fields needed for matching. It never returns the raw free-text
+  // description/memo/check_num fields, which can carry tenant names or other PII irrelevant to
+  // matching a payment to a charge.
+  async transactionLedger({ propertyId, page = 1 }) {
+    if (!/^\d+$/.test(String(propertyId)) || !Number.isInteger(page) || page < 1) throw new Error("A valid Rentec property and page are required.");
+    const payload = await this.get("/transactions", { property_id: propertyId, start_date: "1900-01-01", page });
+    const rows = payload.data || [];
+    return Object.freeze({
+      page: Number(payload.summary?.page || page),
+      moreRecords: Boolean(payload.summary?.more_records),
+      transactions: Object.freeze(rows.map((row) => Object.freeze({
+        transactionId: String(row.transaction_id || row.split_id || ""),
+        renterId: row.renter_id ? String(row.renter_id) : null,
+        propertyId: String(row.property_id || propertyId),
+        amountCents: cents(row.amount),
+        transactionDate: String(row.transaction_time || "").slice(0, 10) || null,
+        categoryName: String(row.category_name || "").trim(),
+      })).filter((row) => row.transactionId)),
+    });
+  }
+
   async transactionPage({ propertyId, propertyName = "", page = 1 }) {
     if (!/^\d+$/.test(String(propertyId)) || !Number.isInteger(page) || page < 1) throw new Error("A valid Rentec property and page are required.");
     if (typeof propertyName !== "string" || propertyName.length > 100) throw new Error("A valid Rentec property label is required.");
