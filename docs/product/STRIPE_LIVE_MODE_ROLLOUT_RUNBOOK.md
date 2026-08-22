@@ -39,9 +39,15 @@ There is no ordering of "migrate" vs. "advance `main`" that avoids *some* window
 
    Never change only one of these. `resolveStripeMode()`/`validatePublishableKeyMode()` will refuse to serve a tenant payment if any single one is stale relative to the others — see below.
 9. **Redeploy** so the new environment variables take effect everywhere (server routes, cron, webhooks, and the client bundle carrying the publishable key).
-10. **Create a new live landlord connected account** — this is a genuinely new V2 Core Account (`dashboard: "express"`, `provider_mode: "live"`); the preserved sandbox account and its `test`-tagged rows are never touched or reused for this.
+10. **Create a new live landlord connected account** — this is a genuinely new V2 Core Account (`dashboard: "full"`, `provider_mode: "live"`); the preserved sandbox account and its `test`-tagged rows are never touched or reused for this.
 11. **Complete live onboarding** for that account through Stripe's hosted flow.
 12. **Perform one controlled, low-value live payment and refund** as the final end-to-end check, then confirm it appears correctly in live operational reports (see `excludeOffModeStripePayments`) and that the historical sandbox transaction still appears in the raw transaction/audit view but not in any live total.
+
+## Why live accounts use `dashboard: "full"`, not `"express"`
+
+Test-mode account creation used `dashboard: "express"` throughout this project and it worked. The first live account-creation attempt on Production failed with Stripe error `account_controller_unsupported_configuration`, HTTP 400. Per Stripe's Connect "design an integration" guide: combining Express Dashboard access with Stripe holding negative-balance liability (`losses_collector: "stripe"`) is in **public preview** — it requires pinning the Stripe client to API version `2026-07-29.preview` *and* replacing hosted Account Link onboarding with Connect embedded components (onboarding, account management, and the notification banner are all mandatory in that combination). This app does neither, so the stable API version this app runs on rejects that permutation outright — test mode never exercised this specific rejection path, which is why it surfaced only on the first live attempt.
+
+FORGE's approved financial policy — the landlord pays Stripe's processing fees, Stripe carries negative-balance liability, FORGE assumes neither — is unchanged. `fees_collector`/`losses_collector` are still both `"stripe"`. What changed is `dashboard: "full"` instead of `"express"`, which **is** supported for this fee/loss combination on the stable API. The trade-off: a full-dashboard connected account gets its own unrestricted Stripe Dashboard login (`dashboard.stripe.com`) rather than a FORGE-branded Express flow, and Stripe treats dashboard type as immutable per account — changing it later means creating a new `Account` object, not updating the existing one. Revisit Express + preview API + embedded components as a deliberate future feature if a branded, headless onboarding experience is wanted for landlords beyond the initial operator.
 
 ## No mixed-key partial state
 

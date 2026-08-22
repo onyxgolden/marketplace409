@@ -29,11 +29,11 @@ function setup() {
 }
 
 describe("StripeBillingProvider", () => {
-  it("creates a V2 Core account on the Express dashboard with Stripe holding fees and loss liability", async () => {
+  it("creates a V2 Core account on the full dashboard with Stripe holding fees and loss liability", async () => {
     const { provider, stripeClient } = setup();
     const result = await provider.createConnectedAccount("owner_1", "account-key", { contactEmail: "owner@example.com" });
     expect(stripeClient.v2.core.accounts.create).toHaveBeenCalledWith({
-      dashboard: "express",
+      dashboard: "full",
       identity: { country: "US" },
       defaults: { responsibilities: { fees_collector: "stripe", losses_collector: "stripe" } },
       configuration: { merchant: { capabilities: {
@@ -44,6 +44,34 @@ describe("StripeBillingProvider", () => {
       contact_email: "owner@example.com",
     }, { idempotencyKey: "account-key" });
     expect(result).toEqual({ connectedAccountId: "acct_kent" });
+  });
+
+  // Regression guard for the live-incident root cause: dashboard: "express" combined with
+  // fees_collector/losses_collector: "stripe" is only supported on the Accounts V2 preview API
+  // version with mandatory embedded components — requesting it on the stable API version fails
+  // live account creation with account_controller_unsupported_configuration (confirmed against a
+  // live Production request). "full" is the only dashboard value supported for this fee/loss
+  // combination on the stable API this app actually uses.
+  it("never requests the express dashboard, and never lets either collector become application", async () => {
+    const { provider, stripeClient } = setup();
+    await provider.createConnectedAccount("owner_1", "account-key");
+    const [params] = stripeClient.v2.core.accounts.create.mock.calls[0];
+    expect(params.dashboard).toBe("full");
+    expect(params.dashboard).not.toBe("express");
+    expect(params.defaults.responsibilities.fees_collector).toBe("stripe");
+    expect(params.defaults.responsibilities.fees_collector).not.toBe("application");
+    expect(params.defaults.responsibilities.losses_collector).toBe("stripe");
+    expect(params.defaults.responsibilities.losses_collector).not.toBe("application");
+  });
+
+  it("still requests card and ACH capabilities on the full dashboard", async () => {
+    const { provider, stripeClient } = setup();
+    await provider.createConnectedAccount("owner_1", "account-key");
+    const [params] = stripeClient.v2.core.accounts.create.mock.calls[0];
+    expect(params.configuration.merchant.capabilities).toEqual({
+      card_payments: { requested: true },
+      ach_debit_payments: { requested: true },
+    });
   });
 
   it("never passes a legacy top-level account type", async () => {
@@ -69,6 +97,8 @@ describe("StripeBillingProvider", () => {
     expect(stripeClient.v2.core.accounts.create).toHaveBeenNthCalledWith(2, expect.anything(), { idempotencyKey: "retry-key" });
   });
 
+  // The full-dashboard fix above doesn't change onboarding-link creation — Account Links still
+  // work for full-dashboard accounts, and this stays scoped to the "merchant" configuration only.
   it("creates a V2 hosted onboarding account link with fixed FORGE return/refresh URLs", async () => {
     const { provider, stripeClient } = setup();
     const result = await provider.createOnboardingLink(

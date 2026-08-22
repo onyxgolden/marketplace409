@@ -63,6 +63,33 @@ describe("stripe-account route", () => {
     expect(body).toEqual({ success: true, url: "https://connect.stripe.com/setup/acct_kent" });
   });
 
+  // Regression guard for the live incident: a rejected Stripe account-creation call (e.g. the real
+  // account_controller_unsupported_configuration failure) must never reach the database write, and
+  // a subsequent retry must be safe to reuse — never a second Stripe account for the same owner.
+  it("never writes landlord_payment_accounts when Stripe account creation fails, and a retry reuses the same deterministic idempotency key", async () => {
+    const found = chain({ data: null, error: null });
+    db = { from: vi.fn(() => found) };
+    createConnectedAccount.mockRejectedValueOnce(new Error("account_controller_unsupported_configuration"));
+
+    const failedResponse = await POST(new NextRequest("https://forge.test/api/rental/stripe-account", { method: "POST" }));
+    expect(failedResponse.status).toBe(500);
+    expect(found.upsert).not.toHaveBeenCalled();
+
+    const upserted = chain({ data: { owner_id: "owner_1", provider_account_id: "acct_kent" }, error: null });
+    let calls = 0;
+    db = { from: vi.fn(() => (++calls === 1 ? found : upserted)) };
+    createConnectedAccount.mockResolvedValueOnce({ connectedAccountId: "acct_kent" });
+    createOnboardingLink.mockResolvedValue({ url: "https://connect.stripe.com/setup/acct_kent" });
+    const retryResponse = await POST(new NextRequest("https://forge.test/api/rental/stripe-account", { method: "POST" }));
+    expect(retryResponse.status).toBe(200);
+
+    expect(createConnectedAccount).toHaveBeenCalledTimes(2);
+    const [firstKey] = createConnectedAccount.mock.calls[0].slice(1);
+    const [secondKey] = createConnectedAccount.mock.calls[1].slice(1);
+    expect(firstKey).toBe(secondKey);
+    expect(upserted.upsert).toHaveBeenCalledTimes(1);
+  });
+
   it("a preserved test connected-account row does not block creating a live connected account", async () => {
     provider.mode = "live";
     const found = chain({ data: null, error: null }); // the live-mode row lookup finds nothing, even though a test row exists elsewhere

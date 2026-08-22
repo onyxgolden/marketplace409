@@ -17,20 +17,25 @@ export class StripeBillingProvider {
     this.stripe = stripeClient || new Stripe(required(secretKey, "a secret key"));
   }
 
-  // V2 Core Account. Fields verified directly against the installed stripe-node 22.5.0 type
-  // definitions and https://docs.stripe.com/connect/accounts-v2/connected-account-configuration —
-  // not copied from a generic sample. `dashboard: "express"` matches the Dashboard's confirmed
-  // Express selection (the SDK's Dashboard type is 'express' | 'full' | 'none' — "full" would be
-  // wrong here). `fees_collector`/`losses_collector` are both "stripe": for direct charges,
-  // Stripe's own integration guidance recommends Stripe hold negative-balance liability, and
-  // FORGE charges a $0 application fee today, so `fees_collector: "application"` would mean
-  // FORGE gets billed for Stripe's processing fees with no way to recover them from the
-  // landlord — "stripe" keeps both fees and losses off FORGE, matching the confirmed Dashboard
-  // fact that Stripe manages risk/loss by default. `requirements_collector` is intentionally
-  // omitted — Stripe computes it from the two responsibilities above and rejects it if set.
+  // V2 Core Account. `fees_collector`/`losses_collector` are both "stripe" — this is FORGE's
+  // approved financial policy: the landlord pays Stripe's processing fees, Stripe carries the
+  // connected account's negative-balance liability, and FORGE assumes neither. `dashboard: "full"`
+  // is required for this combination on the stable (non-preview) Accounts V2 API: Stripe's Connect
+  // "design an integration" guide states that combining Express Dashboard access with Stripe
+  // responsibility for negative balances is in public preview (requires API version
+  // "2026-07-29.preview") and mandates Connect embedded components for onboarding, account
+  // management, and the notification banner — none of which this app has integrated. Requesting
+  // `dashboard: "express"` with `fees_collector`/`losses_collector: "stripe"` on the stable API
+  // version fails live account creation with `account_controller_unsupported_configuration"
+  // (confirmed against a live Production request). `dashboard: "full"` gives the connected
+  // landlord their own unrestricted Stripe Dashboard login rather than a FORGE-branded Express
+  // flow — an accepted product trade-off for now, revisited if headless/Express onboarding is
+  // wanted for future non-Jason landlords, at which point the preview API + embedded components
+  // path above would need to be built instead. `requirements_collector` is intentionally omitted —
+  // Stripe computes it from the two responsibilities above and rejects it if set.
   async createConnectedAccount(ownerId, idempotencyKey, { contactEmail } = {}) {
     const params = {
-      dashboard: "express",
+      dashboard: "full",
       identity: { country: "US" }, // FORGE only operates in the US (Southeast Texas marketplace)
       defaults: { responsibilities: { fees_collector: "stripe", losses_collector: "stripe" } },
       configuration: {
