@@ -158,7 +158,7 @@ export async function POST(request) {
         const { data, error } = await authenticated.supabaseClient.rpc("void_rental_rent_charge",
           { p_owner_id: user.id, p_charge_id: body.chargeId.trim(), p_reason: body.reason.trim() });
         if (error) throw error;
-        if (!data || !data.id) return NextResponse.json({ error: "Only an unpaid, not-yet-voided charge can be voided." }, { status: 409 });
+        if (!data || !data.id) return NextResponse.json({ error: "Only a charge with no paid balance, not already voided, and no pending or unreversed payment can be voided." }, { status: 409 });
         return NextResponse.json({ success: true, charge: data });
       }
       case "activate-lease-schedule": {

@@ -149,6 +149,8 @@ describe("Rental Manager route", () => {
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { rpc } });
     const response = await POST(request({ operation: "void-charge", chargeId: "charge_1", reason: "Mistake." }));
     expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.error).toBe("Only a charge with no paid balance, not already voided, and no pending or unreversed payment can be voided.");
   });
   it("requires a chargeId to void a charge", async () => {
     const response = await POST(request({ operation: "void-charge", reason: "Mistake." }));
