@@ -18,6 +18,12 @@ const mocks = vi.hoisted(() => ({
   landlordEqMode: vi.fn(),
   landlordEqAccount: vi.fn(),
   landlordMaybeSingle: vi.fn(),
+  rentalPaymentsSelect: vi.fn(),
+  rentalPaymentsEqOwner: vi.fn(),
+  rentalPaymentsEqProvider: vi.fn(),
+  rentalPaymentsEqMode: vi.fn(),
+  rentalPaymentsEqPaymentIntent: vi.fn(),
+  rentalPaymentsMaybeSingle: vi.fn(),
   rpc: vi.fn(),
 }));
 
@@ -36,6 +42,7 @@ vi.mock("@/lib/supabase/createRentalWebhookClient", () => ({
     from: (table) => {
       if (table === "payment_webhook_events") return { select: mocks.eventsSelect, upsert: mocks.upsert, update: mocks.update };
       if (table === "landlord_payment_accounts") return { select: mocks.landlordSelect };
+      if (table === "rental_payments") return { select: mocks.rentalPaymentsSelect };
       throw new Error(`Unexpected table: ${table}`);
     },
     rpc: mocks.rpc,
@@ -125,6 +132,13 @@ describe("Stripe rental webhook route", () => {
     mocks.landlordEqMode.mockImplementation(() => ({ eq: mocks.landlordEqAccount }));
     mocks.landlordEqAccount.mockImplementation(() => ({ maybeSingle: mocks.landlordMaybeSingle }));
     mocks.landlordMaybeSingle.mockResolvedValue({ data: { owner_id: "owner_1" }, error: null });
+
+    mocks.rentalPaymentsSelect.mockImplementation(() => ({ eq: mocks.rentalPaymentsEqOwner }));
+    mocks.rentalPaymentsEqOwner.mockImplementation(() => ({ eq: mocks.rentalPaymentsEqProvider }));
+    mocks.rentalPaymentsEqProvider.mockImplementation(() => ({ eq: mocks.rentalPaymentsEqMode }));
+    mocks.rentalPaymentsEqMode.mockImplementation(() => ({ eq: mocks.rentalPaymentsEqPaymentIntent }));
+    mocks.rentalPaymentsEqPaymentIntent.mockImplementation(() => ({ maybeSingle: mocks.rentalPaymentsMaybeSingle }));
+    mocks.rentalPaymentsMaybeSingle.mockResolvedValue({ data: null, error: null });
 
     mocks.rpc.mockResolvedValue({ error: null, data: {} });
     mocks.retrieveCharge.mockResolvedValue({
@@ -349,10 +363,10 @@ describe("Stripe rental webhook route", () => {
     mocks.rpc.mockClear();
     signsOnlyWith(CONNECT_SECRET, {
       id: "evt_refund_1", type: "refund.updated", account: "acct_landlord", livemode: false,
-      data: { object: { id: "re_1", amount: 5000, metadata: { forge_payment_id: "payment_1" } } },
+      data: { object: { id: "re_1", amount: 5000, status: "succeeded", metadata: { forge_payment_id: "payment_1" } } },
     });
     await POST(request());
-    expect(mocks.rpc).toHaveBeenCalledWith("process_stripe_rental_refund_event", expect.objectContaining({ p_provider_mode: "test" }));
+    expect(mocks.rpc).toHaveBeenCalledWith("process_stripe_rental_refund_event", expect.objectContaining({ p_provider_mode: "test", p_payment_id: "payment_1" }));
 
     mocks.rpc.mockClear();
     signsOnlyWith(CONNECT_SECRET, {
@@ -361,6 +375,76 @@ describe("Stripe rental webhook route", () => {
     });
     await POST(request());
     expect(mocks.rpc).toHaveBeenCalledWith("mark_stripe_rental_settlements_paid_out", expect.objectContaining({ p_provider_mode: "test" }));
+  });
+
+  // Regression guards for the live incident: a Dashboard-created refund never carries
+  // forge_payment_id metadata, and refund.updated fires on every status transition — not just
+  // completion. Both defects let a pending/failed refund attempt to reverse rent, or a real
+  // succeeded refund fail outright with "Mapped Stripe refund evidence is required."
+  describe("refund.updated handling", () => {
+    function refundEvent(overrides = {}) {
+      return {
+        id: "evt_refund_status", type: "refund.updated", account: "acct_landlord", livemode: false,
+        data: { object: { id: "re_status", amount: 100, status: "succeeded", ...overrides } },
+      };
+    }
+
+    it("ignores a pending refund without calling the refund RPC — a refund in progress must never reverse rent", async () => {
+      signsOnlyWith(CONNECT_SECRET, refundEvent({ status: "pending", metadata: { forge_payment_id: "payment_1" } }));
+      const response = await POST(request());
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body).toEqual({ received: true, ignored: true });
+      expect(mocks.rpc).not.toHaveBeenCalled();
+    });
+
+    it("ignores a failed refund without calling the refund RPC", async () => {
+      signsOnlyWith(CONNECT_SECRET, refundEvent({ status: "failed", metadata: { forge_payment_id: "payment_1" } }));
+      await POST(request());
+      expect(mocks.rpc).not.toHaveBeenCalled();
+    });
+
+    it("resolves the payment via provider_payment_id when the refund carries no forge_payment_id metadata (a Dashboard-created refund)", async () => {
+      mocks.rentalPaymentsMaybeSingle.mockResolvedValue({ data: { id: "payment_resolved" }, error: null });
+      signsOnlyWith(CONNECT_SECRET, refundEvent({ payment_intent: "pi_resolved" }));
+      await POST(request());
+      expect(mocks.rentalPaymentsEqOwner).toHaveBeenCalledWith("owner_id", "owner_1");
+      expect(mocks.rentalPaymentsEqProvider).toHaveBeenCalledWith("provider", "stripe");
+      expect(mocks.rentalPaymentsEqMode).toHaveBeenCalledWith("provider_mode", "test");
+      expect(mocks.rentalPaymentsEqPaymentIntent).toHaveBeenCalledWith("provider_payment_id", "pi_resolved");
+      expect(mocks.rpc).toHaveBeenCalledWith("process_stripe_rental_refund_event", expect.objectContaining({ p_payment_id: "payment_resolved" }));
+    });
+
+    it("prefers forge_payment_id metadata over the provider_payment_id lookup when both are available", async () => {
+      signsOnlyWith(CONNECT_SECRET, refundEvent({ payment_intent: "pi_1", metadata: { forge_payment_id: "payment_direct" } }));
+      await POST(request());
+      expect(mocks.rentalPaymentsSelect).not.toHaveBeenCalled();
+      expect(mocks.rpc).toHaveBeenCalledWith("process_stripe_rental_refund_event", expect.objectContaining({ p_payment_id: "payment_direct" }));
+    });
+
+    it("a partial refund amount still resolves the payment via provider_payment_id and threads the exact amount through", async () => {
+      mocks.rentalPaymentsMaybeSingle.mockResolvedValue({ data: { id: "payment_resolved" }, error: null });
+      signsOnlyWith(CONNECT_SECRET, refundEvent({ amount: 40, payment_intent: "pi_resolved" }));
+      await POST(request());
+      expect(mocks.rpc).toHaveBeenCalledWith("process_stripe_rental_refund_event", expect.objectContaining({ p_payment_id: "payment_resolved", p_refunded_amount_cents: 40 }));
+    });
+
+    it("passes p_payment_id null to the RPC when no match is found by either metadata or provider_payment_id — never guesses", async () => {
+      mocks.rentalPaymentsMaybeSingle.mockResolvedValue({ data: null, error: null });
+      signsOnlyWith(CONNECT_SECRET, refundEvent({ payment_intent: "pi_unmatched" }));
+      await POST(request());
+      expect(mocks.rpc).toHaveBeenCalledWith("process_stripe_rental_refund_event", expect.objectContaining({ p_payment_id: null }));
+    });
+
+    it("a duplicate delivery of an already-processed succeeded refund short-circuits without calling the RPC again", async () => {
+      mocks.eventsMaybeSingle.mockResolvedValue({ data: { status: "processed" }, error: null });
+      signsOnlyWith(CONNECT_SECRET, refundEvent({ metadata: { forge_payment_id: "payment_1" } }));
+      const response = await POST(request());
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body).toEqual({ received: true, duplicate: true });
+      expect(mocks.rpc).not.toHaveBeenCalled();
+    });
   });
 
   it("a livemode mismatch (a live event delivered to a test-configured server) performs zero business mutations", async () => {

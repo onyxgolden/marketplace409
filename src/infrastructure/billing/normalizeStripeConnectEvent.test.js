@@ -6,11 +6,29 @@ describe("normalizeStripeConnectEvent", () => {
     expect(normalizeStripeConnectEvent({ id: "evt_1", type: "payment_intent.processing", account: "acct_kent",
       livemode: false, data: { object: { id: "pi_1", metadata: { forge_payment_id: "payment_1" } } } })).toEqual({
       providerEventId: "evt_1", connectedAccountId: "acct_kent", eventType: "payment_intent.processing",
-      objectId: "pi_1", paymentId: "payment_1", refundedAmountCents: null, paymentIntentId:null,balanceTransactionId:null,paymentMethodId:null,mandateId:null,failureCode: null, failureMessage: null,
+      objectId: "pi_1", paymentId: "payment_1", refundStatus: null, refundedAmountCents: null, paymentIntentId:null,balanceTransactionId:null,paymentMethodId:null,mandateId:null,failureCode: null, failureMessage: null,
       occurredAt: expect.any(String), supported: true, livemode: false,
     });
   });
-  it("carries mapped refund amounts into reconciliation",()=>{expect(normalizeStripeConnectEvent({id:"evt_refund",type:"refund.updated",account:"acct_kent",data:{object:{id:"re_1",amount:5000,metadata:{forge_payment_id:"payment_1"}}}})).toMatchObject({paymentId:"payment_1",refundedAmountCents:5000,supported:true});});
+  it("carries mapped refund amounts and the refund's own status into reconciliation",()=>{expect(normalizeStripeConnectEvent({id:"evt_refund",type:"refund.updated",account:"acct_kent",data:{object:{id:"re_1",amount:5000,status:"succeeded",metadata:{forge_payment_id:"payment_1"}}}})).toMatchObject({paymentId:"payment_1",refundStatus:"succeeded",refundedAmountCents:5000,supported:true});});
+
+  it("carries a pending or failed refund's status too — callers, not this function, decide whether to act on it", () => {
+    expect(normalizeStripeConnectEvent({
+      id: "evt_refund_pending", type: "refund.updated", account: "acct_kent",
+      data: { object: { id: "re_2", amount: 5000, status: "pending" } },
+    })).toMatchObject({ refundStatus: "pending", refundedAmountCents: 5000 });
+    expect(normalizeStripeConnectEvent({
+      id: "evt_refund_failed", type: "refund.updated", account: "acct_kent",
+      data: { object: { id: "re_3", amount: 5000, status: "failed" } },
+    })).toMatchObject({ refundStatus: "failed", refundedAmountCents: 5000 });
+  });
+
+  it("refundStatus is null for a non-refund event even if the object happens to have a status field", () => {
+    expect(normalizeStripeConnectEvent({
+      id: "evt_pi", type: "payment_intent.succeeded", account: "acct_kent",
+      data: { object: { id: "pi_9", status: "succeeded" } },
+    })).toMatchObject({ refundStatus: null });
+  });
 
   it("rejects platform events that do not identify a connected account", () => {
     expect(() => normalizeStripeConnectEvent({ id: "evt_1", type: "payment_intent.succeeded", data: { object: {} } }))

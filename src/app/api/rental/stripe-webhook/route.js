@@ -81,6 +81,27 @@ export async function POST(request) {
         if (ignoreError) throw ignoreError;
         return NextResponse.json({ received: true, ignored: true });
       }
+      if (normalized.eventType === "refund.updated" && normalized.refundStatus !== "succeeded") {
+        // A refund.updated event fires on every status transition, not just completion — a
+        // pending or failed refund must never reverse rent. Not an error: acknowledge and ignore.
+        const { error: ignoreError } = await supabase.from("payment_webhook_events").update({
+          status: "ignored", processed_at: new Date().toISOString(),
+        }).eq("id", eventRowId);
+        if (ignoreError) throw ignoreError;
+        return NextResponse.json({ received: true, ignored: true });
+      }
+      let refundPaymentId = normalized.paymentId;
+      if (normalized.eventType === "refund.updated" && !refundPaymentId && normalized.paymentIntentId) {
+        // A refund created outside a FORGE-initiated flow (e.g. directly in the Stripe Dashboard)
+        // never carries forge_payment_id metadata — resolve the payment via the PaymentIntent id
+        // Stripe always attaches to a refund instead, scoped to this exact owner and mode so a
+        // live refund can never resolve to a preserved sandbox payment or another owner's row.
+        const { data: matchedPayment, error: matchError } = await supabase.from("rental_payments")
+          .select("id").eq("owner_id", landlordAccount.owner_id).eq("provider", "stripe")
+          .eq("provider_mode", provider.mode).eq("provider_payment_id", normalized.paymentIntentId).maybeSingle();
+        if (matchError) throw matchError;
+        refundPaymentId = matchedPayment?.id || null;
+      }
       let projection;
       if (
         (normalized.eventType === "charge.succeeded" || normalized.eventType === "charge.updated")
@@ -116,7 +137,7 @@ export async function POST(request) {
       else if(normalized.eventType==="payout.paid"){const ids=await provider.listPayoutBalanceTransactionIds({connectedAccountId:normalized.connectedAccountId},normalized.objectId);projection=await supabase.rpc("mark_stripe_rental_settlements_paid_out",{p_provider_event_id:normalized.providerEventId,p_connected_account_id:normalized.connectedAccountId,p_payout_id:normalized.objectId,p_balance_transaction_ids:ids,p_paid_out_at:normalized.occurredAt,p_provider_mode:provider.mode});}
       else projection = normalized.eventType === "refund.updated" ? await supabase.rpc("process_stripe_rental_refund_event", {
         p_provider_event_id: normalized.providerEventId, p_connected_account_id: normalized.connectedAccountId,
-        p_payment_id: normalized.paymentId, p_refunded_amount_cents: normalized.refundedAmountCents, p_occurred_at: normalized.occurredAt,
+        p_payment_id: refundPaymentId, p_refunded_amount_cents: normalized.refundedAmountCents, p_occurred_at: normalized.occurredAt,
         p_provider_mode: provider.mode,
       }) : await supabase.rpc("process_stripe_rental_payment_event", {
         p_provider_event_id: normalized.providerEventId,
