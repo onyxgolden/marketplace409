@@ -17,6 +17,18 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   if (existing.error) throw existing.error;
   if (existing.data) return { httpStatus: 200, body: { success: true, duplicate: true, attempt: existing.data } };
 
+  // Central collection-authority gate for BOTH callers of this function (the sweep cron and any
+  // manual execute endpoint): a schedule that isn't FORGE-collectible as of today must never be
+  // auto-charged, even if a charge/enrollment pair otherwise looks eligible.
+  const schedule = await db.from("rent_schedules").select("collection_mode, forge_cutover_date")
+    .eq("owner_id", enrollment.owner_id).eq("lease_id", enrollment.lease_id).eq("status", "active")
+    .order("effective_start_date", { ascending: false }).limit(1).maybeSingle();
+  if (schedule.error) throw schedule.error;
+  const today = new Date().toISOString().slice(0, 10);
+  const isForgeCollectible = schedule.data?.collection_mode === "forge"
+    && schedule.data.forge_cutover_date !== null && schedule.data.forge_cutover_date <= today;
+  if (!isForgeCollectible) return { httpStatus: 409, body: { error: "This lease is not currently collected through FORGE." } };
+
   // Scoped to the *enrollment's own* provider_mode, not just the current server mode: a payment
   // method/mandate token is only ever valid within the mode it was created under, so the
   // connected account charged here must always match that same mode — this is what makes it

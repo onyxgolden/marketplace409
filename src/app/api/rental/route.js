@@ -30,7 +30,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_tenants")
         .select("id, display_name, email, status, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
       authenticated.supabaseClient.from("rent_schedules")
-        .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date")
+        .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date, collection_mode, collection_provider, forge_cutover_date")
         .order("effective_start_date", { ascending: false }),
       authenticated.supabaseClient.from("rental_maintenance_requests")
         .select("id, lease_id, unit_id, tenant_id, title, description, priority, status, permission_to_enter, contact_phone, owner_notes, submitted_at, updated_at, completed_at")
@@ -70,7 +70,23 @@ export async function GET() {
       withPhotoUrls(authenticated.supabaseClient, unitsResult.data || []),
       withPhotoUrls(authenticated.supabaseClient, tenantsResult.data || []),
     ]);
-    return NextResponse.json({ success: true, openCharges: chargesResult.data || [],
+    // Dashboard balances must distinguish FORGE-collectible from externally-managed charges — a
+    // charge on an 'external'/'paused' (or not-yet-cut-over) schedule must never read as a FORGE
+    // overdue balance just because it exists and is unpaid. This only classifies what's
+    // determinable from FORGE's own data; genuine reconciliation-difference detection (comparing
+    // against actual Rentec evidence) lives in /api/rental/reconciliation-preview, not here.
+    const today = new Date().toISOString().slice(0, 10);
+    const scheduleById = new Map((schedulesResult.data || []).map((s) => [s.id, s]));
+    const collectionSummary = (chargesResult.data || []).reduce((summary, charge) => {
+      const schedule = scheduleById.get(charge.schedule_id);
+      const isForgeCollectible = schedule?.collection_mode === "forge"
+        && schedule.forge_cutover_date !== null && schedule.forge_cutover_date <= today;
+      const remainingCents = Number(charge.amount_cents) - Number(charge.paid_amount_cents);
+      if (isForgeCollectible) { summary.collectibleInForgeCents += remainingCents; summary.collectibleInForgeCount += 1; }
+      else { summary.externallyManagedCents += remainingCents; summary.externallyManagedCount += 1; }
+      return summary;
+    }, { collectibleInForgeCents: 0, collectibleInForgeCount: 0, externallyManagedCents: 0, externallyManagedCount: 0 });
+    return NextResponse.json({ success: true, openCharges: chargesResult.data || [], collectionSummary,
       units: unitsWithPhotos, tenants: tenantsWithPhotos, schedules: schedulesResult.data || [],
       maintenanceRequests: maintenanceResult.data || [], notifications: notificationResult.data || [],
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
@@ -160,6 +176,16 @@ export async function POST(request) {
         if (error) throw error;
         if (!data || !data.id) return NextResponse.json({ error: "Only a charge with no paid balance, not already voided, and no pending or unreversed payment can be voided." }, { status: 409 });
         return NextResponse.json({ success: true, charge: data });
+      }
+      case "activate-forge-billing": {
+        if (typeof body.scheduleId !== "string" || body.scheduleId.trim() === "") return badRequest("scheduleId is required.");
+        if (typeof body.cutoverDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(body.cutoverDate)) return badRequest("A valid cutoverDate (YYYY-MM-DD) is required.");
+        const { data, error } = await authenticated.supabaseClient.rpc("activate_forge_billing_collection", {
+          p_owner_id: user.id, p_schedule_id: body.scheduleId.trim(), p_cutover_date: body.cutoverDate,
+          p_reconciliation_summary: body.reconciliationSummary && typeof body.reconciliationSummary === "object" ? body.reconciliationSummary : {},
+        });
+        if (error) throw error;
+        return NextResponse.json({ success: true, schedule: data });
       }
       case "activate-lease-schedule": {
         if (!body.scheduleId) return badRequest("scheduleId is required.");

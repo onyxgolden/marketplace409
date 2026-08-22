@@ -8,7 +8,8 @@ const build = (overrides = {}) => ({ id: "charge_1", leaseId: "lease_1", schedul
   updatedAt: "2026-09-01T00:00:00.000Z", voidedAt: null, notes: null, ...overrides });
 const schedule = (overrides = {}) => createRentSchedule({ id: "schedule_1", leaseId: "lease_1", status: "active",
   amountCents: 125000, currencyCode: "USD", dueDay: 1, effectiveStartDate: "2026-09-01", effectiveEndDate: "2027-08-31",
-  createdAt: "2026-08-12T00:00:00.000Z", updatedAt: "2026-08-12T00:00:00.000Z", ...overrides });
+  createdAt: "2026-08-12T00:00:00.000Z", updatedAt: "2026-08-12T00:00:00.000Z",
+  collectionMode: "forge", forgeCutoverDate: "2026-09-01", ...overrides });
 describe("RentCharge", () => {
   it("creates immutable charge state", () => expect(Object.isFrozen(createRentCharge(build()))).toBe(true));
   it("validates paid and partial state invariants", () => {
@@ -30,5 +31,24 @@ describe("RentCharge", () => {
   it("marks future obligations scheduled and current obligations due", () => {
     expect(generateRentCharge({ schedule: schedule(), period: "2026-09", now: "2026-08-20T00:00:00.000Z" })?.status).toBe("scheduled");
     expect(generateRentCharge({ schedule: schedule(), period: "2026-09", now: "2026-09-01T00:00:00.000Z" })?.status).toBe("due");
+  });
+
+  // Rental billing cutover containment: most tenants still pay through Rentec even though their
+  // schedule is lifecycle-'active' — this generator must never produce a charge for one of those.
+  describe("collection authority", () => {
+    it("never generates for a schedule that is not FORGE-collectible, even while lifecycle-active and otherwise effective", () => {
+      expect(generateRentCharge({ schedule: schedule({ collectionMode: "external", forgeCutoverDate: null }), period: "2026-09", now: "2026-09-01T00:00:00.000Z" })).toBeNull();
+      expect(generateRentCharge({ schedule: schedule({ collectionMode: "paused", forgeCutoverDate: null }), period: "2026-09", now: "2026-09-01T00:00:00.000Z" })).toBeNull();
+    });
+
+    it("never generates a charge for a period before the schedule's own FORGE cutover date, even when the schedule is 'forge'", () => {
+      const cutoverInOctober = schedule({ effectiveStartDate: "2026-09-01", forgeCutoverDate: "2026-10-01" });
+      expect(generateRentCharge({ schedule: cutoverInOctober, period: "2026-09", now: "2026-09-01T00:00:00.000Z" })).toBeNull();
+      expect(generateRentCharge({ schedule: cutoverInOctober, period: "2026-10", now: "2026-10-01T00:00:00.000Z" })).not.toBeNull();
+    });
+
+    it("generates normally once collection_mode is 'forge' and the cutover date has arrived", () => {
+      expect(generateRentCharge({ schedule: schedule(), period: "2026-09", now: "2026-09-01T00:00:00.000Z" })).not.toBeNull();
+    });
   });
 });

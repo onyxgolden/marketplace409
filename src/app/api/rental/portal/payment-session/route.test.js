@@ -16,7 +16,8 @@ function single(result) {
 }
 
 const tenant = { id: "tenant_1", owner_id: "owner_1", email: "tenant@example.com", display_name: "Tenant One" };
-const charge = { id: "charge_1", owner_id: "owner_1", lease_id: "lease_1", status: "due", amount_cents: 150000, paid_amount_cents: 0, currency_code: "USD", due_date: "2026-09-01", period: "2026-09", charge_type: "rent" };
+const charge = { id: "charge_1", owner_id: "owner_1", lease_id: "lease_1", schedule_id: "schedule_1", status: "due", amount_cents: 150000, paid_amount_cents: 0, currency_code: "USD", due_date: "2026-09-01", period: "2026-09", charge_type: "rent" };
+const forgeCollectibleSchedule = { collection_mode: "forge", forge_cutover_date: "2026-01-01" };
 
 let tables;
 const createRentalWebhookClient = vi.fn(() => ({ from: (table) => tables[table] }));
@@ -28,11 +29,12 @@ function request(body) {
   return new NextRequest("https://forge.test/api/rental/portal/payment-session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 
-function baseTables(accountRow, customerRow = null) {
+function baseTables(accountRow, customerRow = null, scheduleRow = forgeCollectibleSchedule) {
   return {
     rental_tenants: single({ data: tenant, error: null }),
     rent_charges: single({ data: charge, error: null }),
     rental_lease_tenants: single({ data: { lease_id: "lease_1" }, error: null }),
+    rent_schedules: single({ data: scheduleRow, error: null }),
     rental_payments: single({ data: null, error: null }), // no pending payment for this charge
     landlord_payment_accounts: single({ data: accountRow, error: null }),
     billing_customer_references: single({ data: customerRow, error: null }),
@@ -99,5 +101,43 @@ describe("tenant payment-session route (provider-mode isolation)", () => {
     expect(response.status).toBe(500);
     expect(tables.rental_tenants.select).not.toHaveBeenCalled();
     expect(createPaymentSession).not.toHaveBeenCalled();
+  });
+
+  // Rental billing cutover containment: Pay now must reject a pre-cutover/external charge
+  // server-side, even if a URL or stale UI still exposes it — never inferred from the charge's own
+  // status, which looks identical either way.
+  describe("collection-authority containment", () => {
+    it("rejects a charge whose schedule is still collection_mode='external'", async () => {
+      tables = baseTables({ provider_account_id: "acct_kent", status: "enabled", charges_enabled: true, payouts_enabled: true, card_payments_enabled: true },
+        { customer_id: "cus_test_1" }, { collection_mode: "external", forge_cutover_date: null });
+      const response = await POST(request({ chargeId: "charge_1" }));
+      const body = await response.json();
+      expect(response.status).toBe(404);
+      expect(body.error).toBe("This rent charge is not currently collectible through FORGE.");
+      expect(createPaymentSession).not.toHaveBeenCalled();
+    });
+
+    it("rejects a charge whose schedule's FORGE cutover date has not arrived yet", async () => {
+      tables = baseTables({ provider_account_id: "acct_kent", status: "enabled", charges_enabled: true, payouts_enabled: true, card_payments_enabled: true },
+        { customer_id: "cus_test_1" }, { collection_mode: "forge", forge_cutover_date: "2099-01-01" });
+      const response = await POST(request({ chargeId: "charge_1" }));
+      expect(response.status).toBe(404);
+      expect(createPaymentSession).not.toHaveBeenCalled();
+    });
+
+    it("rejects a charge with no matching schedule row at all", async () => {
+      tables = baseTables({ provider_account_id: "acct_kent", status: "enabled", charges_enabled: true, payouts_enabled: true, card_payments_enabled: true },
+        { customer_id: "cus_test_1" }, null);
+      const response = await POST(request({ chargeId: "charge_1" }));
+      expect(response.status).toBe(404);
+    });
+
+    it("allows a charge whose schedule is collection_mode='forge' with an arrived cutover date (the existing baseline)", async () => {
+      tables = baseTables({ provider_account_id: "acct_kent", status: "enabled", charges_enabled: true, payouts_enabled: true, card_payments_enabled: true },
+        { customer_id: "cus_test_1" });
+      const response = await POST(request({ chargeId: "charge_1" }));
+      expect(response.status).toBe(200);
+      expect(createPaymentSession).toHaveBeenCalled();
+    });
   });
 });

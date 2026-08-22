@@ -8,6 +8,7 @@ import { executeAutopayAttempt } from "./executeAutopayAttempt.js";
 function chain(result = { data: null, error: null }) {
   const node = {
     select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node),
+    order: vi.fn(() => node), limit: vi.fn(() => node),
     insert: vi.fn(() => node), update: vi.fn(() => node),
     single: vi.fn(async () => result), maybeSingle: vi.fn(async () => result),
     then: (resolve) => resolve(result),
@@ -18,6 +19,7 @@ function chain(result = { data: null, error: null }) {
 const ENROLLMENT = { id: "enrollment_1", owner_id: "owner_1", lease_id: "lease_1", tenant_id: "tenant_1",
   provider_customer_id: "cus_1", provider_payment_method_id: "pm_1", provider_mode: "test", consecutive_failures: 0, retry_limit: 1 };
 const CHARGE = { id: "charge_1", owner_id: "owner_1", lease_id: "lease_1", amount_cents: 150000, paid_amount_cents: 0, currency_code: "USD" };
+const FORGE_SCHEDULE = { data: { collection_mode: "forge", forge_cutover_date: "2020-01-01" }, error: null };
 
 describe("executeAutopayAttempt", () => {
   it("requires an enrollment and charge id", async () => {
@@ -54,6 +56,7 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
+      .mockReturnValueOnce(chain(FORGE_SCHEDULE))
       .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
       .mockReturnValueOnce(chain({ data: { id: "rental_payment_1" }, error: null }))
       .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
@@ -72,6 +75,7 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
+      .mockReturnValueOnce(chain(FORGE_SCHEDULE))
       .mockReturnValueOnce(accountLookup)
       .mockReturnValueOnce(chain({ data: { id: "rental_payment_1" }, error: null }))
       .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
@@ -90,6 +94,7 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
+      .mockReturnValueOnce(chain(FORGE_SCHEDULE))
       .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
       .mockReturnValueOnce(paymentInsert)
       .mockReturnValueOnce(attemptInsert)
@@ -108,6 +113,7 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(chain({ data: { ...ENROLLMENT, consecutive_failures: 0, retry_limit: 0 }, error: null }))
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
+      .mockReturnValueOnce(chain(FORGE_SCHEDULE))
       .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
       .mockReturnValueOnce(chain({ data: { id: "rental_payment_1" }, error: null }))
       .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
@@ -118,5 +124,47 @@ describe("executeAutopayAttempt", () => {
     expect(result.httpStatus).toBe(409);
     expect(result.body).toEqual({ error: "Autopay attempt failed.", paused: true });
     expect(enrollmentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({ status: "paused", consecutive_failures: 1 }));
+  });
+
+  // Rental billing cutover containment: this is the central choke point for both the autopay
+  // sweep cron and any manual execute endpoint — a lease still collected externally (Rentec) must
+  // never be auto-charged, even if an active enrollment and a due charge otherwise look eligible.
+  describe("collection-authority containment", () => {
+    it("rejects an attempt when the lease's schedule is still collection_mode='external', without ever calling Stripe", async () => {
+      const db = { from: vi.fn() };
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: { collection_mode: "external", forge_cutover_date: null }, error: null }));
+      const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(result.httpStatus).toBe(409);
+      expect(result.body).toEqual({ error: "This lease is not currently collected through FORGE." });
+      // Only 4 db.from calls happened (enrollment, charge, existing-attempt, schedule) — the gate
+      // returned before any account lookup, payment insert, or Stripe call could occur.
+      expect(db.from).toHaveBeenCalledTimes(4);
+    });
+
+    it("rejects an attempt when the FORGE cutover date has not arrived yet", async () => {
+      const db = { from: vi.fn() };
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: { collection_mode: "forge", forge_cutover_date: "2099-01-01" }, error: null }));
+      const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(result.httpStatus).toBe(409);
+    });
+
+    it("rejects an attempt when the lease has no active schedule at all", async () => {
+      const db = { from: vi.fn() };
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }));
+      const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(result.httpStatus).toBe(409);
+    });
   });
 });

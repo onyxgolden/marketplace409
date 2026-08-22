@@ -32,6 +32,17 @@ export async function POST(request) {
     if (membershipError) throw membershipError;
     if (!membership) return failure("This rent charge is not available to this tenant.", 403);
 
+    // Server-side collection-authority gate: rejects a pre-cutover/external charge even if a URL
+    // or stale UI still exposes it. Never inferred from the charge's own status — an 'external'
+    // schedule's charge would otherwise look exactly like a payable one.
+    const { data: schedule, error: scheduleError } = await database.from("rent_schedules")
+      .select("collection_mode, forge_cutover_date").eq("owner_id", tenant.owner_id).eq("id", charge.schedule_id).maybeSingle();
+    if (scheduleError) throw scheduleError;
+    const today = new Date().toISOString().slice(0, 10);
+    const isForgeCollectible = schedule?.collection_mode === "forge"
+      && schedule.forge_cutover_date !== null && schedule.forge_cutover_date <= today;
+    if (!isForgeCollectible) return failure("This rent charge is not currently collectible through FORGE.", 404);
+
     const pending = await database.from("rental_payments").select("id, status").eq("owner_id", tenant.owner_id)
       .eq("charge_id", charge.id).in("status", ["created", "requires_payment_method", "requires_action", "processing"]).maybeSingle();
     if (pending.error) throw pending.error;

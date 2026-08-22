@@ -13,7 +13,11 @@ export async function GET(request) {
   try {
     const db = createRentalWebhookClient();
     const period = new Date().toISOString().slice(0, 7);
-    const { data: schedules, error } = await db.from("rent_schedules").select("*").eq("status", "active");
+    // collection_mode='forge' is a required pre-filter, not just an optimization: an 'external' or
+    // 'paused' schedule must never generate a FORGE charge, regardless of lifecycle status.
+    // generateRentCharge() re-checks this (and the cutover date) itself as the authoritative gate.
+    const { data: schedules, error } = await db.from("rent_schedules").select("*")
+      .eq("status", "active").eq("collection_mode", "forge");
     if (error) throw error;
 
     let processed = 0, failed = 0;
