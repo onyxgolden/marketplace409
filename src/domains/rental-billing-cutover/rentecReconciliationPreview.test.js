@@ -42,7 +42,7 @@ describe("buildRentecReconciliationPreview", () => {
     expect(preview.items).toEqual([{ classification: C.PRE_CUTOVER_CHARGE, chargeId: "charge_1", leaseId: "lease_1", period: "2026-07", reason: expect.any(String) }]);
   });
 
-  it("classifies a FORGE charge for a lease with no forge schedule at all as pre-cutover — this is exactly the false-overdue containment case", () => {
+  it("classifies a FORGE charge for a lease with no forge schedule at all as pre-cutover — this is exactly the externally-managed reconciliation-required containment case", () => {
     const preview = buildRentecReconciliationPreview({
       rentecTransactions: [],
       forgeCharges: [charge()],

@@ -44,10 +44,12 @@ async function clickAndFlush(button) {
 
 const openChargePortal = {
   tenant: { displayName: "Brandy Morgan" },
+  billingEnabled: true,
   rentals: [{
     lease: { id: "lease_1", startDate: "2026-08-19", endDate: null },
     unit: { label: "TEST-" },
-    charges: [{ id: "charge_1", dueDate: "2026-09-01", period: "2026-09", chargeType: "rent", status: "due", amountCents: 2000, paidAmountCents: 0 }],
+    schedules: [{ id: "schedule_1", collectionMode: "forge", forgeCutoverDate: "2026-01-01" }],
+    charges: [{ id: "charge_1", scheduleId: "schedule_1", dueDate: "2026-09-01", period: "2026-09", chargeType: "rent", status: "due", amountCents: 2000, paidAmountCents: 0 }],
     payments: [],
   }],
 };

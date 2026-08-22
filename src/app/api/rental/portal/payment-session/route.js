@@ -43,6 +43,14 @@ export async function POST(request) {
       && schedule.forge_cutover_date !== null && schedule.forge_cutover_date <= today;
     if (!isForgeCollectible) return failure("This rent charge is not currently collectible through FORGE.", 404);
 
+    // Owner-level master pause overrides an otherwise-eligible per-schedule cutover: FORGE must
+    // never accept an online rent payment while the owner's rental billing is globally paused,
+    // regardless of any individual lease's activation state.
+    const { data: billingSettings, error: billingSettingsError } = await database.from("rental_billing_settings")
+      .select("billing_enabled").eq("owner_id", tenant.owner_id).maybeSingle();
+    if (billingSettingsError) throw billingSettingsError;
+    if (!billingSettings?.billing_enabled) return failure("Rental online billing is currently paused for this owner.", 404);
+
     const pending = await database.from("rental_payments").select("id, status").eq("owner_id", tenant.owner_id)
       .eq("charge_id", charge.id).in("status", ["created", "requires_payment_method", "requires_action", "processing"]).maybeSingle();
     if (pending.error) throw pending.error;

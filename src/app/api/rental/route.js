@@ -82,11 +82,20 @@ export async function GET() {
       const isForgeCollectible = schedule?.collection_mode === "forge"
         && schedule.forge_cutover_date !== null && schedule.forge_cutover_date <= today;
       const remainingCents = Number(charge.amount_cents) - Number(charge.paid_amount_cents);
-      if (isForgeCollectible) { summary.collectibleInForgeCents += remainingCents; summary.collectibleInForgeCount += 1; }
+      if (isForgeCollectible) { summary.forgeCollectibleCents += remainingCents; summary.forgeCollectibleCount += 1; }
       else { summary.externallyManagedCents += remainingCents; summary.externallyManagedCount += 1; }
       return summary;
-    }, { collectibleInForgeCents: 0, collectibleInForgeCount: 0, externallyManagedCents: 0, externallyManagedCount: 0 });
-    return NextResponse.json({ success: true, openCharges: chargesResult.data || [], collectionSummary,
+    }, { forgeCollectibleCents: 0, forgeCollectibleCount: 0, externallyManagedCents: 0, externallyManagedCount: 0 });
+
+    // Owner-level master pause: FORGE may collect only when this is enabled AND the individual
+    // schedule is cut over — this flag alone never activates a single lease. Production defaults
+    // every owner to absent (paused), so the row may not exist yet.
+    const { data: billingSettingsRow, error: billingSettingsError } = await authenticated.supabaseClient
+      .from("rental_billing_settings").select("billing_enabled").eq("owner_id", authenticated.user.id).maybeSingle();
+    if (billingSettingsError) throw billingSettingsError;
+    const billingEnabled = billingSettingsRow?.billing_enabled === true;
+
+    return NextResponse.json({ success: true, openCharges: chargesResult.data || [], collectionSummary, billingEnabled,
       units: unitsWithPhotos, tenants: tenantsWithPhotos, schedules: schedulesResult.data || [],
       maintenanceRequests: maintenanceResult.data || [], notifications: notificationResult.data || [],
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
@@ -186,6 +195,14 @@ export async function POST(request) {
         });
         if (error) throw error;
         return NextResponse.json({ success: true, schedule: data });
+      }
+      case "set-billing-enabled": {
+        if (typeof body.enabled !== "boolean") return badRequest("enabled must be boolean.");
+        const { data, error } = await authenticated.supabaseClient.rpc("set_rental_billing_enabled", {
+          p_owner_id: user.id, p_enabled: body.enabled,
+        });
+        if (error) throw error;
+        return NextResponse.json({ success: true, settings: data });
       }
       case "activate-lease-schedule": {
         if (!body.scheduleId) return badRequest("scheduleId is required.");

@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import RentalPaymentsPanel, { defaultChargeMonth, isChargeVoidable, resolveChargeIdentity, resolveScheduleContext } from "./RentalPaymentsPanel";
+import RentalPaymentsPanel, { chargeCollectionLabel, defaultChargeMonth, isChargeVoidable, resolveChargeIdentity, resolveScheduleContext } from "./RentalPaymentsPanel";
 
 const baseData = {
   openCharges: [], payments: [], settlements: [],
@@ -370,5 +370,119 @@ describe("RentalPaymentsPanel charge identity safety (regression)", () => {
   it("the sandbox lease itself has no charges to confuse with the real one", () => {
     const sandboxCharges = identityData.openCharges.filter((charge) => charge.lease_id === SANDBOX_LEASE_ID);
     expect(sandboxCharges).toHaveLength(0);
+  });
+});
+
+describe("chargeCollectionLabel", () => {
+  it("labels a charge FORGE collectible when its schedule is cut over", () => {
+    const schedules = [{ id: "schedule_1", collection_mode: "forge", forge_cutover_date: "2026-01-01" }];
+    expect(chargeCollectionLabel({ schedule_id: "schedule_1", due_date: "2026-08-01" }, schedules, "2026-08-16")).toBe("FORGE collectible");
+  });
+  it("labels a charge externally managed when its schedule is still external", () => {
+    const schedules = [{ id: "schedule_2", collection_mode: "external", forge_cutover_date: null }];
+    expect(chargeCollectionLabel({ schedule_id: "schedule_2", due_date: "2026-08-01" }, schedules, "2026-08-16")).toBe("Externally managed — reconciliation required");
+  });
+  it("labels a charge externally managed when no schedule matches (fails safe)", () => {
+    expect(chargeCollectionLabel({ schedule_id: "schedule_missing", due_date: "2026-08-01" }, [], "2026-08-16")).toBe("Externally managed — reconciliation required");
+  });
+  it("defaults 'today' to the real current date when omitted, so a future cutover is never misclassified as already collectible", () => {
+    const schedules = [{ id: "schedule_future", collection_mode: "forge", forge_cutover_date: "2099-01-01" }];
+    expect(chargeCollectionLabel({ schedule_id: "schedule_future", due_date: "2099-01-02" }, schedules)).toBe("Externally managed — reconciliation required");
+  });
+});
+
+// "Landlord charge lists" containment: every charge row must show whether it's FORGE-collectible
+// or still externally managed — never inferred from status, which looks identical either way.
+describe("RentalPaymentsPanel charge collection-authority visibility", () => {
+  const externallyManagedData = {
+    ...baseData,
+    openCharges: [{ id: "charge_1", lease_id: "lease_1", schedule_id: "schedule_external", period: "2026-08",
+      due_date: "2026-08-01", amount_cents: 1427000, paid_amount_cents: 0, currency_code: "USD", status: "due", charge_type: "rent" }],
+    schedules: [{ id: "schedule_external", lease_id: "lease_1", amount_cents: 130000, due_day: 1, status: "active",
+      collection_mode: "external", forge_cutover_date: null }],
+  };
+
+  it("labels an externally-managed charge as such in the record list, and still shows its amount in full", () => {
+    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={externallyManagedData} initialAccount={null} />);
+    expect(markup).toContain("Externally managed — reconciliation required");
+    expect(markup).toContain("$14,270.00");
+  });
+
+  it("labels a FORGE-collectible charge as such, not externally managed", () => {
+    const forgeData = { ...externallyManagedData, schedules: [{ ...externallyManagedData.schedules[0], id: "schedule_forge",
+      collection_mode: "forge", forge_cutover_date: "2020-01-01" }],
+      openCharges: [{ ...externallyManagedData.openCharges[0], schedule_id: "schedule_forge" }] };
+    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={forgeData} initialAccount={null} />);
+    expect(markup).toContain("FORGE collectible");
+    expect(markup).not.toContain("Externally managed — reconciliation required");
+  });
+});
+
+// Rental billing master pause banner — required at the top of Rent & Payments.
+describe("RentalPaymentsPanel billing pause banner", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("shows PAUSED by default and offers a Resume FORGE billing control", () => {
+    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: false }} initialAccount={null} />);
+    expect(markup).toContain("Rental online billing: PAUSED");
+    expect(markup).toContain("Resume FORGE billing");
+    expect(markup).not.toContain("Rental online billing: ACTIVE");
+  });
+
+  it("shows ACTIVE and a Pause FORGE billing control when billing is enabled", () => {
+    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: true }} initialAccount={null} />);
+    expect(markup).toContain("Rental online billing: ACTIVE");
+    expect(markup).toContain("Pause FORGE billing");
+    expect(markup).not.toContain("Rental online billing: PAUSED");
+  });
+
+  it("requires an explicit confirmation before resuming — clicking Resume does not immediately call the API", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const mounted = mountPanel(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: false }} initialAccount={null} />);
+    clickButton(findButtonByText(mounted.container, "Resume FORGE billing"));
+    expect(mounted.container.textContent).toContain("only leases already individually cut over to FORGE will begin collecting");
+    expect(fetchMock).not.toHaveBeenCalled();
+    unmountPanel(mounted);
+  });
+
+  it("calls set-billing-enabled:true only after the resume confirmation is confirmed", async () => {
+    const fetchMock = vi.fn((url) => {
+      if (String(url).endsWith("/api/rental")) return Promise.resolve({ ok: true, json: async () => ({ success: true, ...baseData, billingEnabled: true }) });
+      return Promise.resolve({ ok: true, json: async () => ({ account: null }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const mounted = mountPanel(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: false }} initialAccount={null} />);
+    clickButton(findButtonByText(mounted.container, "Resume FORGE billing"));
+    await clickButtonAndFlush(findButtonByText(mounted.container, "Confirm resume"));
+    const rentalPostCalls = fetchMock.mock.calls.filter(([url, options]) => String(url).endsWith("/api/rental") && options?.method === "POST");
+    expect(rentalPostCalls).toHaveLength(1);
+    expect(JSON.parse(rentalPostCalls[0][1].body)).toEqual({ operation: "set-billing-enabled", enabled: true });
+    unmountPanel(mounted);
+  });
+
+  it("pausing requires no confirmation and calls set-billing-enabled:false immediately", async () => {
+    const fetchMock = vi.fn((url) => {
+      if (String(url).endsWith("/api/rental")) return Promise.resolve({ ok: true, json: async () => ({ success: true, ...baseData, billingEnabled: false }) });
+      return Promise.resolve({ ok: true, json: async () => ({ account: null }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const mounted = mountPanel(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: true }} initialAccount={null} />);
+    await clickButtonAndFlush(findButtonByText(mounted.container, "Pause FORGE billing"));
+    const rentalPostCalls = fetchMock.mock.calls.filter(([url, options]) => String(url).endsWith("/api/rental") && options?.method === "POST");
+    expect(rentalPostCalls).toHaveLength(1);
+    expect(JSON.parse(rentalPostCalls[0][1].body)).toEqual({ operation: "set-billing-enabled", enabled: false });
+    unmountPanel(mounted);
+  });
+
+  it("cancelling the resume confirmation never calls the API", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const mounted = mountPanel(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: false }} initialAccount={null} />);
+    clickButton(findButtonByText(mounted.container, "Resume FORGE billing"));
+    clickButton(findButtonByText(mounted.container, "Cancel"));
+    expect(mounted.container.textContent).toContain("Resume FORGE billing");
+    expect(fetchMock).not.toHaveBeenCalled();
+    unmountPanel(mounted);
   });
 });

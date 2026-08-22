@@ -13,11 +13,24 @@ export async function GET(request) {
   try {
     const db = createRentalWebhookClient();
     const period = new Date().toISOString().slice(0, 7);
+    // Owner-level master pause is checked BEFORE the per-schedule query: an owner whose rental
+    // billing is paused must contribute zero eligible schedules, even if individual schedules are
+    // already FORGE-activated — this cron runs across every owner, so the pause is applied as an
+    // owner_id allowlist rather than a per-row check.
+    const { data: enabledSettings, error: settingsError } = await db.from("rental_billing_settings")
+      .select("owner_id").eq("billing_enabled", true);
+    if (settingsError) throw settingsError;
+    const enabledOwnerIds = (enabledSettings || []).map((row) => row.owner_id);
+
+    if (enabledOwnerIds.length === 0) {
+      return NextResponse.json({ success: true, period, scheduleCount: 0, processed: 0, failed: 0 });
+    }
+
     // collection_mode='forge' is a required pre-filter, not just an optimization: an 'external' or
     // 'paused' schedule must never generate a FORGE charge, regardless of lifecycle status.
     // generateRentCharge() re-checks this (and the cutover date) itself as the authoritative gate.
     const { data: schedules, error } = await db.from("rent_schedules").select("*")
-      .eq("status", "active").eq("collection_mode", "forge");
+      .eq("status", "active").eq("collection_mode", "forge").in("owner_id", enabledOwnerIds);
     if (error) throw error;
 
     let processed = 0, failed = 0;

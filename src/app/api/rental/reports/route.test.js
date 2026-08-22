@@ -8,8 +8,9 @@ const tables={
   rental_tenants:[{id:"t1",display_name:"John"},{id:"t2",display_name:"Jane"}],
   rental_leases:[{id:"l1",property_id:"kent",unit_id:"u1",status:"active",start_date:"2026-08-12",end_date:null,monthly_rent_cents:200000},{id:"l2",property_id:"rachal",unit_id:"u2",status:"active",start_date:"2026-08-12",end_date:"2026-09-01",monthly_rent_cents:150000}],
   rental_lease_tenants:[{lease_id:"l1",tenant_id:"t1"},{lease_id:"l2",tenant_id:"t2"}],
-  rent_charges:[{lease_id:"l1",status:"overdue",due_date:"2026-08-01",amount_cents:200000,paid_amount_cents:0}],
+  rent_charges:[{lease_id:"l1",schedule_id:"s1",status:"overdue",due_date:"2026-08-01",amount_cents:200000,paid_amount_cents:0}],
   rental_payments:[],
+  rent_schedules:[{id:"s1",lease_id:"l1",collection_mode:"forge",forge_cutover_date:"2020-01-01"}],
   financial_events:[{id:"e1",event_date:"2026-01-01",description:"STARLINK",amount:120,transaction_kind:"expense",normalized_category:"utilities",property_id:"kent"}],
   rental_security_deposits:[{id:"d1",lease_id:"l1",tenant_id:"t1",status:"held",required_amount_cents:200000}],
   rental_security_deposit_transactions:[{id:"tx1",deposit_id:"d1",transaction_type:"received",amount_cents:200000}],
@@ -39,6 +40,28 @@ it("returns the renters insurance compliance report",async()=>{const response=aw
 it("returns the work orders report",async()=>{const response=await GET(new Request("https://example.test/api/rental/reports?report=work-orders"));const body=await response.json();expect(response.status).toBe(200);expect(body.report.summary).toMatchObject({openCount:1,closedCount:0});expect(body.report.rows[0].contractorName).toBe("Gulf Coast Plumbing");});
 it("returns the vendor contact list report",async()=>{const response=await GET(new Request("https://example.test/api/rental/reports?report=vendor-contacts"));const body=await response.json();expect(response.status).toBe(200);expect(body.report.rows[0]).toMatchObject({businessName:"Gulf Coast Plumbing"});});
 it("returns the vendor ledger report",async()=>{const response=await GET(new Request("https://example.test/api/rental/reports?report=vendor-ledger"));const body=await response.json();expect(response.status).toBe(200);expect(body.report.summary).toMatchObject({paymentCount:1,totalPaidCents:72080});});
+
+// Rental billing cutover containment regression: an externally-managed charge (Rentec still
+// authoritative) must never surface as FORGE overdue through this route, in either the rent-roll
+// or delinquent-tenants report — it must remain visible, in full, only as externally managed.
+it("an externally-managed charge never appears as FORGE overdue in the rent-roll report, and remains visible as externally managed/reconciliation required", async()=>{
+  from.mockImplementation(table=>({select:vi.fn(async()=>({data:table==="rent_charges"?[{lease_id:"l1",schedule_id:"s1",status:"overdue",due_date:"2026-08-01",amount_cents:1427000,paid_amount_cents:0}]:table==="rent_schedules"?[{id:"s1",lease_id:"l1",collection_mode:"external",forge_cutover_date:null}]:tables[table],error:null}))}));
+  const response=await GET(new Request("https://example.test/api/rental/reports"));
+  const body=await response.json();
+  expect(response.status).toBe(200);
+  expect(body.report.summary.overdueBalanceCents).toBe(0);
+  expect(body.report.summary.externallyManagedCents).toBe(1427000);
+  expect(body.report.summary.externallyManagedChargeCount).toBe(1);
+});
+
+it("an externally-managed charge never appears as a FORGE delinquency in the delinquent-tenants report", async()=>{
+  from.mockImplementation(table=>({select:vi.fn(async()=>({data:table==="rent_charges"?[{lease_id:"l1",schedule_id:"s1",status:"overdue",due_date:"2026-08-01",amount_cents:1427000,paid_amount_cents:0}]:table==="rent_schedules"?[{id:"s1",lease_id:"l1",collection_mode:"external",forge_cutover_date:null}]:tables[table],error:null}))}));
+  const response=await GET(new Request("https://example.test/api/rental/reports?report=delinquent-tenants"));
+  const body=await response.json();
+  expect(response.status).toBe(200);
+  expect(body.report.summary.delinquentLeaseCount).toBe(0);
+  expect(body.report.summary.externallyManagedCents).toBe(1427000);
+});
 });
 
 describe("rental operating report — mixed live/test/manual payments in one fixture",()=>{

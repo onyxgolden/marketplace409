@@ -36,7 +36,11 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
   return Object.freeze({
     vacancies: Math.max(0, units.length - occupiedUnitIds.size),
     expiringLeases: expiringLeases.length,
+    // FORGE-collectible only — an externally-managed (Rentec-authoritative) charge is a real
+    // obligation but must never inflate this figure. See externallyManagedCents below.
     overdueBalanceCents: Number(report?.summary?.overdueBalanceCents || 0),
+    externallyManagedCents: Number(report?.summary?.externallyManagedCents || 0),
+    externallyManagedChargeCount: Number(report?.summary?.externallyManagedChargeCount || 0),
     openMaintenance: openMaintenance.length,
     awaitingSettlement: unsettledPayments.length,
     missingInsurance: missingInsurance.length,

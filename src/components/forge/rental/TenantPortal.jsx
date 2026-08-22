@@ -14,11 +14,23 @@ import TenantAnimalsPanel from "./TenantAnimalsPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const date = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
-export function buildTenantPaymentSummary(rentals) {
-  const charges = rentals.flatMap((rental) => rental.charges || []);
-  return Object.freeze({ dueCents: charges.filter((charge) => !["paid", "void"].includes(charge.status))
-    .reduce((sum, charge) => sum + charge.amountCents - charge.paidAmountCents, 0),
-    openCharges: charges.filter((charge) => !["paid", "void"].includes(charge.status)).length });
+// dueCents/openCharges describe only what FORGE can actually collect online — an externally
+// managed charge is a real obligation but must never be presented to the tenant as part of a
+// FORGE-payable "Current balance." It is still surfaced, in full, via
+// externallyManagedCents/externallyManagedChargeCount, and the per-charge rows below always show
+// every charge regardless of collection mode — never hidden.
+export function buildTenantPaymentSummary(rentals, billingEnabled) {
+  let dueCents = 0, openCharges = 0, externallyManagedCents = 0, externallyManagedChargeCount = 0;
+  for (const rental of rentals) {
+    const charges = rental.charges || []; const schedules = rental.schedules || [];
+    for (const charge of charges) {
+      if (["paid", "void"].includes(charge.status)) continue;
+      const remainingCents = charge.amountCents - charge.paidAmountCents;
+      if (isChargePayableThroughForge(charge, schedules, billingEnabled)) { dueCents += remainingCents; openCharges += 1; }
+      else { externallyManagedCents += remainingCents; externallyManagedChargeCount += 1; }
+    }
+  }
+  return Object.freeze({ dueCents, openCharges, externallyManagedCents, externallyManagedChargeCount });
 }
 const RESUMABLE_PAYMENT_STATUSES = ["created", "requires_payment_method", "requires_action"];
 export function paymentPendingForCharge(payments, chargeId) {
@@ -30,6 +42,23 @@ export function resumablePaymentForCharge(payments, chargeId) {
 }
 export function isValidPublishableKey(key) {
   return typeof key === "string" && /^pk_(test|live)_/.test(key);
+}
+// Client-side defense in depth for the rental billing cutover containment: the server
+// (/api/rental/portal/payment-session) is the authoritative gate and already rejects an
+// externally-managed charge or a globally-paused owner, but the tenant portal must never even
+// present "Pay now" for either case — this must fail safe to "not payable" on any missing/
+// ambiguous schedule evidence, never the reverse, exactly mirroring the report read-model's
+// isChargeForgeCollectible classifier. billingEnabled is the owner-level master pause: it is a
+// second, independent gate ABOVE the per-schedule check — enabling it alone never makes an
+// external schedule payable, and a paused owner blocks even an individually cut-over schedule.
+export function isChargePayableThroughForge(charge, schedules, billingEnabled, today = new Date().toISOString().slice(0, 10)) {
+  if (!billingEnabled) return false;
+  const schedule = (schedules || []).find((item) => item.id === charge.scheduleId);
+  if (!schedule) return false;
+  if (schedule.collectionMode !== "forge" || !schedule.forgeCutoverDate) return false;
+  if (schedule.forgeCutoverDate > today) return false;
+  if (charge.dueDate < schedule.forgeCutoverDate) return false;
+  return true;
 }
 const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 export default function TenantPortal({ initialPortal = null } = {}) {
@@ -70,7 +99,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
   function retryStripeInit() { setStripeInitError(false); setStripeRetryCount((count) => count + 1); }
   if (error && !portal) return <main className="mx-auto max-w-3xl p-8"><p role="alert">{error}</p></main>;
   if (!portal) return <main className="mx-auto max-w-3xl p-8">Loading your tenant portal…</main>;
-  const summary = buildTenantPaymentSummary(portal.rentals);
+  const summary = buildTenantPaymentSummary(portal.rentals, portal.billingEnabled);
   return <main className="min-h-screen bg-slate-50 px-5 py-10"><div className="mx-auto max-w-3xl space-y-6">
     <header><p className="text-sm font-bold uppercase tracking-widest text-amber-700">FORGE Tenant Portal</p>
       <h1 className="mt-2 text-3xl font-black text-slate-950">Welcome, {portal.tenant.displayName}</h1></header>
@@ -78,7 +107,12 @@ export default function TenantPortal({ initialPortal = null } = {}) {
     {!session ? <section className="rounded-2xl bg-slate-950 p-6 text-white shadow-sm">
       <p className="text-sm font-bold uppercase tracking-widest text-amber-400">Current balance</p>
       <p className="mt-2 text-4xl font-black">{money.format(summary.dueCents / 100)}</p>
-      <p className="mt-2 text-sm text-slate-300">{summary.openCharges ? `${summary.openCharges} open rent charge${summary.openCharges === 1 ? "" : "s"}` : "You are paid in full."}</p>
+      <p className="mt-2 text-sm text-slate-300">{summary.openCharges ? `${summary.openCharges} open rent charge${summary.openCharges === 1 ? "" : "s"}` : "You have no FORGE-payable balance."}</p>
+      {summary.externallyManagedChargeCount ? (
+        <p className="mt-3 text-xs font-bold text-amber-300">
+          {money.format(summary.externallyManagedCents / 100)} across {summary.externallyManagedChargeCount} charge{summary.externallyManagedChargeCount === 1 ? "" : "s"} is still managed in Rentec and is not payable here — see "Managed in Rentec" below.
+        </p>
+      ) : null}
     </section> : null}
     {session ? (stripeInitError ? <section className="rounded-2xl border border-red-200 bg-red-50 p-6" role="alert">
         <h2 className="text-xl font-black text-red-900">Unable to load the secure payment form</h2>
@@ -91,20 +125,22 @@ export default function TenantPortal({ initialPortal = null } = {}) {
       <Elements key={stripeRetryCount} stripe={stripePromise} options={{ clientSecret: session.clientSecret, appearance: { theme: "stripe" } }}>
         <TenantPaymentForm returnUrl={session.returnUrl} amountLabel={money.format(session.amountCents / 100)}
           dueDate={date.format(new Date(`${session.dueDate}T00:00:00`))} chargeLabel={(session.chargeType || "rent").replaceAll("_", " ")} onCancel={() => setSession(null)} />
-      </Elements></section>) : portal.rentals.map(({ lease, unit, charges, payments = [] }) => <section key={lease.id} className="rounded-2xl border bg-white p-6 shadow-sm">
+      </Elements></section>) : portal.rentals.map(({ lease, unit, charges, payments = [], schedules = [] }) => <section key={lease.id} className="rounded-2xl border bg-white p-6 shadow-sm">
       <h2 className="text-xl font-black">{unit?.label || "Rental home"}</h2>
       <p className="mt-1 text-sm text-slate-500">Lease {lease.startDate} {lease.endDate ? `through ${lease.endDate}` : "— current"}</p>
       <div className="mt-6 space-y-3">{charges.map((charge) => <div key={charge.id} className="flex items-center justify-between gap-4 rounded-xl border p-4">
         <div><p className="font-bold">{date.format(new Date(`${charge.dueDate}T00:00:00`))}</p><p className="text-sm capitalize text-slate-500">{charge.period} {(charge.chargeType||"rent").replaceAll("_"," ")} · {charge.status.replaceAll("_", " ")}</p></div>
         <div className="text-right"><p className="font-black">{money.format((charge.amountCents - charge.paidAmountCents) / 100)}</p>
-          {!['paid', 'void'].includes(charge.status) ? (() => {
-            const resumable = resumablePaymentForCharge(payments, charge.id);
-            const trulyPending = !resumable && paymentPendingForCharge(payments, charge.id);
-            return <button onClick={() => resumable ? resume(resumable.id, charge.id) : pay(charge.id)}
-              disabled={starting === charge.id || trulyPending}
-              className="mt-2 rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
-              {trulyPending ? "Payment pending" : starting === charge.id ? "Opening…" : resumable ? "Resume payment" : "Pay now"}</button>;
-          })() : null}</div>
+          {!['paid', 'void'].includes(charge.status) ? (
+            isChargePayableThroughForge(charge, schedules, portal.billingEnabled) ? (() => {
+              const resumable = resumablePaymentForCharge(payments, charge.id);
+              const trulyPending = !resumable && paymentPendingForCharge(payments, charge.id);
+              return <button onClick={() => resumable ? resume(resumable.id, charge.id) : pay(charge.id)}
+                disabled={starting === charge.id || trulyPending}
+                className="mt-2 rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+                {trulyPending ? "Payment pending" : starting === charge.id ? "Opening…" : resumable ? "Resume payment" : "Pay now"}</button>;
+            })() : <p className="mt-2 text-xs font-bold uppercase tracking-wide text-slate-500">Managed in Rentec</p>
+          ) : null}</div>
       </div>)}</div>
       <div className="mt-8 border-t pt-6"><h3 className="font-black">Payment history</h3>
         {payments.length === 0 ? <p className="mt-2 text-sm text-slate-500">No payments recorded yet.</p> :

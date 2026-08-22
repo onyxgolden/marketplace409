@@ -29,6 +29,14 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
     && schedule.data.forge_cutover_date !== null && schedule.data.forge_cutover_date <= today;
   if (!isForgeCollectible) return { httpStatus: 409, body: { error: "This lease is not currently collected through FORGE." } };
 
+  // Owner-level master pause overrides an otherwise-eligible per-schedule cutover: autopay must
+  // never execute while the owner's rental billing is globally paused, even for a lease whose
+  // schedule is individually FORGE-activated with an arrived cutover date.
+  const billingSettings = await db.from("rental_billing_settings").select("billing_enabled")
+    .eq("owner_id", enrollment.owner_id).maybeSingle();
+  if (billingSettings.error) throw billingSettings.error;
+  if (!billingSettings.data?.billing_enabled) return { httpStatus: 409, body: { error: "Rental online billing is currently paused for this owner." } };
+
   // Scoped to the *enrollment's own* provider_mode, not just the current server mode: a payment
   // method/mandate token is only ever valid within the mode it was created under, so the
   // connected account charged here must always match that same mode — this is what makes it

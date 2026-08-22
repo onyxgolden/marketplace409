@@ -50,5 +50,14 @@ describe("RentCharge", () => {
     it("generates normally once collection_mode is 'forge' and the cutover date has arrived", () => {
       expect(generateRentCharge({ schedule: schedule(), period: "2026-09", now: "2026-09-01T00:00:00.000Z" })).not.toBeNull();
     });
+
+    // A mid-month cutover (not aligned to the schedule's due day) must never retroactively create
+    // a pre-cutover obligation: the period whose due date falls before cutover stays uncollected
+    // by FORGE, even though the schedule is already 'forge' by the time that period is generated.
+    it("a mid-month cutover does not create a pre-cutover obligation for the period whose due date precedes it", () => {
+      const midMonthCutover = schedule({ dueDay: 1, forgeCutoverDate: "2026-09-15" });
+      expect(generateRentCharge({ schedule: midMonthCutover, period: "2026-09", now: "2026-09-16T00:00:00.000Z" })).toBeNull();
+      expect(generateRentCharge({ schedule: midMonthCutover, period: "2026-10", now: "2026-10-01T00:00:00.000Z" })?.dueDate).toBe("2026-10-01");
+    });
   });
 });

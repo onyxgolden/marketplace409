@@ -8,8 +8,20 @@ import { GET } from "./route.js";
 function request(headers = {}) { return new Request("https://test/api", { headers }); }
 
 function chain(result) {
-  const node = { select: vi.fn(() => node), eq: vi.fn(() => node), upsert: vi.fn(async () => result), then: (resolve) => resolve(result) };
+  const node = { select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node), upsert: vi.fn(async () => result), then: (resolve) => resolve(result) };
   return node;
+}
+
+function settingsChain(ownerIds) {
+  return chain({ data: ownerIds.map((owner_id) => ({ owner_id })), error: null });
+}
+
+function db({ settings, schedules, charges }) {
+  return { from: vi.fn((table) => {
+    if (table === "rental_billing_settings") return settings;
+    if (table === "rent_schedules") return schedules;
+    return charges;
+  }) };
 }
 
 beforeEach(() => { process.env.CRON_SECRET = "cron-secret"; });
@@ -34,8 +46,7 @@ describe("rent charge generation cron", () => {
       ], error: null,
     });
     const charges = chain({ error: null });
-    const db = { from: vi.fn((table) => (table === "rent_schedules" ? schedules : charges)) };
-    createRentalWebhookClient.mockReturnValue(db);
+    createRentalWebhookClient.mockReturnValue(db({ settings: settingsChain(["owner_1", "owner_2"]), schedules, charges }));
 
     const response = await GET(request({ authorization: "Bearer cron-secret" }));
     const body = await response.json();
@@ -55,7 +66,7 @@ describe("rent charge generation cron", () => {
         collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01" }], error: null,
     });
     const charges = chain({ error: null });
-    createRentalWebhookClient.mockReturnValue({ from: vi.fn((table) => (table === "rent_schedules" ? schedules : charges)) });
+    createRentalWebhookClient.mockReturnValue(db({ settings: settingsChain(["owner_1"]), schedules, charges }));
 
     const response = await GET(request({ authorization: "Bearer cron-secret" }));
     const body = await response.json();
@@ -70,7 +81,7 @@ describe("rent charge generation cron", () => {
   it("queries only collection_mode='forge' schedules — never generates a charge for a lifecycle-active but collection-external schedule", async () => {
     const schedules = chain({ data: [], error: null });
     const charges = chain({ error: null });
-    createRentalWebhookClient.mockReturnValue({ from: vi.fn((table) => (table === "rent_schedules" ? schedules : charges)) });
+    createRentalWebhookClient.mockReturnValue(db({ settings: settingsChain(["owner_1"]), schedules, charges }));
 
     await GET(request({ authorization: "Bearer cron-secret" }));
     const eqCalls = schedules.eq.mock.calls;
@@ -86,11 +97,37 @@ describe("rent charge generation cron", () => {
         collection_mode: "external", collection_provider: "rentec", forge_cutover_date: null }], error: null,
     });
     const charges = chain({ error: null });
-    createRentalWebhookClient.mockReturnValue({ from: vi.fn((table) => (table === "rent_schedules" ? schedules : charges)) });
+    createRentalWebhookClient.mockReturnValue(db({ settings: settingsChain(["owner_1"]), schedules, charges }));
 
     const response = await GET(request({ authorization: "Bearer cron-secret" }));
     const body = await response.json();
     expect(body.processed).toBe(0);
     expect(charges.upsert).not.toHaveBeenCalled();
+  });
+
+  // Master pause regression guards: the owner-level gate must exclude an owner entirely, even when
+  // that owner has an individually FORGE-activated, cutover-arrived schedule.
+  it("generates zero charges and never queries schedules when no owner has rental billing enabled", async () => {
+    const schedules = chain({ data: [], error: null });
+    const charges = chain({ error: null });
+    const settings = settingsChain([]);
+    createRentalWebhookClient.mockReturnValue(db({ settings, schedules, charges }));
+
+    const response = await GET(request({ authorization: "Bearer cron-secret" }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.scheduleCount).toBe(0);
+    expect(body.processed).toBe(0);
+    expect(schedules.select).not.toHaveBeenCalled();
+  });
+
+  it("restricts the schedule query to only owners with rental billing enabled, excluding a paused owner's already-FORGE-activated schedule", async () => {
+    const schedules = chain({ data: [], error: null });
+    const charges = chain({ error: null });
+    const settings = settingsChain(["owner_enabled"]);
+    createRentalWebhookClient.mockReturnValue(db({ settings, schedules, charges }));
+
+    await GET(request({ authorization: "Bearer cron-secret" }));
+    expect(schedules.in).toHaveBeenCalledWith("owner_id", ["owner_enabled"]);
   });
 });

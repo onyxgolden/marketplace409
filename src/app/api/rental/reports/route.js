@@ -18,7 +18,11 @@ import { buildVendorLedgerReport, vendorLedgerReportToCsv } from "@/application/
 import { scopeRentalDataToProperty } from "@/application/rental/scopeRentalDataToProperty";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 
-const CORE_RENTAL_TABLES = ["rental_units", "rental_tenants", "rental_leases", "rental_lease_tenants", "rent_charges", "rental_payments"];
+// rent_schedules is required by every core report that classifies a charge's collection authority
+// (buildRentalOperatingReport, buildDelinquentTenantsReport) — without it, those builders have no
+// evidence to distinguish a FORGE-collectible charge from an externally-managed one and must fail
+// safe to "externally managed," which would silently zero out every FORGE total.
+const CORE_RENTAL_TABLES = ["rental_units", "rental_tenants", "rental_leases", "rental_lease_tenants", "rent_charges", "rental_payments", "rent_schedules"];
 const CORE_RENTAL_KEYS = {
   rental_units: "units",
   rental_tenants: "tenants",
@@ -26,6 +30,7 @@ const CORE_RENTAL_KEYS = {
   rental_lease_tenants: "memberships",
   rent_charges: "charges",
   rental_payments: "payments",
+  rent_schedules: "schedules",
 };
 
 async function fetchTables(supabaseClient, tables, columns = {}) {

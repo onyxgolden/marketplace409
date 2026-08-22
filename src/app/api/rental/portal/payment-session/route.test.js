@@ -29,12 +29,13 @@ function request(body) {
   return new NextRequest("https://forge.test/api/rental/portal/payment-session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 
-function baseTables(accountRow, customerRow = null, scheduleRow = forgeCollectibleSchedule) {
+function baseTables(accountRow, customerRow = null, scheduleRow = forgeCollectibleSchedule, billingSettingsRow = { billing_enabled: true }) {
   return {
     rental_tenants: single({ data: tenant, error: null }),
     rent_charges: single({ data: charge, error: null }),
     rental_lease_tenants: single({ data: { lease_id: "lease_1" }, error: null }),
     rent_schedules: single({ data: scheduleRow, error: null }),
+    rental_billing_settings: single({ data: billingSettingsRow, error: null }),
     rental_payments: single({ data: null, error: null }), // no pending payment for this charge
     landlord_payment_accounts: single({ data: accountRow, error: null }),
     billing_customer_references: single({ data: customerRow, error: null }),
@@ -138,6 +139,28 @@ describe("tenant payment-session route (provider-mode isolation)", () => {
       const response = await POST(request({ chargeId: "charge_1" }));
       expect(response.status).toBe(200);
       expect(createPaymentSession).toHaveBeenCalled();
+    });
+  });
+
+  // Owner-level master pause: must block even an otherwise fully-eligible, individually
+  // FORGE-activated lease — per-schedule activation alone must never be sufficient.
+  describe("rental billing master pause", () => {
+    it("rejects an otherwise-eligible charge while the owner's rental billing is globally paused", async () => {
+      tables = baseTables({ provider_account_id: "acct_kent", status: "enabled", charges_enabled: true, payouts_enabled: true, card_payments_enabled: true },
+        { customer_id: "cus_test_1" }, forgeCollectibleSchedule, { billing_enabled: false });
+      const response = await POST(request({ chargeId: "charge_1" }));
+      const body = await response.json();
+      expect(response.status).toBe(404);
+      expect(body.error).toBe("Rental online billing is currently paused for this owner.");
+      expect(createPaymentSession).not.toHaveBeenCalled();
+    });
+
+    it("rejects an otherwise-eligible charge when no rental_billing_settings row exists yet for the owner (defaults to paused)", async () => {
+      tables = baseTables({ provider_account_id: "acct_kent", status: "enabled", charges_enabled: true, payouts_enabled: true, card_payments_enabled: true },
+        { customer_id: "cus_test_1" }, forgeCollectibleSchedule, null);
+      const response = await POST(request({ chargeId: "charge_1" }));
+      expect(response.status).toBe(404);
+      expect(createPaymentSession).not.toHaveBeenCalled();
     });
   });
 });

@@ -484,17 +484,22 @@ function RentRollView({ report }) {
           value={money.format(report.summary.collectedCents / 100)}
         />
         <Kpi
-          label="Open balance"
+          label="Open balance (FORGE)"
           value={money.format(report.summary.openBalanceCents / 100)}
           attention={report.summary.openBalanceCents > 0}
         />
         <Kpi
-          label="Overdue"
+          label="Overdue (FORGE)"
           value={money.format(report.summary.overdueBalanceCents / 100)}
           attention={report.summary.overdueBalanceCents > 0}
         />
         <Kpi label="Active leases" value={report.summary.activeLeases} />
         <Kpi label="Occupied units" value={report.summary.occupiedUnits} />
+        <Kpi
+          label="Externally managed — reconciliation required"
+          value={`${money.format(report.summary.externallyManagedCents / 100)} (${report.summary.externallyManagedChargeCount})`}
+          attention={report.summary.externallyManagedCents > 0}
+        />
       </div>
       <div className="mt-6 overflow-x-auto">
         <table className="w-full text-left text-sm">
@@ -503,8 +508,9 @@ function RentRollView({ report }) {
               <th className="p-3">Unit / tenant</th>
               <th className="p-3">Lease</th>
               <th className="p-3">Monthly rent</th>
-              <th className="p-3">Open</th>
-              <th className="p-3">Overdue</th>
+              <th className="p-3">Open (FORGE)</th>
+              <th className="p-3">Overdue (FORGE)</th>
+              <th className="p-3">Externally managed</th>
               <th className="p-3">Collected</th>
             </tr>
           </thead>
@@ -537,6 +543,13 @@ function RentRollView({ report }) {
                 >
                   {money.format(row.overdueCents / 100)}
                 </td>
+                <td
+                  className={`p-3 ${row.externallyManagedCents > 0 ? "text-amber-700 font-bold" : ""}`}
+                  title="Managed in Rentec — reconciliation required before this can be presented as FORGE collectible"
+                >
+                  {money.format(row.externallyManagedCents / 100)}
+                  {row.externallyManagedChargeCount > 0 ? ` (${row.externallyManagedChargeCount})` : ""}
+                </td>
                 <td className="p-3">
                   {money.format(row.collectedCents / 100)}
                 </td>
@@ -551,12 +564,17 @@ function RentRollView({ report }) {
 function DelinquentTenantsView({ report }) {
   return (
     <>
-      <div className="mt-6 grid gap-3 md:grid-cols-2">
-        <Kpi label="Delinquent leases" value={report.summary.delinquentLeaseCount} />
+      <div className="mt-6 grid gap-3 md:grid-cols-3">
+        <Kpi label="Delinquent leases (FORGE)" value={report.summary.delinquentLeaseCount} />
         <Kpi
-          label="Total overdue"
+          label="Total overdue (FORGE)"
           value={money.format(report.summary.totalOverdueCents / 100)}
           attention={report.summary.totalOverdueCents > 0}
+        />
+        <Kpi
+          label="Externally managed — reconciliation required"
+          value={`${money.format(report.summary.externallyManagedCents / 100)} (${report.summary.externallyManagedChargeCount})`}
+          attention={report.summary.externallyManagedCents > 0}
         />
       </div>
       <div className="mt-6 overflow-x-auto">
@@ -565,8 +583,9 @@ function DelinquentTenantsView({ report }) {
             <tr className="border-b">
               <th className="p-3">Unit / tenant</th>
               <th className="p-3">Contact</th>
-              <th className="p-3">Overdue</th>
+              <th className="p-3">Overdue (FORGE)</th>
               <th className="p-3">Overdue charges</th>
+              <th className="p-3">Externally managed</th>
               <th className="p-3">Oldest due date</th>
             </tr>
           </thead>
@@ -586,12 +605,19 @@ function DelinquentTenantsView({ report }) {
                   </td>
                   <td className="p-3 font-bold text-red-700">{money.format(row.overdueCents / 100)}</td>
                   <td className="p-3">{row.overdueChargeCount}</td>
+                  <td
+                    className={`p-3 ${row.externallyManagedCents > 0 ? "text-amber-700 font-bold" : ""}`}
+                    title="Managed in Rentec — reconciliation required before this can be presented as a FORGE delinquency"
+                  >
+                    {money.format(row.externallyManagedCents / 100)}
+                    {row.externallyManagedChargeCount > 0 ? ` (${row.externallyManagedChargeCount})` : ""}
+                  </td>
                   <td className="p-3">{row.oldestDueDate}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td className="p-3 text-slate-500" colSpan={5}>No delinquent tenants.</td>
+                <td className="p-3 text-slate-500" colSpan={6}>No delinquent tenants.</td>
               </tr>
             )}
           </tbody>

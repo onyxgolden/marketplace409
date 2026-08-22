@@ -2,11 +2,14 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { buildRentecReconciliationPreview } from "@/domains/rental-billing-cutover/rentecReconciliationPreview";
 
-// Read-only. Never writes anything, never calls Rentec, never touches Stripe. Accepts Rentec
-// transaction evidence in the request body (this app has no live Rentec-transaction import yet —
-// only unit/tenant/lease import exists) and classifies it against the owner's own FORGE
-// leases/schedules/charges. Approving/importing a match is a separate, later, write-capable
-// action — this endpoint only ever previews.
+// PREPARATORY ONLY — not operationally ready. Read-only: never writes anything, never calls
+// Rentec, never touches Stripe. Requires the caller to supply Rentec transaction evidence in the
+// request body, because this app has no live Rentec-transaction fetch yet (only unit/tenant/lease
+// import exists) and no production UI feeds this endpoint. It exposes no approval action of any
+// kind — classifying a match here changes nothing in the database. No reconciliation may be
+// treated as approved, and no external payment may be recorded as reconciled, until a separate,
+// idempotent, owner-scoped external-payment write path exists (tracked as a follow-up; see
+// rentecReconciliationPreview.js for the matching domain this write path would consume).
 export async function POST(request) {
   const authenticated = await createAuthenticatedForgeApplication();
   if (authenticated.response) return authenticated.response;
@@ -51,7 +54,9 @@ export async function POST(request) {
       alreadyReconciled: [],
     });
 
-    return NextResponse.json({ success: true, preview });
+    return NextResponse.json({ success: true, status: "preview_only",
+      notice: "Preparatory preview only — no data was written, and no production UI or Rentec fetch feeds this endpoint yet. Nothing here can be approved until a dedicated external-payment write path exists.",
+      preview });
   } catch (error) {
     console.error("Rentec reconciliation preview error", error);
     return NextResponse.json({ error: "Unable to build the reconciliation preview." }, { status: 500 });

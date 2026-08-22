@@ -3,19 +3,66 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import TenantPortal, { buildTenantPaymentSummary, isValidPublishableKey, paymentPendingForCharge, resumablePaymentForCharge } from "./TenantPortal.jsx";
+import TenantPortal, { buildTenantPaymentSummary, isChargePayableThroughForge, isValidPublishableKey, paymentPendingForCharge, resumablePaymentForCharge } from "./TenantPortal.jsx";
+
+const forgeSchedule = { id: "schedule_1", collectionMode: "forge", forgeCutoverDate: "2026-01-01" };
+const externalSchedule = { id: "schedule_2", collectionMode: "external", forgeCutoverDate: null };
 
 describe("tenant payment summary", () => {
-  it("shows only unpaid rent in the current balance", () => {
-    expect(buildTenantPaymentSummary([{ charges: [
-      { amountCents: 125000, paidAmountCents: 25000, status: "partially_paid" },
-      { amountCents: 125000, paidAmountCents: 125000, status: "paid" },
-      { amountCents: 5000, paidAmountCents: 0, status: "void" },
-    ] }])).toEqual({ dueCents: 100000, openCharges: 1 });
+  it("shows only unpaid, FORGE-payable rent in the current balance", () => {
+    expect(buildTenantPaymentSummary([{ schedules: [forgeSchedule], charges: [
+      { scheduleId: "schedule_1", dueDate: "2026-08-01", amountCents: 125000, paidAmountCents: 25000, status: "partially_paid" },
+      { scheduleId: "schedule_1", dueDate: "2026-08-01", amountCents: 125000, paidAmountCents: 125000, status: "paid" },
+      { scheduleId: "schedule_1", dueDate: "2026-08-01", amountCents: 5000, paidAmountCents: 0, status: "void" },
+    ] }], true)).toEqual({ dueCents: 100000, openCharges: 1, externallyManagedCents: 0, externallyManagedChargeCount: 0 });
   });
   it("blocks a duplicate attempt while ACH is processing", () => {
     expect(paymentPendingForCharge([{ chargeId: "charge_1", status: "processing" }], "charge_1")).toBe(true);
     expect(paymentPendingForCharge([{ chargeId: "charge_1", status: "failed" }], "charge_1")).toBe(false);
+  });
+
+  // Rental billing cutover containment: an externally-managed charge must never inflate the
+  // FORGE-payable "Current balance" — it is real, but surfaced only via the separate
+  // externallyManaged fields, never hidden.
+  it("excludes an externally-managed open charge from dueCents/openCharges and surfaces it separately", () => {
+    expect(buildTenantPaymentSummary([{ schedules: [externalSchedule], charges: [
+      { scheduleId: "schedule_2", dueDate: "2026-08-01", amountCents: 200000, paidAmountCents: 0, status: "due" },
+    ] }], true)).toEqual({ dueCents: 0, openCharges: 0, externallyManagedCents: 200000, externallyManagedChargeCount: 1 });
+  });
+
+  it("treats a charge with no matching schedule as externally managed (fails safe)", () => {
+    expect(buildTenantPaymentSummary([{ schedules: [], charges: [
+      { scheduleId: "schedule_missing", dueDate: "2026-08-01", amountCents: 200000, paidAmountCents: 0, status: "due" },
+    ] }], true)).toMatchObject({ dueCents: 0, externallyManagedCents: 200000 });
+  });
+
+  // Owner-level master pause: an otherwise fully FORGE-eligible charge must fall into the
+  // externally-managed bucket while the owner's rental billing is globally paused.
+  it("treats an otherwise FORGE-eligible charge as externally managed while the owner's rental billing is globally paused", () => {
+    expect(buildTenantPaymentSummary([{ schedules: [forgeSchedule], charges: [
+      { scheduleId: "schedule_1", dueDate: "2026-08-01", amountCents: 200000, paidAmountCents: 0, status: "due" },
+    ] }], false)).toEqual({ dueCents: 0, openCharges: 0, externallyManagedCents: 200000, externallyManagedChargeCount: 1 });
+  });
+});
+
+describe("isChargePayableThroughForge", () => {
+  it("is payable for a forge schedule with an arrived cutover on or before the charge's due date, while billing is enabled", () => {
+    expect(isChargePayableThroughForge({ scheduleId: "schedule_1", dueDate: "2026-08-01" }, [forgeSchedule], true, "2026-08-16")).toBe(true);
+  });
+  it("is not payable for an external schedule", () => {
+    expect(isChargePayableThroughForge({ scheduleId: "schedule_2", dueDate: "2026-08-01" }, [externalSchedule], true, "2026-08-16")).toBe(false);
+  });
+  it("is not payable when no schedule matches the charge's scheduleId", () => {
+    expect(isChargePayableThroughForge({ scheduleId: "schedule_missing", dueDate: "2026-08-01" }, [forgeSchedule], true, "2026-08-16")).toBe(false);
+  });
+
+  // Owner-level master pause: must block even an otherwise fully-eligible, individually
+  // FORGE-activated schedule — per-schedule activation alone must never be sufficient.
+  it("is not payable when the owner's rental billing is globally paused, even for an otherwise-eligible forge schedule", () => {
+    expect(isChargePayableThroughForge({ scheduleId: "schedule_1", dueDate: "2026-08-01" }, [forgeSchedule], false, "2026-08-16")).toBe(false);
+  });
+  it("is not payable when billingEnabled is undefined (fails safe, e.g. before the portal payload has loaded)", () => {
+    expect(isChargePayableThroughForge({ scheduleId: "schedule_1", dueDate: "2026-08-01" }, [forgeSchedule], undefined, "2026-08-16")).toBe(false);
   });
 });
 
@@ -47,10 +94,12 @@ describe("isValidPublishableKey", () => {
 
 const openChargePortal = {
   tenant: { displayName: "Brandy Morgan" },
+  billingEnabled: true,
   rentals: [{
     lease: { id: "lease_1", startDate: "2026-08-19", endDate: null },
     unit: { label: "TEST-" },
-    charges: [{ id: "charge_1", dueDate: "2026-09-01", period: "2026-09", chargeType: "rent", status: "due", amountCents: 2000, paidAmountCents: 0 }],
+    schedules: [forgeSchedule],
+    charges: [{ id: "charge_1", scheduleId: "schedule_1", dueDate: "2026-09-01", period: "2026-09", chargeType: "rent", status: "due", amountCents: 2000, paidAmountCents: 0 }],
     payments: [],
   }],
 };
@@ -75,6 +124,67 @@ describe("TenantPortal charge action labeling", () => {
   it("shows Pay now when there is no pending or resumable payment", () => {
     const markup = renderToStaticMarkup(<TenantPortal initialPortal={openChargePortal} />);
     expect(markup).toContain("Pay now");
+  });
+});
+
+// Rendered-component regression guard: the tenant portal must never present an externally-managed
+// charge as payable, even though it remains fully visible in the per-charge list.
+describe("TenantPortal collection-authority containment", () => {
+  const externallyManagedPortal = {
+    tenant: { displayName: "Brandy Morgan" },
+    billingEnabled: true,
+    rentals: [{
+      lease: { id: "lease_1", startDate: "2026-08-19", endDate: null },
+      unit: { label: "TEST-" },
+      schedules: [externalSchedule],
+      charges: [{ id: "charge_1", scheduleId: "schedule_2", dueDate: "2026-08-01", period: "2026-08", chargeType: "rent", status: "due", amountCents: 1427000, paidAmountCents: 0 }],
+      payments: [],
+    }],
+  };
+
+  it("never renders Pay now for an externally-managed charge, and labels it Managed in Rentec instead", () => {
+    const markup = renderToStaticMarkup(<TenantPortal initialPortal={externallyManagedPortal} />);
+    expect(markup).not.toContain("Pay now");
+    expect(markup).toContain("Managed in Rentec");
+  });
+
+  it("still renders the externally-managed charge itself and its amount — never hidden", () => {
+    const markup = renderToStaticMarkup(<TenantPortal initialPortal={externallyManagedPortal} />);
+    expect(markup).toContain("$14,270.00");
+  });
+
+  it("shows a FORGE-payable current balance of zero, with the externally-managed amount called out separately", () => {
+    const markup = renderToStaticMarkup(<TenantPortal initialPortal={externallyManagedPortal} />);
+    expect(markup).toContain("You have no FORGE-payable balance.");
+    expect(markup).toContain("is still managed in Rentec and is not payable here");
+  });
+
+  it("shows Pay now again for a lease that has been individually cut over to FORGE", () => {
+    const markup = renderToStaticMarkup(<TenantPortal initialPortal={openChargePortal} />);
+    expect(markup).toContain("Pay now");
+    expect(markup).not.toContain("Managed in Rentec");
+  });
+});
+
+// Owner-level master pause: must block Pay now even for a lease individually cut over to FORGE —
+// per-schedule activation alone must never be sufficient while the owner's billing is paused.
+describe("TenantPortal rental billing master pause", () => {
+  const pausedButOtherwiseEligiblePortal = { ...openChargePortal, billingEnabled: false };
+
+  it("never renders Pay now while the owner's rental billing is globally paused, even for an individually cut-over lease", () => {
+    const markup = renderToStaticMarkup(<TenantPortal initialPortal={pausedButOtherwiseEligiblePortal} />);
+    expect(markup).not.toContain("Pay now");
+    expect(markup).toContain("Managed in Rentec");
+  });
+
+  it("shows a FORGE-payable current balance of zero while globally paused, even though the schedule is individually forge-activated", () => {
+    const markup = renderToStaticMarkup(<TenantPortal initialPortal={pausedButOtherwiseEligiblePortal} />);
+    expect(markup).toContain("You have no FORGE-payable balance.");
+  });
+
+  it("still renders the charge itself and its amount while paused — never hidden", () => {
+    const markup = renderToStaticMarkup(<TenantPortal initialPortal={pausedButOtherwiseEligiblePortal} />);
+    expect(markup).toContain("$20.00");
   });
 });
 

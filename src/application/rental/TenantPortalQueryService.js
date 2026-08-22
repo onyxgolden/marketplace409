@@ -16,11 +16,16 @@ export class TenantPortalQueryService {
     if (tenantError) throw tenantError;
     if (!tenantRow) return null;
 
+    const { data: billingSettingsRow, error: billingSettingsError } = await this.supabase
+      .from("rental_billing_settings").select("billing_enabled").eq("owner_id", tenantRow.owner_id).maybeSingle();
+    if (billingSettingsError) throw billingSettingsError;
+    const billingEnabled = billingSettingsRow?.billing_enabled === true;
+
     const { data: memberships, error: membershipError } = await this.supabase.from("rental_lease_tenants")
       .select("owner_id, lease_id, tenant_id").eq("owner_id", tenantRow.owner_id).eq("tenant_id", tenantRow.id);
     if (membershipError) throw membershipError;
     const leaseIds = (memberships || []).map(({ lease_id }) => lease_id);
-    if (leaseIds.length === 0) return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), rentals: Object.freeze([]) });
+    if (leaseIds.length === 0) return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, rentals: Object.freeze([]) });
 
     const { data: leases, error: leaseError } = await this.supabase.from("rental_leases").select("*")
       .eq("owner_id", tenantRow.owner_id).in("id", leaseIds).order("start_date", { ascending: false });
@@ -101,6 +106,6 @@ export class TenantPortalQueryService {
             depositReviewRecommended:item.deposit_review_recommended,estimatedCostCents:item.estimated_cost_cents===null?null:Number(item.estimated_cost_cents),evidenceDocumentId:item.evidence_document_id}))),
           acknowledged:inspectionAcknowledgements.some(item=>item.inspection_id===row.id)}))) });
     }));
-    return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), rentals: Object.freeze(rentals) });
+    return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, rentals: Object.freeze(rentals) });
   }
 }

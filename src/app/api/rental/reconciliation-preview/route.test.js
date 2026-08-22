@@ -60,7 +60,15 @@ describe("rental reconciliation preview route", () => {
     expect(body.preview.classificationCounts.confidently_matched_rentec_payment).toBe(1);
   });
 
-  it("classifies a pre-cutover FORGE charge for an external-mode lease — the exact false-overdue containment case", async () => {
+  it("labels the response as preview_only with a notice that nothing can be approved yet", async () => {
+    createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: mockDatabase() });
+    const response = await POST(request({ rentecTransactions: [] }));
+    const body = await response.json();
+    expect(body.status).toBe("preview_only");
+    expect(body.notice).toMatch(/no data was written/i);
+  });
+
+  it("classifies a pre-cutover FORGE charge for an external-mode lease — the exact externally-managed reconciliation-required containment case", async () => {
     createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: mockDatabase({
       schedules: [scheduleRow({ collection_mode: "external", forge_cutover_date: null })],
     }) });

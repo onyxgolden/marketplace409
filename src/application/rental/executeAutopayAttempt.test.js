@@ -20,6 +20,7 @@ const ENROLLMENT = { id: "enrollment_1", owner_id: "owner_1", lease_id: "lease_1
   provider_customer_id: "cus_1", provider_payment_method_id: "pm_1", provider_mode: "test", consecutive_failures: 0, retry_limit: 1 };
 const CHARGE = { id: "charge_1", owner_id: "owner_1", lease_id: "lease_1", amount_cents: 150000, paid_amount_cents: 0, currency_code: "USD" };
 const FORGE_SCHEDULE = { data: { collection_mode: "forge", forge_cutover_date: "2020-01-01" }, error: null };
+const BILLING_ENABLED = { data: { billing_enabled: true }, error: null };
 
 describe("executeAutopayAttempt", () => {
   it("requires an enrollment and charge id", async () => {
@@ -57,6 +58,7 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
       .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+      .mockReturnValueOnce(chain(BILLING_ENABLED))
       .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
       .mockReturnValueOnce(chain({ data: { id: "rental_payment_1" }, error: null }))
       .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
@@ -76,6 +78,7 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
       .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+      .mockReturnValueOnce(chain(BILLING_ENABLED))
       .mockReturnValueOnce(accountLookup)
       .mockReturnValueOnce(chain({ data: { id: "rental_payment_1" }, error: null }))
       .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
@@ -95,6 +98,7 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
       .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+      .mockReturnValueOnce(chain(BILLING_ENABLED))
       .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
       .mockReturnValueOnce(paymentInsert)
       .mockReturnValueOnce(attemptInsert)
@@ -114,6 +118,7 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
       .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+      .mockReturnValueOnce(chain(BILLING_ENABLED))
       .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
       .mockReturnValueOnce(chain({ data: { id: "rental_payment_1" }, error: null }))
       .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
@@ -162,6 +167,38 @@ describe("executeAutopayAttempt", () => {
         .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
         .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
         .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }));
+      const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(result.httpStatus).toBe(409);
+    });
+  });
+
+  // Owner-level master pause: must block even an otherwise fully-eligible, individually
+  // FORGE-activated enrollment — per-schedule activation alone must never be sufficient.
+  describe("rental billing master pause", () => {
+    it("rejects an attempt when the owner's rental billing is globally paused, without ever calling Stripe", async () => {
+      const db = { from: vi.fn() };
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+        .mockReturnValueOnce(chain({ data: { billing_enabled: false }, error: null }));
+      const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(result.httpStatus).toBe(409);
+      expect(result.body).toEqual({ error: "Rental online billing is currently paused for this owner." });
+      // 5 db.from calls: enrollment, charge, existing-attempt, schedule, billing settings — the
+      // gate returned before any account lookup, payment insert, or Stripe call could occur.
+      expect(db.from).toHaveBeenCalledTimes(5);
+    });
+
+    it("rejects an attempt when no rental_billing_settings row exists yet for the owner (defaults to paused)", async () => {
+      const db = { from: vi.fn() };
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain(FORGE_SCHEDULE))
         .mockReturnValueOnce(chain({ data: null, error: null }));
       const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
       expect(result.httpStatus).toBe(409);
