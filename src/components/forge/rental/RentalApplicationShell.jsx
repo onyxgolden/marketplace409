@@ -26,8 +26,8 @@ export default function RentalApplicationShell({ activeFunctionId, activeRecordC
   const activeId = resolveActiveFunction(RENTAL_FUNCTIONS, activeFunctionId);
   activeRecordContext = activeRecordContext ? { ...activeRecordContext, recordLabel: activeRecordContext.recordLabel || (activeRecordContext.recordType === "tenant" ? "selected tenant" : activeRecordContext.propertyId || "selected property") } : null;
   return <section data-rental-application-shell data-active-function={activeId} className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-950">
-    <header className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-5 text-slate-950 dark:text-slate-100 lg:px-8"><div className="mx-auto max-w-[1800px]"><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">FORGE Application</p><h1 className="text-3xl font-black tracking-tight">Rental Manager</h1><p className="mt-1 text-sm font-semibold text-slate-600 dark:text-slate-400">Tenant, lease, rent, payment, reconciliation, and maintenance operations.</p></div></header>
-    <div className="mx-auto grid max-w-[1800px] gap-5 p-4 lg:grid-cols-[240px_minmax(0,1fr)] lg:p-8">
+    <header className="border-b border-slate-200/70 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-4 text-slate-950 dark:text-slate-100 lg:px-8"><div className="mx-auto max-w-[1800px]"><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">FORGE Application</p><h1 className="text-2xl font-black tracking-tight">Rental Manager</h1></div></header>
+    <div className="mx-auto grid max-w-[1800px] grid-cols-1 gap-5 p-4 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-6 lg:p-8">
       <label className="lg:hidden"><span className="sr-only">Rental function</span><select value={activeId} onChange={(event) => onFunctionChange?.(event.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 p-3 font-bold text-slate-950 dark:text-slate-100">{RENTAL_NAVIGATION.map((group) => <optgroup key={group.label} label={group.label}>{group.items.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>)}</select></label>
       <RentalNavSidebar activeId={activeId} onFunctionChange={onFunctionChange} />
       <main data-active-function-surface={activeId} data-record-context={activeRecordContext?.recordId || undefined} className="min-w-0">{activeRecordContext?<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950 px-4 py-3" role="status"><p className="text-sm font-bold text-sky-950 dark:text-sky-100">Working with {activeRecordContext.recordType === "tenant" ? "tenant" : "property"}: {activeRecordContext.recordLabel}</p><button type="button" onClick={()=>onFunctionChange?.(activeRecordContext.recordType === "tenant" ? "tenants" : "setup")} className="text-sm font-black text-sky-800 dark:text-sky-300 underline">Back to record</button></div>:null}{buildRentalSurface(activeId, { onNavigate: onFunctionChange, recordContext: activeRecordContext })}</main>
@@ -36,20 +36,29 @@ export default function RentalApplicationShell({ activeFunctionId, activeRecordC
 }
 
 const NAV_COLLAPSE_STORAGE_KEY = "forge-rental-nav-sidebar-collapsed";
-function loadCollapsedNavGroups() {
-  if (typeof window === "undefined") return [];
+// Nav starts quiet: every group collapses by default except the one holding the active
+// destination. This only affects initial visual weight — every destination in RENTAL_NAVIGATION
+// stays reachable via its group header, and an explicit user toggle is persisted and always wins
+// over this default on the next load.
+function defaultCollapsedGroups(activeId) {
+  return RENTAL_NAVIGATION.filter((group) => !group.items.some((item) => item.id === activeId)).map((group) => group.label);
+}
+function loadStoredCollapsedNavGroups() {
+  if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(NAV_COLLAPSE_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (raw === null) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
   } catch {
-    return [];
+    return null;
   }
 }
 function RentalNavSidebar({ activeId, onFunctionChange }) {
-  const [collapsed, setCollapsed] = useState([]);
+  const [collapsed, setCollapsed] = useState(() => defaultCollapsedGroups(activeId));
   useEffect(() => {
-    setCollapsed(loadCollapsedNavGroups());
+    const stored = loadStoredCollapsedNavGroups();
+    if (stored !== null) setCollapsed(stored);
   }, []);
   const toggleGroup = (label) => {
     setCollapsed((current) => {
@@ -59,8 +68,8 @@ function RentalNavSidebar({ activeId, onFunctionChange }) {
     });
   };
   return (
-    <aside className="hidden self-start rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 shadow-sm lg:block">
-      <nav aria-label="Rental Manager functions" className="space-y-4">
+    <aside className="hidden self-start lg:block">
+      <nav aria-label="Rental Manager functions" className="space-y-3">
         {RENTAL_NAVIGATION.map((group) => {
           const containsActive = group.items.some((item) => item.id === activeId);
           const open = !collapsed.includes(group.label) || containsActive;
@@ -69,23 +78,24 @@ function RentalNavSidebar({ activeId, onFunctionChange }) {
               <button
                 type="button"
                 onClick={() => toggleGroup(group.label)}
-                className="flex w-full items-center justify-between px-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-700 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white"
+                aria-expanded={open}
+                className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-slate-500 hover:text-slate-950 dark:text-slate-500 dark:hover:text-white"
               >
                 <span>{group.label}</span>
-                <span className="text-sm">{open ? "▾" : "▸"}</span>
+                <span aria-hidden="true" className="text-[10px] text-slate-400">{open ? "▾" : "▸"}</span>
               </button>
               {open && (
-                <div className="mt-1 space-y-1">
+                <div className="mt-0.5 space-y-0.5">
                   {group.items.map((item) => (
                     <button
                       key={item.id}
                       type="button"
                       aria-current={activeId === item.id ? "page" : undefined}
                       onClick={() => onFunctionChange?.(item.id)}
-                      className={`w-full rounded-lg px-3 py-2 text-left text-sm font-bold transition ${
+                      className={`w-full rounded-lg px-3 py-1.5 text-left text-sm font-bold transition motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 ${
                         activeId === item.id
-                          ? "bg-slate-950 dark:bg-amber-400 text-white dark:text-slate-950"
-                          : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-slate-950 dark:hover:text-white"
+                          ? "bg-slate-950 text-white dark:bg-amber-400 dark:text-slate-950"
+                          : "text-slate-600 hover:bg-slate-200/60 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-white"
                       }`}
                     >
                       {item.label}

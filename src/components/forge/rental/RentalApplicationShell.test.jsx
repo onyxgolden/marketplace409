@@ -1,7 +1,49 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import RentalApplicationShell, { buildRentalSurface, RENTAL_FUNCTIONS, RENTAL_NAVIGATION } from "./RentalApplicationShell.jsx";
 import RentalLeasePanel from "./RentalLeasePanel.jsx";
+
+function mount(ui) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => { root.render(ui); });
+  return { container, root };
+}
+function unmount({ container, root }) {
+  act(() => { root.unmount(); });
+  container.remove();
+}
+
+describe("RentalApplicationShell navigation reachability (quieted nav rail)", () => {
+  let mounted;
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } });
+
+  it("keeps every existing destination reachable through the desktop nav rail even though non-active groups start collapsed", () => {
+    const visited = [];
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={(id) => visited.push(id)} />);
+    // Expand every collapsible group header first — the quieted nav collapses non-active groups
+    // by default, but every destination must still be one click away.
+    const groupToggles = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] > div > button'));
+    groupToggles.forEach((toggle) => {
+      if (toggle.getAttribute("aria-expanded") === "false") act(() => { toggle.click(); });
+    });
+    const itemButtons = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-current], nav[aria-label="Rental Manager functions"] div > div > button'))
+      .filter((button) => !button.hasAttribute("aria-expanded"));
+    itemButtons.forEach((button) => act(() => { button.click(); }));
+    expect(new Set(visited)).toEqual(new Set(RENTAL_FUNCTIONS.map(({ id }) => id)));
+  });
+
+  it("also exposes every destination through the mobile select fallback", () => {
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    const options = Array.from(mounted.container.querySelectorAll("select option")).map((option) => option.value);
+    expect(new Set(options)).toEqual(new Set(RENTAL_FUNCTIONS.map(({ id }) => id)));
+  });
+});
+
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
     expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "deposits", "reports", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
