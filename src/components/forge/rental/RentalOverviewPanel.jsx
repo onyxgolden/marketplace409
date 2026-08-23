@@ -155,7 +155,9 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
     },
     {
       metricKey: "lease-expirations", icon: CalendarClock, label: "Lease expirations (90 days)", value: String(summary.expiringLeases),
-      detail: summary.expiringLeases > 0 ? "Plan renewals or move-outs now." : "Nothing expiring soon.",
+      detail: summary.expiringLeases > 0
+        ? `${summary.expiringLeasesWithin30Days} of ${summary.expiringLeases} due within 30 days.`
+        : "Nothing expiring in the next 90 days.",
       tone: summary.expiringLeases > 0 ? "attention" : "neutral", destination: "lease-lifecycle",
     },
     {

@@ -77,6 +77,43 @@ describe("buildRentalDashboardSummary", () => {
     expect(summary.needsAttention).toEqual([]);
   });
 
+  it("computes the 90-day and 30-day lease-expiration windows as genuinely independent counts, not aliases of each other", () => {
+    const summary = buildRentalDashboardSummary({
+      units: [{ id: "u1" }, { id: "u2" }, { id: "u3" }],
+      leases: [
+        { id: "l1", unit_id: "u1", status: "active", end_date: "2026-09-02" }, // 20 days out — within both windows
+        { id: "l2", unit_id: "u2", status: "active", end_date: "2026-10-12" }, // 60 days out — 90-day only
+        { id: "l3", unit_id: "u3", status: "active", end_date: "2026-11-06" }, // 85 days out — 90-day only
+      ],
+    }, null, "2026-08-13");
+    expect(summary.expiringLeases).toBe(3);
+    expect(summary.expiringLeasesWithin30Days).toBe(1);
+    const attentionItem = summary.needsAttention.find((item) => item.id === "leases-expiring-soon");
+    expect(attentionItem.count).toBe(1);
+    expect(attentionItem.detail).toBe("1 of 3 leases expiring within 90 days is due in the next 30 — plan renewals or move-outs now.");
+  });
+
+  it("still reports a truthful 'X of Y' relationship when the 90-day and 30-day counts happen to coincide", () => {
+    const summary = buildRentalDashboardSummary({
+      units: [{ id: "u1" }],
+      leases: [{ id: "l1", unit_id: "u1", status: "active", end_date: "2026-08-20" }], // 7 days out
+    }, null, "2026-08-13");
+    expect(summary.expiringLeases).toBe(1);
+    expect(summary.expiringLeasesWithin30Days).toBe(1);
+    const attentionItem = summary.needsAttention.find((item) => item.id === "leases-expiring-soon");
+    expect(attentionItem.detail).toBe("1 of 1 lease expiring within 90 days is due in the next 30 — plan renewals or move-outs now.");
+  });
+
+  it("omits the leases-expiring-soon attention item when leases expire in the 31-90 day range only", () => {
+    const summary = buildRentalDashboardSummary({
+      units: [{ id: "u1" }],
+      leases: [{ id: "l1", unit_id: "u1", status: "active", end_date: "2026-10-20" }], // ~68 days out
+    }, null, "2026-08-13");
+    expect(summary.expiringLeases).toBe(1);
+    expect(summary.expiringLeasesWithin30Days).toBe(0);
+    expect(summary.needsAttention.find((item) => item.id === "leases-expiring-soon")).toBeUndefined();
+  });
+
   it("builds a six-month collection trend ending on the current month, using only recorded payments", () => {
     const summary = buildRentalDashboardSummary({
       units: [], leases: [],

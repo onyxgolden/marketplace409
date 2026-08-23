@@ -131,8 +131,10 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
   if (expiringLeasesSoon.length > 0) {
     needsAttention.push(Object.freeze({
       id: "leases-expiring-soon", severity: "warning", score: 190,
-      label: "Leases expiring within 30 days", destination: "lease-lifecycle",
-      detail: `${expiringLeasesSoon.length} lease${expiringLeasesSoon.length === 1 ? "" : "s"} — plan renewals or move-outs now.`,
+      label: "Leases due within 30 days", destination: "lease-lifecycle",
+      // Explicitly frames this as a subset of the 90-day KPI figure so the two windows are never
+      // read as duplicating or contradicting each other, even when their counts coincide.
+      detail: `${expiringLeasesSoon.length} of ${expiringLeases.length} lease${expiringLeases.length === 1 ? "" : "s"} expiring within 90 days ${expiringLeasesSoon.length === 1 ? "is" : "are"} due in the next 30 — plan renewals or move-outs now.`,
       count: expiringLeasesSoon.length,
     }));
   }
@@ -180,7 +182,12 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
 
   return Object.freeze({
     vacancies: vacantUnits.length,
+    // Two genuinely distinct windows, each independently computed from lease.end_date — the
+    // 90-day figure drives the headline KPI, the 30-day figure drives urgency ranking in the
+    // needs-attention queue. Exposed separately so the UI can always show their true relationship
+    // ("X of Y") instead of two numbers that look interchangeable when they happen to coincide.
     expiringLeases: expiringLeases.length,
+    expiringLeasesWithin30Days: expiringLeasesSoon.length,
     // FORGE-collectible only — an externally-managed (Rentec-authoritative) charge is a real
     // obligation but must never inflate this figure. See externallyManagedCents below.
     overdueBalanceCents,

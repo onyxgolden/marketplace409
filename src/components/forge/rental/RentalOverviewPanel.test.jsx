@@ -7,6 +7,12 @@ import RentalOverviewPanel from "./RentalOverviewPanel";
 
 const baseData = { units: [{ id: "u1" }], leases: [{ id: "l1", unit_id: "u1", status: "active" }] };
 
+// RentalOverviewPanel computes "today" internally from the real clock (it takes no date prop), so
+// component-level date fixtures must be relative to now, not a hardcoded calendar date.
+function daysFromNow(days) {
+  return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+}
+
 function mount(ui) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -128,6 +134,38 @@ describe("RentalOverviewPanel structure and empty state", () => {
       const isInformational = tile.textContent.includes("Informational");
       expect(isButton || isInformational).toBe(true);
     });
+  });
+});
+
+describe("RentalOverviewPanel lease-expiration window truthfulness", () => {
+  let mounted;
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } });
+
+  // Regression guard for Jason's review feedback: the 90-day KPI tile and the 30-day
+  // needs-attention item must never render as two unrelated-looking numbers that happen to
+  // match — the KPI tile's own detail line must state the true "X of Y" relationship.
+  it("shows the true 30-day-of-90-day relationship on the KPI tile itself, not just the raw 90-day count", () => {
+    const data = {
+      units: [{ id: "u1" }, { id: "u2" }, { id: "u3" }],
+      leases: [
+        { id: "l1", unit_id: "u1", status: "active", end_date: daysFromNow(10) },
+        { id: "l2", unit_id: "u2", status: "active", end_date: daysFromNow(50) },
+        { id: "l3", unit_id: "u3", status: "active", end_date: daysFromNow(75) },
+      ],
+    };
+    mounted = mount(<RentalOverviewPanel initialData={data} initialReport={null} onNavigate={() => {}} />);
+    const tile = mounted.container.querySelector('[data-metric-tile="lease-expirations"]');
+    expect(tile.textContent).toContain("3");
+    expect(tile.textContent).toContain("1 of 3 due within 30 days.");
+  });
+
+  it("never implies a false discrepancy when the 90-day and 30-day counts coincide — states the relationship explicitly instead of a bare duplicate number", () => {
+    const data = { units: [{ id: "u1" }], leases: [{ id: "l1", unit_id: "u1", status: "active", end_date: daysFromNow(7) }] };
+    mounted = mount(<RentalOverviewPanel initialData={data} initialReport={null} onNavigate={() => {}} />);
+    const tile = mounted.container.querySelector('[data-metric-tile="lease-expirations"]');
+    const attentionItem = mounted.container.querySelector('[data-attention-item="leases-expiring-soon"]');
+    expect(tile.textContent).toContain("1 of 1 due within 30 days.");
+    expect(attentionItem.textContent).toContain("1 of 1 lease expiring within 90 days is due in the next 30");
   });
 });
 
