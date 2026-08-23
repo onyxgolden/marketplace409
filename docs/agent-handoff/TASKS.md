@@ -24,20 +24,19 @@ Coordination rules:
 | ID | Task | Owner | Branch | Started UTC | Files/Areas Reserved | Status |
 |----|------|-------|--------|-------------|-----------------------|--------|
 | RENTEC-01-FIX | Correct the three material findings in the one-time Codex review | Claude | `feat/rentec-financial-history-resume` | 2026-08-23 | Rentec history classifier, bounded fetch helper/routes, focused tests | Review recorded in `reviews/RENTec-01-CODEX-REVIEW.md`; no migration/deploy/import |
-| SIMPLIFI-01 | Design Simplifi CSV importer: field mapping, fingerprints, Rentec/Plaid overlap rules, fixtures, tests, UI flow | Codex | Design-only on `chore/agent-handoff` | 2026-08-23 | `docs/agent-handoff/` design materials only; no `src/` changes | Design package for Jason/Claude review |
 
 ## Review Ready
 
 | ID | Owner | Branch | Commit | Tests | Reviewer Needed | Notes |
 |----|-------|--------|--------|-------|------------------|-------|
-| _(none)_ | | | | | | |
+| SIMPLIFI-01 | Codex | `chore/agent-handoff` | `0f5ca9054` | Design-only | Jason/Claude | Complete design at `designs/SIMPLIFI-01-CSV-IMPORT.md`; no source/schema changes |
 
 ## Blocked
 
 | ID | Blocker | Needed From | Safe Work That Can Continue |
 |----|---------|-------------|------------------------------|
-| RENTEC-02 | Real sanitized preview awaits RENTEC-01 fixes and either the key in Preview or explicit Production preview authorization | Jason after fixes | SIMPLIFI-01 design |
-| SIMPLIFI-02 | Implementation waits for SIMPLIFI-01 approval and a dedicated implementation branch/worktree | Jason + Codex | Complete design and fixture contract |
+| RENTEC-02 | Real sanitized preview awaits RENTEC-01 fixes and either the key in Preview or explicit Production preview authorization | Jason after fixes | Review only the three corrected findings |
+| SIMPLIFI-02 | Implementation waits for SIMPLIFI-01 approval and a dedicated implementation branch/worktree | Jason + Codex | Review decisions 1–5 in the design; prepare a synthetic export fixture |
 
 ## Completed
 
