@@ -95,7 +95,7 @@ function PortfolioPerformanceSection({ financialEvents }) {
 
       <div className="mt-5">
         <ForgeComparisonBarChart
-          title="Collected per period" series={performance.series.map((point) => Object.freeze({ key: point.key, primaryCents: point.collectedCents, secondaryCents: point.expensesCents }))}
+          title="Cash flow by period" series={performance.series.map((point) => Object.freeze({ key: point.key, primaryCents: point.collectedCents, secondaryCents: point.expensesCents }))}
           primaryLabel="Rent collected" secondaryLabel="Rental operating expenses" netLabel="Net cash flow"
           formatValue={(cents) => money.format(cents / 100)} currentKey={currentKey}
         />
