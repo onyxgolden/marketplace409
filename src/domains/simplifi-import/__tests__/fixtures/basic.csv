@@ -1,0 +1,4 @@
+Account,Date,Payee,Amount,Category,Tags,Notes,Status
+Business Checking,08/01/2026,Tenant rent,"$1,500.00",Rent Income,Rental,August rent,Cleared
+Business Checking,2026-08-02,Electric Company,(125.43),Utilities,"Rental;Property A","Meter, main house",Cleared
+Business Card,08/03/2026,Hardware Store,-42.17,Repairs,Rental,Supplies,Pending
