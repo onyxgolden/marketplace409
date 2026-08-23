@@ -17,7 +17,7 @@ Coordination rules:
 
 | ID | Task | Owner | Branch | Allowed Scope | Dependencies | Completion Gate |
 |----|------|-------|--------|---------------|--------------|-----------------|
-| _(none)_ | | | | | | |
+| SIMPLIFI-02 | Build Simplifi CSV import and safe preview/approval workflow | Codex | `feat/simplifi-csv-import` | 2026-08-23 | `src/domains/simplifi-import/**` and future isolated Simplifi import route/schema/tests | Foundation + preview builder pushed; schema/write approval path remains |
 
 ## In Progress
 
@@ -36,7 +36,6 @@ Coordination rules:
 | ID | Blocker | Needed From | Safe Work That Can Continue |
 |----|---------|-------------|------------------------------|
 | RENTEC-02 | Real sanitized preview awaits either `RENTEC_API_KEY` in Preview or explicit Production preview authorization | Jason | Prepare rollout plan; do not migrate/deploy/import yet |
-| SIMPLIFI-02 | Implementation waits for SIMPLIFI-01 approval and a dedicated implementation branch/worktree | Jason + Codex | Review decisions 1–5 in the SIMPLIFI-01 design; prepare a synthetic export fixture |
 
 ## Completed
 
