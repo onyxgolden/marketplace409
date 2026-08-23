@@ -1,6 +1,5 @@
 const OPEN_STATUSES = new Set(["open", "pending", "submitted", "assigned", "in_progress"]);
 const MAINTENANCE_PRIORITY_WEIGHT = { urgent: 3, emergency: 3, high: 2, normal: 1, medium: 1, low: 0 };
-const TREND_MONTHS = 6;
 const NEEDS_ATTENTION_LIMIT = 6;
 
 function daysBetween(date, today) {
@@ -17,24 +16,6 @@ function paymentDate(payment) {
 
 function paymentNetCents(payment) {
   return Number(payment.amount_cents || 0) - Number(payment.refunded_amount_cents || 0);
-}
-
-// Last TREND_MONTHS calendar months (oldest first, current month last) of real recorded
-// collections — never a fabricated forecast or comparison figure.
-function buildMonthlyCollectionTrend(payments, today) {
-  const succeeded = payments.filter((payment) => payment.status === "succeeded" && paymentDate(payment));
-  const months = [];
-  const [year, month] = today.slice(0, 7).split("-").map(Number);
-  for (let offset = TREND_MONTHS - 1; offset >= 0; offset -= 1) {
-    const date = new Date(Date.UTC(year, month - 1 - offset, 1));
-    months.push(`${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`);
-  }
-  const totalsByMonth = new Map(months.map((key) => [key, 0]));
-  for (const payment of succeeded) {
-    const key = monthKey(paymentDate(payment));
-    if (totalsByMonth.has(key)) totalsByMonth.set(key, totalsByMonth.get(key) + paymentNetCents(payment));
-  }
-  return months.map((key) => Object.freeze({ month: key, collectedCents: totalsByMonth.get(key) }));
 }
 
 function buildMaintenanceQueue(openItems, unitById) {
@@ -208,7 +189,10 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
     billingEnabled,
     forgeCollectibleScheduleCount,
     externallyManagedScheduleCount,
-    monthlyCollectionTrend: buildMonthlyCollectionTrend(payments, today),
+    // Raw pass-through (already owner-scoped via RLS) — the Portfolio performance chart derives
+    // its own period/year views from this via buildRentalFinancialPerformance, computed
+    // client-side so switching periods never needs a re-fetch.
+    financialEvents: Object.freeze(data.financialEvents || []),
     needsAttention: Object.freeze(needsAttention.slice(0, NEEDS_ATTENTION_LIMIT)),
     vacantUnitDetails: Object.freeze(vacantUnits.slice(0, 6).map((unit) => Object.freeze({
       id: unit.id, label: unit.label || unit.id, photoUrl: unit.photo_url || null,

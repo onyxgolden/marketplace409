@@ -1,15 +1,99 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Building2, AlertTriangle, RefreshCcw, DoorOpen, CalendarClock, Wrench, ShieldCheck,
   PauseCircle, PlayCircle, Home,
 } from "lucide-react";
 import { buildRentalDashboardSummary } from "@/application/rental/buildRentalDashboardSummary";
+import { buildRentalFinancialPerformance } from "@/application/rental/buildRentalFinancialPerformance";
 import ForgeMetricTile from "@/components/forge/ForgeMetricTile";
 import ForgeNeedsAttentionQueue from "@/components/forge/ForgeNeedsAttentionQueue";
-import ForgeMonthlyTrendChart from "@/components/forge/ForgeMonthlyTrendChart";
+import ForgeComparisonBarChart from "@/components/forge/ForgeComparisonBarChart";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+const PERIOD_OPTIONS = Object.freeze([
+  { type: "sixMonths", label: "6 Months" },
+  { type: "ytd", label: "YTD" },
+  { type: "year", label: "Year" },
+  { type: "allTime", label: "All time" },
+]);
+
+function PortfolioPerformanceSection({ financialEvents }) {
+  const [periodType, setPeriodType] = useState("sixMonths");
+  const [selectedYear, setSelectedYear] = useState(null);
+
+  const availableYears = useMemo(
+    () => buildRentalFinancialPerformance(financialEvents, { period: { type: "sixMonths" } }).availableYears,
+    [financialEvents],
+  );
+  const today = new Date();
+  const effectiveYear = selectedYear ?? availableYears.at(-1) ?? today.getUTCFullYear();
+
+  const performance = useMemo(() => buildRentalFinancialPerformance(financialEvents, {
+    period: periodType === "year" ? { type: "year", year: effectiveYear } : { type: periodType },
+  }), [financialEvents, periodType, effectiveYear]);
+
+  const currentKey = performance.granularity === "yearly"
+    ? String(today.getUTCFullYear())
+    : today.toISOString().slice(0, 7);
+
+  return (
+    <section aria-labelledby="rental-performance-heading" className="min-w-0 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h3 id="rental-performance-heading" className="text-lg font-black text-slate-950 dark:text-white">Portfolio performance</h3>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Rent collected vs. rental operating expenses — cash basis (recorded when money moved, not when billed or earned).
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Select time period">
+          {PERIOD_OPTIONS.map((option) => (
+            <button key={option.type} type="button" data-period-option={option.type}
+              aria-pressed={periodType === option.type} onClick={() => setPeriodType(option.type)}
+              className={`rounded-full px-3 py-1.5 text-xs font-black transition motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 ${
+                periodType === option.type
+                  ? "bg-slate-950 text-white dark:bg-amber-400 dark:text-slate-950"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+          {periodType === "year" && (
+            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">
+              <span className="sr-only">Select year</span>
+              <select value={effectiveYear} onChange={(event) => setSelectedYear(Number(event.target.value))}
+                disabled={availableYears.length === 0}
+                className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-slate-950 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
+                {availableYears.length === 0
+                  ? <option value={effectiveYear}>{effectiveYear}</option>
+                  : availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <ForgeComparisonBarChart
+          title="Collected per period" series={performance.series.map((point) => Object.freeze({ key: point.key, primaryCents: point.collectedCents, secondaryCents: point.expensesCents }))}
+          primaryLabel="Rent collected" secondaryLabel="Rental operating expenses" netLabel="Net"
+          formatValue={(cents) => money.format(cents / 100)} currentKey={currentKey}
+        />
+      </div>
+
+      <p data-performance-summary className="mt-5 rounded-xl bg-slate-50 p-4 text-sm font-semibold text-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+        Over this period: collected <strong className="tabular-nums">{money.format(performance.totals.collectedCents / 100)}</strong>,
+        expenses <strong className="tabular-nums">{money.format(performance.totals.expensesCents / 100)}</strong>,
+        net <strong className="tabular-nums">{performance.totals.netCents < 0 ? `-${money.format(Math.abs(performance.totals.netCents) / 100)}` : money.format(performance.totals.netCents / 100)}</strong>.
+      </p>
+      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+        Includes rent recorded in Rentec before FORGE began collecting, alongside FORGE-processed payments — this total can differ from "Collected this month" above, which reflects FORGE-processed payments only.
+      </p>
+    </section>
+  );
+}
 
 function BillingStatusChip({ billingEnabled, onNavigate }) {
   const Icon = billingEnabled ? PlayCircle : PauseCircle;
@@ -180,23 +264,15 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
         {kpis.map((kpi) => <ForgeMetricTile key={kpi.metricKey} onNavigate={onNavigate} {...kpi} />)}
       </div>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.3fr_1fr]">
-        <section aria-labelledby="rental-needs-attention-heading" className="min-w-0 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-          <h3 id="rental-needs-attention-heading" className="text-lg font-black text-slate-950 dark:text-white">Needs attention</h3>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Ordered by urgency — start at the top.</p>
-          <div className="mt-4">
-            <ForgeNeedsAttentionQueue items={summary.needsAttention} onNavigate={onNavigate} />
-          </div>
-        </section>
+      <section aria-labelledby="rental-needs-attention-heading" className="min-w-0 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <h3 id="rental-needs-attention-heading" className="text-lg font-black text-slate-950 dark:text-white">Needs attention</h3>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Ordered by urgency — start at the top.</p>
+        <div className="mt-4">
+          <ForgeNeedsAttentionQueue items={summary.needsAttention} onNavigate={onNavigate} />
+        </div>
+      </section>
 
-        <section aria-labelledby="rental-trend-heading" className="min-w-0 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-          <h3 id="rental-trend-heading" className="text-lg font-black text-slate-950 dark:text-white">Portfolio performance</h3>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Recorded rent collected, last six months.</p>
-          <div className="mt-4">
-            <ForgeMonthlyTrendChart series={summary.monthlyCollectionTrend} formatValue={(cents) => money.format(cents / 100)} />
-          </div>
-        </section>
-      </div>
+      <PortfolioPerformanceSection financialEvents={summary.financialEvents} />
     </section>
   );
 }

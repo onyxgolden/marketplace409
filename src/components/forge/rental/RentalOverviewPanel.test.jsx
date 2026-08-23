@@ -169,6 +169,56 @@ describe("RentalOverviewPanel lease-expiration window truthfulness", () => {
   });
 });
 
+describe("RentalOverviewPanel Portfolio performance (collected vs. expenses)", () => {
+  let mounted;
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } });
+
+  const financialEvents = [
+    { event_date: daysFromNow(-40), amount: "1500.00", transaction_kind: "income", source_system: "rentec", status: "active", is_deleted: false },
+    { event_date: daysFromNow(-38), amount: "300.00", transaction_kind: "expense", source_system: "manual", status: "active", is_deleted: false },
+    { event_date: daysFromNow(-2), amount: "1600.00", transaction_kind: "income", source_system: "forge_rental_payment", status: "active", is_deleted: false },
+  ];
+
+  it("defaults to the 6 Months period and shows an accessible, plain-language totals summary", () => {
+    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents }} initialReport={null} />);
+    const sixMonthsButton = mounted.container.querySelector('[data-period-option="sixMonths"]');
+    expect(sixMonthsButton.getAttribute("aria-pressed")).toBe("true");
+    const summaryText = mounted.container.querySelector("[data-performance-summary]").textContent;
+    expect(summaryText).toContain("$3,100.00");
+    expect(summaryText).toContain("$300.00");
+    expect(summaryText).toContain("$2,800.00");
+  });
+
+  it("switches to Year mode and shows a year selector populated only from years with real financial history", () => {
+    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents }} initialReport={null} />);
+    act(() => { mounted.container.querySelector('[data-period-option="year"]').click(); });
+    const select = mounted.container.querySelector("select");
+    expect(select).toBeTruthy();
+    const options = Array.from(select.querySelectorAll("option")).map((option) => option.value);
+    expect(options.length).toBeGreaterThan(0);
+  });
+
+  it("switches to All time and renders yearly (not monthly) bars", () => {
+    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents }} initialReport={null} />);
+    act(() => { mounted.container.querySelector('[data-period-option="allTime"]').click(); });
+    const points = mounted.container.querySelectorAll("[data-comparison-point]");
+    Array.from(points).forEach((point) => {
+      expect(point.getAttribute("data-comparison-point")).toMatch(/^\d{4}$/);
+    });
+  });
+
+  it("explains the accounting basis and why this total can legitimately differ from the FORGE-only collected-this-month figure", () => {
+    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents }} initialReport={null} />);
+    expect(mounted.container.textContent).toContain("cash basis");
+    expect(mounted.container.textContent).toContain("Rentec before FORGE");
+  });
+
+  it("shows a truthful empty state when there is no safely-attributable rental financial history at all", () => {
+    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents: [] }} initialReport={null} />);
+    expect(mounted.container.textContent).toContain("No recorded activity yet for this period.");
+  });
+});
+
 describe("RentalOverviewPanel (static markup smoke test)", () => {
   it("renders the loading state before data arrives", () => {
     const markup = renderToStaticMarkup(<RentalOverviewPanel />);

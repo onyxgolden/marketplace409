@@ -114,13 +114,14 @@ describe("buildRentalDashboardSummary", () => {
     expect(summary.needsAttention.find((item) => item.id === "leases-expiring-soon")).toBeUndefined();
   });
 
-  it("builds a six-month collection trend ending on the current month, using only recorded payments", () => {
-    const summary = buildRentalDashboardSummary({
-      units: [], leases: [],
-      payments: [{ status: "succeeded", succeeded_at: "2026-08-05T00:00:00Z", amount_cents: 100000, refunded_amount_cents: 0 }],
-    }, null, "2026-08-13");
-    expect(summary.monthlyCollectionTrend).toHaveLength(6);
-    expect(summary.monthlyCollectionTrend.map((point) => point.month)).toEqual(["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"]);
-    expect(summary.monthlyCollectionTrend.at(-1)).toEqual({ month: "2026-08", collectedCents: 100000 });
+  it("passes financialEvents through untouched for the Portfolio performance chart to derive its own period views from", () => {
+    const events = [{ event_date: "2026-08-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec" }];
+    const summary = buildRentalDashboardSummary({ units: [], leases: [], financialEvents: events }, null, "2026-08-13");
+    expect(summary.financialEvents).toEqual(events);
+  });
+
+  it("defaults financialEvents to an empty array rather than throwing when absent", () => {
+    const summary = buildRentalDashboardSummary({ units: [], leases: [] }, null, "2026-08-13");
+    expect(summary.financialEvents).toEqual([]);
   });
 });
