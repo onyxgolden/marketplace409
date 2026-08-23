@@ -162,6 +162,38 @@ export class RentecApiClient {
     });
   }
 
+  // For the financial-history import specifically. Unlike transactionLedger() (payment matching)
+  // and transactionPage() (legacy CSV reconciliation), this needs the six previously-unsupported
+  // provenance fields (bank_id, owner_id, vendor_id, check_num, pmt_type, notes) so they can be
+  // captured in financial_events.metadata. It still never returns the raw free-text
+  // description/memo fields, which can carry tenant names or other PII not needed once a
+  // transaction has been matched/classified by category.
+  async financialHistoryTransactions({ propertyId, page = 1 }) {
+    if (!/^\d+$/.test(String(propertyId)) || !Number.isInteger(page) || page < 1) throw new Error("A valid Rentec property and page are required.");
+    const payload = await this.get("/transactions", { property_id: propertyId, start_date: "1900-01-01", page });
+    const rows = payload.data || [];
+    return Object.freeze({
+      page: Number(payload.summary?.page || page),
+      moreRecords: Boolean(payload.summary?.more_records),
+      transactions: Object.freeze(rows.map((row) => Object.freeze({
+        transactionId: row.transaction_id !== undefined && row.transaction_id !== null ? String(row.transaction_id) : null,
+        splitId: row.split_id !== undefined && row.split_id !== null && row.split_id !== "" ? String(row.split_id) : null,
+        propertyId: String(row.property_id || propertyId),
+        renterId: row.renter_id ? String(row.renter_id) : null,
+        amountCents: cents(row.amount),
+        transactionDate: String(row.transaction_time || "").slice(0, 10) || null,
+        categoryId: row.category_id !== undefined && row.category_id !== null ? String(row.category_id) : null,
+        categoryName: String(row.category_name || "").trim(),
+        bankId: row.bank_id !== undefined && row.bank_id !== null ? String(row.bank_id) : null,
+        rentecOwnerId: row.owner_id !== undefined && row.owner_id !== null ? String(row.owner_id) : null,
+        vendorId: row.vendor_id !== undefined && row.vendor_id !== null ? String(row.vendor_id) : null,
+        checkNum: row.check_num !== undefined && row.check_num !== null && row.check_num !== "" ? String(row.check_num) : null,
+        pmtType: row.pmt_type !== undefined && row.pmt_type !== null && row.pmt_type !== "" ? String(row.pmt_type) : null,
+        notes: row.notes !== undefined && row.notes !== null && row.notes !== "" ? String(row.notes).slice(0, 500) : null,
+      })).filter((row) => row.transactionId)),
+    });
+  }
+
   async transactionPage({ propertyId, propertyName = "", page = 1 }) {
     if (!/^\d+$/.test(String(propertyId)) || !Number.isInteger(page) || page < 1) throw new Error("A valid Rentec property and page are required.");
     if (typeof propertyName !== "string" || propertyName.length > 100) throw new Error("A valid Rentec property label is required.");
