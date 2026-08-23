@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const money = (cents) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cents || 0) / 100);
 
@@ -11,30 +11,45 @@ const REVIEW_SECTIONS = [
   { classification: "already_imported", label: "Already imported", tone: "emerald" },
 ];
 
-export default function RentecPaymentImportPanel() {
-  const [propertyId, setPropertyId] = useState("");
+export default function RentecPaymentImportPanel({ onNavigate } = {}) {
+  const [properties, setProperties] = useState(null); // null = still loading; [] = loaded, empty
+  const [propertiesError, setPropertiesError] = useState("");
+  const [selectedPropertyId, setSelectedPropertyId] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState(null);
   const [importBatchId, setImportBatchId] = useState(null);
+  const [rentecPropertyId, setRentecPropertyId] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
   const [confirming, setConfirming] = useState(false);
   const [approving, setApproving] = useState(false);
   const [approveResults, setApproveResults] = useState(null);
 
+  // Reads FORGE's own already-imported linkage data only — never calls Rentec. The first (and
+  // only) Rentec call happens when the landlord explicitly clicks "Preview Rentec payments" below.
+  useEffect(() => {
+    fetch("/api/rental/rentec-linked-properties").then(async (response) => {
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error);
+      setProperties(body.properties);
+    }).catch((error) => setPropertiesError(error.message));
+  }, []);
+
   const matchedItems = (preview?.items || []).filter((item) => item.classification === "matched");
 
   async function runPreview(event) {
     event.preventDefault();
-    setBusy(true); setMessage(""); setPreview(null); setImportBatchId(null); setApproveResults(null); setConfirming(false);
+    if (!selectedPropertyId) return;
+    setBusy(true); setMessage(""); setPreview(null); setImportBatchId(null); setRentecPropertyId(null); setApproveResults(null); setConfirming(false);
     try {
       const response = await fetch("/api/rental/rentec-payment-import-preview", {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ propertyId }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ propertyId: selectedPropertyId }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error);
       setPreview(body.preview);
       setImportBatchId(body.importBatchId);
+      setRentecPropertyId(body.rentecPropertyId);
       setSelected(new Set((body.preview.items || []).filter((item) => item.classification === "matched").map((item) => item.transactionId)));
     } catch (error) { setMessage(error.message); }
     finally { setBusy(false); }
@@ -52,14 +67,15 @@ export default function RentecPaymentImportPanel() {
     if (!importBatchId) return;
     // Only the mapping the landlord reviewed and picked (which transaction, which charge) is sent —
     // the server re-fetches the real Rentec amount/date/category itself and never trusts a
-    // client-submitted financial fact.
+    // client-submitted financial fact. propertyId here is the Rentec id already resolved
+    // server-side during preview — the browser never handles or edits the raw Rentec id itself.
     const approvals = matchedItems.filter((item) => selected.has(item.transactionId))
       .map((item) => ({ transactionId: item.transactionId, leaseId: item.leaseId, chargeId: item.chargeId }));
     if (approvals.length === 0) return;
     setApproving(true); setMessage(""); setApproveResults(null);
     try {
       const response = await fetch("/api/rental/rentec-payment-import-approve", {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ importBatchId, propertyId, approvals }),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ importBatchId, propertyId: rentecPropertyId, approvals }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error);
@@ -82,15 +98,30 @@ export default function RentecPaymentImportPanel() {
       never written to.
     </p>
 
-    <form onSubmit={runPreview} className="mt-5 flex flex-wrap items-end gap-3">
-      <label className="text-sm font-bold">Rentec property ID
-        <input value={propertyId} onChange={(event) => setPropertyId(event.target.value)} required
-          className="mt-1 block w-48 rounded-xl border border-slate-300 p-3 font-normal" placeholder="e.g. 10" />
-      </label>
-      <button type="submit" disabled={busy} className="rounded-xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-50">
-        {busy ? "Previewing…" : "Preview Rentec payments"}
-      </button>
-    </form>
+    {propertiesError ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-800">{propertiesError}</p> : null}
+
+    {properties === null ? <p className="mt-5 text-sm text-slate-500">Loading your Rentec-linked properties…</p> : properties.length === 0 ? (
+      <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <p className="text-sm font-bold text-amber-900">No properties are linked to Rentec yet.</p>
+        <p className="mt-2 text-sm text-amber-800">Import or link a property from Rentec Migration before you can preview its payments here.</p>
+        <button type="button" onClick={() => onNavigate?.("rentec-migration")} className="mt-3 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white">
+          Go to Rentec Migration
+        </button>
+      </div>
+    ) : (
+      <form onSubmit={runPreview} className="mt-5 flex flex-wrap items-end gap-3">
+        <label className="text-sm font-bold">Property
+          <select value={selectedPropertyId} onChange={(event) => setSelectedPropertyId(event.target.value)} required
+            className="mt-1 block w-64 rounded-xl border border-slate-300 p-3 font-normal">
+            <option value="">Choose a property…</option>
+            {properties.map((property) => <option key={property.id} value={property.id}>{property.label}</option>)}
+          </select>
+        </label>
+        <button type="submit" disabled={busy || !selectedPropertyId} className="rounded-xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-50">
+          {busy ? "Previewing…" : "Preview Rentec payments"}
+        </button>
+      </form>
+    )}
     <p className="mt-3 text-sm font-bold text-amber-800">Preview only: this never writes anything. Approving matched payments below is the only action on this page that writes anything.</p>
 
     {message ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-800">{message}</p> : null}

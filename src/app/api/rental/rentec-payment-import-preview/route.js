@@ -7,6 +7,13 @@ import { buildRentecPaymentImportPreview } from "@/domains/rental-payment-reconc
 // "preview only" contract. Scoped to one Rentec property per call (the same "one property at a
 // time" boundary already used by the units/tenants/leases import), and bounded to a fixed page
 // count so a single request can never run away against a very large ledger.
+//
+// propertyId in the request body is a FORGE property (rental_units.id) the browser picked from
+// this owner's own linked-properties list — never a raw Rentec provider id. The real Rentec
+// property id is resolved here, from that unit's stored source_record_id, scoped to the
+// authenticated owner. An arbitrary or cross-owner value never reaches the Rentec API: a
+// propertyId that isn't one of this owner's own Rentec-linked units is rejected before any Rentec
+// call is made.
 const MAX_TRANSACTION_PAGES = 50;
 
 export async function POST(request) {
@@ -14,17 +21,24 @@ export async function POST(request) {
   if (authenticated.response) return authenticated.response;
   try {
     const body = await request.json();
-    const propertyId = String(body?.propertyId || "").trim();
-    if (!/^\d+$/.test(propertyId)) return NextResponse.json({ error: "A valid Rentec property id is required." }, { status: 400 });
+    const forgePropertyId = String(body?.propertyId || "").trim();
+    if (!forgePropertyId) return NextResponse.json({ error: "A property is required." }, { status: 400 });
 
     const ownerId = authenticated.user.id;
     const database = authenticated.supabaseClient;
+
+    const { data: linkedUnit, error: linkedUnitError } = await database.from("rental_units")
+      .select("id, source_record_id").eq("owner_id", ownerId).eq("id", forgePropertyId).eq("source_system", "rentec")
+      .not("source_record_id", "is", null).maybeSingle();
+    if (linkedUnitError) throw linkedUnitError;
+    if (!linkedUnit) return NextResponse.json({ error: "This property is not linked to Rentec, or does not belong to your account." }, { status: 404 });
+    const rentecPropertyId = linkedUnit.source_record_id;
 
     const client = createRentecApiClient();
     const rentecTransactions = [];
     let page = 1;
     for (; page <= MAX_TRANSACTION_PAGES; page++) {
-      const result = await client.transactionLedger({ propertyId, page });
+      const result = await client.transactionLedger({ propertyId: rentecPropertyId, page });
       rentecTransactions.push(...result.transactions);
       if (!result.moreRecords) break;
     }
@@ -68,7 +82,10 @@ export async function POST(request) {
       success: true, status: "preview_only",
       notice: "Preparatory preview only — no data was written. Approve specific matched transactions separately to apply them.",
       importBatchId: `rentec_import_batch_${crypto.randomUUID()}`,
-      propertyId, pagesFetched: page, preview,
+      // propertyId is the FORGE property the browser picked; rentecPropertyId is the real Rentec
+      // provider id resolved server-side from it. Approval keeps using rentecPropertyId — the
+      // browser never has to (and never should) know or handle the raw Rentec id itself.
+      propertyId: forgePropertyId, rentecPropertyId, pagesFetched: page, preview,
     });
   } catch (error) {
     console.error("Rentec payment import preview error", error);
