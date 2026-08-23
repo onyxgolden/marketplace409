@@ -76,3 +76,52 @@ gracefully (rejected, not silently misapplied) rather than corrupting `financial
 **Consequences:** Any future Rentec-derived write endpoint on this project should follow the same
 shape: client requests are opaque identifiers only; financial facts always come from a fresh
 server-side computation immediately before the write.
+
+
+---
+
+## 2026-08-23 — Simplifi CSV is bank/card evidence; Rentec remains rental authority
+
+**Decision:** Simplifi CSV imports populate the general financial-event/accounting domain only. They
+never create or mutate rent charges, rental payments, Stripe settlements, or Rentec import records.
+When one cash movement is represented by both sources, Rentec remains authoritative for the rental
+operation and the Simplifi row is linked as bank evidence rather than counted as a second income or
+expense event.
+
+**Rationale:** Rentec describes the rental obligation and property context; Simplifi describes the
+bank/card movement. Treating both as independent P&L entries would double-count the same money.
+
+**Consequences:** Overlap matching is owner-scoped, cardinality-safe, and never based on a tenant or
+payee name alone. Batch deposits require explicit many-to-one reconciliation whose members sum to the
+bank deposit.
+
+---
+
+## 2026-08-23 — Simplifi CSV identity uses versioned owner-scoped fingerprints
+
+**Decision:** Because Simplifi CSV does not promise immutable transaction IDs, approved rows use a
+versioned HMAC fingerprint over account mapping, date, signed amount, normalized payee/category/tags,
+check number, and split identity. File SHA-256 identifies the import batch; it is not the row identity.
+
+**Rationale:** A plain hash leaks guessable transaction evidence and account-agnostic matching can
+collapse identical transactions from different accounts. Boolean existence checks also lose valid
+duplicates, so matching must preserve multiset cardinality.
+
+**Consequences:** `source_system='quicken_simplifi_csv'`; fingerprint version is stored; account
+mapping and split identity are mandatory parts of row identity; cosmetic note changes produce drift
+evidence rather than a second financial event.
+
+---
+
+## 2026-08-23 — Plaid supersedes Simplifi automation, not Simplifi provenance
+
+**Decision:** When Plaid becomes available, a confident Plaid match links to and supersedes the
+existing Simplifi evidence for reporting without deleting or overwriting the historical Simplifi
+record. Ambiguous matches remain review items.
+
+**Rationale:** Plaid is the future ongoing feed, while the manually exported CSV is historical audit
+evidence. Replacing provenance would make prior approvals unauditable; counting both would duplicate
+money.
+
+**Consequences:** Simplifi can be disabled per account from an explicit Plaid cutover date. Reporting
+counts one economic event while preserving both source lineages.
