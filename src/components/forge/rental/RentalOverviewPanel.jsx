@@ -9,6 +9,7 @@ import { buildRentalFinancialPerformance } from "@/application/rental/buildRenta
 import ForgeMetricTile from "@/components/forge/ForgeMetricTile";
 import ForgeNeedsAttentionQueue from "@/components/forge/ForgeNeedsAttentionQueue";
 import ForgeComparisonBarChart from "@/components/forge/ForgeComparisonBarChart";
+import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -53,7 +54,7 @@ function PortfolioPerformanceSection({ financialEvents }) {
               aria-pressed={periodType === option.type} onClick={() => setPeriodType(option.type)}
               className={`rounded-full px-3 py-1.5 text-xs font-black transition motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 ${
                 periodType === option.type
-                  ? "bg-slate-950 text-white dark:bg-amber-400 dark:text-slate-950"
+                  ? goldControlClassName
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
               }`}
             >
@@ -75,20 +76,32 @@ function PortfolioPerformanceSection({ financialEvents }) {
         </div>
       </div>
 
+      <div data-performance-summary className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="rounded-xl bg-emerald-50 p-4 dark:bg-emerald-950/30">
+          <p className="text-xs font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Collected</p>
+          <p className="mt-1 text-xl font-black tabular-nums text-emerald-900 dark:text-emerald-200">{money.format(performance.totals.collectedCents / 100)}</p>
+        </div>
+        <div className="rounded-xl bg-amber-50 p-4 dark:bg-amber-950/30">
+          <p className="text-xs font-black uppercase tracking-wide text-amber-700 dark:text-amber-400">Expenses</p>
+          <p className="mt-1 text-xl font-black tabular-nums text-amber-900 dark:text-amber-200">{money.format(performance.totals.expensesCents / 100)}</p>
+        </div>
+        <div className="rounded-xl bg-cyan-50 p-4 dark:bg-cyan-950/30">
+          <p className="text-xs font-black uppercase tracking-wide text-cyan-700 dark:text-cyan-400">Net</p>
+          <p className="mt-1 text-xl font-black tabular-nums text-cyan-900 dark:text-cyan-200">
+            {performance.totals.netCents < 0 ? `-${money.format(Math.abs(performance.totals.netCents) / 100)}` : money.format(performance.totals.netCents / 100)}
+          </p>
+        </div>
+      </div>
+
       <div className="mt-5">
         <ForgeComparisonBarChart
           title="Collected per period" series={performance.series.map((point) => Object.freeze({ key: point.key, primaryCents: point.collectedCents, secondaryCents: point.expensesCents }))}
-          primaryLabel="Rent collected" secondaryLabel="Rental operating expenses" netLabel="Net"
+          primaryLabel="Rent collected" secondaryLabel="Rental operating expenses" netLabel="Net cash flow"
           formatValue={(cents) => money.format(cents / 100)} currentKey={currentKey}
         />
       </div>
 
-      <p data-performance-summary className="mt-5 rounded-xl bg-slate-50 p-4 text-sm font-semibold text-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
-        Over this period: collected <strong className="tabular-nums">{money.format(performance.totals.collectedCents / 100)}</strong>,
-        expenses <strong className="tabular-nums">{money.format(performance.totals.expensesCents / 100)}</strong>,
-        net <strong className="tabular-nums">{performance.totals.netCents < 0 ? `-${money.format(Math.abs(performance.totals.netCents) / 100)}` : money.format(performance.totals.netCents / 100)}</strong>.
-      </p>
-      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+      <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
         Includes rent recorded in Rentec before FORGE began collecting, alongside FORGE-processed payments — this total can differ from "Collected this month" above, which reflects FORGE-processed payments only.
       </p>
     </section>
