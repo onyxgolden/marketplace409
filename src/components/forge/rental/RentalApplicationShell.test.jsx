@@ -46,7 +46,7 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
 
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
-    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "deposits", "reports", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
   });
   it("renders an exception-first summary in grouped navigation", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
@@ -108,4 +108,24 @@ describe("RentalApplicationShell", () => {
   it("shows owner autopay authorization without claiming consent activates a debit",()=>{const markup=renderToStaticMarkup(buildRentalSurface("autopay"));expect(markup).toContain("Tenant authorizations");expect(markup).toContain("Consent alone never activates a debit");});
   it("separates pet fees from assistance-animal review",()=>{const markup=renderToStaticMarkup(buildRentalSurface("animals"));expect(markup).toContain("Pet approvals and assistance review");expect(markup).toContain("can never receive a pet fee");});
   it("renders support cases without automatic money movement",()=>{const markup=renderToStaticMarkup(buildRentalSurface("support"));expect(markup).toContain("Support and incident cases");expect(markup).toContain("without automatically moving money");});
+  it("renders the property financial setup surface scoped to the selected property's exact property_id", () => {
+    // renderToStaticMarkup captures only the pre-effect state, so this is the loading state --
+    // the panel's own tests cover the post-fetch "Financial setup — {propertyId}" render.
+    const recordContext = { recordType: "unit", recordId: "unit_1", propertyId: "930 Highland Drive" };
+    const markup = renderToStaticMarkup(buildRentalSurface("financial-setup", { recordContext }));
+    expect(markup).toContain("Loading financial setup");
+    expect(renderToStaticMarkup(buildRentalSurface("financial-setup"))).toContain("Select a property before opening financial setup");
+  });
+  it("keeps financial-setup a recognized function id, not just a surface -- resolveActiveFunction falls back to overview for anything outside RENTAL_FUNCTIONS", () => {
+    // Regression: adding the surface to buildRentalSurface alone was not enough. The Property
+    // actions menu calls onNavigate("financial-setup", context), which sets activeFunctionId --
+    // but RentalApplicationShell resolves that id through resolveActiveFunction(RENTAL_FUNCTIONS,
+    // ...) before ever calling buildRentalSurface, and silently falls back to a default function
+    // id for anything not in RENTAL_FUNCTIONS. Confirmed live: clicking "Financial setup" rendered
+    // the Overview dashboard instead, because the id wasn't registered in RENTAL_NAVIGATION.
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toContain("financial-setup");
+    const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="financial-setup" activeRecordContext={{ recordType: "unit", recordId: "unit_1", propertyId: "930 Highland Drive" }} onFunctionChange={() => {}} />);
+    expect(markup).toContain('data-active-function="financial-setup"');
+    expect(markup).toContain("Loading financial setup");
+  });
 });
