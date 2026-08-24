@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ authenticate: vi.fn(), buildPreview: vi.fn(), loadOverlap: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  authenticate: vi.fn(), buildPreview: vi.fn(), loadOverlap: vi.fn(), fetchFingerprints: vi.fn(),
+}));
 vi.mock("@/lib/supabase/createAuthenticatedFinancialApplication", () => ({
   createAuthenticatedFinancialApplication: mocks.authenticate,
 }));
 vi.mock("@/domains/simplifi-import", () => ({
   buildSimplifiImportPreview: mocks.buildPreview,
   loadSimplifiOverlapEvidence: mocks.loadOverlap,
+  fetchAllOwnerSimplifiFingerprints: mocks.fetchFingerprints,
 }));
 import { POST } from "./route";
 
@@ -21,7 +24,7 @@ const previewHash = "c".repeat(64);
 const csv = "Account,Date,Payee,Amount\nChecking,8/1/2026,Tenant,100";
 
 function query(data = [], error = null) {
-  const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), not: vi.fn(() => chain),
+  const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), not: vi.fn(() => chain), range: vi.fn(() => chain),
     then(resolve) { return Promise.resolve({ data, error }).then(resolve); } };
   return chain;
 }
@@ -43,6 +46,7 @@ describe("POST /api/financial/simplifi-import-approve", () => {
       ? query([{ id: "account_1", name: "Operating", type: "depository" }]) : query([]));
     mocks.authenticate.mockResolvedValue({ user: { id: "owner_1" }, supabaseClient: { from, rpc } });
     mocks.loadOverlap.mockResolvedValue([{ id: "event_1", source_system: "plaid" }]);
+    mocks.fetchFingerprints.mockResolvedValue([]);
     mocks.buildPreview.mockReturnValue({ batch_hash: batchHash, preview_hash: previewHash, rows: [{
       fingerprint, fingerprint_version: "v2", evidence_hash: "d".repeat(64), account_mapping_id: "account_1", date: "2026-08-01",
       amount_cents: 10000, normalized_category: "rental_income", classification: "safe_missing",
