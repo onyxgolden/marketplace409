@@ -34,14 +34,18 @@ export default function RentecFinancialHistoryImportPanel() {
   }
 
   const pendingByYear = batchPlan?.eligibleByYear || [];
-  // Rows to render: every year still pending, plus every year this session already approved (so its
-  // result stays visible as "Done" instead of disappearing once a fresh preview shows nothing left
-  // eligible for it) — merged and sorted ascending, oldest first.
+  // Rows to render: every year still pending in the last-loaded preview, plus every year this
+  // session already approved (so its result stays visible as "Done" even before the next manual
+  // preview refresh) — merged and sorted ascending, oldest first.
   const years = [...new Set([...pendingByYear.map((batch) => batch.year), ...Object.keys(approvedYearResults)])].sort();
-  // Always the oldest year in the freshest server-recomputed batch plan — recomputed after every
-  // approval, so a year that still has (or newly has) eligible rows keeps its turn regardless of
-  // whether this session already approved an earlier batch for it.
-  const nextYear = pendingByYear[0]?.year ?? null;
+  // The oldest year that hasn't been approved yet *this session* — deliberately not re-derived from
+  // a fresh preview after every approval. The approval endpoint already re-fetches Rentec and
+  // recomputes its own batch fresh immediately before writing, which is the actual correctness
+  // guarantee; requiring a second full-account Rentec fetch here too (right on top of the one the
+  // approval itself just did) was hitting Rentec's own rate limit and left the page showing stale
+  // "Ready" status even after a real, successful approval. Click "Run fresh preview" any time to get
+  // an authoritative refresh (e.g. before approving the current, still-active year).
+  const nextYear = pendingByYear.find((batch) => !approvedYearResults[batch.year])?.year ?? null;
 
   function startConfirm(year) { setConfirmingYear(year); setError(""); }
   function cancelConfirm() { setConfirmingYear(null); }
@@ -62,10 +66,6 @@ export default function RentecFinancialHistoryImportPanel() {
           rejectedCount: body.rejected.length, incomeCents: body.incomeCents, expenseCents: body.expenseCents,
         },
       }));
-      // Re-run the real preview so the remaining table reflects fresh, authoritative server state —
-      // the same fresh-recompute guarantee that makes a second click of the same year insert nothing
-      // twice, made visible here without requiring a second click to discover it.
-      await runPreview();
     } catch (caught) { setError(caught.message); }
     finally { setApprovingYear(null); }
   }
@@ -114,15 +114,15 @@ export default function RentecFinancialHistoryImportPanel() {
           {years.map((year) => {
             const batch = pendingByYear.find((candidate) => candidate.year === year);
             const result = approvedYearResults[year];
-            const isDone = Boolean(result) && !batch;
+            const isDone = Boolean(result);
             const isNext = year === nextYear;
             const isConfirming = confirmingYear === year;
             const isApproving = approvingYear === year;
             return <tr key={year} className="border-b align-top">
               <td className="p-2 font-black">{year}</td>
-              <td className="p-2">{batch ? batch.count : result?.insertedCount ?? 0}</td>
-              <td className="p-2">{money(batch ? batch.incomeCents : result?.incomeCents)}</td>
-              <td className="p-2">{money(batch ? batch.expenseCents : result?.expenseCents)}</td>
+              <td className="p-2">{isDone ? result.insertedCount : batch?.count ?? 0}</td>
+              <td className="p-2">{money(isDone ? result.incomeCents : batch?.incomeCents)}</td>
+              <td className="p-2">{money(isDone ? result.expenseCents : batch?.expenseCents)}</td>
               <td className="p-2">
                 {isDone ? <span className="font-bold text-emerald-700">Done — {result.insertedCount} imported</span>
                   : isApproving ? <span className="font-bold text-slate-500">Approving…</span>
@@ -130,7 +130,7 @@ export default function RentecFinancialHistoryImportPanel() {
                   : <span className="text-slate-400">Waiting for earlier years</span>}
               </td>
               <td className="p-2">
-                {!batch ? null : isConfirming ? (
+                {isDone || !batch ? null : isConfirming ? (
                   <div className="rounded-xl border-2 border-red-700 bg-red-50 p-3">
                     <p className="font-black text-red-900">Confirm: import {batch.count} row{batch.count === 1 ? "" : "s"} for {year} ({money(batch.incomeCents)} income / {money(batch.expenseCents)} expense)?</p>
                     <p className="mt-1 text-xs text-red-800">The server recomputes this batch fresh from Rentec immediately before writing — a row that&apos;s no longer safe is rejected, not imported.</p>

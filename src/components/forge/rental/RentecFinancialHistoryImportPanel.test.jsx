@@ -186,20 +186,36 @@ describe("RentecFinancialHistoryImportPanel approval flow", () => {
     expect(sentBody.importBatchId).toBeTruthy();
   });
 
-  it("re-runs the preview after a successful approval so the batch plan reflects fresh server state", async () => {
-    let previewCallCount = 0;
-    const fetchMock = vi.fn((url) => {
-      const href = String(url);
-      if (href.includes("rentec-financial-history-import-preview")) {
-        previewCallCount += 1;
-        // Second preview call (post-approval) shows nothing left eligible for 2019.
-        const body = previewCallCount === 1 ? singleYearPreview : previewBody({ eligibleByYear: [] });
-        return Promise.resolve({ ok: true, json: async () => body });
-      }
-      if (href.includes("rentec-financial-history-import-approve")) {
-        return Promise.resolve({ ok: true, json: async () => ({ success: true, importBatchId: "batch_1", requestedCount: 2, insertedCount: 2, skippedCount: 0, rejected: [], incomeCents: 100000, expenseCents: 20000 }) });
-      }
-      throw new Error(`Unexpected fetch: ${href}`);
+  // Regression: the panel used to auto-refresh the preview right after a successful approval —
+  // a second full-account Rentec fetch fired back-to-back with the one the approval itself already
+  // did, which could hit Rentec's own rate limit and leave the page showing stale "Ready" status
+  // even though the approval had genuinely succeeded. "Done" must reflect the approval response
+  // alone, never a follow-up preview call.
+  it("shows Done immediately from the approval response alone, without any follow-up preview fetch", async () => {
+    const fetchMock = fetchRouter({
+      preview: singleYearPreview,
+      approve: { success: true, importBatchId: "batch_1", requestedCount: 2, insertedCount: 2, skippedCount: 0, rejected: [], incomeCents: 100000, expenseCents: 20000 },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    mounted = mountPanel(<RentecFinancialHistoryImportPanel />);
+    await flush();
+    await clickButtonAndFlush(findButtonByText(mounted.container, "Run preview"));
+    const previewCallsBefore = fetchMock.mock.calls.filter(([url]) => String(url).includes("preview")).length;
+    await clickButtonAndFlush(findButtonByText(mounted.container, "Approve 2019"));
+    await clickButtonAndFlush(findButtonByText(mounted.container, "Confirm approval"));
+    const previewCallsAfter = fetchMock.mock.calls.filter(([url]) => String(url).includes("preview")).length;
+    expect(previewCallsAfter).toBe(previewCallsBefore);
+    expect(mounted.container.textContent).toContain("Done — 2 imported");
+    expect(mounted.container.querySelector("button")?.textContent).not.toBe("Approve 2019");
+  });
+
+  it("unlocks the next year using only the approval response, even if the batch plan is never refreshed", async () => {
+    const fetchMock = fetchRouter({
+      preview: previewBody({ eligibleByYear: [
+        { year: "2019", count: 2, incomeCents: 100000, expenseCents: 20000, otherCents: 0, sourceRecordIds: ["1:none", "2:none"] },
+        { year: "2020", count: 1, incomeCents: 5000, expenseCents: 0, otherCents: 0, sourceRecordIds: ["3:none"] },
+      ] }),
+      approve: { success: true, importBatchId: "batch_1", requestedCount: 2, insertedCount: 2, skippedCount: 0, rejected: [], incomeCents: 100000, expenseCents: 20000 },
     });
     vi.stubGlobal("fetch", fetchMock);
     mounted = mountPanel(<RentecFinancialHistoryImportPanel />);
@@ -207,9 +223,7 @@ describe("RentecFinancialHistoryImportPanel approval flow", () => {
     await clickButtonAndFlush(findButtonByText(mounted.container, "Run preview"));
     await clickButtonAndFlush(findButtonByText(mounted.container, "Approve 2019"));
     await clickButtonAndFlush(findButtonByText(mounted.container, "Confirm approval"));
-    expect(previewCallCount).toBe(2);
-    expect(mounted.container.textContent).toContain("Done — 2 imported");
-    expect(mounted.container.querySelector("button")?.textContent).not.toBe("Approve 2019");
+    expect(findButtonByText(mounted.container, "Approve 2020").disabled).toBe(false);
   });
 
   it("surfaces a server-side rejection (e.g. a row that became unsafe between preview and approval) without crashing", async () => {
