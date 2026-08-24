@@ -13,6 +13,14 @@
 //   - "rentec"              — the one-time historical Rentec CSV bulk import. Rentec is
 //                              exclusively a property-management platform, so every row it
 //                              produced is rental-portfolio activity by construction.
+//   - "rentec_api"          — the Rentec financial-history resume importer (see
+//                              src/domains/rentec-financial-history-import/), which fills gaps the
+//                              CSV bulk import didn't cover by reading the same Rentec account
+//                              directly via its API. Same platform-scoping justification as
+//                              "rentec" above, and mutually exclusive with it by construction: the
+//                              importer only ever writes rows it first verified aren't already
+//                              represented by a "rentec" row, so there is no double-counting risk
+//                              in summing both sources together.
 //   - "forge_rental_payment"— posted automatically (DB trigger) from every succeeded
 //                              rental_payments row, already scoped via rental_leases.property_id.
 //                              Income only — there is no equivalent trigger for expenses.
@@ -26,8 +34,8 @@
 // by transaction_kind, matching buildIncomeExpenseStatement's own exclusions — this also removes
 // tenant security deposits (transaction_kind "transfer") and loan proceeds/principal
 // ("liability_payment") without any extra filtering logic.
-const SAFE_INCOME_SOURCES = new Set(["rentec", "forge_rental_payment"]);
-const SAFE_EXPENSE_SOURCES = new Set(["rentec", "manual"]);
+const SAFE_INCOME_SOURCES = new Set(["rentec", "rentec_api", "forge_rental_payment"]);
+const SAFE_EXPENSE_SOURCES = new Set(["rentec", "rentec_api", "manual"]);
 
 function isSafeRentalEvent(event) {
   if (!event || event.status === "inactive" || event.status === "deleted" || event.is_deleted === true) return false;
@@ -90,6 +98,12 @@ function seriesPoint(key, bucket) {
 
 const PERIOD_TYPES = Object.freeze(["sixMonths", "ytd", "year", "allTime"]);
 
+// This owner's rental portfolio began operating in 2014. A couple of stray pre-acquisition
+// ledger entries from 2005 and 2007 exist in the historical Rentec data (asset-purchase-adjacent
+// noise, not real portfolio income/expense activity), which would otherwise stretch the All Time
+// view back across nearly a decade of flat, empty years.
+const EARLIEST_PORTFOLIO_YEAR = 2014;
+
 export function buildRentalFinancialPerformance(financialEvents = [], { today = new Date().toISOString().slice(0, 10), period = { type: "sixMonths" } } = {}) {
   const { byMonth, byYear } = bucketSafeEvents(financialEvents);
   const availableYears = Object.freeze([...byYear.keys()].filter((key) => key.length === 4).map(Number).sort((a, b) => a - b));
@@ -109,7 +123,8 @@ export function buildRentalFinancialPerformance(financialEvents = [], { today = 
     keys = monthsInRange(year, 1, 12);
   } else if (periodType === "allTime") {
     granularity = "yearly";
-    const earliest = availableYears.length > 0 ? availableYears[0] : todayYear;
+    const earliestWithData = availableYears.length > 0 ? availableYears[0] : todayYear;
+    const earliest = Math.max(EARLIEST_PORTFOLIO_YEAR, earliestWithData);
     for (let year = earliest; year <= todayYear; year += 1) keys.push(String(year));
   }
 

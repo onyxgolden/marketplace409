@@ -16,6 +16,19 @@ describe("buildRentalFinancialPerformance — safe source scoping", () => {
     expect(august.collectedCents).toBe(310000);
   });
 
+  it("includes rentec_api (the financial-history resume importer) income and expenses alongside the legacy rentec CSV import, without double counting", () => {
+    const events = [
+      event({ event_date: "2026-08-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec" }),
+      event({ event_date: "2026-08-06", amount: "700.00", transaction_kind: "income", source_system: "rentec_api" }),
+      event({ event_date: "2026-08-05", amount: "200.00", transaction_kind: "expense", source_system: "rentec" }),
+      event({ event_date: "2026-08-06", amount: "50.00", transaction_kind: "expense", source_system: "rentec_api" }),
+    ];
+    const result = buildRentalFinancialPerformance(events, { today: "2026-08-13", period: { type: "sixMonths" } });
+    const august = result.series.find((point) => point.key === "2026-08");
+    expect(august.collectedCents).toBe(220000);
+    expect(august.expensesCents).toBe(25000);
+  });
+
   it("includes Rentec-imported and manually-entered expenses, but excludes bank-feed (Plaid) and QuickBooks expenses whose property attribution to this portfolio isn't guaranteed", () => {
     const events = [
       event({ event_date: "2026-08-05", amount: "200.00", transaction_kind: "expense", source_system: "rentec" }),
@@ -124,6 +137,22 @@ describe("buildRentalFinancialPerformance — period controls", () => {
     expect(result.series.map((p) => p.key)).toEqual(["2025", "2026"]);
     expect(result.series.find((p) => p.key === "2025").collectedCents).toBe(100000);
     expect(result.series.find((p) => p.key === "2026").collectedCents).toBe(400000);
+  });
+
+  it("floors the allTime view at 2014 even when stray pre-2014 ledger entries exist, so a couple of outlier years don't stretch the chart back across a decade of empty data", () => {
+    const eventsWithStrayEarlyEntry = [
+      event({ event_date: "2007-03-01", amount: "50.00", transaction_kind: "expense", source_system: "rentec" }),
+      ...events,
+    ];
+    const result = buildRentalFinancialPerformance(eventsWithStrayEarlyEntry, { today: "2026-08-13", period: { type: "allTime" } });
+    expect(result.series[0].key).toBe("2014");
+    expect(result.availableYears).toEqual([2007, 2025, 2026]);
+  });
+
+  it("still starts allTime at a later actual data year when the owner's history begins after 2014", () => {
+    const laterEvents = [event({ event_date: "2018-05-01", amount: "500.00", transaction_kind: "income", source_system: "rentec" })];
+    const result = buildRentalFinancialPerformance(laterEvents, { today: "2026-08-13", period: { type: "allTime" } });
+    expect(result.series[0].key).toBe("2018");
   });
 
   it("exposes only the years actually present in the owner's safely-scoped financial history for the year selector", () => {
