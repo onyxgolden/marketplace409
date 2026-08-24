@@ -21,11 +21,25 @@ describe("classifySimplifiImportPreview", () => {
     [base, { rentecOverlapFingerprints: ["v1:new"] }, "overlap_rentec"],
     [base, { plaidOverlapFingerprints: ["v1:new"] }, "overlap_plaid"],
     [{ ...base, account_scope: "personal" }, {}, "personal"],
+    [{ ...base, account_scope: "mixed" }, {}, "ambiguous"],
     [base, {}, "safe_missing"],
   ])("classifies rows fail closed", (row, options, expected) => {
     const result = classifySimplifiImportPreview([row], { categoryMappings: categories, ...options });
     expect(result.rows[0].classification).toBe(expected);
     expect(result.rows[0].approvable).toBe(expected === "safe_missing");
+  });
+
+  it("never approves mixed-account activity without transaction-level review", () => {
+    const result = classifySimplifiImportPreview(
+      [{ ...base, account_scope: "mixed" }],
+      { categoryMappings: categories },
+    );
+    expect(result.rows[0]).toMatchObject({
+      classification: "ambiguous",
+      approvable: false,
+      reason: "Mixed-account activity requires transaction-level business or personal review.",
+    });
+    expect(result.can_approve).toBe(false);
   });
 
   it("reports signed totals by classification", () => {
