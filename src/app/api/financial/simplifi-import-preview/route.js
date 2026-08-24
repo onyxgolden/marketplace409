@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { buildSimplifiImportPreview, loadSimplifiOverlapEvidence } from "@/domains/simplifi-import";
+import { buildSimplifiImportPreview, loadSimplifiOverlapEvidence, fetchAllOwnerSimplifiFingerprints } from "@/domains/simplifi-import";
 import { createAuthenticatedFinancialApplication } from "@/lib/supabase/createAuthenticatedFinancialApplication";
 
 const SAFE_FILE_LABEL = /^[^/\\\0]{1,200}$/;
@@ -50,20 +50,15 @@ export async function POST(request) {
 
     const ownerId = authenticated.user.id;
     const database = authenticated.supabaseClient;
-    const [accountsResult, importsResult, overlapEvidence] = await Promise.all([
+    const [accountsResult, existingFingerprints, overlapEvidence] = await Promise.all([
       database.from("financial_accounts")
         .select("id,type,name")
         .eq("owner_id", ownerId)
         .eq("active", true),
-      database.from("financial_events")
-        .select("source_record_id")
-        .eq("owner_id", ownerId)
-        .eq("source_system", "quicken_simplifi_csv")
-        .not("source_record_id", "is", null),
+      fetchAllOwnerSimplifiFingerprints(database, ownerId),
       loadSimplifiOverlapEvidence(database, ownerId),
     ]);
-    const fetchError = accountsResult.error || importsResult.error;
-    if (fetchError) throw fetchError;
+    if (accountsResult.error) throw accountsResult.error;
 
     const preview = buildSimplifiImportPreview({
       csv,
@@ -71,9 +66,7 @@ export async function POST(request) {
       requestedMappings: Array.isArray(body?.accountMappings) ? body.accountMappings : [],
       categoryMappings: validatedCategoryMappings(body?.categoryMappings),
       fingerprintSecret: fingerprintSecret(),
-      existingFingerprints: (importsResult.data || [])
-        .map((row) => row.source_record_id)
-        .filter((value) => typeof value === "string" && value.startsWith("v1:")),
+      existingFingerprints,
       overlapEvidence,
     });
 

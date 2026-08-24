@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   authenticate: vi.fn(),
   buildPreview: vi.fn(),
   loadOverlap: vi.fn(),
+  fetchFingerprints: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/createAuthenticatedFinancialApplication", () => ({
@@ -12,6 +13,7 @@ vi.mock("@/lib/supabase/createAuthenticatedFinancialApplication", () => ({
 vi.mock("@/domains/simplifi-import", () => ({
   buildSimplifiImportPreview: mocks.buildPreview,
   loadSimplifiOverlapEvidence: mocks.loadOverlap,
+  fetchAllOwnerSimplifiFingerprints: mocks.fetchFingerprints,
 }));
 
 import { POST } from "./route";
@@ -20,7 +22,7 @@ const csv = "Account,Date,Payee,Amount\nChecking,8/1/2026,Tenant,100";
 
 function query(data = [], error = null) {
   const chain = {
-    select: vi.fn(() => chain), eq: vi.fn(() => chain), not: vi.fn(() => chain),
+    select: vi.fn(() => chain), eq: vi.fn(() => chain), not: vi.fn(() => chain), range: vi.fn(() => chain),
     then(resolve) { return Promise.resolve({ data, error }).then(resolve); },
   };
   return chain;
@@ -37,10 +39,10 @@ describe("POST /api/financial/simplifi-import-preview", () => {
     vi.clearAllMocks();
     process.env.SIMPLIFI_FINGERPRINT_SECRET = "a-secure-test-secret-that-is-long-enough";
     const accounts = query([{ id: "account_1", name: "Operating", type: "checking" }]);
-    const events = query([{ source_record_id: "v1:existing" }]);
-    const from = vi.fn((table) => table === "financial_accounts" ? accounts : events);
+    const from = vi.fn((table) => table === "financial_accounts" ? accounts : query([]));
     mocks.authenticate.mockResolvedValue({ user: { id: "owner_1" }, supabaseClient: { from } });
     mocks.loadOverlap.mockResolvedValue([{ id: "event_1", source_system: "rentec" }]);
+    mocks.fetchFingerprints.mockResolvedValue(["v1:existing"]);
     mocks.buildPreview.mockReturnValue({ status: "preview_only", batch_hash: "a".repeat(64), rows: [] });
   });
 
@@ -58,8 +60,8 @@ describe("POST /api/financial/simplifi-import-preview", () => {
     }));
     const database = (await mocks.authenticate.mock.results[0].value).supabaseClient;
     expect(mocks.loadOverlap).toHaveBeenCalledWith(database, "owner_1");
+    expect(mocks.fetchFingerprints).toHaveBeenCalledWith(database, "owner_1");
     expect(database.from).toHaveBeenCalledWith("financial_accounts");
-    expect(database.from).toHaveBeenCalledWith("financial_events");
     expect(database.from).not.toHaveBeenCalledWith("simplifi_import_batches");
   });
 
