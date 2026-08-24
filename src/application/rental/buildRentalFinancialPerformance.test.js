@@ -29,6 +29,21 @@ describe("buildRentalFinancialPerformance — safe source scoping", () => {
     expect(august.expensesCents).toBe(25000);
   });
 
+  it("nets a refunded FORGE rent payment back out via its forge_rental_payment_adjustment reversal, instead of counting the refunded money as pure income", () => {
+    const events = [
+      event({ event_date: "2026-08-20", amount: "20.00", transaction_kind: "income", source_system: "forge_rental_payment" }),
+      event({ event_date: "2026-08-22", amount: "1.00", transaction_kind: "income", source_system: "forge_rental_payment" }),
+      // The reversal trigger stores the offsetting amount as negative; toCents() takes the
+      // absolute value, matching every other expense's positive-dollar convention.
+      event({ event_date: "2026-08-22", amount: "-1.00", transaction_kind: "expense", source_system: "forge_rental_payment_adjustment" }),
+    ];
+    const result = buildRentalFinancialPerformance(events, { today: "2026-08-23", period: { type: "sixMonths" } });
+    const august = result.series.find((point) => point.key === "2026-08");
+    expect(august.collectedCents).toBe(2100);
+    expect(august.expensesCents).toBe(100);
+    expect(august.netCents).toBe(2000);
+  });
+
   it("includes Rentec-imported and manually-entered expenses, but excludes bank-feed (Plaid) and QuickBooks expenses whose property attribution to this portfolio isn't guaranteed", () => {
     const events = [
       event({ event_date: "2026-08-05", amount: "200.00", transaction_kind: "expense", source_system: "rentec" }),

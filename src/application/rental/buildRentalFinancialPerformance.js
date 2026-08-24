@@ -23,7 +23,17 @@
 //                              in summing both sources together.
 //   - "forge_rental_payment"— posted automatically (DB trigger) from every succeeded
 //                              rental_payments row, already scoped via rental_leases.property_id.
-//                              Income only — there is no equivalent trigger for expenses.
+//                              Income only.
+//   - "forge_rental_payment_adjustment" — posted automatically (a second DB trigger,
+//                              reconcile_rental_payment_reversal_trigger, see
+//                              20260813003000_reconcile_rental_payment_reversals.sql) whenever a
+//                              "forge_rental_payment" row is refunded or disputed. Always the exact
+//                              offsetting amount, stored as a negative expense (this module's own
+//                              toCents() takes the absolute value, matching every other expense's
+//                              positive-dollar convention). Must be included as an expense source
+//                              whenever "forge_rental_payment" is included as an income source, or
+//                              a refunded/disputed FORGE payment keeps counting as pure income here
+//                              even though the money moved back to the tenant.
 //   - "manual"               — written exclusively by /api/rental/manual-financial-event (grep
 //                              confirms no other route uses this source_system), i.e. entered by
 //                              the landlord from within the Rental Manager itself.
@@ -35,7 +45,7 @@
 // tenant security deposits (transaction_kind "transfer") and loan proceeds/principal
 // ("liability_payment") without any extra filtering logic.
 const SAFE_INCOME_SOURCES = new Set(["rentec", "rentec_api", "forge_rental_payment"]);
-const SAFE_EXPENSE_SOURCES = new Set(["rentec", "rentec_api", "manual"]);
+const SAFE_EXPENSE_SOURCES = new Set(["rentec", "rentec_api", "manual", "forge_rental_payment_adjustment"]);
 
 function isSafeRentalEvent(event) {
   if (!event || event.status === "inactive" || event.status === "deleted" || event.is_deleted === true) return false;
