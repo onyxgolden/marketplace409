@@ -2,28 +2,31 @@
 
 ## Last Updated
 
-2026-08-24T04:20Z — Claude Code (Sonnet 5) — branch `chore/agent-handoff`.
+2026-08-24T04:35Z — Claude Code (Sonnet 5) — branch `chore/agent-handoff`.
 
 ## Current Objective
 
-**RENTEC-02, UI-01, and the FORGE Workspace 2.0 visual rollout are all complete.** All available
-Rentec financial history (2014–2026) is imported and verified; every Rental Manager panel (21 of
-them, not just the Summary page) now uses the Workspace 2.0 visual language with full dark-mode
-support; two of the three Roadmap Parking Lot items from the previous version of this file are now
-resolved (see below). Nothing is currently blocked.
+**RENTEC-02, UI-01, the FORGE Workspace 2.0 visual rollout, and all three Roadmap Parking Lot items
+from the previous version of this file are complete.** All available Rentec financial history
+(2014–2026) is imported and verified; every Rental Manager panel (21 of them, not just the Summary
+page) now uses the Workspace 2.0 visual language with full dark-mode support; the
+`forge_rental_payment_adjustment` accounting gap is fixed; Preview/Production environment parity is
+resolved per Jason's explicit policy; and `financial_events`' trusted-source provenance is now
+enforced at the database level, not just by convention. Nothing is currently blocked.
 
 ## Production State
 
-- `origin/main` SHA: `cb78ab313` (linear history from `7c6a05d92` through the 21-panel Workspace 2.0
-  rollout (`94a17f7cf`) and the `forge_rental_payment_adjustment` fix (`cb78ab313`); every step
-  pushed as a fast-forward, no rewritten history reached `main`). Note: `main` also picked up an
-  unrelated Simplifi commit (`cc8bf3101`, Codex's track) in between — zero file overlap, handled by a
-  routine rebase.
-- Deployed Production SHA: `cb78ab313`, confirmed live on `409marketplace.online`,
-  `www.409marketplace.online`, and `marketplace409.vercel.app`.
-- Migrations: unchanged since the last snapshot (still `20260823000000` and `20260823010000`, both
-  applied). The rollout and the `forge_rental_payment_adjustment` fix are both pure application code,
-  no new migrations.
+- `origin/main` SHA: `64ec62fd7` (linear history from `cb78ab313` through the provenance-hardening
+  migration; every step pushed as a fast-forward, no rewritten history reached `main`). Note: `main`
+  picked up two more unrelated Simplifi commits (`cc8bf3101`, `9751190ff`, Codex's track) in between —
+  zero file overlap both times, handled by routine rebase/cherry-pick.
+- Deployed Production SHA: `cb78ab313` is the last one confirmed live on all three domains (the
+  provenance-hardening commit is a migration-only change with no application code, so it needed no
+  redeploy — the migration itself was applied directly and independently verified, see below).
+- Migrations: `20260824010000_harden_financial_events_trusted_source_provenance.sql` is **applied to
+  Production** (`supabase db push --linked --yes`), verified by reading back the live `pg_policy` and
+  `pg_proc` rows afterward (see "What Actually Happened" below) — not just trusted from the migration
+  file. All prior migrations unchanged.
 - Environment configuration — **updated this session** (see Roadmap Parking Lot for the decision
   record): `ACCOUNT_BALANCE_REPOSITORY`, `FINANCIAL_ACCOUNT_REPOSITORY`, `FINANCIAL_EVENT_REPOSITORY`,
   and `RENTAL_EMAIL_VERIFIED_DOMAIN` now exist in **Preview**, mirrored from their Production values
@@ -118,6 +121,27 @@ resolved (see below). Nothing is currently blocked.
   left in place. Real financial history; left alone.
 - **Roadmap item 2 resolved — Preview/Production environment parity**: see Roadmap Parking Lot for
   the decision record and Production State above for what changed.
+- **Roadmap item 3 resolved — `financial_events` trusted-source provenance hardened**: the
+  owner-scoped INSERT/UPDATE/DELETE RLS policies on `financial_events` had no restriction on
+  `source_system`, so an authenticated owner could write a row directly through the Supabase client
+  claiming `source_system = 'rentec_api'` (or `'rentec'`, or a FORGE-payment source) without that
+  data ever actually coming from Rentec or a real payment — not a new privilege escalation (an owner
+  already had full access to their own rows), but provenance was a convention, not something the
+  database enforced. Mapped every write path into `financial_events` first: `forge_rental_payment`
+  and its reversal were already `SECURITY DEFINER` triggers (unaffected);
+  `approve_rentec_financial_history_import()` was `SECURITY INVOKER`, meaning its insert relied on
+  the same open RLS policy as a raw client insert would — promoted to `SECURITY DEFINER` with
+  `row_security = off` (its own checks — owner match, per-row validation, hardcoded
+  `source_system`— were already sufficient and unchanged, matching the sibling triggers' existing
+  pattern); the legacy `'rentec'` CSV bulk import has no live application write path at all
+  (confirmed by grep). Migration `20260824010000_harden_financial_events_trusted_source_provenance.sql`
+  tightens all three owner-scoped policies to `source_system = 'manual'` only (UPDATE and DELETE
+  were tightened too, not just INSERT — otherwise an owner could retag an existing `'manual'` row to
+  a trusted source_system after the fact via UPDATE, defeating the INSERT restriction entirely).
+  Applied directly to Production and independently verified by reading back the live `pg_policy` and
+  `pg_proc` rows afterward (not just trusted from the migration file) — see the exact `using`/`with
+  check` expressions and `prosecdef`/`proconfig` values in git history of this session if needed.
+  Pure migration, zero application code changed, so no redeploy was required.
 
 ## Active Worktrees
 
@@ -151,6 +175,13 @@ reporting `safeMissing` counts that reconciled exactly to Jason's pre-approved t
   was reviewed against test fixtures — both UI-01 bugs above passed their own test suites and were
   only caught by spot-checking the live page against real Production data after deploy. Do that
   spot-check before considering a data-visualization branch done, not after.
+- **A plain client-side (`SECURITY INVOKER`) write to `financial_events` can now only ever succeed
+  with `source_system = 'manual'`** — the owner-scoped INSERT/UPDATE/DELETE RLS policies enforce
+  this as of `20260824010000_harden_financial_events_trusted_source_provenance.sql`. Any new feature
+  that needs to write a different `source_system` (a new import source, a new automated posting)
+  must do it through a new or existing `SECURITY DEFINER` function/trigger with `row_security = off`
+  that performs its own full validation — not by relying on RLS, and not by trying to loosen these
+  policies back open.
 
 ## Safety Boundaries
 
@@ -179,11 +210,7 @@ figures only, and only what's already safe to show an owner-scoped UI.
   no code changes were needed, this was purely a documentation + env-var task. If this policy is ever
   revisited, it requires Jason's vendor-dashboard action (creating scoped test credentials in Rentec/
   Stripe/Resend); no agent can do that.
-- Residual provenance-hardening gap (noted in RENTEC-01-REVIEW, not part of that task's scope): the
-  `approve_rentec_financial_history_import` RPC can technically be called directly by an authenticated
-  owner with arbitrary structurally-valid rows labeled `rentec_api`, because the pre-existing
-  `financial_events` INSERT policy already allows an owner to insert arbitrary owner-scoped events —
-  not a new privilege escalation, but Rentec provenance isn't cryptographically enforced at the DB
-  boundary. Still open — next item being worked.
+- **Resolved**: `financial_events` trusted-source provenance — see "What Actually Happened" above.
+  All three items originally parked in this section are now closed.
 - Simplifi CSV import (SIMPLIFI-01 design review, SIMPLIFI-02 build) — a fully separate track owned by
   Codex, untouched by any of this work. See `TASKS.md` for its current status.
