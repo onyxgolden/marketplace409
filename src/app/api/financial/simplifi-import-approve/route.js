@@ -41,7 +41,7 @@ export async function POST(request) {
     if (!csv || !/^[0-9a-f]{64}$/.test(expectedBatchHash) || !/^[0-9a-f]{64}$/.test(expectedPreviewHash)) {
       return NextResponse.json({ error: "The original CSV and valid preview evidence are required." }, { status: 400 });
     }
-    if (selected.length === 0 || selected.length > 500 || selected.some((value) => !/^v1:[0-9a-f]{64}$/.test(value))) {
+    if (selected.length === 0 || selected.length > 500 || selected.some((value) => !/^v[12]:[0-9a-f]{64}$/.test(value))) {
       return NextResponse.json({ error: "Select between 1 and 500 valid preview rows." }, { status: 400 });
     }
 
