@@ -17,6 +17,7 @@ import { buildVendorContactListReport, vendorContactListReportToCsv } from "@/ap
 import { buildVendorLedgerReport, vendorLedgerReportToCsv } from "@/application/rental/buildVendorLedgerReport";
 import { scopeRentalDataToProperty } from "@/application/rental/scopeRentalDataToProperty";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
+import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
 
 // rent_schedules is required by every core report that classifies a charge's collection authority
 // (buildRentalOperatingReport, buildDelinquentTenantsReport) — without it, those builders have no
@@ -79,13 +80,17 @@ async function loadCoreReport(a, url, reportKey) {
 // account-ledger, income-expense-statement, and schedule-e-assistant are all business/tax
 // dashboards — personal Simplifi transactions (business_scope='personal') must never appear in
 // any of them, so the exclusion is applied once here rather than in each report builder.
+//
+// Paginated via fetchAllOwnerFinancialEvents — a plain unbounded .select() is silently capped by
+// PostgREST's default page size (1000 rows), which for an owner with more financial_events
+// history than that (this owner has 11,000+) truncated to an arbitrary 1000 rows, making a
+// freshly-recorded property (e.g. via the Financial setup workflow) invisible to every report
+// here even though the underlying financial_events rows existed and were correct.
 async function loadFinancialEvents(a) {
-  const { data, error } = await a.supabaseClient
-    .from("financial_events")
-    .select("id,event_date,description,amount,transaction_kind,normalized_category,property_id,status,is_deleted")
-    .neq("business_scope", "personal");
-  if (error) throw error;
-  return data || [];
+  const events = await fetchAllOwnerFinancialEvents(a.supabaseClient, a.user.id, {
+    columns: "id,event_date,description,amount,transaction_kind,normalized_category,property_id,status,is_deleted,business_scope",
+  });
+  return events.filter((event) => event.business_scope !== "personal");
 }
 
 const FINANCIAL_EVENT_HANDLERS = {
