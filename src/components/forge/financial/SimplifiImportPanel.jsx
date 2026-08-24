@@ -69,11 +69,11 @@ export default function SimplifiImportPanel() {
         const next = { ...current };
         const available = payload.available_accounts ?? [];
         for (const account of payload.accounts ?? []) {
-          if (next[account.account_name]) continue;
           const exact = available.find((candidate) => key(candidate.name) === key(account.account_name));
+          if (next[account.account_name]?.scope === "excluded" || next[account.account_name]?.forge_account_id) continue;
           next[account.account_name] = exact
-            ? { forge_account_id: exact.id, account_type: exact.type, scope: "business" }
-            : { forge_account_id: "", account_type: "other", scope: "business" };
+            ? { ...next[account.account_name], forge_account_id: exact.id, account_type: exact.type, scope: next[account.account_name]?.scope || "business" }
+            : { ...next[account.account_name], forge_account_id: "", account_type: "other", scope: next[account.account_name]?.scope || "business" };
         }
         return next;
       });
@@ -103,6 +103,20 @@ export default function SimplifiImportPanel() {
     } catch (requestError) { setError(requestError.message); setBusy(false); }
   }
 
+  async function createMissingAccounts() {
+    const missing = sourceAccounts.filter((account) => {
+      const mapping = accountMappings[account.account_name];
+      return mapping?.scope !== "excluded" && !mapping?.forge_account_id;
+    });
+    if (!missing.length || !window.confirm(`Create and map ${missing.length} missing FORGE accounts? No transactions will be imported.`)) return;
+    setBusy(true); setError("");
+    try {
+      const payload = await call("/api/financial/simplifi-import-accounts", { csv });
+      setResult({ accounts_created: payload.created, accounts_reused: payload.reused });
+      await runPreview(csv, file, mappingPayloads(), true);
+    } catch (requestError) { setError(requestError.message); setBusy(false); }
+  }
+
   const safeCount = preview?.totals?.safe_missing?.count ?? 0;
   const mappingsComplete = sourceAccounts.length > 0 && sourceAccounts.every((account) => {
     const mapping = accountMappings[account.account_name];
@@ -121,6 +135,7 @@ export default function SimplifiImportPanel() {
     {preview ? <>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{Object.entries(preview.totals ?? {}).map(([label, total]) => <div key={label} className="rounded-2xl bg-slate-100 p-4 dark:bg-slate-800"><p className="text-xs font-black uppercase text-slate-500">{label.replaceAll("_", " ")}</p><p className="mt-1 text-xl font-black">{total.count}</p><p className="text-sm">{money(total.amount_cents)}</p></div>)}</div>
       <details open className="rounded-2xl border p-4"><summary className="cursor-pointer font-black">1. Map {sourceAccounts.length} Simplifi accounts</summary>
+        {!mappingsComplete ? <button type="button" disabled={busy} onClick={createMissingAccounts} className="mt-4 rounded-xl bg-cyan-600 px-4 py-2 font-black text-white disabled:opacity-40">Create and map missing FORGE accounts</button> : null}
         <div className="mt-4 grid gap-3 lg:grid-cols-2">{sourceAccounts.map((account) => <div key={account.account_name} className="grid gap-2 rounded-xl bg-slate-50 p-3 dark:bg-slate-800 sm:grid-cols-[1fr_1fr_auto]">
           <div><p className="font-bold">{account.account_name}</p><p className="text-xs text-slate-500">{account.row_count} rows · {money(account.amount_cents)}</p></div>
           <select aria-label={`FORGE account for ${account.account_name}`} disabled={accountMappings[account.account_name]?.scope === "excluded"} value={accountMappings[account.account_name]?.forge_account_id || ""} onChange={(event) => setAccountMappings((current) => ({ ...current, [account.account_name]: { ...current[account.account_name], forge_account_id: event.target.value, account_type: preview.available_accounts.find((item) => item.id === event.target.value)?.type || "other" } }))} className="rounded-lg border bg-white px-2 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-950">
@@ -137,7 +152,7 @@ export default function SimplifiImportPanel() {
       </details>
       <div className="flex flex-wrap gap-3"><button type="button" disabled={busy || !mappingsComplete} onClick={() => runPreview()} className="rounded-xl bg-slate-900 px-5 py-3 font-black text-white disabled:opacity-40 dark:bg-cyan-500 dark:text-slate-950">Refresh reviewed preview</button>
         <button type="button" disabled={busy || safeCount === 0 || !mappingsComplete} onClick={approveNextBatch} className="rounded-xl bg-amber-500 px-5 py-3 font-black text-slate-950 disabled:opacity-40">Import next {Math.min(500, safeCount)} safe rows</button></div>
-      {result ? <p role="status" className="rounded-xl bg-emerald-50 p-4 font-bold text-emerald-900">Applied {result.applied ?? 0}; already imported {result.already_applied ?? 0}.</p> : null}
+      {result ? <p role="status" className="rounded-xl bg-emerald-50 p-4 font-bold text-emerald-900">{result.accounts_created !== undefined ? `Created ${result.accounts_created}; reused ${result.accounts_reused ?? 0} FORGE accounts. No transactions imported.` : `Applied ${result.applied ?? 0}; already imported ${result.already_applied ?? 0}.`}</p> : null}
     </> : null}
   </section>;
 }
