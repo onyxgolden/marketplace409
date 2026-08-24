@@ -564,6 +564,107 @@ A unified platform maximizes capability reuse, preserves customer continuity, an
 
 ---
 
+## PDR-021 — Plaid Is the Single-Entry Transaction Workflow
+
+### Context
+
+Financial FORGE and Rental Manager both need transaction data (bank/card activity from Plaid, and
+historical bulk imports such as Rentec and Quicken Simplifi). Without a unifying model, each import
+source risks becoming its own dead-end classification system, and the same real-world transaction
+risks being entered or copied more than once across Financial FORGE and Rental Manager.
+
+### Decision
+
+Plaid is the single-entry transaction workflow for ongoing (non-historical) transaction activity:
+
+1. FORGE identifies the account, merchant/payee, category, amount pattern, and description for
+   every incoming transaction.
+2. The owner labels it once as personal or business.
+3. For business transactions, the owner may also assign property, lease/tenant (when relevant),
+   expense category, capital-vs-operating treatment, and tax treatment.
+4. FORGE offers "Apply this rule to future matching transactions."
+5. Future matches are classified automatically by the resulting reusable rule and appear in both
+   Financial FORGE and Rental Manager without duplicate manual entry.
+6. Rental Manager receives the linked payment/expense record; Financial FORGE reads the same
+   underlying transaction — never a copied financial event.
+7. Transfers and credit-card payments remain transfers and never become duplicate income/expenses.
+8. Personal transactions stay out of rental/business reports.
+9. Low-confidence or conflicting matches route to a short review queue instead of being guessed.
+10. Corrections update the reusable rule and can optionally reclassify prior matching transactions.
+
+Historical bulk importers (Rentec, Quicken Simplifi) are not required to build this rule engine
+themselves, since they import history rather than live activity. They must instead seed the same
+underlying classification substrate Plaid will read and write — the labels and account/category
+mappings a historical import applies (e.g. Simplifi's account-level business/personal scope and
+category treatment) are recorded in a form Plaid's reusable rules can later reuse or supersede, not
+in an importer-private shape that would need to be thrown away.
+
+### Rationale
+
+A single transaction workflow prevents the same cash movement from being represented (and
+potentially double-counted or inconsistently classified) once for Rental Manager and again for
+Financial FORGE. Reusable rules reduce manual entry to a one-time decision per recurring pattern,
+while a review queue keeps automatic classification from silently guessing on low-confidence or
+conflicting matches.
+
+### Consequences
+
+- New transaction-ingestion sources (Plaid now; any future feed) should read/write the same
+  underlying transaction and classification-rule substrate rather than inventing a parallel model.
+- Historical importers persist business/personal scope and category evidence as durable, reusable
+  data (see PDR-022's editable-classification requirement) instead of import-batch-only state.
+- Rental Manager and Financial FORGE must resolve to the same financial event for a given
+  transaction — no per-surface copies.
+- The review queue is a first-class state, not an error path — low-confidence classification is an
+  expected, common outcome, not a failure.
+
+## PDR-022 — Every Transaction Classification Must Remain Owner-Editable, With No Silent History Rewrites
+
+### Context
+
+PDR-021 establishes automatic classification via reusable rules. Automatic classification will
+sometimes be wrong, and rules will sometimes need correction after the fact. Without an explicit
+editing and audit model, corrections risk silently rewriting financial history that reports, taxes,
+and prior decisions already depended on.
+
+### Decision
+
+Every imported or Plaid-sourced transaction remains manually editable by an authorized owner.
+Editable fields include: personal/business classification; property; lease or tenant (when
+applicable); income/expense/transfer classification; category; operating-expense-vs-capital-asset
+treatment; tax treatment; and notes/supporting-document links.
+
+Editing one transaction must offer three explicit, distinct choices:
+
+1. Change this transaction only.
+2. Change this and future matching transactions (updates the reusable rule going forward).
+3. Change all matching transactions, including history — with a preview of the affected
+   transactions shown before applying.
+
+History is never silently rewritten. Every edit preserves the original source data and an audit
+trail recording before/after values, who changed them, and when.
+
+### Rationale
+
+Automatic rules should handle the common case, but every result must remain correctable without
+destroying the evidentiary trail that reports and tax positions rely on. Distinguishing "this one"
+from "this rule going forward" from "all matching history" keeps corrections precise and prevents a
+narrow fix from silently reclassifying transactions the owner never reviewed.
+
+### Consequences
+
+- Classification fields on a transaction are plain, updatable data, not derived/computed values —
+  any future editing UI can update them directly.
+- Bulk reclassification ("apply to all matching, including history") requires an explicit preview
+  step before it writes anything.
+- An audit trail (before/after values, actor, timestamp) is required wherever classification is
+  edited, not optional instrumentation added later.
+- Historical importers (e.g. Quicken Simplifi) that write classification data now must write it in
+  this editable, audited shape from the start, since PDR-021 already commits to reusing it — not as
+  import-batch-only metadata.
+
+---
+
 # Governance
 
 The Product Decisions register is governed by the Product Operating System.

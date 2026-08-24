@@ -75,6 +75,30 @@ describe("POST /api/financial/simplifi-import-approve", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it("sends a fresh personal row to the RPC, including account_scope and category for audit evidence", async () => {
+    mocks.buildPreview.mockReturnValueOnce({ batch_hash: batchHash, preview_hash: previewHash, rows: [{
+      fingerprint, evidence_hash: "d".repeat(64), account_mapping_id: "account_1", date: "2026-08-01",
+      amount_cents: -2500, normalized_category: "groceries", classification: "personal",
+      transaction_kind: "expense", affects_noi: false, capitalized: false,
+      approvable: true, payee: "Grocery Store", account_scope: "personal", category: "Groceries",
+    }] });
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith("approve_simplifi_csv_import", expect.objectContaining({
+      p_rows: [expect.objectContaining({
+        classification: "personal", account_scope: "personal", simplifi_category: "Groceries",
+      })],
+    }));
+  });
+
+  it("rejects a selected row whose classification is neither safe_missing nor personal, even if marked approvable", async () => {
+    mocks.buildPreview.mockReturnValueOnce({ batch_hash: batchHash, preview_hash: previewHash,
+      rows: [{ fingerprint, classification: "transfer_pair", approvable: true }] });
+    const response = await POST(request());
+    expect(response.status).toBe(409);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("returns a clean idempotent result when every selected row is already imported", async () => {
     mocks.buildPreview.mockReturnValueOnce({ batch_hash: batchHash, preview_hash: "e".repeat(64),
       rows: [{ fingerprint, classification: "already_imported", approvable: false }] });

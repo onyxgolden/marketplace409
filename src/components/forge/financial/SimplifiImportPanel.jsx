@@ -15,6 +15,13 @@ function suggestedTreatment(category) {
   return "operating";
 }
 
+// Counts every approvable row (both business "safe_missing" and personal), not just
+// safe_missing — otherwise, once every business row is imported across earlier batches, the
+// import button would disable itself while personal rows still remain unapproved.
+export function approvableRowCount(rows) {
+  return (rows ?? []).filter((row) => row?.approvable).length;
+}
+
 export default function SimplifiImportPanel() {
   const [file, setFile] = useState(null);
   const [csv, setCsv] = useState("");
@@ -117,7 +124,7 @@ export default function SimplifiImportPanel() {
     } catch (requestError) { setError(requestError.message); setBusy(false); }
   }
 
-  const safeCount = preview?.totals?.safe_missing?.count ?? 0;
+  const safeCount = approvableRowCount(preview?.rows);
   const mappingsComplete = sourceAccounts.length > 0 && sourceAccounts.every((account) => {
     const mapping = accountMappings[account.account_name];
     return mapping?.scope === "excluded" || Boolean(mapping?.forge_account_id);
@@ -151,7 +158,7 @@ export default function SimplifiImportPanel() {
         </div>)}</div>
       </details>
       <div className="flex flex-wrap gap-3"><button type="button" disabled={busy || !mappingsComplete} onClick={() => runPreview()} className="rounded-xl bg-slate-900 px-5 py-3 font-black text-white disabled:opacity-40 dark:bg-cyan-500 dark:text-slate-950">Refresh reviewed preview</button>
-        <button type="button" disabled={busy || safeCount === 0 || !mappingsComplete} onClick={approveNextBatch} className="rounded-xl bg-amber-500 px-5 py-3 font-black text-slate-950 disabled:opacity-40">Import next {Math.min(500, safeCount)} safe rows</button></div>
+        <button type="button" disabled={busy || safeCount === 0 || !mappingsComplete} onClick={approveNextBatch} className="rounded-xl bg-amber-500 px-5 py-3 font-black text-slate-950 disabled:opacity-40">Import next {Math.min(500, safeCount)} reviewed rows</button></div>
       {result ? <p role="status" className="rounded-xl bg-emerald-50 p-4 font-bold text-emerald-900">{result.accounts_created !== undefined ? `Created ${result.accounts_created}; reused ${result.accounts_reused ?? 0} FORGE accounts. No transactions imported.` : `Applied ${result.applied ?? 0}; already imported ${result.already_applied ?? 0}.`}</p> : null}
     </> : null}
   </section>;

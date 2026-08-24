@@ -76,10 +76,14 @@ async function loadCoreReport(a, url, reportKey) {
   return { report, toCsv: () => builder.toCsv(report), filename: builder.filename, dateHint: report.asOfDate || report.startDate || report.generatedAt.slice(0, 10) };
 }
 
+// account-ledger, income-expense-statement, and schedule-e-assistant are all business/tax
+// dashboards — personal Simplifi transactions (business_scope='personal') must never appear in
+// any of them, so the exclusion is applied once here rather than in each report builder.
 async function loadFinancialEvents(a) {
   const { data, error } = await a.supabaseClient
     .from("financial_events")
-    .select("id,event_date,description,amount,transaction_kind,normalized_category,property_id,status,is_deleted");
+    .select("id,event_date,description,amount,transaction_kind,normalized_category,property_id,status,is_deleted")
+    .neq("business_scope", "personal");
   if (error) throw error;
   return data || [];
 }

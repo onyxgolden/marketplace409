@@ -101,7 +101,7 @@ describe("buildSimplifiImportPreview", () => {
         { simplifi_account_name: "Card", forge_account_id: "forge_card", scope: "business" },
       ],
     });
-    expect(result.rows[0]).toMatchObject({ classification: "personal", approvable: false });
+    expect(result.rows[0]).toMatchObject({ classification: "unsupported", approvable: false });
     expect(result.preview_hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -118,7 +118,7 @@ describe("buildSimplifiImportPreview", () => {
     expect(result.rows[0]).toMatchObject({
       account_mapping_id: "excluded:checking",
       account_scope: "excluded",
-      classification: "personal",
+      classification: "unsupported",
       approvable: false,
     });
     expect(result.rows[1]).toMatchObject({ classification: "safe_missing", approvable: true });
