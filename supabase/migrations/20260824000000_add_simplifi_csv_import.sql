@@ -169,6 +169,22 @@ begin
       or coalesce(v_row->>'capitalized', '') not in ('true', 'false')
     then raise exception 'Approved Simplifi row evidence is invalid.'; end if;
 
+    if exists (
+      select 1
+      from simplifi_import_rows existing
+      where existing.owner_id = p_owner_id
+        and existing.row_fingerprint = v_row->>'fingerprint'
+        and (
+          existing.evidence_hash is distinct from v_row->>'evidence_hash'
+          or existing.financial_account_id is distinct from v_row->>'financial_account_id'
+          or existing.event_date is distinct from (v_row->>'event_date')::date
+          or existing.signed_amount_cents is distinct from (v_row->>'signed_amount_cents')::bigint
+          or existing.normalized_category is distinct from v_row->>'normalized_category'
+        )
+    ) then
+      raise exception 'Simplifi transaction was previously approved under different mapping or evidence.';
+    end if;
+
     insert into financial_events (
       owner_id, financial_account_id, event_date, description, amount,
       transaction_kind, normalized_category, tax_deductible, affects_noi, capitalized,

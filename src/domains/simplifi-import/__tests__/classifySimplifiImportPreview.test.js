@@ -6,6 +6,7 @@ const base = Object.freeze({
   account_scope: "business",
   fingerprint: "v1:new",
   status: "cleared",
+  date: "2026-08-01",
   category: "Repairs",
   amount_cents: -1000,
 });

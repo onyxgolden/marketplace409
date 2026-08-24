@@ -56,8 +56,8 @@ describe("POST /api/financial/simplifi-import-preview", () => {
       categoryMappings: { "rent income": { normalized_category: "rental_income", treatment: "operating" } },
       overlapEvidence: [{ id: "event_1", source_system: "rentec" }],
     }));
-    expect(mocks.loadOverlap).toHaveBeenCalledWith(database, "owner_1");
     const database = (await mocks.authenticate.mock.results[0].value).supabaseClient;
+    expect(mocks.loadOverlap).toHaveBeenCalledWith(database, "owner_1");
     expect(database.from).toHaveBeenCalledWith("financial_accounts");
     expect(database.from).toHaveBeenCalledWith("financial_events");
     expect(database.from).not.toHaveBeenCalledWith("simplifi_import_batches");
