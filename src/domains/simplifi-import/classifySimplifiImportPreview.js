@@ -65,6 +65,14 @@ export function classifySimplifiImportPreview(rows, options = {}) {
     } else if (treatment === "exclude") {
       classification = "unsupported";
       reason = "This category is explicitly excluded from import.";
+    } else if (treatment === "transfer") {
+      // A transfer-treated row (account-to-account movement, credit-card payment, or either side
+      // of a paired transfer) must never be approvable, and must never be evaluated for Rentec/
+      // Plaid overlap or safe_missing status — it is money moving, not income or an expense.
+      // classification="transfer_pair" reuses the schema's existing reserved enum value rather than
+      // introducing a new one; approvable stays false below regardless of any future overlap logic.
+      classification = "transfer_pair";
+      reason = "Account transfers and credit-card payments are never counted as income or expense.";
     } else if (existingFingerprints.has(row.fingerprint)) {
       classification = "already_imported";
       reason = "This exact Simplifi transaction is already imported.";

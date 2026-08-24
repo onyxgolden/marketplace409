@@ -29,6 +29,49 @@ describe("classifySimplifiImportPreview", () => {
     expect(result.rows[0].approvable).toBe(expected === "safe_missing");
   });
 
+  it("classifies a treatment=transfer row as transfer_pair, never safe_missing, regardless of overlap evidence", () => {
+    // Regression: treatment="transfer" previously fell through to the same safe_missing/overlap
+    // logic as any operating category, since nothing distinguished it after the exclude branch.
+    // A transfer must be rejected before overlap evidence is even consulted.
+    const evidence = [{ id: "evidence_1", source_system: "rentec", event_date: "2026-08-01",
+      signed_amount_cents: -1000, normalized_category: "transfer" }];
+    const result = classifySimplifiImportPreview([base], {
+      categoryMappings: { repairs: { normalized_category: "transfer", treatment: "transfer" } },
+      overlapEvidence: evidence,
+    });
+    expect(result.rows[0]).toMatchObject({
+      classification: "transfer_pair",
+      approvable: false,
+      transaction_kind: "transfer",
+      affects_noi: false,
+    });
+    expect(result.can_approve).toBe(false);
+  });
+
+  it("classifies a credit-card payment as transfer_pair, never safe_missing", () => {
+    const row = { ...base, category: "Credit Card Payment", amount_cents: -50000 };
+    const result = classifySimplifiImportPreview([row], {
+      categoryMappings: { "credit card payment": { normalized_category: "credit_card_payment", treatment: "transfer" } },
+    });
+    expect(result.rows[0]).toMatchObject({ classification: "transfer_pair", approvable: false });
+  });
+
+  it("classifies both sides of a paired account-to-account transfer as transfer_pair, and excludes both from safe_missing totals", () => {
+    const outgoing = { ...base, fingerprint: "v1:out", category: "Business Savings", amount_cents: -336800 };
+    const incoming = { ...base, fingerprint: "v1:in", category: "Dugood Bus Ck", amount_cents: 336800 };
+    const result = classifySimplifiImportPreview([outgoing, incoming], {
+      categoryMappings: {
+        "business savings": { normalized_category: "business_savings", treatment: "transfer" },
+        "dugood bus ck": { normalized_category: "dugood_bus_ck", treatment: "transfer" },
+      },
+    });
+    expect(result.rows.map((row) => row.classification)).toEqual(["transfer_pair", "transfer_pair"]);
+    expect(result.rows.every((row) => row.approvable === false)).toBe(true);
+    expect(result.totals.safe_missing).toBeUndefined();
+    expect(result.totals.transfer_pair).toEqual({ count: 2, amount_cents: 0 });
+    expect(result.can_approve).toBe(false);
+  });
+
   it("never approves mixed-account activity without transaction-level review", () => {
     const result = classifySimplifiImportPreview(
       [{ ...base, account_scope: "mixed" }],
@@ -74,7 +117,10 @@ describe("classifySimplifiImportPreview", () => {
       repairs: { normalized_category: "transfer", treatment: "transfer" },
       purchase: { normalized_category: "real_estate_purchase", treatment: "asset_purchase" },
     } });
-    expect(result.rows[0]).toMatchObject({ transaction_kind: "transfer", affects_noi: false, capitalized: false });
+    expect(result.rows[0]).toMatchObject({
+      transaction_kind: "transfer", affects_noi: false, capitalized: false,
+      classification: "transfer_pair", approvable: false,
+    });
     expect(result.rows[1]).toMatchObject({ transaction_kind: "asset_purchase", affects_noi: false, capitalized: true });
   });
 
