@@ -95,6 +95,7 @@ export async function POST(request) {
       p_preview_hash: fresh.preview_hash,
       p_rows: rows.map((row) => ({
         fingerprint: row.fingerprint,
+        fingerprint_version: row.fingerprint_version,
         evidence_hash: row.evidence_hash,
         financial_account_id: row.account_mapping_id,
         event_date: row.date,

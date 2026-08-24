@@ -88,6 +88,7 @@ export function buildSimplifiImportPreview(input) {
   const fingerprinted = fingerprintSimplifiRows(parsed.rows, {
     accountMappings,
     secret: input.fingerprintSecret,
+    existingFingerprints: input.existingFingerprints,
   });
   const classified = classifySimplifiImportPreview(fingerprinted, {
     categoryMappings: input.categoryMappings,
