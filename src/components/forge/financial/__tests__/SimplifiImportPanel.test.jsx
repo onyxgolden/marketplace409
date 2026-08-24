@@ -10,6 +10,7 @@ describe("SimplifiImportPanel", () => {
     expect(markup).toContain("never stored");
     expect(markup).toContain("at most 500 transactions at a time");
     expect(markup).toContain('accept=".csv,text/csv"');
+    expect(markup).not.toContain("Create and map missing FORGE accounts");
     expect(markup).not.toContain("Import next 500 safe rows");
   });
 });
