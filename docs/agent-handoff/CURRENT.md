@@ -2,32 +2,36 @@
 
 ## Last Updated
 
-2026-08-23T21:56Z — Claude Code (Sonnet 5) — branch `chore/agent-handoff`.
+2026-08-24T04:20Z — Claude Code (Sonnet 5) — branch `chore/agent-handoff`.
 
 ## Current Objective
 
-**RENTEC-02 (the Rentec financial-history resume import) is complete.** All available Rentec
-financial history (2014–2026) has been imported into `financial_events` in Production, verified
-row-for-row against the database, and the Rental Manager Summary's Portfolio Performance chart
-(UI-01) is deployed and correctly displays it. Nothing is currently blocked. See Roadmap Parking Lot
-for genuinely open follow-up items — none of them block anything today.
+**RENTEC-02, UI-01, and the FORGE Workspace 2.0 visual rollout are all complete.** All available
+Rentec financial history (2014–2026) is imported and verified; every Rental Manager panel (21 of
+them, not just the Summary page) now uses the Workspace 2.0 visual language with full dark-mode
+support; two of the three Roadmap Parking Lot items from the previous version of this file are now
+resolved (see below). Nothing is currently blocked.
 
 ## Production State
 
-- `origin/main` SHA: `7c6a05d92` (fast-forward history from `327b8b025` → `3289f2670` →
-  `44bbda68e` → `341221bfa` → `7c6a05d92`; every step pushed as a fast-forward or a clean merge
-  commit, no rewritten history reached `main`).
-- Deployed Production SHA: `7c6a05d92`, confirmed live on `409marketplace.online`,
+- `origin/main` SHA: `cb78ab313` (linear history from `7c6a05d92` through the 21-panel Workspace 2.0
+  rollout (`94a17f7cf`) and the `forge_rental_payment_adjustment` fix (`cb78ab313`); every step
+  pushed as a fast-forward, no rewritten history reached `main`). Note: `main` also picked up an
+  unrelated Simplifi commit (`cc8bf3101`, Codex's track) in between — zero file overlap, handled by a
+  routine rebase.
+- Deployed Production SHA: `cb78ab313`, confirmed live on `409marketplace.online`,
   `www.409marketplace.online`, and `marketplace409.vercel.app`.
-- Migrations: `20260823000000_add_rentec_financial_history_import.sql` and
-  `20260823010000_fix_rentec_financial_history_import_reason_column.sql` are both **applied to
-  Production** (`supabase db push --linked --yes`). The second migration is a targeted hotfix for a
-  SQL typo in the first (`x.reason` → `reasons.reason`) discovered when live approvals were failing
-  with Postgres error 42703 — see `DECISIONS.md`. Both were verified read-only-safe before applying
-  (audit table + one RPC function, no changes to `rental_payments`/`rent_charges`/settlements).
-- Environment configuration: unchanged from the last recorded snapshot (see git history of this file
-  for the last full `vercel env ls` names-only listing) — no environment variables were added,
-  removed, or changed during the import or chart rollout.
+- Migrations: unchanged since the last snapshot (still `20260823000000` and `20260823010000`, both
+  applied). The rollout and the `forge_rental_payment_adjustment` fix are both pure application code,
+  no new migrations.
+- Environment configuration — **updated this session** (see Roadmap Parking Lot for the decision
+  record): `ACCOUNT_BALANCE_REPOSITORY`, `FINANCIAL_ACCOUNT_REPOSITORY`, `FINANCIAL_EVENT_REPOSITORY`,
+  and `RENTAL_EMAIL_VERIFIED_DOMAIN` now exist in **Preview**, mirrored from their Production values
+  (all four are non-sensitive config, not secrets). `CRON_SECRET` and
+  `RENTAL_NOTIFICATION_DELIVERY_SECRET` now exist in **Preview** too, but as freshly generated values
+  distinct from Production (never reused across environments). `RENTEC_API_KEY`, `RESEND_API_KEY`,
+  `STRIPE_CONNECT_ACCOUNT_WEBHOOK_SECRET`, and `STRIPE_WEBHOOK_SECRET_PLATFORM` remain
+  Production-only **by explicit decision, not oversight** — see Roadmap Parking Lot.
 - Safety state, independently re-verified after every import batch and again at final verification:
   `rental_billing_settings` has 0 rows with `billing_enabled = true`; all 27 `rent_schedules` rows
   remain `collection_mode = 'external'`. FORGE billing was never activated by this work.
@@ -84,6 +88,37 @@ for genuinely open follow-up items — none of them block anything today.
   - Final chart totals were reconciled exactly against a direct database query
     (`SELECT sum(amount) ... GROUP BY transaction_kind, source_system`) before calling this done.
 
+## What Actually Happened (Workspace 2.0 rollout + roadmap items 1–2)
+
+- **Workspace 2.0 visual rollout**: all 21 remaining Rental Manager panels (everything besides the
+  Summary page, which was UI-01) converted to the same visual language — `rounded-3xl` card
+  sections, the `goldControlClassName` pressed-control treatment for primary actions, consistent
+  typography, and full `dark:` support (none of these panels had any dark-mode classes before).
+  Purely presentational — no handler, data-fetch, or business-logic changes anywhere. Shipped as 4
+  commits by nav group (Money, Portfolio, Operations, Controls). Every panel with existing tests
+  passes unchanged; `RentalReportsPanel.jsx` (1,200+ lines, previously zero test coverage) got a new
+  smoke test. Where a test asserted an exact className substring (lease status colors in
+  `RentalLeasePanel.jsx`), the literal string was preserved and only `dark:` variants were appended
+  alongside it. Full suite: same pre-existing `executeProgrammerCommand` failures only, nothing new.
+  **Not visually spot-checked live** (no authenticated browser session available this session) —
+  Jason should click through a few pages, especially Reports and Setup, when convenient.
+- **Roadmap item 1 resolved — `forge_rental_payment_adjustment` fix**: investigating the parked "2026
+  `forge_rental_payment` shows $0" note found the real, currently-live issue instead: a working DB
+  trigger (`reconcile_rental_payment_reversal_trigger`, already existed, see
+  `20260813003000_reconcile_rental_payment_reversals.sql`) posts an offsetting expense to
+  `financial_events` whenever a FORGE-collected payment is refunded or disputed, under
+  `source_system = 'forge_rental_payment_adjustment'` — but `buildRentalFinancialPerformance.js`'s
+  `SAFE_EXPENSE_SOURCES` never included it, so a refunded payment kept counting as pure income in the
+  Portfolio Performance chart. Confirmed live: a $1 test payment refunded during this session was
+  still showing as $1 collected with no offset before the fix. Fixed and reconciled against the live
+  database after deploy. Separately noted (not a bug, not touched): one `forge_rental_payment`
+  `financial_events` row references a `rental_payments` id that no longer exists in that table — the
+  row has full trigger-populated metadata (charge/lease/tenant/Stripe), so this looks like a test
+  payment whose source row was later deleted directly while its financial-ledger entry was correctly
+  left in place. Real financial history; left alone.
+- **Roadmap item 2 resolved — Preview/Production environment parity**: see Roadmap Parking Lot for
+  the decision record and Production State above for what changed.
+
 ## Active Worktrees
 
 - `.claude/worktrees/rentec-financial-history-resume` — branch `feat/rentec-financial-history-resume`,
@@ -128,18 +163,27 @@ figures only, and only what's already safe to show an owner-scoped UI.
 
 ## Roadmap Parking Lot
 
-- 2026 `financial_events` shows `$0` from `forge_rental_payment` despite a small number of real
-  `rental_payments` rows existing — flagged during the original audit, still not investigated. Worth
-  a short, separate look.
-- Preview/Production environment-variable parity gap — several Production-only secrets
-  (`RENTEC_API_KEY`, `CRON_SECRET`, Stripe webhook secrets, notification/repository config) are still
-  missing from Preview. Never became a blocker here because all real work ran directly against
-  Production per Jason's explicit instruction, but the underlying parity gap is unaddressed.
+- **Resolved**: 2026 `forge_rental_payment` accounting gap — see "What Actually Happened" above.
+- **Resolved**: Preview/Production environment-variable parity — Jason made an explicit two-part
+  decision (2026-08-24): (1) internal secrets/config with no third-party dependency
+  (`CRON_SECRET`, `RENTAL_NOTIFICATION_DELIVERY_SECRET`, `RENTAL_EMAIL_VERIFIED_DOMAIN`, and the
+  three `*_REPOSITORY` config vars) should be added to Preview now — done, via `vercel env add`,
+  non-sensitive config mirrored from Production, the two secrets freshly generated and distinct per
+  environment (never reused across environments). (2) Real third-party credentials
+  (`RENTEC_API_KEY`, `RESEND_API_KEY`, `STRIPE_CONNECT_ACCOUNT_WEBHOOK_SECRET`,
+  `STRIPE_WEBHOOK_SECRET_PLATFORM`) stay Production-only **by explicit decision** rather than being
+  reused across environments or provisioned as separate vendor-scoped test credentials — this avoids
+  giving any Preview deployment real Rentec/Stripe/Resend access. Verified each dependent code path
+  already fails closed with a clear error when its variable is absent (e.g.
+  `RentecApiClient` throws `"Rentec API key is not configured."` rather than crashing cryptically) —
+  no code changes were needed, this was purely a documentation + env-var task. If this policy is ever
+  revisited, it requires Jason's vendor-dashboard action (creating scoped test credentials in Rentec/
+  Stripe/Resend); no agent can do that.
 - Residual provenance-hardening gap (noted in RENTEC-01-REVIEW, not part of that task's scope): the
   `approve_rentec_financial_history_import` RPC can technically be called directly by an authenticated
   owner with arbitrary structurally-valid rows labeled `rentec_api`, because the pre-existing
   `financial_events` INSERT policy already allows an owner to insert arbitrary owner-scoped events —
   not a new privilege escalation, but Rentec provenance isn't cryptographically enforced at the DB
-  boundary. Still open.
+  boundary. Still open — next item being worked.
 - Simplifi CSV import (SIMPLIFI-01 design review, SIMPLIFI-02 build) — a fully separate track owned by
   Codex, untouched by any of this work. See `TASKS.md` for its current status.
