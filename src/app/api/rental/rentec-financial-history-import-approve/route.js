@@ -3,7 +3,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { createRentecApiClient } from "@/domains/rentec-rental-migration/rentec-api.client";
 import { buildRentecFinancialHistoryImportPreview } from "@/domains/rentec-financial-history-import/rentecFinancialHistoryImportPreview";
 import { fetchAllRentecFinancialHistoryTransactions } from "@/domains/rentec-financial-history-import/fetchAllRentecFinancialHistoryTransactions";
-import { isCommissionsCategory } from "@/domains/rentec-financial-history-import/rentecFinancialHistoryImportBatchPlan";
+import { isCommissionsCategory, isZeroOrNegativeAmount } from "@/domains/rentec-financial-history-import/rentecFinancialHistoryImportBatchPlan";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
 
 // The one route in this workflow that writes anything — deliberately separate from the preview
@@ -78,6 +78,15 @@ export async function POST(request) {
       // a request built by hand can never bypass the exclusion.
       if (isCommissionsCategory(fresh.categoryName)) {
         rejected.push({ sourceRecordId, reason: "This row's category (\"Commissions\") is held back from automatic import — it may already be recorded as a real-estate purchase under a different category. Requires manual review." });
+        continue;
+      }
+      // A $0 (or negative) row has no financial impact to record, and the approval RPC correctly
+      // rejects any non-positive amount as structurally invalid — but it fails closed on the whole
+      // batch if even one row is invalid, so a single $0 row would otherwise block every other row
+      // requested alongside it. Filtered out here (not just batchPlan) so a request built by hand
+      // can't reintroduce it and take down an entire batch.
+      if (isZeroOrNegativeAmount(fresh.financialEventRow.amount)) {
+        rejected.push({ sourceRecordId, reason: "This row has no positive amount (a $0 or negative transaction) and carries no financial impact to record." });
         continue;
       }
       approvedRows.push(fresh.financialEventRow);

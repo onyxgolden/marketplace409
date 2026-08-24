@@ -276,4 +276,39 @@ describe("rentec financial history import approve route", () => {
       expect(body.expenseCents).toBe(0);
     });
   });
+
+  describe("zero-amount exclusion (a $0 row would otherwise block the whole batch's RPC call)", () => {
+    it("rejects a $0.00 row even though fresh classification says safeMissing, and never calls the RPC for it alone", async () => {
+      const rpc = vi.fn();
+      createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: mockDatabase({ rpcImpl: rpc }) });
+      inventory.mockResolvedValueOnce(oneProperty);
+      financialHistoryTransactions.mockResolvedValueOnce({ page: 1, moreRecords: false, transactions: [rentecRow({ amountCents: 0 })] });
+      const response = await POST(request({ sourceRecordIds: ["500:none"] }));
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.insertedCount).toBe(0);
+      expect(rpc).not.toHaveBeenCalled();
+      expect(body.rejected).toEqual([{ sourceRecordId: "500:none", reason: expect.stringContaining("no positive amount") }]);
+    });
+
+    it("approves the rest of a batch while excluding only the $0.00 row within it", async () => {
+      const rpc = vi.fn(async () => ({ data: { status: "applied", insertedCount: 1, skippedCount: 0 }, error: null }));
+      createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: mockDatabase({ rpcImpl: rpc }) });
+      inventory.mockResolvedValueOnce(oneProperty);
+      financialHistoryTransactions.mockResolvedValueOnce({
+        page: 1, moreRecords: false,
+        transactions: [
+          rentecRow({ transactionId: "500", amountCents: 0 }),
+          rentecRow({ transactionId: "501", amountCents: 100000 }),
+        ],
+      });
+      const response = await POST(request({ sourceRecordIds: ["500:none", "501:none"] }));
+      const body = await response.json();
+      expect(body.insertedCount).toBe(1);
+      expect(body.rejected).toEqual([{ sourceRecordId: "500:none", reason: expect.stringContaining("no positive amount") }]);
+      const [, params] = rpc.mock.calls[0];
+      expect(params.p_rows).toHaveLength(1);
+      expect(params.p_rows[0].source_record_id).toBe("501:none");
+    });
+  });
 });

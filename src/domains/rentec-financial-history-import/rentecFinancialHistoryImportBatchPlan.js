@@ -16,12 +16,24 @@ export function isCommissionsCategory(categoryName) {
   return String(categoryName || "").split("(")[0].trim() === "Commissions";
 }
 
+// A $0.00 transaction carries no financial impact — nothing to record — but the reviewed classifier
+// doesn't filter these out (a zero amount trips neither the income- nor expense-direction conflict
+// check), so they surface as safeMissing. The approval RPC correctly rejects any row with a
+// non-positive amount as structurally invalid, and — because it fails closed on the *whole* batch
+// if any one row is invalid — a single $0 row anywhere in a year's batch would block that entire
+// year from ever being approved. Excluded here for the same reason Commissions rows are: never
+// silently written, and never allowed to block everything around it either.
+export function isZeroOrNegativeAmount(amount) {
+  return !(Number(amount) > 0);
+}
+
 const KIND_BUCKET_KEYS = Object.freeze({ income: "incomeCents", expense: "expenseCents" });
 
 export function buildRentecFinancialHistoryImportBatchPlan(previewItems = []) {
   const byYear = new Map();
   let heldBackCount = 0;
   let heldBackAmountCents = 0;
+  let excludedZeroAmountCount = 0;
 
   for (const item of previewItems) {
     if (item.classification !== "safeMissing") continue;
@@ -30,6 +42,11 @@ export function buildRentecFinancialHistoryImportBatchPlan(previewItems = []) {
     if (isCommissionsCategory(item.categoryName)) {
       heldBackCount += 1;
       heldBackAmountCents += cents;
+      continue;
+    }
+
+    if (isZeroOrNegativeAmount(item.financialEventRow.amount)) {
+      excludedZeroAmountCount += 1;
       continue;
     }
 
@@ -53,5 +70,6 @@ export function buildRentecFinancialHistoryImportBatchPlan(previewItems = []) {
   return Object.freeze({
     eligibleByYear: Object.freeze(eligibleByYear),
     heldBackCommissions: Object.freeze({ count: heldBackCount, amountCents: heldBackAmountCents }),
+    excludedZeroAmountCount,
   });
 }

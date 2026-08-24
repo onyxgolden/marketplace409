@@ -28,11 +28,11 @@ async function clickButtonAndFlush(button) {
   await act(async () => { button.click(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 }
 
-function previewBody({ eligibleByYear = [], heldBackCommissions = { count: 0, amountCents: 0 } } = {}) {
+function previewBody({ eligibleByYear = [], heldBackCommissions = { count: 0, amountCents: 0 }, excludedZeroAmountCount = 0 } = {}) {
   return {
     success: true, status: "preview_only",
     preview: { classificationCounts: { alreadyRepresented: 4128, safeMissing: 1290, ambiguous: 0, conflict: 63, unsupported: 199 } },
-    batchPlan: { eligibleByYear, heldBackCommissions },
+    batchPlan: { eligibleByYear, heldBackCommissions, excludedZeroAmountCount },
   };
 }
 
@@ -105,6 +105,16 @@ describe("RentecFinancialHistoryImportPanel preview", () => {
     expect(mounted.container.textContent).toContain("20 rows");
     expect(mounted.container.textContent).toContain("$766,730.19");
     expect(mounted.container.textContent).toContain("held back for manual review");
+  });
+
+  it("shows a note about excluded $0.00 rows without exposing any per-row detail", async () => {
+    const fetchMock = fetchRouter({ preview: previewBody({ excludedZeroAmountCount: 40 }) });
+    vi.stubGlobal("fetch", fetchMock);
+    mounted = mountPanel(<RentecFinancialHistoryImportPanel />);
+    await flush();
+    await clickButtonAndFlush(findButtonByText(mounted.container, "Run preview"));
+    expect(mounted.container.textContent).toContain("40 rows");
+    expect(mounted.container.textContent).toContain("$0.00 amount excluded automatically");
   });
 
   it("never renders a raw sourceRecordId, transaction id, or category name anywhere on the page", async () => {

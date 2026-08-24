@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRentecFinancialHistoryImportBatchPlan, isCommissionsCategory } from "./rentecFinancialHistoryImportBatchPlan.js";
+import { buildRentecFinancialHistoryImportBatchPlan, isCommissionsCategory, isZeroOrNegativeAmount } from "./rentecFinancialHistoryImportBatchPlan.js";
 
 function safeMissingItem({ financialEventRow, ...overrides } = {}) {
   return {
@@ -90,6 +90,43 @@ describe("buildRentecFinancialHistoryImportBatchPlan", () => {
     const plan = buildRentecFinancialHistoryImportBatchPlan([]);
     expect(plan.eligibleByYear).toEqual([]);
     expect(plan.heldBackCommissions).toEqual({ count: 0, amountCents: 0 });
+    expect(plan.excludedZeroAmountCount).toBe(0);
+  });
+
+  describe("zero/negative-amount exclusion (a $0 row anywhere would block its whole year's RPC call)", () => {
+    it("flags exactly zero and negative amounts, not small positive ones", () => {
+      expect(isZeroOrNegativeAmount(0)).toBe(true);
+      expect(isZeroOrNegativeAmount(-5)).toBe(true);
+      expect(isZeroOrNegativeAmount(0.01)).toBe(false);
+      expect(isZeroOrNegativeAmount(100)).toBe(false);
+    });
+
+    it("excludes a $0.00 safeMissing row from its year's batch entirely", () => {
+      const plan = buildRentecFinancialHistoryImportBatchPlan([
+        safeMissingItem({ sourceRecordId: "500:none", financialEventRow: { event_date: "2019-01-01", amount: 0, transaction_kind: "income" } }),
+        safeMissingItem({ sourceRecordId: "501:none", financialEventRow: { event_date: "2019-01-01", amount: 50, transaction_kind: "income" } }),
+      ]);
+      expect(plan.eligibleByYear).toEqual([
+        { year: "2019", count: 1, incomeCents: 5000, expenseCents: 0, otherCents: 0, sourceRecordIds: ["501:none"] },
+      ]);
+      expect(plan.excludedZeroAmountCount).toBe(1);
+    });
+
+    it("produces no yearly batch at all for a year whose only eligible row is $0", () => {
+      const plan = buildRentecFinancialHistoryImportBatchPlan([
+        safeMissingItem({ sourceRecordId: "500:none", financialEventRow: { event_date: "2020-01-01", amount: 0, transaction_kind: "income" } }),
+      ]);
+      expect(plan.eligibleByYear).toEqual([]);
+      expect(plan.excludedZeroAmountCount).toBe(1);
+    });
+
+    it("does not double-count a Commissions row that also happens to be $0 in both exclusion buckets", () => {
+      const plan = buildRentecFinancialHistoryImportBatchPlan([
+        safeMissingItem({ sourceRecordId: "500:none", categoryName: "Commissions", financialEventRow: { event_date: "2020-01-01", amount: 0, transaction_kind: "expense" } }),
+      ]);
+      expect(plan.heldBackCommissions).toEqual({ count: 1, amountCents: 0 });
+      expect(plan.excludedZeroAmountCount).toBe(0);
+    });
   });
 
   it("output is deeply frozen", () => {

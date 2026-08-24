@@ -106,6 +106,13 @@ export default function RentecFinancialHistoryImportPanel() {
       </p>
     ) : null}
 
+    {batchPlan?.excludedZeroAmountCount > 0 ? (
+      <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-700">
+        {batchPlan.excludedZeroAmountCount} row{batchPlan.excludedZeroAmountCount === 1 ? "" : "s"} with a $0.00 amount excluded automatically —
+        no financial impact to record. Not included in any batch below.
+      </p>
+    ) : null}
+
     {batchPlan ? <div className="mt-6 overflow-x-auto">
       <table className="w-full text-left text-sm">
         <thead><tr className="border-b"><th className="p-2">Year</th><th className="p-2">Rows</th><th className="p-2">Income</th><th className="p-2">Expense</th><th className="p-2">Status</th><th className="p-2"></th></tr></thead>

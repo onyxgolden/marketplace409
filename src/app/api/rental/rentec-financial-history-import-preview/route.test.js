@@ -177,5 +177,18 @@ describe("rentec financial history import preview route", () => {
       expect(body.batchPlan.eligibleByYear).toEqual([]);
       expect(body.batchPlan.heldBackCommissions).toEqual({ count: 1, amountCents: 11250000 });
     });
+
+    it("excludes a $0.00 safe-missing transaction out of the batch plan entirely (would otherwise block its whole year's approval)", async () => {
+      createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: mockDatabase() });
+      inventory.mockResolvedValueOnce(oneProperty);
+      financialHistoryTransactions.mockResolvedValueOnce({
+        page: 1, moreRecords: false,
+        transactions: [{ transactionId: "500", splitId: null, propertyId: "10", renterId: null, amountCents: 0, transactionDate: "2019-01-01", categoryId: "9", categoryName: "Rental Income", bankId: null, rentecOwnerId: null, vendorId: null, checkNum: null, pmtType: null, notes: null }],
+      });
+      const response = await POST(request());
+      const body = await response.json();
+      expect(body.batchPlan.eligibleByYear).toEqual([]);
+      expect(body.batchPlan.excludedZeroAmountCount).toBe(1);
+    });
   });
 });
