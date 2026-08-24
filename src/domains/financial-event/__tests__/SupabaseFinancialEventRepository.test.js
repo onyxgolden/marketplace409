@@ -86,6 +86,7 @@ describe("SupabaseFinancialEventRepository", () => {
         organization_id: null,
         property_id: "170-john",
         financial_account_id: null,
+        business_scope: null,
         event_date: "2026-07-01",
         description: "Rental Income",
         amount: 1500,

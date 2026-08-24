@@ -200,18 +200,31 @@ export class FinancialReadModelApplication {
     return ownerId;
   }
 
-  async buildWorkspace(ownerId = null) {
+  // Defaults every dashboard-facing builder to business-only activity — a caller must explicitly
+  // pass scope: "personal" (or "all" to get everything, tagged but unfiltered) to see anything
+  // else. Financial FORGE's headline numbers (KPIs, health, NOI) must never silently blend a
+  // personal Simplifi import into business totals just because a caller forgot to ask for scope.
+  resolveWorkspaceScope(scope) {
+    if (scope === undefined) return "business";
+    if (scope === "all") return null;
+    if (scope === "business" || scope === "personal" || scope === null) return scope;
+
+    throw new Error(`Unsupported financial workspace scope: ${scope}`);
+  }
+
+  async buildWorkspace(ownerId = null, { scope } = {}) {
     const resolvedOwnerId =
       ownerId || await this.resolveOwnerId();
 
     return this.financialWorkspaceQueryService.buildWorkspace(
       resolvedOwnerId,
+      { scope: this.resolveWorkspaceScope(scope) },
     );
   }
 
-  async buildDashboard() {
+  async buildDashboard({ scope } = {}) {
     const ownerId = await this.resolveOwnerId();
-    const workspace = await this.buildWorkspace(ownerId);
+    const workspace = await this.buildWorkspace(ownerId, { scope });
     const activityDashboard =
       this.readModelAdapter.buildDashboard(workspace);
 
@@ -239,8 +252,8 @@ export class FinancialReadModelApplication {
     });
   }
 
-  async buildFinancialDashboard() {
-    const { dashboard } = await this.buildDashboard();
+  async buildFinancialDashboard({ scope } = {}) {
+    const { dashboard } = await this.buildDashboard({ scope });
 
     return Object.freeze({
       type: "financial-dashboard",
@@ -248,9 +261,9 @@ export class FinancialReadModelApplication {
     });
   }
 
-  async buildBusinessDashboard() {
+  async buildBusinessDashboard({ scope } = {}) {
     const { workspace, dashboard } =
-      await this.buildDashboard();
+      await this.buildDashboard({ scope });
 
     const reports =
       this.readModelAdapter.buildReports(workspace);
@@ -262,8 +275,8 @@ export class FinancialReadModelApplication {
     });
   }
 
-  async buildInvestorDashboard() {
-    const { dashboard } = await this.buildDashboard();
+  async buildInvestorDashboard({ scope } = {}) {
+    const { dashboard } = await this.buildDashboard({ scope });
 
     return Object.freeze({
       type: "investor-dashboard",
@@ -273,8 +286,8 @@ export class FinancialReadModelApplication {
     });
   }
 
-  async buildKPIModel() {
-    const { dashboard } = await this.buildDashboard();
+  async buildKPIModel({ scope } = {}) {
+    const { dashboard } = await this.buildDashboard({ scope });
 
     return Object.freeze({
       type: "kpi-model",
@@ -282,8 +295,8 @@ export class FinancialReadModelApplication {
     });
   }
 
-  async buildExecutiveSummary() {
-    const { dashboard } = await this.buildDashboard();
+  async buildExecutiveSummary({ scope } = {}) {
+    const { dashboard } = await this.buildDashboard({ scope });
 
     return Object.freeze({
       type: "executive-summary",

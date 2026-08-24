@@ -24,6 +24,8 @@ export class ForgeFinancialDashboardApplication {
       properties: [],
       categories: [],
       transactions: [],
+      allScopeTransactions: [],
+      accounts: [],
       statusItems: this.buildStatusItems({
         loadState: "loading",
         metadata: DEFAULT_METADATA,
@@ -36,6 +38,8 @@ export class ForgeFinancialDashboardApplication {
     dashboard,
     reports,
     operationsPlan,
+    allScopeTransactions,
+    accounts,
   }) {
     const normalizedDashboard = dashboard || null;
     const normalizedReports = reports || null;
@@ -66,6 +70,9 @@ export class ForgeFinancialDashboardApplication {
       transactions:
         normalizedReports?.transactions ||
         [],
+      allScopeTransactions:
+        allScopeTransactions || [],
+      accounts: accounts || [],
       statusItems: this.buildStatusItems({
         loadState: "ready",
         metadata,
@@ -93,18 +100,35 @@ export class ForgeFinancialDashboardApplication {
 
   static async load({ fetcher = fetch } = {}) {
     try {
-      const readModelPayload = await this.fetchJson({
-        fetcher,
-        url:
-          "/api/financial/read-models?financial=true&business=true",
-        fallbackMessage: "Financial read model failed.",
-      });
-
-      const operationsPayload = await this.fetchJson({
-        fetcher,
-        url: "/api/financial/operations",
-        fallbackMessage: "Financial operations failed.",
-      });
+      const [
+        readModelPayload,
+        operationsPayload,
+        allScopePayload,
+        accountsPayload,
+      ] = await Promise.all([
+        this.fetchJson({
+          fetcher,
+          url:
+            "/api/financial/read-models?financial=true&business=true",
+          fallbackMessage: "Financial read model failed.",
+        }),
+        this.fetchJson({
+          fetcher,
+          url: "/api/financial/operations",
+          fallbackMessage: "Financial operations failed.",
+        }),
+        this.fetchJson({
+          fetcher,
+          url:
+            "/api/financial/read-models?business=true&scope=all",
+          fallbackMessage: "Financial activity failed.",
+        }),
+        this.fetchJson({
+          fetcher,
+          url: "/api/financial/accounts",
+          fallbackMessage: "Financial accounts failed.",
+        }),
+      ]);
 
       return this.buildReadyModel({
         dashboard:
@@ -116,6 +140,10 @@ export class ForgeFinancialDashboardApplication {
         operationsPlan:
           operationsPayload.data ||
           null,
+        allScopeTransactions:
+          allScopePayload.data?.business?.reports?.transactions ||
+          [],
+        accounts: accountsPayload.accounts || [],
       });
     } catch (error) {
       return this.buildErrorModel(error);

@@ -338,7 +338,7 @@ describe("FinancialReadModelApplication", () => {
     expect(currentOwnerId).toHaveBeenCalledOnce();
     expect(
       financialWorkspaceQueryService.buildWorkspace,
-    ).toHaveBeenCalledWith("owner-1");
+    ).toHaveBeenCalledWith("owner-1", { scope: "business" });
   });
 
   test("rejects read-model queries without an authenticated owner", async () => {

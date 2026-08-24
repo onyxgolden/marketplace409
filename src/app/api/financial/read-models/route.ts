@@ -26,6 +26,16 @@ export async function GET(request: Request) {
     const decisionId =
       searchParams.get("decisionId");
 
+    const requestedScope =
+      searchParams.get("scope");
+
+    const scope =
+      requestedScope === "business" ||
+      requestedScope === "personal" ||
+      requestedScope === "all"
+        ? requestedScope
+        : undefined;
+
     if (
       decisionOutcomeRequested &&
       (
@@ -60,30 +70,30 @@ export async function GET(request: Request) {
       searchParams.get("financial") ===
       "true"
         ? readModelApplication
-            .buildFinancialDashboard()
+            .buildFinancialDashboard({ scope })
         : Promise.resolve(null),
 
       searchParams.get("business") ===
       "true"
         ? readModelApplication
-            .buildBusinessDashboard()
+            .buildBusinessDashboard({ scope })
         : Promise.resolve(null),
 
       searchParams.get("investor") ===
       "true"
         ? readModelApplication
-            .buildInvestorDashboard()
+            .buildInvestorDashboard({ scope })
         : Promise.resolve(null),
 
       searchParams.get("kpi") === "true"
         ? readModelApplication
-            .buildKPIModel()
+            .buildKPIModel({ scope })
         : Promise.resolve(null),
 
       searchParams.get("executive") ===
       "true"
         ? readModelApplication
-            .buildExecutiveSummary()
+            .buildExecutiveSummary({ scope })
         : Promise.resolve(null),
 
       decisionOutcomeRequested

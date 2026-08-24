@@ -46,7 +46,7 @@ export class FinancialWorkspaceQueryService {
     Object.freeze(this);
   }
 
-  async buildWorkspace(ownerId) {
+  async buildWorkspace(ownerId, { scope = null } = {}) {
     if (!ownerId) {
       throw new Error("Owner id is required");
     }
@@ -54,7 +54,7 @@ export class FinancialWorkspaceQueryService {
     const events =
       await this.financialEventRepository.findByOwnerId(ownerId);
 
-    return this.aggregationService.aggregate(events);
+    return this.aggregationService.aggregate(events, { scope });
   }
 }
 
