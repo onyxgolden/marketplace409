@@ -18,6 +18,18 @@ function normalized(value) {
   return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function canonicalImportAccountType(value, accountName) {
+  const accountType = normalized(value || "other");
+  if (accountType === "credit") return "credit card";
+  if (accountType === "depository") {
+    const name = normalized(accountName);
+    if (/\bsavings?\b/.test(name)) return "savings";
+    if (/\bcash\b/.test(name)) return "cash";
+    return "checking";
+  }
+  return accountType;
+}
+
 function buildAccountMappings(requestedMappings, ownerAccounts) {
   const ownerAccountsById = new Map(
     (ownerAccounts ?? []).map((account) => [String(account.id), account]),
@@ -43,7 +55,10 @@ function buildAccountMappings(requestedMappings, ownerAccounts) {
 
     const ownerAccount = ownerAccountsById.get(accountId);
     if (!ownerAccount) throw new Error("A selected FORGE financial account does not belong to this owner.");
-    const accountType = normalized(requested.account_type || ownerAccount.type || "other");
+    const accountType = canonicalImportAccountType(
+      requested.account_type || ownerAccount.type || "other",
+      ownerAccount.name,
+    );
     if (!ACCOUNT_TYPES.has(accountType)) throw new Error(`Unsupported Simplifi account type: ${accountType}.`);
     mappings[label] = Object.freeze({ id: accountId, account_type: accountType, scope });
   }
