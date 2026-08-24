@@ -3,6 +3,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { createRentecApiClient } from "@/domains/rentec-rental-migration/rentec-api.client";
 import { buildRentecFinancialHistoryImportPreview } from "@/domains/rentec-financial-history-import/rentecFinancialHistoryImportPreview";
 import { fetchAllRentecFinancialHistoryTransactions } from "@/domains/rentec-financial-history-import/fetchAllRentecFinancialHistoryTransactions";
+import { isCommissionsCategory } from "@/domains/rentec-financial-history-import/rentecFinancialHistoryImportBatchPlan";
 
 // The one route in this workflow that writes anything — deliberately separate from the preview
 // route, same reasoning as rentec-payment-import-approve/route.js and rentec-commit/route.js. A
@@ -69,13 +70,26 @@ export async function POST(request) {
         });
         continue;
       }
+      // Held back even though fresh classification says safeMissing — see
+      // rentecFinancialHistoryImportBatchPlan.js: a "Commissions" row can collide with an existing
+      // legacy asset_purchase row under a different transaction_kind, and approving it risks a
+      // duplicate, miscategorized financial_events row. Enforced here (not just batchPlan/the UI) so
+      // a request built by hand can never bypass the exclusion.
+      if (isCommissionsCategory(fresh.categoryName)) {
+        rejected.push({ sourceRecordId, reason: "This row's category (\"Commissions\") is held back from automatic import — it may already be recorded as a real-estate purchase under a different category. Requires manual review." });
+        continue;
+      }
       approvedRows.push(fresh.financialEventRow);
     }
+
+    const requestedIncomeCents = approvedRows.filter((row) => row.transaction_kind === "income").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+    const requestedExpenseCents = approvedRows.filter((row) => row.transaction_kind === "expense").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
 
     if (approvedRows.length === 0) {
       return NextResponse.json({
         success: true, importBatchId, requestedCount: requestedSourceRecordIds.length,
         insertedCount: 0, skippedCount: 0, rejected,
+        incomeCents: 0, expenseCents: 0,
       });
     }
 
@@ -97,6 +111,10 @@ export async function POST(request) {
       success: true, importBatchId,
       requestedCount: requestedSourceRecordIds.length,
       insertedCount, skippedCount, rejected,
+      // Dollar totals of the rows actually sent to the RPC (== actually inserted, in the normal
+      // sequential-approval flow; a nonzero skippedCount means a small part of this reflects rows a
+      // concurrent request already inserted, not this call).
+      incomeCents: requestedIncomeCents, expenseCents: requestedExpenseCents,
     });
   } catch (error) {
     console.error("Rentec financial history import approval error", error);

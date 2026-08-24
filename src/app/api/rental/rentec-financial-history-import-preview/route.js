@@ -3,6 +3,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { createRentecApiClient } from "@/domains/rentec-rental-migration/rentec-api.client";
 import { buildRentecFinancialHistoryImportPreview } from "@/domains/rentec-financial-history-import/rentecFinancialHistoryImportPreview";
 import { fetchAllRentecFinancialHistoryTransactions } from "@/domains/rentec-financial-history-import/fetchAllRentecFinancialHistoryTransactions";
+import { buildRentecFinancialHistoryImportBatchPlan } from "@/domains/rentec-financial-history-import/rentecFinancialHistoryImportBatchPlan";
 
 // Read-only, end to end — never writes anything, mirrors the "preview only" contract already used
 // by rentec-payment-import-preview/route.js and reconciliation-preview/route.js. Unlike the payment
@@ -39,12 +40,19 @@ export async function POST() {
       propertyLabelById,
     });
 
+    // batchPlan is the shape the authenticated import-control UI actually drives off — one row per
+    // year with counts/dollar totals and the sourceRecordIds needed to approve it, with every
+    // "Commissions"-category row (real-estate-purchase collision risk — see
+    // rentecFinancialHistoryImportBatchPlan.js) already held back out of every year's batch.
+    const batchPlan = buildRentecFinancialHistoryImportBatchPlan(preview.items);
+
     return NextResponse.json({
       success: true, status: "preview_only",
       notice: "Preparatory preview only — no data was written. Approve the safe-missing rows separately to import them.",
       propertiesScanned: inventory.propertyIds.length,
       fetchSummary,
       preview,
+      batchPlan,
     });
   } catch (error) {
     console.error("Rentec financial history import preview error", error);

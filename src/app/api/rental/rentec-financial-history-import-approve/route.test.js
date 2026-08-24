@@ -210,4 +210,70 @@ describe("rentec financial history import approve route", () => {
     const response = await POST(request({ sourceRecordIds: ["500:none"] }));
     expect(response.status).toBe(500);
   });
+
+  describe("Commissions exclusion (RENTEC-01-FIX follow-up: real-estate-purchase collision risk)", () => {
+    it("rejects a Commissions-category row even though fresh classification says safeMissing, and never calls the RPC for it", async () => {
+      const rpc = vi.fn();
+      createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: mockDatabase({ rpcImpl: rpc }) });
+      inventory.mockResolvedValueOnce(oneProperty);
+      financialHistoryTransactions.mockResolvedValueOnce({
+        page: 1, moreRecords: false,
+        transactions: [rentecRow({ categoryName: "Commissions (Purchase Price)", categoryId: "1", amountCents: -11250000 })],
+      });
+      const response = await POST(request({ sourceRecordIds: ["500:none"] }));
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.insertedCount).toBe(0);
+      expect(rpc).not.toHaveBeenCalled();
+      expect(body.rejected).toEqual([{ sourceRecordId: "500:none", reason: expect.stringContaining("Commissions") }]);
+    });
+
+    it("approves a non-Commissions row in the same batch while rejecting the Commissions one", async () => {
+      const rpc = vi.fn(async () => ({ data: { status: "applied", insertedCount: 1, skippedCount: 0 }, error: null }));
+      createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: mockDatabase({ rpcImpl: rpc }) });
+      inventory.mockResolvedValueOnce(oneProperty);
+      financialHistoryTransactions.mockResolvedValueOnce({
+        page: 1, moreRecords: false,
+        transactions: [
+          rentecRow({ transactionId: "500", categoryName: "Commissions", categoryId: "1", amountCents: -11250000 }),
+          rentecRow({ transactionId: "501", categoryName: "Rental Income", categoryId: "9", amountCents: 100000 }),
+        ],
+      });
+      const response = await POST(request({ sourceRecordIds: ["500:none", "501:none"] }));
+      const body = await response.json();
+      expect(body.insertedCount).toBe(1);
+      expect(body.rejected).toEqual([{ sourceRecordId: "500:none", reason: expect.stringContaining("Commissions") }]);
+      const [, params] = rpc.mock.calls[0];
+      expect(params.p_rows).toHaveLength(1);
+      expect(params.p_rows[0].source_record_id).toBe("501:none");
+    });
+  });
+
+  describe("income/expense totals in the response", () => {
+    it("reports the income and expense dollar totals of the rows sent to the RPC", async () => {
+      createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: mockDatabase() });
+      inventory.mockResolvedValueOnce(oneProperty);
+      financialHistoryTransactions.mockResolvedValueOnce({
+        page: 1, moreRecords: false,
+        transactions: [
+          rentecRow({ transactionId: "500", categoryName: "Rental Income", categoryId: "9", amountCents: 100000 }),
+          rentecRow({ transactionId: "501", categoryName: "Repairs", categoryId: "4", amountCents: -20000 }),
+        ],
+      });
+      const response = await POST(request({ sourceRecordIds: ["500:none", "501:none"] }));
+      const body = await response.json();
+      expect(body.incomeCents).toBe(100000);
+      expect(body.expenseCents).toBe(20000);
+    });
+
+    it("reports zero income/expense totals when nothing is approved", async () => {
+      createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: mockDatabase() });
+      inventory.mockResolvedValueOnce(oneProperty);
+      financialHistoryTransactions.mockResolvedValueOnce({ page: 1, moreRecords: false, transactions: [] });
+      const response = await POST(request({ sourceRecordIds: ["500:none"] }));
+      const body = await response.json();
+      expect(body.incomeCents).toBe(0);
+      expect(body.expenseCents).toBe(0);
+    });
+  });
 });

@@ -148,4 +148,34 @@ describe("rentec financial history import preview route", () => {
     const response = await POST(request());
     expect(response.status).toBe(500);
   });
+
+  describe("batchPlan (drives the authenticated import-control UI)", () => {
+    it("groups a safe-missing transaction into its year's batch", async () => {
+      createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: mockDatabase() });
+      inventory.mockResolvedValueOnce(oneProperty);
+      financialHistoryTransactions.mockResolvedValueOnce({
+        page: 1, moreRecords: false,
+        transactions: [{ transactionId: "500", splitId: null, propertyId: "10", renterId: "7", amountCents: 100000, transactionDate: "2021-04-01", categoryId: "9", categoryName: "Rental Income", bankId: null, rentecOwnerId: null, vendorId: null, checkNum: null, pmtType: null, notes: null }],
+      });
+      const response = await POST(request());
+      const body = await response.json();
+      expect(body.batchPlan.eligibleByYear).toEqual([
+        { year: "2021", count: 1, incomeCents: 100000, expenseCents: 0, otherCents: 0, sourceRecordIds: ["500:none"] },
+      ]);
+      expect(body.batchPlan.heldBackCommissions).toEqual({ count: 0, amountCents: 0 });
+    });
+
+    it("holds back a Commissions-category safe-missing transaction out of the batch plan entirely", async () => {
+      createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: mockDatabase() });
+      inventory.mockResolvedValueOnce(oneProperty);
+      financialHistoryTransactions.mockResolvedValueOnce({
+        page: 1, moreRecords: false,
+        transactions: [{ transactionId: "500", splitId: null, propertyId: "10", renterId: null, amountCents: -11250000, transactionDate: "2018-01-01", categoryId: "1", categoryName: "Commissions (Purchase Price)", bankId: null, rentecOwnerId: null, vendorId: null, checkNum: null, pmtType: null, notes: null }],
+      });
+      const response = await POST(request());
+      const body = await response.json();
+      expect(body.batchPlan.eligibleByYear).toEqual([]);
+      expect(body.batchPlan.heldBackCommissions).toEqual({ count: 1, amountCents: 11250000 });
+    });
+  });
 });
