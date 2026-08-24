@@ -39,7 +39,7 @@ describe("Rental Manager route", () => {
   it("loads the persisted setup records needed by the lease form", async () => {
     const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
-      order: vi.fn().mockResolvedValue({ data, error: null }) });
+      order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
     const tables = { rent_charges: result([{ id: "charge_1" }]), rental_units: result([{ id: "unit_1" }]),
       rental_tenants: result([{ id: "tenant_1" }]), rent_schedules: result([{ id: "schedule_1", status: "draft" }]),
       rental_maintenance_requests: result([{ id: "request_1", status: "submitted" }]),
@@ -66,10 +66,45 @@ describe("Rental Manager route", () => {
       depositTransactions: [{ id: "deposit_tx_1", deposit_id: "deposit_1" }], inspections: [{ id: "inspection_1", status: "draft" }],
       inspectionItems: [{ id: "item_1", inspection_id: "inspection_1" }], inspectionAcknowledgements: [],leases:[{id:"lease_1",status:"active"}],leaseMemberships:[{lease_id:"lease_1",tenant_id:"tenant_1"}],leaseChanges:[{id:"change_1",status:"draft"}],lateFeeRules:[{id:"rule_1",status:"active"}],lateFeeAssessments:[],contractors:[{id:"contractor_1",business_name:"Reliable Plumbing"}],workOrders:[{id:"work_1",request_id:"request_1"}],workEvents:[{id:"event_1",work_order_id:"work_1"}],leasePreparations:[{id:"prep_1",lease_id:"lease_1",current_version:1}],leasePreparationVersions:[{preparation_id:"prep_1",version_number:1}],autopayEnrollments:[{id:"autopay_1",status:"setup_required"}],insurancePolicies:[{id:"policy_1",status:"pending_verification"}],animals:[{id:"animal_1",classification:"pet",approval_status:"requested"}],supportCases:[{id:"case_1",case_type:"failed_payment",status:"open"}], billingEnabled: true, financialEvents: [{ event_date: "2026-08-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec", status: "active", is_deleted: false }] });
   });
+  // Regression test for a real production bug: financial_events for a long-tenured owner can
+  // exceed PostgREST's default 1000-row page size, and an unbounded .select() ordered by
+  // event_date ascending silently truncates to the OLDEST 1000 rows — making the Portfolio
+  // performance chart's most recent years (the ones a landlord actually cares about) vanish.
+  it("returns financial events beyond PostgREST's 1000-row default page cap, paginating through every page", async () => {
+    const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
+      order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
+    const firstPage = Array.from({ length: 1000 }, (_, index) => ({
+      event_date: "2025-01-01", amount: "1.00", transaction_kind: "income", source_system: "rentec_api",
+      status: "active", is_deleted: false, __page: 1, __index: index,
+    }));
+    const secondPage = [{ event_date: "2026-08-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec_api", status: "active", is_deleted: false, __page: 2 }];
+    const financialEventsChain = {
+      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValueOnce({ data: firstPage, error: null }).mockResolvedValueOnce({ data: secondPage, error: null }),
+    };
+    const tables = { rent_charges: result([]), rental_units: result([]), rental_tenants: result([]), rent_schedules: result([]),
+      rental_maintenance_requests: result([]), rental_notification_outbox: result([]), rental_payments: result([]),
+      rental_settlements: result([]), rental_security_deposits: result([]), rental_security_deposit_transactions: result([]),
+      rental_inspections: result([]), rental_inspection_items: result([]), rental_inspection_acknowledgements: result([]),
+      rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
+      rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_contractors: result([]),
+      rental_maintenance_work_orders: result([]), rental_maintenance_work_events: result([]), rental_lease_preparations: result([]),
+      rental_lease_preparation_versions: result([]), rental_autopay_enrollments: result([]), renters_insurance_policies: result([]),
+      rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null),
+      financial_events: financialEventsChain };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
+      supabaseClient: { from: vi.fn((table) => tables[table]) } });
+    const response = await GET(); const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.financialEvents).toHaveLength(1001);
+    expect(body.financialEvents.some((event) => event.__page === 2)).toBe(true);
+  });
   it("dashboard collectionSummary distinguishes FORGE-collectible from externally-managed open charges", async () => {
     const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
-      order: vi.fn().mockResolvedValue({ data, error: null }) });
+      order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
     const charges = [
       { id: "charge_forge", schedule_id: "schedule_forge", amount_cents: 20000, paid_amount_cents: 0 },
       { id: "charge_external", schedule_id: "schedule_external", amount_cents: 150000, paid_amount_cents: 0 },
@@ -101,7 +136,7 @@ describe("Rental Manager route", () => {
   it("attaches signed photo URLs to units and tenants that have one, and null otherwise", async () => {
     const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
-      order: vi.fn().mockResolvedValue({ data, error: null }) });
+      order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
     const tables = { rent_charges: result([]), rental_units: result([{ id: "unit_1", photo_bucket: "rental-photos", photo_object_path: "owner_1/units/unit_1/x.jpg" }]),
       rental_tenants: result([{ id: "tenant_1", photo_bucket: null, photo_object_path: null }]), rent_schedules: result([]),
       rental_maintenance_requests: result([]), rental_notification_outbox: result([]), rental_payments: result([]), rental_settlements: result([]),

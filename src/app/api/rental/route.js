@@ -4,6 +4,7 @@ import { createRentalUnit } from "@/domains/rental-unit";
 import { createRentalTenant } from "@/domains/rental-tenant";
 import { createRentalLease } from "@/domains/rental-lease";
 import { createRentSchedule } from "@/domains/rent-schedule";
+import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
 
 function badRequest(message) { return NextResponse.json({ error: message }, { status: 400 }); }
 function now() { return new Date().toISOString(); }
@@ -63,14 +64,18 @@ export async function GET() {
       authenticated.supabaseClient.from("renters_insurance_policies").select("*").order("expiration_date",{ascending:true}),
       authenticated.supabaseClient.from("rental_animals").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_support_cases").select("*").order("opened_at",{ascending:false}),
-      // Read-only, owner-scoped via RLS like every table above. Used only to build the Rental
-      // Summary's Portfolio performance chart (collected vs. rental operating expenses) — never
-      // written to from this route, and never used to alter billing, collection authority, or any
-      // charge/payment/reconciliation behavior. See buildRentalFinancialPerformance.js for the
-      // source_system scoping this powers.
-      authenticated.supabaseClient.from("financial_events")
-        .select("event_date, amount, transaction_kind, source_system, status, is_deleted")
-        .order("event_date", { ascending: true }),
+      // Read-only, owner-scoped explicitly (not just via RLS) like every table above. Used only to
+      // build the Rental Summary's Portfolio performance chart (collected vs. rental operating
+      // expenses) — never written to from this route, and never used to alter billing, collection
+      // authority, or any charge/payment/reconciliation behavior. See
+      // buildRentalFinancialPerformance.js for the source_system scoping this powers. Paginated via
+      // fetchAllOwnerFinancialEvents — a plain unbounded .select() is silently capped by
+      // PostgREST's default page size (1000 rows), which for an owner with more financial_events
+      // history than that (this owner has 5,600+) would truncate to only the oldest rows when
+      // ordered by event_date ascending, making recent years vanish from the chart entirely.
+      fetchAllOwnerFinancialEvents(authenticated.supabaseClient, authenticated.user.id, {
+        columns: "event_date, amount, transaction_kind, source_system, status, is_deleted",
+      }).then((data) => ({ data, error: null })).catch((caught) => ({ data: null, error: caught })),
     ]);
     const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || autopayResult.error || insurancePolicyResult.error || animalResult.error || supportResult.error || financialEventResult.error;
     if (error) throw error;
