@@ -21,8 +21,8 @@ const tables={
   rental_contractor_payments:[{id:"p1",contractor_id:"c1",property_id:"kent",paid_at:"2026-02-09",amount_cents:72080}],
   rental_1099_reviews:[],
 };
-function financialEventsSelectResult(){const result=Promise.resolve({data:tables.financial_events,error:null});result.neq=(column,value)=>Promise.resolve({data:tables.financial_events.filter(row=>row[column]!==value),error:null});return result;}
-describe("rental reports route",()=>{beforeEach(()=>{vi.clearAllMocks();from.mockImplementation(table=>table==="financial_events"?{select:vi.fn(()=>financialEventsSelectResult())}:{select:vi.fn(async()=>({data:tables[table],error:null}))});});
+function financialEventsChain(){const chain={select:vi.fn(()=>chain),eq:vi.fn(()=>chain),range:vi.fn(()=>Promise.resolve({data:tables.financial_events,error:null}))};return chain;}
+describe("rental reports route",()=>{beforeEach(()=>{vi.clearAllMocks();from.mockImplementation(table=>table==="financial_events"?financialEventsChain():{select:vi.fn(async()=>({data:tables[table],error:null}))});});
 it("returns the owner rental operating report across all properties by default",async()=>{const response=await GET(new Request("https://example.test/api/rental/reports"));const body=await response.json();expect(response.status).toBe(200);expect(body.report.summary.activeLeases).toBe(2);expect(from).toHaveBeenCalledWith("rental_leases");});
 it("exports the rent roll as a downloadable CSV",async()=>{const response=await GET(new Request("https://example.test/api/rental/reports?format=csv"));expect(response.headers.get("content-type")).toContain("text/csv");expect(response.headers.get("content-disposition")).toContain("forge-rental-rent-roll");expect(await response.text()).toContain('"Main"');});
 it("returns the vacant units report by key",async()=>{const response=await GET(new Request("https://example.test/api/rental/reports?report=vacant-units"));const body=await response.json();expect(response.status).toBe(200);expect(body.report.summary).toMatchObject({vacantUnitCount:0,totalUnitCount:2});});
