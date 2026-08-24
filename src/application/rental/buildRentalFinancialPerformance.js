@@ -50,6 +50,11 @@ const SAFE_EXPENSE_SOURCES = new Set(["rentec", "rentec_api", "manual", "forge_r
 function isSafeRentalEvent(event) {
   if (!event || event.status === "inactive" || event.status === "deleted" || event.is_deleted === true) return false;
   if (!event.event_date) return false;
+  // Defense in depth: SAFE_INCOME_SOURCES/SAFE_EXPENSE_SOURCES already exclude
+  // "quicken_simplifi_csv" entirely, so no personal Simplifi row reaches here today, but a
+  // personal-scope row must never count toward rental performance even if a future source is
+  // added to those allowlists without remembering this.
+  if (event.business_scope === "personal") return false;
   if (event.transaction_kind === "income") return SAFE_INCOME_SOURCES.has(event.source_system);
   if (event.transaction_kind === "expense") return SAFE_EXPENSE_SOURCES.has(event.source_system);
   return false;

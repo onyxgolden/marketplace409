@@ -83,7 +83,8 @@ export async function POST(request) {
     if (fresh.preview_hash !== expectedPreviewHash) {
       return NextResponse.json({ error: "The file, mappings, or source evidence changed. Run a new preview before approving." }, { status: 409 });
     }
-    if (rows.some((row) => !row || row.classification !== "safe_missing" || !row.approvable)) {
+    if (rows.some((row) => !row || !row.approvable
+      || (row.classification !== "safe_missing" && row.classification !== "personal"))) {
       return NextResponse.json({ error: "One or more selected rows are no longer safe to import. Run a new preview." }, { status: 409 });
     }
 
@@ -104,6 +105,8 @@ export async function POST(request) {
         capitalized: row.capitalized,
         classification: row.classification,
         description: row.payee,
+        account_scope: row.account_scope,
+        simplifi_category: row.category,
       })),
     });
     if (error) throw error;

@@ -74,7 +74,7 @@ export async function GET() {
       // history than that (this owner has 5,600+) would truncate to only the oldest rows when
       // ordered by event_date ascending, making recent years vanish from the chart entirely.
       fetchAllOwnerFinancialEvents(authenticated.supabaseClient, authenticated.user.id, {
-        columns: "event_date, amount, transaction_kind, source_system, status, is_deleted",
+        columns: "event_date, amount, transaction_kind, source_system, status, is_deleted, business_scope",
       }).then((data) => ({ data, error: null })).catch((caught) => ({ data: null, error: caught })),
     ]);
     const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || autopayResult.error || insurancePolicyResult.error || animalResult.error || supportResult.error || financialEventResult.error;

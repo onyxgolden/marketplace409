@@ -45,17 +45,18 @@ export function classifySimplifiImportPreview(rows, options = {}) {
     const transactionKind = treatment === "asset_purchase"
       ? "asset_purchase"
       : treatment === "transfer" ? "transfer" : row.amount_cents >= 0 ? "income" : "expense";
+    // Every guard below (mapping, excluded-account, pending, category, exclude-treatment,
+    // transfer-treatment, in-file dedup) applies uniformly to business, personal, and mixed
+    // accounts alike — a personal or mixed-account row is only as safe to import as a business
+    // one once it has cleared the exact same checks. Only AFTER these shared guards do business
+    // rows continue on into Rentec/Plaid cash-movement overlap detection, and personal/mixed rows
+    // fall through to the "personal" bucket.
     if (!row.account_mapping_id) {
       classification = "unsupported";
       reason = "Account mapping is required.";
-    } else if (row.account_scope === "personal" || row.account_scope === "excluded") {
-      classification = "personal";
-      reason = row.account_scope === "excluded"
-        ? "This account is explicitly excluded from import."
-        : "Personal activity is excluded from business reports.";
-    } else if (row.account_scope === "mixed") {
-      classification = "ambiguous";
-      reason = "Mixed-account activity requires transaction-level business or personal review.";
+    } else if (row.account_scope === "excluded") {
+      classification = "unsupported";
+      reason = "This account is explicitly excluded from import.";
     } else if (row.status === "pending") {
       classification = "pending";
       reason = "Pending transactions cannot be approved.";
@@ -67,8 +68,9 @@ export function classifySimplifiImportPreview(rows, options = {}) {
       reason = "This category is explicitly excluded from import.";
     } else if (treatment === "transfer") {
       // A transfer-treated row (account-to-account movement, credit-card payment, or either side
-      // of a paired transfer) must never be approvable, and must never be evaluated for Rentec/
-      // Plaid overlap or safe_missing status — it is money moving, not income or an expense.
+      // of a paired transfer) must never be approvable as income or expense — for ANY account
+      // scope, business or personal — and must never be evaluated for Rentec/Plaid overlap or
+      // safe_missing/personal status; it is money moving, not income or an expense.
       // classification="transfer_pair" reuses the schema's existing reserved enum value rather than
       // introducing a new one; approvable stays false below regardless of any future overlap logic.
       classification = "transfer_pair";
@@ -76,6 +78,17 @@ export function classifySimplifiImportPreview(rows, options = {}) {
     } else if (existingFingerprints.has(row.fingerprint)) {
       classification = "already_imported";
       reason = "This exact Simplifi transaction is already imported.";
+    } else if (row.account_scope === "personal" || row.account_scope === "mixed") {
+      // Personal accounts are imported (not blocked) so they're available for personal net-worth
+      // and cash-flow reporting, but never touch business/rental totals — see business_scope below.
+      // Mixed accounts default to personal for the same reason: relabeling individual transactions
+      // to business is a future editable classification, not a prerequisite to importing history.
+      // account_scope is preserved on the row (via the ...row spread) so a mixed-account default
+      // can still be told apart from a genuinely personal account later.
+      classification = "personal";
+      reason = row.account_scope === "mixed"
+        ? "Mixed-account activity is imported as personal by default; relabel individual transactions to business later."
+        : "Personal activity is tracked for personal reporting but excluded from business reports.";
     } else if (rentecOverlapFingerprints.has(row.fingerprint)) {
       classification = "overlap_rentec";
       reason = "Rentec already represents this cash movement.";
@@ -104,6 +117,11 @@ export function classifySimplifiImportPreview(rows, options = {}) {
         reason = "Cleared, mapped, and not represented by existing evidence.";
       }
     }
+    // business_scope is the durable, editable field financial_events actually persists: every
+    // approvable row is "business" except classification="personal", which must never contribute
+    // to NOI, business profit, or tax totals — enforced again below by forcing affects_noi/
+    // capitalized false, not just by classification string.
+    const businessScope = classification === "personal" ? "personal" : "business";
     return Object.freeze({
       ...row,
       classification,
@@ -111,9 +129,10 @@ export function classifySimplifiImportPreview(rows, options = {}) {
       normalized_category: normalizedCategory,
       category_treatment: treatment,
       transaction_kind: transactionKind,
-      affects_noi: treatment === "operating",
-      capitalized: treatment === "asset_purchase",
-      approvable: classification === "safe_missing",
+      affects_noi: businessScope === "personal" ? false : treatment === "operating",
+      capitalized: businessScope === "personal" ? false : treatment === "asset_purchase",
+      business_scope: businessScope,
+      approvable: classification === "safe_missing" || classification === "personal",
     });
   });
 

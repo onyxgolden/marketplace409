@@ -79,6 +79,21 @@ describe("buildRentalFinancialPerformance — safe source scoping", () => {
     const august = result.series.find((point) => point.key === "2026-08");
     expect(august.collectedCents).toBe(0);
   });
+
+  it("excludes business_scope=personal even from an otherwise-safe source, as defense in depth", () => {
+    // Belt-and-suspenders: quicken_simplifi_csv is already outside SAFE_INCOME_SOURCES/
+    // SAFE_EXPENSE_SOURCES, so no personal Simplifi row reaches this today, but a personal-scope
+    // row must never count toward rental performance even from a source that IS in the allowlist.
+    const events = [
+      event({ event_date: "2026-08-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec", business_scope: "personal" }),
+      event({ event_date: "2026-08-06", amount: "200.00", transaction_kind: "expense", source_system: "manual", business_scope: "personal" }),
+      event({ event_date: "2026-08-07", amount: "700.00", transaction_kind: "income", source_system: "rentec", business_scope: "business" }),
+    ];
+    const result = buildRentalFinancialPerformance(events, { today: "2026-08-13", period: { type: "sixMonths" } });
+    const august = result.series.find((point) => point.key === "2026-08");
+    expect(august.collectedCents).toBe(70000);
+    expect(august.expensesCents).toBe(0);
+  });
 });
 
 describe("buildRentalFinancialPerformance — month alignment and net presentation", () => {
