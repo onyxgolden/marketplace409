@@ -35,7 +35,7 @@ Coordination rules:
 
 | ID | Blocker | Needed From | Safe Work That Can Continue |
 |----|---------|-------------|------------------------------|
-| RENTEC-02 | Real sanitized preview awaits either `RENTEC_API_KEY` in Preview or explicit Production preview authorization | Jason | Prepare rollout plan; do not migrate/deploy/import yet |
+| _(none)_ | | | |
 
 ## Completed
 
@@ -43,7 +43,9 @@ Keep only the most recent 20 completed tasks here; git history is the archive.
 
 | ID | Task | Owner | Branch | Commit | Completed UTC |
 |----|------|-------|--------|--------|---------------|
+| UI-01-HOTFIX | Fix two live bugs found post-deploy: chart missing `rentec_api` rows, dashboard route hitting the 1000-row PostgREST pagination cap | Claude | `main` (direct, no feature branch) | `341221bfa`, `7c6a05d92` | 2026-08-23 |
+| UI-01 | Portfolio Performance chart: data coverage + metallic treatment — rebased onto `main` and deployed to Production (previously built but deliberately left unpushed pending approval) | Claude | `feat/forge-workspace-2-rental-summary` → `main` | `44bbda68e` | 2026-08-23 |
+| RENTEC-02 | Import all available Rentec financial history (2014–2026) into Production `financial_events`: 1,230 rows, $703,914.10 income / $499,756.33 expense, via a purpose-built authenticated import-control UI, approved year-by-year directly against Production per Jason's explicit instruction | Claude | `feat/rentec-financial-history-resume` → `main` | `0e8d190f3`..`3289f2670` | 2026-08-23 |
 | RENTEC-01-FIX | Correct three material Rentec history findings; targeted Codex follow-up approved | Claude / Codex review | `feat/rentec-financial-history-resume` | `7817b6c09` | 2026-08-23 |
 | RENTEC-01-REVIEW | One-time architecture/accounting/idempotency review; three material fixes required | Codex | `chore/agent-handoff` | `f8a4ef554` | 2026-08-23 |
 | HANDOFF-01 | Create shared agent-handoff docs | Claude | `chore/agent-handoff` | `430f6f70f` | 2026-08-23 |
-| UI-01 | Portfolio Performance chart: data coverage + metallic treatment | Claude | `feat/forge-workspace-2-rental-summary` | `8022b0b0e` | 2026-08-23 |
