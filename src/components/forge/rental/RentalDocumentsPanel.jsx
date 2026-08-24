@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { compressImageFile } from "./compressImageFile";
 
 const label = (value) => value?.replaceAll("_", " ") || "—";
 const identity = (value) => value;
@@ -73,10 +74,21 @@ export default function RentalDocumentsPanel({ initialData = null, dataScope = i
     form.set("tenantVisible", form.get("tenantVisible") === "on" ? "true" : "false");
     if (!form.get("leaseId") && propertyId) form.set("propertyId", propertyId);
     if (versionOf) form.set("versionOfDocumentId", versionOf.id);
+    const originalFile = form.get("file");
+    if (originalFile instanceof File) {
+      // A phone-camera photo of a paper document routinely exceeds the platform's request body
+      // limit before it ever reaches this app's own (larger) file-size check. Downscaling/
+      // re-encoding client-side fixes the actual failure mode without lowering what the app
+      // otherwise supports for normal PDFs and already-reasonable images.
+      form.set("file", await compressImageFile(originalFile));
+    }
     try {
       const response = await fetch("/api/rental/documents", { method: "POST", body: form });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error);
+      // A platform-level rejection (e.g. 413 Request Entity Too Large) returns plain text, not
+      // JSON -- response.json() would throw its own confusing parse error instead of surfacing
+      // what actually happened.
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error || (response.status === 413 ? "That file is too large to upload, even after compression." : `Upload failed (${response.status}).`));
       element.reset();
       await load();
       setShowUpload(false);
