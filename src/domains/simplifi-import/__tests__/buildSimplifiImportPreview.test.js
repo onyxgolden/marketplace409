@@ -44,6 +44,19 @@ describe("buildSimplifiImportPreview", () => {
     ]);
   });
 
+  it("translates platform credit and depository account types into the import vocabulary", () => {
+    const result = preview({
+      ownerAccounts: [
+        { id: "forge_checking", name: "Business Savings", type: "depository" },
+        { id: "forge_card", name: "Chase Credit Card", type: "credit" },
+      ],
+    });
+
+    expect(result.rows[0].account_type).toBe("savings");
+    expect(result.rows[1].account_type).toBe("credit card");
+    expect(result.totals.safe_missing.count).toBe(2);
+  });
+
   it("does not permit a cross-owner or invented FORGE account mapping", () => {
     expect(() => preview({
       requestedMappings: [{ simplifi_account_name: "Checking", forge_account_id: "other_owner_account" }],
