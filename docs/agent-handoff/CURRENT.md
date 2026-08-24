@@ -2,7 +2,38 @@
 
 ## Last Updated
 
-2026-08-24T04:35Z — Claude Code (Sonnet 5) — branch `chore/agent-handoff`.
+2026-08-24T05:40Z — Claude Code (Sonnet 5) — branch `chore/agent-handoff`.
+
+## ACTIVE INCIDENT — Simplifi CSV import is broken in Production (regression from `20260824010000`)
+
+**`approve_simplifi_csv_import()` (Codex's Simplifi track, `src/app/api/financial/simplifi-import-approve`)
+fails every call with Postgres `42501: new row violates row-level security policy for table
+"financial_events"`.** Confirmed via `vercel logs` on the live Production deployment
+(`www.409marketplace.online`, 2026-08-24 05:10–05:23 UTC): several `simplifi-import-preview` calls
+succeed (200, read-only), but every `simplifi-import-approve` call either 409s (stale preview hash,
+expected/safe) or 500s with the RLS error above. **Zero Simplifi rows exist anywhere in Production** —
+`financial_events` has none with `source_system = 'quicken_simplifi_csv'`, and `simplifi_import_batches`
+/ `simplifi_account_mappings` / `simplifi_import_rows` are all completely empty (the whole approval
+runs in one transaction, so the RLS failure rolls back the batch/row audit inserts too).
+
+**Root cause, mine**: `20260824010000_harden_financial_events_trusted_source_provenance.sql`
+(2026-08-24, this session) restricted the owner-scoped INSERT/UPDATE/DELETE policies on
+`financial_events` to `source_system = 'manual'` only. I based that migration on a "every write path
+into financial_events" grep run from a git branch that did not yet contain the Simplifi domain
+(`feat/rentec-financial-history-resume`, built independently and in parallel by Codex on
+`feat/simplifi-csv-import`) — so I never saw that `approve_simplifi_csv_import()` is `SECURITY
+INVOKER` and writes `source_system = 'quicken_simplifi_csv'` directly, relying on the exact policy I
+tightened. The Rentec RPC was deliberately promoted to `SECURITY DEFINER` in that same migration for
+this reason; the Simplifi RPC was never touched and is now blocked.
+
+**Not fixed.** Explicitly out of scope for the verification task that found this — read-only, no
+code/data/deploy changes authorized. Recommended fix, for whoever picks this up: promote
+`approve_simplifi_csv_import()` to `SECURITY DEFINER` with `set row_security = off`, matching the
+Rentec RPC's pattern — its own validation (owner match, per-row shape/semantics, account
+ownership/active checks, idempotency) is already independently thorough and does not depend on RLS.
+Also decide whether to merge PR #5 (`fix(financial): hold mixed Simplifi accounts for review` +
+its test, not yet merged into `main` as of this writing) before anyone retries an approval — it adds
+the "Mixed accounts held for manual review" fail-safe the import currently lacks.
 
 ## Current Objective
 
@@ -12,7 +43,9 @@ from the previous version of this file are complete.** All available Rentec fina
 page) now uses the Workspace 2.0 visual language with full dark-mode support; the
 `forge_rental_payment_adjustment` accounting gap is fixed; Preview/Production environment parity is
 resolved per Jason's explicit policy; and `financial_events`' trusted-source provenance is now
-enforced at the database level, not just by convention. Nothing is currently blocked.
+enforced at the database level, not just by convention. **See ACTIVE INCIDENT above** — the
+provenance-hardening migration has an unintended side effect that currently blocks Codex's separate
+Simplifi CSV import track.
 
 ## Production State
 
@@ -143,6 +176,41 @@ enforced at the database level, not just by convention. Nothing is currently blo
   check` expressions and `prosecdef`/`proconfig` values in git history of this session if needed.
   Pure migration, zero application code changed, so no redeploy was required.
 
+## What Actually Happened (Simplifi Production import verification — read-only)
+
+Jason asked for a 9-point read-only verification of a supposedly "completed" Simplifi Production
+import, explicitly no writes. Every point resolved to the same root fact: **no Simplifi import ever
+succeeded** — see ACTIVE INCIDENT above for the mechanism. Per-item results:
+
+1. Imported `financial_events` count/signed total: 0 rows, $0.00.
+2. Audit rows (`simplifi_import_rows`): 0. Every applied row has an audit record — vacuously true.
+3. Preview rerun proving `safe_missing = 0` for already-imported rows: not performable — no CSV was
+   ever persisted (by design) and `simplifi_account_mappings` is empty, so there is nothing to rerun
+   against.
+4. Imported transactions from Mixed-scoped accounts: none — zero transactions imported at all.
+5. Mixed-account exposure by account: $0 across the board, none imported.
+6. Duplicate fingerprints / cross-source duplication with Rentec or Plaid: none possible — zero
+   Simplifi fingerprints exist anywhere in the database.
+7. Reconciliation against the dashboard figures Jason was shown (revenue $34,732 / expenses $26,494 /
+   profit $10,177 / margin 29.3%): **fails outright.** Real current-month totals across every actual
+   `financial_events` source (there is exactly one owner in the table) are income $23,922.00 / expense
+   $3,754.51 — nothing close to the cited figures. Whatever displayed those numbers to Jason was not
+   reading the live database; flagged to him directly as needing investigation separately (stale
+   client-side preview state before the failed approval is the most likely explanation, but not
+   confirmed).
+8. Production log check: done — `vercel logs` on the current Production deployment
+   (`www.409marketplace.online`), 2026-08-24 05:10–05:23 UTC. 7 relevant entries: several
+   `simplifi-import-preview` 200s (read-only preview works fine), two `simplifi-import-approve` 409s
+   (stale preview hash — an expected, safe rejection), one `simplifi-import-approve` 500 with the RLS
+   error. No successful approval anywhere in the available log window.
+9. Reversible correction proposal for Mixed rows: not applicable, nothing was imported. The real next
+   step is unblocking the approve path (see ACTIVE INCIDENT's recommended fix) and deciding on PR #5
+   before any retry — proposed, not executed.
+
+No data, code, or deployment was changed by this verification. All nine steps were read-only
+(`SELECT`-only DB queries via `supabase db query --linked`, `git log`/`git show`/`git fetch` including
+`refs/pull/5/head`, and `vercel logs`).
+
 ## Active Worktrees
 
 - `.claude/worktrees/rentec-financial-history-resume` — branch `feat/rentec-financial-history-resume`,
@@ -181,7 +249,14 @@ reporting `safeMissing` counts that reconciled exactly to Jason's pre-approved t
   that needs to write a different `source_system` (a new import source, a new automated posting)
   must do it through a new or existing `SECURITY DEFINER` function/trigger with `row_security = off`
   that performs its own full validation — not by relying on RLS, and not by trying to loosen these
-  policies back open.
+  policies back open. **This is exactly the migration that broke Simplifi — see ACTIVE INCIDENT.**
+- **When auditing "every write path into a shared table" across a repo with multiple agents/worktrees
+  working in parallel, do the grep from a checkout of the actual current `origin/main` tip, not a
+  feature branch that may predate another agent's still-landing work.** The provenance-hardening
+  migration's write-path analysis was run from `feat/rentec-financial-history-resume`, which did not
+  yet contain Codex's Simplifi domain — the grep silently missed a real write path as a result. A
+  cross-cutting migration touching a table other agents also write to is exactly the kind of change
+  that most needs the freshest possible view of the whole codebase, not just your own branch.
 
 ## Safety Boundaries
 
@@ -212,5 +287,11 @@ figures only, and only what's already safe to show an owner-scoped UI.
   Stripe/Resend); no agent can do that.
 - **Resolved**: `financial_events` trusted-source provenance — see "What Actually Happened" above.
   All three items originally parked in this section are now closed.
+- **New, urgent**: Simplifi CSV import is broken in Production — see ACTIVE INCIDENT at the top of
+  this file. `approve_simplifi_csv_import()` needs promotion to `SECURITY DEFINER` (matching the
+  Rentec RPC's already-established pattern), and PR #5 (mixed-account hold-for-review fail-safe,
+  currently unmerged) should be decided on before any retry. Not fixed by this session — read-only
+  verification task, explicitly no writes authorized.
 - Simplifi CSV import (SIMPLIFI-01 design review, SIMPLIFI-02 build) — a fully separate track owned by
-  Codex, untouched by any of this work. See `TASKS.md` for its current status.
+  Codex. Now intersects with the item directly above; otherwise still untouched by any of this work.
+  See `TASKS.md` for its current status.

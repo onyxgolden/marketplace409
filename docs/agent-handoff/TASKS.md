@@ -35,7 +35,7 @@ Coordination rules:
 
 | ID | Blocker | Needed From | Safe Work That Can Continue |
 |----|---------|-------------|------------------------------|
-| _(none)_ | | | |
+| SIMPLIFI-VERIFY | `approve_simplifi_csv_import()` fails every call in Production with Postgres 42501 (RLS violation on `financial_events`) — a regression from Claude's `20260824010000` provenance-hardening migration, which restricted direct writes to `source_system = 'manual'` without knowing the Simplifi RPC (SECURITY INVOKER) relied on the same policy. Zero Simplifi rows exist anywhere; see `CURRENT.md` ACTIVE INCIDENT for full detail | Promote `approve_simplifi_csv_import()` to SECURITY DEFINER (matching the Rentec RPC pattern) + decide on PR #5 (mixed-account fail-safe, unmerged) before retrying | Read-only work only against Simplifi until unblocked — do not attempt another approval against Production |
 
 ## Completed
 
@@ -43,6 +43,7 @@ Keep only the most recent 20 completed tasks here; git history is the archive.
 
 | ID | Task | Owner | Branch | Commit | Completed UTC |
 |----|------|-------|--------|--------|---------------|
+| SIMPLIFI-VERIFY | Read-only 9-point verification of a supposedly completed Simplifi Production import; no writes made. Found the import never actually succeeded (0 rows anywhere) and traced why — see Blocked table above and `CURRENT.md` | Claude | (read-only, no branch) | n/a | 2026-08-24 |
 | UI-01-HOTFIX | Fix two live bugs found post-deploy: chart missing `rentec_api` rows, dashboard route hitting the 1000-row PostgREST pagination cap | Claude | `main` (direct, no feature branch) | `341221bfa`, `7c6a05d92` | 2026-08-23 |
 | UI-01 | Portfolio Performance chart: data coverage + metallic treatment — rebased onto `main` and deployed to Production (previously built but deliberately left unpushed pending approval) | Claude | `feat/forge-workspace-2-rental-summary` → `main` | `44bbda68e` | 2026-08-23 |
 | RENTEC-02 | Import all available Rentec financial history (2014–2026) into Production `financial_events`: 1,230 rows, $703,914.10 income / $499,756.33 expense, via a purpose-built authenticated import-control UI, approved year-by-year directly against Production per Jason's explicit instruction | Claude | `feat/rentec-financial-history-resume` → `main` | `0e8d190f3`..`3289f2670` | 2026-08-23 |
