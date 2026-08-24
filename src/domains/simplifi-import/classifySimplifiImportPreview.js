@@ -53,7 +53,7 @@ export function classifySimplifiImportPreview(rows, options = {}) {
       reason = row.account_scope === "excluded"
         ? "This account is explicitly excluded from import."
         : "Personal activity is excluded from business reports.";
-    } else if (row.status === "pending") {
+    } else if (row.account_scope === "mixed") {\n      classification = "ambiguous";\n      reason = "Mixed-account activity requires transaction-level business or personal review.";\n    } else if (row.status === "pending") {
       classification = "pending";
       reason = "Pending transactions cannot be approved.";
     } else if (!row.category || !categoryMappings[normalized(row.category)]) {
