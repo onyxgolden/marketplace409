@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import ManualFinancialEventForm from "@/components/forge/rental/ManualFinancialEventForm";
+import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -146,13 +147,13 @@ export default function RentalReportsPanel() {
   const report = loaded && loaded.key === reportKey ? loaded.report : null;
   const csvHref = `/api/rental/reports?${buildReportParams(reportKey, filters, { format: "csv" }).toString()}`;
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm print:border-0 print:shadow-none">
-      <div className="border-b border-slate-200 p-6 print:hidden">
-        <p className="text-sm font-bold uppercase tracking-widest text-amber-700">
+    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 print:border-0 print:shadow-none">
+      <div className="border-b border-slate-200 p-6 dark:border-slate-700 print:hidden">
+        <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">
           Rental reporting
         </p>
-        <h2 className="mt-2 text-2xl font-black">Rent roll and tenant ledger</h2>
-        <p className="mt-2 text-slate-600">
+        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Rent roll and tenant ledger</h2>
+        <p className="mt-2 max-w-2xl text-sm text-slate-600 dark:text-slate-400">
           See scheduled rent, collected payments, open balances, and delinquency
           as of today.
         </p>
@@ -202,41 +203,41 @@ export default function RentalReportsPanel() {
         onSaved={() => setRefreshToken((token) => token + 1)}
       />
       {error ? (
-        <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-red-800">
+        <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">
           {error}
         </p>
       ) : !report ? (
-        <p className="mt-4 text-slate-500">Loading report…</p>
+        <p className="mt-4 text-slate-500 dark:text-slate-400">Loading report…</p>
       ) : (
         <>
           <div className="mt-5 flex flex-wrap gap-3 print:hidden">
             <button
               type="button"
               onClick={() => window.print()}
-              className="rounded-lg border border-slate-300 px-5 py-3 font-bold text-slate-700 hover:border-slate-400"
+              className="rounded-lg border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 transition hover:border-slate-400 dark:border-slate-600 dark:text-slate-300 dark:hover:border-slate-500"
             >
               Print / Save as PDF
             </button>
             <a
               href={csvHref}
-              className="rounded-lg bg-slate-950 px-5 py-3 font-bold text-white"
+              className={`rounded-lg px-5 py-3 text-sm font-black transition ${goldControlClassName}`}
             >
               Download CSV
             </a>
             {!reportKey && (
               <a
                 href={`/api/rental/reports?format=tax-csv&taxYear=${new Date().getFullYear()}`}
-                className="rounded-lg border px-5 py-3 font-bold"
+                className="rounded-lg border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 transition hover:border-slate-400 dark:border-slate-600 dark:text-slate-300 dark:hover:border-slate-500"
               >
                 Download accountant/contractor tax CSV
               </a>
             )}
           </div>
           {!reportKey && (
-            <p className="mt-3 text-sm text-slate-600 print:hidden">Review package only—not a filed 1099 or an automatic eligibility decision.</p>
+            <p className="mt-3 text-sm text-slate-600 dark:text-slate-400 print:hidden">Review package only—not a filed 1099 or an automatic eligibility decision.</p>
           )}
           {reportKey === "schedule-e-assistant" && (
-            <p className="mt-3 text-sm text-slate-600 print:hidden">Starting point for your accountant—not a filed tax return. Depreciation isn&apos;t tracked yet.</p>
+            <p className="mt-3 text-sm text-slate-600 dark:text-slate-400 print:hidden">Starting point for your accountant—not a filed tax return. Depreciation isn&apos;t tracked yet.</p>
           )}
           {reportKey === "" && <RentRollView report={report} />}
           {reportKey === "delinquent-tenants" && <DelinquentTenantsView report={report} />}
@@ -286,7 +287,7 @@ function ReportSidebar({ reportKey, onSelect, favorites, favoriteReports, onTogg
     });
   };
   return (
-    <aside className="shrink-0 border-b border-slate-200 p-4 md:w-64 md:border-b-0 md:border-r print:hidden">
+    <aside className="shrink-0 border-b border-slate-200 p-4 dark:border-slate-700 md:w-64 md:border-b-0 md:border-r print:hidden">
       {favoriteReports.length > 0 && (
         <SidebarGroup
           label="Favorites"
@@ -323,7 +324,7 @@ function SidebarGroup({ label, items, reportKey, onSelect, favorites, onToggleFa
       <button
         type="button"
         onClick={() => onToggleGroup(label)}
-        className="flex w-full items-center justify-between px-2 text-xs font-black uppercase tracking-wide text-slate-400 hover:text-slate-600"
+        className="flex w-full items-center justify-between px-2 text-xs font-black uppercase tracking-wide text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
       >
         <span>{label}</span>
         <span className="text-sm">{open ? "▾" : "▸"}</span>
@@ -334,7 +335,7 @@ function SidebarGroup({ label, items, reportKey, onSelect, favorites, onToggleFa
           <div
             key={item.key || "rent-roll"}
             className={`flex items-center justify-between rounded-lg px-2 py-1.5 text-sm ${
-              reportKey === item.key ? "bg-slate-950 text-white" : "text-slate-700 hover:bg-slate-100"
+              reportKey === item.key ? "bg-slate-950 text-white dark:bg-amber-400 dark:text-slate-950" : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
             }`}
           >
             <button type="button" onClick={() => onSelect(item.key)} className="flex-1 text-left font-bold">
@@ -348,8 +349,8 @@ function SidebarGroup({ label, items, reportKey, onSelect, favorites, onToggleFa
                 favorites.includes(item.key)
                   ? "text-amber-400"
                   : reportKey === item.key
-                    ? "text-slate-500 hover:text-slate-300"
-                    : "text-slate-300 hover:text-slate-400"
+                    ? "text-slate-500 hover:text-slate-300 dark:text-slate-800 dark:hover:text-slate-700"
+                    : "text-slate-300 hover:text-slate-400 dark:text-slate-600 dark:hover:text-slate-500"
               }`}
             >
               {favorites.includes(item.key) ? "★" : "☆"}
@@ -380,14 +381,14 @@ function FilterBar({
 }) {
   if (mode === "none") return null;
   return (
-    <div className="mt-4 flex flex-wrap items-end gap-3 rounded-xl bg-slate-50 p-3">
+    <div className="mt-4 flex flex-wrap items-end gap-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-950/40">
       {mode === "contractorRange" ? (
         <label className="text-sm">
-          <span className="block font-bold text-slate-700">Contractor</span>
+          <span className="block font-bold text-slate-700 dark:text-slate-300">Contractor</span>
           <select
             value={contractorId}
             onChange={(event) => onContractorChange(event.target.value)}
-            className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
+            className="mt-1 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"
           >
             <option value="">All contractors</option>
             {availableContractors.map((contractor) => (
@@ -399,11 +400,11 @@ function FilterBar({
         </label>
       ) : (
         <label className="text-sm">
-          <span className="block font-bold text-slate-700">Property</span>
+          <span className="block font-bold text-slate-700 dark:text-slate-300">Property</span>
           <select
             value={propertyId}
             onChange={(event) => onPropertyChange(event.target.value)}
-            className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
+            className="mt-1 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"
           >
             <option value="">All properties</option>
             {availableProperties.map((id) => (
@@ -416,45 +417,45 @@ function FilterBar({
       )}
       {mode === "asOf" && (
         <label className="text-sm">
-          <span className="block font-bold text-slate-700">As of</span>
+          <span className="block font-bold text-slate-700 dark:text-slate-300">As of</span>
           <input
             type="date"
             value={asOfDate}
             onChange={(event) => onAsOfDateChange(event.target.value)}
-            className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
+            className="mt-1 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"
           />
         </label>
       )}
       {(mode === "range" || mode === "contractorRange") && (
         <>
           <label className="text-sm">
-            <span className="block font-bold text-slate-700">From</span>
+            <span className="block font-bold text-slate-700 dark:text-slate-300">From</span>
             <input
               type="date"
               value={startDate}
               onChange={(event) => onStartDateChange(event.target.value)}
-              className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
+              className="mt-1 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"
             />
           </label>
           <label className="text-sm">
-            <span className="block font-bold text-slate-700">To</span>
+            <span className="block font-bold text-slate-700 dark:text-slate-300">To</span>
             <input
               type="date"
               value={endDate}
               onChange={(event) => onEndDateChange(event.target.value)}
-              className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
+              className="mt-1 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"
             />
           </label>
         </>
       )}
       {mode === "taxYear" && (
         <label className="text-sm">
-          <span className="block font-bold text-slate-700">Tax year</span>
+          <span className="block font-bold text-slate-700 dark:text-slate-300">Tax year</span>
           <input
             type="number"
             value={taxYear}
             onChange={(event) => onTaxYearChange(event.target.value)}
-            className="mt-1 w-28 rounded-lg border border-slate-300 px-3 py-2"
+            className="mt-1 w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"
           />
         </label>
       )}
@@ -464,10 +465,10 @@ function FilterBar({
 function Kpi({ label, value, attention = false }) {
   return (
     <div
-      className={`rounded-xl p-4 ${attention ? "bg-red-50 text-red-900" : "bg-slate-50"}`}
+      className={`rounded-xl p-4 ${attention ? "bg-red-50 text-red-900 dark:bg-red-950/30 dark:text-red-200" : "bg-slate-50 text-slate-950 dark:bg-slate-950/40 dark:text-white"}`}
     >
-      <p className="text-xs font-bold uppercase tracking-wide">{label}</p>
-      <p className="mt-1 text-2xl font-black">{value}</p>
+      <p className="text-xs font-black uppercase tracking-wide opacity-70">{label}</p>
+      <p className="mt-1 text-2xl font-black tabular-nums">{value}</p>
     </div>
   );
 }
@@ -501,41 +502,41 @@ function RentRollView({ report }) {
           attention={report.summary.externallyManagedCents > 0}
         />
       </div>
-      <div className="mt-6 overflow-x-auto">
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b">
-              <th className="p-3">Unit / tenant</th>
-              <th className="p-3">Lease</th>
-              <th className="p-3">Monthly rent</th>
-              <th className="p-3">Open (FORGE)</th>
-              <th className="p-3">Overdue (FORGE)</th>
-              <th className="p-3">Externally managed</th>
-              <th className="p-3">Collected</th>
+            <tr className="border-b border-slate-200 dark:border-slate-700">
+              <th className="p-3 text-slate-700 dark:text-slate-300">Unit / tenant</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Lease</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Monthly rent</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Open (FORGE)</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Overdue (FORGE)</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Externally managed</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Collected</th>
             </tr>
           </thead>
           <tbody>
             {report.rentRoll.map((row) => (
-              <tr key={row.leaseId} className="border-b">
-                <td className="p-3">
+              <tr key={row.leaseId} className="border-b border-slate-200 dark:border-slate-700">
+                <td className="p-3 text-slate-700 dark:text-slate-300">
                   <strong>{row.unitLabel}</strong>
                   <br />
-                  <span className="text-slate-500">
+                  <span className="text-slate-500 dark:text-slate-400">
                     {row.tenantNames.join(", ") || "No tenant"}
                   </span>
                 </td>
-                <td className="p-3 capitalize">
+                <td className="p-3 capitalize text-slate-700 dark:text-slate-300">
                   {row.status}
                   <br />
-                  <span className="text-xs text-slate-500">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
                     {row.startDate}
                     {row.endDate ? ` — ${row.endDate}` : " — current"}
                   </span>
                 </td>
-                <td className="p-3">
+                <td className="p-3 text-slate-700 dark:text-slate-300">
                   {money.format(row.monthlyRentCents / 100)}
                 </td>
-                <td className="p-3">
+                <td className="p-3 text-slate-700 dark:text-slate-300">
                   {money.format(row.balanceCents / 100)}
                 </td>
                 <td
@@ -550,7 +551,7 @@ function RentRollView({ report }) {
                   {money.format(row.externallyManagedCents / 100)}
                   {row.externallyManagedChargeCount > 0 ? ` (${row.externallyManagedChargeCount})` : ""}
                 </td>
-                <td className="p-3">
+                <td className="p-3 text-slate-700 dark:text-slate-300">
                   {money.format(row.collectedCents / 100)}
                 </td>
               </tr>
@@ -577,34 +578,34 @@ function DelinquentTenantsView({ report }) {
           attention={report.summary.externallyManagedCents > 0}
         />
       </div>
-      <div className="mt-6 overflow-x-auto">
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b">
-              <th className="p-3">Unit / tenant</th>
-              <th className="p-3">Contact</th>
-              <th className="p-3">Overdue (FORGE)</th>
-              <th className="p-3">Overdue charges</th>
-              <th className="p-3">Externally managed</th>
-              <th className="p-3">Oldest due date</th>
+            <tr className="border-b border-slate-200 dark:border-slate-700">
+              <th className="p-3 text-slate-700 dark:text-slate-300">Unit / tenant</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Contact</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Overdue (FORGE)</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Overdue charges</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Externally managed</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Oldest due date</th>
             </tr>
           </thead>
           <tbody>
             {report.rows.length ? (
               report.rows.map((row) => (
-                <tr key={row.leaseId} className="border-b">
-                  <td className="p-3">
+                <tr key={row.leaseId} className="border-b border-slate-200 dark:border-slate-700">
+                  <td className="p-3 text-slate-700 dark:text-slate-300">
                     <strong>{row.unitLabel}</strong>
                     <br />
-                    <span className="text-slate-500">{row.tenantNames.join(", ") || "No tenant"}</span>
+                    <span className="text-slate-500 dark:text-slate-400">{row.tenantNames.join(", ") || "No tenant"}</span>
                   </td>
-                  <td className="p-3 text-slate-500">
+                  <td className="p-3 text-slate-500 dark:text-slate-400">
                     {row.tenantEmails.join(", ")}
                     <br />
                     {row.tenantPhones.filter(Boolean).join(", ")}
                   </td>
-                  <td className="p-3 font-bold text-red-700">{money.format(row.overdueCents / 100)}</td>
-                  <td className="p-3">{row.overdueChargeCount}</td>
+                  <td className="p-3 font-bold text-red-700 dark:text-red-400">{money.format(row.overdueCents / 100)}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.overdueChargeCount}</td>
                   <td
                     className={`p-3 ${row.externallyManagedCents > 0 ? "text-amber-700 font-bold" : ""}`}
                     title="Managed in Rentec — reconciliation required before this can be presented as a FORGE delinquency"
@@ -612,12 +613,12 @@ function DelinquentTenantsView({ report }) {
                     {money.format(row.externallyManagedCents / 100)}
                     {row.externallyManagedChargeCount > 0 ? ` (${row.externallyManagedChargeCount})` : ""}
                   </td>
-                  <td className="p-3">{row.oldestDueDate}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.oldestDueDate}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td className="p-3 text-slate-500" colSpan={6}>No delinquent tenants.</td>
+                <td className="p-3 text-slate-500 dark:text-slate-400" colSpan={6}>No delinquent tenants.</td>
               </tr>
             )}
           </tbody>
@@ -628,35 +629,35 @@ function DelinquentTenantsView({ report }) {
 }
 function LeaseExpirationView({ report }) {
   return (
-    <div className="mt-6 overflow-x-auto">
+    <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
       <table className="w-full text-left text-sm">
         <thead>
-          <tr className="border-b">
-            <th className="p-3">Unit / tenant</th>
-            <th className="p-3">End date</th>
-            <th className="p-3">Days until expiration</th>
-            <th className="p-3">Monthly rent</th>
+          <tr className="border-b border-slate-200 dark:border-slate-700">
+            <th className="p-3 text-slate-700 dark:text-slate-300">Unit / tenant</th>
+            <th className="p-3 text-slate-700 dark:text-slate-300">End date</th>
+            <th className="p-3 text-slate-700 dark:text-slate-300">Days until expiration</th>
+            <th className="p-3 text-slate-700 dark:text-slate-300">Monthly rent</th>
           </tr>
         </thead>
         <tbody>
           {report.rows.length ? (
             report.rows.map((row) => (
-              <tr key={row.leaseId} className="border-b">
-                <td className="p-3">
+              <tr key={row.leaseId} className="border-b border-slate-200 dark:border-slate-700">
+                <td className="p-3 text-slate-700 dark:text-slate-300">
                   <strong>{row.unitLabel}</strong>
                   <br />
-                  <span className="text-slate-500">{row.tenantNames.join(", ") || "No tenant"}</span>
+                  <span className="text-slate-500 dark:text-slate-400">{row.tenantNames.join(", ") || "No tenant"}</span>
                 </td>
-                <td className="p-3">{row.endDate}</td>
+                <td className="p-3 text-slate-700 dark:text-slate-300">{row.endDate}</td>
                 <td className={`p-3 font-bold ${row.daysUntilExpiration < 0 ? "text-red-700" : ""}`}>
                   {row.daysUntilExpiration}
                 </td>
-                <td className="p-3">{money.format(row.monthlyRentCents / 100)}</td>
+                <td className="p-3 text-slate-700 dark:text-slate-300">{money.format(row.monthlyRentCents / 100)}</td>
               </tr>
             ))
           ) : (
             <tr>
-              <td className="p-3 text-slate-500" colSpan={4}>No leases expiring in this window.</td>
+              <td className="p-3 text-slate-500 dark:text-slate-400" colSpan={4}>No leases expiring in this window.</td>
             </tr>
           )}
         </tbody>
@@ -671,35 +672,35 @@ function VacantUnitsView({ report }) {
         <Kpi label="Vacant units" value={report.summary.vacantUnitCount} />
         <Kpi label="Total units" value={report.summary.totalUnitCount} />
       </div>
-      <div className="mt-6 overflow-x-auto">
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b">
-              <th className="p-3">Unit</th>
-              <th className="p-3">Status</th>
-              <th className="p-3">Beds / baths / sqft</th>
-              <th className="p-3">Available since</th>
-              <th className="p-3">Days vacant</th>
+            <tr className="border-b border-slate-200 dark:border-slate-700">
+              <th className="p-3 text-slate-700 dark:text-slate-300">Unit</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Status</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Beds / baths / sqft</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Available since</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Days vacant</th>
             </tr>
           </thead>
           <tbody>
             {report.rows.length ? (
               report.rows.map((row) => (
-                <tr key={row.unitId} className="border-b">
-                  <td className="p-3">
+                <tr key={row.unitId} className="border-b border-slate-200 dark:border-slate-700">
+                  <td className="p-3 text-slate-700 dark:text-slate-300">
                     <strong>{row.unitLabel}</strong>
                   </td>
-                  <td className="p-3 capitalize">{row.status}</td>
-                  <td className="p-3">
+                  <td className="p-3 capitalize text-slate-700 dark:text-slate-300">{row.status}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">
                     {row.bedrooms ?? "—"} / {row.bathrooms ?? "—"} / {row.squareFeet ?? "—"}
                   </td>
-                  <td className="p-3">{row.availableAt || "—"}</td>
-                  <td className="p-3 font-bold">{row.daysVacant ?? "—"}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.availableAt || "—"}</td>
+                  <td className="p-3 font-bold text-slate-950 dark:text-white">{row.daysVacant ?? "—"}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td className="p-3 text-slate-500" colSpan={5}>No vacant units.</td>
+                <td className="p-3 text-slate-500 dark:text-slate-400" colSpan={5}>No vacant units.</td>
               </tr>
             )}
           </tbody>
@@ -710,31 +711,31 @@ function VacantUnitsView({ report }) {
 }
 function TenantContactsView({ report }) {
   return (
-    <div className="mt-6 overflow-x-auto">
+    <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
       <table className="w-full text-left text-sm">
         <thead>
-          <tr className="border-b">
-            <th className="p-3">Tenant</th>
-            <th className="p-3">Contact</th>
-            <th className="p-3">Status</th>
-            <th className="p-3">Current unit</th>
+          <tr className="border-b border-slate-200 dark:border-slate-700">
+            <th className="p-3 text-slate-700 dark:text-slate-300">Tenant</th>
+            <th className="p-3 text-slate-700 dark:text-slate-300">Contact</th>
+            <th className="p-3 text-slate-700 dark:text-slate-300">Status</th>
+            <th className="p-3 text-slate-700 dark:text-slate-300">Current unit</th>
           </tr>
         </thead>
         <tbody>
           {report.rows.map((row) => (
-            <tr key={row.tenantId} className="border-b">
-              <td className="p-3">
+            <tr key={row.tenantId} className="border-b border-slate-200 dark:border-slate-700">
+              <td className="p-3 text-slate-700 dark:text-slate-300">
                 <strong>{row.displayName}</strong>
               </td>
-              <td className="p-3 text-slate-500">
+              <td className="p-3 text-slate-500 dark:text-slate-400">
                 {row.email}
                 {row.phone ? <><br />{row.phone}</> : null}
               </td>
-              <td className="p-3 capitalize">{row.status}</td>
-              <td className="p-3">
+              <td className="p-3 capitalize text-slate-700 dark:text-slate-300">{row.status}</td>
+              <td className="p-3 text-slate-700 dark:text-slate-300">
                 {row.unitLabel || "—"}
                 {row.unitLabel ? <br /> : null}
-                <span className="text-xs text-slate-500">{row.propertyId}</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">{row.propertyId}</span>
               </td>
             </tr>
           ))}
@@ -750,33 +751,33 @@ function UpcomingChargesView({ report }) {
         <Kpi label="Upcoming charges" value={report.summary.upcomingCount} />
         <Kpi label="Total due" value={money.format(report.summary.totalDueCents / 100)} />
       </div>
-      <div className="mt-6 overflow-x-auto">
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b">
-              <th className="p-3">Unit / tenant</th>
-              <th className="p-3">Due date</th>
-              <th className="p-3">Amount due</th>
-              <th className="p-3">Status</th>
+            <tr className="border-b border-slate-200 dark:border-slate-700">
+              <th className="p-3 text-slate-700 dark:text-slate-300">Unit / tenant</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Due date</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Amount due</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Status</th>
             </tr>
           </thead>
           <tbody>
             {report.rows.length ? (
               report.rows.map((row) => (
-                <tr key={row.chargeId} className="border-b">
-                  <td className="p-3">
+                <tr key={row.chargeId} className="border-b border-slate-200 dark:border-slate-700">
+                  <td className="p-3 text-slate-700 dark:text-slate-300">
                     <strong>{row.unitLabel}</strong>
                     <br />
-                    <span className="text-slate-500">{row.tenantNames.join(", ") || "No tenant"}</span>
+                    <span className="text-slate-500 dark:text-slate-400">{row.tenantNames.join(", ") || "No tenant"}</span>
                   </td>
-                  <td className="p-3">{row.dueDate}</td>
-                  <td className="p-3">{money.format(row.remainingCents / 100)}</td>
-                  <td className="p-3 capitalize">{row.status}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.dueDate}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{money.format(row.remainingCents / 100)}</td>
+                  <td className="p-3 capitalize text-slate-700 dark:text-slate-300">{row.status}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td className="p-3 text-slate-500" colSpan={4}>No charges due in this window.</td>
+                <td className="p-3 text-slate-500 dark:text-slate-400" colSpan={4}>No charges due in this window.</td>
               </tr>
             )}
           </tbody>
@@ -794,35 +795,35 @@ function AccountLedgerView({ report }) {
         <Kpi label="Total credits" value={money.format(report.summary.totalCredits)} />
         <Kpi label="Ending balance" value={money.format(report.summary.endingBalance)} attention={report.summary.endingBalance < 0} />
       </div>
-      <div className="mt-6 overflow-x-auto">
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b">
-              <th className="p-3">Date</th>
-              <th className="p-3">Description</th>
-              <th className="p-3">Category</th>
-              <th className="p-3">Property</th>
-              <th className="p-3">Debit</th>
-              <th className="p-3">Credit</th>
-              <th className="p-3">Balance</th>
+            <tr className="border-b border-slate-200 dark:border-slate-700">
+              <th className="p-3 text-slate-700 dark:text-slate-300">Date</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Description</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Category</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Property</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Debit</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Credit</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Balance</th>
             </tr>
           </thead>
           <tbody>
             {report.rows.length ? (
               report.rows.map((row) => (
-                <tr key={row.id} className="border-b">
-                  <td className="p-3">{row.date}</td>
-                  <td className="p-3">{row.description}</td>
-                  <td className="p-3 capitalize text-slate-500">{row.category.replaceAll("_", " ")}</td>
-                  <td className="p-3 text-slate-500">{propertyLabel(row.propertyId)}</td>
-                  <td className="p-3">{row.debit ? money.format(row.debit) : ""}</td>
-                  <td className="p-3">{row.credit ? money.format(row.credit) : ""}</td>
+                <tr key={row.id} className="border-b border-slate-200 dark:border-slate-700">
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.date}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.description}</td>
+                  <td className="p-3 capitalize text-slate-500 dark:text-slate-400">{row.category.replaceAll("_", " ")}</td>
+                  <td className="p-3 text-slate-500 dark:text-slate-400">{propertyLabel(row.propertyId)}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.debit ? money.format(row.debit) : ""}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.credit ? money.format(row.credit) : ""}</td>
                   <td className={`p-3 font-bold ${row.balance < 0 ? "text-red-700" : ""}`}>{money.format(row.balance)}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td className="p-3 text-slate-500" colSpan={7}>No transactions in this scope.</td>
+                <td className="p-3 text-slate-500 dark:text-slate-400" colSpan={7}>No transactions in this scope.</td>
               </tr>
             )}
           </tbody>
@@ -842,26 +843,26 @@ function IncomeExpenseStatementView({ report }) {
       </div>
       <div className="mt-6 grid gap-6 md:grid-cols-2">
         <div>
-          <h3 className="text-sm font-black uppercase tracking-wide text-slate-500">By property</h3>
-          <div className="mt-2 overflow-x-auto">
+          <h3 className="text-sm font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">By property</h3>
+          <div className="mt-2 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b">
-                  <th className="p-2">Property</th>
-                  <th className="p-2">Income</th>
-                  <th className="p-2">Expenses</th>
-                  <th className="p-2">Net</th>
-                  <th className="p-2">NOI</th>
+                <tr className="border-b border-slate-200 dark:border-slate-700">
+                  <th className="p-2 text-slate-700 dark:text-slate-300">Property</th>
+                  <th className="p-2 text-slate-700 dark:text-slate-300">Income</th>
+                  <th className="p-2 text-slate-700 dark:text-slate-300">Expenses</th>
+                  <th className="p-2 text-slate-700 dark:text-slate-300">Net</th>
+                  <th className="p-2 text-slate-700 dark:text-slate-300">NOI</th>
                 </tr>
               </thead>
               <tbody>
                 {report.byProperty.map((row) => (
-                  <tr key={row.propertyId} className="border-b">
-                    <td className="p-2">{propertyLabel(row.propertyId)}</td>
-                    <td className="p-2">{money.format(row.income)}</td>
-                    <td className="p-2">{money.format(row.expenses)}</td>
-                    <td className="p-2">{money.format(row.net)}</td>
-                    <td className="p-2">{money.format(row.noi)}</td>
+                  <tr key={row.propertyId} className="border-b border-slate-200 dark:border-slate-700">
+                    <td className="p-2 text-slate-700 dark:text-slate-300">{propertyLabel(row.propertyId)}</td>
+                    <td className="p-2 text-slate-700 dark:text-slate-300">{money.format(row.income)}</td>
+                    <td className="p-2 text-slate-700 dark:text-slate-300">{money.format(row.expenses)}</td>
+                    <td className="p-2 text-slate-700 dark:text-slate-300">{money.format(row.net)}</td>
+                    <td className="p-2 text-slate-700 dark:text-slate-300">{money.format(row.noi)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -869,24 +870,24 @@ function IncomeExpenseStatementView({ report }) {
           </div>
         </div>
         <div>
-          <h3 className="text-sm font-black uppercase tracking-wide text-slate-500">By category</h3>
-          <div className="mt-2 overflow-x-auto">
+          <h3 className="text-sm font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">By category</h3>
+          <div className="mt-2 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b">
-                  <th className="p-2">Category</th>
-                  <th className="p-2">Income</th>
-                  <th className="p-2">Expenses</th>
-                  <th className="p-2">Net</th>
+                <tr className="border-b border-slate-200 dark:border-slate-700">
+                  <th className="p-2 text-slate-700 dark:text-slate-300">Category</th>
+                  <th className="p-2 text-slate-700 dark:text-slate-300">Income</th>
+                  <th className="p-2 text-slate-700 dark:text-slate-300">Expenses</th>
+                  <th className="p-2 text-slate-700 dark:text-slate-300">Net</th>
                 </tr>
               </thead>
               <tbody>
                 {report.byCategory.map((row) => (
-                  <tr key={row.category} className="border-b">
-                    <td className="p-2 capitalize">{row.category.replaceAll("_", " ")}</td>
-                    <td className="p-2">{money.format(row.income)}</td>
-                    <td className="p-2">{money.format(row.expenses)}</td>
-                    <td className="p-2">{money.format(row.net)}</td>
+                  <tr key={row.category} className="border-b border-slate-200 dark:border-slate-700">
+                    <td className="p-2 capitalize text-slate-700 dark:text-slate-300">{row.category.replaceAll("_", " ")}</td>
+                    <td className="p-2 text-slate-700 dark:text-slate-300">{money.format(row.income)}</td>
+                    <td className="p-2 text-slate-700 dark:text-slate-300">{money.format(row.expenses)}</td>
+                    <td className="p-2 text-slate-700 dark:text-slate-300">{money.format(row.net)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -905,31 +906,31 @@ function ScheduleEAssistantView({ report }) {
         <Kpi label="Total expenses" value={money.format(report.summary.totalExpensesCents / 100)} />
         <Kpi label="Net income" value={money.format(report.summary.netIncomeCents / 100)} attention={report.summary.netIncomeCents < 0} />
       </div>
-      <div className="mt-6 overflow-x-auto">
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b">
-              <th className="p-3">Line</th>
-              <th className="p-3">Label</th>
-              <th className="p-3">Amount</th>
-              <th className="p-3">Transactions</th>
-              <th className="p-3">Source categories</th>
+            <tr className="border-b border-slate-200 dark:border-slate-700">
+              <th className="p-3 text-slate-700 dark:text-slate-300">Line</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Label</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Amount</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Transactions</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Source categories</th>
             </tr>
           </thead>
           <tbody>
             {report.lines.map((row) => (
-              <tr key={row.line} className="border-b">
-                <td className="p-3">{row.line}</td>
-                <td className="p-3">{row.label}</td>
-                <td className="p-3">{money.format(row.amountCents / 100)}</td>
-                <td className="p-3">{row.transactionCount}</td>
-                <td className="p-3 text-xs text-slate-500">{row.categories.join(", ")}</td>
+              <tr key={row.line} className="border-b border-slate-200 dark:border-slate-700">
+                <td className="p-3 text-slate-700 dark:text-slate-300">{row.line}</td>
+                <td className="p-3 text-slate-700 dark:text-slate-300">{row.label}</td>
+                <td className="p-3 text-slate-700 dark:text-slate-300">{money.format(row.amountCents / 100)}</td>
+                <td className="p-3 text-slate-700 dark:text-slate-300">{row.transactionCount}</td>
+                <td className="p-3 text-xs text-slate-500 dark:text-slate-400">{row.categories.join(", ")}</td>
               </tr>
             ))}
             <tr>
-              <td className="p-3">18</td>
-              <td className="p-3">Depreciation</td>
-              <td className="p-3 text-slate-500" colSpan={3}>Not tracked — add manually with your accountant.</td>
+              <td className="p-3 text-slate-700 dark:text-slate-300">18</td>
+              <td className="p-3 text-slate-700 dark:text-slate-300">Depreciation</td>
+              <td className="p-3 text-slate-500 dark:text-slate-400" colSpan={3}>Not tracked — add manually with your accountant.</td>
             </tr>
           </tbody>
         </table>
@@ -945,41 +946,41 @@ function SecurityDepositsView({ report }) {
         <Kpi label="Total required" value={money.format(report.summary.totalRequiredCents / 100)} />
         <Kpi label="Total held" value={money.format(report.summary.totalHeldCents / 100)} />
       </div>
-      <div className="mt-6 overflow-x-auto">
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b">
-              <th className="p-3">Unit / tenant</th>
-              <th className="p-3">Status</th>
-              <th className="p-3">Required</th>
-              <th className="p-3">Held</th>
-              <th className="p-3">Jurisdiction</th>
-              <th className="p-3">Disposition deadline</th>
+            <tr className="border-b border-slate-200 dark:border-slate-700">
+              <th className="p-3 text-slate-700 dark:text-slate-300">Unit / tenant</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Status</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Required</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Held</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Jurisdiction</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Disposition deadline</th>
             </tr>
           </thead>
           <tbody>
             {report.rows.length ? (
               report.rows.map((row) => (
-                <tr key={row.depositId} className="border-b">
-                  <td className="p-3">
+                <tr key={row.depositId} className="border-b border-slate-200 dark:border-slate-700">
+                  <td className="p-3 text-slate-700 dark:text-slate-300">
                     <strong>{row.unitLabel}</strong>
                     <br />
-                    <span className="text-slate-500">{row.tenantNames.join(", ") || "No tenant"}</span>
+                    <span className="text-slate-500 dark:text-slate-400">{row.tenantNames.join(", ") || "No tenant"}</span>
                   </td>
-                  <td className="p-3 capitalize">{row.status.replaceAll("_", " ")}</td>
-                  <td className="p-3">{money.format(row.requiredCents / 100)}</td>
+                  <td className="p-3 capitalize text-slate-700 dark:text-slate-300">{row.status.replaceAll("_", " ")}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{money.format(row.requiredCents / 100)}</td>
                   <td
                     className={`p-3 font-bold ${row.heldCents < row.requiredCents ? "text-red-700" : ""}`}
                   >
                     {money.format(row.heldCents / 100)}
                   </td>
-                  <td className="p-3">{row.jurisdictionCode || "—"}</td>
-                  <td className="p-3">{row.dispositionDeadline || "—"}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.jurisdictionCode || "—"}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.dispositionDeadline || "—"}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td className="p-3 text-slate-500" colSpan={6}>No security deposits on file.</td>
+                <td className="p-3 text-slate-500 dark:text-slate-400" colSpan={6}>No security deposits on file.</td>
               </tr>
             )}
           </tbody>
@@ -996,35 +997,35 @@ function RentersInsuranceView({ report }) {
         <Kpi label="Compliant" value={report.summary.compliantCount} />
         <Kpi label="Missing evidence" value={report.summary.missingCount} attention={report.summary.missingCount > 0} />
       </div>
-      <div className="mt-6 overflow-x-auto">
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b">
-              <th className="p-3">Unit / tenant</th>
-              <th className="p-3">Status</th>
-              <th className="p-3">Evidence on file</th>
-              <th className="p-3">Most recent upload</th>
+            <tr className="border-b border-slate-200 dark:border-slate-700">
+              <th className="p-3 text-slate-700 dark:text-slate-300">Unit / tenant</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Status</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Evidence on file</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Most recent upload</th>
             </tr>
           </thead>
           <tbody>
             {report.rows.length ? (
               report.rows.map((row) => (
-                <tr key={row.leaseId} className="border-b">
-                  <td className="p-3">
+                <tr key={row.leaseId} className="border-b border-slate-200 dark:border-slate-700">
+                  <td className="p-3 text-slate-700 dark:text-slate-300">
                     <strong>{row.unitLabel}</strong>
                     <br />
-                    <span className="text-slate-500">{row.tenantNames.join(", ") || "No tenant"}</span>
+                    <span className="text-slate-500 dark:text-slate-400">{row.tenantNames.join(", ") || "No tenant"}</span>
                   </td>
                   <td className={`p-3 font-bold ${row.hasEvidence ? "" : "text-red-700"}`}>
                     {row.hasEvidence ? "Compliant" : "Missing"}
                   </td>
-                  <td className="p-3">{row.evidenceCount}</td>
-                  <td className="p-3">{row.mostRecentUploadAt ? new Date(row.mostRecentUploadAt).toLocaleDateString() : "—"}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.evidenceCount}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.mostRecentUploadAt ? new Date(row.mostRecentUploadAt).toLocaleDateString() : "—"}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td className="p-3 text-slate-500" colSpan={4}>No active leases in this scope.</td>
+                <td className="p-3 text-slate-500 dark:text-slate-400" colSpan={4}>No active leases in this scope.</td>
               </tr>
             )}
           </tbody>
@@ -1042,35 +1043,35 @@ function WorkOrdersView({ report }) {
         <Kpi label="Estimated cost" value={money.format(report.summary.totalEstimatedCents / 100)} />
         <Kpi label="Actual cost" value={money.format(report.summary.totalActualCents / 100)} />
       </div>
-      <div className="mt-6 overflow-x-auto">
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b">
-              <th className="p-3">Unit</th>
-              <th className="p-3">Contractor</th>
-              <th className="p-3">Status</th>
-              <th className="p-3">Scope of work</th>
-              <th className="p-3">Scheduled</th>
-              <th className="p-3">Estimated</th>
-              <th className="p-3">Actual</th>
+            <tr className="border-b border-slate-200 dark:border-slate-700">
+              <th className="p-3 text-slate-700 dark:text-slate-300">Unit</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Contractor</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Status</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Scope of work</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Scheduled</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Estimated</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Actual</th>
             </tr>
           </thead>
           <tbody>
             {report.rows.length ? (
               report.rows.map((row) => (
-                <tr key={row.workOrderId} className="border-b">
-                  <td className="p-3">{row.unitLabel}</td>
-                  <td className="p-3">{row.contractorName}</td>
+                <tr key={row.workOrderId} className="border-b border-slate-200 dark:border-slate-700">
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.unitLabel}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.contractorName}</td>
                   <td className={`p-3 capitalize font-bold ${row.isOpen ? "text-amber-700" : ""}`}>{row.status.replaceAll("_", " ")}</td>
-                  <td className="p-3">{row.scopeOfWork}</td>
-                  <td className="p-3">{row.scheduledStart ? new Date(row.scheduledStart).toLocaleDateString() : "—"}</td>
-                  <td className="p-3">{row.estimatedCostCents != null ? money.format(row.estimatedCostCents / 100) : "—"}</td>
-                  <td className="p-3">{row.actualCostCents != null ? money.format(row.actualCostCents / 100) : "—"}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.scopeOfWork}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.scheduledStart ? new Date(row.scheduledStart).toLocaleDateString() : "—"}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.estimatedCostCents != null ? money.format(row.estimatedCostCents / 100) : "—"}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.actualCostCents != null ? money.format(row.actualCostCents / 100) : "—"}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td className="p-3 text-slate-500" colSpan={7}>No work orders in this scope.</td>
+                <td className="p-3 text-slate-500 dark:text-slate-400" colSpan={7}>No work orders in this scope.</td>
               </tr>
             )}
           </tbody>
@@ -1081,33 +1082,33 @@ function WorkOrdersView({ report }) {
 }
 function VendorContactsView({ report }) {
   return (
-    <div className="mt-6 overflow-x-auto">
+    <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
       <table className="w-full text-left text-sm">
         <thead>
-          <tr className="border-b">
-            <th className="p-3">Business</th>
-            <th className="p-3">Contact</th>
-            <th className="p-3">Trade</th>
-            <th className="p-3">Status</th>
-            <th className="p-3">Insurance expiration</th>
-            <th className="p-3">W-9 status</th>
+          <tr className="border-b border-slate-200 dark:border-slate-700">
+            <th className="p-3 text-slate-700 dark:text-slate-300">Business</th>
+            <th className="p-3 text-slate-700 dark:text-slate-300">Contact</th>
+            <th className="p-3 text-slate-700 dark:text-slate-300">Trade</th>
+            <th className="p-3 text-slate-700 dark:text-slate-300">Status</th>
+            <th className="p-3 text-slate-700 dark:text-slate-300">Insurance expiration</th>
+            <th className="p-3 text-slate-700 dark:text-slate-300">W-9 status</th>
           </tr>
         </thead>
         <tbody>
           {report.rows.map((row) => (
-            <tr key={row.contractorId} className="border-b">
-              <td className="p-3">
+            <tr key={row.contractorId} className="border-b border-slate-200 dark:border-slate-700">
+              <td className="p-3 text-slate-700 dark:text-slate-300">
                 <strong>{row.businessName}</strong>
-                {row.contactName ? <><br /><span className="text-slate-500">{row.contactName}</span></> : null}
+                {row.contactName ? <><br /><span className="text-slate-500 dark:text-slate-400">{row.contactName}</span></> : null}
               </td>
-              <td className="p-3 text-slate-500">
+              <td className="p-3 text-slate-500 dark:text-slate-400">
                 {row.email}
                 {row.phone ? <><br />{row.phone}</> : null}
               </td>
-              <td className="p-3 capitalize">{row.trade || "—"}</td>
-              <td className="p-3 capitalize">{row.status}</td>
-              <td className="p-3">{row.insuranceExpiration || "—"}</td>
-              <td className="p-3 capitalize">{row.w9Status.replaceAll("_", " ")}</td>
+              <td className="p-3 capitalize text-slate-700 dark:text-slate-300">{row.trade || "—"}</td>
+              <td className="p-3 capitalize text-slate-700 dark:text-slate-300">{row.status}</td>
+              <td className="p-3 text-slate-700 dark:text-slate-300">{row.insuranceExpiration || "—"}</td>
+              <td className="p-3 capitalize text-slate-700 dark:text-slate-300">{row.w9Status.replaceAll("_", " ")}</td>
             </tr>
           ))}
         </tbody>
@@ -1122,33 +1123,33 @@ function VendorLedgerView({ report }) {
         <Kpi label="Payments" value={report.summary.paymentCount} />
         <Kpi label="Total paid" value={money.format(report.summary.totalPaidCents / 100)} />
       </div>
-      <div className="mt-6 overflow-x-auto">
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b">
-              <th className="p-3">Paid date</th>
-              <th className="p-3">Contractor</th>
-              <th className="p-3">Property</th>
-              <th className="p-3">Amount</th>
-              <th className="p-3">Method</th>
-              <th className="p-3">Reference</th>
+            <tr className="border-b border-slate-200 dark:border-slate-700">
+              <th className="p-3 text-slate-700 dark:text-slate-300">Paid date</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Contractor</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Property</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Amount</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Method</th>
+              <th className="p-3 text-slate-700 dark:text-slate-300">Reference</th>
             </tr>
           </thead>
           <tbody>
             {report.rows.length ? (
               report.rows.map((row) => (
-                <tr key={row.paymentId} className="border-b">
-                  <td className="p-3">{row.paidAt}</td>
-                  <td className="p-3">{row.businessName}</td>
-                  <td className="p-3 text-slate-500">{row.propertyId}</td>
-                  <td className="p-3">{money.format(row.amountCents / 100)}</td>
-                  <td className="p-3 capitalize">{row.paymentMethod}</td>
-                  <td className="p-3">{row.reference}</td>
+                <tr key={row.paymentId} className="border-b border-slate-200 dark:border-slate-700">
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.paidAt}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.businessName}</td>
+                  <td className="p-3 text-slate-500 dark:text-slate-400">{row.propertyId}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{money.format(row.amountCents / 100)}</td>
+                  <td className="p-3 capitalize text-slate-700 dark:text-slate-300">{row.paymentMethod}</td>
+                  <td className="p-3 text-slate-700 dark:text-slate-300">{row.reference}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td className="p-3 text-slate-500" colSpan={6}>No vendor payments in this scope.</td>
+                <td className="p-3 text-slate-500 dark:text-slate-400" colSpan={6}>No vendor payments in this scope.</td>
               </tr>
             )}
           </tbody>
