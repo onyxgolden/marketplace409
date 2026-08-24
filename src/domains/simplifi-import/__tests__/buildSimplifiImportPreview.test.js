@@ -80,4 +80,34 @@ describe("buildSimplifiImportPreview", () => {
     expect(rerun.rows[0]).toMatchObject({ classification: "already_imported", approvable: false });
     expect(rerun.rows[1].classification).toBe("safe_missing");
   });
+
+  it("keeps explicitly excluded accounts out of approval", () => {
+    const result = preview({
+      requestedMappings: [
+        { simplifi_account_name: "Checking", forge_account_id: "forge_checking", scope: "excluded" },
+        { simplifi_account_name: "Card", forge_account_id: "forge_card", scope: "business" },
+      ],
+    });
+    expect(result.rows[0]).toMatchObject({ classification: "personal", approvable: false });
+    expect(result.preview_hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("allows an excluded account without inventing a FORGE account or mapping its categories", () => {
+    const result = preview({
+      requestedMappings: [
+        { simplifi_account_name: "Checking", scope: "excluded" },
+        { simplifi_account_name: "Card", forge_account_id: "forge_card", scope: "business" },
+      ],
+      categoryMappings: { repairs: categoryMappings.repairs },
+    });
+
+    expect(result.accounts[0]).toMatchObject({ account_name: "Checking", mapped: true });
+    expect(result.rows[0]).toMatchObject({
+      account_mapping_id: "excluded:checking",
+      account_scope: "excluded",
+      classification: "personal",
+      approvable: false,
+    });
+    expect(result.rows[1]).toMatchObject({ classification: "safe_missing", approvable: true });
+  });
 });

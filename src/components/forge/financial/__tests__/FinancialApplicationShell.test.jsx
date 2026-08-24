@@ -22,6 +22,10 @@ vi.mock(
   }),
 );
 
+vi.mock("../SimplifiImportPanel", () => ({
+  default: function MockSimplifiImport() { return <section data-simplifi-import-function>Simplifi import</section>; },
+}));
+
 vi.mock(
   "../FinancialExecutiveIntelligence",
   () => ({
@@ -128,6 +132,10 @@ describe(
             id: "operations",
             label: "Operations",
           },
+          {
+            id: "import",
+            label: "Import",
+          },
         ]);
       },
     );
@@ -148,6 +156,10 @@ describe(
       [
         "operations",
         "data-operations-function",
+      ],
+      [
+        "import",
+        "data-simplifi-import-function",
       ],
     ])(
       "renders only the %s function surface",
@@ -173,6 +185,7 @@ describe(
           "data-transactions-function",
           "data-properties-function",
           "data-operations-function",
+          "data-simplifi-import-function",
         ];
 
         for (

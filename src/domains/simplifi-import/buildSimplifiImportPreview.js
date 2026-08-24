@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { classifySimplifiImportPreview } from "./classifySimplifiImportPreview";
 import { fingerprintSimplifiRows } from "./fingerprintSimplifiRows";
 import { parseSimplifiCsv } from "./parseSimplifiCsv";
@@ -11,7 +12,7 @@ const ACCOUNT_TYPES = new Set([
   "investment",
   "other",
 ]);
-const ACCOUNT_SCOPES = new Set(["business", "personal", "mixed"]);
+const ACCOUNT_SCOPES = new Set(["business", "personal", "mixed", "excluded"]);
 
 function normalized(value) {
   return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -25,15 +26,25 @@ function buildAccountMappings(requestedMappings, ownerAccounts) {
   for (const requested of requestedMappings ?? []) {
     const label = normalized(requested?.simplifi_account_name);
     const accountId = String(requested?.forge_account_id ?? "").trim();
-    if (!label || !accountId) throw new Error("Every Simplifi account mapping requires both account names.");
+    if (!label) throw new Error("Every Simplifi account mapping requires a Simplifi account name.");
     if (mappings[label]) throw new Error(`Simplifi account ${label} is mapped more than once.`);
+
+    const scope = normalized(requested.scope || "business");
+    if (!ACCOUNT_SCOPES.has(scope)) throw new Error(`Unsupported Simplifi account scope: ${scope}.`);
+    if (scope === "excluded" && !accountId) {
+      mappings[label] = Object.freeze({
+        id: `excluded:${label}`,
+        account_type: "other",
+        scope,
+      });
+      continue;
+    }
+    if (!accountId) throw new Error("Every included Simplifi account requires a FORGE financial account.");
 
     const ownerAccount = ownerAccountsById.get(accountId);
     if (!ownerAccount) throw new Error("A selected FORGE financial account does not belong to this owner.");
     const accountType = normalized(requested.account_type || ownerAccount.type || "other");
-    const scope = normalized(requested.scope || "business");
     if (!ACCOUNT_TYPES.has(accountType)) throw new Error(`Unsupported Simplifi account type: ${accountType}.`);
-    if (!ACCOUNT_SCOPES.has(scope)) throw new Error(`Unsupported Simplifi account scope: ${scope}.`);
     mappings[label] = Object.freeze({ id: accountId, account_type: accountType, scope });
   }
   return Object.freeze(mappings);
@@ -68,12 +79,27 @@ export function buildSimplifiImportPreview(input) {
     existingFingerprints: input.existingFingerprints,
     rentecOverlapFingerprints: input.rentecOverlapFingerprints,
     plaidOverlapFingerprints: input.plaidOverlapFingerprints,
+    overlapEvidence: input.overlapEvidence,
   });
+
+  const previewHash = createHash("sha256").update(JSON.stringify({
+    batch_hash: parsed.batch_hash,
+    rows: classified.rows.map((row) => ({
+      fingerprint: row.fingerprint,
+      evidence_hash: row.evidence_hash,
+      classification: row.classification,
+      normalized_category: row.normalized_category,
+      transaction_kind: row.transaction_kind,
+      affects_noi: row.affects_noi,
+      capitalized: row.capitalized,
+    })),
+  })).digest("hex");
 
   return Object.freeze({
     status: "preview_only",
     notice: "Preview only — no financial events were written.",
     batch_hash: parsed.batch_hash,
+    preview_hash: previewHash,
     row_count: parsed.row_count,
     unknown_headers: parsed.unknown_headers,
     accounts: summarizeAccounts(classified.rows),

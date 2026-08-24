@@ -35,4 +35,38 @@ describe("classifySimplifiImportPreview", () => {
     expect(result.totals.safe_missing).toEqual({ count: 2, amount_cents: 1500 });
     expect(result.can_approve).toBe(true);
   });
+
+  it("uses owner-scoped cross-source evidence once, preserving cardinality", () => {
+    const evidence = [{ id: "rentec_1", source_system: "rentec_api", event_date: "2026-08-03",
+      signed_amount_cents: -1000, normalized_category: "repairs_maintenance" }];
+    const result = classifySimplifiImportPreview(
+      [base, { ...base, fingerprint: "v1:second" }],
+      { categoryMappings: categories, overlapEvidence: evidence },
+    );
+    expect(result.rows.map((row) => row.classification)).toEqual(["overlap_rentec", "safe_missing"]);
+  });
+
+  it("fails closed when more than one existing event could match", () => {
+    const overlapEvidence = ["one", "two"].map((id) => ({ id, source_system: "plaid",
+      event_date: "2026-08-01", signed_amount_cents: -1000, normalized_category: "repairs_maintenance" }));
+    const result = classifySimplifiImportPreview([base], { categoryMappings: categories, overlapEvidence });
+    expect(result.rows[0]).toMatchObject({ classification: "ambiguous", approvable: false });
+  });
+
+  it("keeps transfers and asset purchases out of operating income", () => {
+    const rows = [base, { ...base, fingerprint: "v1:asset", category: "Purchase" }];
+    const result = classifySimplifiImportPreview(rows, { categoryMappings: {
+      repairs: { normalized_category: "transfer", treatment: "transfer" },
+      purchase: { normalized_category: "real_estate_purchase", treatment: "asset_purchase" },
+    } });
+    expect(result.rows[0]).toMatchObject({ transaction_kind: "transfer", affects_noi: false, capitalized: false });
+    expect(result.rows[1]).toMatchObject({ transaction_kind: "asset_purchase", affects_noi: false, capitalized: true });
+  });
+
+  it("never approves a category explicitly excluded by the landlord", () => {
+    const result = classifySimplifiImportPreview([base], { categoryMappings: {
+      repairs: { normalized_category: "excluded", treatment: "exclude" },
+    } });
+    expect(result.rows[0]).toMatchObject({ classification: "unsupported", approvable: false });
+  });
 });
