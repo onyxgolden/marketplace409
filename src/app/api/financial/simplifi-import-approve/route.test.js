@@ -10,7 +10,12 @@ vi.mock("@/domains/simplifi-import", () => ({
 }));
 import { POST } from "./route";
 
-const fingerprint = `v1:${"a".repeat(64)}`;
+// Every freshly approvable row is always v2-shaped now (already-imported/legacy rows are never
+// submitted for approval), so this is the realistic default fixture -- a prior version of this
+// suite left it v1-shaped by accident, which is exactly how the route's own selectedFingerprints
+// regex silently rejecting real v2 fingerprints went unnoticed (see the explicit format test below).
+const fingerprint = `v2:${"a".repeat(64)}`;
+const legacyFingerprint = `v1:${"b".repeat(64)}`;
 const batchHash = "b".repeat(64);
 const previewHash = "c".repeat(64);
 const csv = "Account,Date,Payee,Amount\nChecking,8/1/2026,Tenant,100";
@@ -115,5 +120,25 @@ describe("POST /api/financial/simplifi-import-approve", () => {
     expect(response.status).toBe(400);
     expect(mocks.buildPreview).not.toHaveBeenCalled();
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("accepts a v2 fingerprint in selectedFingerprints (regression: this regex used to accept v1 only)", async () => {
+    const response = await POST(request({ selectedFingerprints: [fingerprint] }));
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalled();
+  });
+
+  it("still accepts a legacy v1-shaped fingerprint in selectedFingerprints", async () => {
+    mocks.buildPreview.mockReturnValueOnce({ batch_hash: batchHash, preview_hash: "e".repeat(64),
+      rows: [{ fingerprint: legacyFingerprint, classification: "already_imported", approvable: false }] });
+    const response = await POST(request({ selectedFingerprints: [legacyFingerprint] }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ success: true, result: { applied: 0, already_applied: 1 } });
+  });
+
+  it("rejects a malformed or unversioned fingerprint", async () => {
+    const response = await POST(request({ selectedFingerprints: [`v3:${"a".repeat(64)}`] }));
+    expect(response.status).toBe(400);
+    expect(mocks.buildPreview).not.toHaveBeenCalled();
   });
 });
