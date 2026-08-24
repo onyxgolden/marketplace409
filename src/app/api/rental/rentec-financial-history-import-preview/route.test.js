@@ -20,7 +20,7 @@ function request() {
 
 function financialEventsChain(rows) {
   const eqCalls = [];
-  const node = { eq: (...args) => { eqCalls.push(args); return node; }, then: (resolve) => resolve({ data: rows, error: null }) };
+  const node = { eq: (...args) => { eqCalls.push(args); return node; }, range: () => Promise.resolve({ data: rows, error: null }) };
   return { select: () => node, __eqCalls: eqCalls };
 }
 

@@ -22,7 +22,7 @@ function mockDatabase({ financialEvents = [], rpcImpl } = {}) {
   const rpc = vi.fn(rpcImpl || (async () => ({ data: { status: "applied", insertedCount: 1, skippedCount: 0 }, error: null })));
   return {
     from: (table) => {
-      if (table === "financial_events") return { select: () => ({ eq: () => ({ then: (resolve) => resolve({ data: financialEvents, error: null }) }) }) };
+      if (table === "financial_events") return { select: () => ({ eq: () => ({ range: () => Promise.resolve({ data: financialEvents, error: null }) }) }) };
       throw new Error(`Unexpected table: ${table}`);
     },
     rpc,
@@ -167,7 +167,7 @@ describe("rentec financial history import approve route", () => {
   it("scopes the fresh financial_events re-read to the authenticated owner id", async () => {
     const eqCalls = [];
     const db = {
-      from: (table) => { if (table === "financial_events") return { select: () => ({ eq: (...args) => { eqCalls.push(args); return { then: (resolve) => resolve({ data: [], error: null }) }; } }) }; throw new Error(table); },
+      from: (table) => { if (table === "financial_events") return { select: () => ({ eq: (...args) => { eqCalls.push(args); return { range: () => Promise.resolve({ data: [], error: null }) }; } }) }; throw new Error(table); },
       rpc: vi.fn(async () => ({ data: { status: "applied", insertedCount: 1, skippedCount: 0 }, error: null })),
     };
     createAuthenticatedForgeApplication.mockResolvedValueOnce({ ...authenticated, supabaseClient: db });

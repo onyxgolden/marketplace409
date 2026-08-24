@@ -4,6 +4,7 @@ import { createRentecApiClient } from "@/domains/rentec-rental-migration/rentec-
 import { buildRentecFinancialHistoryImportPreview } from "@/domains/rentec-financial-history-import/rentecFinancialHistoryImportPreview";
 import { fetchAllRentecFinancialHistoryTransactions } from "@/domains/rentec-financial-history-import/fetchAllRentecFinancialHistoryTransactions";
 import { isCommissionsCategory } from "@/domains/rentec-financial-history-import/rentecFinancialHistoryImportBatchPlan";
+import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
 
 // The one route in this workflow that writes anything — deliberately separate from the preview
 // route, same reasoning as rentec-payment-import-approve/route.js and rentec-commit/route.js. A
@@ -19,7 +20,11 @@ import { isCommissionsCategory } from "@/domains/rentec-financial-history-import
 //
 // The fetch itself shares fetchAllRentecFinancialHistoryTransactions() with the preview route so the
 // two paths can never apply a different (or missing) pagination safety cap — approval must never act
-// on a source snapshot the preview never actually showed.
+// on a source snapshot the preview never actually showed. Likewise shares
+// fetchAllOwnerFinancialEvents() for the *existing* financial_events read — a plain unbounded
+// .select() is silently capped by PostgREST's default page size (1000 rows), which for an owner
+// with more history than that would make the classifier's evidence-matching miss legacy rows it
+// should have matched against, misclassifying them as safeMissing here too.
 const MAX_ROWS_PER_RPC_CALL = 1000;
 
 export async function POST(request) {
@@ -44,15 +49,11 @@ export async function POST(request) {
 
     const { rentecTransactions } = await fetchAllRentecFinancialHistoryTransactions(client, inventory.propertyIds);
 
-    const { data: existingFinancialEvents, error: fetchError } = await database
-      .from("financial_events")
-      .select("id, event_date, description, amount, transaction_kind, normalized_category, property_id, source_system, source_record_id, status, is_deleted")
-      .eq("owner_id", ownerId);
-    if (fetchError) throw fetchError;
+    const existingFinancialEvents = await fetchAllOwnerFinancialEvents(database, ownerId);
 
     const freshPreview = buildRentecFinancialHistoryImportPreview({
       rentecTransactions,
-      existingFinancialEvents: existingFinancialEvents || [],
+      existingFinancialEvents,
       propertyLabelById,
     });
     const freshBySourceRecordId = new Map(freshPreview.items.map((item) => [item.sourceRecordId, item]));
