@@ -27,6 +27,7 @@ describe("rental existing-record safety", () => {
     expect(unitMarkup).toContain("Selected unit");
     expect(unitMarkup).toContain("Property actions");
     expect(unitMarkup).toContain("Edit property details");
+    expect(unitMarkup).toContain("Financial setup");
     expect(unitMarkup).toContain("Work orders");
     expect(unitMarkup).toContain("File library");
     expect(unitMarkup).not.toContain("Save Kent Avenue unit");
