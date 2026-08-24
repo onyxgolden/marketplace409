@@ -82,6 +82,19 @@ function parseCalendarDate(value, rowNumber) {
   else {
     match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
     if (match) [, month, day, year] = match;
+    else {
+      match = raw.match(/^([A-Za-z]{3})\s+(\d{1,2}),\s*(\d{4})$/);
+      if (match) {
+        const monthIndex = [
+          "jan", "feb", "mar", "apr", "may", "jun",
+          "jul", "aug", "sep", "oct", "nov", "dec",
+        ].indexOf(match[1].toLowerCase());
+        if (monthIndex >= 0) {
+          month = String(monthIndex + 1);
+          [, , day, year] = match;
+        } else match = null;
+      }
+    }
   }
   if (!match) throw new Error(`Simplifi CSV row ${rowNumber} has an invalid date.`);
 
@@ -104,7 +117,7 @@ function parseCalendarDate(value, rowNumber) {
 function parseAmountCents(value, rowNumber) {
   const raw = String(value ?? "").trim();
   const parenthesized = /^\(.*\)$/.test(raw);
-  const cleaned = raw.replace(/[,$\s()]/g, "");
+  const cleaned = raw.replace(/[,\$\s()]/g, "");
   if (!/^[+-]?\d+(?:\.\d{1,2})?$/.test(cleaned)) {
     throw new Error(`Simplifi CSV row ${rowNumber} has an invalid amount.`);
   }
