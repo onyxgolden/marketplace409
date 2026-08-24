@@ -29,7 +29,7 @@ Coordination rules:
 
 | ID | Owner | Branch | Commit | Tests | Reviewer Needed | Notes |
 |----|-------|--------|--------|-------|------------------|-------|
-| SIMPLIFI-01 | Codex | `chore/agent-handoff` | `0f5ca9054` | Design-only | Jason/Claude | Complete design at `designs/SIMPLIFI-01-CSV-IMPORT.md`; no source/schema changes |
+| ASSETS-01 | Codex | `chore/agent-handoff` | `87d54518c` | Design-only | Jason/Claude | Investments and other-assets architecture at `designs/ASSETS-01-INVESTMENTS-OTHER-ASSETS.md`; stocks, funds, bonds, crypto, metals, private/manual assets; no source/schema changes |\n| SIMPLIFI-01 | Codex | `chore/agent-handoff` | `0f5ca9054` | Design-only | Jason/Claude | Complete design at `designs/SIMPLIFI-01-CSV-IMPORT.md`; no source/schema changes |
 
 ## Blocked
 
