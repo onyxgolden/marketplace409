@@ -35,8 +35,21 @@ describe("parseSimplifiCsv", () => {
   });
 
   it.each([
+    ["Aug 22, 2026", "2026-08-22"],
+    ["Jan 2, 2025", "2025-01-02"],
+    ["dec 31, 2024", "2024-12-31"],
+  ])("parses Simplifi export date %s", (sourceDate, expectedDate) => {
+    const result = parseSimplifiCsv(
+      `Account,Date,Payee,Amount\nChecking,"${sourceDate}",A,1.00`,
+    );
+    expect(result.rows[0].date).toBe(expectedDate);
+  });
+
+  it.each([
     ["", "required"],
     ["Account,Date,Payee,Amount\nChecking,2/30/2026,A,1.00", "invalid date"],
+    ['Account,Date,Payee,Amount\nChecking,"Foo 22, 2026",A,1.00', "invalid date"],
+    ['Account,Date,Payee,Amount\nChecking,"Feb 30, 2026",A,1.00', "invalid date"],
     ["Account,Date,Payee,Amount\nChecking,8/1/2026,A,one", "invalid amount"],
     ["Account,Date,Payee\nChecking,8/1/2026,A", "missing required headers"],
     ['Account,Date,Payee,Amount\nChecking,8/1/2026,"A,1.00', "unterminated"],
