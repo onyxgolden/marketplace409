@@ -39,7 +39,7 @@ describe("POST /api/financial/simplifi-import-approve", () => {
     mocks.authenticate.mockResolvedValue({ user: { id: "owner_1" }, supabaseClient: { from, rpc } });
     mocks.loadOverlap.mockResolvedValue([{ id: "event_1", source_system: "plaid" }]);
     mocks.buildPreview.mockReturnValue({ batch_hash: batchHash, preview_hash: previewHash, rows: [{
-      fingerprint, evidence_hash: "d".repeat(64), account_mapping_id: "account_1", date: "2026-08-01",
+      fingerprint, fingerprint_version: "v2", evidence_hash: "d".repeat(64), account_mapping_id: "account_1", date: "2026-08-01",
       amount_cents: 10000, normalized_category: "rental_income", classification: "safe_missing",
       transaction_kind: "income", affects_noi: true, capitalized: false,
       approvable: true, payee: "Tenant",
@@ -55,7 +55,7 @@ describe("POST /api/financial/simplifi-import-approve", () => {
     }));
     expect(rpc).toHaveBeenCalledWith("approve_simplifi_csv_import", expect.objectContaining({
       p_owner_id: "owner_1", p_file_hash: batchHash, p_preview_hash: previewHash,
-      p_rows: [expect.objectContaining({ fingerprint, financial_account_id: "account_1", classification: "safe_missing",
+      p_rows: [expect.objectContaining({ fingerprint, fingerprint_version: "v2", financial_account_id: "account_1", classification: "safe_missing",
         transaction_kind: "income", affects_noi: true, capitalized: false })],
     }));
   });

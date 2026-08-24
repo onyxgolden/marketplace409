@@ -123,4 +123,38 @@ describe("buildSimplifiImportPreview", () => {
     });
     expect(result.rows[1]).toMatchObject({ classification: "safe_missing", approvable: true });
   });
+
+  it("preserves business/personal/transfer segregation across duplicate-evidence rows with the corrected fingerprint scheme", () => {
+    const duplicateCsv = [
+      "Account,Date,Payee,Amount,Category,Status",
+      "Checking,8/1/2026,Store,-50.00,Repairs,Cleared",
+      "Checking,8/1/2026,Store,-50.00,Repairs,Cleared",
+      "Card,8/2/2026,Coffee,-6.00,Shopping,Cleared",
+      "Card,8/2/2026,Coffee,-6.00,Shopping,Cleared",
+      "Card,8/2/2026,Coffee,-6.00,Shopping,Cleared",
+      "Checking,8/3/2026,Business Savings,-1000.00,Business Savings,Cleared",
+    ].join("\n");
+    const result = buildSimplifiImportPreview({
+      csv: duplicateCsv,
+      ownerAccounts,
+      requestedMappings: [
+        { simplifi_account_name: "Checking", forge_account_id: "forge_checking", scope: "business" },
+        { simplifi_account_name: "Card", forge_account_id: "forge_card", scope: "personal" },
+      ],
+      categoryMappings: {
+        repairs: { normalized_category: "repairs_maintenance", treatment: "operating" },
+        shopping: { normalized_category: "shopping", treatment: "operating" },
+        "business savings": { normalized_category: "business_savings", treatment: "transfer" },
+      },
+      fingerprintSecret: "test-only-secret",
+    });
+
+    const byClassification = Object.fromEntries(
+      Object.entries(result.totals).map(([k, v]) => [k, v.count]),
+    );
+    expect(byClassification).toEqual({ safe_missing: 2, personal: 3, transfer_pair: 1 });
+    expect(new Set(result.rows.map((r) => r.fingerprint)).size).toBe(6);
+    expect(result.rows.filter((r) => r.classification === "safe_missing").every((r) => r.business_scope === "business")).toBe(true);
+    expect(result.rows.filter((r) => r.classification === "personal").every((r) => r.business_scope === "personal")).toBe(true);
+  });
 });
