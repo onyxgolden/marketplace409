@@ -3,6 +3,7 @@ import { useState } from "react";
 import RentecExceptionReview from "./RentecExceptionReview.jsx";
 import RentecOperationalMigrationPlan from "./RentecOperationalMigrationPlan.jsx";
 import RentecImportManifestPreview from "./RentecImportManifestPreview.jsx";
+import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 
 const money = (cents) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cents || 0) / 100);
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -148,29 +149,29 @@ export default function RentecMigrationPanel() {
     && (propertyManifest.privateRecordCounts.units + propertyManifest.privateRecordCounts.tenants + propertyManifest.privateRecordCounts.leases > 0);
 
   return <section className="space-y-5">
-    <div className="rounded-2xl border bg-white p-6">
-      <p className="text-sm font-bold uppercase tracking-widest text-sky-700">Migration</p>
-      <h2 className="mt-2 text-2xl font-black">Import from Rentec Direct</h2>
-      <p className="mt-2 max-w-3xl text-slate-600">Connect read-only to inventory every property, renter, lease, and transaction page, then compare transaction fingerprints with the legacy Rentec financial export and build a read-only operational migration plan and controlled import manifest before any FORGE record is created.</p>
-      <button type="button" disabled={busy} onClick={inspectApi} className="mt-5 rounded-xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-50">{busy ? "Inspecting…" : "Inspect Rentec account"}</button>
-      <p className="mt-3 text-sm font-bold text-amber-800">Preview only: this screen cannot write Rentec or FORGE records.</p>
-      {progress ? <p role="status" className="mt-4">{progress}</p> : null}
-      {message ? <p role="alert" className="mt-4 text-red-700">{message}</p> : null}
+    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Migration</p>
+      <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Import from Rentec Direct</h2>
+      <p className="mt-2 max-w-3xl text-sm text-slate-600 dark:text-slate-400">Connect read-only to inventory every property, renter, lease, and transaction page, then compare transaction fingerprints with the legacy Rentec financial export and build a read-only operational migration plan and controlled import manifest before any FORGE record is created.</p>
+      <button type="button" disabled={busy} onClick={inspectApi} className={`mt-5 rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{busy ? "Inspecting…" : "Inspect Rentec account"}</button>
+      <p className="mt-3 text-sm font-bold text-amber-800 dark:text-amber-400">Preview only: this screen cannot write Rentec or FORGE records.</p>
+      {progress ? <p role="status" className="mt-4 text-sm text-slate-600 dark:text-slate-400">{progress}</p> : null}
+      {message ? <p role="alert" className="mt-4 text-sm font-bold text-red-700 dark:text-red-400">{message}</p> : null}
       {apiPreview ? <div className="mt-6 space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[["Properties", apiPreview.properties], ["Renters", apiPreview.tenants], ["Leases", apiPreview.leases], ["Transactions", apiPreview.transactionRecords]].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-100 p-4"><p className="text-xs font-black uppercase text-slate-500">{label}</p><p className="mt-1 text-xl font-black">{value}</p></div>)}</div>
-        <div className="rounded-xl border p-4"><h3 className="font-black">Read-only reconciliation inventory</h3><p className="mt-2 text-sm">Archived renters: {apiPreview.archivedTenants}</p><p className="mt-2 text-sm">Renters linked to transactions: {apiPreview.matchedTenantIds}</p><p className="mt-2 text-sm">Transactions without a renter link: {apiPreview.unassignedTransactions}</p><p className="mt-2 text-sm">Transaction pages read: {apiPreview.transactionPages}</p><p className="mt-2 text-sm">Net transaction value: {money(apiPreview.netTransactionCents)}</p></div>
-        {reconciliation ? <div className="rounded-xl border p-4"><h3 className="font-black">Legacy Rentec export comparison</h3><p className="mt-2 text-sm">Already represented: {reconciliation.alreadyRepresented}</p><p className="mt-2 text-sm">Probable matches requiring review: {reconciliation.probableMatch}</p><p className="mt-2 text-sm">Probable matches supported by property evidence: {reconciliation.propertySupportedMatch}</p><p className="mt-2 text-sm">Conflicting amount candidates: {reconciliation.conflicting}</p><p className="mt-2 text-sm">New API transactions: {reconciliation.newFromApi}</p><p className="mt-2 text-sm">Legacy-only financial events: {reconciliation.legacyOnly}</p><p className="mt-3 text-sm font-bold text-amber-800">Dry run only: legacy financial events remain accounting history and will not be copied into Rental Manager.</p></div> : null}
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[["Properties", apiPreview.properties], ["Renters", apiPreview.tenants], ["Leases", apiPreview.leases], ["Transactions", apiPreview.transactionRecords]].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800"><p className="text-xs font-black uppercase text-slate-500 dark:text-slate-400">{label}</p><p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{value}</p></div>)}</div>
+        <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700"><h3 className="font-black text-slate-950 dark:text-white">Read-only reconciliation inventory</h3><p className="mt-2 text-sm text-slate-700 dark:text-slate-300">Archived renters: {apiPreview.archivedTenants}</p><p className="mt-2 text-sm text-slate-700 dark:text-slate-300">Renters linked to transactions: {apiPreview.matchedTenantIds}</p><p className="mt-2 text-sm text-slate-700 dark:text-slate-300">Transactions without a renter link: {apiPreview.unassignedTransactions}</p><p className="mt-2 text-sm text-slate-700 dark:text-slate-300">Transaction pages read: {apiPreview.transactionPages}</p><p className="mt-2 text-sm text-slate-700 dark:text-slate-300">Net transaction value: {money(apiPreview.netTransactionCents)}</p></div>
+        {reconciliation ? <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700"><h3 className="font-black text-slate-950 dark:text-white">Legacy Rentec export comparison</h3><p className="mt-2 text-sm text-slate-700 dark:text-slate-300">Already represented: {reconciliation.alreadyRepresented}</p><p className="mt-2 text-sm text-slate-700 dark:text-slate-300">Probable matches requiring review: {reconciliation.probableMatch}</p><p className="mt-2 text-sm text-slate-700 dark:text-slate-300">Probable matches supported by property evidence: {reconciliation.propertySupportedMatch}</p><p className="mt-2 text-sm text-slate-700 dark:text-slate-300">Conflicting amount candidates: {reconciliation.conflicting}</p><p className="mt-2 text-sm text-slate-700 dark:text-slate-300">New API transactions: {reconciliation.newFromApi}</p><p className="mt-2 text-sm text-slate-700 dark:text-slate-300">Legacy-only financial events: {reconciliation.legacyOnly}</p><p className="mt-3 text-sm font-bold text-amber-800 dark:text-amber-400">Dry run only: legacy financial events remain accounting history and will not be copied into Rental Manager.</p></div> : null}
         <RentecOperationalMigrationPlan plan={apiPreview.operationalPlan}/>
         <RentecImportManifestPreview manifest={apiPreview.importManifest} busy={busy} onResolve={resolveManifest}/>
         <RentecExceptionReview review={reconciliation?.exceptionReview}/>
 
-        <div className="rounded-xl border-2 border-slate-950 p-4">
-          <h3 className="font-black">Import one property</h3>
-          <p className="mt-2 text-sm text-slate-600">Choose a single property to review and, if you approve it, actually create its records in Rental Manager. This is the only action on this page that writes anything — everything else above remains preview only.</p>
-          <label className="mt-4 block text-sm font-bold">
+        <div className="rounded-2xl border-2 border-slate-950 p-4 dark:border-amber-400">
+          <h3 className="font-black text-slate-950 dark:text-white">Import one property</h3>
+          <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Choose a single property to review and, if you approve it, actually create its records in Rental Manager. This is the only action on this page that writes anything — everything else above remains preview only.</p>
+          <label className="mt-4 block text-sm font-bold text-slate-900 dark:text-white">
             Property
             <select
-              className="mt-1 block w-full max-w-md rounded-xl border border-slate-300 p-3 font-bold"
+              className="mt-1 block w-full max-w-md rounded-xl border border-slate-300 bg-white p-3 font-bold dark:border-slate-600 dark:bg-slate-900 dark:text-white"
               value={selectedPropertyId}
               disabled={busy || committing}
               onChange={(event) => previewProperty(event.target.value)}
@@ -186,30 +187,30 @@ export default function RentecMigrationPanel() {
             <RentecImportManifestPreview manifest={propertyManifest} busy={busy} onResolve={resolvePropertyManifest}/>
 
             {propertyManifest.blockers?.length ? (
-              <p className="rounded-xl bg-amber-50 p-4 text-sm font-bold text-amber-900">Resolve the blocking owner inputs above before this property can be imported.</p>
+              <p className="rounded-xl bg-amber-50 p-4 text-sm font-bold text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Resolve the blocking owner inputs above before this property can be imported.</p>
             ) : !propertyReadyToImport ? (
-              <p className="rounded-xl bg-slate-100 p-4 text-sm font-bold text-slate-700">Every record for {selectedPropertyLabel} already exists in Rental Manager — there is nothing new to import.</p>
+              <p className="rounded-xl bg-slate-100 p-4 text-sm font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-300">Every record for {selectedPropertyLabel} already exists in Rental Manager — there is nothing new to import.</p>
             ) : !confirmingImport ? (
-              <button type="button" disabled={committing} onClick={() => setConfirmingImport(true)} className="rounded-xl bg-amber-500 px-5 py-3 font-black text-slate-950 disabled:opacity-50">
+              <button type="button" disabled={committing} onClick={() => setConfirmingImport(true)} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>
                 Approve and import {selectedPropertyLabel}
               </button>
             ) : (
-              <div className="rounded-xl border-2 border-red-700 bg-red-50 p-4">
-                <p className="font-black text-red-900">Confirm: create real Rental Manager records for {selectedPropertyLabel}?</p>
-                <p className="mt-2 text-sm text-red-800">This creates {propertyManifest.privateRecordCounts.units} unit(s), {propertyManifest.privateRecordCounts.tenants} tenant(s), and {propertyManifest.privateRecordCounts.leases} lease(s) as draft — leases stay draft and cannot activate billing, portals, or autopay. This cannot be undone from this screen.</p>
+              <div className="rounded-xl border-2 border-red-700 bg-red-50 p-4 dark:border-red-500 dark:bg-red-950/30">
+                <p className="font-black text-red-900 dark:text-red-200">Confirm: create real Rental Manager records for {selectedPropertyLabel}?</p>
+                <p className="mt-2 text-sm text-red-800 dark:text-red-300">This creates {propertyManifest.privateRecordCounts.units} unit(s), {propertyManifest.privateRecordCounts.tenants} tenant(s), and {propertyManifest.privateRecordCounts.leases} lease(s) as draft — leases stay draft and cannot activate billing, portals, or autopay. This cannot be undone from this screen.</p>
                 <div className="mt-3 flex gap-3">
-                  <button type="button" disabled={committing} onClick={approveImport} className="rounded-xl bg-red-700 px-5 py-3 font-black text-white disabled:opacity-50">{committing ? "Importing…" : "Confirm import"}</button>
-                  <button type="button" disabled={committing} onClick={() => setConfirmingImport(false)} className="rounded-xl border border-slate-300 px-5 py-3 font-black">Cancel</button>
+                  <button type="button" disabled={committing} onClick={approveImport} className="rounded-xl bg-red-700 px-5 py-3 text-sm font-black text-white transition hover:bg-red-800 disabled:opacity-50">{committing ? "Importing…" : "Confirm import"}</button>
+                  <button type="button" disabled={committing} onClick={() => setConfirmingImport(false)} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
                 </div>
               </div>
             )}
           </div> : null}
 
-          {commitError ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-800">{commitError}</p> : null}
-          {commitResult ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-4 text-sm font-bold text-emerald-900">Imported {selectedPropertyLabel}: {commitResult.unitsCreated} unit(s), {commitResult.tenantsCreated} tenant(s), {commitResult.leasesCreated} lease(s) created.</p> : null}
+          {commitError ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{commitError}</p> : null}
+          {commitResult ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-4 text-sm font-bold text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">Imported {selectedPropertyLabel}: {commitResult.unitsCreated} unit(s), {commitResult.tenantsCreated} tenant(s), {commitResult.leasesCreated} lease(s) created.</p> : null}
         </div>
       </div> : null}
     </div>
-    <details className="rounded-2xl border bg-white p-6"><summary className="cursor-pointer font-black">CSV backup and reconciliation</summary><p className="mt-3 text-sm text-slate-600">Use exported tenant-list and tenant-ledger CSV files only when API records require secondary evidence.</p><input className="mt-3 block w-full" type="file" accept=".csv,text/csv" multiple onChange={inspectCsv}/>{preview ? <p className="mt-3 text-sm font-bold">Recognized {preview.inventory.tenantRows} renter rows and {preview.inventory.ledgerRows} ledger rows.</p> : null}</details>
+    <details className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900"><summary className="cursor-pointer font-black text-slate-950 dark:text-white">CSV backup and reconciliation</summary><p className="mt-3 text-sm text-slate-600 dark:text-slate-400">Use exported tenant-list and tenant-ledger CSV files only when API records require secondary evidence.</p><input className="mt-3 block w-full text-sm text-slate-700 dark:text-slate-300" type="file" accept=".csv,text/csv" multiple onChange={inspectCsv}/>{preview ? <p className="mt-3 text-sm font-bold text-slate-800 dark:text-slate-200">Recognized {preview.inventory.tenantRows} renter rows and {preview.inventory.ledgerRows} ledger rows.</p> : null}</details>
   </section>;
 }
