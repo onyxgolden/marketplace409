@@ -2,12 +2,15 @@
 
 ## Last Updated
 
-2026-08-25T~22:00Z — Claude Code (Sonnet 5) — branch `agent-handoff-update-4`, pushed to
+2026-08-25T~22:30Z — Claude Code (Sonnet 5) — branch `agent-handoff-update-4`, pushed to
 `chore/agent-handoff`. Update covers manual bank/credit-card balance entry from two more Quicken
 Simplifi screenshots (two rounds, real transaction activity happened between them), a verification
-that no ChatGPT/Codex investment-account work exists anywhere unshipped, and a new **Investments**
-workspace (PR #23) populated with 8 real brokerage/retirement accounts. Net Worth moved
-$3,774,436 → $3,795,810 → **$3,996,781** across this update.
+that no ChatGPT/Codex investment-account work exists anywhere unshipped, a new **Investments**
+workspace (PR #23) populated with 8 real brokerage/retirement accounts, the home cash box
+(corrected once after an initial wrong figure), and finally the full Savings group breakdown —
+which surfaced a stale placeholder balance on "Business Savings" that had gone unnoticed since
+early in the session. Net Worth moved $3,774,436 → $3,795,810 → $3,996,781 → $4,031,781 →
+**$4,096,845** across this update.
 
 ## Status At A Glance
 
@@ -28,6 +31,8 @@ $3,774,436 → $3,795,810 → **$3,996,781** across this update.
 | Real estate in Net Worth | **Done** | 23 properties manually registered as Financial Assets from a Quicken Simplifi screenshot. Net Worth $4,236 → $3,774,436. See section B.2 — also created a live (not just latent) instance of the B.1 double-counting risk. |
 | Bank/credit-card balances from Simplifi | **Done** | 16 accounts entered/refreshed across two rounds (real activity happened between captures — verified against the actual transactions shown). Net Worth $3,774,436 → $3,795,810. See section B.3. |
 | Investments workspace (brokerage/retirement/crypto accounts) | **Done** | New feature, PR #23, migration applied, deployed, populated with 8 real accounts. Net Worth $3,795,810 → $3,996,781. See section B.4. Deliberately scoped to manual accounts+valuations only — not Codex's full CSV-import/tax-lot/Plaid design. |
+| Home cash box | **Done** | Entered as $35,000, corrected by Jason same-session to the real figure, $53,168. Net Worth $3,996,781 → $4,031,781 → $4,096,845 (net of both entries). See section B.5. |
+| Savings group fully broken out | **Done** | Personal Savings, Rave Brandy's, RAVE Jason's entered for the first time; Business Savings corrected from a stale $4,235.67 placeholder to its real $26,123.53 balance; a previously-unknown "Joint WROS - TOD" brokerage account added to Investments. Net Worth $4,031,781 → $4,096,845. See section B.5. |
 | ChatGPT/Codex investment-account work — "was it built and not pushed?" | **Checked, confirmed no** | Only the `ASSETS-01` design doc exists (`87d54518c`), explicitly "implementation not started." No branch, migration, route, or PR anywhere in history. See section B.4. |
 
 ## A. Simplifi — Fingerprint/Duplicate Defect
@@ -425,6 +430,41 @@ specifically whether ChatGPT/Codex had built this and just not pushed it live �
   now, since Plaid will make this live automatically once connected (architected for exactly that,
   same mechanism as the rest of this domain — no code change needed when that day comes).
 
+### B.5 Home cash box + full Savings group breakdown — 2026-08-25
+
+Two more rounds of live data entry via the existing `POST /api/financial/account-balances` and
+`POST /api/financial/investment-accounts` routes — no code changes, both already built.
+
+- **Home cash box**: Jason first gave $35,000 (entered, Net Worth $3,996,781 → $4,031,781), then
+  corrected it in the same session to the real figure, **$53,168.00** — re-entered against the same
+  account/date, which upserted cleanly via the existing same-day `ON CONFLICT DO UPDATE` path (no
+  duplicate row, no special handling needed).
+- **Full Savings group revealed for the first time**: earlier screenshots only ever showed
+  Simplifi's "Savings" group collapsed to one $91,770.85 total (flagged as a known gap in every
+  prior update, `CASH-SAVINGS-BALANCES` in TASKS.md). A later screenshot showed it expanded into 5
+  accounts, which were verified to sum to exactly $91,770.85 before entering anything:
+  - **Personal Savings**: $12,273.64 (previously missing entirely)
+  - **Rave Brandy's**: $134.49 (previously missing entirely, `type: other`)
+  - **RAVE Jason's**: $71.19 (previously missing entirely, `type: other`)
+  - **Business Savings**: corrected from **$4,235.67 to $26,123.53** — the $4,235.67 figure had
+    been sitting in the system since very early this session (the very first manual-balance-entry
+    test, used throughout this document as "the sole pre-existing balance" before real estate/
+    investments were added) and was never revisited as a live figure. It turned out to be a stale
+    placeholder, not the real bank-synced balance — nearly 6x lower than reality. **Worth noting
+    for future data-entry work: don't assume an early-session manually-entered balance is still
+    current without re-verifying it against a live Simplifi screenshot.**
+  - Cash box correction + all 5 Savings accounts together: Net Worth $4,031,781 → **$4,096,845**
+    (verified exact against the sum of all deltas).
+- **Bonus find, added to Investments (B.4)**: the same screenshot surfaced a previously-unknown
+  brokerage account, **"Joint WROS - TOD"** ($12,528.84, real holdings: QQQ, SPY, BUFR, RDVY, a
+  small cash sweep, UNH), registered as `taxable_brokerage`/personal via the Investments API —
+  this is very likely the same account referenced early in the session as "Other Investments,
+  $12,481.61" in the first Quicken screenshot Jason ever shared, now with an updated value.
+- **Coordination note**: Jason confirmed ChatGPT/Codex is unavailable until tomorrow (weekly token
+  limit); Grok and Perplexity are available if needed for anything in the meantime. Relevant context
+  for whoever picks up `SIMPLIFI-01` or any other Codex-track item in TASKS.md — don't expect a
+  response on that track today.
+
 ## C. Property Documents
 
 - **Standardized document library — built, deployed, verified live, PR #13** (merged
@@ -518,13 +558,18 @@ specifically whether ChatGPT/Codex had built this and just not pushed it live �
   6. Minor: `parseAssetBody` in `src/app/api/financial/assets/route.js` treats an omitted
      `purchaseCostCents` field as `NaN` (validation failure) rather than `null` — hit and worked
      around during B.2, not fixed. Small, isolated.
-  7. The plain "Cash" and "Personal Savings" accounts still have no balance entered — Simplifi's
-     "Savings" group has only ever been seen collapsed to one total, never broken out per account.
-     Needs an expanded-Savings-group screenshot from Jason.
+  7. ~~The plain "Cash" and "Personal Savings" accounts still have no balance entered~~ — **resolved
+     2026-08-25, section B.5**: Simplifi's Savings group was seen expanded for the first time and
+     both accounts (plus 3 more) were entered.
   8. `SIMPLIFI-01` design doc (Codex's Simplifi CSV import track) sits in TASKS.md "Review Ready"
-     awaiting Jason/Claude review — untouched by this update. `ASSETS-01` (investments design) is
-     now superseded by the shipped Investments workspace (B.4) — should be marked resolved/closed in
-     TASKS.md rather than left as if still awaiting review of an unbuilt design.
+     awaiting Jason/Claude review — untouched by this update, and **Codex is unavailable until
+     tomorrow** (weekly token limit; Grok/Perplexity available in the meantime if needed for
+     anything). `ASSETS-01` (investments design) is now superseded by the shipped Investments
+     workspace (B.4) — should be marked resolved/closed in TASKS.md rather than left as if still
+     awaiting review of an unbuilt design.
+  9. New, found during B.5: the early-session "Business Savings" test balance ($4,235.67) had gone
+     stale and gone unnoticed for the rest of the session before being corrected to $26,123.53 — see
+     B.5's note on re-verifying early-session manual balances before treating them as still current.
 
 ## Active Worktrees
 
@@ -552,8 +597,6 @@ specifically whether ChatGPT/Codex had built this and just not pushed it live �
 - Two classifier bugs in the Simplifi asset-registry preview (section A.1) need fixing before any
   write/approval path is built on it: the real-estate regex false-positive/negative, and the
   zero-transaction-account ownership-scope gap that keeps every row at `needs_review`.
-- Personal Savings and the plain "Cash" account need their balances entered once Jason can share an
-  expanded view of Simplifi's Savings group (section B.3).
 
 ## Do Not Repeat
 
@@ -590,13 +633,19 @@ in this file or in `DECISIONS.md`. Record environment variable **names** and whi
 they're set in — never values. Record sanitized counts/totals, never raw transaction payloads. This
 file already includes real aggregate dollar figures for this specific owner's own portfolio, at
 their own explicit direction throughout this session (e.g. "$4,200,210.70", "$703,914.10",
-"$3,996,781") — that practice continues here, but stays bounded to aggregates/counts and individual
+"$4,096,845") — that practice continues here, but stays bounded to aggregates/counts and individual
 account/property valuations the owner explicitly shared (never a raw per-transaction payload,
 account number, or credential).
 
 ## Roadmap Parking Lot
 
-- **Resolved this update**: bank/credit-card balances entered from Simplifi across two rounds
+- **Resolved this update**: home cash box entered and corrected to its real value ($53,168); full
+  Savings group broken out for the first time — Personal Savings, Rave Brandy's, and RAVE Jason's
+  entered, Business Savings corrected from a stale $4,235.67 placeholder to its real $26,123.53
+  (section B.5); a previously-unknown "Joint WROS - TOD" brokerage account added to Investments.
+  Net Worth $3,996,781 → $4,031,781 → **$4,096,845**. `CASH-SAVINGS-BALANCES` in TASKS.md is now
+  fully resolved — no more missing Savings-group accounts.
+- **Resolved earlier today**: bank/credit-card balances entered from Simplifi across two rounds
   (Net Worth $3,774,436 → $3,795,810, section B.3); new Investments workspace built and shipped
   (PR #23), populated with 8 real accounts (Net Worth $3,795,810 → $3,996,781, section B.4);
   confirmed no ChatGPT/Codex investment-account work exists anywhere unshipped (only the design
@@ -608,8 +657,8 @@ account number, or credential).
   + image-compression fix + Vision OCR credentials; manual account-balance entry.
 - **Still open**: cross-feature double-counting risk between Financial Assets and manual
   account-balance entry (section B.1, D item 4); two classifier bugs in the Simplifi asset-registry
-  preview (section A.1, D item 5); the `parseAssetBody` NaN-vs-null minor bug (D item 6); Personal
-  Savings/Cash balances still missing (D item 7); 52-row/17-account Simplifi scope decision;
-  Simplifi asset-account import (explicitly still not started); `SIMPLIFI-01` design-doc review
-  (Codex's track — `ASSETS-01` is now superseded by the shipped Investments workspace, should be
+  preview (section A.1, D item 5); the `parseAssetBody` NaN-vs-null minor bug (D item 6);
+  52-row/17-account Simplifi scope decision; Simplifi asset-account import (explicitly still not
+  started); `SIMPLIFI-01` design-doc review (Codex's track — **unavailable until tomorrow, weekly
+  token limit**; `ASSETS-01` is now superseded by the shipped Investments workspace, should be
   marked resolved in TASKS.md rather than left pending review).
