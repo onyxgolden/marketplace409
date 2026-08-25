@@ -65,6 +65,14 @@ describe("FinancialForgeOverviewPanel", () => {
     expect(markup).toMatch(/Imported business transaction history covers/);
   });
 
+  it("shows the income totals as trend charts rather than flat stat cards", () => {
+    const markup = renderToStaticMarkup(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
+    expect(markup).toContain("Income — trailing 6 months");
+    expect(markup).toContain("Income — year to date");
+    // One bar per bucketed period, rendered by ForgeMonthlyTrendChart.
+    expect((markup.match(/data-trend-bar=/g) || []).length).toBeGreaterThan(0);
+  });
+
   it("shows all four period preset controls plus a business/personal toggle", () => {
     const markup = renderToStaticMarkup(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
     for (const label of ["6 Months", "YTD", "Year", "All time", "Business", "Personal"]) {

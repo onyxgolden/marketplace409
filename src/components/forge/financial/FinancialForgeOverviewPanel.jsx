@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { buildFinancialForgePerformance } from "@/application/financial/buildFinancialForgePerformance";
 import ForgeComparisonBarChart from "@/components/forge/ForgeComparisonBarChart";
+import ForgeMonthlyTrendChart from "@/components/forge/ForgeMonthlyTrendChart";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -67,7 +68,6 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
     [transactions, scope, accountsById],
   );
   const currentMonthKey = today.toISOString().slice(0, 7);
-  const currentMonthPoint = currentMonth.series.find((point) => point.key === currentMonthKey);
 
   const currentKey = performance.granularity === "yearly"
     ? String(today.getUTCFullYear())
@@ -117,15 +117,24 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
           : `No imported ${scope} transaction history yet.`}
       </div>
 
-      <div data-financial-forge-summary className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-xl bg-slate-950 p-4 text-white dark:bg-slate-800">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-300">This month</p>
-          <p className="mt-1 text-xl font-black tabular-nums">{money.format((currentMonthPoint?.netCents || 0) / 100)}</p>
+      <div data-financial-forge-summary className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+          <ForgeMonthlyTrendChart
+            title="Income — trailing 6 months"
+            series={currentMonth.series.map((point) => ({ month: point.key, collectedCents: point.incomeCents }))}
+            formatValue={(cents) => money.format(cents / 100)}
+          />
         </div>
-        <div className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Year to date</p>
-          <p className="mt-1 text-xl font-black tabular-nums text-slate-950 dark:text-white">{money.format(ytd.totals.netCents / 100)}</p>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+          <ForgeMonthlyTrendChart
+            title="Income — year to date"
+            series={ytd.series.map((point) => ({ month: point.key, collectedCents: point.incomeCents }))}
+            formatValue={(cents) => money.format(cents / 100)}
+          />
         </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="rounded-xl bg-emerald-50 p-4 dark:bg-emerald-950/30">
           <p className="text-xs font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Income (selected period)</p>
           <p className="mt-1 text-xl font-black tabular-nums text-emerald-900 dark:text-emerald-200">{money.format(performance.totals.incomeCents / 100)}</p>
