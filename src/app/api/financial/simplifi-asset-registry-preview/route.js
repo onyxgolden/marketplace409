@@ -25,6 +25,28 @@ async function fetchScopeEvidence(database, ownerId) {
   }
 }
 
+async function fetchLatestBalances(database, ownerId) {
+  const seenAccounts = new Set();
+  const latestBalances = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await database.from("account_balances")
+      .select("financial_account_id,current_balance_cents,as_of")
+      .eq("owner_id", ownerId)
+      .order("financial_account_id", { ascending: true })
+      .order("as_of", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = data ?? [];
+    for (const balance of page) {
+      if (!seenAccounts.has(balance.financial_account_id)) {
+        seenAccounts.add(balance.financial_account_id);
+        latestBalances.push(balance);
+      }
+    }
+    if (page.length < PAGE_SIZE) return latestBalances;
+  }
+}
+
 export async function GET() {
   const authenticated = await createAuthenticatedFinancialApplication();
   if (authenticated.response) return authenticated.response;
@@ -32,27 +54,16 @@ export async function GET() {
   try {
     const ownerId = authenticated.user.id;
     const database = authenticated.supabaseClient;
-    const [accountsResult, balancesResult, assetsResult, scopeEvidence] = await Promise.all([
+    const [accountsResult, latestBalances, assetsResult, scopeEvidence] = await Promise.all([
       database.from("financial_accounts").select("id,name,type,provider,active")
         .eq("owner_id", ownerId).eq("active", true).eq("provider", "quicken_simplifi_csv"),
-      database.from("account_balances").select("financial_account_id,current_balance_cents,as_of")
-        .eq("owner_id", ownerId).order("as_of", { ascending: false }),
+      fetchLatestBalances(database, ownerId),
       database.from("financial_assets").select("name,active")
         .eq("owner_id", ownerId).eq("active", true),
       fetchScopeEvidence(database, ownerId),
     ]);
     if (accountsResult.error) throw accountsResult.error;
-    if (balancesResult.error) throw balancesResult.error;
     if (assetsResult.error) throw assetsResult.error;
-
-    const latestBalances = [];
-    const seenAccounts = new Set();
-    for (const balance of balancesResult.data ?? []) {
-      if (!seenAccounts.has(balance.financial_account_id)) {
-        seenAccounts.add(balance.financial_account_id);
-        latestBalances.push(balance);
-      }
-    }
 
     return NextResponse.json({
       success: true,
