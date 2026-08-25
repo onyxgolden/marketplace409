@@ -29,7 +29,7 @@ function buildBalanceByAccountId(accountBalances) {
 
 function projectAssets(financialAccounts, balanceByAccountId) {
   return financialAccounts
-    .filter((account) => ASSET_ACCOUNT_TYPES.has(account.type))
+    .filter((account) => account.active !== false && ASSET_ACCOUNT_TYPES.has(account.type))
     .flatMap((account) => {
       const balance = balanceByAccountId.get(account.id);
 
@@ -55,7 +55,7 @@ function projectLiabilities(
 ) {
   return financialAccounts
     .filter((account) =>
-      LIABILITY_ACCOUNT_TYPES.has(account.type),
+      account.active !== false && LIABILITY_ACCOUNT_TYPES.has(account.type),
     )
     .flatMap((account) => {
       const balance = balanceByAccountId.get(account.id);

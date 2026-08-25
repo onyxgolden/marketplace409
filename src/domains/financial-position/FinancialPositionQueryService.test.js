@@ -187,6 +187,32 @@ describe("FinancialPositionQueryService", () => {
     expect(position.assets.some((item) => item.id === "account-other")).toBe(true);
   });
 
+  test("excludes a retired (inactive) account from Net Worth even though it still has a balance on record", async () => {
+    // Review defect: retiring a Financial Asset sets financial_accounts.active = false, but
+    // projectAssets/projectLiabilities never checked that flag -- a retired asset (or any closed
+    // account) stayed in active Net Worth forever, with no way to actually remove it short of
+    // deleting its history outright.
+    const dependencies = createDependencies();
+    dependencies.financialAccountRepository.findByOwnerId = vi.fn().mockResolvedValue([
+      { id: "account-cash", name: "Operating Cash", type: "depository", subtype: "checking", active: true },
+      { id: "account-retired-asset", name: "Sold Trailer", type: "other", subtype: "trailer", active: false },
+      { id: "account-retired-liability", name: "Paid-off Loan", type: "loan", subtype: "mortgage", active: false },
+    ]);
+    dependencies.accountBalanceRepository.findLatestByOwnerId = vi.fn().mockResolvedValue([
+      { id: "b1", financialAccountId: "account-cash", currentBalanceCents: 100000, availableBalanceCents: null, asOf: "2026-08-01T00:00:00.000Z" },
+      { id: "b2", financialAccountId: "account-retired-asset", currentBalanceCents: 500000, availableBalanceCents: null, asOf: "2026-08-01T00:00:00.000Z" },
+      { id: "b3", financialAccountId: "account-retired-liability", currentBalanceCents: 200000, availableBalanceCents: null, asOf: "2026-08-01T00:00:00.000Z" },
+    ]);
+
+    const service = new FinancialPositionQueryService(dependencies);
+    const position = await service.buildPosition("owner-1");
+
+    expect(position.assets.map((a) => a.id)).toEqual(["account-cash"]);
+    expect(position.liabilities).toEqual([]);
+    expect(position.netWorth.totalAssets).toBe(1000);
+    expect(position.netWorth.totalLiabilities).toBe(0);
+  });
+
   test("reports canonical account balances without fabricating metrics or insights", async () => {
     const service =
       new FinancialPositionQueryService(

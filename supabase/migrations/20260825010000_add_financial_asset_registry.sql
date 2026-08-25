@@ -18,6 +18,12 @@ create table if not exists public.financial_assets (
 create index if not exists idx_financial_assets_owner_class
   on public.financial_assets(owner_id, asset_class, name);
 
+-- Prevents two active assets from double-counting the same rental property in Net Worth (a
+-- property can appear in exactly one active asset registration at a time).
+create unique index if not exists idx_financial_assets_owner_property_active
+  on public.financial_assets(owner_id, linked_property_id)
+  where active and linked_property_id is not null;
+
 create table if not exists public.financial_asset_valuations (
   id text primary key,
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -81,6 +87,14 @@ begin
       and property_id = trim(p_linked_property_id)
   ) then
     raise exception 'Linked property does not belong to authenticated owner.';
+  end if;
+  if nullif(trim(coalesce(p_linked_property_id, '')), '') is not null and exists (
+    select 1 from public.financial_assets
+    where owner_id = v_owner_id
+      and active = true
+      and linked_property_id = trim(p_linked_property_id)
+  ) then
+    raise exception 'This property is already linked to another active asset. Retire that asset first, or leave this one unlinked, to avoid double-counting it in Net Worth.';
   end if;
 
   insert into public.financial_assets (
@@ -152,6 +166,15 @@ begin
   ) then
     raise exception 'Linked property does not belong to authenticated owner.';
   end if;
+  if nullif(trim(coalesce(p_linked_property_id, '')), '') is not null and exists (
+    select 1 from public.financial_assets
+    where owner_id = v_owner_id
+      and active = true
+      and id != p_asset_id
+      and linked_property_id = trim(p_linked_property_id)
+  ) then
+    raise exception 'This property is already linked to another active asset. Retire that asset first, or leave this one unlinked, to avoid double-counting it in Net Worth.';
+  end if;
 
   update public.financial_assets
   set name = trim(p_name),
@@ -186,7 +209,9 @@ begin
   ) values (
     'account_balance_' || p_valuation_id, v_owner_id, p_asset_id, 'manual_assets',
     'manual_asset', p_asset_id, 'USD', p_value_cents, null, p_value_date::timestamptz
-  );
+  )
+  on conflict (owner_id, financial_account_id, as_of) do update
+    set current_balance_cents = excluded.current_balance_cents;
 
   return v_asset;
 end;
