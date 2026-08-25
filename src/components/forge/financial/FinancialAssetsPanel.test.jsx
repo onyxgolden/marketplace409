@@ -12,4 +12,12 @@ describe("FinancialAssetsPanel", () => {
     expect(markup).toContain("Add asset");
     expect(markup).toContain("separately from income and expenses");
   });
+
+  it("provides a lifecycle surface for valuations and retirement", () => {
+    const markup = renderToStaticMarkup(<FinancialAssetsPanel />);
+    expect(markup).toContain("Add asset");
+    expect(markup).toContain("Total assets");
+    expect(markup).toContain("Business");
+    expect(markup).toContain("Personal");
+  });
 });

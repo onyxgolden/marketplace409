@@ -27,5 +27,18 @@ describe("financial asset registry migration", () => {
     expect(sql).not.toContain("security definer");
     expect(sql).toContain("v_owner_id uuid := auth.uid()");
     expect(sql).toContain("grant execute on function public.create_financial_asset_with_valuation");
+    expect(sql).toContain("linked property does not belong to authenticated owner");
+    expect(sql).toContain("where owner_id = v_owner_id::text and property_id = trim(p_linked_property_id)");
+  });
+
+  it("keeps edits, new valuations, canonical balances, and retirement synchronized", () => {
+    expect(sql).toContain("update_financial_asset_with_valuation");
+    expect(sql).toContain("insert into public.financial_asset_valuations");
+    expect(sql).toContain("on conflict (owner_id, asset_id, effective_date, source) do update");
+    expect(sql).toContain("insert into public.account_balances");
+    expect(sql).toContain("deactivate_financial_asset");
+    expect(sql).toContain("set active = false");
+    expect(sql).toContain("provider = 'manual_asset'");
+    expect(sql).not.toContain("delete from public.financial_assets");
   });
 });

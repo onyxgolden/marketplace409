@@ -75,6 +75,13 @@ declare
   v_asset public.financial_assets;
 begin
   if v_owner_id is null then raise exception 'Authenticated owner is required.'; end if;
+  if nullif(trim(coalesce(p_linked_property_id, '')), '') is not null and not exists (
+    select 1 from public.rental_units
+    where owner_id = v_owner_id::text
+      and property_id = trim(p_linked_property_id)
+  ) then
+    raise exception 'Linked property does not belong to authenticated owner.';
+  end if;
 
   insert into public.financial_assets (
     id, owner_id, name, asset_class, ownership_scope, linked_property_id,
@@ -114,3 +121,107 @@ $$;
 grant execute on function public.create_financial_asset_with_valuation(
   text, text, text, text, text, date, bigint, text, text, bigint, date, text
 ) to authenticated;
+
+create or replace function public.update_financial_asset_with_valuation(
+  p_asset_id text,
+  p_name text,
+  p_asset_class text,
+  p_ownership_scope text,
+  p_linked_property_id text,
+  p_purchase_date date,
+  p_purchase_cost_cents bigint,
+  p_notes text,
+  p_valuation_id text,
+  p_value_cents bigint,
+  p_value_date date,
+  p_value_source text
+) returns public.financial_assets
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_owner_id uuid := auth.uid();
+  v_asset public.financial_assets;
+begin
+  if v_owner_id is null then raise exception 'Authenticated owner is required.'; end if;
+  if nullif(trim(coalesce(p_linked_property_id, '')), '') is not null and not exists (
+    select 1 from public.rental_units
+    where owner_id = v_owner_id::text
+      and property_id = trim(p_linked_property_id)
+  ) then
+    raise exception 'Linked property does not belong to authenticated owner.';
+  end if;
+
+  update public.financial_assets
+  set name = trim(p_name),
+      asset_class = p_asset_class,
+      ownership_scope = p_ownership_scope,
+      linked_property_id = nullif(trim(coalesce(p_linked_property_id, '')), ''),
+      purchase_date = p_purchase_date,
+      purchase_cost_cents = p_purchase_cost_cents,
+      notes = nullif(trim(coalesce(p_notes, '')), ''),
+      updated_at = now()
+  where id = p_asset_id and owner_id = v_owner_id and active = true
+  returning * into v_asset;
+
+  if v_asset.id is null then raise exception 'Active asset was not found.'; end if;
+
+  insert into public.financial_asset_valuations (
+    id, owner_id, asset_id, amount_cents, effective_date, source
+  ) values (
+    p_valuation_id, v_owner_id, p_asset_id, p_value_cents, p_value_date, p_value_source
+  ) on conflict (owner_id, asset_id, effective_date, source) do update
+    set amount_cents = excluded.amount_cents,
+        notes = excluded.notes,
+        created_at = now();
+
+  update public.financial_accounts
+  set name = trim(p_name), subtype = p_asset_class, updated_at = now()
+  where id = p_asset_id and owner_id = v_owner_id::text and provider = 'manual_asset';
+
+  insert into public.account_balances (
+    id, owner_id, financial_account_id, connection_id, provider, provider_account_id,
+    currency_code, current_balance_cents, available_balance_cents, as_of
+  ) values (
+    'account_balance_' || p_valuation_id, v_owner_id, p_asset_id, 'manual_assets',
+    'manual_asset', p_asset_id, 'USD', p_value_cents, null, p_value_date::timestamptz
+  );
+
+  return v_asset;
+end;
+$$;
+
+grant execute on function public.update_financial_asset_with_valuation(
+  text, text, text, text, text, date, bigint, text, text, bigint, date, text
+) to authenticated;
+
+create or replace function public.deactivate_financial_asset(
+  p_asset_id text
+) returns public.financial_assets
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_owner_id uuid := auth.uid();
+  v_asset public.financial_assets;
+begin
+  if v_owner_id is null then raise exception 'Authenticated owner is required.'; end if;
+
+  update public.financial_assets
+  set active = false, updated_at = now()
+  where id = p_asset_id and owner_id = v_owner_id and active = true
+  returning * into v_asset;
+
+  if v_asset.id is null then raise exception 'Active asset was not found.'; end if;
+
+  update public.financial_accounts
+  set active = false, updated_at = now()
+  where id = p_asset_id and owner_id = v_owner_id::text and provider = 'manual_asset';
+
+  return v_asset;
+end;
+$$;
+
+grant execute on function public.deactivate_financial_asset(text) to authenticated;
