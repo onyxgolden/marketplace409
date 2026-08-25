@@ -1,5 +1,6 @@
 import ApplicationShell from "@/components/forge/workspace/ApplicationShell";
 import FinancialExecutiveIntelligence from "@/components/forge/financial/FinancialExecutiveIntelligence";
+import FinancialForgeOverviewPanel from "@/components/forge/financial/FinancialForgeOverviewPanel";
 import FinancialPositionSnapshot from "@/components/forge/financial/FinancialPositionSnapshot";
 import FinancialTransactionsSurface from "@/components/forge/financial/FinancialTransactionsSurface";
 import FinancialWorkspaceHeader from "@/components/forge/financial/FinancialWorkspaceHeader";
@@ -49,6 +50,8 @@ export function buildFinancialActiveSurface({
   properties,
   categories,
   transactions,
+  allScopeTransactions,
+  accounts,
   statusItems,
   activities,
   operations,
@@ -106,6 +109,12 @@ export function buildFinancialActiveSurface({
           <FinancialWorkspaceHeader
             health={health}
             kpis={kpis}
+          />
+
+          <FinancialForgeOverviewPanel
+            loadState={loadState}
+            transactions={allScopeTransactions}
+            accounts={accounts}
           />
 
           <FinancialExecutiveIntelligence

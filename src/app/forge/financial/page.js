@@ -156,6 +156,8 @@ export default function FinancialPage() {
     properties,
     categories,
     transactions,
+    allScopeTransactions,
+    accounts,
     statusItems,
     activities,
   } = viewModel;
@@ -405,6 +407,10 @@ export default function FinancialPage() {
       transactions={
         recentTransactionPresentations
       }
+      allScopeTransactions={
+        allScopeTransactions
+      }
+      accounts={accounts}
       statusItems={statusItems}
       activities={activities}
       operations={

@@ -99,12 +99,18 @@ function freezeTotals(totals) {
  * routes, or presentation components.
  */
 export class FinancialEventAggregationService {
-  aggregate(events) {
+  aggregate(events, { scope = null } = {}) {
     if (!Array.isArray(events)) {
       throw new Error("Financial events must be an array");
     }
 
-    const activeEvents = events.filter(isActiveEvent);
+    if (scope !== null && scope !== "business" && scope !== "personal") {
+      throw new Error("Financial event aggregation scope must be \"business\" or \"personal\" when provided");
+    }
+
+    const activeEvents = events
+      .filter(isActiveEvent)
+      .filter((event) => scope === null || event.business_scope === scope);
     const portfolioTotals = createTotals();
     const propertyTotals = new Map();
     const categoryTotals = new Map();
@@ -201,6 +207,8 @@ export class FinancialEventAggregationService {
           capitalized: event.capitalized === true,
           sourceSystem: event.source_system,
           sourceRecordId: event.source_record_id ?? null,
+          businessScope: event.business_scope ?? null,
+          financialAccountId: event.financial_account_id ?? null,
         })),
     );
 

@@ -331,4 +331,67 @@ describe("FinancialEventAggregationService", () => {
       ]),
     ).toThrow("Financial event amount must be a finite number");
   });
+
+  test("rejects an unsupported scope value", () => {
+    const service = new FinancialEventAggregationService();
+
+    expect(() => service.aggregate([], { scope: "rental" })).toThrow(
+      "Financial event aggregation scope must be \"business\" or \"personal\" when provided",
+    );
+  });
+
+  test("with no scope option, blends business and personal events into one portfolio", () => {
+    const service = new FinancialEventAggregationService();
+
+    const result = service.aggregate([
+      buildEvent({ id: "biz-1", amount: 1000, business_scope: "business" }),
+      buildEvent({ id: "personal-1", amount: 500, business_scope: "personal" }),
+    ]);
+
+    expect(result.portfolio.income).toBe(1500);
+    expect(result.transactions).toHaveLength(2);
+  });
+
+  test("scope: business excludes every personal-scoped event from every total", () => {
+    const service = new FinancialEventAggregationService();
+
+    const result = service.aggregate(
+      [
+        buildEvent({ id: "biz-1", amount: 1000, business_scope: "business" }),
+        buildEvent({ id: "personal-1", amount: 500, business_scope: "personal" }),
+      ],
+      { scope: "business" },
+    );
+
+    expect(result.portfolio.income).toBe(1000);
+    expect(result.transactions).toHaveLength(1);
+    expect(result.transactions[0].id).toBe("biz-1");
+  });
+
+  test("scope: personal excludes every business-scoped event from every total", () => {
+    const service = new FinancialEventAggregationService();
+
+    const result = service.aggregate(
+      [
+        buildEvent({ id: "biz-1", amount: 1000, business_scope: "business" }),
+        buildEvent({ id: "personal-1", amount: 500, business_scope: "personal" }),
+      ],
+      { scope: "personal" },
+    );
+
+    expect(result.portfolio.income).toBe(500);
+    expect(result.transactions).toHaveLength(1);
+    expect(result.transactions[0].id).toBe("personal-1");
+  });
+
+  test("carries business_scope and financial_account_id onto each transaction", () => {
+    const service = new FinancialEventAggregationService();
+
+    const result = service.aggregate([
+      buildEvent({ business_scope: "business", financial_account_id: "acct-1" }),
+    ]);
+
+    expect(result.transactions[0].businessScope).toBe("business");
+    expect(result.transactions[0].financialAccountId).toBe("acct-1");
+  });
 });

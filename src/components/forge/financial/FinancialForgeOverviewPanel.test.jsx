@@ -1,0 +1,97 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, describe, expect, it } from "vitest";
+import FinancialForgeOverviewPanel from "./FinancialForgeOverviewPanel";
+
+function daysFromNow(days) {
+  return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+function mount(ui) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => { root.render(ui); });
+  return { container, root };
+}
+function unmount({ container, root }) {
+  act(() => { root.unmount(); });
+  container.remove();
+}
+
+const transactions = [
+  { id: "b1", eventDate: daysFromNow(-2), amount: 1500, transactionKind: "income", category: "rental_income", businessScope: "business", financialAccountId: "acct-biz" },
+  { id: "b2", eventDate: daysFromNow(-3), amount: 200, transactionKind: "expense", category: "utilities", businessScope: "business", financialAccountId: "acct-biz" },
+  { id: "p1", eventDate: daysFromNow(-1), amount: 75, transactionKind: "expense", category: "dining", businessScope: "personal", financialAccountId: "acct-personal" },
+];
+const accounts = [
+  { id: "acct-biz", name: "Business Savings" },
+  { id: "acct-personal", name: "Chase Credit Card" },
+];
+
+describe("FinancialForgeOverviewPanel", () => {
+  it("shows a loading state before data arrives", () => {
+    const markup = renderToStaticMarkup(<FinancialForgeOverviewPanel loadState="loading" transactions={[]} accounts={[]} />);
+    expect(markup).toContain("Loading Financial FORGE activity");
+  });
+
+  it("defaults to the business scope and never shows personal category/account activity there", () => {
+    const markup = renderToStaticMarkup(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
+    expect(markup).toContain("Utilities");
+    expect(markup).not.toContain("Dining");
+    expect(markup).toContain("Business Savings");
+    expect(markup).not.toContain("Chase Credit Card");
+  });
+
+  it("switches to the personal scope and shows only personal activity, on click", () => {
+    let mounted;
+    try {
+      mounted = mount(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
+      const personalButton = mounted.container.querySelector('[data-scope-option="personal"]');
+      act(() => { personalButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+      expect(mounted.container.textContent).toContain("Chase Credit Card");
+      expect(mounted.container.textContent).not.toContain("Business Savings");
+      expect(mounted.container.querySelector('[data-scope-option="personal"]').getAttribute("aria-pressed")).toBe("true");
+    } finally {
+      if (mounted) unmount(mounted);
+    }
+  });
+
+  it("renders a data-coverage notice naming the imported date range for the active scope", () => {
+    const markup = renderToStaticMarkup(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
+    expect(markup).toMatch(/Imported business transaction history covers/);
+  });
+
+  it("shows the income totals as trend charts rather than flat stat cards", () => {
+    const markup = renderToStaticMarkup(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
+    expect(markup).toContain("Income — trailing 6 months");
+    expect(markup).toContain("Income — year to date");
+    // One bar per bucketed period, rendered by ForgeMonthlyTrendChart.
+    expect((markup.match(/data-trend-bar=/g) || []).length).toBeGreaterThan(0);
+  });
+
+  it("shows all four period preset controls plus a business/personal toggle", () => {
+    const markup = renderToStaticMarkup(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
+    for (const label of ["6 Months", "YTD", "Year", "All time", "Business", "Personal"]) {
+      expect(markup).toContain(label);
+    }
+  });
+
+  it("reveals a year selector only once the Year preset is active", () => {
+    let mounted;
+    try {
+      mounted = mount(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
+      expect(mounted.container.querySelector("select")).toBeNull();
+
+      const yearButton = mounted.container.querySelector('[data-period-option="year"]');
+      act(() => { yearButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+      expect(mounted.container.querySelector("select")).not.toBeNull();
+    } finally {
+      if (mounted) unmount(mounted);
+    }
+  });
+});

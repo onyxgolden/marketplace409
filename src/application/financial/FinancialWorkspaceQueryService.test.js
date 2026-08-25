@@ -145,7 +145,7 @@ describe("FinancialWorkspaceQueryService", () => {
     await service.buildWorkspace("owner-1");
 
     expect(aggregationService.aggregate).toHaveBeenCalledOnce();
-    expect(aggregationService.aggregate).toHaveBeenCalledWith(events);
+    expect(aggregationService.aggregate).toHaveBeenCalledWith(events, { scope: null });
   });
 
   test("returns the immutable workspace produced by the domain service", async () => {

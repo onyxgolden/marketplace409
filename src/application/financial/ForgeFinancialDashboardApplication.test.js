@@ -183,6 +183,28 @@ describe("ForgeFinancialDashboardApplication", () => {
             priority: "monitor",
           },
         }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          success: true,
+          data: {
+            business: {
+              type: "business-dashboard",
+              reports: {
+                transactions: [
+                  { id: "t1", businessScope: "business" },
+                  { id: "t2", businessScope: "personal" },
+                ],
+              },
+            },
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          success: true,
+          accounts: [{ id: "acct-1", name: "Business Savings", type: "depository" }],
+        }),
       });
 
     const result = await ForgeFinancialDashboardApplication.load({ fetcher });
@@ -195,6 +217,14 @@ describe("ForgeFinancialDashboardApplication", () => {
       2,
       "/api/financial/operations",
     );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      "/api/financial/read-models?business=true&scope=all",
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      4,
+      "/api/financial/accounts",
+    );
     expect(result.loadState).toBe("ready");
     expect(result.kpis.profit).toBe(280000);
     expect(result.kpis.cash).toBeNull();
@@ -203,10 +233,14 @@ describe("ForgeFinancialDashboardApplication", () => {
     expect(result.operationsPlan.focus).toBe(
       "Keep monitoring",
     );
+    expect(result.allScopeTransactions).toHaveLength(2);
+    expect(result.accounts).toEqual([
+      { id: "acct-1", name: "Business Savings", type: "depository" },
+    ]);
   });
 
   it("builds an error model when loading fails", async () => {
-    const fetcher = vi.fn().mockResolvedValueOnce({
+    const fetcher = vi.fn().mockResolvedValue({
       json: async () => ({
         success: false,
         error: "Read model unavailable.",
