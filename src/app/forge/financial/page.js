@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ForgeDashboardApplication,
   ForgeFinancialDashboardApplication,
@@ -10,6 +10,7 @@ import {
 } from "@/application/financial/FinancialPeriodApplication";
 import FinancialApplicationShell from "@/components/forge/financial/FinancialApplicationShell";
 import { money } from "./formatMoney.js";
+import { getCurrentMonthProfitKpi } from "./getCurrentMonthProfitKpi.js";
 
 async function loadPropertyOperatingObligations() {
   try {
@@ -178,6 +179,11 @@ export default function FinancialPage() {
     .reverse()
     .slice(0, 8);
 
+  const currentMonthProfitKpi = useMemo(
+    () => getCurrentMonthProfitKpi(allScopeTransactions, { scope: "business" }),
+    [allScopeTransactions],
+  );
+
   const balanceSheetPresentations =
     balanceSheetLines.map((line) => ({
       accountId: line.accountId,
@@ -221,10 +227,10 @@ export default function FinancialPage() {
     {
       id: "profit",
       label: "Monthly Profit",
-      value: money(kpis.profit),
+      value: money(currentMonthProfitKpi.profitDollars),
       detail:
-        `Revenue ${money(kpis.revenue)} · ` +
-        `Expenses ${money(kpis.expenses)}`,
+        `Revenue ${money(currentMonthProfitKpi.revenueDollars)} · ` +
+        `Expenses ${money(currentMonthProfitKpi.expensesDollars)}`,
     },
     {
       id: "margin",
