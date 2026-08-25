@@ -1,4 +1,5 @@
 "use client";
+import { goldControlClassName, metallicSwatchClassName, metallicTokensClassName } from "./forgeMetallicTheme";
 
 // timeZone: "UTC" is required — the date below is constructed with Date.UTC, and formatting it in
 // the server's local timezone (e.g. anything behind UTC, like US timezones) silently rolls the
@@ -21,7 +22,7 @@ export default function ForgeMonthlyTrendChart({ series = [], formatValue, title
   const hasData = values.some((value) => value > 0);
 
   return (
-    <div data-monthly-trend-chart>
+    <div data-monthly-trend-chart className={metallicTokensClassName}>
       <h3 className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">{title}</h3>
       {!hasData ? (
         <p className="mt-3 text-sm font-semibold text-slate-500 dark:text-slate-400">No recorded collections yet for this period.</p>
@@ -36,7 +37,11 @@ export default function ForgeMonthlyTrendChart({ series = [], formatValue, title
               <div key={point.month} data-trend-bar={point.month} className="flex flex-1 flex-col items-center gap-1.5">
                 <div className="flex h-24 w-full items-end">
                   <div
-                    className={`w-full rounded-t-md transition-[height] motion-reduce:transition-none ${isCurrent ? "bg-amber-500" : "bg-sky-700/70 dark:bg-sky-500/60"}`}
+                    className={`w-full rounded-t-md border transition-[height] motion-reduce:transition-none ${
+                      isCurrent
+                        ? `${goldControlClassName} border-amber-700/50 dark:border-amber-900/60`
+                        : `${metallicSwatchClassName.income} border-[var(--forge-metal-income-lo)]/60`
+                    }`}
                     style={{ height: `${heightPercent}%` }}
                   />
                 </div>
