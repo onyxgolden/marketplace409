@@ -9,6 +9,7 @@ import {
   FinancialPeriodApplication,
 } from "@/application/financial/FinancialPeriodApplication";
 import FinancialApplicationShell from "@/components/forge/financial/FinancialApplicationShell";
+import { money } from "./formatMoney.js";
 
 async function loadPropertyOperatingObligations() {
   try {
@@ -34,18 +35,6 @@ async function loadPropertyOperatingObligations() {
   } catch {
     return [];
   }
-}
-
-function cents(value) {
-  return Number(value || 0);
-}
-
-function money(value) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(cents(value) / 100);
 }
 
 function percent(value) {
