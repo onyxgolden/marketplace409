@@ -2,9 +2,10 @@
 
 ## Last Updated
 
-2026-08-25T05:35Z — Claude Code (Sonnet 5) — branch `chore/agent-handoff`. Work paused at Jason's
-explicit request for this refresh; no further fixes/migrations/imports/merges/deploys were started
-after this point.
+2026-08-25T~07:15Z — Claude Code (Sonnet 5) — branch `agent-handoff-update-2`, pushed to
+`chore/agent-handoff`. Update covers the "Monthly Profit" current-month fix (PR #20) and the
+Financial Assets feature rollout (physical/digital asset registry), both landed since the prior
+refresh.
 
 ## Status At A Glance
 
@@ -15,11 +16,12 @@ after this point.
 | Simplifi 52 rows / 17 accounts never reviewed | **Ready** (needs a scope decision) | Vehicle/crypto/tool "accounts" bootstrapped by Simplifi import, never submitted to any approval batch. Not a bug — likely correct to exclude, not confirmed. |
 | Financial FORGE — personal/business blending | **Done** | Fixed and deployed, PR #15. |
 | Financial FORGE — KPI ÷100 display bug | **Done** | Fixed and deployed, PR #18. |
-| Financial FORGE — "Monthly Profit" mislabeling | **Ready** | Confirmed defect, not yet fixed. See Financial FORGE section. |
+| Financial FORGE — "Monthly Profit" mislabeling | **Done** | Real current-month figure, not all-time. Fixed and deployed, PR #20. |
 | Property document library | **Done** | Built, deployed, verified live (PR #13). |
 | Image-compression upload fix | **Done** | Built, deployed, verified live (PR #14). |
 | Vision OCR credentials | **Done** | Provisioned and verified live end-to-end (PR #19 + Vercel env var + real service-account key). |
 | Manual account balance entry | **Done** | Built, deployed, verified live (PR #17). |
+| Financial Assets (physical/digital asset registry) | **Done** | Reviewed, 3 defects fixed, migration applied, main fast-forwarded, Production verified. Empty-registry only — no asset created yet. See section B.1. |
 
 ## A. Simplifi — Fingerprint/Duplicate Defect
 
@@ -122,11 +124,18 @@ memory):
     `unavailable-without-canonical-ledger-position` / `unavailable-without-financial-metrics` in the
     API response itself — this is intentional, matching the "no invented numbers" requirement, not a
     bug).
-  - **Known remaining defect, not yet fixed**: the top KPI card labeled **"Monthly Profit" is
-    mislabeled — it actually displays an all-time total** (no period scoping exists at that specific
-    call site), currently showing ~$1,194,979 (all-time NOI) under a "Monthly" label. The newer
-    "Financial activity" panel directly below it *does* have real period controls and does not have
-    this problem — only the older top-of-page KPI header does.
+  - **"Monthly Profit" mislabeling — fixed and deployed, PR #20** (merged `2026-08-25T06:07Z`,
+  commit `d833f598b`): the top KPI card previously showed an all-time total under a "Monthly" label.
+  Added `src/app/forge/financial/getCurrentMonthProfitKpi.js`, which reuses the existing
+  `buildFinancialForgePerformance` period-bucketing utility (the same one that already powered the
+  "Financial activity" panel's real period controls) to compute a genuine current-calendar-month
+  figure, wired into the `kpiPresentations` "profit" entry. All-time/YTD/selected-period totals
+  elsewhere on the page are unchanged. Verified directly against the database with `sum(abs(amount))`
+  (a naive sum without `abs()` disagreed by exactly $2.00, traced to one intentional negative-amount
+  refund-reversal row — a pre-existing, documented convention, not a bug). New regression tests cover
+  prior-month exclusion, current-month inclusion, scope non-blending, and month-boundary/UTC
+  correctness (this codebase's established convention: "today" always resolves via
+  `new Date().toISOString().slice(0,10)`, UTC, no per-owner reporting timezone exists anywhere).
 - **Manual account-balance entry — built and deployed, PR #17** (merged `2026-08-25T01:30Z`): the
   read path for Net Worth/Cash (`FinancialPositionQueryService`,
   `FinancialPositionReadModelAdapter`, `account_balances` table,
@@ -139,9 +148,76 @@ memory):
   needed for that**: the repository already keeps only the latest-`as_of` balance per account
   regardless of provider, and the POST route explicitly refuses to let a manual entry overwrite an
   account whose latest balance already comes from a non-manual provider.
-- **Next bounded implementation task**: fix the "Monthly Profit" mislabeling above — either rename
-  the card to reflect that it's an all-time total, or wire it to a real current-month figure. Small,
-  isolated, no schema/migration involved.
+- **Next bounded implementation task**: none queued in this section — both known KPI defects
+  (÷100 display bug, Monthly Profit mislabel) are now fixed.
+
+### B.1 Financial Assets (physical/digital asset registry) — reviewed and shipped 2026-08-25
+
+Built by Codex on `feat/financial-assets-foundation` (HEAD `5358d3a18`), reviewed and corrected by
+Claude (commit `4762e5293` on the same branch), then fast-forwarded onto `main`.
+
+- **What it is**: a Net-Worth-integrated registry for assets with no other canonical source —
+  vehicles, jewelry, equipment, or a rental property tracked as a value line rather than through
+  rental operations. New `financial_assets` / `financial_asset_valuations` tables (owner-scoped,
+  `force row level security`), three `SECURITY INVOKER` RPCs (`create_financial_asset_with_valuation`,
+  `update_financial_asset_with_valuation`, `deactivate_financial_asset`) that atomically write both
+  those tables AND the canonical `financial_accounts`/`account_balances` tables (`provider =
+  'manual_asset'`, `type = 'other'`), `GET/POST/PATCH/DELETE /api/financial/assets`, and a full CRUD
+  panel (`FinancialAssetsPanel.jsx`) registered under Financial FORGE's "Assets" nav tab.
+- **Review found and fixed 3 material defects, all corrected on the same branch before merge**
+  (commit `4762e5293`, full rationale in that commit message):
+  1. **Same-day valuation correction would fail.** The `account_balances` insert inside
+     `update_financial_asset_with_valuation` had no `ON CONFLICT` handling against that table's own
+     `(owner_id, financial_account_id, as_of)` unique index — a same-day "fix my typo" correction
+     would violate the constraint and roll back the whole update. Added `ON CONFLICT ... DO UPDATE`.
+  2. **Retired assets never actually left Net Worth.** `deactivate_financial_asset` correctly set
+     `financial_accounts.active = false`, but `FinancialPositionQueryService`'s asset/liability
+     projection never checked that flag at all (a pre-existing gap, not unique to this feature — any
+     closed account of any kind stayed in Net Worth forever). Added an `active !== false` filter.
+  3. **No safeguard against double-counting a property.** Neither RPC checked whether a
+     `linked_property_id` was already claimed by another active asset before linking it — two assets
+     could both link the same rental property, each contributing its own `account_balances` row,
+     silently doubling that property in Net Worth. Added a partial unique index
+     `(owner_id, linked_property_id) where active and linked_property_id is not null`, plus a
+     friendly pre-check-and-raise in both RPCs instead of a raw constraint violation.
+  - Explicitly reviewed, no defect found: owner isolation/RLS, create atomicity (one function call =
+    one transaction), linked-property ownership validation, route auth/wiring, Assets nav
+    registration (single registration point — unlike Rental Manager's separate dual-registration
+    requirement found earlier this session).
+- **Flagged, not fixed — cross-feature double-counting risk, deliberately out of scope for this
+  narrow review**: this branch broadened `ASSET_ACCOUNT_TYPES` (in `FinancialPositionQueryService.js`)
+  from `{depository, investment}` to include `"other"`, so the new asset-registry accounts count
+  toward Net Worth. That set is **shared** with `/api/financial/account-balances`'s
+  `RECOGNIZED_TYPES` (imports it directly) — so the 17 pre-existing Simplifi-bootstrapped
+  `type='other'` accounts (vehicles, trailers, some property-address-named accounts, see the
+  Simplifi 52-row/17-account item in section A) are now *also* editable via the generic manual-
+  balance-entry panel from PR #17. If a balance is ever entered there for one of those AND a
+  Financial Asset is separately created for the same physical thing, Net Worth would double-count
+  it — the two systems have no cross-reference to each other. **Neither path is populated today**
+  (verified: zero balances exist for any of those 17 accounts, and the asset registry is empty).
+  This is a real risk for whoever picks up the Simplifi asset-account import next, not an active bug.
+- **Tests**: 80/80 passing scoped to the asset/position/account-balance files touched; 381/381
+  passing across the broader Financial FORGE domain; full suite 4,430/4,450 (the 20 failures are the
+  same pre-existing, unrelated `executeProgrammerCommand.test.js` environmental failures noted
+  throughout this document).
+- **Migration `20260825010000_add_financial_asset_registry.sql` — applied to Production**, confirmed
+  via `supabase migration list --linked` as the only pending migration before applying, and as
+  present in both LOCAL and REMOTE columns after.
+- **Deployed**: `main` fast-forwarded `81ccb52a9..4762e5293` (clean fast-forward, no rewrite,
+  pushed directly — no separate PR, per this task's explicit instructions). New Production deployment
+  confirmed **Ready**, aliased to all three customer-facing domains (`www.409marketplace.online`,
+  `409marketplace.online`, `marketplace409.vercel.app`), all individually curl-verified HTTP 200.
+- **Read-only smoke checks, all passed, zero data mutation**: "Assets" present in Financial nav
+  (Overview/Transactions/Properties/Operations/Import/**Assets**); empty-registry state renders
+  cleanly (`$0.00` total, no crash); Net Worth measured identically before and after opening the
+  Assets tab (**$4,236** both times — the single existing test balance from PR #17, unaffected);
+  zero browser console errors; all 7 `/api/financial/*` requests on the page returned 200, including
+  the new `GET /api/financial/assets`. No asset was created, no valuation entered, no existing
+  financial data altered during rollout, per explicit instruction.
+- **Simplifi asset-account import — explicitly NOT started.** This was the natural next step (import
+  the 17 Simplifi-bootstrapped `type='other'` accounts as Financial Assets) but was explicitly
+  out of scope for this rollout. See the double-counting risk above before starting it — it should
+  resolve the cross-reference gap, not just port the 52 rows over.
 
 ## C. Property Documents
 
@@ -185,53 +261,62 @@ memory):
 
 ## D. Repository / Production
 
-- **`origin/main` HEAD**: `fb1ed7b41` ("Merge pull request #19 from onyxgolden/feat-ocr-credentials-env").
+- **`origin/main` HEAD**: `4762e5293` ("fix(financial): correct 3 material defects found in
+  asset-registry review") — fast-forwarded directly from `81ccb52a9` (PR #20's merge commit), no PR
+  for this integration per explicit instruction; the two commits ahead are the reviewed
+  `feat/financial-assets-foundation` branch tip.
 - **Merged PRs this session, in order** (all via the standard branch → PR → CI-green → merge flow,
-  `--merge` strategy, branches left undeleted): #4 `42b5950ff`, #6 `0c1bfd2fc`, #7 `310644506`, #8
-  `9f18cc3f5`, #9 `0d4f7447a`, #10 `c6fe7b3f8`, #11 `79ebf80f5`, #12 `f67d51461`, #13 `f08daec4e`,
-  #14 `28aec9182`, #15 `4bcd995db`, #16 `9d45fb84d`, #17 `e6d64b5b6`, #18 `6749fd7e6`, #19
-  `fb1ed7b41`.
-- **Working tree**: clean on every branch touched this session; this handoff update is the only
-  uncommitted work at pause time.
-- **Latest Production deployment**: `https://marketplace409-ml8rkxzyg-jason-morgan-s-projects.vercel.app`,
+  `--merge` strategy, branches left undeleted, through #19): #4 `42b5950ff`, #6 `0c1bfd2fc`, #7
+  `310644506`, #8 `9f18cc3f5`, #9 `0d4f7447a`, #10 `c6fe7b3f8`, #11 `79ebf80f5`, #12 `f67d51461`, #13
+  `f08daec4e`, #14 `28aec9182`, #15 `4bcd995db`, #16 `9d45fb84d`, #17 `e6d64b5b6`, #18 `6749fd7e6`,
+  #19 `fb1ed7b41`, #20 `81ccb52a9`. **After #20**: `feat/financial-assets-foundation` (built by
+  Codex, reviewed/corrected by Claude) was fast-forwarded directly onto `main` at `4762e5293` —
+  no PR, per that task's explicit instructions (push-triggered Vercel deploy hook, not a separate
+  CLI deploy).
+- **Working tree**: clean on every branch touched this session; this handoff update (on
+  `agent-handoff-update-2`, tracking `origin/chore/agent-handoff`) is the only uncommitted work at
+  time of writing.
+- **Latest Production deployment**: `https://marketplace409-bb6cu2wj7-jason-morgan-s-projects.vercel.app`,
   status **Ready**, aliased to `www.409marketplace.online` / `409marketplace.online` /
-  `marketplace409.vercel.app`. This is the redeploy that picked up the `GOOGLE_CLOUD_VISION_CREDENTIALS`
-  env var (PR #19's code was already live from an earlier auto-deploy; this redeploy was needed
-  specifically so the new env var took effect, since Vercel bakes env vars in at build time).
+  `marketplace409.vercel.app` / `marketplace409-git-main-jason-morgan-s-projects.vercel.app`. This is
+  the deployment auto-triggered by the `main` fast-forward push to `4762e5293`. All three
+  customer-facing domains individually curl-verified HTTP 200.
 - **Migrations**: `origin/main`'s `supabase/migrations/` tree matches Supabase's applied-migrations
-  list exactly through `20260825000000_extend_rental_document_library.sql` — **nothing pending**.
-  (Note: the 301-row Simplifi correction in section A was a data `UPDATE`, not a migration — it has
-  no migration file, by design, since it corrected existing rows rather than changing schema.)
-- **Tests**: fresh full-suite run against `origin/main` HEAD (`fb1ed7b41`, detached checkout,
-  2026-08-25): **4,408 / 4,428 passing**. All 20 failures are pre-existing and unrelated to any work
-  this session — `src/infrastructure/developer/executeProgrammerCommand.test.js`, all failing with
-  `"No validation evidence directory exists."`, a filesystem-dependent test fixture issue confirmed
-  present on `origin/main` independent of any branch this session touched.
+  list exactly through `20260825010000_add_financial_asset_registry.sql` — **nothing pending**.
+  Confirmed via `supabase migration list --linked` showing LOCAL and REMOTE both current. (Note: the
+  301-row Simplifi correction in section A was a data `UPDATE`, not a migration — it has no
+  migration file, by design, since it corrected existing rows rather than changing schema.)
+- **Tests**: full suite run on `feat/financial-assets-foundation` after corrections, before merging
+  to `main` (2026-08-25): **4,430 / 4,450 passing**. The 20 failures are pre-existing and unrelated
+  to any work this session — `src/infrastructure/developer/executeProgrammerCommand.test.js`, all
+  failing with `"No validation evidence directory exists."`, a filesystem-dependent test fixture
+  issue confirmed present independent of any branch this session touched.
 - **Build**: local production build (`next build`) is **blocked in this environment** — `vercel env
   pull` redacts secret values to the literal string `"[SENSITIVE]"` here, so any route touching
   Supabase fails static analysis locally regardless of code correctness. This is a pre-existing
-  environment limitation, not a code defect. Every merged PR's real Vercel CI build (with actual
-  production credentials) succeeded — that was used as the authoritative build check throughout,
-  per established practice.
+  environment limitation, not a code defect. Confirmed again this update: local build compiles and
+  type-checks clean, then fails at exactly the known `vercel env pull` redaction point, not from any
+  new code error. Every merged PR's real Vercel CI build (with actual production credentials)
+  succeeded — that remains the authoritative build check.
 - **Unresolved defects / concrete blockers, complete list**:
-  1. "Monthly Profit" KPI mislabeling (Financial FORGE section B) — confirmed defect, small, not
-     fixed.
-  2. 52 CSV rows / 17 Simplifi accounts never submitted for approval (Simplifi section A) — needs an
+  1. 52 CSV rows / 17 Simplifi accounts never submitted for approval (Simplifi section A) — needs an
      explicit scope decision, not a bug.
-  3. "172 previously skipped transactions recovered" — unverifiable with available data, flagged not
+  2. "172 previously skipped transactions recovered" — unverifiable with available data, flagged not
      resolved.
-  4. Local production build blocked by this environment's credential redaction — environmental, not
+  3. Local production build blocked by this environment's credential redaction — environmental, not
      app-level; no action possible from inside this environment.
+  4. Cross-feature Simplifi/Financial-Assets double-counting risk (section B.1) — real but currently
+     dormant (neither data path is populated); should be resolved as part of, not before, the
+     Simplifi asset-account import.
   5. `ASSETS-01` and `SIMPLIFI-01` design docs (Codex's track) sit in TASKS.md "Review Ready" awaiting
-     Jason/Claude review — untouched by this session's work.
-  6. A markdown-formatting bug in the previous version of `TASKS.md`'s "Review Ready" table (a
-     literal `\n` instead of a real newline collapsed two rows into one) — fixed while updating this
-     file.
+     Jason/Claude review — untouched by this update. Note: `ASSETS-01`'s design doc predates the
+     Financial Assets feature that has now actually shipped — worth reviewing for overlap/drift
+     before treating it as still-current guidance.
 
 ## Active Worktrees
 
 - `.claude/worktrees/rentec-financial-history-resume` — this session's worktree. Currently on branch
-  `agent-handoff-update` (tracking `origin/chore/agent-handoff`) specifically to prepare this
+  `agent-handoff-update-2` (tracking `origin/chore/agent-handoff`) specifically to prepare this
   documentation update without colliding with the `chore/agent-handoff` branch name, which is
   already checked out in a different, separate worktree (`.claude/worktrees/agent-handoff`) —
   presumably another concurrent session's. No application code was changed while on this branch.
@@ -243,8 +328,10 @@ memory):
 - The 52-row/17-account Simplifi scope question (section A) needs a human or agent decision:
   confirm these Simplifi-bootstrapped "accounts" (vehicles, crypto, tools, trailers) are correctly
   out of scope for P&L import, or decide they need review.
-- Whether to fix the "Monthly Profit" mislabel now or leave it queued (section B) — small, no
-  dependencies, safe to pick up independently.
+- Whether/how to resolve the cross-feature double-counting risk between Financial Assets and the
+  generic manual-balance-entry panel (section B.1) before starting the Simplifi asset-account
+  import — e.g. exclude Simplifi `type='other'` accounts from the manual-balance-entry panel once a
+  matching Financial Asset exists, or vice versa.
 
 ## Do Not Repeat
 
@@ -286,8 +373,14 @@ account number, or credential.
 
 ## Roadmap Parking Lot
 
-- **Resolved this update**: Simplifi duplicate-import defect (301 rows), Financial FORGE
+- **Resolved this update**: "Monthly Profit" KPI mislabel (PR #20, real current-month figure);
+  Financial Assets feature reviewed, 3 defects fixed, migration applied, deployed, verified
+  (physical/digital asset registry now live and integrated into Net Worth).
+- **Resolved previously**: Simplifi duplicate-import defect (301 rows), Financial FORGE
   personal/business blending, Financial FORGE KPI ÷100 display bug, property document library +
   image-compression fix + Vision OCR credentials, manual account-balance entry.
-- **Still open**: "Monthly Profit" mislabel (Financial FORGE), 52-row/17-account Simplifi scope
-  decision, `ASSETS-01`/`SIMPLIFI-01` design-doc review (Codex's track).
+- **Still open**: 52-row/17-account Simplifi scope decision; cross-feature double-counting risk
+  between Financial Assets and manual account-balance entry (section B.1); Simplifi asset-account
+  import (explicitly not started, should resolve the double-counting risk as part of the work, not
+  after it); `ASSETS-01`/`SIMPLIFI-01` design-doc review (Codex's track — note `ASSETS-01` predates
+  the now-shipped Financial Assets feature and may need reconciling against it).
