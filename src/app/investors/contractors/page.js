@@ -82,7 +82,7 @@ export default async function InvestorContractorsPage() {
           </div>
 
           <a
-            href="/businesses/add"
+            href="/businesses/add?category=Contractors"
             className="bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-500"
           >
             Add Contractor Business
@@ -107,7 +107,7 @@ export default async function InvestorContractorsPage() {
             </p>
 
             <a
-              href="/businesses/add"
+              href="/businesses/add?category=Contractors"
               className="inline-block bg-green-700 text-white px-6 py-3 rounded-xl font-bold hover:bg-green-600"
             >
               Add First Contractor
