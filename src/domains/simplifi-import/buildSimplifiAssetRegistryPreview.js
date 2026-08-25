@@ -5,7 +5,7 @@ const VEHICLE = /\b(toyota|lexus|ford|chevrolet|chevy|gmc|dodge|ram|honda|nissan
 const TRAILER = /\b(trailer|camper|rv|recreational vehicle|coleman)\b/i;
 const EQUIPMENT = /\b(tractor|scag|turf|mower|ladder|tool|equipment|skid steer|excavator)\b/i;
 const COLLECTIBLE = /\b(silver|gold|coin|collectible|bullion|art|memorabilia)\b/i;
-const REAL_ESTATE = /\b(real estate|property|house|home|land|lot)\b/i;
+const REAL_ESTATE = /\b(real estate|rental property)\b/i;
 
 export function inferSimplifiAssetClass(name) {
   if (CRYPTO.test(name)) return "crypto";
@@ -63,13 +63,10 @@ export function buildSimplifiAssetRegistryPreview({
     if (assetClass !== "crypto" && account.type !== "other") {
       return { ...base, classification: "excluded", approvable: false, reason: "This financial-account type is not a registry asset." };
     }
-    if (!ownershipScope || ownershipScope === "mixed") {
-      return { ...base, classification: "needs_review", approvable: false, reason: "Ownership scope requires review." };
-    }
     if (!balance || !Number.isInteger(balance.current_balance_cents) || balance.current_balance_cents < 0) {
       return { ...base, classification: "needs_review", approvable: false, reason: "A non-negative current value is required." };
     }
-    return { ...base, classification: "ready", approvable: true, reason: "Ready for explicit asset-registry approval." };
+    return { ...base, classification: "ready", approvable: true, reason: "Ready for explicit asset-registry approval. Ownership scope is selected during approval, not inferred." };
   });
 
   const totals = rows.reduce((result, row) => {

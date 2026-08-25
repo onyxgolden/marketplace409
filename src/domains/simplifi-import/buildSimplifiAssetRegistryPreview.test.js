@@ -17,7 +17,7 @@ describe("Simplifi asset registry preview", () => {
     expect(preview.rows[0]).toMatchObject({ assetClass: "equipment", ownershipScope: "business", valueCents: 800000, classification: "ready", approvable: true });
   });
 
-  it("fails closed for mixed ownership, missing values, unknown classes, and duplicate assets", () => {
+  it("does not block readiness on ownership scope (business/personal/mixed/unknown are all selected at approval time, never inferred), but still fails closed for missing values, unknown classes, and duplicate assets", () => {
     const accounts = [
       { id: "mixed", name: "Tractor", type: "other", active: true },
       { id: "missing", name: "Box Trailer", type: "other", active: true },
@@ -37,7 +37,24 @@ describe("Simplifi asset registry preview", () => {
       { financial_account_id: "duplicate", account_scope: "personal" },
     ];
     const preview = buildSimplifiAssetRegistryPreview({ accounts, balances, scopeEvidence, existingAssets: [{ name: "silver eagle coins", active: true }] });
-    expect(preview.rows.map((row) => row.classification)).toEqual(["needs_review", "needs_review", "needs_review", "already_registered"]);
+    expect(preview.rows.map((row) => row.classification)).toEqual(["ready", "needs_review", "needs_review", "already_registered"]);
+    expect(preview.rows[0]).toMatchObject({ ownershipScope: "mixed", classification: "ready", approvable: true });
+  });
+
+  it("reaches ready with no financial_events at all, since ownership scope has no bearing on readiness (zero-transaction accounts previously could never reach ready)", () => {
+    const preview = buildSimplifiAssetRegistryPreview({
+      accounts: [{ id: "z", name: "Box Trailer", type: "other", active: true }],
+      balances: [{ financial_account_id: "z", current_balance_cents: 250000 }],
+      scopeEvidence: [],
+    });
+    expect(preview.rows[0]).toMatchObject({ ownershipScope: null, classification: "ready", approvable: true });
+  });
+
+  it("does not misclassify a brand name containing the bare word 'home' as real estate (review defect: the previous regex matched \\bhome\\b, so 'The Home Depot Consumer Credit Card' was wrongly excluded as real_estate)", () => {
+    expect(inferSimplifiAssetClass("The Home Depot Consumer Credit Card")).toBeNull();
+    expect(inferSimplifiAssetClass("The Home Depot Commercial Revolving Charge Card")).toBeNull();
+    expect(inferSimplifiAssetClass("Real Estate Holdings LLC")).toBe("real_estate");
+    expect(inferSimplifiAssetClass("Rental Property Fund")).toBe("real_estate");
   });
 
   it("excludes property accounts and ordinary bank accounts from registry approval", () => {
