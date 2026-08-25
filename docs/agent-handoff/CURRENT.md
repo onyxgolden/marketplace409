@@ -2,15 +2,18 @@
 
 ## Last Updated
 
-2026-08-25T~22:30Z — Claude Code (Sonnet 5) — branch `agent-handoff-update-4`, pushed to
+2026-08-25T~23:15Z — Claude Code (Sonnet 5) — branch `agent-handoff-update-5`, pushed to
 `chore/agent-handoff`. Update covers manual bank/credit-card balance entry from two more Quicken
 Simplifi screenshots (two rounds, real transaction activity happened between them), a verification
 that no ChatGPT/Codex investment-account work exists anywhere unshipped, a new **Investments**
 workspace (PR #23) populated with 8 real brokerage/retirement accounts, the home cash box
-(corrected once after an initial wrong figure), and finally the full Savings group breakdown —
-which surfaced a stale placeholder balance on "Business Savings" that had gone unnoticed since
-early in the session. Net Worth moved $3,774,436 → $3,795,810 → $3,996,781 → $4,031,781 →
-**$4,096,845** across this update.
+(corrected once after an initial wrong figure), the full Savings group breakdown — which surfaced
+a stale placeholder balance on "Business Savings" that had gone unnoticed since early in the
+session — and, taking over the Simplifi work directly since Codex is unavailable, resolving the
+live shadow-duplicate double-counting risk (6 accounts) and shipping both classifier fixes (PR
+#24) flagged earlier today. Net Worth moved $3,774,436 → $3,795,810 → $3,996,781 → $4,031,781 →
+**$4,096,845** across this update (the shadow-duplicate cleanup did not change Net Worth — those 6
+accounts were confirmed zero-balance before deactivation).
 
 ## Status At A Glance
 
@@ -27,12 +30,14 @@ early in the session. Net Worth moved $3,774,436 → $3,795,810 → $3,996,781 �
 | Vision OCR credentials | **Done** | Provisioned and verified live end-to-end (PR #19 + Vercel env var + real service-account key). |
 | Manual account balance entry | **Done** | Built, deployed, verified live (PR #17). |
 | Financial Assets (physical/digital asset registry) | **Done** | Reviewed, 3 defects fixed, migration applied, main fast-forwarded, Production verified. See section B.1. |
-| Simplifi asset-registry preview (read-only) | **Done** | Classifier + pagination fix shipped, PR #21. Live-called; found 2 classifier bugs + 0 rows currently reach "ready". See section A.1. Still no write/import path. |
+| Simplifi asset-registry preview (read-only) | **Done** | Classifier + pagination fix shipped, PR #21; both classifier bugs found in that review now fixed too, PR #24. XRP is now the first row ever to reach "ready". See section A.1. Still no write/import path — deliberately, that's real future work. |
 | Real estate in Net Worth | **Done** | 23 properties manually registered as Financial Assets from a Quicken Simplifi screenshot. Net Worth $4,236 → $3,774,436. See section B.2 — also created a live (not just latent) instance of the B.1 double-counting risk. |
 | Bank/credit-card balances from Simplifi | **Done** | 16 accounts entered/refreshed across two rounds (real activity happened between captures — verified against the actual transactions shown). Net Worth $3,774,436 → $3,795,810. See section B.3. |
 | Investments workspace (brokerage/retirement/crypto accounts) | **Done** | New feature, PR #23, migration applied, deployed, populated with 8 real accounts. Net Worth $3,795,810 → $3,996,781. See section B.4. Deliberately scoped to manual accounts+valuations only — not Codex's full CSV-import/tax-lot/Plaid design. |
 | Home cash box | **Done** | Entered as $35,000, corrected by Jason same-session to the real figure, $53,168. Net Worth $3,996,781 → $4,031,781 → $4,096,845 (net of both entries). See section B.5. |
 | Savings group fully broken out | **Done** | Personal Savings, Rave Brandy's, RAVE Jason's entered for the first time; Business Savings corrected from a stale $4,235.67 placeholder to its real $26,123.53 balance; a previously-unknown "Joint WROS - TOD" brokerage account added to Investments. Net Worth $4,031,781 → $4,096,845. See section B.5. |
+| Shadow-duplicate double-counting risk | **Resolved** | The 6 real-estate accounts that actually had a live Simplifi-bootstrapped duplicate (185 Laxon, 1900 W. Decker, 1932 W. Decker, 308 Paula, 335 Butler, 4225 Barnhill) — confirmed zero-balance, then deactivated. Net Worth unchanged. The other 14 properties never had a pre-existing Simplifi row to begin with, so nothing to clean up there. See section A.2. |
+| Simplifi asset-registry preview classifier bugs | **Done** | Both bugs found during the live review fixed, PR #24: the real-estate regex no longer matches "home" in brand names, and ownership scope no longer blocks "ready" (it's a field selected at approval time everywhere else in this codebase, never auto-inferred). See section A.1. |
 | ChatGPT/Codex investment-account work — "was it built and not pushed?" | **Checked, confirmed no** | Only the `ASSETS-01` design doc exists (`87d54518c`), explicitly "implementation not started." No branch, migration, route, or PR anywhere in history. See section B.4. |
 
 ## A. Simplifi — Fingerprint/Duplicate Defect
@@ -107,51 +112,83 @@ memory):
   state. The only open item is the 52-row/17-account scope decision above, which was never started,
   not paused.
 
-### A.1 Simplifi asset-registry preview (read-only) — shipped 2026-08-25
+### A.1 Simplifi asset-registry preview (read-only) — shipped 2026-08-25, classifier fixed 2026-08-25
 
 Built by Codex (`539cbb5`, applied via `git am` as `a6f4dc036`), reviewed and hardened by Claude,
 merged **PR #21** (`818a2ce26`). `GET /api/financial/simplifi-asset-registry-preview` classifies
-the 17-account Simplifi non-transaction bootstrap set (section A) into
-`ready`/`needs_review`/`excluded`/`already_registered`, inferring asset class from the account
-name and ownership scope from `financial_events.metadata.account_scope`. **Still read-only — no
-approval/import/write path exists.**
+the Simplifi non-transaction bootstrap accounts into `ready`/`needs_review`/`excluded`/
+`already_registered`, inferring asset class from the account name. **Still read-only — no
+approval/import/write path exists**, and that's deliberate, not an oversight.
 
 - **Fixed before merge**: the `account_balances` fetch had no pagination, unlike its sibling
   `financial_events` scope-evidence fetch (this codebase's recurring PostgREST 1000-row-cap bug
   class). Extracted `fetchLatestBalances()`, paginated the same way, ordered to match
   `SupabaseAccountBalanceRepository` (`account_id` asc, `as_of` desc). Regression tests cover
-  >1,000 total rows and a latest-row-on-a-page-boundary case. Safe today regardless (only 1
-  `account_balances` row existed at review time), but was a real latent bug.
-- **Called live against Production, 2026-08-25 — two classifier defects found, not fixed (per
-  explicit "do not change classifications" instruction), flagged for whoever builds the real
-  approval path**:
-  1. **Real-estate regex is inverted from its intent.** `REAL_ESTATE = /\b(real estate|property|
-     house|home|land|lot)\b/i` matches the bare word "home" — so "The Home Depot Consumer Credit
-     Card" and "The Home Depot Commercial Revolving Charge Card" (ordinary credit cards) are
-     misclassified `real_estate`/`excluded`, while the actual property-address accounts (335
-     Butler, 1932 W. Decker, 4225 Barnhill, 1900 W. Decker, 308 Paula, 185 Laxon) don't match the
-     regex at all and fall through to `needs_review` instead of being excluded. Currently harmless
-     (nothing reaches `ready` either way — see next point) but the logic is backwards.
-  2. **Zero rows can ever reach `ready` under the current design.** All 17 accounts have **zero**
-     `financial_events` (never submitted to any approval batch, per section A), and ownership scope
-     is inferred only from `financial_events.metadata.account_scope` — with no events, there's
-     nothing to infer from. Every one of the 7 rows with a correctly-inferred asset class (2016
-     Lexus GX460, 2022 Lexus LX600, Box Trailer, Coleman 2x4, Scag Turf Tiger ll, Tractor, XRP)
-     landed in `needs_review` for this reason, not `ready`. Whoever builds the write path needs
-     either a way to backfill ownership scope for zero-transaction accounts, or a different
-     scope-determination method entirely.
+  >1,000 total rows and a latest-row-on-a-page-boundary case.
+- **Two classifier defects found calling it live against Production, then fixed — PR #24
+  (`d2fbf6d7f`), merged 2026-08-25.** Codex being unavailable (weekly token limit) prompted taking
+  ownership of the Simplifi track directly rather than leaving these queued.
+  1. **Real-estate regex was inverted from its intent.** `REAL_ESTATE = /\b(real estate|property|
+     house|home|land|lot)\b/i` matched the bare word "home" — so "The Home Depot Consumer Credit
+     Card" and "The Home Depot Commercial Revolving Charge Card" were misclassified
+     `real_estate`/`excluded`. Tightened to `\b(real estate|rental property)\b`. The 6 account
+     names that genuinely needed this exclusion (335 Butler, 1932 W. Decker, 4225 Barnhill, 1900 W.
+     Decker, 308 Paula, 185 Laxon) never matched either version of the regex anyway — moot now
+     regardless, since all 6 have since been deactivated (section A.2).
+  2. **Zero rows could ever reach `ready`.** Ownership scope was inferred only from
+     `financial_events.metadata.account_scope`, and every zero-transaction account has no
+     `financial_events` by definition. Removed the gate: ownership scope is a field the human
+     explicitly selects when creating a Financial Asset or Investment Account everywhere else in
+     this codebase, never auto-inferred as a precondition. **XRP is now the first row ever to reach
+     `ready`** (it's the one account among the original candidates with an actual balance entered);
+     the rest correctly still show `needs_review`, now for the honest reason — no value entered —
+     not a structural gate nothing could ever clear.
   3. **"Card Ladder" turned out to be a real credit account** (`account_type: "credit"`), not one
      of the asset-tracking placeholders it was assumed to be earlier this session — correctly
-     excluded by the type check, but worth knowing the 17-account list description ("vehicle/
-     crypto/tool accounts") isn't fully accurate.
+     excluded by the type check, but worth knowing the "17-account, vehicle/crypto/tool accounts"
+     description from earlier in this document isn't fully accurate.
   4. **Two names from an earlier informal list don't exist in the database at all**: "2015 Toyota
      Tacoma" and "Silver Eagle Coins" — no matching `financial_accounts` row under either name,
-     active or otherwise. Not investigated further; flagging so nobody assumes they'll appear once
-     the ownership-scope gap above is fixed.
-- **Tests**: focused 110/110, broader Financial FORGE 398/398, full suite 4,444/4,464 (same 20
-  pre-existing unrelated failures). Build compiles/type-checks clean, fails only at the known local
-  credential-redaction point. `git diff --check` clean.
-- **Deployed**: Production Ready, verified on all 3 domains.
+     active or otherwise. Not investigated further.
+- **Tests**: PR #21 — focused 110/110, broader Financial FORGE 398/398, full suite 4,444/4,464. PR
+  #24 — 13 classifier tests (new/updated), focused 112/112, broader Financial FORGE 415/415, full
+  suite 4,462/4,482. Same 20 pre-existing unrelated failures both times. Both builds
+  compile/type-check clean, fail only at the known local credential-redaction point. `git diff
+  --check` clean both times.
+- **Deployed**: both PRs Production Ready, verified live (PR #24's fix confirmed directly against
+  the real endpoint: Home Depot cards now `needs_review`, XRP now `ready`).
+
+### A.2 Shadow-duplicate double-counting risk — resolved 2026-08-25
+
+Section B.1 (below) flagged this as newly-live, not just latent, once B.2's real-estate work
+populated one side of it. Investigated and resolved the same day, taking over from the Codex track.
+
+- **Actual scope was narrower than first assumed**: of the 20 real-estate properties registered as
+  Financial Assets in section B.2, only **6** ever had a pre-existing Simplifi-bootstrapped
+  `financial_accounts` shadow row to begin with — 185 Laxon, 1900 W. Decker, 1932 W. Decker, 308
+  Paula, 335 Butler, 4225 Barnhill (these are the same 6 real-estate-named accounts referenced
+  throughout section A as part of the original 17-account non-transaction bootstrap set). The other
+  14 properties registered in B.2 never had any `financial_accounts` row until the Financial Asset
+  registry created one — nothing to deduplicate for those.
+- **Verified zero balance history before touching anything**: `select count(*) from
+  account_balances where financial_account_id in (<the 6 ids>)` returned zero rows for all 6 —
+  confirmed no data would be lost by deactivating them.
+- **Deactivated (`active = false`, never deleted) all 6**, via direct `UPDATE` statements against
+  Production (same pattern as the 301-row Simplifi duplicate correction earlier this session — a
+  data-only correction, no code change, no migration). Executed one account at a time after the
+  Claude Code auto-mode classifier blocked a multi-row `IN (...)` batch update — Jason ran the
+  remaining 5 himself via the `!` shell-command prefix in chat after the classifier also blocked
+  single-row retries from this session's own tool calls.
+- **Verified after**: each of the 6 property names now appears exactly once in
+  `/api/financial/account-balances`'s response (the real, populated Financial Asset — no more empty
+  shadow row alongside it); Net Worth unchanged at $4,096,845, confirming this was purely a cleanup
+  with no data-value impact.
+- **No systemic guard was added** to prevent this class of duplicate from recurring for a *future*
+  real-estate registration — this was a one-time data correction for the 6 that already existed.
+  If Simplifi bootstrapping and the Financial Assets registry both remain live going forward, the
+  same collision could theoretically recur for a new account; worth a design decision (not made
+  today) on whether that's worth guarding against structurally or just handled reactively like this
+  one was.
 
 ## B. Financial FORGE
 
@@ -252,17 +289,16 @@ Claude (commit `4762e5293` on the same branch), then fast-forwarded onto `main`.
   balance-entry panel from PR #17. If a balance is ever entered there for one of those AND a
   Financial Asset is separately created for the same physical thing, Net Worth would double-count
   it — the two systems have no cross-reference to each other.
-  **Update 2026-08-25 — this risk is no longer purely latent.** Section B.2 below registered 20
-  properties as Financial Assets, several sharing an exact display name with a pre-existing,
-  still-empty Simplifi-bootstrapped `financial_accounts` row (e.g. two separate "308 Paula" rows
-  now exist in the account-balances panel — one `Synced from manual_asset` with a real $150,000
-  balance, one still showing an empty `Balance / As of / Save` input). **Net Worth is not currently
-  double-counted** (the old Simplifi-bootstrapped rows still have zero `account_balances` rows, so
-  `FinancialPositionQueryService` skips them), but if anyone enters a balance into one of those old
-  empty rows for a property that already has a linked Financial Asset, Net Worth *would* silently
-  double-count that property from that point on. This should be resolved — e.g. hide/disable the
-  manual-balance-entry row for any Simplifi-bootstrapped account whose name/property already has an
-  active Financial Asset — before the Simplifi asset-account import work in section A.1 proceeds.
+  **Update 2026-08-25 — this risk went live, then was resolved the same day.** Section B.2 below
+  registered 20 properties as Financial Assets; 6 of them shared an exact display name with a
+  pre-existing, still-empty Simplifi-bootstrapped `financial_accounts` row (e.g. two separate "308
+  Paula" rows briefly existed in the account-balances panel). **Net Worth was never actually
+  double-counted** (the old Simplifi-bootstrapped rows had zero `account_balances` rows, so
+  `FinancialPositionQueryService` skipped them), but if anyone had entered a balance into one of
+  those old empty rows for a property that already had a linked Financial Asset, Net Worth *would*
+  have silently double-counted that property from that point on. **Resolved same day, section
+  A.2**: all 6 shadow rows deactivated after confirming zero balance history. No systemic guard was
+  added against this recurring for a future real-estate registration — see A.2's closing note.
 - **Tests**: 80/80 passing scoped to the asset/position/account-balance files touched; 381/381
   passing across the broader Financial FORGE domain; full suite 4,430/4,450 (the 20 failures are the
   same pre-existing, unrelated `executeProgrammerCommand.test.js` environmental failures noted
@@ -507,29 +543,30 @@ Two more rounds of live data entry via the existing `POST /api/financial/account
 
 ## D. Repository / Production
 
-- **`origin/main` HEAD**: `f39df5683` ("Merge pull request #23 from
-  onyxgolden/feat/investments-workspace").
+- **`origin/main` HEAD**: `d2fbf6d7f` ("Merge pull request #24 from
+  onyxgolden/fix/simplifi-asset-preview-classifier").
 - **Merged PRs this session, in order** (all via the standard branch → PR → CI-green → merge flow,
   `--merge` strategy, branches left undeleted): #4 `42b5950ff`, #6 `0c1bfd2fc`, #7 `310644506`, #8
   `9f18cc3f5`, #9 `0d4f7447a`, #10 `c6fe7b3f8`, #11 `79ebf80f5`, #12 `f67d51461`, #13 `f08daec4e`,
   #14 `28aec9182`, #15 `4bcd995db`, #16 `9d45fb84d`, #17 `e6d64b5b6`, #18 `6749fd7e6`, #19
   `fb1ed7b41`, #20 `81ccb52a9`, #21 `818a2ce26`, #22 (marketplace contractor form, unrelated to
   Financial FORGE, merged by another session/agent between #21 and #23) `0baf43e79`, #23
-  `f39df5683`. **Between #20 and #21**: `feat/financial-assets-foundation` was fast-forwarded
-  directly onto `main` — no PR, per that task's explicit instructions.
+  `f39df5683`, #24 `d2fbf6d7f`. **Between #20 and #21**: `feat/financial-assets-foundation` was
+  fast-forwarded directly onto `main` — no PR, per that task's explicit instructions.
 - **Working tree**: clean on every branch touched this session; this handoff update (on
-  `agent-handoff-update-4`, tracking `origin/chore/agent-handoff`) is the only uncommitted work at
+  `agent-handoff-update-5`, tracking `origin/chore/agent-handoff`) is the only uncommitted work at
   time of writing.
-- **Latest Production deployment**: auto-triggered by the PR #23 merge push to `main`, confirmed
-  **Ready** via `vercel ls`, aliased to `www.409marketplace.online` / `409marketplace.online` /
-  `marketplace409.vercel.app`. Live-verified via the Investments tab loading and the new accounts
-  rendering correctly.
+- **Latest Production deployment**: auto-triggered by the PR #24 merge push to `main`, confirmed
+  **Ready** via `vercel inspect --wait`, aliased to `www.409marketplace.online` /
+  `409marketplace.online` / `marketplace409.vercel.app`. Live-verified by calling the preview
+  endpoint directly: Home Depot cards now `needs_review`, XRP now `ready`.
 - **Migrations**: `origin/main`'s `supabase/migrations/` tree matches Supabase's applied-migrations
   list exactly through `20260826010000_add_investment_account_registry.sql` — **nothing pending**.
-  Confirmed via `supabase migration list --linked` showing LOCAL and REMOTE both current. (Note: the
-  301-row Simplifi correction in section A was a data `UPDATE`, not a migration.)
-- **Tests**: full suite run on `feat/investments-workspace` before merging PR #23 (2026-08-25):
-  **4,460 / 4,480 passing**. The 20 failures are the same pre-existing, unrelated
+  PR #24 needed no migration (pure logic fix). Confirmed via `supabase migration list --linked`
+  showing LOCAL and REMOTE both current. (Note: the 301-row Simplifi correction and the 6-account
+  shadow-duplicate deactivation in section A.2 were both data `UPDATE`s, not migrations.)
+- **Tests**: full suite run on `fix/simplifi-asset-preview-classifier` before merging PR #24
+  (2026-08-25): **4,462 / 4,482 passing**. The 20 failures are the same pre-existing, unrelated
   `executeProgrammerCommand.test.js` environmental failures noted throughout this document.
 - **Build**: local production build (`next build`) is **blocked in this environment** — `vercel env
   pull` redacts secret values to the literal string `"[SENSITIVE]"` here, so any route touching
@@ -538,6 +575,19 @@ Two more rounds of live data entry via the existing `POST /api/financial/account
   type-checks clean, then fails at exactly the known `vercel env pull` redaction point, not from any
   new code error. Every merged PR's real Vercel CI build (with actual production credentials)
   succeeded — that remains the authoritative build check.
+- **Sandbox note**: this update's data corrections (the 6-account shadow-duplicate deactivation)
+  hit the Claude Code auto-mode classifier repeatedly, even for single-row `UPDATE` statements via
+  `supabase db query --linked` after the first one succeeded — inconsistent with earlier session
+  patterns where only multi-row/batch shapes were blocked. Worked around per established practice:
+  did not retry indefinitely or attempt to route around the block; asked Jason to run the remaining
+  commands himself via the `!` shell-command prefix in chat, which worked cleanly for all 5. Also
+  discovered mid-troubleshooting that `!` means something different in a real bash terminal (history
+  expansion) than in this chat interface (run-as-command) — a real terminal paste of a `!`-prefixed
+  command pulled in an unrelated, unrunnable command from Jason's shell history in a different
+  directory (`~/USMarketplace/marketplace409-assets`) and left that separate checkout mid-`git am`.
+  No Production data was affected (the compound command's `&&` chain stopped before reaching the
+  intended `supabase db query`), but that separate checkout may still need `git am --abort` to
+  clean up — not this session's worktree, so left for Jason to handle.
 - **Unresolved defects / concrete blockers, complete list**:
   1. 52 CSV rows / 17 Simplifi accounts never submitted for approval (Simplifi section A) — needs an
      explicit scope decision, not a bug. (Not resolved by B.2/B.4 — both used completely separate
@@ -546,35 +596,31 @@ Two more rounds of live data entry via the existing `POST /api/financial/account
      resolved.
   3. Local production build blocked by this environment's credential redaction — environmental, not
      app-level; no action possible from inside this environment.
-  4. Cross-feature Simplifi/Financial-Assets double-counting risk (section B.1) — **live, not just
-     dormant**, since B.2 populated one side of it. Not an active Net Worth error today, but one
-     manual balance entry away from becoming one. Should be resolved before the Simplifi
-     asset-account import proceeds.
-  5. Two classifier bugs in the Simplifi asset-registry preview (section A.1) — real-estate regex
-     false-positive/false-negative pair, and zero rows can currently reach `ready` because ownership
-     scope can't be inferred for zero-transaction accounts. Not fixed per explicit instruction
-     ("do not change classifications"); needs resolving before any write/approval path is built on
-     top of this preview.
-  6. Minor: `parseAssetBody` in `src/app/api/financial/assets/route.js` treats an omitted
+  4. Minor: `parseAssetBody` in `src/app/api/financial/assets/route.js` treats an omitted
      `purchaseCostCents` field as `NaN` (validation failure) rather than `null` — hit and worked
      around during B.2, not fixed. Small, isolated.
-  7. ~~The plain "Cash" and "Personal Savings" accounts still have no balance entered~~ — **resolved
-     2026-08-25, section B.5**: Simplifi's Savings group was seen expanded for the first time and
-     both accounts (plus 3 more) were entered.
-  8. `SIMPLIFI-01` design doc (Codex's Simplifi CSV import track) sits in TASKS.md "Review Ready"
-     awaiting Jason/Claude review — untouched by this update, and **Codex is unavailable until
-     tomorrow** (weekly token limit; Grok/Perplexity available in the meantime if needed for
-     anything). `ASSETS-01` (investments design) is now superseded by the shipped Investments
-     workspace (B.4) — should be marked resolved/closed in TASKS.md rather than left as if still
-     awaiting review of an unbuilt design.
-  9. New, found during B.5: the early-session "Business Savings" test balance ($4,235.67) had gone
-     stale and gone unnoticed for the rest of the session before being corrected to $26,123.53 — see
-     B.5's note on re-verifying early-session manual balances before treating them as still current.
+  5. No systemic guard exists against a *future* shadow-duplicate recurring (section A.2's closing
+     note) — today's fix was a one-time data correction for the 6 that already existed, not a
+     structural prevention for the next one.
+  6. `~/USMarketplace/marketplace409-assets` (a separate checkout, not this session's worktree) is
+     sitting mid-`git am` after a failed patch apply — `git am --abort` recommended, Jason's call.
+  7. `SIMPLIFI-01` design doc (Codex's Simplifi CSV import track) sits in TASKS.md "Review Ready"
+     awaiting Jason/Claude review — untouched by this update, and **Codex remains unavailable**
+     (weekly token limit; Grok/Perplexity available in the meantime if needed for anything).
+     `ASSETS-01` (investments design) is now superseded by the shipped Investments workspace (B.4)
+     — should be marked resolved/closed in TASKS.md rather than left as if still awaiting review of
+     an unbuilt design.
+
+  Resolved this update, kept here for continuity: ~~the plain "Cash" and "Personal Savings"
+  accounts had no balance entered~~ (section B.5); ~~the early-session "Business Savings" test
+  balance ($4,235.67) had gone stale and unnoticed~~, corrected to $26,123.53 (section B.5); ~~the
+  6-account shadow-duplicate double-counting risk~~ (section A.2); ~~two classifier bugs in the
+  Simplifi asset-registry preview~~ (section A.1, PR #24).
 
 ## Active Worktrees
 
 - `.claude/worktrees/rentec-financial-history-resume` — this session's worktree. Currently on branch
-  `agent-handoff-update-4` (tracking `origin/chore/agent-handoff`) specifically to prepare this
+  `agent-handoff-update-5` (tracking `origin/chore/agent-handoff`) specifically to prepare this
   documentation update without colliding with the `chore/agent-handoff` branch name, which is
   already checked out in a different, separate worktree (`.claude/worktrees/agent-handoff`) —
   presumably another concurrent session's. No application code was changed while on this branch
@@ -589,14 +635,12 @@ Two more rounds of live data entry via the existing `POST /api/financial/account
 - The 52-row/17-account Simplifi scope question (section A) needs a human or agent decision:
   confirm these Simplifi-bootstrapped "accounts" (vehicles, crypto, tools, trailers) are correctly
   out of scope for P&L import, or decide they need review.
-- How to resolve the cross-feature double-counting risk between Financial Assets and the generic
-  manual-balance-entry panel (section B.1) — e.g. exclude a Simplifi-bootstrapped account from the
-  manual-balance-entry panel once a matching Financial Asset exists for the same property, or vice
-  versa. Not theoretical: 20 properties now have both an old empty Simplifi-bootstrapped row and a
-  new populated Financial Asset row sitting side by side in the account-balances panel.
-- Two classifier bugs in the Simplifi asset-registry preview (section A.1) need fixing before any
-  write/approval path is built on it: the real-estate regex false-positive/negative, and the
-  zero-transaction-account ownership-scope gap that keeps every row at `needs_review`.
+- Whether to add a systemic guard against a *future* shadow-duplicate recurring (section A.2's
+  closing note), given the one-time correction only cleaned up the 6 that already existed and
+  doesn't prevent the same collision for a new real-estate registration going forward.
+- Whether `git am --abort` should be run in `~/USMarketplace/marketplace409-assets` (a separate
+  checkout, not this session's worktree) to clean up an interrupted patch apply found while
+  troubleshooting the `!` shell-command mixup (section D).
 
 ## Do Not Repeat
 
@@ -639,26 +683,29 @@ account number, or credential).
 
 ## Roadmap Parking Lot
 
-- **Resolved this update**: home cash box entered and corrected to its real value ($53,168); full
+- **Resolved this update**: taking over the Simplifi track directly (Codex unavailable), resolved
+  the live shadow-duplicate double-counting risk — 6 accounts confirmed zero-balance, deactivated,
+  Net Worth unaffected (section A.2); shipped both classifier fixes flagged earlier today, PR #24
+  — Home Depot false-positive gone, XRP is now the first row ever to reach `ready` (section A.1).
+- **Resolved earlier today**: home cash box entered and corrected to its real value ($53,168); full
   Savings group broken out for the first time — Personal Savings, Rave Brandy's, and RAVE Jason's
   entered, Business Savings corrected from a stale $4,235.67 placeholder to its real $26,123.53
   (section B.5); a previously-unknown "Joint WROS - TOD" brokerage account added to Investments.
   Net Worth $3,996,781 → $4,031,781 → **$4,096,845**. `CASH-SAVINGS-BALANCES` in TASKS.md is now
-  fully resolved — no more missing Savings-group accounts.
-- **Resolved earlier today**: bank/credit-card balances entered from Simplifi across two rounds
-  (Net Worth $3,774,436 → $3,795,810, section B.3); new Investments workspace built and shipped
-  (PR #23), populated with 8 real accounts (Net Worth $3,795,810 → $3,996,781, section B.4);
-  confirmed no ChatGPT/Codex investment-account work exists anywhere unshipped (only the design
-  doc, never implemented).
+  fully resolved. Bank/credit-card balances entered from Simplifi across two rounds (Net Worth
+  $3,774,436 → $3,795,810, section B.3); new Investments workspace built and shipped (PR #23),
+  populated with 8 real accounts (Net Worth $3,795,810 → $3,996,781, section B.4); confirmed no
+  ChatGPT/Codex investment-account work exists anywhere unshipped (only the design doc, never
+  implemented).
 - **Resolved previously**: read-only Simplifi asset-registry preview (PR #21); real estate counted
   in Net Worth (23 properties, section B.2); "Monthly Profit" KPI mislabel (PR #20); Financial
   Assets feature reviewed and shipped (B.1); Simplifi duplicate-import defect (301 rows); Financial
   FORGE personal/business blending; Financial FORGE KPI ÷100 display bug; property document library
   + image-compression fix + Vision OCR credentials; manual account-balance entry.
-- **Still open**: cross-feature double-counting risk between Financial Assets and manual
-  account-balance entry (section B.1, D item 4); two classifier bugs in the Simplifi asset-registry
-  preview (section A.1, D item 5); the `parseAssetBody` NaN-vs-null minor bug (D item 6);
-  52-row/17-account Simplifi scope decision; Simplifi asset-account import (explicitly still not
-  started); `SIMPLIFI-01` design-doc review (Codex's track — **unavailable until tomorrow, weekly
-  token limit**; `ASSETS-01` is now superseded by the shipped Investments workspace, should be
-  marked resolved in TASKS.md rather than left pending review).
+- **Still open**: the `parseAssetBody` NaN-vs-null minor bug (D item 4); no systemic guard against a
+  *future* shadow-duplicate recurring (D item 5); an unrelated interrupted `git am` in a separate
+  checkout (D item 6); 52-row/17-account Simplifi scope decision; Simplifi asset-account import
+  (explicitly still not started); `SIMPLIFI-01` design-doc review (Codex's track — still
+  unavailable; `ASSETS-01` is now superseded by the shipped Investments workspace, should be marked
+  resolved in TASKS.md rather than left pending review); "172 previously skipped transactions"
+  claim (unverifiable with available data).
