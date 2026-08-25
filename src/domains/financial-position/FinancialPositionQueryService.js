@@ -1,7 +1,7 @@
 import { NetWorthService } from "../networth/networth.service";
 
 export const ASSET_ACCOUNT_TYPES = Object.freeze(
-  new Set(["depository", "investment"]),
+  new Set(["depository", "investment", "other"]),
 );
 
 export const LIABILITY_ACCOUNT_TYPES = Object.freeze(

@@ -34,9 +34,9 @@ function createDependencies() {
         },
         {
           id: "account-other",
-          name: "Unsupported Account",
+          name: "Tractor",
           type: "other",
-          subtype: "other",
+          subtype: "equipment",
         },
         {
           id: "account-unbalanced",
@@ -122,6 +122,13 @@ describe("FinancialPositionQueryService", () => {
         account_type: "investment",
         current_value: 300000,
       },
+      {
+        id: "account-other",
+        name: "Tractor",
+        category: "equipment",
+        account_type: "other",
+        current_value: 9999,
+      },
     ]);
 
     expect(position.liabilities).toEqual([
@@ -140,10 +147,10 @@ describe("FinancialPositionQueryService", () => {
     ]);
 
     expect(position.netWorth).toEqual({
-      totalAssets: 425000,
+      totalAssets: 434999,
       totalLiabilities: 200000,
-      netWorth: 225000,
-      debtToAssetRatio: 200000 / 425000,
+      netWorth: 234999,
+      debtToAssetRatio: 200000 / 434999,
     });
 
     expect(position.accountBalances).toHaveLength(5);
@@ -162,7 +169,7 @@ describe("FinancialPositionQueryService", () => {
     expect(Object.isFrozen(position.metadata)).toBe(true);
   });
 
-  test("skips unsupported accounts and accounts without balances", async () => {
+  test("includes physical assets and skips accounts without balances", async () => {
     const service =
       new FinancialPositionQueryService(
         createDependencies(),
@@ -177,11 +184,7 @@ describe("FinancialPositionQueryService", () => {
       ),
     ).toBe(false);
 
-    expect(
-      [...position.assets, ...position.liabilities].some(
-        (item) => item.id === "account-other",
-      ),
-    ).toBe(false);
+    expect(position.assets.some((item) => item.id === "account-other")).toBe(true);
   });
 
   test("reports canonical account balances without fabricating metrics or insights", async () => {
