@@ -1,10 +1,10 @@
 import { NetWorthService } from "../networth/networth.service";
 
-const ASSET_ACCOUNT_TYPES = Object.freeze(
+export const ASSET_ACCOUNT_TYPES = Object.freeze(
   new Set(["depository", "investment"]),
 );
 
-const LIABILITY_ACCOUNT_TYPES = Object.freeze(
+export const LIABILITY_ACCOUNT_TYPES = Object.freeze(
   new Set(["credit", "loan"]),
 );
 
@@ -41,6 +41,7 @@ function projectAssets(financialAccounts, balanceByAccountId) {
         id: account.id,
         name: account.name,
         category: account.subtype || account.type,
+        account_type: account.type,
         current_value: centsToDollars(
           balance.currentBalanceCents,
         ),

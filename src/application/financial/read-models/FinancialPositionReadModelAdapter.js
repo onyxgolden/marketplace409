@@ -11,8 +11,12 @@ function freezeLines(lines) {
 }
 
 function sumCashAssets(assets) {
+  // "Cash" means liquid, spendable balance — depository accounts (checking/savings), not
+  // brokerage/investment holdings. account_type is the account's own type (depository/investment),
+  // independent of its provider-supplied subtype, so this holds regardless of which subtype string
+  // a given provider (Simplifi import, Plaid once connected, manual entry) happens to report.
   const cashAssets = assets.filter(
-    (asset) => asset.category === "cash",
+    (asset) => asset.account_type === "depository",
   );
 
   if (cashAssets.length === 0) {

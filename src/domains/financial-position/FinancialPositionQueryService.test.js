@@ -112,12 +112,14 @@ describe("FinancialPositionQueryService", () => {
         id: "account-cash",
         name: "Operating Cash",
         category: "checking",
+        account_type: "depository",
         current_value: 125000,
       },
       {
         id: "account-investment",
         name: "Brokerage",
         category: "brokerage",
+        account_type: "investment",
         current_value: 300000,
       },
     ]);
