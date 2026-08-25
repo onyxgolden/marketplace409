@@ -111,6 +111,27 @@ function annotationText(
   ).trim();
 }
 
+// Vercel Functions have no persistent filesystem to point GOOGLE_APPLICATION_CREDENTIALS at, so
+// the default (no-args) ImageAnnotatorClient() constructor -- which only resolves credentials via
+// that file path, the GCE/GKE metadata server, or a local gcloud SDK login -- can never
+// authenticate there. GOOGLE_CLOUD_VISION_CREDENTIALS holds the full service-account key JSON
+// directly (as a Vercel env var), parsed and passed to the client explicitly instead.
+function credentialsFromEnv() {
+  const raw = process.env.GOOGLE_CLOUD_VISION_CREDENTIALS;
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(
+      "GOOGLE_CLOUD_VISION_CREDENTIALS is not valid JSON.",
+    );
+  }
+}
+
 async function createDefaultClient() {
   const vision =
     await import(
@@ -128,7 +149,14 @@ async function createDefaultClient() {
     );
   }
 
-  return new ImageAnnotatorClient();
+  const credentials = credentialsFromEnv();
+
+  return credentials
+    ? new ImageAnnotatorClient({
+        credentials,
+        projectId: credentials.project_id,
+      })
+    : new ImageAnnotatorClient();
 }
 
 export class GoogleCloudVisionOCRAdapter {
@@ -362,6 +390,7 @@ export class GoogleCloudVisionOCRAdapter {
 }
 
 export {
+  credentialsFromEnv,
   DOCUMENT_TEXT_DETECTION,
   IMAGE_MIME_TYPES,
   MAX_SYNCHRONOUS_PDF_PAGES,

@@ -1,4 +1,5 @@
 import {
+  afterEach,
   describe,
   expect,
   it,
@@ -6,9 +7,43 @@ import {
 } from "vitest";
 
 import {
+  credentialsFromEnv,
   DOCUMENT_TEXT_DETECTION,
   GoogleCloudVisionOCRAdapter,
 } from "../GoogleCloudVisionOCRAdapter";
+
+describe("credentialsFromEnv", () => {
+  const originalValue = process.env.GOOGLE_CLOUD_VISION_CREDENTIALS;
+
+  afterEach(() => {
+    if (originalValue === undefined) delete process.env.GOOGLE_CLOUD_VISION_CREDENTIALS;
+    else process.env.GOOGLE_CLOUD_VISION_CREDENTIALS = originalValue;
+  });
+
+  it("returns null when the env var is unset, so the client falls back to default ADC resolution", () => {
+    delete process.env.GOOGLE_CLOUD_VISION_CREDENTIALS;
+    expect(credentialsFromEnv()).toBeNull();
+  });
+
+  it("parses a service-account key JSON from the env var", () => {
+    process.env.GOOGLE_CLOUD_VISION_CREDENTIALS = JSON.stringify({
+      client_email: "forge-document-ocr@example.iam.gserviceaccount.com",
+      project_id: "example-project",
+      private_key: "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n",
+    });
+
+    expect(credentialsFromEnv()).toEqual({
+      client_email: "forge-document-ocr@example.iam.gserviceaccount.com",
+      project_id: "example-project",
+      private_key: "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n",
+    });
+  });
+
+  it("throws a clear error when the env var is set but not valid JSON", () => {
+    process.env.GOOGLE_CLOUD_VISION_CREDENTIALS = "{not json";
+    expect(() => credentialsFromEnv()).toThrow("GOOGLE_CLOUD_VISION_CREDENTIALS is not valid JSON.");
+  });
+});
 
 describe(
   "GoogleCloudVisionOCRAdapter",
