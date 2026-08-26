@@ -1,29 +1,28 @@
 {
   "schemaVersion": "1.0",
+  "sessionId": "forge-session-20260826-184252734",
+  "sessionDate": "2026-08-26",
+  "phase": {
+    "identifier": "REVIEW_REQUIRED",
+    "title": "REVIEW_REQUIRED",
+    "status": "incomplete"
+  },
+  "objective": {
+    "startingObjective": "REVIEW_REQUIRED",
+    "endingObjective": "REVIEW_REQUIRED"
+  },
   "repository": {
-    "branch": "main",
     "head": "ba8f561916662bc9a4b1e2cc10a15e69ad44bed5",
     "originMain": "ba8f561916662bc9a4b1e2cc10a15e69ad44bed5",
+    "branch": "main",
     "workingTreeClean": true,
-    "headMatchesOriginMain": true
+    "implementationCommit": null,
+    "governanceCommit": null
   },
-  "session": {
-    "latestSnapshot": "governance/snapshots/forge-session-20260826-184252734.json",
-    "lastUpdated": "2026-08-26T18:42:52.734Z"
-  },
-  "state": {
-    "activePhase": {
-      "identifier": "REVIEW_REQUIRED",
-      "title": "REVIEW_REQUIRED",
-      "status": "incomplete"
-    },
-    "currentObjective": "REVIEW_REQUIRED",
-    "completedWork": [],
-    "knownWarnings": [],
-    "nextSession": {
-      "objective": "REVIEW_REQUIRED",
-      "startingInspection": "REVIEW_REQUIRED"
-    }
+  "work": {
+    "delivered": [],
+    "modifiedFiles": [],
+    "knownWarnings": []
   },
   "validation": {
     "focusedTests": {
@@ -47,16 +46,24 @@
     "supportedByEvidence": false,
     "incompleteReason": "The repository evidence collector does not infer session completion. Human review is required."
   },
-  "authority": {
-    "defaultAuthority": "human",
-    "promotionStateVersion": "1.0",
-    "capabilitiesVersion": "1.0",
-    "editableSectionsVersion": "1.0"
+  "nextSession": {
+    "objective": "REVIEW_REQUIRED",
+    "startingInspection": "REVIEW_REQUIRED"
   },
-  "synchronization": {
-    "mode": "shadow",
-    "stateGeneratedAt": null,
-    "sourceSnapshot": "governance/snapshots/forge-session-20260826-184252734.json",
-    "rendererVersion": null
+  "evidence": {
+    "capturedAt": "2026-08-26T18:42:52.734Z",
+    "latestCommit": {
+      "hash": "ba8f561916662bc9a4b1e2cc10a15e69ad44bed5",
+      "subject": "Merge pull request #32 from onyxgolden/automation/governance-refresh",
+      "committedAt": "2026-08-26T13:41:56-05:00"
+    },
+    "headMatchesOriginMain": true,
+    "gitStatus": [],
+    "selectedValidationArtifact": {
+      "path": "governance/validation/forge-validation-20260826-184249.json",
+      "validationId": "forge-validation-20260826-184249",
+      "completedAt": "2026-08-26T18:42:52.456Z",
+      "repositoryHead": "ba8f561916662bc9a4b1e2cc10a15e69ad44bed5"
+    }
   }
 }

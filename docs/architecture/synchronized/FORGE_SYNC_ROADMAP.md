@@ -18,7 +18,7 @@
 
 **Last Synchronization:** Not yet generated
 **Session ID:** Not recorded
-**Evidence Snapshot:** governance/snapshots/forge-session-20260826-183744688.json
+**Evidence Snapshot:** governance/snapshots/forge-session-20260826-184252734.json
 **Renderer Version:** Not recorded
 **Mode:** shadow
 
@@ -100,12 +100,13 @@ The synchronizer may record completed implementation evidence in other shadow do
 
 - **Focused tests:** passing; RUN  v4.1.9 /home/runner/work/marketplace409/marketplace409
 
- ✓ scripts/governance/__tests__/collectSessionEvidence.test.mjs (11 tests) 1408ms
+ ✓ scripts/governance/__tests__/collectSessionEvidence.test.mjs (11 tests) 1844ms
+     ✓ preserves not-run validation when no eligible artifact exists  445ms
 
  Test Files  1 passed (1)
       Tests  11 passed (11)
-   Start at  18:37:42
-   Duration  1.61s (transform 30ms, setup 0ms, import 46ms, tests 1.41s, environment 0ms)
+   Start at  18:42:50
+   Duration  2.06s (transform 36ms, setup 0ms, import 51ms, tests 1.84s, environment 0ms)
 - **Full tests:** not-run; Not recorded
 - **Production build:** not-run; Not recorded
 

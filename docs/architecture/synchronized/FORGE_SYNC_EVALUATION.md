@@ -18,7 +18,7 @@
 
 **Last Evaluation Update:** Not yet generated
 **Last Session ID:** Not recorded
-**Last Evidence Snapshot:** governance/snapshots/forge-session-20260826-183744688.json
+**Last Evidence Snapshot:** governance/snapshots/forge-session-20260826-184252734.json
 **Renderer Version:** Not recorded
 **Mode:** shadow
 
