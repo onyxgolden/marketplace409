@@ -2,6 +2,21 @@
 
 ## Last Updated
 
+2026-08-26T~17:15Z — Claude Code (Sonnet 5) — branch `agent-handoff-update-6`, pushed to
+`chore/agent-handoff`. **New track this update: a Primavera P6 (v17-23) feature-parity build-out
+for the Scheduling tool**, entirely separate from the Simplifi/Financial FORGE work in sections A-D
+below (that work is unchanged since `agent-handoff-update-5` — see that section's own history for
+Net Worth progression, now at $4,096,845). Three slices shipped: **Phase 0** (PR #25, a 10-table
+relational schema replacing the old JSONB-blob board, with a verified exact-parity live-data
+backfill), **SCHED-01** (PR #26, a real CPM engine — calendars, 4 relationship types with signed
+lag, a 10-type constraint taxonomy, hammocks, float/criticality, conflict detection — plus two
+follow-up env-loading fixes, PR #27/#28, needed to actually run its verification script), and
+**SCHED-02** (PR #29, baseline snapshots + `actual_start`/`actual_finish` progress-tracking
+columns). See new section **E** below for full detail. **One item still open**: SCHED-02's
+migration is merged to `main` but not yet applied to Production — the sandbox classifier blocked
+`supabase db push`, command handed to Jason to run himself via the chat `!` prefix, not yet
+confirmed run.
+
 2026-08-25T~23:15Z — Claude Code (Sonnet 5) — branch `agent-handoff-update-5`, pushed to
 `chore/agent-handoff`. Update covers manual bank/credit-card balance entry from two more Quicken
 Simplifi screenshots (two rounds, real transaction activity happened between them), a verification
@@ -39,6 +54,9 @@ accounts were confirmed zero-balance before deactivation).
 | Shadow-duplicate double-counting risk | **Resolved** | The 6 real-estate accounts that actually had a live Simplifi-bootstrapped duplicate (185 Laxon, 1900 W. Decker, 1932 W. Decker, 308 Paula, 335 Butler, 4225 Barnhill) — confirmed zero-balance, then deactivated. Net Worth unchanged. The other 14 properties never had a pre-existing Simplifi row to begin with, so nothing to clean up there. See section A.2. |
 | Simplifi asset-registry preview classifier bugs | **Done** | Both bugs found during the live review fixed, PR #24: the real-estate regex no longer matches "home" in brand names, and ownership scope no longer blocks "ready" (it's a field selected at approval time everywhere else in this codebase, never auto-inferred). See section A.1. |
 | ChatGPT/Codex investment-account work — "was it built and not pushed?" | **Checked, confirmed no** | Only the `ASSETS-01` design doc exists (`87d54518c`), explicitly "implementation not started." No branch, migration, route, or PR anywhere in history. See section B.4. |
+| Scheduling Phase 0 (relational schema, replaces JSONB blob) | **Done** | 10-table schema + verified exact-parity backfill, PR #25, applied to Production. See section E.1. |
+| Scheduling SCHED-01 (real CPM engine) | **Done** | Calendars, 4 relationship types + signed lag, 10-type constraints, hammocks, float/criticality, conflict detection. PR #26, plus 2 follow-up env-loading fixes (PR #27, #28) needed to run its own verification script. Not wired into any route/UI yet — deliberately. See section E.2. |
+| Scheduling SCHED-02 (baselines + progress tracking) | **Shipped, not yet applied to Production** | Baseline snapshot tables + `actual_start`/`actual_finish` columns, PR #29 merged to `main`. Migration blocked by the sandbox classifier — handed to Jason to run via chat `!` prefix, not yet confirmed applied. See section E.3. |
 
 ## A. Simplifi — Fingerprint/Duplicate Defect
 
@@ -543,31 +561,39 @@ Two more rounds of live data entry via the existing `POST /api/financial/account
 
 ## D. Repository / Production
 
-- **`origin/main` HEAD**: `d2fbf6d7f` ("Merge pull request #24 from
-  onyxgolden/fix/simplifi-asset-preview-classifier").
+- **`origin/main` HEAD**: `be3f42056` ("Merge pull request #29 from
+  onyxgolden/feat/scheduling-baselines-progress").
 - **Merged PRs this session, in order** (all via the standard branch → PR → CI-green → merge flow,
   `--merge` strategy, branches left undeleted): #4 `42b5950ff`, #6 `0c1bfd2fc`, #7 `310644506`, #8
   `9f18cc3f5`, #9 `0d4f7447a`, #10 `c6fe7b3f8`, #11 `79ebf80f5`, #12 `f67d51461`, #13 `f08daec4e`,
   #14 `28aec9182`, #15 `4bcd995db`, #16 `9d45fb84d`, #17 `e6d64b5b6`, #18 `6749fd7e6`, #19
   `fb1ed7b41`, #20 `81ccb52a9`, #21 `818a2ce26`, #22 (marketplace contractor form, unrelated to
   Financial FORGE, merged by another session/agent between #21 and #23) `0baf43e79`, #23
-  `f39df5683`, #24 `d2fbf6d7f`. **Between #20 and #21**: `feat/financial-assets-foundation` was
-  fast-forwarded directly onto `main` — no PR, per that task's explicit instructions.
+  `f39df5683`, #24 `d2fbf6d7f`, #25 `edaeda396` (scheduling Phase 0, section E.1), #26 `a30368b0`
+  (SCHED-01 CPM engine, section E.2), #27 `d4be3de1` (SCHED-01 verify-script env fix), #28
+  `110f9724` (SCHED-01 verify-script CJS/ESM interop fix), #29 `be3f4205` (SCHED-02 baselines,
+  section E.3). **Between #20 and #21**: `feat/financial-assets-foundation` was fast-forwarded
+  directly onto `main` — no PR, per that task's explicit instructions.
 - **Working tree**: clean on every branch touched this session; this handoff update (on
   `agent-handoff-update-5`, tracking `origin/chore/agent-handoff`) is the only uncommitted work at
   time of writing.
-- **Latest Production deployment**: auto-triggered by the PR #24 merge push to `main`, confirmed
-  **Ready** via `vercel inspect --wait`, aliased to `www.409marketplace.online` /
-  `409marketplace.online` / `marketplace409.vercel.app`. Live-verified by calling the preview
-  endpoint directly: Home Depot cards now `needs_review`, XRP now `ready`.
+- **Latest Production deployment**: auto-triggered by the PR #29 merge push to `main`. Not
+  separately live-verified this update — PR #29 shipped schema/domain-logic only (no route/UI
+  change), so the build-passing CI check is the relevant signal, same as Phase 0/SCHED-01.
 - **Migrations**: `origin/main`'s `supabase/migrations/` tree matches Supabase's applied-migrations
-  list exactly through `20260826010000_add_investment_account_registry.sql` — **nothing pending**.
-  PR #24 needed no migration (pure logic fix). Confirmed via `supabase migration list --linked`
-  showing LOCAL and REMOTE both current. (Note: the 301-row Simplifi correction and the 6-account
+  list exactly through `20260827000100_backfill_scheduling_projects_from_board_jsonb.sql` (Phase
+  0's backfill, section E.1). **One migration pending**:
+  `20260828000000_add_schedule_baselines_and_progress_tracking.sql` (SCHED-02, section E.3) is
+  merged to `main` but **not yet applied to Production** — confirm via `supabase migration list`
+  (it should appear in both the Local and Remote columns; as of this update it only appears in
+  Local when run from a branch that has the file, and doesn't appear in Remote at all). PR #24
+  needed no migration (pure logic fix). (Note: the 301-row Simplifi correction and the 6-account
   shadow-duplicate deactivation in section A.2 were both data `UPDATE`s, not migrations.)
-- **Tests**: full suite run on `fix/simplifi-asset-preview-classifier` before merging PR #24
-  (2026-08-25): **4,462 / 4,482 passing**. The 20 failures are the same pre-existing, unrelated
-  `executeProgrammerCommand.test.js` environmental failures noted throughout this document.
+- **Tests**: full suite run on `feat/scheduling-baselines-progress` before merging PR #29
+  (2026-08-26): **4,554 / 4,574 passing**. The 20 failures are the same pre-existing, unrelated
+  `executeProgrammerCommand.test.js`/governance-CLI-validation environmental failures noted
+  throughout this document — re-confirmed this update as reproducible with this session's
+  scheduling changes fully removed, so definitively not caused by this work.
 - **Build**: local production build (`next build`) is **blocked in this environment** — `vercel env
   pull` redacts secret values to the literal string `"[SENSITIVE]"` here, so any route touching
   Supabase fails static analysis locally regardless of code correctness. This is a pre-existing
@@ -610,6 +636,10 @@ Two more rounds of live data entry via the existing `POST /api/financial/account
      `ASSETS-01` (investments design) is now superseded by the shipped Investments workspace (B.4)
      — should be marked resolved/closed in TASKS.md rather than left as if still awaiting review of
      an unbuilt design.
+  8. **SCHED-02's migration (section E.3) is merged to `main` but not yet applied to Production** —
+     classifier-blocked, handed to Jason as an exact `supabase db push` command via the chat `!`
+     prefix, not yet confirmed run. Confirm via `supabase migration list` before treating any
+     scheduling work past SCHED-01 as fully live.
 
   Resolved this update, kept here for continuity: ~~the plain "Cash" and "Personal Savings"
   accounts had no balance entered~~ (section B.5); ~~the early-session "Business Savings" test
@@ -617,16 +647,147 @@ Two more rounds of live data entry via the existing `POST /api/financial/account
   6-account shadow-duplicate double-counting risk~~ (section A.2); ~~two classifier bugs in the
   Simplifi asset-registry preview~~ (section A.1, PR #24).
 
+## E. Scheduling — P6-Parity Build-Out
+
+Jason asked to build out the Scheduling tool's WBS/Activities pages "with all the capabilities and
+functions similar to primavera p6 version 17-23." When asked which capability area to prioritize
+first (CPM engine / resources+costs / baselines+progress / EVM+DCMA), the answer was "all of them"
+— this is being built as a sequence of narrow, independently-reviewable slices, each shipped and
+merged before the next starts, same discipline as the rest of this handoff doc's work. The live
+Gantt/WBS/Activities UI (JSONB-blob-backed, `forge_scheduling_projects.board`) is **untouched
+throughout** — nothing below is wired into any route or UI yet; that's deliberate, not an oversight,
+and called out explicitly in every slice's own PR.
+
+The abandoned design spec (`docs/scheduling/SPEC.md`, branch `scheduling-engine-phase1-schema`,
+never merged) is the only prior design guidance anywhere in the repo, and is thin — it explicitly
+lists resource loading/leveling, cost tracking, and baseline comparison/variance reporting as v1
+non-goals, and says nothing at all about EVM or DCMA. Every algorithm below was designed from
+scratch this build-out, with judgment calls flagged explicitly in code comments and PR descriptions
+rather than silently decided.
+
+### E.1 Phase 0 — relational schema — shipped 2026-08-26
+
+**PR #25** (`edaeda396`). Reconciled the abandoned draft's 8-table schema against everything that's
+since shipped on the live JSONB board (WBS hierarchy, calendars, blackout windows, dependencies with
+lag, templates, text styling) into a 10-table relational schema: `schedule_projects`,
+`schedule_calendars`, `schedule_calendar_holidays`, `schedule_wbs_nodes`,
+`schedule_blackout_windows`, `schedule_lanes`, `schedule_blocks` (unifies Gantt blocks and WBS
+activities — they already shared one task-numbering counter in the live app), `schedule_dependencies`,
+`schedule_hammock_anchors`. Composite `(owner_id, id)` primary/foreign keys throughout, matching this
+codebase's dominant convention; `schedule_templates` dropped entirely (client-side only, nothing
+joins against it in SQL).
+
+- **Backfill migration** converts the live app's week-index JSONB data into day-granular relational
+  rows using the exact arithmetic the app's own `computeWeeks()` already uses — verified via an
+  independently-written pure JS mirror (`schedulingRelationalMapping.js`) agreeing with the SQL.
+- **Verified exact parity across all 5 real Production projects** after applying — every field of
+  every row matched between the JSONB source and the new relational tables, not just row counts.
+- Both migrations applied to Production directly (no classifier block that time).
+
+### E.2 SCHED-01 — real CPM engine — shipped 2026-08-26
+
+**PR #26** (`a30368b0`), plus two follow-up fixes needed to actually exercise it against real data,
+**PR #27** (`d4be3de1`) and **PR #28** (`110f9724`).
+
+- **`src/domains/scheduling/schedulingCpmEngine.js`** — pure, no I/O, `Object.freeze` throughout,
+  UTC-only date math (deliberately diverging from the live board's local-time date parsing).
+  Replaces `schedulingBoardState.js`'s `criticalPath()`, an explicitly-labeled "simplified
+  stand-in" (longest-path-by-duration, no calendars/lag/constraints) — that function is untouched,
+  still what the live UI uses today.
+- Kahn's-algorithm topological sort with **cycle isolation, not whole-graph failure** — a bad
+  dependency edge excludes only the cycle, the rest of the graph still computes normally, one
+  `cycle` conflict reported.
+- Forward/backward pass computes both a "constrained" and a parallel "dependency-only" thread per
+  block, used later for constraint-conflict detection. All 4 relationship types (FS/SS/FF/SF) with
+  signed lag applied in **calendar days** (not working days — elapsed real-world wait time,
+  independent of whether a crew works that day), rolled to the nearest working day once. Float in
+  **working days**, matching `duration_days`'s unit. Criticality is `float === graph-wide minimum`,
+  not hardcoded to exactly zero.
+- Full 10-type P6 constraint taxonomy including ALAP (computed as ASAP, then a non-repropagating
+  post-process sets reported dates to late dates — a named, accepted simplification, not a true
+  fixed-point re-solve).
+- Hammocks resolved after the main pass, from anchor dates only.
+- 17 hand-computed test scenarios, anchored to a confirmed Monday so every expected date is
+  independently verifiable — includes a diamond-graph float assertion, a cyclic-graph isolation
+  test, and a hard `must_start_on` conflict test.
+- **Verification script** `scripts/scheduling/verifyCpmEngineAgainstRealProjects.mjs` — read-only
+  (`.select()` only, never writes), runs the engine against every real Production project, reports
+  anomalies. Two real bugs found and fixed getting it to actually run (not sandbox artifacts —
+  reproduced identically in a real terminal): **PR #27** switched from `node --env-file` (which
+  mis-parses the quoted values `vercel env pull` writes) to Next's own `loadEnvConfig`; **PR #28**
+  fixed a CJS/ESM named-export interop bug where `@next/env`'s minified bundle didn't give plain
+  Node a staticly-detectable `loadEnvConfig` export.
+- **Live verification against Production was ultimately skipped, by Jason's explicit choice** — not
+  a sandbox limitation as first suspected. All three Supabase env vars
+  (`SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`)
+  are marked **Sensitive** in Vercel project settings, and Vercel deliberately refuses to write
+  sensitive-flagged values to a local file via `vercel env pull` (writes a `"[SENSITIVE]"`
+  placeholder instead) — confirmed by matching character-for-character between this session's own
+  attempt and Jason's independent real-terminal attempt. The only way around it would be copying the
+  real service-role key from the Supabase dashboard directly, which Jason chose not to do for this
+  one-off check, given the engine's correctness already rests on 17 hand-verified scenarios plus 5
+  stubbed-client tests for the verification script's own scoping logic. **If this is ever wanted
+  later**: fetch real credentials from `supabase.com/dashboard/project/_/settings/api` directly
+  (bypasses the Vercel-pull restriction since it's sourced from Supabase, not Vercel), never paste
+  them into chat.
+
+### E.3 SCHED-02 — baseline snapshots + progress tracking — shipped 2026-08-26, migration not yet applied
+
+**PR #29** (`be3f4205`), merged to `main`. Migration **not yet applied to Production** — see the
+open item below.
+
+- Adds `actual_start`/`actual_finish` to `schedule_blocks` (true progress-tracking dates, distinct
+  from the existing `percent_complete` estimate) and two new tables, `schedule_baselines` /
+  `schedule_baseline_blocks` (a project-level snapshot + a durable per-block snapshot). Schema only,
+  same pattern as Phase 0/SCHED-01 — nothing in the app writes to these yet.
+- **`schedule_baseline_blocks` deliberately stores a copy of each block's `task_code`, not a live
+  FK** to `schedule_blocks` — a baseline snapshot must survive the source block later being edited
+  or deleted, so variance can still be explained after the fact. Named consequence: no
+  `schedule_baseline_dependencies` table exists either, so the new `rollupProjectVariance()`
+  function can't determine "which blocks had no successors" from the snapshot alone and uses
+  max-across-all-blocks instead of max-across-leaves (numerically identical in the normal
+  non-negative-lag case, an accepted named limitation otherwise).
+- **`src/domains/scheduling/schedulingBaselines.js`** — `captureBaseline`, `computeBlockVariance`
+  (prefers `actual_start`/`actual_finish` over the CPM engine's `early_start`/`early_finish` when
+  present — a task that's genuinely started/finished is compared against reality, not the
+  projection; the two sides are evaluated independently, not all-or-nothing), `computeScheduleVariance`
+  (joins by `task_code`, reports blocks added/removed since baseline without crashing or fabricating
+  numbers), `rollupProjectVariance`.
+- Also added `daysBetweenISO` to `schedulingRelationalMapping.js`, a signed-calendar-days companion
+  to the existing `addDaysISO`.
+- 12 hand-computed test scenarios (zero variance, a slipping task, actual-date precedence proven
+  against a case that would give the wrong answer if `early_finish` were used instead, blocks
+  added/removed since baseline, a multi-block project-level rollup) plus 8 migration tests plus 3
+  new `daysBetweenISO` tests. Full repo suite: 4,554 passed / 20 failed — same 20 pre-existing,
+  unrelated failures confirmed identically reproducible without this branch's changes (governance
+  CLI validation + a developer-command test needing a local evidence directory neither exists in
+  this sandbox nor is related to scheduling).
+- **Open item, not yet resolved**: applying `20260828000000_add_schedule_baselines_and_progress_tracking.sql`
+  to Production hit the same sandbox classifier block this session's other direct-Production-write
+  attempts have hit. Handed to Jason as an exact command
+  (`supabase db push`, via the chat `!` prefix, not a real terminal) — **not yet confirmed run**.
+  Confirm via `supabase migration list` (should show `20260828000000` in both columns) before
+  treating SCHED-02 as fully live.
+
+### Explicitly out of scope, this build-out so far (all three slices)
+
+No API route or UI component calls any of the above yet. Resource loading/leveling, EVM metrics,
+and DCMA 14-point checks are real remaining work toward "all of them" — not started. This baseline
+work (E.3) was built with those in mind (captures `total_float_days`/`is_critical`/`block_type` on
+the snapshot even though nothing computes with them yet) so the schema doesn't need to change again
+when that work starts.
+
 ## Active Worktrees
 
 - `.claude/worktrees/rentec-financial-history-resume` — this session's worktree. Currently on branch
-  `agent-handoff-update-5` (tracking `origin/chore/agent-handoff`) specifically to prepare this
+  `agent-handoff-update-6` (tracking `origin/chore/agent-handoff`) specifically to prepare this
   documentation update without colliding with the `chore/agent-handoff` branch name, which is
   already checked out in a different, separate worktree (`.claude/worktrees/agent-handoff`) —
   presumably another concurrent session's. No application code was changed while on this branch
   (note: this branch's `src/` tree is stale/pre-dates most of this session's feature work, since
   `chore/agent-handoff` diverged from `main` early on 2026-08-23 and was only ever used for docs
-  commits — this is expected, not a regression; all real feature work lives on `main`).
+  commits — this is expected, not a regression; all real feature work, including the entire
+  scheduling P6-parity track in section E, lives on `main`).
 - `.claude/worktrees/agent-handoff` — branch `chore/agent-handoff`, owned by a different worktree/
   session than this one as of this update.
 
@@ -641,6 +802,12 @@ Two more rounds of live data entry via the existing `POST /api/financial/account
 - Whether `git am --abort` should be run in `~/USMarketplace/marketplace409-assets` (a separate
   checkout, not this session's worktree) to clean up an interrupted patch apply found while
   troubleshooting the `!` shell-command mixup (section D).
+- **Whether/when to apply SCHED-02's migration to Production** (section E.3) — handed to Jason as an
+  exact `supabase db push` command via the chat `!` prefix after the sandbox classifier blocked it;
+  not yet confirmed run.
+- **Which P6 capability area to build next** for the scheduling track (section E) — resource
+  loading/leveling and EVM/DCMA are both still fully unstarted; Jason's original answer was "all of
+  them," no explicit ordering decision made for what comes after SCHED-02.
 
 ## Do Not Repeat
 
@@ -683,6 +850,12 @@ account number, or credential).
 
 ## Roadmap Parking Lot
 
+- **New track, resolved so far this update**: Scheduling P6-parity build-out (section E) —
+  relational schema replacing the JSONB blob (Phase 0, PR #25, verified exact live-data parity); a
+  real CPM engine with calendars/lag/constraints/hammocks/float (SCHED-01, PR #26 + 2 follow-up env
+  fixes PR #27/#28); baseline snapshots + progress-tracking columns (SCHED-02, PR #29). Still open:
+  SCHED-02's migration not yet applied to Production (classifier-blocked, handed to Jason); resource
+  loading/leveling and EVM/DCMA not started.
 - **Resolved this update**: taking over the Simplifi track directly (Codex unavailable), resolved
   the live shadow-duplicate double-counting risk — 6 accounts confirmed zero-balance, deactivated,
   Net Worth unaffected (section A.2); shipped both classifier fixes flagged earlier today, PR #24
