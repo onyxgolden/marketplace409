@@ -110,7 +110,8 @@ if (invokedPath === fileURLToPath(import.meta.url)) {
   // Uses Next.js's own env loader (.env.production.local/.env.local/.env, in that precedence)
   // instead of `node --env-file`, which has been observed to mis-load quoted values written by
   // `vercel env pull`.
-  const { loadEnvConfig } = await import("@next/env");
+  const nextEnv = await import("@next/env");
+  const loadEnvConfig = nextEnv.loadEnvConfig ?? nextEnv.default.loadEnvConfig;
   loadEnvConfig(process.cwd(), false);
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
