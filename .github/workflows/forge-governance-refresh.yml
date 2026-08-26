@@ -1,0 +1,118 @@
+# Nightly refresh of the FORGE shadow governance documents (docs/architecture/synchronized/
+# FORGE_SYNC_*.md, governance/state/current-governance-state.json, and a new governance session
+# snapshot), using the repo's own existing deterministic updater -- this workflow only invokes it,
+# it never reimplements its generation logic in YAML and never hand-edits generated output.
+#
+# Two things this workflow is deliberately careful about:
+#   1. scripts/governance/generateValidationEvidence.mjs requires the checked-out branch to
+#      literally be named "main" (its own eligibility check), so the checkout step below hardcodes
+#      ref: main regardless of which ref triggered the run -- including a workflow_dispatch test
+#      fired from a feature branch.
+#   2. Every successful updater run creates a brand-new timestamped snapshot file and updates a
+#      snapshot-pointer line in the 5 synced docs + governance state, even when nothing else
+#      changed. scripts/governance/reconcileGovernanceRefresh.mjs (a separate, unit-tested script --
+#      see scripts/governance/evaluateMaterialGovernanceChange.mjs) tells apart that routine
+#      bookkeeping from a real content change: if nothing material changed, it deletes the new
+#      snapshot and restores every file to its pre-run committed content, then this workflow
+#      verifies the tree is clean and exits without a commit or PR.
+#
+# Generated changes are never pushed to main -- only to the reusable automation/governance-refresh
+# branch, which is opened as a PR into main for a human to review and merge. Pushing to main is what
+# triggers this repo's Vercel Production deployment; this workflow must never do that.
+
+name: FORGE Governance Document Refresh
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # 2:00 AM America/Chicago during CDT (UTC-5, roughly Mar-Nov)
+    - cron: '0 8 * * *'   # 2:00 AM America/Chicago during CST (UTC-6, roughly Nov-Mar)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: forge-governance-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: DST guard (scheduled runs only -- workflow_dispatch always proceeds)
+        id: dst_guard
+        if: github.event_name == 'schedule'
+        run: |
+          HOUR=$(TZ=America/Chicago date +%H)
+          if [ "$HOUR" = "02" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "Not currently 2 AM America/Chicago (it's $HOUR:00 local) -- this is the redundant DST-offset cron entry for the other half of the year, skipping."
+          fi
+
+      - name: Generate FORGE validation evidence (focused governance test only)
+        id: generate_evidence
+        if: github.event_name != 'schedule' || steps.dst_guard.outputs.proceed == 'true'
+        run: |
+          node scripts/governance/generateValidationEvidence.mjs \
+            --focused scripts/governance/__tests__/collectSessionEvidence.test.mjs \
+            | tee /tmp/generate-evidence.log
+          ARTIFACT_PATH=$(sed -n 's/^Artifact: //p' /tmp/generate-evidence.log)
+          echo "artifact_path=$ARTIFACT_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Run FORGE engineering session (synchronizes governance documents)
+        if: github.event_name != 'schedule' || steps.dst_guard.outputs.proceed == 'true'
+        run: npm run forge:session -- "${{ steps.generate_evidence.outputs.artifact_path }}"
+
+      - name: Verify protected sections remained intact
+        if: github.event_name != 'schedule' || steps.dst_guard.outputs.proceed == 'true'
+        run: node scripts/governance/verifyShadowGovernance.mjs
+
+      - name: Validate diff (whitespace errors)
+        if: github.event_name != 'schedule' || steps.dst_guard.outputs.proceed == 'true'
+        run: git diff --check
+
+      - name: Reconcile generated output
+        id: reconcile
+        if: github.event_name != 'schedule' || steps.dst_guard.outputs.proceed == 'true'
+        run: node scripts/governance/reconcileGovernanceRefresh.mjs
+
+      - name: Commit and push the refresh branch
+        if: (github.event_name != 'schedule' || steps.dst_guard.outputs.proceed == 'true') && steps.reconcile.outputs.material_change == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B automation/governance-refresh
+          git add governance/state/current-governance-state.json governance/snapshots/ docs/architecture/synchronized/
+          git commit -m "chore(governance): automated internal document refresh"
+          git push --force origin automation/governance-refresh
+
+      - name: Create or update the refresh PR
+        if: (github.event_name != 'schedule' || steps.dst_guard.outputs.proceed == 'true') && steps.reconcile.outputs.material_change == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh pr list --head automation/governance-refresh --base main --state open --json number --jq '.[0].number')
+          if [ -z "$EXISTING" ]; then
+            gh pr create --base main --head automation/governance-refresh \
+              --title "chore(governance): automated internal document refresh" \
+              --body "Automated FORGE governance document refresh. Generated by .github/workflows/forge-governance-refresh.yml -- do not hand-edit; re-run the workflow instead."
+          else
+            echo "PR #$EXISTING already open for automation/governance-refresh; force-push already updated its diff."
+          fi
