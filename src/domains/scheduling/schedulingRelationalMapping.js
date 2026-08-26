@@ -92,7 +92,7 @@ export function mapLaneRows(board, { ownerId, projectId }) {
 // the exact same arithmetic schedulingBoardState.js's computeWeeks() already uses to render week
 // columns from board.startDate -- this is a faithful conversion of already-displayed dates, not a
 // new approximation.
-function addDaysISO(isoDate, days) {
+export function addDaysISO(isoDate, days) {
   const date = new Date(`${isoDate}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
