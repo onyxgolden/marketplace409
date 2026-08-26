@@ -2,14 +2,14 @@
   "schemaVersion": "1.0",
   "repository": {
     "branch": "main",
-    "head": "a824b5d713bd124370791f94e27c8137ce5afe0f",
-    "originMain": "a824b5d713bd124370791f94e27c8137ce5afe0f",
+    "head": "edcfa93b4877f9be9e5e06f622dbd6f989a96c67",
+    "originMain": "edcfa93b4877f9be9e5e06f622dbd6f989a96c67",
     "workingTreeClean": true,
     "headMatchesOriginMain": true
   },
   "session": {
-    "latestSnapshot": "governance/snapshots/forge-session-20260826-183004795.json",
-    "lastUpdated": "2026-08-26T18:30:04.795Z"
+    "latestSnapshot": "governance/snapshots/forge-session-20260826-183744688.json",
+    "lastUpdated": "2026-08-26T18:37:44.688Z"
   },
   "state": {
     "activePhase": {
@@ -29,7 +29,7 @@
     "focusedTests": {
       "status": "passing",
       "command": "npx vitest run scripts/governance/__tests__/collectSessionEvidence.test.mjs",
-      "summary": "RUN  v4.1.9 /home/runner/work/marketplace409/marketplace409\n\n ✓ scripts/governance/__tests__/collectSessionEvidence.test.mjs (11 tests) 1344ms\n\n Test Files  1 passed (1)\n      Tests  11 passed (11)\n   Start at  18:30:02\n   Duration  1.54s (transform 29ms, setup 0ms, import 46ms, tests 1.34s, environment 0ms)"
+      "summary": "RUN  v4.1.9 /home/runner/work/marketplace409/marketplace409\n\n ✓ scripts/governance/__tests__/collectSessionEvidence.test.mjs (11 tests) 1408ms\n\n Test Files  1 passed (1)\n      Tests  11 passed (11)\n   Start at  18:37:42\n   Duration  1.61s (transform 30ms, setup 0ms, import 46ms, tests 1.41s, environment 0ms)"
     },
     "fullTests": {
       "status": "not-run",
@@ -56,7 +56,7 @@
   "synchronization": {
     "mode": "shadow",
     "stateGeneratedAt": null,
-    "sourceSnapshot": "governance/snapshots/forge-session-20260826-183004795.json",
+    "sourceSnapshot": "governance/snapshots/forge-session-20260826-183744688.json",
     "rendererVersion": null
   }
 }
