@@ -6,6 +6,7 @@ const STATUS_LABELS = { invited: "Invited", active: "Active", suspended: "Suspen
 
 export default function WorkspaceMembersPanel() {
   const [viewerRole, setViewerRole] = useState(null);
+  const [viewerId, setViewerId] = useState(null);
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState("");
@@ -20,6 +21,7 @@ export default function WorkspaceMembersPanel() {
       .then(({ response, payload }) => {
         if (!response.ok) throw new Error(payload.error || "Unable to load workspace members.");
         setViewerRole(payload.viewerRole);
+        setViewerId(payload.viewerId);
         setMembers(payload.members || []);
       })
       .catch((loadError) => setError(loadError.message))
@@ -29,6 +31,12 @@ export default function WorkspaceMembersPanel() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // resolveEffectiveOwnerId only matches an *active* co-owner membership, so viewerRole still reads
+  // "primary_owner" for someone who has been invited but hasn't accepted yet -- their own pending row
+  // shows up in `members` (via the self-select RLS policy) with memberUserId equal to their own id.
+  // That, not viewerRole, is what identifies "this invitation is addressed to me."
+  const ownPendingInvite = members.find((member) => member.memberUserId === viewerId && member.status === "invited");
 
   async function invite(event) {
     event.preventDefault();
@@ -48,6 +56,23 @@ export default function WorkspaceMembersPanel() {
       await load();
     } catch (inviteError) {
       setError(inviteError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function accept() {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/workspace/members/accept", { method: "POST" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to accept that invitation.");
+      setMessage("Invitation accepted. You now have co-owner access.");
+      await load();
+    } catch (acceptError) {
+      setError(acceptError.message);
     } finally {
       setBusy(false);
     }
@@ -84,6 +109,17 @@ export default function WorkspaceMembersPanel() {
       </p>
 
       {loading ? <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">Loading membership status…</p> : null}
+
+      {!loading && ownPendingInvite ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/30">
+          <p className="text-sm font-bold text-amber-900 dark:text-amber-200">
+            You have a pending invitation to become a co-owner of this workspace.
+          </p>
+          <button type="button" disabled={busy} onClick={accept} className={`rounded-lg px-4 py-2 text-sm font-bold transition ${goldControlClassName}`}>
+            Accept invitation
+          </button>
+        </div>
+      ) : null}
 
       {!loading && viewerRole === "co_owner" ? (
         <p className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-200">
@@ -125,7 +161,7 @@ export default function WorkspaceMembersPanel() {
                 {member.role.replaceAll("_", " ")} · {STATUS_LABELS[member.status] || member.status}
               </p>
             </div>
-            {viewerRole === "primary_owner" && member.status !== "suspended" ? (
+            {viewerRole === "primary_owner" && member.memberUserId !== viewerId && member.status !== "suspended" ? (
               <button
                 type="button"
                 disabled={busy}
@@ -135,7 +171,7 @@ export default function WorkspaceMembersPanel() {
                 Suspend access
               </button>
             ) : null}
-            {viewerRole === "primary_owner" && member.status === "suspended" ? (
+            {viewerRole === "primary_owner" && member.memberUserId !== viewerId && member.status === "suspended" ? (
               <button
                 type="button"
                 disabled={busy}

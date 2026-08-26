@@ -20,4 +20,12 @@ describe("WorkspaceMembersPanel", () => {
     expect(markup).not.toContain("Invite as co-owner");
     expect(markup).not.toContain("Only the primary owner can invite");
   });
+
+  it("does not render the accept-invitation banner before members have loaded", () => {
+    // ownPendingInvite is derived from `members`, which is still empty pre-fetch -- no banner should
+    // flash before the viewer's own pending invitation (if any) is actually known.
+    const markup = renderToStaticMarkup(<WorkspaceMembersPanel />);
+    expect(markup).not.toContain("Accept invitation");
+    expect(markup).not.toContain("pending invitation");
+  });
 });

@@ -4,6 +4,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 function rowToMember(row) {
   return {
     id: row.id,
+    memberUserId: row.member_user_id,
     role: row.role,
     status: row.status,
     invitedEmail: row.invited_email,
@@ -31,9 +32,17 @@ export async function GET() {
   // effectiveOwnerId only diverges from the caller's own id for an active co-owner (resolved via
   // resolve_effective_owner_id()), so this comparison is the same signal the RLS policies
   // themselves rely on -- no separate owner lookup needed to tell the UI which controls to show.
+  // Note this reads "primary_owner" for an invitee who hasn't accepted yet too (resolveEffectiveOwnerId
+  // only matches an *active* co-owner membership) -- viewerId lets the client identify its own
+  // still-invited row directly instead of relying on viewerRole for that case.
   const viewerRole = authenticated.user.id === authenticated.effectiveOwnerId ? "primary_owner" : "co_owner";
 
-  return NextResponse.json({ success: true, viewerRole, members: (data || []).map(rowToMember) });
+  return NextResponse.json({
+    success: true,
+    viewerRole,
+    viewerId: authenticated.user.id,
+    members: (data || []).map(rowToMember),
+  });
 }
 
 export async function POST(request) {

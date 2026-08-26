@@ -22,6 +22,7 @@ function buildQuery(rows) {
 
 const memberRow = {
   id: "workspace_member_1",
+  member_user_id: "wife_1",
   role: "co_owner",
   status: "invited",
   invited_email: "wife@example.com",
@@ -41,10 +42,19 @@ describe("GET /api/workspace/members", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.members).toEqual([{
-      id: "workspace_member_1", role: "co_owner", status: "invited",
+      id: "workspace_member_1", memberUserId: "wife_1", role: "co_owner", status: "invited",
       invitedEmail: "wife@example.com", invitedAt: "2026-08-29T00:00:00.000Z",
       activatedAt: null, suspendedAt: null,
     }]);
+  });
+
+  it("reports viewerId as the caller's own id, so the client can recognize its own pending invitation row", async () => {
+    const supabaseClient = { from: vi.fn(() => buildQuery([memberRow])) };
+    mocks.authenticate.mockResolvedValue({ user: { id: "wife_1" }, effectiveOwnerId: "wife_1", supabaseClient });
+
+    const response = await GET();
+    const body = await response.json();
+    expect(body.viewerId).toBe("wife_1");
   });
 
   it("reports viewerRole 'primary_owner' when the caller's own id resolves as the effective owner", async () => {
