@@ -18,7 +18,7 @@
 
 **Last Synchronization:** Not yet generated
 **Session ID:** Not recorded
-**Evidence Snapshot:** governance/snapshots/forge-session-20260826-183004795.json
+**Evidence Snapshot:** governance/snapshots/forge-session-20260826-183744688.json
 **Renderer Version:** Not recorded
 **Mode:** shadow
 
@@ -33,8 +33,8 @@
 | Check                 | Result       |
 | --------------------- | ------------ |
 | Branch                | main |
-| HEAD                  | a824b5d713bd124370791f94e27c8137ce5afe0f |
-| origin/main           | a824b5d713bd124370791f94e27c8137ce5afe0f |
+| HEAD                  | edcfa93b4877f9be9e5e06f622dbd6f989a96c67 |
+| origin/main           | edcfa93b4877f9be9e5e06f622dbd6f989a96c67 |
 | Working tree          | clean |
 | Implementation commit | Not recorded |
 | Governance commit     | Not recorded |
@@ -115,12 +115,12 @@ None recorded.
 | ---------------- | ------ | ------- |
 | Focused tests    | passing | RUN  v4.1.9 /home/runner/work/marketplace409/marketplace409
 
- ✓ scripts/governance/__tests__/collectSessionEvidence.test.mjs (11 tests) 1344ms
+ ✓ scripts/governance/__tests__/collectSessionEvidence.test.mjs (11 tests) 1408ms
 
  Test Files  1 passed (1)
       Tests  11 passed (11)
-   Start at  18:30:02
-   Duration  1.54s (transform 29ms, setup 0ms, import 46ms, tests 1.34s, environment 0ms) |
+   Start at  18:37:42
+   Duration  1.61s (transform 30ms, setup 0ms, import 46ms, tests 1.41s, environment 0ms) |
 | Full tests       | not-run | Not recorded |
 | Production build | not-run | Not recorded |
 
