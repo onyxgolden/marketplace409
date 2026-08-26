@@ -42,6 +42,7 @@ describe(
           "Connections",
           "Results",
           "Import",
+          "Members",
         ]);
 
         expect(
@@ -86,6 +87,19 @@ describe(
           isForgeApplicationActive(
             "/forge/import/review",
             FORGE_APPLICATIONS[5],
+          ),
+        ).toBe(true);
+
+        expect(
+          FORGE_APPLICATIONS[6].href,
+        ).toBe(
+          "/forge/workspace",
+        );
+
+        expect(
+          isForgeApplicationActive(
+            "/forge/workspace",
+            FORGE_APPLICATIONS[6],
           ),
         ).toBe(true);
       },
