@@ -35,7 +35,7 @@ describe("GET /api/workspace/members", () => {
 
   it("lists members visible under RLS for the current caller, mapped to camelCase", async () => {
     const supabaseClient = { from: vi.fn(() => buildQuery([memberRow])) };
-    mocks.authenticate.mockResolvedValue({ user: { id: "owner_1" }, supabaseClient });
+    mocks.authenticate.mockResolvedValue({ user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient });
 
     const response = await GET();
     expect(response.status).toBe(200);
@@ -45,6 +45,24 @@ describe("GET /api/workspace/members", () => {
       invitedEmail: "wife@example.com", invitedAt: "2026-08-29T00:00:00.000Z",
       activatedAt: null, suspendedAt: null,
     }]);
+  });
+
+  it("reports viewerRole 'primary_owner' when the caller's own id resolves as the effective owner", async () => {
+    const supabaseClient = { from: vi.fn(() => buildQuery([memberRow])) };
+    mocks.authenticate.mockResolvedValue({ user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient });
+
+    const response = await GET();
+    const body = await response.json();
+    expect(body.viewerRole).toBe("primary_owner");
+  });
+
+  it("reports viewerRole 'co_owner' when the caller's effective owner id resolves to someone else", async () => {
+    const supabaseClient = { from: vi.fn(() => buildQuery([memberRow])) };
+    mocks.authenticate.mockResolvedValue({ user: { id: "wife_1" }, effectiveOwnerId: "owner_1", supabaseClient });
+
+    const response = await GET();
+    const body = await response.json();
+    expect(body.viewerRole).toBe("co_owner");
   });
 
   it("propagates the 401 response from the auth factory unchanged", async () => {

@@ -28,7 +28,12 @@ export async function GET() {
     .order("invited_at", { ascending: false });
   if (error) return NextResponse.json({ error: "Unable to load workspace members." }, { status: 500 });
 
-  return NextResponse.json({ success: true, members: (data || []).map(rowToMember) });
+  // effectiveOwnerId only diverges from the caller's own id for an active co-owner (resolved via
+  // resolve_effective_owner_id()), so this comparison is the same signal the RLS policies
+  // themselves rely on -- no separate owner lookup needed to tell the UI which controls to show.
+  const viewerRole = authenticated.user.id === authenticated.effectiveOwnerId ? "primary_owner" : "co_owner";
+
+  return NextResponse.json({ success: true, viewerRole, members: (data || []).map(rowToMember) });
 }
 
 export async function POST(request) {
