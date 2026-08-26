@@ -107,6 +107,12 @@ export function formatReport(reports) {
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
 if (invokedPath === fileURLToPath(import.meta.url)) {
+  // Uses Next.js's own env loader (.env.production.local/.env.local/.env, in that precedence)
+  // instead of `node --env-file`, which has been observed to mis-load quoted values written by
+  // `vercel env pull`.
+  const { loadEnvConfig } = await import("@next/env");
+  loadEnvConfig(process.cwd(), false);
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceRoleKey) {
