@@ -98,6 +98,14 @@ export function addDaysISO(isoDate, days) {
   return date.toISOString().slice(0, 10);
 }
 
+// Signed calendar days from fromISO to toISO (positive = toISO is later). Companion to addDaysISO:
+// daysBetweenISO(a, addDaysISO(a, n)) === n for any integer n. Same UTC-midnight convention.
+export function daysBetweenISO(fromISO, toISO) {
+  const fromMs = new Date(`${fromISO}T00:00:00.000Z`).getTime();
+  const toMs = new Date(`${toISO}T00:00:00.000Z`).getTime();
+  return Math.round((toMs - fromMs) / 86_400_000);
+}
+
 export function mapGanttBlockRows(board, { ownerId, projectId }) {
   return Object.freeze((board.blocks || []).map((block) => Object.freeze({
     owner_id: ownerId,

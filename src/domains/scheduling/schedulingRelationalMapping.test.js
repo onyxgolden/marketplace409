@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   boardToRelationalTables,
+  daysBetweenISO,
   mapActivityBlockRows,
   mapBlackoutWindowRows,
   mapBlockRows,
@@ -34,6 +35,20 @@ function minimalBoard(overrides = {}) {
     ...overrides,
   };
 }
+
+describe("schedulingRelationalMapping — daysBetweenISO", () => {
+  it("is positive when toISO is later", () => {
+    expect(daysBetweenISO("2026-01-05", "2026-01-12")).toBe(7);
+  });
+
+  it("is negative when toISO is earlier (sign confirms direction)", () => {
+    expect(daysBetweenISO("2026-01-12", "2026-01-05")).toBe(-7);
+  });
+
+  it("is zero for the same date", () => {
+    expect(daysBetweenISO("2026-01-05", "2026-01-05")).toBe(0);
+  });
+});
 
 describe("schedulingRelationalMapping — minimal/edge-case boards", () => {
   it("maps an empty board to a project row and zero rows everywhere else, not an error", () => {
