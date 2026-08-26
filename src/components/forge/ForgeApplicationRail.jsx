@@ -52,6 +52,11 @@ export const FORGE_APPLICATIONS =
       label: "Import",
       shortLabel: "I",
     }),
+    Object.freeze({
+      href: "/forge/workspace",
+      label: "Members",
+      shortLabel: "M",
+    }),
   ]);
 
 export const PROMOTED_PREFIXES = ["/forge/rental", "/forge/developer", "/forge/scheduling"];
