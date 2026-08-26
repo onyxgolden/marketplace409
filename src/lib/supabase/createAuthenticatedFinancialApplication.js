@@ -10,6 +10,10 @@ import {
   createClient,
 } from "@/lib/supabase/server";
 
+import {
+  resolveEffectiveOwnerId,
+} from "@/lib/supabase/resolveEffectiveOwnerId";
+
 export async function createAuthenticatedFinancialApplication() {
   const supabaseClient = await createClient();
 
@@ -34,7 +38,12 @@ export async function createAuthenticatedFinancialApplication() {
     };
   }
 
-  const currentOwnerId = async () => user.id;
+  const effectiveOwnerId = await resolveEffectiveOwnerId({
+    supabaseClient,
+    actorUserId: user.id,
+  });
+
+  const currentOwnerId = async () => effectiveOwnerId;
 
   let financialApplicationSuite;
 
@@ -43,7 +52,7 @@ export async function createAuthenticatedFinancialApplication() {
       financialApplicationSuite =
         await createFinancialApplicationSuite({
           supabaseClient,
-          ownerId: user.id,
+          ownerId: effectiveOwnerId,
           currentOwnerId,
         });
     }
@@ -54,6 +63,7 @@ export async function createAuthenticatedFinancialApplication() {
   return {
     supabaseClient,
     user,
+    effectiveOwnerId,
     currentOwnerId,
     getFinancialApplicationSuite,
   };

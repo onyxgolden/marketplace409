@@ -10,6 +10,10 @@ import {
   createClient,
 } from "@/lib/supabase/server";
 
+import {
+  resolveEffectiveOwnerId,
+} from "@/lib/supabase/resolveEffectiveOwnerId";
+
 export async function createAuthenticatedForgeApplication() {
   const supabaseClient =
     await createClient();
@@ -35,8 +39,14 @@ export async function createAuthenticatedForgeApplication() {
     };
   }
 
+  const effectiveOwnerId =
+    await resolveEffectiveOwnerId({
+      supabaseClient,
+      actorUserId: user.id,
+    });
+
   const currentOwnerId =
-    async () => user.id;
+    async () => effectiveOwnerId;
 
   let forgeApplicationSuite;
 
@@ -46,7 +56,7 @@ export async function createAuthenticatedForgeApplication() {
         await createForgeApplicationSuite({
           supabaseClient,
           ownerId:
-            user.id,
+            effectiveOwnerId,
           currentOwnerId,
         });
     }
@@ -57,6 +67,7 @@ export async function createAuthenticatedForgeApplication() {
   return {
     supabaseClient,
     user,
+    effectiveOwnerId,
     currentOwnerId,
     getForgeApplicationSuite,
   };

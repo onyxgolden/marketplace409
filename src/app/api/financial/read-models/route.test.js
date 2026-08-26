@@ -50,6 +50,17 @@ function configureAuthenticatedRequest({
         error: null,
       }),
     },
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(function eq() {
+          return this;
+        }),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: null,
+          error: null,
+        }),
+      })),
+    })),
   };
 
   mocks.createClient.mockResolvedValue(supabaseClient);

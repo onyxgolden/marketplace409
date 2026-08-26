@@ -52,6 +52,17 @@ describe("createAuthenticatedConnectionApplication", () => {
           error: null,
         }),
       },
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(function eq() {
+            return this;
+          }),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: null,
+            error: null,
+          }),
+        })),
+      })),
     };
 
     const connectionPlatformSuite = {
@@ -105,6 +116,38 @@ describe("createAuthenticatedConnectionApplication", () => {
     await expect(
       result.currentOwnerId(),
     ).resolves.toBe("owner-1");
+
+    expect(result.effectiveOwnerId).toBe("owner-1");
+  });
+
+  it("resolves effectiveOwnerId to the workspace owner when acting as an active co-owner, not the actor's own id", async () => {
+    const user = { id: "co-owner-uuid" };
+
+    const supabaseClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user }, error: null }),
+      },
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(function eq() {
+            return this;
+          }),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { owner_id: "primary-owner-uuid" },
+            error: null,
+          }),
+        })),
+      })),
+    };
+
+    mocks.createClient.mockResolvedValue(supabaseClient);
+    mocks.createConnectionPlatformSuite.mockResolvedValue({});
+
+    const result = await createAuthenticatedConnectionApplication();
+
+    expect(result.user.id).toBe("co-owner-uuid");
+    expect(result.effectiveOwnerId).toBe("primary-owner-uuid");
+    await expect(result.currentOwnerId()).resolves.toBe("primary-owner-uuid");
   });
 
   it("returns 401 when no authenticated user exists", async () => {
