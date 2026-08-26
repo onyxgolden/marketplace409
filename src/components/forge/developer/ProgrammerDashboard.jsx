@@ -581,6 +581,39 @@ export default function ProgrammerDashboard({
           </p>
         </header>
 
+        <section
+          data-programmer-command-handbook
+          aria-labelledby="programmer-command-handbook-title"
+          className="mt-5 flex flex-col gap-4 rounded-2xl border border-amber-300 bg-gradient-to-br from-amber-50 via-white to-slate-50 p-5 text-slate-950 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div>
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-amber-700">
+              Copy-ready reference
+            </div>
+
+            <h2
+              id="programmer-command-handbook-title"
+              className="mt-2 text-xl font-black"
+            >
+              FORGE Command Handbook
+            </h2>
+
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+              Download the Excel workbook with copy-ready Terminal, Git,
+              VS Code, Vercel, Supabase, testing, browser-console, SQL,
+              document-updater, and secure-vault guidance.
+            </p>
+          </div>
+
+          <a
+            href="/downloads/FORGE_Copy_Ready_Command_Handbook.xlsx"
+            download="FORGE_Copy_Ready_Command_Handbook.xlsx"
+            className="inline-flex shrink-0 items-center justify-center rounded-xl bg-amber-500 px-5 py-3 text-sm font-black text-slate-950 shadow-sm transition hover:bg-amber-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
+          >
+            Download handbook
+          </a>
+        </section>
+
         <div
           data-programmer-dashboard-layout
           className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start"

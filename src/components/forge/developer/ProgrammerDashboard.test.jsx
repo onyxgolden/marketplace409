@@ -95,6 +95,25 @@ describe("ProgrammerDashboard", () => {
     expect(markup).toContain("disabled on Vercel");
   });
 
+  it("offers the copy-ready command handbook as an Excel download", () => {
+    const markup = renderToStaticMarkup(
+      <ProgrammerDashboard
+        commands={commands}
+        programmerEmail="jasonmorgan99@gmail.com"
+      />,
+    );
+
+    expect(markup).toContain("data-programmer-command-handbook");
+    expect(markup).toContain("FORGE Command Handbook");
+    expect(markup).toContain("Download handbook");
+    expect(markup).toContain(
+      'href="/downloads/FORGE_Copy_Ready_Command_Handbook.xlsx"',
+    );
+    expect(markup).toContain(
+      'download="FORGE_Copy_Ready_Command_Handbook.xlsx"',
+    );
+  });
+
   it("calculates capped estimated command progress", () => {
     expect(
       calculateProgrammerCommandProgress({
