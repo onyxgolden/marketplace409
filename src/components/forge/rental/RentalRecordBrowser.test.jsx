@@ -30,4 +30,14 @@ describe("RentalRecordBrowser", () => {
     expect(markup).toContain('data-list-size="wide"');
     expect(markup).toContain("minmax(520px,1.4fr)");
   });
+  it("keeps selected rows and record surfaces readable in dark mode", () => {
+    const records = [{ id: "tenant_1", name: "Ashley George" }];
+    const markup = renderToStaticMarkup(<RentalRecordBrowser title="Tenants" records={records} selectedId="tenant_1" onSelect={() => {}}
+      columns={[{ header: "Tenant", render: (item) => <strong className="dark:text-white">{item.name}</strong> }]}>
+      <p>Tenant detail</p>
+    </RentalRecordBrowser>);
+    expect(markup).toContain("dark:bg-sky-950/60");
+    expect(markup).toContain("dark:bg-slate-900");
+    expect(markup).toContain("dark:text-white");
+  });
 });
