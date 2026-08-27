@@ -122,7 +122,7 @@ export default function ManualFinancialEventForm({ availableProperties, onSaved 
         <label className="text-sm">
           <span className="block font-bold text-slate-700">Property</span>
           <select value={form.propertyId} onChange={update("propertyId")} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2">
-            <option value="">Unassigned / general</option>
+            <option value="">Rental business / portfolio</option>
             {availableProperties.filter((id) => id !== "unassigned").map((id) => (
               <option key={id} value={id}>
                 {id}
