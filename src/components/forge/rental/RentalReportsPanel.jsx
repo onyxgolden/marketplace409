@@ -16,6 +16,7 @@ const REPORTS = [
   { key: "upcoming-charges", label: "Upcoming charges due" },
   { key: "account-ledger", label: "Account ledger" },
   { key: "income-expense-statement", label: "Income & expense statement" },
+  { key: "business-expenses", label: "Business expense report" },
   { key: "schedule-e-assistant", label: "Schedule-E assistant" },
   { key: "security-deposits", label: "Security deposits held" },
   { key: "renters-insurance", label: "Renters insurance compliance" },
@@ -26,7 +27,7 @@ const REPORTS = [
 const REPORT_GROUPS = [
   { label: "Overview", keys: ["", "vacant-units"] },
   { label: "Tenants", keys: ["delinquent-tenants", "lease-expiration", "tenant-contacts", "security-deposits", "renters-insurance"] },
-  { label: "Financial", keys: ["account-ledger", "income-expense-statement", "upcoming-charges"] },
+  { label: "Financial", keys: ["account-ledger", "income-expense-statement", "business-expenses", "upcoming-charges"] },
   { label: "Tax", keys: ["schedule-e-assistant"] },
   { label: "Vendors", keys: ["work-orders", "vendor-contacts", "vendor-ledger"] },
 ];
@@ -40,6 +41,7 @@ const FILTER_MODES = {
   "upcoming-charges": "range",
   "account-ledger": "range",
   "income-expense-statement": "range",
+  "business-expenses": "businessExpense",
   "schedule-e-assistant": "taxYear",
   "security-deposits": "propertyOnly",
   "renters-insurance": "propertyOnly",
@@ -56,6 +58,13 @@ function buildReportParams(key, filters, extra = {}) {
   if (PROPERTY_FILTER_MODES.has(mode) && filters.propertyId) params.set("propertyId", filters.propertyId);
   if (mode === "asOf" && filters.asOfDate) params.set("asOfDate", filters.asOfDate);
   if (mode === "range" || mode === "contractorRange") {
+    if (filters.startDate) params.set("startDate", filters.startDate);
+    if (filters.endDate) params.set("endDate", filters.endDate);
+  }
+  if (mode === "businessExpense") {
+    params.set("scope", filters.expenseScope || "all");
+    if (filters.propertyId) params.set("propertyId", filters.propertyId);
+    if (filters.category) params.set("category", filters.category);
     if (filters.startDate) params.set("startDate", filters.startDate);
     if (filters.endDate) params.set("endDate", filters.endDate);
   }
@@ -84,6 +93,9 @@ export default function RentalReportsPanel() {
   const [contractorId, setContractorId] = useState("");
   const [availableProperties, setAvailableProperties] = useState([]);
   const [availableContractors, setAvailableContractors] = useState([]);
+  const [availableCategories, setAvailableCategories] = useState([]);
+  const [expenseScope, setExpenseScope] = useState("all");
+  const [category, setCategory] = useState("");
   const [favorites, setFavorites] = useState([]);
   const [loaded, setLoaded] = useState(null);
   const [error, setError] = useState("");
@@ -106,8 +118,10 @@ export default function RentalReportsPanel() {
     setStartDate("");
     setEndDate("");
     setContractorId("");
+    setExpenseScope("all");
+    setCategory("");
   };
-  const filters = { propertyId, asOfDate, startDate, endDate, taxYear, contractorId };
+  const filters = { propertyId, asOfDate, startDate, endDate, taxYear, contractorId, expenseScope, category };
   const load = useCallback((key, currentFilters) => {
     const params = buildReportParams(key, currentFilters);
     return fetch(`/api/rental/reports?${params.toString()}`).then(
@@ -131,6 +145,7 @@ export default function RentalReportsPanel() {
         if (nextReport.availableContractors) {
           setAvailableContractors(nextReport.availableContractors);
         }
+        if (nextReport.availableCategories) setAvailableCategories(nextReport.availableCategories);
       })
       .catch((reason) => {
         if (cancelled) return;
@@ -140,7 +155,7 @@ export default function RentalReportsPanel() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, reportKey, propertyId, asOfDate, startDate, endDate, taxYear, contractorId, refreshToken]);
+  }, [load, reportKey, propertyId, asOfDate, startDate, endDate, taxYear, contractorId, expenseScope, category, refreshToken]);
   // Only trust `loaded` when it was fetched for the currently-selected tab —
   // otherwise a render can land between a tab switch and its effect running,
   // pairing the new reportKey with a report shaped for the previous tab.
@@ -196,6 +211,11 @@ export default function RentalReportsPanel() {
           contractorId={contractorId}
           onContractorChange={setContractorId}
           availableContractors={availableContractors}
+          availableCategories={availableCategories}
+          expenseScope={expenseScope}
+          onExpenseScopeChange={(value) => { setExpenseScope(value); if (value !== "property") setPropertyId(""); }}
+          category={category}
+          onCategoryChange={setCategory}
         />
       </div>
       <ManualFinancialEventForm
@@ -247,6 +267,7 @@ export default function RentalReportsPanel() {
           {reportKey === "upcoming-charges" && <UpcomingChargesView report={report} />}
           {reportKey === "account-ledger" && <AccountLedgerView report={report} />}
           {reportKey === "income-expense-statement" && <IncomeExpenseStatementView report={report} />}
+          {reportKey === "business-expenses" && <BusinessExpenseView report={report} />}
           {reportKey === "schedule-e-assistant" && <ScheduleEAssistantView report={report} />}
           {reportKey === "security-deposits" && <SecurityDepositsView report={report} />}
           {reportKey === "renters-insurance" && <RentersInsuranceView report={report} />}
@@ -261,7 +282,7 @@ export default function RentalReportsPanel() {
   );
 }
 function propertyLabel(id) {
-  return id === "unassigned" ? "Unassigned / general" : id;
+  return id === "unassigned" ? "Rental business / portfolio" : id;
 }
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "forge-rental-report-sidebar-collapsed";
 function loadCollapsedGroups() {
@@ -378,11 +399,28 @@ function FilterBar({
   contractorId,
   onContractorChange,
   availableContractors,
+  availableCategories,
+  expenseScope,
+  onExpenseScopeChange,
+  category,
+  onCategoryChange,
 }) {
   if (mode === "none") return null;
   return (
     <div className="mt-4 flex flex-wrap items-end gap-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-950/40">
-      {mode === "contractorRange" ? (
+      {mode === "businessExpense" ? <>
+        <label className="text-sm"><span className="block font-bold text-slate-700 dark:text-slate-300">Expense scope</span>
+          <select value={expenseScope} onChange={(event) => onExpenseScopeChange(event.target.value)} className="mt-1 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white">
+            <option value="all">All rental-business expenses</option><option value="portfolio">Rental business / portfolio</option><option value="property">Property-specific expenses</option>
+          </select>
+        </label>
+        {expenseScope === "property" && <label className="text-sm"><span className="block font-bold text-slate-700 dark:text-slate-300">Property</span>
+          <select value={propertyId} onChange={(event) => onPropertyChange(event.target.value)} className="mt-1 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="">All rental properties</option>{availableProperties.filter((id) => id !== "unassigned").map((id) => <option key={id} value={id}>{propertyLabel(id)}</option>)}</select>
+        </label>}
+        <label className="text-sm"><span className="block font-bold text-slate-700 dark:text-slate-300">Category</span>
+          <select value={category} onChange={(event) => onCategoryChange(event.target.value)} className="mt-1 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="">All categories</option>{availableCategories.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select>
+        </label>
+      </> : mode === "contractorRange" ? (
         <label className="text-sm">
           <span className="block font-bold text-slate-700 dark:text-slate-300">Contractor</span>
           <select
@@ -426,7 +464,7 @@ function FilterBar({
           />
         </label>
       )}
-      {(mode === "range" || mode === "contractorRange") && (
+      {(mode === "range" || mode === "contractorRange" || mode === "businessExpense") && (
         <>
           <label className="text-sm">
             <span className="block font-bold text-slate-700 dark:text-slate-300">From</span>
@@ -897,6 +935,18 @@ function IncomeExpenseStatementView({ report }) {
       </div>
     </>
   );
+}
+function BusinessExpenseView({ report }) {
+  return <>
+    <div className="mt-6 grid gap-3 md:grid-cols-2"><Kpi label="Business expenses" value={money.format(report.summary.totalExpenses)} /><Kpi label="Transactions" value={report.summary.transactionCount} /></div>
+    <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
+      <table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-200 dark:border-slate-700">
+        <th className="p-3 text-slate-700 dark:text-slate-300">Date</th><th className="p-3 text-slate-700 dark:text-slate-300">Description</th><th className="p-3 text-slate-700 dark:text-slate-300">Category</th><th className="p-3 text-slate-700 dark:text-slate-300">Scope / property</th><th className="p-3 text-slate-700 dark:text-slate-300">Amount</th>
+      </tr></thead><tbody>{report.rows.length ? report.rows.map((row) => <tr key={row.id} className="border-b border-slate-200 dark:border-slate-700">
+        <td className="p-3 text-slate-700 dark:text-slate-300">{row.date}</td><td className="p-3 text-slate-700 dark:text-slate-300">{row.description}</td><td className="p-3 capitalize text-slate-500 dark:text-slate-400">{row.category.replaceAll("_", " ")}</td><td className="p-3 text-slate-500 dark:text-slate-400">{propertyLabel(row.propertyId)}</td><td className="p-3 font-bold text-slate-700 dark:text-slate-300">{money.format(row.amount)}</td>
+      </tr>) : <tr><td className="p-3 text-slate-500 dark:text-slate-400" colSpan={5}>No business expenses in this scope.</td></tr>}</tbody></table>
+    </div>
+  </>;
 }
 function ScheduleEAssistantView({ report }) {
   return (
