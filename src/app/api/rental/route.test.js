@@ -213,6 +213,31 @@ describe("Rental Manager route", () => {
     expect(query.update).toHaveBeenCalledWith(expect.objectContaining({ email: "owner+tenant@example.com" }));
     expect(query.is).toHaveBeenCalledWith("auth_user_id", null);
   });
+  it("updates owner-scoped tenant profile details while storing only SSN last four", async () => {
+    const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "tenant_1", display_name: "Ashley George" }, error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { from: vi.fn(() => query) } });
+    const response = await POST(request({ operation: "update-tenant-profile", tenantId: "tenant_1", profile: {
+      phone: "555-1000", workPhone: "555-2000", monthlyIncomeCents: 450000, ssnLastFour: "1234", landlordNotes: "Owner-only note",
+    } }));
+    expect(response.status).toBe(200);
+    expect(query.update).toHaveBeenCalledWith(expect.objectContaining({ work_phone: "555-2000", monthly_income_cents: 450000, ssn_last_four: "1234" }));
+    expect(JSON.stringify(query.update.mock.calls[0][0])).not.toContain("social_security_number");
+  });
+  it("rejects anything other than exactly four SSN digits", async () => {
+    const response = await POST(request({ operation: "update-tenant-profile", tenantId: "tenant_1", profile: { ssnLastFour: "123-45-6789" } }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain("exactly four digits");
+  });
+  it("changes the primary tenant through the workspace-scoped RPC", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: null }));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { rpc } });
+    const response = await POST(request({ operation: "set-primary-tenant", leaseId: "lease_1", tenantId: "tenant_2" }));
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith("set_rental_primary_tenant", { p_owner_id: "owner_1", p_lease_id: "lease_1", p_tenant_id: "tenant_2" });
+  });
   it("cancels only an owner-scoped draft lease", async () => {
     const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", status: "cancelled" }, error: null })) };
