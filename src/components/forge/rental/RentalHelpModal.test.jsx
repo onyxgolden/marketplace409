@@ -27,7 +27,7 @@ describe("RentalHelpModal", () => {
 
   it("renders the daily routine, every common workflow, and every help group", () => {
     const markup = renderToStaticMarkup(<RentalHelpModal activeFunctionId="overview" onClose={() => {}} />);
-    for (const step of RENTAL_DAILY_WORKFLOW) expect(markup).toContain(step);
+    for (const step of RENTAL_DAILY_WORKFLOW) expect(markup).toContain(step.replaceAll("&", "&amp;"));
     for (const workflow of RENTAL_COMMON_WORKFLOWS) expect(markup).toContain(workflow.title);
     for (const group of RENTAL_HELP_GROUPS) expect(markup).toContain(group.title);
   });
