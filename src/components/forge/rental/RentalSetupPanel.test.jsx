@@ -44,7 +44,7 @@ describe("activeBalanceCentsForUnit", () => {
 describe("RentalSetupPanel new-unit creation", () => {
   it("labels the create action generically instead of naming a specific property", () => {
     const markup = renderToStaticMarkup(<RentalSetupPanel />);
-    expect(markup).toContain("Save new unit");
+    expect(markup).toContain("Review and create property / unit");
     expect(markup).not.toContain("Save Kent Avenue unit");
   });
   it("uses the wide property-address, tenant, and balance layout for saved properties", () => {

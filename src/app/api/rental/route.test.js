@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const application = { saveUnit: vi.fn(), saveTenant: vi.fn(), saveLease: vi.fn(), saveSchedule: vi.fn(), generateMonthlyCharge: vi.fn() };
+const application = { units: { findById: vi.fn() }, findUnitsByProperty: vi.fn(), saveUnit: vi.fn(), saveTenant: vi.fn(), saveLease: vi.fn(), saveSchedule: vi.fn(), generateMonthlyCharge: vi.fn() };
 vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
   createAuthenticatedRentalManagerApplication: vi.fn(async () => ({ application, user: { id: "owner_1" } })),
@@ -7,13 +7,51 @@ vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
 import { GET, POST } from "./route.js";
 function request(body) { return new Request("http://localhost/api/rental", { method: "POST", body: JSON.stringify(body) }); }
 describe("Rental Manager route", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); application.findUnitsByProperty.mockResolvedValue([]); });
   it("saves a validated owner-scoped unit", async () => {
     application.saveUnit.mockImplementation(async (value) => value);
     const response = await POST(request({ operation: "save-unit", unit: { propertyId: "4800-kent-ave", label: "Main residence",
       status: "preparing", bedrooms: 3, bathrooms: 2, squareFeet: 1450 } }));
     expect(response.status).toBe(200);
     expect(application.saveUnit).toHaveBeenCalledWith(expect.objectContaining({ propertyId: "4800-kent-ave" }), "owner_1");
+  });
+  it("rejects an exact duplicate property/unit before saving", async () => {
+    application.findUnitsByProperty.mockResolvedValue([{ id: "unit_1", label: "1214 Wagner", status: "occupied" }]);
+    const response = await POST(request({ operation: "save-unit", unit: { propertyId: "1214-wagner", label: "1214 WAGNER", status: "preparing" } }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain("already exists");
+    expect(application.saveUnit).not.toHaveBeenCalled();
+  });
+  it("archives an inactive duplicate only when no active lease exists", async () => {
+    const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), limit: vi.fn(async () => ({ data: [], error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { from: vi.fn(() => chain) } });
+    application.units.findById.mockResolvedValue({ id: "unit_1", propertyId: "1214-wagner", label: "1214 Wagner", status: "available", bedrooms: null, bathrooms: null, squareFeet: null, availableAt: null, createdAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-01T00:00:00Z", notes: null });
+    application.saveUnit.mockImplementation(async (value) => value);
+    const response = await POST(request({ operation: "archive-unit", unitId: "unit_1" }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).unit.status).toBe("inactive");
+  });
+  it("permanently deletes an archived empty duplicate", async () => {
+    const emptyReference = () => { const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), limit: vi.fn(async () => ({ data: [], error: null })) }; return chain; };
+    const deleteChain = { delete: vi.fn(() => deleteChain), eq: vi.fn(() => deleteChain), select: vi.fn(() => deleteChain), maybeSingle: vi.fn(async () => ({ data: { id: "unit_1", label: "1214 Wagner" }, error: null })) };
+    const from = vi.fn((table) => table === "rental_units" ? deleteChain : emptyReference());
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { from } });
+    application.units.findById.mockResolvedValue({ id: "unit_1", label: "1214 Wagner", status: "inactive" });
+    const response = await POST(request({ operation: "delete-archived-unit", unitId: "unit_1" }));
+    expect(response.status).toBe(200);
+    expect(deleteChain.delete).toHaveBeenCalled();
+    expect(deleteChain.eq).toHaveBeenCalledWith("status", "inactive");
+  });
+  it("protects an archived property with any linked history from permanent deletion", async () => {
+    const referenced = () => { const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), limit: vi.fn(async () => ({ data: [{ id: "lease_1" }], error: null })) }; return chain; };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { from: vi.fn(() => referenced()) } });
+    application.units.findById.mockResolvedValue({ id: "unit_1", label: "1214 Wagner", status: "inactive" });
+    const response = await POST(request({ operation: "delete-archived-unit", unitId: "unit_1" }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain("linked lease, maintenance, or inspection history");
   });
   it("generates an owner-scoped charge", async () => {
     application.generateMonthlyCharge.mockResolvedValue({ id: "charge_1" });

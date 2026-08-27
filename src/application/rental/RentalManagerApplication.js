@@ -10,6 +10,7 @@ export class RentalManagerApplication {
     this.charges = chargeRepository;
   }
   async saveUnit(unit, ownerId) { return this.units.save(unit, { ownerId }); }
+  async findUnitsByProperty(propertyId, ownerId) { return this.units.findByProperty(propertyId, ownerId); }
   async saveTenant(tenant, ownerId) { return this.tenants.save(tenant, { ownerId }); }
   async saveLease(lease, ownerId) { return this.leases.save(lease, { ownerId }); }
   async saveSchedule(schedule, ownerId) { return this.schedules.save(schedule, { ownerId }); }
