@@ -128,4 +128,33 @@ describe("RentalApplicationShell", () => {
     expect(markup).toContain('data-active-function="financial-setup"');
     expect(markup).toContain("Loading financial setup");
   });
+  it("renders a contextual Help control without opening the guide initially", () => {
+    const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="maintenance" onFunctionChange={() => {}} />);
+    expect(markup).toContain('title="Rental Manager workflows and button guide"');
+    expect(markup).not.toContain("data-rental-help");
+  });
+
+  it("opens help for the active section and closes it without changing the selected Rental Manager function", () => {
+    const visited = [];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      act(() => root.render(<RentalApplicationShell activeFunctionId="charges" onFunctionChange={(id) => visited.push(id)} />));
+      const helpButton = container.querySelector('button[title="Rental Manager workflows and button guide"]');
+      expect(helpButton).not.toBeNull();
+      act(() => helpButton.click());
+      const help = container.querySelector("[data-rental-help]");
+      expect(help).not.toBeNull();
+      expect(help.textContent).toContain("Rent & Payments");
+      const closeButton = Array.from(help.querySelectorAll("button")).find((button) => button.textContent === "Close");
+      act(() => closeButton.click());
+      expect(container.querySelector("[data-rental-help]")).toBeNull();
+      expect(visited).toEqual([]);
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
+
 });
