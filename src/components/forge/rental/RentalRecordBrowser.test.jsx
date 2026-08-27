@@ -25,4 +25,9 @@ describe("RentalRecordBrowser", () => {
     expect(markup).toContain(">Vacant<");
     expect(markup).toContain('role="button"');
   });
+  it("supports a wider list for data-heavy screens", () => {
+    const markup = renderToStaticMarkup(<RentalRecordBrowser title="Tenants" records={[]} selectedId={null} onSelect={() => {}} listSize="wide" emptyMessage="No tenants"><p>Detail</p></RentalRecordBrowser>);
+    expect(markup).toContain('data-list-size="wide"');
+    expect(markup).toContain("minmax(520px,1.4fr)");
+  });
 });
