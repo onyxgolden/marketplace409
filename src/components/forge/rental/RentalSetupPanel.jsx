@@ -21,12 +21,23 @@ export function tenantLabelForUnit(unit, leases, leaseMemberships, tenants) {
   return names.length ? names.join(", ") : null;
 }
 
+export function activeBalanceCentsForUnit(unit, leases, openCharges) {
+  const activeLeaseIds = new Set(leases.filter((lease) => lease.unit_id === unit.id && lease.status === "active").map((lease) => lease.id));
+  if (activeLeaseIds.size === 0) return null;
+  return openCharges
+    .filter((charge) => activeLeaseIds.has(charge.lease_id))
+    .reduce((sum, charge) => sum + Number(charge.amount_cents || 0) - Number(charge.paid_amount_cents || 0), 0);
+}
+
+const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
 export default function RentalSetupPanel({ initialUnits = [], onNavigate: navigate }) {
   const [message, setMessage] = useState("");
   const [units, setUnits] = useState(initialUnits);
   const [leases, setLeases] = useState([]);
   const [leaseMemberships, setLeaseMemberships] = useState([]);
   const [tenants, setTenants] = useState([]);
+  const [openCharges, setOpenCharges] = useState([]);
   const [showCreate, setShowCreate] = useState(initialUnits.length === 0);
   const [selectedId, setSelectedId] = useState(initialUnits[0]?.id || null);
   const [working, setWorking] = useState(false);
@@ -36,7 +47,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
     const response = await fetch("/api/rental"); const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
     const loaded = result.units || []; setUnits(loaded); setSelectedId((current) => loaded.some((item) => item.id === current) ? current : loaded[0]?.id || null);
-    setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setTenants(result.tenants || []);
+    setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setTenants(result.tenants || []); setOpenCharges(result.openCharges || []);
   }
   useEffect(() => {
     fetch("/api/rental").then(async (response) => {
@@ -44,7 +55,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
       if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
       return result;
     }).then((result) => { const loadedUnits = result.units || []; setUnits(loadedUnits); setSelectedId(loadedUnits[0]?.id || null); setShowCreate(loadedUnits.length === 0);
-      setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setTenants(result.tenants || []); }).catch((error) => setMessage(error.message));
+      setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setTenants(result.tenants || []); setOpenCharges(result.openCharges || []); }).catch((error) => setMessage(error.message));
   }, []);
   async function saveUnit(event) {
     event.preventDefault(); setWorking(true); setMessage("");
@@ -67,10 +78,13 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review saved units first. Create another unit only as a deliberate action.</p></div>
         {units.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`shrink-0 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a new property / unit</button>}
       </div>
-      {units.length > 0 && <RentalRecordBrowser title="Rental units" records={units} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); }} getThumbnail={(unit) => unit.photo_url}
+      {units.length > 0 && <RentalRecordBrowser title="Rental properties" records={units} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); }} getThumbnail={(unit) => unit.photo_url} listSize="wide"
         columns={[
-          { header: "Property", render: (unit) => <><strong className="block text-sm text-slate-950 dark:text-white">{unit.label}</strong><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{unit.property_id} · {unit.status || "Status not set"}</span></> },
+          { header: "Property address", render: (unit) => <><strong className="block text-sm text-slate-950 dark:text-white">{unit.label}</strong><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{unit.property_id} · {unit.status || "Status not set"}</span></> },
           { header: "Tenant", render: (unit) => { const tenantLabel = tenantLabelForUnit(unit, leases, leaseMemberships, tenants); return tenantLabel || <span className="font-bold text-red-600 dark:text-red-400">Vacant</span>; } },
+          { header: "Active balance", render: (unit) => { const balanceCents = activeBalanceCentsForUnit(unit, leases, openCharges); return balanceCents === null
+            ? <span className="text-slate-500 dark:text-slate-400">—</span>
+            : <strong className={balanceCents > 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}>{money.format(balanceCents / 100)}</strong>; } },
         ]}>
         {(() => { const unit = units.find((item) => item.id === selectedId) || units[0]; const context = { recordType: "unit", recordId: unit?.id, propertyId: unit?.property_id }; return unit && <div data-rental-unit-detail><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Selected unit</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{unit.label}</h3></div><RentalRecordActions label="Property actions" summaryClassName="cursor-pointer list-none rounded-xl bg-red-600 px-4 py-2 text-sm font-black text-white transition hover:bg-red-700" actions={[{label:"Edit property details",onSelect:()=>setEditingId(unit.id)},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Financial setup",onSelect:()=>onNavigate?.("financial-setup",context)},{label:"Work orders",onSelect:()=>onNavigate?.("maintenance",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)}]}/></div><div className="mt-4"><RentalPhotoUpload entityType="unit" entityId={unit.id} photoUrl={unit.photo_url} onUploaded={loadUnits} /></div>{editingId===unit.id?<UnitEditForm unit={unit} working={working} onCancel={()=>setEditingId(null)} onSave={saveUnit}/>:<dl className="mt-5 grid gap-4 sm:grid-cols-2"><Detail label="Property" value={unit.property_id} /><Detail label="Status" value={unit.status || "Not set"} /><Detail label="Bedrooms" value={unit.bedrooms ?? "Not recorded"} /><Detail label="Bathrooms" value={unit.bathrooms ?? "Not recorded"} /><Detail label="Square feet" value={unit.square_feet ?? "Not recorded"} /><Detail label="Notes" value={unit.notes || "No notes"} /></dl>}</div>; })()}
       </RentalRecordBrowser>}
