@@ -8,6 +8,7 @@ import RentecFileInventoryPanel from "./RentecFileInventoryPanel";
 import RentecPaymentImportPanel from "./RentecPaymentImportPanel";
 import RentecFinancialHistoryImportPanel from "./RentecFinancialHistoryImportPanel";
 import PropertyFinancialSetupPanel from "./PropertyFinancialSetupPanel";
+import RentalHelpModal from "./RentalHelpModal";
 
 export const RENTAL_NAVIGATION = Object.freeze([
   Object.freeze({ label: "Overview", items: Object.freeze([{ id: "overview", label: "Summary" }]) }),
@@ -26,14 +27,33 @@ export function buildRentalSurface(id, { onNavigate, recordContext = null } = {}
 
 export default function RentalApplicationShell({ activeFunctionId, activeRecordContext = null, onFunctionChange }) {
   const activeId = resolveActiveFunction(RENTAL_FUNCTIONS, activeFunctionId);
+  const [showHelp, setShowHelp] = useState(false);
   activeRecordContext = activeRecordContext ? { ...activeRecordContext, recordLabel: activeRecordContext.recordLabel || (activeRecordContext.recordType === "tenant" ? "selected tenant" : activeRecordContext.propertyId || "selected property") } : null;
   return <section data-rental-application-shell data-active-function={activeId} className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-950">
-    <header className="border-b border-slate-200/70 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-4 text-slate-950 dark:text-slate-100 lg:px-8"><div className="mx-auto max-w-[1800px]"><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">FORGE Application</p><h1 className="text-2xl font-black tracking-tight">Rental Manager</h1></div></header>
+    <header className="border-b border-slate-200/70 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-4 text-slate-950 dark:text-slate-100 lg:px-8">
+      <div className="mx-auto flex max-w-[1800px] items-center justify-between gap-4">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">FORGE Application</p>
+          <h1 className="text-2xl font-black tracking-tight">Rental Manager</h1>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowHelp(true)}
+          title="Rental Manager workflows and button guide"
+          aria-haspopup="dialog"
+          className="flex shrink-0 items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm font-black hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:border-slate-600 dark:hover:bg-slate-800"
+        >
+          <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-950 text-xs text-white dark:bg-amber-400 dark:text-slate-950">?</span>
+          <span>Help</span>
+        </button>
+      </div>
+    </header>
     <div className="mx-auto grid max-w-[1800px] grid-cols-1 gap-5 p-4 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-6 lg:p-8">
       <label className="lg:hidden"><span className="sr-only">Rental function</span><select value={activeId} onChange={(event) => onFunctionChange?.(event.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 p-3 font-bold text-slate-950 dark:text-slate-100">{RENTAL_NAVIGATION.map((group) => <optgroup key={group.label} label={group.label}>{group.items.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>)}</select></label>
       <RentalNavSidebar activeId={activeId} onFunctionChange={onFunctionChange} />
       <main data-active-function-surface={activeId} data-record-context={activeRecordContext?.recordId || undefined} className="min-w-0">{activeRecordContext?<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950 px-4 py-3" role="status"><p className="text-sm font-bold text-sky-950 dark:text-sky-100">Working with {activeRecordContext.recordType === "tenant" ? "tenant" : "property"}: {activeRecordContext.recordLabel}</p><button type="button" onClick={()=>onFunctionChange?.(activeRecordContext.recordType === "tenant" ? "tenants" : "setup")} className="text-sm font-black text-sky-800 dark:text-sky-300 underline">Back to record</button></div>:null}{buildRentalSurface(activeId, { onNavigate: onFunctionChange, recordContext: activeRecordContext })}</main>
     </div>
+    {showHelp && <RentalHelpModal activeFunctionId={activeId} onClose={() => setShowHelp(false)} />}
   </section>;
 }
 
