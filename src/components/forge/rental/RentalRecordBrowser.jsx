@@ -19,7 +19,7 @@ export default function RentalRecordBrowser({ title, records, selectedId, onSele
               {getThumbnail && <td className="w-20 px-3 py-3">{thumbnail
                 ? <img src={thumbnail} alt="" className="h-14 w-14 min-h-14 min-w-14 rounded-lg object-cover" />
                 : <span className="block h-14 w-14 min-h-14 min-w-14 rounded-lg bg-slate-100 dark:bg-slate-800" aria-hidden="true" />}</td>}
-              {columns.map((column, index) => <td key={column.header} className={`px-2 py-3 align-top ${index === 0 && !getThumbnail ? "pl-4" : ""}`}>{column.render(record)}</td>)}
+              {columns.map((column, index) => <td key={column.header} className={`px-2 py-3 align-top text-slate-800 dark:text-slate-200 ${index === 0 && !getThumbnail ? "pl-4" : ""}`}>{column.render(record)}</td>)}
             </tr>;
           })}</tbody>
         </table>
