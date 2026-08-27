@@ -32,6 +32,27 @@ describe("Rental Manager route", () => {
     expect(response.status).toBe(200);
     expect((await response.json()).unit.status).toBe("inactive");
   });
+  it("permanently deletes an archived empty duplicate", async () => {
+    const emptyReference = () => { const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), limit: vi.fn(async () => ({ data: [], error: null })) }; return chain; };
+    const deleteChain = { delete: vi.fn(() => deleteChain), eq: vi.fn(() => deleteChain), select: vi.fn(() => deleteChain), maybeSingle: vi.fn(async () => ({ data: { id: "unit_1", label: "1214 Wagner" }, error: null })) };
+    const from = vi.fn((table) => table === "rental_units" ? deleteChain : emptyReference());
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { from } });
+    application.units.findById.mockResolvedValue({ id: "unit_1", label: "1214 Wagner", status: "inactive" });
+    const response = await POST(request({ operation: "delete-archived-unit", unitId: "unit_1" }));
+    expect(response.status).toBe(200);
+    expect(deleteChain.delete).toHaveBeenCalled();
+    expect(deleteChain.eq).toHaveBeenCalledWith("status", "inactive");
+  });
+  it("protects an archived property with any linked history from permanent deletion", async () => {
+    const referenced = () => { const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), limit: vi.fn(async () => ({ data: [{ id: "lease_1" }], error: null })) }; return chain; };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { from: vi.fn(() => referenced()) } });
+    application.units.findById.mockResolvedValue({ id: "unit_1", label: "1214 Wagner", status: "inactive" });
+    const response = await POST(request({ operation: "delete-archived-unit", unitId: "unit_1" }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain("linked lease, maintenance, or inspection history");
+  });
   it("generates an owner-scoped charge", async () => {
     application.generateMonthlyCharge.mockResolvedValue({ id: "charge_1" });
     const response = await POST(request({ operation: "generate-charge", scheduleId: "schedule_1", period: "2026-09" }));
