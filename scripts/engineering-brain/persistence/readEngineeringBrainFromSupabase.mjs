@@ -29,3 +29,25 @@ export async function fetchExcludedForRun(supabaseClient, runId) {
   if (error) throw new Error(`Failed to fetch excluded rows: ${error.message}`);
   return data;
 }
+
+// Exact row counts via Postgres's own count, not by fetching rows and measuring the array length --
+// fetchRecordsForRun's default `limit: 1000` would silently undercount this repo's 4,400+ records,
+// which is exactly the kind of "looked successful, was actually wrong" failure a sync verification
+// step exists to catch. `{ head: true }` means Postgres never sends the rows themselves, just the count.
+export async function countRecordsForRun(supabaseClient, runId) {
+  const { count, error } = await supabaseClient
+    .from("engineering_brain_records")
+    .select("*", { count: "exact", head: true })
+    .eq("run_id", runId);
+  if (error) throw new Error(`Failed to count records: ${error.message}`);
+  return count;
+}
+
+export async function countExcludedForRun(supabaseClient, runId) {
+  const { count, error } = await supabaseClient
+    .from("engineering_brain_excluded")
+    .select("*", { count: "exact", head: true })
+    .eq("run_id", runId);
+  if (error) throw new Error(`Failed to count excluded rows: ${error.message}`);
+  return count;
+}

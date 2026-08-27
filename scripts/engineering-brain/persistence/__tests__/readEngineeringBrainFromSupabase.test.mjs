@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fetchLatestRun, fetchRecordsForRun, fetchExcludedForRun } from "../readEngineeringBrainFromSupabase.mjs";
+import { fetchLatestRun, fetchRecordsForRun, fetchExcludedForRun, countRecordsForRun, countExcludedForRun } from "../readEngineeringBrainFromSupabase.mjs";
 
 function fakeQuery(result) {
   const calls = [];
@@ -61,6 +61,30 @@ describe("fetchExcludedForRun", () => {
     const table = fakeQuery({ data: [{ id: "excluded_0" }], error: null });
     const excluded = await fetchExcludedForRun(fakeClient(table), "run_1");
     expect(excluded).toEqual([{ id: "excluded_0" }]);
+    expect(table.__calls).toContainEqual(["eq", ["run_id", "run_1"]]);
+  });
+});
+
+describe("countRecordsForRun", () => {
+  it("returns Postgres's own exact count, not the length of a possibly-truncated row fetch", async () => {
+    const table = fakeQuery({ count: 4459, error: null });
+    const count = await countRecordsForRun(fakeClient(table), "run_1");
+    expect(count).toBe(4459);
+    expect(table.__calls).toContainEqual(["select", ["*", { count: "exact", head: true }]]);
+    expect(table.__calls).toContainEqual(["eq", ["run_id", "run_1"]]);
+  });
+
+  it("propagates a query error", async () => {
+    const table = fakeQuery({ count: null, error: { message: "timeout" } });
+    await expect(countRecordsForRun(fakeClient(table), "run_1")).rejects.toThrow(/timeout/);
+  });
+});
+
+describe("countExcludedForRun", () => {
+  it("returns the exact excluded-row count for a run", async () => {
+    const table = fakeQuery({ count: 8, error: null });
+    const count = await countExcludedForRun(fakeClient(table), "run_1");
+    expect(count).toBe(8);
     expect(table.__calls).toContainEqual(["eq", ["run_id", "run_1"]]);
   });
 });
