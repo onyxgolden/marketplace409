@@ -5,6 +5,8 @@ import {
   useState,
 } from "react";
 
+import Link from "next/link";
+
 import {
   validateReviewedSessionMetadata,
 } from "../../../../scripts/governance/reviewedSessionMetadataContract.mjs";
@@ -612,6 +614,37 @@ export default function ProgrammerDashboard({
           >
             Download handbook
           </a>
+        </section>
+
+        <section
+          data-engineering-brain-link
+          aria-labelledby="engineering-brain-link-title"
+          className="mt-5 flex flex-col gap-4 rounded-2xl border border-sky-300 bg-gradient-to-br from-sky-50 via-white to-slate-50 p-5 text-slate-950 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div>
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-sky-700">
+              Deterministic search
+            </div>
+
+            <h2
+              id="engineering-brain-link-title"
+              className="mt-2 text-xl font-black"
+            >
+              FORGE Engineering Brain
+            </h2>
+
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+              Search the repository&apos;s own indexed source, migrations, tests, and governance
+              documents -- ranked citations, never a fabricated answer.
+            </p>
+          </div>
+
+          <Link
+            href="/forge/developer/engineering-brain"
+            className="inline-flex shrink-0 items-center justify-center rounded-xl bg-sky-600 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-sky-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-700"
+          >
+            Open Engineering Brain
+          </Link>
         </section>
 
         <div
