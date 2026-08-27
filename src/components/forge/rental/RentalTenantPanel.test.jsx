@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { propertyLabelForTenant } from "./RentalTenantPanel";
+import { activeBalanceCentsForTenant, propertyLabelForTenant } from "./RentalTenantPanel";
 
 const leases = [
   { id: "lease_1", unit_id: "unit_1", status: "active" },
@@ -20,5 +20,22 @@ describe("propertyLabelForTenant", () => {
   });
   it("falls back to the raw unit id if the unit record is missing", () => {
     expect(propertyLabelForTenant({ id: "tenant_1" }, leases, leaseMemberships, [])).toBe("unit_1");
+  });
+});
+
+describe("activeBalanceCentsForTenant", () => {
+  it("totals the remaining open charges on the tenant's active lease", () => {
+    const charges = [
+      { lease_id: "lease_1", amount_cents: 120000, paid_amount_cents: 20000 },
+      { lease_id: "lease_1", amount_cents: 5000, paid_amount_cents: 0 },
+      { lease_id: "lease_2", amount_cents: 90000, paid_amount_cents: 0 },
+    ];
+    expect(activeBalanceCentsForTenant({ id: "tenant_1" }, leases, leaseMemberships, charges)).toBe(105000);
+  });
+  it("returns zero when an active tenant has no open charges", () => {
+    expect(activeBalanceCentsForTenant({ id: "tenant_1" }, leases, leaseMemberships, [])).toBe(0);
+  });
+  it("returns null when the tenant has no active lease", () => {
+    expect(activeBalanceCentsForTenant({ id: "tenant_2" }, leases, leaseMemberships, [])).toBeNull();
   });
 });
