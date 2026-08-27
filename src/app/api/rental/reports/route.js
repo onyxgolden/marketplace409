@@ -9,6 +9,7 @@ import { buildTenantContactListReport, tenantContactListReportToCsv } from "@/ap
 import { buildUpcomingChargesReport, upcomingChargesReportToCsv } from "@/application/rental/buildUpcomingChargesReport";
 import { buildFinancialLedgerReport, financialLedgerReportToCsv } from "@/application/financial/buildFinancialLedgerReport";
 import { buildIncomeExpenseStatement, incomeExpenseStatementToCsv } from "@/application/financial/buildIncomeExpenseStatement";
+import { buildBusinessExpenseReport, businessExpenseReportToCsv } from "@/application/financial/buildBusinessExpenseReport";
 import { buildScheduleEAssistant, scheduleEAssistantToCsv } from "@/application/financial/buildScheduleEAssistant";
 import { buildSecurityDepositsReport, securityDepositsReportToCsv } from "@/application/rental/buildSecurityDepositsReport";
 import { buildRentersInsuranceComplianceReport, rentersInsuranceComplianceReportToCsv } from "@/application/rental/buildRentersInsuranceComplianceReport";
@@ -106,6 +107,16 @@ const FINANCIAL_EVENT_HANDLERS = {
       const events = await loadFinancialEvents(a);
       const report = buildIncomeExpenseStatement({ events }, { propertyId: url.searchParams.get("propertyId") || "", startDate: url.searchParams.get("startDate") || "", endDate: url.searchParams.get("endDate") || "" });
       return { report, toCsv: () => incomeExpenseStatementToCsv(report), filename: "income-expense-statement", dateHint: report.generatedAt.slice(0, 10) };
+    },
+  },
+  "business-expenses": {
+    load: async (a, url) => {
+      const events = await loadFinancialEvents(a);
+      const report = buildBusinessExpenseReport({ events }, {
+        scope: url.searchParams.get("scope") || "all", propertyId: url.searchParams.get("propertyId") || "",
+        category: url.searchParams.get("category") || "", startDate: url.searchParams.get("startDate") || "", endDate: url.searchParams.get("endDate") || "",
+      });
+      return { report, toCsv: () => businessExpenseReportToCsv(report), filename: "business-expenses", dateHint: report.generatedAt.slice(0, 10) };
     },
   },
   "schedule-e-assistant": {
