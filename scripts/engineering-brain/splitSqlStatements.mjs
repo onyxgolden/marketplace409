@@ -1,16 +1,27 @@
 // Splits a SQL file into individual statements, respecting dollar-quoted function bodies (`$$...$$`
-// or `$function$...$function$`) and single-quoted string literals -- a naive split on `;` would
-// break on the very first semicolon inside a plpgsql function body, which every RPC migration in
-// this repo has dozens of.
+// or `$function$...$function$`), single-quoted string literals, and `--` line comments -- a naive
+// split on `;` would break on the very first semicolon inside a plpgsql function body, which every
+// RPC migration in this repo has dozens of. Line comments matter here specifically because this
+// repo's migration headers are prose-heavy and routinely contain contractions ("they're", "doesn't",
+// "wasn't") -- an apostrophe inside a `--` comment, if not recognized as being inside a comment,
+// gets misread as opening a real string literal and corrupts every statement boundary after it.
 export function splitSqlStatements(sql) {
   const statements = [];
   let current = "";
   let i = 0;
   let inSingleQuote = false;
+  let inLineComment = false;
   let dollarTag = null;
 
   while (i < sql.length) {
     const ch = sql[i];
+
+    if (inLineComment) {
+      current += ch;
+      if (ch === "\n") inLineComment = false;
+      i += 1;
+      continue;
+    }
 
     if (dollarTag) {
       if (sql.startsWith(dollarTag, i)) {
@@ -35,6 +46,13 @@ export function splitSqlStatements(sql) {
         inSingleQuote = false;
       }
       i += 1;
+      continue;
+    }
+
+    if (ch === "-" && sql[i + 1] === "-") {
+      inLineComment = true;
+      current += "--";
+      i += 2;
       continue;
     }
 

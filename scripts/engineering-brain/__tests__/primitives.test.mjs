@@ -63,6 +63,11 @@ describe("splitSqlStatements", () => {
     const statements = splitSqlStatements("create table a (id text); create table b (id text);");
     expect(statements).toHaveLength(2);
   });
+  it("does not treat an apostrophe inside a -- line comment as opening a string literal", () => {
+    const statements = splitSqlStatements("-- a comment that's got an apostrophe in it\ncreate table a (id text);\ncreate table b (id text);");
+    expect(statements).toHaveLength(2);
+    expect(statements[1].trim()).toBe("create table b (id text);");
+  });
 });
 
 describe("deriveAssociatedSourcePaths", () => {

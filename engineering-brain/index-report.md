@@ -2,9 +2,9 @@
 
 > Sanitized: paths, counts, and content hashes only. No file contents or matched secret/PII values appear below.
 
-**Commit:** `c7b2c4eb2106ae5a6e0c65f01b20adec6ad167f9`
-**Generated at:** 2026-08-27T05:38:26.553Z
-**Index content hash:** `02d11d6f01ceb9354535fbe993faa74c1e1e3604e2e0274cba03783ceafbceb5` (excludes `generated_at` -- identical repo content at this commit always produces this same hash)
+**Commit:** `382a60bcf07052517beb16406184340fcc168b68`
+**Generated at:** 2026-08-27T06:59:07.548Z
+**Index content hash:** `6b3cb08a7378993e838a6cca89fdbee069257324c9faa5b809b3e47016cf6460` (excludes `generated_at` -- identical repo content at this commit always produces this same hash)
 
 ## Authority order
 
@@ -19,7 +19,7 @@
 
 ## Indexed records
 
-**Total:** 4354
+**Total:** 4421
 
 By source type:
 
@@ -27,13 +27,13 @@ By source type:
 | --- | ----- |
 | application_source_symbol | 1945 |
 | application_source_file | 977 |
-| test_file | 745 |
-| sql_rls_policy | 166 |
+| test_file | 752 |
+| sql_rls_policy | 192 |
 | api_route_symbol | 111 |
 | sql_migration_file | 103 |
-| sql_table | 73 |
+| sql_table | 91 |
+| sql_rpc_function | 73 |
 | api_route_file | 65 |
-| sql_rpc_function | 57 |
 | synchronized_document_section | 50 |
 | dependency_version | 25 |
 | historical_snapshot | 23 |
@@ -46,7 +46,7 @@ By authority level:
 
 | Key | Count |
 | --- | ----- |
-| current | 4277 |
+| current | 4344 |
 | synchronized_document | 50 |
 | historical_snapshot | 23 |
 | reviewed_decision | 3 |
@@ -54,7 +54,7 @@ By authority level:
 
 ## Excluded records
 
-**Total:** 4
+**Total:** 7
 
 By reason:
 
@@ -62,11 +62,14 @@ By reason:
 | --- | ----- |
 | likely_secret:high_entropy_secret_assignment | 2 |
 | lockfile | 1 |
+| likely_pii:ssn_like_value | 1 |
+| likely_secret:stripe_live_secret_key | 1 |
+| likely_pii:payment_card_like_value | 1 |
 | likely_secret:generic_private_key_block | 1 |
 
 ## Out of scope
 
-232 tracked files fell outside every category this Phase 1 indexer covers (not excluded -- simply not yet in scope; see requirement 3's category list).
+252 tracked files fell outside every category this Phase 1 indexer covers (not excluded -- simply not yet in scope; see requirement 3's category list).
 
 ## Deleted since previous index
 

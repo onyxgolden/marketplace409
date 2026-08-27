@@ -50,3 +50,15 @@ export function readFileAtCommit(commitSha, filePath, cwd = process.cwd()) {
     return null;
   }
 }
+
+// Reads every migration file at a commit, sorted by path (this repo's forward-only,
+// timestamp-prefixed convention -- the same order Postgres itself would apply them). Used by the
+// Phase 2 query layer to re-derive a SQL object's current-effective definition on demand, reusing
+// listTrackedFiles/readFileAtCommit rather than re-implementing tracked-file discovery.
+export function readMigrationsAtCommit(commitSha, cwd = process.cwd()) {
+  return listTrackedFiles(commitSha, cwd)
+    .filter((entry) => /^supabase\/migrations\/.*\.sql$/.test(entry.path))
+    .map((entry) => ({ path: entry.path, content: readFileAtCommit(commitSha, entry.path, cwd) }))
+    .filter((file) => file.content !== null)
+    .sort((a, b) => a.path.localeCompare(b.path));
+}

@@ -13,7 +13,7 @@ function countBy(items, keyFn) {
 // byte-identical across two runs at the same commit. `index_content_hash` is computed over exactly
 // that content (JSON-stringified with sorted, stable ordering) so a caller can prove determinism with
 // one hash comparison instead of a deep-equal over the whole structure.
-export function buildManifest({ commitSha, generatedAt, trackedFiles, records, excluded, outOfScope, deletedPaths }) {
+export function buildManifest({ commitSha, generatedAt, trackedFiles, records, excluded, outOfScope, deletedPaths, extractorVersion }) {
   const sortedRecords = [...records].sort((a, b) => {
     const pathCompare = a.source_path.localeCompare(b.source_path);
     if (pathCompare !== 0) return pathCompare;
@@ -29,6 +29,7 @@ export function buildManifest({ commitSha, generatedAt, trackedFiles, records, e
 
   const contentForHashing = {
     schema_version: "1.0",
+    extractor_version: extractorVersion,
     commit_sha: commitSha,
     records: sortedRecords,
     excluded: sortedExcluded,

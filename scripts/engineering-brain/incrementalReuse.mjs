@@ -13,8 +13,15 @@
 // still change another object's *current effective* definition if a LATER migration in the same
 // build was added/changed (e.g. a new migration drops a policy an old, unchanged migration created)
 // -- so the sql_* record set is always rebuilt from the full migration set, never partially reused.
-export function partitionFilesForIncrementalBuild(trackedFiles, previousManifest) {
-  if (!previousManifest) {
+//
+// `currentExtractorVersion` guards against a subtler staleness source: a file's blob SHA only says
+// the *file* didn't change, not that the *extraction code* reading it didn't. Fixing a bug in a
+// symbol/SQL/section extractor must invalidate every previously-cached record, even for files whose
+// content is untouched -- otherwise the fix would silently never take effect. When the previous
+// manifest's extractor_version doesn't match, this treats the run as if there were no previous
+// manifest at all (full rebuild), exactly once, until the next run is incremental again.
+export function partitionFilesForIncrementalBuild(trackedFiles, previousManifest, currentExtractorVersion) {
+  if (!previousManifest || previousManifest.extractor_version !== currentExtractorVersion) {
     return { toProcess: trackedFiles, reusableRecordsByPath: new Map() };
   }
 

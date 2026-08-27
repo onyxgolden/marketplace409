@@ -86,4 +86,35 @@ describe("extractSqlObjects (SQL-object extraction)", () => {
     expect(fn.definition).not.toContain("'hi '");
     expect(fn.sourcePath).toBe("0002.sql");
   });
+
+  it("regression: an apostrophe inside a -- comment does not open a false string literal and corrupt every statement boundary after it", () => {
+    // Found by running the query layer against this repo's own migrations: a header comment
+    // containing a contraction ("they're") was misread as opening a real string literal, since the
+    // splitter had no concept of line comments -- every subsequent statement boundary in the file
+    // then merged into one giant blob, and has_workspace_access(text) silently vanished from the index.
+    const migrations = [{
+      path: "0001_prose.sql",
+      content: `
+        -- This helper resolves the owner_id whose workspace they're currently authorized to act
+        -- within, or their own id if they aren't a co-owner of anyone else's workspace.
+        create or replace function first_fn(p_x text) returns text language sql as $$ select p_x; $$;
+        create or replace function second_fn(p_y text) returns text language sql as $$ select p_y; $$;
+      `,
+    }];
+    const objects = extractSqlObjects(migrations);
+    expect(objects.map((o) => o.key).sort()).toEqual(["first_fn(text)", "second_fn(text)"]);
+  });
+
+  it("regression: the first statement in a file is still classified correctly when a header comment with no terminator precedes it", () => {
+    // splitSqlStatements only splits on `;`; a leading comment block (which has no `;` of its own)
+    // gets glued onto the front of the first real statement. classifyStatement's regexes are all
+    // anchored at the start of the string, so without stripping that leading comment first, the very
+    // first object defined in any file (after any header comment) would never match anything.
+    const migrations = [{
+      path: "0001_header.sql",
+      content: `-- Explains what this migration does, across two lines of prose.\n-- Second line.\ncreate table if not exists gadgets (id text primary key);`,
+    }];
+    const objects = extractSqlObjects(migrations);
+    expect(objects.map((o) => o.key)).toEqual(["gadgets"]);
+  });
 });

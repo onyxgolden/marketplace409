@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { partitionFilesForIncrementalBuild, findDeletedPaths } from "../incrementalReuse.mjs";
 
-function fakeManifest({ fileBlobShas, records }) {
-  return { file_blob_shas: fileBlobShas, records };
+const EXTRACTOR_VERSION = 7;
+
+function fakeManifest({ fileBlobShas, records, extractorVersion = EXTRACTOR_VERSION }) {
+  return { file_blob_shas: fileBlobShas, records, extractor_version: extractorVersion };
 }
 
 describe("incremental content hashes", () => {
   it("with no previous manifest, every file needs full processing", () => {
     const files = [{ path: "a.js", blobSha: "sha-a" }, { path: "b.js", blobSha: "sha-b" }];
-    const { toProcess, reusableRecordsByPath } = partitionFilesForIncrementalBuild(files, null);
+    const { toProcess, reusableRecordsByPath } = partitionFilesForIncrementalBuild(files, null, EXTRACTOR_VERSION);
     expect(toProcess).toEqual(files);
     expect(reusableRecordsByPath.size).toBe(0);
   });
@@ -22,7 +24,7 @@ describe("incremental content hashes", () => {
       ],
     });
     const files = [{ path: "a.js", blobSha: "sha-a" }, { path: "b.js", blobSha: "sha-b-CHANGED" }];
-    const { toProcess, reusableRecordsByPath } = partitionFilesForIncrementalBuild(files, previous);
+    const { toProcess, reusableRecordsByPath } = partitionFilesForIncrementalBuild(files, previous, EXTRACTOR_VERSION);
 
     expect(toProcess.map((f) => f.path)).toEqual(["b.js"]);
     expect(reusableRecordsByPath.has("a.js")).toBe(true);
@@ -35,7 +37,7 @@ describe("incremental content hashes", () => {
       records: [{ source_path: "supabase/migrations/0001_init.sql", source_type: "sql_migration_file", symbol_or_section: null }],
     });
     const files = [{ path: "supabase/migrations/0001_init.sql", blobSha: "sha-migration" }];
-    const { toProcess } = partitionFilesForIncrementalBuild(files, previous);
+    const { toProcess } = partitionFilesForIncrementalBuild(files, previous, EXTRACTOR_VERSION);
     expect(toProcess).toEqual(files);
   });
 
@@ -54,7 +56,19 @@ describe("incremental content hashes", () => {
       records: [{ source_path: "removed.js", source_type: "application_source_file", symbol_or_section: null }],
     });
     const files = [];
-    const { reusableRecordsByPath } = partitionFilesForIncrementalBuild(files, previous);
+    const { reusableRecordsByPath } = partitionFilesForIncrementalBuild(files, previous, EXTRACTOR_VERSION);
+    expect(reusableRecordsByPath.size).toBe(0);
+  });
+
+  it("an extractor version mismatch forces a full rebuild even when every file's blob sha is unchanged -- fixing an extraction bug must actually take effect", () => {
+    const previous = fakeManifest({
+      fileBlobShas: { "a.js": "sha-a" },
+      records: [{ source_path: "a.js", source_type: "application_source_file", symbol_or_section: null }],
+      extractorVersion: EXTRACTOR_VERSION - 1,
+    });
+    const files = [{ path: "a.js", blobSha: "sha-a" }];
+    const { toProcess, reusableRecordsByPath } = partitionFilesForIncrementalBuild(files, previous, EXTRACTOR_VERSION);
+    expect(toProcess).toEqual(files);
     expect(reusableRecordsByPath.size).toBe(0);
   });
 });

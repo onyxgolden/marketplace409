@@ -6,6 +6,7 @@ import { buildIndexRecords } from "./buildIndexRecords.mjs";
 import { buildManifest } from "./buildManifest.mjs";
 import { renderIndexReport } from "./renderIndexReport.mjs";
 import { partitionFilesForIncrementalBuild, findDeletedPaths } from "./incrementalReuse.mjs";
+import { EXTRACTOR_VERSION } from "./extractorVersion.mjs";
 
 const OUTPUT_DIR = "engineering-brain";
 const MANIFEST_FILENAME = "index-manifest.json";
@@ -32,7 +33,7 @@ export function runEngineeringBrainIndexer({ repositoryRoot = process.cwd(), use
   const trackedFiles = listTrackedFiles(commitSha, repositoryRoot);
 
   const previousManifest = useIncrementalReuse ? loadPreviousManifest(repositoryRoot) : null;
-  const { toProcess, reusableRecordsByPath } = partitionFilesForIncrementalBuild(trackedFiles, previousManifest);
+  const { toProcess, reusableRecordsByPath } = partitionFilesForIncrementalBuild(trackedFiles, previousManifest, EXTRACTOR_VERSION);
   const deletedPaths = findDeletedPaths(trackedFiles, previousManifest);
 
   const filesWithContent = toProcess.map((file) => ({
@@ -57,6 +58,7 @@ export function runEngineeringBrainIndexer({ repositoryRoot = process.cwd(), use
     excluded,
     outOfScope,
     deletedPaths,
+    extractorVersion: EXTRACTOR_VERSION,
   });
 
   const report = renderIndexReport(manifest);

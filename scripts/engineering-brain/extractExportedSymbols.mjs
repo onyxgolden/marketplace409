@@ -28,8 +28,14 @@ export function extractExportedSymbols(sourceText, filePath) {
     } else if (ts.isClassDeclaration(node) && hasExportModifier(node)) {
       addSymbol(node.name?.text || (hasDefaultModifier(node) ? "default" : undefined), "class", node);
     } else if (ts.isVariableStatement(node) && hasExportModifier(node)) {
+      // Use the whole statement (including the `export const` keywords and trailing `;`) when it
+      // declares a single variable -- the overwhelming common case in this codebase, and consistent
+      // with function/class declarations already capturing their full node. Only fall back to the
+      // bare declaration for the rare multi-declarator statement (`export const a = 1, b = 2;`),
+      // where using the full statement for both `a` and `b` would duplicate the same text twice.
+      const singleDeclarator = node.declarationList.declarations.length === 1;
       for (const declaration of node.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name)) addSymbol(declaration.name.text, "const", declaration);
+        if (ts.isIdentifier(declaration.name)) addSymbol(declaration.name.text, "const", singleDeclarator ? node : declaration);
       }
     } else if (ts.isExportAssignment(node)) {
       addSymbol("default", "export_assignment", node);

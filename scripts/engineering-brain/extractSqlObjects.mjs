@@ -22,7 +22,28 @@ const PATTERNS = Object.freeze({
   dropFunction: /^drop\s+function\s+(?:if\s+exists\s+)?(?:public\.)?"?([a-zA-Z_][\w]*)"?\s*\(([^)]*)\)/i,
 });
 
-function classifyStatement(statement) {
+// splitSqlStatements() only splits on `;`, so a header comment block with no statement terminator of
+// its own (the normal case -- comments don't end in semicolons) gets glued onto the *front* of
+// whatever real statement follows it. Every PATTERNS.* regex is anchored with `^`, so without
+// stripping that leading comment block first, the very first statement after any header comment
+// would never classify as anything -- silently dropping the first function/table/policy/trigger
+// defined in a file whenever it's preceded by explanatory comments, which is the norm in this repo.
+function stripLeadingCommentLines(statement) {
+  const lines = statement.split("\n");
+  let start = 0;
+  while (start < lines.length) {
+    const line = lines[start].trim();
+    if (line === "" || line.startsWith("--")) {
+      start += 1;
+    } else {
+      break;
+    }
+  }
+  return lines.slice(start).join("\n").trim();
+}
+
+function classifyStatement(rawStatement) {
+  const statement = stripLeadingCommentLines(rawStatement);
   let match;
   if ((match = statement.match(PATTERNS.createFunction))) {
     return { objectType: "rpc_function", action: "create", key: `${match[1]}(${normalizeFunctionArgTypes(match[2])})`, name: match[1] };
