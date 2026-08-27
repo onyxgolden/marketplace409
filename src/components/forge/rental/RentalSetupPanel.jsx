@@ -86,6 +86,16 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
       await loadUnits();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
+  async function permanentlyDeleteUnit(unit) {
+    const typed = window.prompt(`Permanently delete ${unit.label}? Type the exact property/unit name to confirm. This cannot be undone.`);
+    if (typed !== unit.label) { if (typed !== null) setMessage("Permanent deletion cancelled: the name did not match."); return; }
+    setWorking(true); setMessage("");
+    try {
+      await submit("delete-archived-unit", "unitId", unit.id);
+      setMessage(`${unit.label} was permanently deleted.`);
+      await loadUnits();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-setup>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -127,6 +137,15 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
         <div className="md:col-span-2 flex flex-wrap items-center gap-4"><button disabled={working} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working ? "Saving…" : "Review and create property / unit"}</button><button type="button" onClick={() => setShowCreate(false)} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 dark:border-slate-600 dark:text-slate-300">Cancel creation</button>
           {message && <p role="status" className="text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}</div>
       </form>}
+      {!showCreate && units.some((unit) => unit.status === "inactive") && <div className="mt-6 rounded-2xl border border-slate-300 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
+        <h3 className="text-lg font-black text-slate-950 dark:text-white">Archived properties / units</h3>
+        <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Permanent deletion is available only for empty accidental duplicates. Records with lease, maintenance, or inspection history are protected.</p>
+        <div className="mt-4 grid gap-3">{units.filter((unit) => unit.status === "inactive").map((unit) => <div key={unit.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+          <div><p className="font-black text-slate-950 dark:text-white">{unit.label}</p><p className="text-xs text-slate-500 dark:text-slate-400">{unit.property_id}</p></div>
+          <button type="button" disabled={working} onClick={() => permanentlyDeleteUnit(unit)} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Permanently delete duplicate</button>
+        </div>)}</div>
+      </div>}
+      {!showCreate && message && <p role="status" className="mt-4 text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}
     </section>
   );
 }
