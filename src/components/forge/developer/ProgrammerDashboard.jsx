@@ -571,15 +571,15 @@ export default function ProgrammerDashboard({
           </h1>
 
           <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
-            Choose an approved engineering action. FORGE explains what it does, verifies your identity again at the API boundary, and displays the result here.
+            Each card below is a task you can run yourself, in plain English -- what it does, whether it changes anything, and the exact technical command it runs under the hood (safe to ignore if you&apos;re not reading code). You generally don&apos;t need to use this page: when you ask your AI assistant to build or ship something in chat, it already runs the equivalent of these steps for you automatically. This page exists for when you want to check something or run a step yourself, independently.
           </p>
 
           <div className="mt-4 inline-flex rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-900">
-            Authorized as {programmerEmail}
+            Signed in as {programmerEmail}
           </div>
 
           <p className="mt-3 text-xs font-bold text-slate-500">
-            Repository commands execute only from the authorized local FORGE workstation. They are disabled on Vercel.
+            These only work when run from Jason&apos;s own computer, not from the live website -- so this page won&apos;t do anything if you&apos;re viewing it anywhere else.
           </p>
         </header>
 
