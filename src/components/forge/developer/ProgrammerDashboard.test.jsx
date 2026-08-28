@@ -90,9 +90,9 @@ describe("ProgrammerDashboard", () => {
     );
 
     expect(markup).toContain(
-      "Authorized as jasonmorgan99@gmail.com",
+      "Signed in as jasonmorgan99@gmail.com",
     );
-    expect(markup).toContain("disabled on Vercel");
+    expect(markup).toContain("own computer");
   });
 
   it("offers the copy-ready command handbook as an Excel download", () => {
