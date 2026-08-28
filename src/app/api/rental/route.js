@@ -108,7 +108,8 @@ export async function GET() {
     if (billingSettingsError) throw billingSettingsError;
     const billingEnabled = billingSettingsRow?.billing_enabled === true;
 
-    return NextResponse.json({ success: true, openCharges: chargesResult.data || [], collectionSummary, billingEnabled,
+    return NextResponse.json({ success: true, actingUserId: authenticated.user.id, canonicalOwnerId: authenticated.effectiveOwnerId,
+      openCharges: chargesResult.data || [], collectionSummary, billingEnabled,
       units: unitsWithPhotos, tenants: tenantsWithPhotos, schedules: schedulesResult.data || [],
       maintenanceRequests: maintenanceResult.data || [], notifications: notificationResult.data || [],
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
