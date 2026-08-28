@@ -24,6 +24,35 @@ export async function fetchRecordsForRun(supabaseClient, runId, { sourceType, au
   return data;
 }
 
+const DEFAULT_PAGE_SIZE = 1000;
+
+// Supabase/PostgREST silently caps a response at its own server-side row limit regardless of the
+// `.limit(n)` requested in the query -- a plain single-page fetch with a large `limit` looks correct
+// locally (small test fixtures never hit the cap) but truncates real data, dropping whichever
+// source_types happen to sync after the cap in insertion order. Paginate with `.range()` instead,
+// ordered by the table's own `id` for a stable cursor, until a short page proves there's no more.
+export async function fetchAllRecordsForRun(supabaseClient, runId, { sourceType, authorityLevel, symbolOrSection, columns = "*", pageSize = DEFAULT_PAGE_SIZE } = {}) {
+  const records = [];
+  let from = 0;
+  for (;;) {
+    let query = supabaseClient
+      .from("engineering_brain_records")
+      .select(columns)
+      .eq("run_id", runId)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (sourceType) query = query.eq("source_type", sourceType);
+    if (authorityLevel) query = query.eq("authority_level", authorityLevel);
+    if (symbolOrSection) query = query.eq("symbol_or_section", symbolOrSection);
+    const { data, error } = await query;
+    if (error) throw new Error(`Failed to fetch records: ${error.message}`);
+    records.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return records;
+}
+
 export async function fetchExcludedForRun(supabaseClient, runId) {
   const { data, error } = await supabaseClient.from("engineering_brain_excluded").select("*").eq("run_id", runId);
   if (error) throw new Error(`Failed to fetch excluded rows: ${error.message}`);
