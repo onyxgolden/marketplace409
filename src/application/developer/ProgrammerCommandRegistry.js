@@ -7,7 +7,7 @@ export const PROGRAMMER_COMMANDS =
       risk: "read-only",
       expectedDurationSeconds: 5,
       description:
-        "Shows the current branch, synchronization with origin/main, working-tree changes, and latest commits.",
+        "Looks at the project and reports back what's going on: any unsaved work in progress, whether it matches the shared online copy, and the most recent saved changes. This only looks -- it doesn't change anything.",
       commandPreview:
         Object.freeze([
           "git status --short --branch",
@@ -22,7 +22,7 @@ export const PROGRAMMER_COMMANDS =
       risk: "read-only",
       expectedDurationSeconds: 45,
       description:
-        "Runs every Vitest test and reports whether the complete automated test suite passes.",
+        "Runs thousands of small automated checks that each confirm one piece of the app still behaves correctly, and tells you if anything broke. This only checks -- it doesn't change anything.",
       commandPreview:
         Object.freeze([
           "NODE_ENV=test npx vitest run",
@@ -36,7 +36,7 @@ export const PROGRAMMER_COMMANDS =
       risk: "local-build",
       expectedDurationSeconds: 30,
       description:
-        "Compiles the complete Next.js production application and verifies TypeScript and route generation.",
+        "Builds the app exactly the way it would be built for the live website, as a practice run to catch errors before real users ever see them. Nothing goes live -- this is just a rehearsal.",
       commandPreview:
         Object.freeze([
           "NODE_ENV=production npm run build",
@@ -50,7 +50,7 @@ export const PROGRAMMER_COMMANDS =
       risk: "generated-file",
       expectedDurationSeconds: 75,
       description:
-        "Runs the full tests and production build, then creates a validated governance evidence artifact.",
+        "Runs the two checks above (tests and build) and saves a timestamped, tamper-evident record proving they passed -- a paper trail you or the AI assistant can point to later as proof the work was verified, not just claimed.",
       commandPreview:
         Object.freeze([
           "node scripts/governance/generateValidationEvidence.mjs --full --build",
@@ -64,7 +64,7 @@ export const PROGRAMMER_COMMANDS =
       risk: "shadow-write",
       expectedDurationSeconds: 20,
       description:
-        "Uses the newest eligible validation evidence, runs shadow governance synchronization, and generates the next-session bootstrap.",
+        "Gets everything ready for the next time you start a new conversation with your AI assistant about this project, so it can pick up exactly where things left off instead of having to re-learn the project from scratch.",
       commandPreview:
         Object.freeze([
           "node scripts/orchestration/runEngineeringConversationSession.mjs <newest-validation-evidence.json>",
@@ -79,7 +79,7 @@ export const PROGRAMMER_COMMANDS =
       risk: "shadow-write",
       expectedDurationSeconds: 95,
       description:
-        "Runs full validation, creates evidence, synchronizes shadow governance documents, and generates a continuation bootstrap in one operation.",
+        "Wraps up a work session in one step: runs the checks, saves proof they passed, and prepares the notes your AI assistant will read next time -- everything the commands above do, combined.",
       commandPreview:
         Object.freeze([
           "node scripts/governance/generateValidationEvidence.mjs --focused scripts/governance/__tests__/collectSessionEvidence.test.mjs --full --build",
