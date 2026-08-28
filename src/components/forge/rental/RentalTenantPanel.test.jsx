@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeBalanceCentsForTenant, propertyLabelForTenant } from "./RentalTenantPanel";
+import { activeBalanceCentsForTenant, propertyLabelForTenant, tenantHouseholdForSelection } from "./RentalTenantPanel";
 
 const leases = [
   { id: "lease_1", unit_id: "unit_1", status: "active" },
@@ -37,5 +37,15 @@ describe("activeBalanceCentsForTenant", () => {
   });
   it("returns null when the tenant has no active lease", () => {
     expect(activeBalanceCentsForTenant({ id: "tenant_2" }, leases, leaseMemberships, [])).toBeNull();
+  });
+});
+
+describe("tenantHouseholdForSelection", () => {
+  it("keeps the stored primary tenant first and returns co-tenants separately", () => {
+    const householdTenants = [{ id: "tenant_1", display_name: "Primary" }, { id: "tenant_2", display_name: "Spouse" }];
+    const memberships = [{ lease_id: "lease_1", tenant_id: "tenant_1", occupancy_role: "primary" }, { lease_id: "lease_1", tenant_id: "tenant_2", occupancy_role: "co_tenant" }];
+    const household = tenantHouseholdForSelection(householdTenants[1], householdTenants, [{ id: "lease_1", unit_id: "unit_1", status: "active" }], memberships, units);
+    expect(household.primaryTenant.display_name).toBe("Primary");
+    expect(household.coTenants.map((tenant) => tenant.display_name)).toEqual(["Spouse"]);
   });
 });

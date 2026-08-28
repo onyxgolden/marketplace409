@@ -29,7 +29,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_units")
         .select("id, property_id, label, status, photo_bucket, photo_object_path").order("label", { ascending: true }),
       authenticated.supabaseClient.from("rental_tenants")
-        .select("id, display_name, email, status, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
+        .select("id, display_name, email, phone, work_phone, date_of_birth, employer_name, employer_phone, monthly_income_cents, emergency_contact_name, emergency_contact_phone, application_status, application_submitted_at, screening_provider, screening_reference, screening_status, screening_completed_at, ssn_last_four, landlord_notes, status, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
       authenticated.supabaseClient.from("rent_schedules")
         .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date, collection_mode, collection_provider, forge_cutover_date")
         .order("effective_start_date", { ascending: false }),
@@ -51,7 +51,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_inspection_items").select("*").order("created_at", { ascending: true }),
       authenticated.supabaseClient.from("rental_inspection_acknowledgements").select("*").order("acknowledged_at", { ascending: false }),
       authenticated.supabaseClient.from("rental_leases").select("*").order("start_date",{ascending:false}),
-      authenticated.supabaseClient.from("rental_lease_tenants").select("lease_id, tenant_id").order("lease_id",{ascending:true}),
+      authenticated.supabaseClient.from("rental_lease_tenants").select("lease_id, tenant_id, occupancy_role").order("lease_id",{ascending:true}),
       authenticated.supabaseClient.from("rental_lease_changes").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_late_fee_rules").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_late_fee_assessments").select("*").order("approved_at",{ascending:false}),
@@ -126,7 +126,7 @@ export async function POST(request) {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
     const body = await request.json();
-    const { application, user } = authenticated;
+    const { application, user, effectiveOwnerId } = authenticated;
     const timestamp = now();
 
     switch (body?.operation) {
@@ -193,6 +193,36 @@ export async function POST(request) {
         if (error) throw error;
         if (!data) return NextResponse.json({ error: "Only an unlinked tenant email can be changed." }, { status: 409 });
         return NextResponse.json({ success: true, tenant: data });
+      }
+      case "update-tenant-profile": {
+        if (typeof body.tenantId !== "string" || body.tenantId.trim() === "") return badRequest("tenantId is required.");
+        const profile = body.profile && typeof body.profile === "object" ? body.profile : {};
+        const optional = (value) => typeof value === "string" ? value.trim() || null : null;
+        const lastFour = optional(profile.ssnLastFour);
+        if (lastFour && !/^\d{4}$/.test(lastFour)) return badRequest("SSN last four must contain exactly four digits.");
+        const monthlyIncomeCents = profile.monthlyIncomeCents === null || profile.monthlyIncomeCents === "" || profile.monthlyIncomeCents === undefined
+          ? null : Number(profile.monthlyIncomeCents);
+        if (monthlyIncomeCents !== null && (!Number.isSafeInteger(monthlyIncomeCents) || monthlyIncomeCents < 0)) return badRequest("Monthly income must be a non-negative whole-cent amount.");
+        const update = { phone: optional(profile.phone), work_phone: optional(profile.workPhone), date_of_birth: optional(profile.dateOfBirth),
+          employer_name: optional(profile.employerName), employer_phone: optional(profile.employerPhone), monthly_income_cents: monthlyIncomeCents,
+          emergency_contact_name: optional(profile.emergencyContactName), emergency_contact_phone: optional(profile.emergencyContactPhone),
+          application_status: optional(profile.applicationStatus), application_submitted_at: optional(profile.applicationSubmittedAt),
+          screening_provider: optional(profile.screeningProvider), screening_reference: optional(profile.screeningReference),
+          screening_status: optional(profile.screeningStatus), screening_completed_at: optional(profile.screeningCompletedAt),
+          ssn_last_four: lastFour, landlord_notes: optional(profile.landlordNotes), updated_at: timestamp };
+        const { data, error } = await authenticated.supabaseClient.from("rental_tenants").update(update)
+          .eq("owner_id", effectiveOwnerId).eq("id", body.tenantId.trim()).select("id, display_name").maybeSingle();
+        if (error) throw error;
+        if (!data) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
+        return NextResponse.json({ success: true, tenant: data });
+      }
+      case "set-primary-tenant": {
+        if (!body.leaseId || !body.tenantId) return badRequest("leaseId and tenantId are required.");
+        const { error } = await authenticated.supabaseClient.rpc("set_rental_primary_tenant", {
+          p_owner_id: effectiveOwnerId, p_lease_id: body.leaseId, p_tenant_id: body.tenantId,
+        });
+        if (error) throw error;
+        return NextResponse.json({ success: true });
       }
       case "save-lease": {
         const input = body.lease;
