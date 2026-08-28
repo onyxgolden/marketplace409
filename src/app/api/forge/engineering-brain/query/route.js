@@ -3,10 +3,10 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { ProgrammerAuthorizationApplication } from "@/application/developer/ProgrammerAuthorizationApplication";
 
-import { fetchLatestRun } from "../../../../../../scripts/engineering-brain/persistence/readEngineeringBrainFromSupabase.mjs";
+import { fetchLatestRun, fetchAllRecordsForRun } from "../../../../../../scripts/engineering-brain/persistence/readEngineeringBrainFromSupabase.mjs";
 import { runQuery } from "../../../../../../scripts/engineering-brain/query/runQuery.mjs";
 
-const MAX_RECORDS_PER_RUN = 10000;
+const RECORD_COLUMNS = "source_path, source_type, symbol_or_section, commit_sha, content_hash, authority_level, version, details";
 
 // Uses the caller's own cookie-based session (not a service-role key) -- RLS's is_forge_programmer()
 // check does the real enforcement here, the same predicate Postgres itself trusts, so this route
@@ -39,18 +39,18 @@ export async function GET(request) {
     return NextResponse.json({ error: "No indexed run found yet. Run the sync workflow first." }, { status: 404 });
   }
 
-  const { data: records, error } = await supabase
-    .from("engineering_brain_records")
-    .select("source_path, source_type, symbol_or_section, commit_sha, content_hash, authority_level, version, details")
-    .eq("run_id", latestRun.id)
-    .limit(MAX_RECORDS_PER_RUN);
-  if (error) return NextResponse.json({ error: "Unable to load the index." }, { status: 500 });
+  let records;
+  try {
+    records = await fetchAllRecordsForRun(supabase, latestRun.id, { columns: RECORD_COLUMNS });
+  } catch {
+    return NextResponse.json({ error: "Unable to load the index." }, { status: 500 });
+  }
 
   const manifest = {
     schema_version: "1.0",
     commit_sha: latestRun.commit_sha,
     index_content_hash: latestRun.index_content_hash,
-    records: records || [],
+    records,
   };
 
   const result = runQuery({ manifest, queryText, filters, maxResults, resolveExcerpts: false });

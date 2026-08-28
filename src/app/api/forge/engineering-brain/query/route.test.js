@@ -17,6 +17,7 @@ function fakeQuery(result) {
     eq: () => builder,
     order: () => builder,
     limit: () => builder,
+    range: () => builder,
     maybeSingle: () => Promise.resolve(result),
     then: (resolve) => resolve(result),
   };

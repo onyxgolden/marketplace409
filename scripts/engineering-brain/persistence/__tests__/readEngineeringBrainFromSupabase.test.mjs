@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fetchLatestRun, fetchRecordsForRun, fetchExcludedForRun, countRecordsForRun, countExcludedForRun } from "../readEngineeringBrainFromSupabase.mjs";
+import { fetchLatestRun, fetchRecordsForRun, fetchAllRecordsForRun, fetchExcludedForRun, countRecordsForRun, countExcludedForRun } from "../readEngineeringBrainFromSupabase.mjs";
 
 function fakeQuery(result) {
   const calls = [];
@@ -8,6 +8,7 @@ function fakeQuery(result) {
     eq: (...args) => { calls.push(["eq", args]); return builder; },
     order: (...args) => { calls.push(["order", args]); return builder; },
     limit: (...args) => { calls.push(["limit", args]); return builder; },
+    range: (...args) => { calls.push(["range", args]); return builder; },
     maybeSingle: () => Promise.resolve(result),
     then: (resolve) => resolve(result),
   };
@@ -17,6 +18,24 @@ function fakeQuery(result) {
 
 function fakeClient(table) {
   return { from: () => table };
+}
+
+// Fans out one fake query builder per `.range()` call, so pagination can be exercised page-by-page
+// instead of every request seeing the same static result.
+function fakePaginatedClient(pages) {
+  const allCalls = [];
+  let callIndex = 0;
+  return {
+    from: () => {
+      const page = pages[Math.min(callIndex, pages.length - 1)];
+      callIndex += 1;
+      const builder = fakeQuery({ data: page, error: null });
+      const originalThen = builder.then;
+      builder.then = (resolve) => { allCalls.push(builder.__calls); return originalThen(resolve); };
+      return builder;
+    },
+    __allCalls: allCalls,
+  };
 }
 
 describe("fetchLatestRun", () => {
@@ -53,6 +72,44 @@ describe("fetchRecordsForRun", () => {
   it("propagates a query error", async () => {
     const table = fakeQuery({ data: null, error: { message: "timeout" } });
     await expect(fetchRecordsForRun(fakeClient(table), "run_1")).rejects.toThrow(/timeout/);
+  });
+});
+
+describe("fetchAllRecordsForRun", () => {
+  it("returns every row on a single short page without a second request", async () => {
+    const client = fakePaginatedClient([[{ id: "record_0" }, { id: "record_1" }]]);
+    const records = await fetchAllRecordsForRun(client, "run_1", { pageSize: 1000 });
+    expect(records).toEqual([{ id: "record_0" }, { id: "record_1" }]);
+    expect(client.__allCalls).toHaveLength(1);
+  });
+
+  it("pages past a server-side row cap instead of silently truncating -- the exact bug this exists to prevent", async () => {
+    const pageOne = Array.from({ length: 3 }, (_, i) => ({ id: `record_${i}` }));
+    const pageTwo = [{ id: "record_3" }];
+    const client = fakePaginatedClient([pageOne, pageTwo]);
+    const records = await fetchAllRecordsForRun(client, "run_1", { pageSize: 3 });
+    expect(records).toHaveLength(4);
+    expect(records.map((r) => r.id)).toEqual(["record_0", "record_1", "record_2", "record_3"]);
+    expect(client.__allCalls).toHaveLength(2);
+    expect(client.__allCalls[0]).toContainEqual(["range", [0, 2]]);
+    expect(client.__allCalls[1]).toContainEqual(["range", [3, 5]]);
+  });
+
+  it("orders by id for a stable cursor across pages", async () => {
+    const client = fakePaginatedClient([[{ id: "record_0" }]]);
+    await fetchAllRecordsForRun(client, "run_1", { pageSize: 1000 });
+    expect(client.__allCalls[0]).toContainEqual(["order", ["id", { ascending: true }]]);
+  });
+
+  it("applies optional filters on every page", async () => {
+    const client = fakePaginatedClient([[{ id: "record_0" }]]);
+    await fetchAllRecordsForRun(client, "run_1", { sourceType: "sql_rpc_function", pageSize: 1000 });
+    expect(client.__allCalls[0]).toContainEqual(["eq", ["source_type", "sql_rpc_function"]]);
+  });
+
+  it("propagates a query error", async () => {
+    const table = fakeQuery({ data: null, error: { message: "timeout" } });
+    await expect(fetchAllRecordsForRun(fakeClient(table), "run_1")).rejects.toThrow(/timeout/);
   });
 });
 
