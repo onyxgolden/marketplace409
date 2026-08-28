@@ -6,6 +6,8 @@ export async function createAuthenticatedRentalManagerApplication() {
   const authenticated = await createAuthenticatedForgeApplication();
   if (authenticated.response) return authenticated;
   const repositories = await createRentalManagerRepositories({ storage: "supabase", supabaseClient: authenticated.supabaseClient });
-  return Object.freeze({ supabaseClient: authenticated.supabaseClient, user: authenticated.user,
+  return Object.freeze({ supabaseClient: authenticated.supabaseClient,
+    user: authenticated.user,
+    effectiveOwnerId: authenticated.effectiveOwnerId,
     application: new RentalManagerApplication(repositories) });
 }

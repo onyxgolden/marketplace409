@@ -126,7 +126,7 @@ export async function POST(request) {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
     const body = await request.json();
-    const { application, user } = authenticated;
+    const { application, user, effectiveOwnerId } = authenticated;
     const timestamp = now();
 
     switch (body?.operation) {
@@ -211,7 +211,7 @@ export async function POST(request) {
           screening_status: optional(profile.screeningStatus), screening_completed_at: optional(profile.screeningCompletedAt),
           ssn_last_four: lastFour, landlord_notes: optional(profile.landlordNotes), updated_at: timestamp };
         const { data, error } = await authenticated.supabaseClient.from("rental_tenants").update(update)
-          .eq("owner_id", user.id).eq("id", body.tenantId.trim()).select("id, display_name").maybeSingle();
+          .eq("owner_id", effectiveOwnerId).eq("id", body.tenantId.trim()).select("id, display_name").maybeSingle();
         if (error) throw error;
         if (!data) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
         return NextResponse.json({ success: true, tenant: data });
@@ -219,7 +219,7 @@ export async function POST(request) {
       case "set-primary-tenant": {
         if (!body.leaseId || !body.tenantId) return badRequest("leaseId and tenantId are required.");
         const { error } = await authenticated.supabaseClient.rpc("set_rental_primary_tenant", {
-          p_owner_id: user.id, p_lease_id: body.leaseId, p_tenant_id: body.tenantId,
+          p_owner_id: effectiveOwnerId, p_lease_id: body.leaseId, p_tenant_id: body.tenantId,
         });
         if (error) throw error;
         return NextResponse.json({ success: true });
