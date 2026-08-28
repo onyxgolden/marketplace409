@@ -10,7 +10,7 @@ import {
 } from "@/domains/property-hvac/property-hvac.types";
 
 const INPUT_CLASS =
-  "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950";
+  "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700";
 
 function today() {
   return new Date()
@@ -56,7 +56,7 @@ function Field({
   children,
 }) {
   return (
-    <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+    <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
       {label}
       {children}
     </label>
@@ -299,18 +299,18 @@ export default function PropertyHVACSystemReplacementPanel({
       data-property-hvac-system-replacement-panel
       className="mt-6"
     >
-      <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-5">
-        <div className="text-xs font-black uppercase tracking-wide text-amber-800">
+      <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-5 dark:bg-amber-950/30 dark:border-amber-700/50">
+        <div className="text-xs font-black uppercase tracking-wide text-amber-800 dark:text-amber-300">
           Permanent lifecycle transition
         </div>
 
-        <p className="mt-2 max-w-4xl text-sm font-bold leading-6 text-amber-950">
+        <p className="mt-2 max-w-4xl text-sm font-bold leading-6 text-amber-950 dark:text-amber-300">
           Approval permanently marks the former system as replaced, records its failure, creates the new active system, and links both records. Existing history is preserved and is not overwritten.
         </p>
       </div>
 
       {currentSystems.length === 0 ? (
-        <p className="mt-5 text-sm font-bold text-slate-600">
+        <p className="mt-5 text-sm font-bold text-slate-600 dark:text-slate-300">
           No current HVAC system is available to replace.
         </p>
       ) : (
@@ -656,7 +656,7 @@ export default function PropertyHVACSystemReplacementPanel({
             </Field>
           </div>
 
-          <label className="mt-6 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold leading-6 text-amber-950">
+          <label className="mt-6 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold leading-6 text-amber-950 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300">
             <input
               type="checkbox"
               checked={approved}
@@ -692,7 +692,7 @@ export default function PropertyHVACSystemReplacementPanel({
       {message && (
         <p
           role="status"
-          className="mt-4 text-sm font-bold text-slate-700"
+          className="mt-4 text-sm font-bold text-slate-700 dark:text-slate-300"
         >
           {message}
         </p>

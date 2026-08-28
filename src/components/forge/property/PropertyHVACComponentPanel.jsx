@@ -35,7 +35,7 @@ Object.freeze({
 });
 
 const INPUT_CLASS =
-  "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950";
+  "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700";
 
 function displayValue(value) {
   return String(value || "")
@@ -138,7 +138,7 @@ function Field({
   children,
 }) {
   return (
-    <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+    <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
       {label}
       {children}
     </label>
@@ -406,20 +406,20 @@ export default function PropertyHVACComponentPanel({
       className={
         focused
           ? "mt-6"
-          : "mt-7 rounded-2xl border border-sky-200 bg-sky-50 p-5"
+          : "mt-7 rounded-2xl border border-sky-200 bg-sky-50 p-5 dark:bg-sky-950/30"
       }
     >
       {!focused && (
       <div>
-        <div className="text-xs font-black uppercase tracking-wide text-sky-700">
+        <div className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">
           Replaceable Components
         </div>
 
-        <h5 className="mt-2 text-lg font-black text-slate-950">
+        <h5 className="mt-2 text-lg font-black text-slate-950 dark:text-slate-50">
           Component identity and replacement history
         </h5>
 
-        <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+        <p className="mt-2 text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
           Track component age independently from the overall system so compressor, motor, coil, control, and warranty history is preserved.
         </p>
       </div>
@@ -454,11 +454,11 @@ export default function PropertyHVACComponentPanel({
 
       {showComponentEditor && (
       systems.length === 0 ? (
-        <p className="mt-4 text-sm font-bold text-slate-600">
+        <p className="mt-4 text-sm font-bold text-slate-600 dark:text-slate-300">
           Save an HVAC system before adding its components.
         </p>
       ) : (
-        <div className="mt-5 rounded-2xl border border-sky-200 bg-white p-5">
+        <div className="mt-5 rounded-2xl border border-sky-200 bg-white p-5 dark:bg-slate-900">
           <div className="grid gap-4 md:grid-cols-3">
             <Field label="Component type">
               <select
@@ -755,7 +755,7 @@ export default function PropertyHVACComponentPanel({
       {message && (
         <p
           role="status"
-          className="mt-3 text-sm font-bold text-slate-600"
+          className="mt-3 text-sm font-bold text-slate-600 dark:text-slate-300"
         >
           {message}
         </p>
@@ -763,16 +763,16 @@ export default function PropertyHVACComponentPanel({
 
       {showComponentEditor && (
       <div className="mt-6">
-        <h6 className="text-sm font-black text-slate-950">
+        <h6 className="text-sm font-black text-slate-950 dark:text-slate-50">
           Recorded components
         </h6>
 
         {loading ? (
-          <p className="mt-3 text-sm font-semibold text-slate-500">
+          <p className="mt-3 text-sm font-semibold text-slate-500 dark:text-slate-400">
             Loading component history...
           </p>
         ) : components.length === 0 ? (
-          <p className="mt-3 text-sm font-semibold text-slate-500">
+          <p className="mt-3 text-sm font-semibold text-slate-500 dark:text-slate-400">
             No components recorded for this system.
           </p>
         ) : (
@@ -781,13 +781,13 @@ export default function PropertyHVACComponentPanel({
               (component) => (
                 <article
                   key={component.id}
-                  className="rounded-xl border border-sky-200 bg-white p-4"
+                  className="rounded-xl border border-sky-200 bg-white p-4 dark:bg-slate-900"
                 >
-                  <div className="text-sm font-black text-slate-950">
+                  <div className="text-sm font-black text-slate-950 dark:text-slate-50">
                     {component.name}
                   </div>
 
-                  <div className="mt-1 text-xs font-bold text-slate-500">
+                  <div className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-400">
                     {displayValue(
                       component.componentType,
                     )}
@@ -801,7 +801,7 @@ export default function PropertyHVACComponentPanel({
                     )}
                   </div>
 
-                  <div className="mt-3 text-xs font-semibold text-slate-600">
+                  <div className="mt-3 text-xs font-semibold text-slate-600 dark:text-slate-300">
                     {component.manufacturer ||
                       "Manufacturer unknown"}
                     {" · "}

@@ -381,28 +381,28 @@ export default function PropertyConditionAssessmentPanel() {
       data-property-condition-assessment-panel
       className={
         workflow === null
-          ? "max-w-5xl rounded-2xl border border-slate-200 bg-white p-6"
-          : "rounded-2xl border border-slate-200 bg-white p-6"
+          ? "max-w-5xl rounded-2xl border border-slate-200 bg-white p-6 dark:bg-slate-900 dark:border-slate-800"
+          : "rounded-2xl border border-slate-200 bg-white p-6 dark:bg-slate-900 dark:border-slate-800"
       }
     >
       {workflow === null ? (
         <>
           <div>
-            <div className="text-xs font-black uppercase tracking-wide text-emerald-700">
+            <div className="text-xs font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
               Condition Assessments
             </div>
 
-            <h4 className="mt-2 text-xl font-black text-slate-950">
+            <h4 className="mt-2 text-xl font-black text-slate-950 dark:text-slate-50">
               Standardized property condition history
             </h4>
 
-            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
               Record owner observations using the standardized REI 7-6-aligned checklist.
             </p>
           </div>
 
       <div className="mt-6 max-w-2xl">
-        <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+        <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
           Property
           <select
             value={propertyId}
@@ -411,7 +411,7 @@ export default function PropertyConditionAssessmentPanel() {
                 event.target.value,
               )
             }
-            className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+            className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
           >
             <option value="">
               Choose a property
@@ -429,12 +429,12 @@ export default function PropertyConditionAssessmentPanel() {
         </label>
       </div>
 
-          <div className="mt-5 max-w-xl rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="text-[11px] font-black uppercase text-slate-500">
+          <div className="mt-5 max-w-xl rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:bg-slate-800/60 dark:border-slate-800">
+            <div className="text-[11px] font-black uppercase text-slate-500 dark:text-slate-400">
               Saved assessments
             </div>
 
-            <div className="mt-1 text-xl font-black text-slate-950">
+            <div className="mt-1 text-xl font-black text-slate-950 dark:text-slate-50">
               {assessments.length}
             </div>
           </div>
@@ -463,12 +463,12 @@ export default function PropertyConditionAssessmentPanel() {
 
           {workflow === "record" && (
             <>
-              <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold leading-6 text-amber-950">
+              <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold leading-6 text-amber-950 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300">
                 This is an owner condition assessment aligned to the REI 7-6 checklist. It is not a licensed property inspection.
               </div>
 
       <div className="mt-6 grid gap-4 md:grid-cols-3">
-        <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+        <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
           Property
           <select
             value={propertyId}
@@ -477,7 +477,7 @@ export default function PropertyConditionAssessmentPanel() {
                 event.target.value,
               )
             }
-            className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+            className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
           >
             <option value="">
               Choose a property
@@ -494,7 +494,7 @@ export default function PropertyConditionAssessmentPanel() {
           </select>
         </label>
 
-        <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+        <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
           Effective date
           <input
             type="date"
@@ -504,11 +504,11 @@ export default function PropertyConditionAssessmentPanel() {
                 event.target.value,
               )
             }
-            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-3 text-sm font-bold normal-case text-slate-950"
+            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:text-slate-50 dark:border-slate-700"
           />
         </label>
 
-        <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+        <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
           Assessment summary
           <input
             value={summary}
@@ -518,14 +518,14 @@ export default function PropertyConditionAssessmentPanel() {
               )
             }
             placeholder="Owner walkthrough"
-            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-3 text-sm font-bold normal-case text-slate-950"
+            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:text-slate-50 dark:border-slate-700"
           />
         </label>
       </div>
 
-      <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+      <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:bg-slate-800/60 dark:border-slate-800">
         <div className="grid gap-4 md:grid-cols-3">
-          <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+          <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
             Checklist section
             <select
               value={section}
@@ -534,7 +534,7 @@ export default function PropertyConditionAssessmentPanel() {
                   event.target.value,
                 )
               }
-              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
             >
               {PROPERTY_CONDITION_SECTIONS.map(
                 (sectionValue) => (
@@ -554,7 +554,7 @@ export default function PropertyConditionAssessmentPanel() {
             </select>
           </label>
 
-          <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+          <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
             Checklist item
             <select
               value={itemKey}
@@ -563,7 +563,7 @@ export default function PropertyConditionAssessmentPanel() {
                   event.target.value,
                 )
               }
-              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
             >
               <option value="">
                 Choose an item
@@ -588,7 +588,7 @@ export default function PropertyConditionAssessmentPanel() {
             </select>
           </label>
 
-          <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+          <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
             Observation status
             <select
               value={status}
@@ -597,7 +597,7 @@ export default function PropertyConditionAssessmentPanel() {
                   event.target.value,
                 )
               }
-              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
             >
               {PROPERTY_CONDITION_OBSERVATION_STATUSES.map(
                 (statusValue) => (
@@ -633,7 +633,7 @@ export default function PropertyConditionAssessmentPanel() {
                   return (
                     <label
                       key={key}
-                      className="text-xs font-black uppercase tracking-wide text-slate-600"
+                      className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400"
                     >
                       {attributeLabel(
                         definition,
@@ -650,7 +650,7 @@ export default function PropertyConditionAssessmentPanel() {
                             event.target.value,
                           )
                         }
-                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
                       >
                         <option value="">
                           Not recorded
@@ -693,7 +693,7 @@ export default function PropertyConditionAssessmentPanel() {
                 return (
                   <label
                     key={key}
-                    className="text-xs font-black uppercase tracking-wide text-slate-600"
+                    className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400"
                   >
                     {attributeLabel(
                       definition,
@@ -718,7 +718,7 @@ export default function PropertyConditionAssessmentPanel() {
                           event.target.value,
                         )
                       }
-                      className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+                      className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
                     />
                   </label>
                 );
@@ -728,7 +728,7 @@ export default function PropertyConditionAssessmentPanel() {
         )}
 
         <div className="mt-4 grid gap-4 md:grid-cols-3">
-          <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+          <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
             Replacement cost
             <input
               type="number"
@@ -743,11 +743,11 @@ export default function PropertyConditionAssessmentPanel() {
                 )
               }
               placeholder="0.00"
-              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
             />
           </label>
 
-          <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+          <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
             Planned replacement year
             <input
               type="number"
@@ -759,11 +759,11 @@ export default function PropertyConditionAssessmentPanel() {
                   event.target.value,
                 )
               }
-              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
             />
           </label>
 
-          <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+          <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
             Notes
             <input
               value={notes}
@@ -773,7 +773,7 @@ export default function PropertyConditionAssessmentPanel() {
                 )
               }
               placeholder="Observed condition"
-              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+              className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
             />
           </label>
         </div>
@@ -789,7 +789,7 @@ export default function PropertyConditionAssessmentPanel() {
 
       {observations.length > 0 && (
         <div className="mt-6 space-y-3">
-          <h5 className="text-sm font-black text-slate-950">
+          <h5 className="text-sm font-black text-slate-950 dark:text-slate-50">
             Assessment observations
           </h5>
 
@@ -799,10 +799,10 @@ export default function PropertyConditionAssessmentPanel() {
                 key={
                   observation.itemKey
                 }
-                className="flex items-start justify-between gap-4 rounded-xl border border-slate-200 p-4"
+                className="flex items-start justify-between gap-4 rounded-xl border border-slate-200 p-4 dark:border-slate-800"
               >
                 <div>
-                  <div className="text-sm font-black text-slate-950">
+                  <div className="text-sm font-black text-slate-950 dark:text-slate-50">
                     {checklistItemLabel(
                       getPropertyConditionChecklistItem(
                         observation.itemKey,
@@ -810,7 +810,7 @@ export default function PropertyConditionAssessmentPanel() {
                     )}
                   </div>
 
-                  <div className="mt-1 text-xs font-bold text-slate-500">
+                  <div className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-400">
                     {displayValue(
                       observation.status,
                     )}
@@ -824,7 +824,7 @@ export default function PropertyConditionAssessmentPanel() {
                       observation.itemKey,
                     )
                   }
-                  className="text-xs font-black text-rose-700"
+                  className="text-xs font-black text-rose-700 dark:text-rose-400"
                 >
                   Remove
                 </button>
@@ -849,7 +849,7 @@ export default function PropertyConditionAssessmentPanel() {
         {message && (
           <p
             role="status"
-            className="text-sm font-bold text-slate-600"
+            className="text-sm font-bold text-slate-600 dark:text-slate-300"
           >
             {message}
           </p>
@@ -863,7 +863,7 @@ export default function PropertyConditionAssessmentPanel() {
           {workflow === "history" && (
             <>
       <div className="mt-6 max-w-2xl">
-        <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+        <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
           Property
           <select
             value={propertyId}
@@ -872,7 +872,7 @@ export default function PropertyConditionAssessmentPanel() {
                 event.target.value,
               )
             }
-            className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950"
+            className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
           >
             <option value="">
               Choose a property
@@ -889,13 +889,13 @@ export default function PropertyConditionAssessmentPanel() {
           </select>
         </label>
       </div>
-      <div className="mt-7 border-t border-slate-200 pt-6">
-        <h5 className="text-sm font-black text-slate-950">
+      <div className="mt-7 border-t border-slate-200 pt-6 dark:border-slate-800">
+        <h5 className="text-sm font-black text-slate-950 dark:text-slate-50">
           Condition history
         </h5>
 
         {assessments.length === 0 ? (
-          <p className="mt-3 text-sm font-semibold text-slate-500">
+          <p className="mt-3 text-sm font-semibold text-slate-500 dark:text-slate-400">
             No saved assessments for this property yet.
           </p>
         ) : (
@@ -904,14 +904,14 @@ export default function PropertyConditionAssessmentPanel() {
               (assessment) => (
                 <article
                   key={assessment.id}
-                  className="rounded-xl border border-slate-200 p-4"
+                  className="rounded-xl border border-slate-200 p-4 dark:border-slate-800"
                 >
-                  <div className="text-sm font-black text-slate-950">
+                  <div className="text-sm font-black text-slate-950 dark:text-slate-50">
                     {assessment.summary ||
                       "Property condition assessment"}
                   </div>
 
-                  <div className="mt-1 text-xs font-bold text-slate-500">
+                  <div className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-400">
                     {assessment.effectiveAt
                       ? formatPropertyConditionDate(
                           assessment.effectiveAt,

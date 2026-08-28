@@ -11,7 +11,7 @@ import {
 import PropertyHVACEventActionEditor from "./PropertyHVACEventActionEditor";
 
 const INPUT_CLASS =
-  "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950";
+  "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700";
 
 function todayValue() {
   return new Date()
@@ -177,7 +177,7 @@ function Field({
   children,
 }) {
   return (
-    <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+    <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
       {label}
       {children}
     </label>
@@ -428,7 +428,7 @@ export default function PropertyHVACEventPanel({
   return (
     <section
       data-property-hvac-event-panel
-      className="mt-7 rounded-2xl border border-amber-200 bg-amber-50 p-5"
+      className="mt-7 rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:bg-amber-950/30"
     >
       {importingInvoice && (
         <div
@@ -459,11 +459,11 @@ export default function PropertyHVACEventPanel({
       )}
 
       <div>
-        <div className="text-xs font-black uppercase tracking-wide text-amber-800">
+        <div className="text-xs font-black uppercase tracking-wide text-amber-800 dark:text-amber-300">
           Append-Only History
         </div>
 
-        <h5 className="mt-2 text-lg font-black text-slate-950">
+        <h5 className="mt-2 text-lg font-black text-slate-950 dark:text-slate-50">
           {initialEventType === "failed"
             ? "Complete system failure"
             : initialEventType === "repaired"
@@ -471,17 +471,17 @@ export default function PropertyHVACEventPanel({
               : "Inspection and service history"}
         </h5>
 
-        <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+        <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
           Preserve what happened, when it happened, which component was involved, who performed the work, and what it cost.
         </p>
       </div>
 
-      <div className="mt-5 grid gap-4 rounded-xl border border-blue-300 bg-blue-50 p-5">
+      <div className="mt-5 grid gap-4 rounded-xl border border-blue-300 bg-blue-50 p-5 dark:bg-blue-950/30">
         <div className="max-w-3xl">
-          <div className="text-sm font-black uppercase tracking-wide text-blue-900">
+          <div className="text-sm font-black uppercase tracking-wide text-blue-900 dark:text-blue-300">
             1. Add invoice or service photo
           </div>
-          <div className="mt-1 text-sm text-slate-700">
+          <div className="mt-1 text-sm text-slate-700 dark:text-slate-300">
             Select a PDF, JPEG, or PNG. FORGE will preserve the evidence and prepare editable service and component details.
           </div>
         </div>
@@ -522,7 +522,7 @@ export default function PropertyHVACEventPanel({
         </label>
 
         {evidenceReference && (
-          <div className="grid max-w-3xl gap-2 rounded-lg border border-emerald-200 bg-white p-4 text-xs text-slate-700">
+          <div className="grid max-w-3xl gap-2 rounded-lg border border-emerald-200 bg-white p-4 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300">
             <div className="font-black text-emerald-800">
               Document read successfully — review the populated HVAC fields below.
             </div>
@@ -543,16 +543,16 @@ export default function PropertyHVACEventPanel({
       </div>
 
       {!systemId ? (
-        <p className="mt-4 text-sm font-bold text-slate-600">
+        <p className="mt-4 text-sm font-bold text-slate-600 dark:text-slate-300">
           Choose an HVAC system before recording events.
         </p>
       ) : (
-        <div className="mt-5 rounded-2xl border-2 border-blue-200 bg-white p-5 shadow-sm">
+        <div className="mt-5 rounded-2xl border-2 border-blue-200 bg-white p-5 shadow-sm dark:bg-slate-900">
           <div className="mb-5">
-            <div className="text-sm font-black uppercase tracking-wide text-blue-900">
+            <div className="text-sm font-black uppercase tracking-wide text-blue-900 dark:text-blue-300">
               2. Review service and component details
             </div>
-            <div className="mt-1 text-sm text-slate-600">
+            <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
               Confirm or correct every extracted field before recording the append-only event.
             </div>
           </div>
@@ -734,7 +734,7 @@ export default function PropertyHVACEventPanel({
             }
           />
 
-          <div className="mt-5 rounded-lg bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900">
+          <div className="mt-5 rounded-lg bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900 dark:bg-amber-950/30">
             Invoice upload creates only a review proposal. HVAC history changes only after this approval.
           </div>
 
@@ -754,19 +754,19 @@ export default function PropertyHVACEventPanel({
       {message && (
         <p
           role="status"
-          className="mt-3 text-sm font-bold text-slate-600"
+          className="mt-3 text-sm font-bold text-slate-600 dark:text-slate-300"
         >
           {message}
         </p>
       )}
 
       <div className="mt-6">
-        <h6 className="text-sm font-black text-slate-950">
+        <h6 className="text-sm font-black text-slate-950 dark:text-slate-50">
           Service history
         </h6>
 
         {events.length === 0 ? (
-          <p className="mt-3 text-sm font-semibold text-slate-500">
+          <p className="mt-3 text-sm font-semibold text-slate-500 dark:text-slate-400">
             No service events recorded for this system.
           </p>
         ) : (
@@ -774,17 +774,17 @@ export default function PropertyHVACEventPanel({
             {events.map((event) => (
               <article
                 key={event.id}
-                className="rounded-xl border border-amber-200 bg-white p-4"
+                className="rounded-xl border border-amber-200 bg-white p-4 dark:bg-slate-900"
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <div className="text-sm font-black text-slate-950">
+                    <div className="text-sm font-black text-slate-950 dark:text-slate-50">
                       {displayValue(
                         event.eventType,
                       )}
                     </div>
 
-                    <div className="mt-1 text-xs font-bold text-slate-500">
+                    <div className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-400">
                       {componentName(
                         event.componentId,
                       )}
@@ -803,7 +803,7 @@ export default function PropertyHVACEventPanel({
                     </div>
                   </div>
 
-                  <div className="text-sm font-black text-amber-800">
+                  <div className="text-sm font-black text-amber-800 dark:text-amber-300">
                     {event.costCents != null
                       ? new Intl.NumberFormat(
                           "en-US",
@@ -821,7 +821,7 @@ export default function PropertyHVACEventPanel({
 
                 {(event.failureSymptoms ||
                   event.workPerformed) && (
-                  <div className="mt-3 text-sm font-semibold leading-6 text-slate-600">
+                  <div className="mt-3 text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
                     {event.failureSymptoms && (
                       <p>
                         Symptoms:{" "}
@@ -841,7 +841,7 @@ export default function PropertyHVACEventPanel({
                 {event.componentActions?.length >
                   0 && (
                   <div className="mt-4 border-t border-amber-100 pt-3">
-                    <div className="text-xs font-black uppercase tracking-wide text-amber-800">
+                    <div className="text-xs font-black uppercase tracking-wide text-amber-800 dark:text-amber-300">
                       Component actions
                     </div>
 
@@ -853,9 +853,9 @@ export default function PropertyHVACEventPanel({
                         ) => (
                           <div
                             key={`${action.actionType}-${action.description}-${index}`}
-                            className="rounded-lg bg-amber-50 px-3 py-2"
+                            className="rounded-lg bg-amber-50 px-3 py-2 dark:bg-amber-950/30"
                           >
-                            <div className="text-xs font-black text-slate-950">
+                            <div className="text-xs font-black text-slate-950 dark:text-slate-50">
                               {displayValue(
                                 action.actionType,
                               )}
@@ -871,13 +871,13 @@ export default function PropertyHVACEventPanel({
                                   : "System action"}
                             </div>
 
-                            <div className="mt-1 text-sm font-semibold text-slate-600">
+                            <div className="mt-1 text-sm font-semibold text-slate-600 dark:text-slate-300">
                               {action.description}
                             </div>
 
                             {action.quantity !=
                               null && (
-                              <div className="mt-1 text-xs font-bold text-slate-500">
+                              <div className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-400">
                                 {action.quantity}
                                 {action.unit
                                   ? ` ${action.unit}`

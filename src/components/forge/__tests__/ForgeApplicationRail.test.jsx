@@ -17,12 +17,12 @@ vi.mock(
   }),
 );
 
+import ThemeProvider from "@/components/theme/ThemeProvider";
+
 import ForgeApplicationRail, {
   FORGE_APPLICATIONS,
   isForgeApplicationActive,
 } from "../ForgeApplicationRail.jsx";
-
-import { ThemeProvider } from "@/contexts/ThemeContext";
 
 describe(
   "ForgeApplicationRail",
@@ -142,6 +142,32 @@ describe(
         );
         expect(markup).toContain(
           "Open Forge navigation",
+        );
+      },
+    );
+
+    it(
+      "renders a compact, accessible theme menu button in the persistent nav",
+      () => {
+        const markup =
+          renderToStaticMarkup(
+            <ThemeProvider>
+              <ForgeApplicationRail>
+                <main>
+                  Property workspace
+                </main>
+              </ForgeApplicationRail>
+            </ThemeProvider>,
+          );
+
+        expect(markup).toContain(
+          'aria-haspopup="menu"',
+        );
+        expect(markup).toContain(
+          'aria-expanded="false"',
+        );
+        expect(markup).toContain(
+          "Theme: System",
         );
       },
     );

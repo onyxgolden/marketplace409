@@ -181,7 +181,7 @@ export default function FinancialApplicationShell({
       activeSurface={
         <div className="space-y-5">
           {error && (
-            <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-900">
+            <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-900 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
               <div className="font-black">
                 Financial data failed to load.
               </div>

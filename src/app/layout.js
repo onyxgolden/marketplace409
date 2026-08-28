@@ -1,8 +1,9 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { ThemeProvider } from "@/contexts/ThemeContext";
-import { THEME_STORAGE_KEY } from "@/contexts/ThemeContext";
 import ImpactSiteVerificationMeta from "./ImpactSiteVerificationMeta";
+
+import ThemeProvider from "@/components/theme/ThemeProvider";
+import { buildNoFlashThemeScript } from "@/lib/theme/noFlashThemeScript";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -20,18 +21,6 @@ export const metadata = {
     "A local Southeast Texas marketplace for listings, services, rentals, pets, community resources, and American-made products.",
 };
 
-// Runs before React hydrates so the correct theme is already applied by
-// first paint — without this, the page would flash the wrong theme
-// whenever the stored/OS preference is dark (Next.js renders the server
-// HTML with no theme information at all).
-const NO_FLASH_THEME_SCRIPT = `(function () {
-  try {
-    var stored = localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});
-    var dark = stored ? stored === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
-    if (dark) document.documentElement.classList.add("dark");
-  } catch (e) {}
-})();`;
-
 export default function RootLayout({ children }) {
   return (
     <html
@@ -43,7 +32,12 @@ export default function RootLayout({ children }) {
         <ImpactSiteVerificationMeta />
       </head>
       <body className="min-h-full flex flex-col">
-        <script dangerouslySetInnerHTML={{ __html: NO_FLASH_THEME_SCRIPT }} />
+        <script
+          // Runs before hydration to apply the resolved theme class and
+          // prevent a light-mode flash on initial load. See
+          // src/lib/theme/noFlashThemeScript.js.
+          dangerouslySetInnerHTML={{ __html: buildNoFlashThemeScript() }}
+        />
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

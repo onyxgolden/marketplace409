@@ -9,7 +9,7 @@ function PropertyList({
       data-property-performance-list
       className="space-y-1"
     >
-      <div className="hidden grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.7fr)_minmax(8rem,0.8fr)_minmax(8rem,0.8fr)_auto] gap-2 px-4 py-1 text-[10px] font-black uppercase tracking-wide text-slate-500 sm:grid">
+      <div className="hidden grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.7fr)_minmax(8rem,0.8fr)_minmax(8rem,0.8fr)_auto] gap-2 px-4 py-1 text-[10px] font-black uppercase tracking-wide text-slate-500 sm:grid dark:text-slate-400">
         <div>Property</div>
         <div>Activity</div>
         <div>NOI</div>
@@ -76,11 +76,11 @@ export default function RentalPortfolioPerformance({
 
       <div className="mt-2 flex flex-col justify-between gap-3 md:flex-row md:items-end">
         <div>
-          <h2 className="text-2xl font-black text-slate-950">
+          <h2 className="text-2xl font-black text-slate-950 dark:text-slate-50">
             Rental Portfolio Summary
           </h2>
 
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 dark:text-slate-300">
             Actual imported cash activity plus verified taxes and insurance
             accrued into the selected reporting period. NOI uses accrued
             property costs while cash flow preserves actual payments.
@@ -89,7 +89,7 @@ export default function RentalPortfolioPerformance({
 
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-52">
-            <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-500">
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
               Reporting period
             </span>
 
@@ -103,7 +103,7 @@ export default function RentalPortfolioPerformance({
                   event.target.value,
                 )
               }
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-black text-slate-800"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-black text-slate-800 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700"
             >
               {periodOptions.map(
                 (option) => (
@@ -122,25 +122,25 @@ export default function RentalPortfolioPerformance({
             </select>
           </label>
 
-          <div className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-black uppercase tracking-wide text-emerald-800">
+          <div className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-black uppercase tracking-wide text-emerald-800 dark:bg-emerald-950/30">
             Repository Backed
           </div>
         </div>
       </div>
 
       {loadState === "loading" && (
-        <div className="mt-6 rounded-2xl bg-slate-100 p-6 text-sm font-bold text-slate-600">
+        <div className="mt-6 rounded-2xl bg-slate-100 p-6 text-sm font-bold text-slate-600 dark:text-slate-300 dark:bg-slate-800/60">
           Loading rental portfolio activity...
         </div>
       )}
 
       {loadState === "ready" && !portfolio && (
-        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-6">
-          <div className="font-black text-slate-900">
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-6 dark:bg-slate-800/60 dark:border-slate-800">
+          <div className="font-black text-slate-900 dark:text-slate-50">
             No rental portfolio data is available yet.
           </div>
 
-          <div className="mt-2 text-sm text-slate-600">
+          <div className="mt-2 text-sm text-slate-600 dark:text-slate-300">
             Import a Rentec financial file to populate this summary.
           </div>
         </div>
@@ -152,13 +152,13 @@ export default function RentalPortfolioPerformance({
             {portfolio.metrics.map((metric) => (
               <div
                 key={metric.label}
-                className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:bg-slate-800/60 dark:border-slate-800"
               >
                 <div className={forgeTheme.labelSmall}>
                   {metric.label}
                 </div>
 
-                <div className="mt-2 text-2xl font-black text-slate-950">
+                <div className="mt-2 text-2xl font-black text-slate-950 dark:text-slate-50">
                   {metric.value}
                 </div>
               </div>
@@ -172,16 +172,16 @@ export default function RentalPortfolioPerformance({
                   Properties
                 </div>
 
-                <h3 className="mt-1 text-xl font-black text-slate-950">
+                <h3 className="mt-1 text-xl font-black text-slate-950 dark:text-slate-50">
                   Imported Property Performance
                 </h3>
 
-                <div className="mt-1 text-xs font-bold text-sky-700">
+                <div className="mt-1 text-xs font-bold text-sky-700 dark:text-sky-400">
                   {selectedPeriodLabel}
                 </div>
               </div>
 
-              <div className="text-sm font-bold text-slate-500">
+              <div className="text-sm font-bold text-slate-500 dark:text-slate-400">
                 {properties.length}{" "}
                 {properties.length === 1
                   ? "property"
@@ -190,12 +190,12 @@ export default function RentalPortfolioPerformance({
             </div>
 
             {properties.length === 0 ? (
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600 dark:text-slate-300 dark:bg-slate-800/60 dark:border-slate-800">
                 No property-linked financial events were found.
               </div>
             ) : (
               <div className="mt-4">
-                <div className="mb-3 text-xs font-semibold text-slate-500">
+                <div className="mb-3 text-xs font-semibold text-slate-500 dark:text-slate-400">
                   Select a property to expand and compare imported cash activity with accrued operating costs.
                 </div>
 
@@ -212,25 +212,25 @@ export default function RentalPortfolioPerformance({
                 Categories
               </div>
 
-              <h3 className="mt-1 text-xl font-black text-slate-950">
+              <h3 className="mt-1 text-xl font-black text-slate-950 dark:text-slate-50">
                 Income and Expense Breakdown
               </h3>
 
-              <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
+              <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800">
                 <table className="w-full border-collapse text-left text-sm">
-                  <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-500">
+                  <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
                     <tr>
                       <th className="p-3">Category</th>
                       <th className="p-3 text-right">Net</th>
                     </tr>
                   </thead>
 
-                  <tbody className="divide-y divide-slate-200">
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                     {categories.length === 0 ? (
                       <tr>
                         <td
                           colSpan={2}
-                          className="p-5 text-slate-500"
+                          className="p-5 text-slate-500 dark:text-slate-400"
                         >
                           No categorized activity yet.
                         </td>
@@ -238,15 +238,15 @@ export default function RentalPortfolioPerformance({
                     ) : (
                       categories.map((category) => (
                         <tr key={category.category}>
-                          <td className="p-3 font-bold text-slate-800">
+                          <td className="p-3 font-bold text-slate-800 dark:text-slate-200">
                             {category.label}
                           </td>
 
                           <td
                             className={`p-3 text-right font-black ${
                               category.isNegative
-                                ? "text-rose-700"
-                                : "text-emerald-700"
+                                ? "text-rose-700 dark:text-rose-400"
+                                : "text-emerald-700 dark:text-emerald-400"
                             }`}
                           >
                             {category.value}
@@ -264,28 +264,28 @@ export default function RentalPortfolioPerformance({
                 Recent Imported Activity
               </div>
 
-              <h3 className="mt-1 text-xl font-black text-slate-950">
+              <h3 className="mt-1 text-xl font-black text-slate-950 dark:text-slate-50">
                 Latest Financial Events
               </h3>
 
               <div className="mt-4 space-y-3">
                 {recentTransactions.length === 0 ? (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600 dark:text-slate-300 dark:bg-slate-800/60 dark:border-slate-800">
                     No imported financial activity yet.
                   </div>
                 ) : (
                   recentTransactions.map((transaction) => (
                     <div
                       key={transaction.id}
-                      className="rounded-2xl border border-slate-200 bg-white p-4"
+                      className="rounded-2xl border border-slate-200 bg-white p-4 dark:bg-slate-900 dark:border-slate-800"
                     >
                       <div className="flex items-start justify-between gap-4">
                         <div>
-                          <div className="font-black text-slate-900">
+                          <div className="font-black text-slate-900 dark:text-slate-50">
                             {transaction.description}
                           </div>
 
-                          <div className="mt-1 text-xs font-bold uppercase tracking-wide text-slate-500">
+                          <div className="mt-1 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                             {transaction.eventDate} ·{" "}
                             {transaction.propertyName}
                           </div>
@@ -294,8 +294,8 @@ export default function RentalPortfolioPerformance({
                         <div
                           className={`font-black ${
                             transaction.isIncome
-                              ? "text-emerald-700"
-                              : "text-rose-700"
+                              ? "text-emerald-700 dark:text-emerald-400"
+                              : "text-rose-700 dark:text-rose-400"
                           }`}
                         >
                           {transaction.isIncome ? "+" : "-"}
@@ -304,11 +304,11 @@ export default function RentalPortfolioPerformance({
                       </div>
 
                       <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
-                        <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                           {transaction.categoryLabel}
                         </span>
 
-                        <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                           {transaction.sourceSystem}
                         </span>
                       </div>

@@ -94,7 +94,7 @@ function statusPresentation(
         label:
           "Approved",
         className:
-          "border-emerald-200 bg-emerald-50 text-emerald-800",
+          "border-emerald-200 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30",
       };
 
     case "extraction_failed":
@@ -102,7 +102,7 @@ function statusPresentation(
         label:
           "Extraction failed",
         className:
-          "border-rose-200 bg-rose-50 text-rose-800",
+          "border-rose-200 bg-rose-50 text-rose-800 dark:bg-rose-950/30",
       };
 
     case "pending_review":
@@ -110,7 +110,7 @@ function statusPresentation(
         label:
           "Pending review",
         className:
-          "border-amber-200 bg-amber-50 text-amber-800",
+          "border-amber-200 bg-amber-50 text-amber-800 dark:text-amber-300 dark:bg-amber-950/30",
       };
 
     default:
@@ -121,7 +121,7 @@ function statusPresentation(
               "pending",
           ),
         className:
-          "border-slate-200 bg-slate-50 text-slate-700",
+          "border-slate-200 bg-slate-50 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300 dark:border-slate-800",
       };
   }
 }
@@ -146,7 +146,7 @@ export function PropertyEvidenceHistoryList({
 }) {
   if (evidence.length === 0) {
     return (
-      <p className="mt-4 text-sm font-semibold text-slate-500">
+      <p className="mt-4 text-sm font-semibold text-slate-500 dark:text-slate-400">
         No private evidence has been recorded for this property.
       </p>
     );
@@ -181,15 +181,15 @@ export function PropertyEvidenceHistoryList({
         return (
           <article
             key={record.id}
-            className="rounded-xl border border-slate-200 bg-white p-4"
+            className="rounded-xl border border-slate-200 bg-white p-4 dark:bg-slate-900 dark:border-slate-800"
           >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div className="text-sm font-black text-slate-950">
+                <div className="text-sm font-black text-slate-950 dark:text-slate-50">
                   {record.originalFilename}
                 </div>
 
-                <div className="mt-1 text-xs font-bold text-slate-500">
+                <div className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-400">
                   {displayEvidenceValue(
                     record.mimeType,
                   )}
@@ -213,21 +213,21 @@ export function PropertyEvidenceHistoryList({
 
             <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
               <div>
-                <dt className="font-black uppercase tracking-wide text-slate-500">
+                <dt className="font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
                   Property
                 </dt>
 
-                <dd className="mt-1 font-bold text-slate-800">
+                <dd className="mt-1 font-bold text-slate-800 dark:text-slate-200">
                   {record.propertyId}
                 </dd>
               </div>
 
               <div>
-                <dt className="font-black uppercase tracking-wide text-slate-500">
+                <dt className="font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
                   Extraction
                 </dt>
 
-                <dd className="mt-1 font-bold text-slate-800">
+                <dd className="mt-1 font-bold text-slate-800 dark:text-slate-200">
                   {displayEvidenceValue(
                     record.extractionMethod,
                   )}
@@ -235,22 +235,22 @@ export function PropertyEvidenceHistoryList({
               </div>
 
               <div>
-                <dt className="font-black uppercase tracking-wide text-slate-500">
+                <dt className="font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
                   Parser
                 </dt>
 
-                <dd className="mt-1 font-bold text-slate-800">
+                <dd className="mt-1 font-bold text-slate-800 dark:text-slate-200">
                   {record.parserVersion ||
                     "Not available"}
                 </dd>
               </div>
 
               <div>
-                <dt className="font-black uppercase tracking-wide text-slate-500">
+                <dt className="font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
                   HVAC link
                 </dt>
 
-                <dd className="mt-1 font-bold text-slate-800">
+                <dd className="mt-1 font-bold text-slate-800 dark:text-slate-200">
                   {linkedSystem}
                 </dd>
               </div>
@@ -262,7 +262,7 @@ export function PropertyEvidenceHistoryList({
                   record.hvacEventId ||
                   undefined
                 }
-                className="text-xs font-semibold text-slate-500"
+                className="text-xs font-semibold text-slate-500 dark:text-slate-400"
               >
                 {record.hvacEventId
                   ? "Linked to approved service event"
@@ -388,11 +388,11 @@ export default function PropertyEvidenceHistoryPanel({
             Property Evidence
           </div>
 
-          <h5 className="mt-2 text-lg font-black text-slate-950">
+          <h5 className="mt-2 text-lg font-black text-slate-950 dark:text-slate-50">
             Private evidence history
           </h5>
 
-          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
             Review original invoices and photographs, extraction provenance, approval state, and linked HVAC history.
           </p>
         </div>
@@ -411,7 +411,7 @@ export default function PropertyEvidenceHistoryPanel({
                 current + 1,
             )
           }
-          className="rounded-xl border border-violet-300 bg-white px-4 py-2 text-xs font-black text-violet-800 disabled:opacity-50"
+          className="rounded-xl border border-violet-300 bg-white px-4 py-2 text-xs font-black text-violet-800 disabled:opacity-50 dark:bg-slate-900"
         >
           {loading
             ? "Refreshing evidence..."
@@ -420,17 +420,17 @@ export default function PropertyEvidenceHistoryPanel({
       </div>
 
       {!propertyId ? (
-        <p className="mt-4 text-sm font-semibold text-slate-500">
+        <p className="mt-4 text-sm font-semibold text-slate-500 dark:text-slate-400">
           Choose a property to view its private evidence.
         </p>
       ) : loading ? (
-        <p className="mt-4 text-sm font-semibold text-slate-500">
+        <p className="mt-4 text-sm font-semibold text-slate-500 dark:text-slate-400">
           Loading private evidence...
         </p>
       ) : message ? (
         <p
           role="status"
-          className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800"
+          className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800 dark:bg-rose-950/30"
         >
           {message}
         </p>
