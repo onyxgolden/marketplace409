@@ -1,4 +1,4 @@
-# Rental Manager Seller Financing — Owner-Directed Handoff
+# FORGE Private Financing — Owner-Directed Handoff
 
 ## Status and priority
 
@@ -15,9 +15,20 @@ with current code, stop and report the conflict rather than silently forcing the
 
 ## Product intent
 
-Add a reusable **Seller Financing** capability inside Rental Manager for landlords who sell homes through
-owner financing. It must not represent the buyer as a renter or ordinary tenant and must not classify loan
-principal as rent or rental income.
+Build a reusable **FORGE Private Financing** foundation for people and small businesses servicing legitimate
+loans they already own. The first production-facing use case remains **Seller Financing** inside Rental
+Manager, proven with the South Main account. The shared engine must be designed so a later **Personal Loans**
+surface can reuse its terms, calculation, immutable ledger, payments, statements, adjustments, borrower
+access, payoff, and audit capabilities without treating every loan as property or rent.
+
+Seller Financing must not represent the buyer as a renter or ordinary tenant and must not classify loan
+principal as rent or rental income. Personal Loans should later appear as a separate FORGE product surface,
+likely integrated with Financial FORGE, rather than being forced into Rental Manager.
+
+Initial boundary: FORGE provides recordkeeping, servicing, statements, and payment software for agreements
+the customer already owns. It does not originate or underwrite loans, match lenders and borrowers, buy debt,
+collect defaulted debt for unrelated third parties, determine enforceability, or automatically declare
+default or accelerate a loan.
 
 The first real account is the South Main home. The seller must be able to manage the loan in Rental Manager.
 The home buyer must have a borrower/home-buyer portal that shows:
@@ -162,6 +173,66 @@ confirmation and a durable receipt.
 - Financial FORGE integration must preserve these classifications and the acting-user/canonical-owner audit
   split.
 
+
+## Approved platform expansion beyond the first Seller Financing account
+
+The owner approved designing the foundation for a broader **FORGE Private Financing** product with two
+product-specific experiences:
+
+1. **Seller Financing** — property-linked and accessible from Rental Manager.
+2. **Personal Loans** — a later general-purpose surface connected to Financial FORGE.
+
+The common engine should support interest-bearing and zero-interest components, fixed or flexible payments,
+actual-day or scheduled interest methods, secured or unsecured classifications, early/late/partial/extra
+payments, credits, waivers, discounted settlements, external payments, statements, receipts, and explainable
+historical reconstruction. Product-specific rules and disclosures must remain explicit; do not flatten all
+loan types into one unsafe generic behavior.
+
+### FORGE servicing revenue
+
+Design—but do not activate without later approval—a configurable FORGE platform fee of **$0 to $10 per
+active loan per month**. The lender/seller pays by default. It is FORGE subscription/servicing revenue,
+not loan principal or interest, and must never reduce the amount credited from a borrower payment.
+
+A borrower-paid servicing fee may be supported only for future agreements when applicable law and the signed
+agreement authorize it. It must be separately disclosed, receipted, and classified; it cannot be enabled
+retroactively through a dashboard toggle. The South Main account is grandfathered: the seller absorbs both
+FORGE servicing and Stripe processing expenses, and the buyer receives full credit for every dollar submitted.
+
+### Later optional credit reporting
+
+Reserve an extension boundary for **buyer-opt-in credit reporting**, but do not implement or advertise it as
+available during SF-0 through SF-4. Treat it as a later **PF-5 / optional credit-reporting integration**,
+dependent on a qualified third-party furnisher/reporting provider, legal and processor review, verified data
+accuracy, dispute/correction workflows, and explicit buyer consent.
+
+FORGE must not promise score improvement or selectively report only favorable events when the provider or law
+requires complete history. Prefer provider-hosted identity verification/tokenization so FORGE does not store
+full Social Security numbers, identity documents, or unnecessary birth dates. Reporting fees must remain
+separate from principal, interest, and payment credit. Opt-out behavior and already-reported accurate history
+must follow provider and legal requirements.
+
+### Later document-generation product
+
+Reserve a future **FORGE Documents** layer that uses the same authoritative loan terms and calculation engine
+to produce consistent documents and servicing records. Potential outputs include term sheets, promissory
+notes, payment schedules, amortization tables, payment instructions, servicing-fee disclosures, prepayment
+and late-fee selections, optional credit-reporting consent, borrower acknowledgments, signature packages,
+and a permanent signed-document archive.
+
+Delivery must progress in controlled levels:
+
+1. Import and service an existing agreement.
+2. Generate a non-binding term sheet for review.
+3. Offer versioned, state- and loan-type-specific attorney-reviewed templates.
+4. Only later consider complete execution packages with e-signature, notarization, recording instructions,
+   disclosures, and automatic servicing activation.
+
+Never present one generic contract as valid for every state or transaction. Each template needs state,
+loan type, version, effective date, review status, required disclosures, eligibility restrictions, and
+notarization/recording requirements. FORGE may populate reviewed templates and validate arithmetic; it must
+not decide whether a transaction or its terms are legally appropriate.
+
 ## Security and data model expectations
 
 Perform a read-only overlap and authorization inspection before proposing migrations. Expected concepts include
@@ -211,13 +282,16 @@ or enable live money movement without the owner's explicit instruction for that 
 ## Immediate Claude assignment
 
 Pause implementation of GW-3 after preserving its exact state. Begin **SF-0 only**: read-only repository
-inspection and a source-cited integration map. Do not begin migrations, UI implementation, Stripe changes,
+inspection and a source-cited integration map for the reusable Private Financing foundation, with Seller
+Financing/South Main as the first bounded delivery and Personal Loans as a later product surface. Do not begin migrations, UI implementation, Stripe changes,
 or Production data work. Return:
 
 - the preserved GW-3 branch/worktree/dirty-state checkpoint;
 - PR #55 and `origin/main` reality;
 - reusable code and real gaps for Seller Financing;
-- proposed data, ledger, authorization, payment, accounting, and UI boundaries;
-- processor/policy questions requiring verification;
-- proposed SF-1 slices and tests;
+- proposed shared Private Financing data, ledger, calculation, authorization, payment, accounting, and audit boundaries;
+- product boundaries between Seller Financing, Personal Loans, optional credit reporting, and FORGE Documents;
+- a safe $0-$10 lender-paid monthly servicing-fee design that never reduces borrower payment credit;
+- processor, reporting-provider, licensing, template-review, and policy questions requiring verification;
+- proposed SF-1 slices and tests, keeping South Main as the first proof account;
 - conflicts or decisions that genuinely require owner input.
