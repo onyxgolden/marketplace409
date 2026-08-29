@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { activeBalanceCentsForTenant, propertyLabelForTenant, tenantHouseholdForSelection } from "./RentalTenantPanel";
+import { renderToStaticMarkup } from "react-dom/server";
+import RentalTenantPanel, { activeBalanceCentsForTenant, propertyLabelForTenant, tenantHouseholdForSelection } from "./RentalTenantPanel";
 
 const leases = [
   { id: "lease_1", unit_id: "unit_1", status: "active" },
@@ -47,5 +48,29 @@ describe("tenantHouseholdForSelection", () => {
     const household = tenantHouseholdForSelection(householdTenants[1], householdTenants, [{ id: "lease_1", unit_id: "unit_1", status: "active" }], memberships, units);
     expect(household.primaryTenant.display_name).toBe("Primary");
     expect(household.coTenants.map((tenant) => tenant.display_name)).toEqual(["Spouse"]);
+  });
+});
+
+// FORGE does not collect tenant birth dates -- verifies the field is gone from the form and never
+// re-appears even for a legacy tenant record that still happens to carry a stored date_of_birth
+// value (proving it's not displayed, not merely not requested for new tenants).
+describe("RentalTenantPanel birth-date removal", () => {
+  it("never renders a date-of-birth field or label, even for a legacy tenant record with a stored value", () => {
+    const legacyTenant = {
+      id: "tenant_1", display_name: "Ashley George", email: "ashley@example.com", phone: "555-1000",
+      date_of_birth: "1990-01-01", status: "active",
+    };
+    const markup = renderToStaticMarkup(<RentalTenantPanel initialTenants={[legacyTenant]} />);
+    expect(markup).not.toContain("Date of birth");
+    expect(markup).not.toContain("dateOfBirth");
+    expect(markup).not.toContain("1990-01-01");
+  });
+
+  it("does not include a dateOfBirth field in the tenant-creation form submission shape", () => {
+    // The create form only ever sends displayName/email/phone (see RentalTenantPanel.jsx's save()) --
+    // this pins that shape so a birth-date field can't be silently reintroduced there either.
+    const markup = renderToStaticMarkup(<RentalTenantPanel initialTenants={[]} />);
+    expect(markup).not.toContain("Date of birth");
+    expect(markup).not.toContain('name="dateOfBirth"');
   });
 });

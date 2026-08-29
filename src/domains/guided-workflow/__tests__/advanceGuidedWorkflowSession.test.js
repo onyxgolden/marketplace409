@@ -7,6 +7,7 @@ import {
   resumeGuidedWorkflowSession,
   exitGuidedWorkflowSession,
   authorizeGuidedWorkflowSessionStart,
+  sessionHasUnavailableSteps,
   GuidedWorkflowAuthorizationError,
 } from "../advanceGuidedWorkflowSession.js";
 import { validateWorkflowDefinition, EVALUATOR_RESULT_STATUS, GUIDED_WORKFLOW_SESSION_STATUS, WORKFLOW_STEP_CONSEQUENCE } from "../guidedWorkflowContracts.js";
@@ -238,5 +239,62 @@ describe("pause / resume / exit", () => {
 
   it("rejects exiting across a workspace boundary", () => {
     expect(() => exitGuidedWorkflowSession(activeSession(), "a-different-owner", LATER)).toThrow(GuidedWorkflowAuthorizationError);
+  });
+});
+
+describe("UNAVAILABLE steps (partial-data source)", () => {
+  const definition = fixtureDefinition();
+
+  it("skips an UNAVAILABLE step with its own distinct reason code, never conflating it with not_applicable or already_complete", () => {
+    const session = startGuidedWorkflowSession({
+      sessionId: "session-1", workflowDefinition: definition,
+      evaluatorResults: results({ "step-a": EVALUATOR_RESULT_STATUS.UNAVAILABLE, "step-b": EVALUATOR_RESULT_STATUS.NOT_APPLICABLE, "step-c": EVALUATOR_RESULT_STATUS.NOT_APPLICABLE }),
+      actingUserId: "user-1", canonicalOwnerId: "owner-1", now: NOW,
+    });
+    expect(session.currentStepId).toBeNull();
+    expect(session.status).toBe(GUIDED_WORKFLOW_SESSION_STATUS.COMPLETED);
+    const skippedA = session.skippedSteps.find((s) => s.stepId === "step-a");
+    expect(skippedA.reasonCode).toBe("unavailable");
+    expect(skippedA.reasonCode).not.toBe("not_applicable");
+    expect(skippedA.reasonCode).not.toBe("already_complete");
+  });
+
+  it("does not treat an UNAVAILABLE step as needing attention -- it's walked past, not stopped on", () => {
+    const session = startGuidedWorkflowSession({
+      sessionId: "session-1", workflowDefinition: definition,
+      evaluatorResults: results({ "step-a": EVALUATOR_RESULT_STATUS.UNAVAILABLE, "step-b": EVALUATOR_RESULT_STATUS.REQUIRED, "step-c": EVALUATOR_RESULT_STATUS.NOT_APPLICABLE }),
+      actingUserId: "user-1", canonicalOwnerId: "owner-1", now: NOW,
+    });
+    expect(session.currentStepId).toBe("step-b");
+  });
+
+  it("sessionHasUnavailableSteps is true whenever any step was skipped as unavailable, even if the session reached COMPLETED", () => {
+    const session = startGuidedWorkflowSession({
+      sessionId: "session-1", workflowDefinition: definition,
+      evaluatorResults: results({ "step-a": EVALUATOR_RESULT_STATUS.UNAVAILABLE, "step-b": EVALUATOR_RESULT_STATUS.NOT_APPLICABLE, "step-c": EVALUATOR_RESULT_STATUS.NOT_APPLICABLE }),
+      actingUserId: "user-1", canonicalOwnerId: "owner-1", now: NOW,
+    });
+    expect(session.status).toBe(GUIDED_WORKFLOW_SESSION_STATUS.COMPLETED);
+    expect(sessionHasUnavailableSteps(session)).toBe(true);
+  });
+
+  it("sessionHasUnavailableSteps is false for an ordinary, fully-evaluated completed session", () => {
+    const session = startGuidedWorkflowSession({
+      sessionId: "session-1", workflowDefinition: definition,
+      evaluatorResults: results({ "step-a": EVALUATOR_RESULT_STATUS.NOT_APPLICABLE, "step-b": EVALUATOR_RESULT_STATUS.NOT_APPLICABLE, "step-c": EVALUATOR_RESULT_STATUS.NOT_APPLICABLE }),
+      actingUserId: "user-1", canonicalOwnerId: "owner-1", now: NOW,
+    });
+    expect(sessionHasUnavailableSteps(session)).toBe(false);
+  });
+
+  it("sessionHasUnavailableSteps remains true after advancing past additional required steps", () => {
+    const session = startGuidedWorkflowSession({
+      sessionId: "session-1", workflowDefinition: definition,
+      evaluatorResults: results({ "step-a": EVALUATOR_RESULT_STATUS.UNAVAILABLE, "step-b": EVALUATOR_RESULT_STATUS.REQUIRED, "step-c": EVALUATOR_RESULT_STATUS.NOT_APPLICABLE }),
+      actingUserId: "user-1", canonicalOwnerId: "owner-1", now: NOW,
+    });
+    const advanced = advanceGuidedWorkflowSession(session, definition, results({ "step-a": EVALUATOR_RESULT_STATUS.UNAVAILABLE, "step-b": EVALUATOR_RESULT_STATUS.REQUIRED, "step-c": EVALUATOR_RESULT_STATUS.NOT_APPLICABLE }), "owner-1", LATER);
+    expect(advanced.status).toBe(GUIDED_WORKFLOW_SESSION_STATUS.COMPLETED);
+    expect(sessionHasUnavailableSteps(advanced)).toBe(true);
   });
 });

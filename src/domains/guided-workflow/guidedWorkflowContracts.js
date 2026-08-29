@@ -28,6 +28,12 @@ export const EVALUATOR_RESULT_STATUS = Object.freeze({
   BLOCKED: "blocked",
   NOT_APPLICABLE: "not_applicable",
   REQUIRES_CONFIRMATION: "requires_confirmation",
+  // Distinct from NOT_APPLICABLE: the evaluator genuinely doesn't know whether this step is
+  // required, because the data source it depends on failed to load -- never means "checked and
+  // fine." A caller must never treat UNAVAILABLE as a green signal (see the guided-workflow session
+  // controller's completion messaging, which must not claim "nothing urgent" while any step is
+  // unavailable).
+  UNAVAILABLE: "unavailable",
 });
 
 export const GUIDED_WORKFLOW_SESSION_STATUS = Object.freeze({

@@ -73,7 +73,27 @@ export function evaluateTodaysPrioritiesStep(step, needsAttentionIds, evaluatedA
   });
 }
 
-export function buildTodaysPrioritiesEvaluatorResults(workflowDefinition, needsAttention, evaluatedAt) {
+// The only two needsAttention categories buildRentalDashboardSummary() actually derives from the
+// /api/rental/reports payload (overdueBalanceCents/externallyManagedCents) -- every other category
+// comes entirely from /api/rental. Kept here, next to the workflow definition, as the single place
+// that has to stay in sync with buildRentalDashboardSummary.js's own gating logic.
+export const REPORT_DEPENDENT_STEP_IDS = Object.freeze(new Set(["overdue-forge", "externally-managed"]));
+
+export function buildTodaysPrioritiesEvaluatorResults(workflowDefinition, needsAttention, evaluatedAt, { reportsAvailable = true } = {}) {
   const needsAttentionIds = new Set(needsAttention.map((item) => item.id));
-  return workflowDefinition.steps.map((step) => evaluateTodaysPrioritiesStep(step, needsAttentionIds, evaluatedAt));
+  return workflowDefinition.steps.map((step) => {
+    // A report-dependent step is UNAVAILABLE whenever reports failed to load -- never silently
+    // evaluated against needsAttentionIds, which would already be missing that id (since
+    // buildRentalDashboardSummary defaults a missing report's figures to 0) and would misreport a
+    // genuinely unknown state as "not applicable."
+    if (!reportsAvailable && REPORT_DEPENDENT_STEP_IDS.has(step.stepId)) {
+      return validateEvaluatorResult({
+        stepId: step.stepId,
+        status: EVALUATOR_RESULT_STATUS.UNAVAILABLE,
+        reasonCode: "reports_endpoint_unavailable",
+        evaluatedAt,
+      });
+    }
+    return evaluateTodaysPrioritiesStep(step, needsAttentionIds, evaluatedAt);
+  });
 }

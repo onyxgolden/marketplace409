@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { AlertTriangle, ArrowRight, CircleAlert, Info, PartyPopper, PauseCircle, PlayCircle } from "lucide-react";
+import { AlertTriangle, ArrowRight, CircleAlert, Info, PartyPopper, PauseCircle, PlayCircle, RefreshCw } from "lucide-react";
 import { GUIDED_WORKFLOW_SESSION_STATUS } from "@/domains/guided-workflow";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useTodaysPrioritiesSession } from "./useTodaysPrioritiesSession";
@@ -31,7 +31,8 @@ function GuidedControlButton({ control, onClick, disabled, children }) {
 export default function RentalTodaysPrioritiesPanel({ onNavigate }) {
   const {
     summary, session, currentStep, currentAttentionItem, loading, error,
-    canGoBack, next, back, pause, resume, exit, restart,
+    canGoBack, reportsAvailable, reportsError, hasUnavailablePriorities,
+    next, back, pause, resume, exit, restart, retryReports,
   } = useTodaysPrioritiesSession();
   const [showWhy, setShowWhy] = useState(false);
 
@@ -57,6 +58,22 @@ export default function RentalTodaysPrioritiesPanel({ onNavigate }) {
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">One item at a time, ordered by urgency.</p>
       </header>
 
+      {!reportsAvailable && (
+        <div
+          data-guided-workflow-partial-data
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-300 bg-slate-50 p-4 text-slate-700 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-300"
+        >
+          <p className="text-sm font-semibold">
+            Some priorities couldn&apos;t be checked because the report source is unavailable right now.
+            {reportsError ? ` (${reportsError})` : ""}
+          </p>
+          <GuidedControlButton control="retry-reports" onClick={retryReports} disabled={loading}>
+            <span className="flex items-center gap-2"><RefreshCw size={16} aria-hidden="true" />Retry</span>
+          </GuidedControlButton>
+        </div>
+      )}
+
       {session.status === GUIDED_WORKFLOW_SESSION_STATUS.EXITED && (
         <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
           <p className="text-sm font-bold text-slate-600 dark:text-slate-400">Guidance exited.</p>
@@ -75,10 +92,17 @@ export default function RentalTodaysPrioritiesPanel({ onNavigate }) {
         </div>
       )}
 
-      {session.status === GUIDED_WORKFLOW_SESSION_STATUS.COMPLETED && (
+      {session.status === GUIDED_WORKFLOW_SESSION_STATUS.COMPLETED && !hasUnavailablePriorities && (
         <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
           <PartyPopper size={20} aria-hidden="true" />
           <p className="text-sm font-bold">Nothing urgent right now.</p>
+        </div>
+      )}
+
+      {session.status === GUIDED_WORKFLOW_SESSION_STATUS.COMPLETED && hasUnavailablePriorities && (
+        <div className="flex items-center gap-3 rounded-2xl border border-slate-300 bg-slate-50 p-5 text-slate-700 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+          <Info size={20} aria-hidden="true" />
+          <p className="text-sm font-bold">No other priorities right now, but some categories couldn&apos;t be checked. Retry above once the report source is back.</p>
         </div>
       )}
 

@@ -4,8 +4,11 @@
 
 Phase AR-0 + GW-0 read-only repository inspection, complete. **Phase GW-1 (Guided Workflow Engine
 foundation), complete** -- see Section 6. **Phase AR-1 (Repair Controller foundation), complete** -- see
-Section 7. Both foundations are separately built, separately tested, and stop here for owner review --
-no commit, push, merge, deploy, or migration has occurred for either.
+Section 7. **Phase GW-2 (state-aware first-tenant readiness), complete** -- see Section 9. GW-1 and AR-1
+were committed and merged to `main` as PR #54 (merge commit `97d41db3e8657ac64a453187f2a27d9dff62b56c`)
+before GW-2 began. GW-2 itself stops here for owner review -- no commit, push, merge, deploy, or
+migration has occurred for it. AR-2 (autonomous incident diagnosis) has explicitly not been started, per
+instruction.
 
 A note on how this document is being kept current: `scripts/governance/generateValidationEvidence.mjs`
 (the real entry point for the deterministic governance updater's synchronized-document pipeline)
@@ -175,12 +178,191 @@ Performed after both foundations were complete, before any commit. Results below
 
 ---
 
+## 9. GW-2 — State-aware first-tenant readiness (complete)
+
+Built on a fresh branch, `feat/gw2-first-tenant-readiness`, branched from `origin/main` at merge commit
+`97d41db3e8657ac64a453187f2a27d9dff62b56c` (the merged GW-1 + AR-1 PR #54) — not on the stale
+pre-merge branch, per instruction. AR-2 was explicitly not started in this slice. Three checkpoints,
+each separately gated.
+
+### Checkpoint 1 — Production reality and screening-language review
+
+**Production verification**: confirmed `origin/main` contains merge commit
+`97d41db3e8657ac64a453187f2a27d9dff62b56c`. Vercel production deployment confirmed healthy. Brief
+authenticated smoke test of Today's Priorities performed as primary owner and, where practical,
+co-owner, against the live deployment.
+
+**TransUnion/SmartMove screening-language finding**: inspected every tenant-screening UI surface and
+related documentation for any claim that TransUnion or SmartMove is a FORGE partner, affiliate, or
+endorsed provider. **Zero mentions of TransUnion or SmartMove branding exist anywhere in the
+repository.** `rental_tenants.screening_provider` is a free-text, neutral field with no hardcoded
+provider name, no partner badge, no "powered by" language, and no endorsement claim anywhere in the
+tenant-screening UI. "Use another screening provider" is preserved as-is (it was never removed or
+narrowed). **No code change was made for this finding** — existing UI already complies with every
+constraint the owner described (no implied partnership, SmartMove may remain as a neutral external
+option, no SSN/DOB/credit-report/criminal-record collection claimed as a FORGE capability) and no
+correction was needed.
+
+**A separate, real gap found as a side effect of this same review, not assumed**: `rental_tenants` had
+a `date_of_birth` column that the API's `update-tenant-profile` write path and
+`RentalTenantPanel.jsx`'s profile-edit form both actively read from and wrote to, despite the owner's
+"do not collect SSNs, birth dates, credit reports, or criminal-record data" instruction. Tenant
+*creation* (`mapRentalTenantToRow` in `rental-tenant.mapper.ts`) already structurally could never write
+a birth date (whitelist mapper, no spread of caller input) — the real, only gap was the *update* path
+and the UI. **Fix, scoped exactly to owner-approved Option 1**: removed the date-of-birth `<Field>`
+from `RentalTenantPanel.jsx`'s profile-edit form; removed `date_of_birth` from `route.js`'s GET
+`.select(...)` column list; removed `date_of_birth: optional(profile.dateOfBirth)` from the
+`update-tenant-profile` write object, replaced with a comment explaining that omitting the key (not
+setting it to `null`) leaves any existing legacy value on a real row completely untouched. **No
+migration was added or run** — the dormant `date_of_birth` column and any values already stored in it
+are explicitly *not* touched, and are recorded here as a future privacy-review item, per instruction.
+5 new regression tests added (1 in `rental-tenant.persistence.test.ts` proving `mapRentalTenantToRow`
+never writes a birth date even given a runtime object carrying an extra `dateOfBirth` property; 2 in
+`route.test.js` proving the GET query never selects `date_of_birth` and that `update-tenant-profile`
+silently ignores a `dateOfBirth` payload field without erroring or writing it; 2 in
+`RentalTenantPanel.test.jsx` proving the field never renders, even for a legacy tenant record that
+still carries a stored `date_of_birth` value). The stored last-four-SSN field (`ssn_last_four`) was
+independently reviewed and found already fully compliant (`/^\d{4}$/` validation rejects a full
+9-digit SSN, and an existing test already asserts the update payload never contains
+`social_security_number`) — left untouched, as explicitly instructed, pending a separate owner review
+of that field specifically.
+
+### Checkpoint 2 — Removing the Today's Priorities reliability bottleneck
+
+**The bug** (found and documented in GW-1's own §6 "Known local-dev-only limitation" note, fixed here):
+`useTodaysPrioritiesSession.js` fetched `/api/rental` and `/api/rental/reports` via a single
+`Promise.all`, so a report-service failure failed the *entire* Today's Priorities session — even
+though only 2 of the 9 `needsAttention` categories (`overdue-forge`, `externally-managed`) actually
+derive anything from the reports endpoint; the other 7 are fully independent of it.
+
+**Fix — a genuinely new evaluator status, not an overload of an existing one**:
+`EVALUATOR_RESULT_STATUS.UNAVAILABLE` was added to `guidedWorkflowContracts.js`, distinct from
+`NOT_APPLICABLE` — it means "this step's data source failed to load, so its real requiredness is
+unknown," never "checked and fine." `skipReasonCodeForStatus()` in
+`advanceGuidedWorkflowSession.js` gives it its own `"unavailable"` reason code (never reusing
+`"not_applicable"` or `"already_complete"`), and a new generic, workflow-agnostic helper,
+`sessionHasUnavailableSteps(session)`, lets a UI layer distinguish an honestly-clean COMPLETED session
+from one that reached COMPLETED only by skipping past one or more unavailable steps.
+`todaysPrioritiesWorkflow.js` gained `REPORT_DEPENDENT_STEP_IDS` (the exact, source-verified two-id set)
+and `buildTodaysPrioritiesEvaluatorResults(..., { reportsAvailable })`, which forces exactly those two
+steps to `UNAVAILABLE` when `reportsAvailable` is false, leaving the other seven evaluated normally
+against real data.
+
+**UI**: `useTodaysPrioritiesSession.js`'s `fetchSummaryAndIdentity()` now fetches `/api/rental` (still a
+hard requirement) and `/api/rental/reports` independently — a reports failure is caught internally and
+turned into `{ reportsAvailable: false, reportsError }` state, never a thrown error that blocks the
+session. `RentalTodaysPrioritiesPanel.jsx` renders a calm, non-alarming partial-data notice with a
+Retry control whenever `reportsAvailable` is false, and the panel's "Nothing urgent right now." message
+is now gated behind `!hasUnavailablePriorities` (a COMPLETED session with an unavailable step instead
+shows "No other priorities right now, but some categories couldn't be checked") — satisfying "never
+display Nothing urgent while any required priority source is unavailable" structurally, not by
+convention. Retry (`retryReports`) re-runs a full session restart when the session already reached
+COMPLETED (nothing left to preserve), or refreshes `summary`/`reportsAvailable` in place without
+disturbing the current step when the session is still ACTIVE (mid-review) — so clicking Retry can never
+silently advance a landlord past a real priority they're currently looking at.
+
+**Gate**: 12 new tests (4 in `todaysPrioritiesWorkflow.test.js`, 5 in
+`advanceGuidedWorkflowSession.test.js`, 3 in `RentalTodaysPrioritiesPanel.test.jsx`) — domain suite
+69/69, panel suite 11/11, all passing. Clean lint, clean `git diff --check`, clean production build.
+
+### Checkpoint 3 — The GW-2 readiness-guidance workflow itself
+
+**New workflow**: `src/domains/guided-workflow/firstTenantReadinessWorkflow.js` defines
+`rental.first-tenant-readiness` — 8 static, versioned, informational (non-mutating,
+`requiresExplicitConfirmation: false`) steps in the owner-specified order: unit readiness, tenant
+assignment, lease readiness, recurring-rent setup, security deposit, renter's insurance, move-in
+inspection, and a final ready-for-move-in review. Unlike Today's Priorities (portfolio-wide), this
+workflow is scoped to one landlord-chosen vacant unit at a time.
+
+**Evaluator logic reads only real, already-existing fields** (verified directly against
+`src/app/api/rental/route.js` and its underlying migrations, not assumed): `rental_units.status`,
+`rental_leases.status`, `rental_lease_tenants` membership, `rent_schedules.status`,
+`rental_security_deposits.status`, `renters_insurance_policies.status`/`expiration_date`, and
+`rental_inspections.status`/`inspection_type`. `selectVacantUnitsForReadiness()` reuses
+`buildRentalDashboardSummary.js`'s own "no active lease references this unit" predicate verbatim, so
+this workflow's unit picker can never disagree with Today's Priorities' own vacancy count. A unit can
+accumulate more than one lease over time; `selectTargetLease()` picks an active lease first, else the
+most recently created draft, else the most recent overall — never an arbitrary array-order pick.
+Downstream steps that structurally depend on an earlier one not yet being true (e.g. rent can't be
+scheduled before the lease is active) are marked `BLOCKED` with their own reason code and human-readable
+explanation, rather than silently reordered or hidden, satisfying "clearly explain blockers."
+
+**A real, related gap found and fixed as part of building this checkpoint honestly, not scope creep**:
+`renters_insurance_requirements` (whether insurance is even *required* for a given lease, as opposed to
+whether proof was *provided*) was never fetched by `/api/rental` at all — meaning a lease that
+deliberately opted out of an insurance requirement would have been misread as "missing" insurance by
+this workflow's evaluator. Added a new, read-only, additively-scoped `.select("lease_id, required,
+minimum_liability_cents")` query to the existing GET handler (RLS on that table is already
+`has_workspace_access()`-scoped from an earlier migration, so co-owner access needed no new work) and
+used it: `renters-insurance` resolves to `NOT_APPLICABLE` when a requirement row explicitly marks
+`required: false`, and otherwise applies the implicit-required default `buildRentalDashboardSummary.js`
+itself already uses for the portfolio-wide view. Every existing GET-handler test file that constructs a
+full `tables` mock (6 spots in `route.test.js`) was updated to supply this table; no other file in the
+repository was affected (confirmed by grep — this is a wholly new field, additive to the response body).
+
+**Never claims ready-for-move-in unless every required evaluator passes — structurally, not by
+convention**: the final `ready-for-move-in` step's evaluator always returns `REQUIRED` when evaluated.
+Combined with the session controller's own existing rule (the walk stops at the first step needing
+attention, in definition order), this step can only ever become the *current* step once every step
+before it has resolved to `COMPLETE` or `NOT_APPLICABLE` — there is no code path that reaches it
+otherwise. `hasUnavailableSteps` (via the same generic `sessionHasUnavailableSteps()` helper Checkpoint
+2 introduced) additionally gates the panel's congratulatory copy, even though this workflow's evaluator
+does not currently produce any `UNAVAILABLE` result (it depends only on the single hard-required
+`/api/rental` fetch) — kept as a defensive, zero-cost consistency measure, not a currently-reachable
+path.
+
+**UI**: `useFirstTenantReadinessSession.js` (fetch `/api/rental` once, derive the vacant-units list,
+manage unit selection and the guided session) and `RentalFirstTenantReadinessPanel.jsx` (a unit picker
+when no unit is chosen or the list is empty, then one step at a time with Back/Pause/Resume/Exit/Change
+unit, a distinct visual treatment for the final ready-for-move-in review, and the same
+`data-guided-workflow-*` semantic-target convention GW-1 established — no new attributes were added to
+any *destination* panel, only to this new panel's own controls). Wired into
+`RentalApplicationShell.jsx` as a new "Prepare a Tenant" entry in the Overview nav group, function id
+`readiness` — reachable, not just built. Guidance only ever issues `GET /api/rental`; every destination
+step's actual action (activating a lease, recording a deposit, etc.) happens through the existing,
+unmodified Leases/Deposits/Insurance/Inspections panels and their existing server-side authorization, so
+consequential actions remain explicitly landlord-confirmed through existing forms, exactly as required.
+
+**Deferred, not forgotten, exactly as instructed**: the Property Passport ↔ maintenance linkage and
+reconciliation's self-declared incompleteness (both documented in §3 and GW-1's §6) remain completely
+untouched by GW-2 — this workflow guides toward the existing Deposits/Insurance/Inspections panels as
+they are today, making no claim that either gap is closed, and does not attempt to repair the
+Property Passport linkage or the reconciliation system in this slice.
+
+**Gate**: 44 new tests (29 in `firstTenantReadinessWorkflow.test.js`, 14 in
+`RentalFirstTenantReadinessPanel.test.jsx`, 1 new `RentalApplicationShell.test.jsx` assertion for the
+new surface — its two existing generic reachability tests, which loop over every registered function
+id, cover the new `readiness` surface automatically with no additional edits). Combined with Checkpoints
+1 and 2, GW-2 in total adds 61 new tests across this branch. Full repository suite at the end of
+Checkpoint 3: **795 test files, 5123 tests, all passing.** Clean lint on every new/changed file (the one
+pre-existing `RentalApplicationShell.jsx` finding noted in GW-1's §6 remains, confirmed via `git diff`
+to be on a line this branch never touches). Clean `git diff --check`. Clean production build.
+
+**Validation performed**: primary-owner and co-owner behavior (via the same `resolveEffectiveOwnerId`/
+`has_workspace_access` mechanism GW-1 already relies on — no new authorization code was written, so no
+new cross-workspace risk was introduced); cross-workspace denial (session-level `assertWorkspaceMatch`,
+already covered by `advanceGuidedWorkflowSession.test.js`'s existing suite, reused unmodified); complete,
+incomplete, blocked, and skipped states (all 29 evaluator tests); partial-data and reports-endpoint
+failure (Checkpoint 2's 12 tests); missing/duplicate semantic targets (the shared
+`createSemanticTargetRegistry()` already fails closed on a duplicate `targetId`, exercised by this
+workflow's own 8 unique step ids); refresh/pause/resume/Back/Exit/direct navigation (dedicated panel
+tests for each); no false "Nothing urgent" or "ready for move-in" result (dedicated tests asserting the
+exact opposite for a unit with one real outstanding gap); no POST/PATCH/DELETE issued by guidance
+(a dedicated test inspects every `fetch` call guidance makes and asserts none carries a mutating
+method). **Not independently browser-verified this checkpoint** (matching GW-1's own honest §8
+disclosure of the same limitation): keyboard accessibility, pinch-zoom, and mobile-viewport rendering
+rest on this panel reusing the exact same semantic-button/ARIA/responsive-Tailwind conventions already
+used (and already visually verified live) by `RentalTodaysPrioritiesPanel.jsx`, not on a fresh direct
+observation of this specific new panel in a real browser.
+
+---
+
 ## 5. Recommendation / decision requested
 
-AR-0 and GW-0 acceptance criteria are met: current repository reality is cited throughout this document, no duplicate subsystem exists, the existing deterministic governance updater remains untouched and authoritative, and protected domains plus Version 1 restrictions (Section 4) are identified above. GW-1 (Section 6) and AR-1 (Section 7) are both complete, as two distinct, separately-tested change sets on the same branch, sharing only read-only reuse points (Forge Brain's query engine, the acting-user/canonical-owner helpers) and no code path between them.
+AR-0 and GW-0 acceptance criteria are met: current repository reality is cited throughout this document, no duplicate subsystem exists, the existing deterministic governance updater remains untouched and authoritative, and protected domains plus Version 1 restrictions (Section 4) are identified above. GW-1 (Section 6) and AR-1 (Section 7) were committed and merged to `main` as PR #54. GW-2 (Section 9) is now complete on its own branch, as three separately-gated checkpoints, sharing only read-only reuse points (the acting-user/canonical-owner helpers, the generic guided-workflow session controller) with GW-1 and no code path into AR-1 or the Repair Controller at all.
 
-Nothing has been committed, pushed, merged, deployed, or migrated. Next-decision options for the owner:
+Nothing on the GW-2 branch has been committed, pushed, merged, deployed, or migrated. Next-decision options for the owner:
 
-1. **Commit and push this branch, open a PR** covering both GW-1 and AR-1 (or two separate PRs, if a cleaner review split is preferred) — no merge without a further explicit instruction, matching the standing pattern for every other phase this session.
-2. **Continue toward GW-2 or AR-2** (state-aware first-tenant readiness workflows; read-only incident diagnosis) before opening anything for review.
-3. **Request changes** to either foundation — in particular, `AUTHORITY_CEILING_THIS_VERSION` (hard-capped at 2 in code, not just policy) and the "Today's priorities" step-order/explanations are the two most product-facing decisions made without a separate check-in.
+1. **Commit and push this branch, open a PR** covering GW-2's three checkpoints (or split further, e.g. the Checkpoint 1 birth-date correction as its own small PR, if a cleaner review split is preferred) — no merge without a further explicit instruction, matching the standing pattern for every other phase this session.
+2. **Continue toward GW-3 or AR-2** (further guided-workflow product surfaces; read-only incident diagnosis) before opening anything for review.
+3. **Request changes** — in particular, the readiness workflow's exact 8-step order/copy, the choice to add a new `renters_insurance_requirements` fetch to `/api/rental` rather than deferring that gap, and the "unit picker returns to itself rather than resuming a specific unit on error/exit" UX decision are the most product-facing calls made without a separate check-in this checkpoint.

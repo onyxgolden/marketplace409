@@ -38,6 +38,9 @@ function skipReasonCodeForStatus(status) {
   if (status === EVALUATOR_RESULT_STATUS.NOT_APPLICABLE) return "not_applicable";
   if (status === EVALUATOR_RESULT_STATUS.COMPLETE) return "already_complete";
   if (status === EVALUATOR_RESULT_STATUS.AVAILABLE) return "available_not_required";
+  // Never reuse "not_applicable" or "already_complete" for this -- an unavailable step is walked
+  // past for now (its data source failed), but that is never the same claim as "checked and fine."
+  if (status === EVALUATOR_RESULT_STATUS.UNAVAILABLE) return "unavailable";
   return "not_required";
 }
 
@@ -181,4 +184,13 @@ export function resumeGuidedWorkflowSession(session, workflowDefinition, canonic
 export function exitGuidedWorkflowSession(session, canonicalOwnerId, now) {
   assertWorkspaceMatch(session, canonicalOwnerId);
   return validateGuidedWorkflowSession({ ...session, status: GUIDED_WORKFLOW_SESSION_STATUS.EXITED, updatedAt: now });
+}
+
+// Generic, reusable across any guided workflow built on this module -- a caller (typically the UI) uses
+// this to decide whether a COMPLETED session may honestly say something like "nothing urgent" or "ready
+// for move-in," versus a partial-data message. A session can reach COMPLETED with zero remaining
+// required steps while still having skipped one or more UNAVAILABLE steps along the way; those two facts
+// are not the same claim, and only this function (not session.status alone) tells them apart.
+export function sessionHasUnavailableSteps(session) {
+  return session.skippedSteps.some((skipped) => skipped.reasonCode === "unavailable");
 }
