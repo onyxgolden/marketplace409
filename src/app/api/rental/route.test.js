@@ -128,6 +128,32 @@ describe("Rental Manager route", () => {
     expect(body.actingUserId).toBe("acting_user_co_owner");
     expect(body.canonicalOwnerId).toBe("canonical_primary_owner");
   });
+  // FORGE does not collect tenant birth dates -- confirms the GET query itself never asks Supabase
+  // for date_of_birth, so a legacy value stored on a real row can never even reach the response body,
+  // rather than relying on the UI to simply not render a field it already received.
+  it("never selects date_of_birth from rental_tenants", async () => {
+    const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
+      order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
+    const empty = result([]);
+    const tenantsQuery = result([]);
+    const tables = { rent_charges: empty, rental_units: empty, rental_tenants: tenantsQuery, rent_schedules: empty,
+      rental_maintenance_requests: empty, rental_notification_outbox: empty, rental_payments: empty,
+      rental_settlements: empty, rental_security_deposits: empty, rental_security_deposit_transactions: empty,
+      rental_inspections: empty, rental_inspection_items: empty, rental_inspection_acknowledgements: empty,
+      rental_leases: empty, rental_lease_tenants: empty, rental_lease_changes: empty, rental_late_fee_rules: empty,
+      rental_late_fee_assessments: empty, rental_contractors: empty, rental_maintenance_work_orders: empty,
+      rental_maintenance_work_events: empty, rental_lease_preparations: empty, rental_lease_preparation_versions: empty,
+      rental_autopay_enrollments: empty, renters_insurance_policies: empty, rental_animals: empty,
+      rental_support_cases: empty, rental_billing_settings: result(null), financial_events: empty };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
+      supabaseClient: { from: vi.fn((table) => tables[table]) } });
+    const response = await GET();
+    expect(response.status).toBe(200);
+    const selectedColumns = tenantsQuery.select.mock.calls[0][0];
+    expect(selectedColumns).not.toContain("date_of_birth");
+  });
   // Regression test for a real production bug: financial_events for a long-tenured owner can
   // exceed PostgREST's default 1000-row page size, and an unbounded .select() ordered by
   // event_date ascending silently truncates to the OLDEST 1000 rows — making the Portfolio
@@ -254,6 +280,24 @@ describe("Rental Manager route", () => {
     const response = await POST(request({ operation: "update-tenant-profile", tenantId: "tenant_1", profile: { ssnLastFour: "123-45-6789" } }));
     expect(response.status).toBe(400);
     expect((await response.json()).error).toContain("exactly four digits");
+  });
+  // FORGE does not collect tenant birth dates. A caller sending dateOfBirth is neither an error nor
+  // silently written -- it's simply not part of the update shape at all, so Supabase's .update()
+  // never touches the date_of_birth column, leaving any birth date already stored on a legacy
+  // record exactly as it was (not erased, not overwritten).
+  it("ignores a dateOfBirth field in an update payload rather than storing, changing, or erasing it", async () => {
+    const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "tenant_1", display_name: "Ashley George" }, error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(() => query) } });
+    const response = await POST(request({ operation: "update-tenant-profile", tenantId: "tenant_1", profile: {
+      phone: "555-1000", dateOfBirth: "1990-01-01",
+    } }));
+    expect(response.status).toBe(200);
+    expect(query.update).toHaveBeenCalledWith(expect.objectContaining({ phone: "555-1000" }));
+    const updatedFields = query.update.mock.calls[0][0];
+    expect(updatedFields).not.toHaveProperty("date_of_birth");
+    expect(JSON.stringify(updatedFields)).not.toContain("1990-01-01");
   });
   it("changes the primary tenant through the workspace-scoped RPC", async () => {
     const rpc = vi.fn(async () => ({ data: null, error: null }));

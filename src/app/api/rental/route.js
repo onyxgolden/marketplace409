@@ -29,7 +29,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_units")
         .select("id, property_id, label, status, photo_bucket, photo_object_path").order("label", { ascending: true }),
       authenticated.supabaseClient.from("rental_tenants")
-        .select("id, display_name, email, phone, work_phone, date_of_birth, employer_name, employer_phone, monthly_income_cents, emergency_contact_name, emergency_contact_phone, application_status, application_submitted_at, screening_provider, screening_reference, screening_status, screening_completed_at, ssn_last_four, landlord_notes, status, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
+        .select("id, display_name, email, phone, work_phone, employer_name, employer_phone, monthly_income_cents, emergency_contact_name, emergency_contact_phone, application_status, application_submitted_at, screening_provider, screening_reference, screening_status, screening_completed_at, ssn_last_four, landlord_notes, status, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
       authenticated.supabaseClient.from("rent_schedules")
         .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date, collection_mode, collection_provider, forge_cutover_date")
         .order("effective_start_date", { ascending: false }),
@@ -204,7 +204,11 @@ export async function POST(request) {
         const monthlyIncomeCents = profile.monthlyIncomeCents === null || profile.monthlyIncomeCents === "" || profile.monthlyIncomeCents === undefined
           ? null : Number(profile.monthlyIncomeCents);
         if (monthlyIncomeCents !== null && (!Number.isSafeInteger(monthlyIncomeCents) || monthlyIncomeCents < 0)) return badRequest("Monthly income must be a non-negative whole-cent amount.");
-        const update = { phone: optional(profile.phone), work_phone: optional(profile.workPhone), date_of_birth: optional(profile.dateOfBirth),
+        // date_of_birth is deliberately never written here, even if a caller sends dateOfBirth --
+        // FORGE does not collect tenant birth dates (owner privacy decision). Omitting the key
+        // entirely means Supabase's .update() never touches that column, so any birth date already
+        // stored on a legacy record is left exactly as-is, neither erased nor overwritten.
+        const update = { phone: optional(profile.phone), work_phone: optional(profile.workPhone),
           employer_name: optional(profile.employerName), employer_phone: optional(profile.employerPhone), monthly_income_cents: monthlyIncomeCents,
           emergency_contact_name: optional(profile.emergencyContactName), emergency_contact_phone: optional(profile.emergencyContactPhone),
           application_status: optional(profile.applicationStatus), application_submitted_at: optional(profile.applicationSubmittedAt),
