@@ -308,6 +308,32 @@ describe("Rental Manager route", () => {
     expect(response.status).toBe(200);
     expect(rpc).toHaveBeenCalledWith("set_rental_primary_tenant", { p_owner_id: "owner_1", p_lease_id: "lease_1", p_tenant_id: "tenant_2" });
   });
+  it("save-lease-change scopes the lease lookup and the inserted row to the workspace owner, not the acting user", async () => {
+    const leaseQuery = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", monthly_rent_cents: 150000, rent_due_day: 1, end_date: "2026-09-01" }, error: null })) };
+    const insertQuery = { insert: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
+      single: vi.fn(async () => ({ data: { id: "rental_lease_change_1" }, error: null })) };
+    const from = vi.fn((table) => (table === "rental_leases" ? leaseQuery : insertQuery));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "co_owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from } });
+    const response = await POST(request({ operation: "save-lease-change", change: { leaseId: "lease_1", changeType: "renewal", effectiveDate: "2026-09-01", reason: "Renewal" } }));
+    expect(response.status).toBe(200);
+    expect(leaseQuery.eq).toHaveBeenCalledWith("owner_id", "owner_1");
+    expect(leaseQuery.eq).not.toHaveBeenCalledWith("owner_id", "co_owner_1");
+    expect(insertQuery.insert).toHaveBeenCalledWith(expect.objectContaining({ owner_id: "owner_1" }));
+  });
+  it("approve-lease-change scopes the approval update and the apply RPC to the workspace owner, not the acting user", async () => {
+    const approvalQuery = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "change_1" }, error: null })) };
+    const rpc = vi.fn(async () => ({ data: { applied: true }, error: null }));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "co_owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(() => approvalQuery), rpc } });
+    const response = await POST(request({ operation: "approve-lease-change", changeId: "change_1" }));
+    expect(response.status).toBe(200);
+    expect(approvalQuery.eq).toHaveBeenCalledWith("owner_id", "owner_1");
+    expect(approvalQuery.eq).not.toHaveBeenCalledWith("owner_id", "co_owner_1");
+    expect(rpc).toHaveBeenCalledWith("apply_rental_lease_change", { p_owner_id: "owner_1", p_change_id: "change_1" });
+  });
   it("cancels only an owner-scoped draft lease", async () => {
     const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", status: "cancelled" }, error: null })) };
