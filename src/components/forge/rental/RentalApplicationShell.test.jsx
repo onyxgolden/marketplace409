@@ -46,7 +46,7 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
 
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
-    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
   });
   it("renders an exception-first summary in grouped navigation", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
@@ -63,6 +63,10 @@ describe("RentalApplicationShell", () => {
   it("renders functional tenant and lease setup surfaces", () => {
     expect(renderToStaticMarkup(buildRentalSurface("tenants"))).toContain("Tenants");
     expect(renderToStaticMarkup(buildRentalSurface("leases"))).toContain("Leases and rent schedules");
+  });
+  it("renders the first-tenant readiness surface as its own reachable function", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("readiness"));
+    expect(markup).toContain("Prepare a tenant for move-in");
   });
   it("renders a preview-only Rentec migration surface",()=>{const markup=renderToStaticMarkup(buildRentalSurface("rentec-migration"));expect(markup).toContain("Import from Rentec Direct");expect(markup).toContain("cannot write Rentec or FORGE records");});
   it("renders a metadata-only Rentec file inventory",()=>{const markup=renderToStaticMarkup(buildRentalSurface("rentec-files"));expect(markup).toContain("Rentec files and renter photos");expect(markup).toContain("Inspect Rentec files");expect(markup).toContain("file names and contents are not returned");});
