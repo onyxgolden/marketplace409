@@ -4,6 +4,7 @@ import {
   buildTodaysPrioritiesEvaluatorResults,
   evaluateTodaysPrioritiesStep,
   TODAYS_PRIORITIES_WORKFLOW_ID,
+  REPORT_DEPENDENT_STEP_IDS,
 } from "../todaysPrioritiesWorkflow.js";
 import { EVALUATOR_RESULT_STATUS } from "../guidedWorkflowContracts.js";
 
@@ -83,5 +84,35 @@ describe("buildTodaysPrioritiesEvaluatorResults", () => {
       "2026-08-28T00:00:00.000Z",
     );
     expect(results.every((r) => r.status === EVALUATOR_RESULT_STATUS.NOT_APPLICABLE)).toBe(true);
+  });
+
+  it("marks only the two report-dependent steps unavailable when reports failed to load, leaving the other seven evaluated normally", () => {
+    const needsAttention = [
+      { id: "vacancies", severity: "warning", label: "y", destination: "setup" },
+      { id: "support-cases", severity: "info", label: "z", destination: "support" },
+    ];
+    const results = buildTodaysPrioritiesEvaluatorResults(definition, needsAttention, "2026-08-28T00:00:00.000Z", { reportsAvailable: false });
+    const byId = Object.fromEntries(results.map((r) => [r.stepId, r]));
+    expect(byId["overdue-forge"].status).toBe(EVALUATOR_RESULT_STATUS.UNAVAILABLE);
+    expect(byId["overdue-forge"].reasonCode).toBe("reports_endpoint_unavailable");
+    expect(byId["externally-managed"].status).toBe(EVALUATOR_RESULT_STATUS.UNAVAILABLE);
+    // The other seven are unaffected -- still evaluated normally against real needsAttention data.
+    expect(byId["vacancies"].status).toBe(EVALUATOR_RESULT_STATUS.REQUIRED);
+    expect(byId["support-cases"].status).toBe(EVALUATOR_RESULT_STATUS.REQUIRED);
+    expect(byId["urgent-maintenance"].status).toBe(EVALUATOR_RESULT_STATUS.NOT_APPLICABLE);
+  });
+
+  it("never marks a report-dependent step unavailable when reports genuinely succeeded", () => {
+    const results = buildTodaysPrioritiesEvaluatorResults(definition, [], "2026-08-28T00:00:00.000Z", { reportsAvailable: true });
+    expect(results.some((r) => r.status === EVALUATOR_RESULT_STATUS.UNAVAILABLE)).toBe(false);
+  });
+
+  it("defaults to reportsAvailable: true when the option is omitted, matching prior behavior", () => {
+    const results = buildTodaysPrioritiesEvaluatorResults(definition, [], "2026-08-28T00:00:00.000Z");
+    expect(results.every((r) => r.status === EVALUATOR_RESULT_STATUS.NOT_APPLICABLE)).toBe(true);
+  });
+
+  it("REPORT_DEPENDENT_STEP_IDS matches exactly the two categories buildRentalDashboardSummary derives from report", () => {
+    expect([...REPORT_DEPENDENT_STEP_IDS].sort()).toEqual(["externally-managed", "overdue-forge"]);
   });
 });

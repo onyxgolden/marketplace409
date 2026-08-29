@@ -38,6 +38,23 @@ function stubFetch(sequence) {
   return fetch;
 }
 
+// /api/rental always succeeds (from `rental`); /api/rental/reports resolves per-call from
+// `reportsOkSequence` (true = 200 with reportBody(), false = a failing response) so tests can drive
+// reports from failing to succeeding across a retry without touching /api/rental at all.
+function stubFetchWithReportsSequence(rental, reportsOkSequence) {
+  let reportsCall = 0;
+  const fetch = vi.fn(async (url) => {
+    if (String(url).includes("/api/rental/reports")) {
+      const ok = reportsOkSequence[Math.min(reportsCall, reportsOkSequence.length - 1)];
+      reportsCall += 1;
+      if (!ok) return { ok: false, json: async () => ({ error: "Reports service unavailable." }) };
+      return { ok: true, json: async () => reportBody() };
+    }
+    return { ok: true, json: async () => rental };
+  });
+  return fetch;
+}
+
 function mount(ui) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -131,6 +148,39 @@ describe("RentalTodaysPrioritiesPanel", () => {
     await flush();
     expect(mounted.container.querySelector('[role="alert"]')).toBeTruthy();
     expect(mounted.container.querySelector("[data-guided-workflow-panel]")).toBeFalsy();
+  });
+
+  it("keeps rendering non-report priorities and shows a partial-data notice when reports fails", async () => {
+    const fetch = stubFetchWithReportsSequence(rentalBody({ units: [{ id: "u1" }, { id: "u2" }] }), [false]);
+    vi.stubGlobal("fetch", fetch);
+    mounted = mount(<RentalTodaysPrioritiesPanel />);
+    await flush();
+    expect(mounted.container.querySelector('[data-guided-workflow-step="vacancies"]')).toBeTruthy();
+    expect(mounted.container.querySelector("[data-guided-workflow-partial-data]")).toBeTruthy();
+    expect(mounted.container.textContent).toContain("Reports service unavailable.");
+  });
+
+  it("never shows 'Nothing urgent' when reports is unavailable, even with no other priorities", async () => {
+    const fetch = stubFetchWithReportsSequence(rentalBody(), [false]);
+    vi.stubGlobal("fetch", fetch);
+    mounted = mount(<RentalTodaysPrioritiesPanel />);
+    await flush();
+    expect(mounted.container.textContent).not.toContain("Nothing urgent right now.");
+    expect(mounted.container.querySelector("[data-guided-workflow-partial-data]")).toBeTruthy();
+  });
+
+  it("Retry clears the partial-data notice once reports succeeds", async () => {
+    const fetch = stubFetchWithReportsSequence(rentalBody(), [false, true]);
+    vi.stubGlobal("fetch", fetch);
+    mounted = mount(<RentalTodaysPrioritiesPanel />);
+    await flush();
+    expect(mounted.container.querySelector("[data-guided-workflow-partial-data]")).toBeTruthy();
+    await act(async () => {
+      mounted.container.querySelector('[data-guided-workflow-control="retry-reports"]').click();
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+    expect(mounted.container.querySelector("[data-guided-workflow-partial-data]")).toBeFalsy();
+    expect(mounted.container.textContent).toContain("Nothing urgent right now.");
   });
 
   it("calls onNavigate with the live item's destination when Open is clicked", async () => {
