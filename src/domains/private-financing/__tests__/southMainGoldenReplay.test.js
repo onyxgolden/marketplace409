@@ -39,16 +39,23 @@ function foldGoldenPayments(terms, payments, throughDate) {
     const totalAccruedFractionalCents = unpaidAccruedInterestFractionalCents + newAccrualFractionalCents;
     const accruedInterestCents = roundToNearestCent(totalAccruedFractionalCents);
     const result = allocatePayment({
-      interestBearing: { remainingPrincipalCents: interestBearingRemainingCents, regularPaymentCents: terms.interestBearing.regularPaymentCents },
-      zeroInterest: { remainingPrincipalCents: zeroInterestRemainingCents, regularPaymentCents: terms.zeroInterest.regularPaymentCents },
-      accruedInterestCents,
+      components: [
+        { componentId: "ib", remainingPrincipalCents: interestBearingRemainingCents, scheduledComponentAmountCents: terms.interestBearing.regularPaymentCents, rateBps: terms.interestBearing.rateBps, allocationPriority: 1 },
+        { componentId: "zi", remainingPrincipalCents: zeroInterestRemainingCents, scheduledComponentAmountCents: terms.zeroInterest.regularPaymentCents, rateBps: terms.zeroInterest.rateBps, allocationPriority: 2 },
+      ],
+      accruedInterestCentsByComponent: { ib: accruedInterestCents },
       paymentAmountCents: payment.amountPaidCents,
+      allocationPolicy: "scheduled_component_order",
+      extraPaymentAllocationPolicy: "highest_rate_first_extra",
     });
-    unpaidAccruedInterestFractionalCents = totalAccruedFractionalCents - result.interestPaidCents;
-    interestBearingRemainingCents -= result.interestBearingPrincipalPaidCents;
-    zeroInterestRemainingCents -= result.zeroInterestPrincipalPaidCents;
-    totalInterestPaidCents += result.interestPaidCents;
-    totalPrincipalPaidCents += result.interestBearingPrincipalPaidCents + result.zeroInterestPrincipalPaidCents;
+    const interestPaid = result.interestPaidByComponentCents.ib || 0;
+    const ibPrincipalPaid = result.principalPaidByComponentCents.ib || 0;
+    const ziPrincipalPaid = result.principalPaidByComponentCents.zi || 0;
+    unpaidAccruedInterestFractionalCents = totalAccruedFractionalCents - interestPaid;
+    interestBearingRemainingCents -= ibPrincipalPaid;
+    zeroInterestRemainingCents -= ziPrincipalPaid;
+    totalInterestPaidCents += interestPaid;
+    totalPrincipalPaidCents += ibPrincipalPaid + ziPrincipalPaid;
     totalUnallocatedCents += result.unallocatedCents;
     lastDate = payment.datePaid;
   }
@@ -124,11 +131,17 @@ describe("South Main golden replay -- reproduces the owner-approved reconciliati
     // carry-forward state of any kind for that component (it has no interest to accrue), so no such
     // error can be reproduced structurally.
     const result = allocatePayment({
-      interestBearing: { remainingPrincipalCents: 100_00, regularPaymentCents: 43_452 },
-      zeroInterest: { remainingPrincipalCents: 10_000, regularPaymentCents: 8_333 },
-      accruedInterestCents: 0,
-      paymentAmountCents: 51_785,
+      components: [
+        { componentId: "ib", remainingPrincipalCents: 4_500_000, scheduledComponentAmountCents: 43_452, rateBps: 300, allocationPriority: 1 },
+        { componentId: "zi", remainingPrincipalCents: 10_000, scheduledComponentAmountCents: 8_333, rateBps: 0, allocationPriority: 2 },
+      ],
+      accruedInterestCentsByComponent: {},
+      // Exactly the combined required envelope, so there is no leftover "extra" amount to redirect --
+      // isolating the required-phase envelope allocation this test actually checks.
+      paymentAmountCents: 43_452 + 8_333,
+      allocationPolicy: "scheduled_component_order",
+      extraPaymentAllocationPolicy: "highest_rate_first_extra",
     });
-    expect(result.zeroInterestPrincipalPaidCents).toBe(8_333); // exactly the regular envelope, never off by $100
+    expect(result.principalPaidByComponentCents.zi).toBe(8_333); // exactly the regular envelope, never off by $100
   });
 });

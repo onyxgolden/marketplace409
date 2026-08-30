@@ -58,11 +58,17 @@ export function assertValidPayoffOfferTransition(fromStatus, toStatus) {
 // re-reads the original quote.
 function validateQuoteSnapshot(snapshot) {
   if (!isPlainObject(snapshot)) fail("quoteSnapshot must be an object");
-  for (const field of ["calculatedPayoffCents", "offeredPayoffCents", "sellerConcessionCents", "accruedInterestCents", "interestBearingPrincipalCents", "zeroInterestPrincipalCents"]) {
+  for (const field of ["calculatedPayoffCents", "offeredPayoffCents", "sellerConcessionCents", "accruedInterestCents"]) {
     if (!Number.isInteger(snapshot[field]) || snapshot[field] < 0) fail(`quoteSnapshot.${field} must be a non-negative integer`);
   }
+  // V1 Terms Generalization: principal is a {[componentId]: cents} map now (one or more components),
+  // never two fixed named fields.
+  if (!isPlainObject(snapshot.principalByComponentCents)) fail("quoteSnapshot.principalByComponentCents must be an object keyed by componentId");
+  for (const [componentId, cents] of Object.entries(snapshot.principalByComponentCents)) {
+    if (!Number.isInteger(cents) || cents < 0) fail(`quoteSnapshot.principalByComponentCents.${componentId} must be a non-negative integer`);
+  }
   if (!isNonEmptyString(snapshot.calculatedThroughDate)) fail("quoteSnapshot.calculatedThroughDate must be a non-empty string");
-  return Object.freeze({ ...snapshot });
+  return Object.freeze({ ...snapshot, principalByComponentCents: Object.freeze({ ...snapshot.principalByComponentCents }) });
 }
 
 export function validatePayoffOffer(offer) {
@@ -122,8 +128,7 @@ export function buildPayoffOfferFromQuote(quote, { id, sellerActingUserId, issue
       offeredPayoffCents: quote.offeredPayoffCents,
       sellerConcessionCents: quote.sellerConcessionCents,
       accruedInterestCents: quote.accruedInterestCents,
-      interestBearingPrincipalCents: quote.interestBearingPrincipalCents,
-      zeroInterestPrincipalCents: quote.zeroInterestPrincipalCents,
+      principalByComponentCents: quote.principalByComponentCents,
       calculatedThroughDate: quote.calculatedThroughDate,
     },
     status: PAYOFF_OFFER_STATUS.PENDING,
