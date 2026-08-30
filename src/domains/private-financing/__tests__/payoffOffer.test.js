@@ -19,8 +19,7 @@ function pendingOffer(overrides = {}) {
       offeredPayoffCents: 480_000,
       sellerConcessionCents: 20_000,
       accruedInterestCents: 5_000,
-      interestBearingPrincipalCents: 400_000,
-      zeroInterestPrincipalCents: 95_000,
+      principalByComponentCents: { ib: 400_000, zi: 95_000 },
       calculatedThroughDate: "2026-09-01",
     },
     status: PAYOFF_OFFER_STATUS.PENDING,
@@ -116,8 +115,7 @@ describe("buildPayoffOfferFromQuote", () => {
       offeredPayoffCents: 480_000,
       sellerConcessionCents: 20_000,
       accruedInterestCents: 5_000,
-      interestBearingPrincipalCents: 400_000,
-      zeroInterestPrincipalCents: 95_000,
+      principalByComponentCents: { ib: 400_000, zi: 95_000 },
       calculatedThroughDate: "2026-09-01",
     };
     const offer = buildPayoffOfferFromQuote(quote, {
@@ -140,8 +138,7 @@ describe("buildPayoffOfferFromQuote", () => {
       offeredPayoffCents: 480_000,
       sellerConcessionCents: 20_000,
       accruedInterestCents: 5_000,
-      interestBearingPrincipalCents: 400_000,
-      zeroInterestPrincipalCents: 95_000,
+      principalByComponentCents: { ib: 400_000, zi: 95_000 },
       calculatedThroughDate: "2026-09-01",
     };
     const offer = buildPayoffOfferFromQuote(quote, {

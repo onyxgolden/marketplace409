@@ -855,3 +855,1025 @@ The work exists only as uncommitted changes on this branch/worktree.
    FORGE-as-merchant billing relationship, licensure, the credit-reporting furnisher relationship,
    document-template legality/review, and South Main's actual note-document requirements. None of these
    were resolved by SF-1 and none block schema/calculation work; all block SF-3 and live payments.
+
+## SF-2 — Private Financing Seller Administration
+
+**PR #57 (SF-1, 6 commits) merged to `main` at `62689f804b2d0deba90e955d8bb89ebb73a2c008` (2026-08-29).**
+Verified before merge: 6 commits, head `365695d645294ccee6070bd7d2dcd526e8eac064`, 0 behind `main`, Vercel
+check green, zero unresolved review threads, no merge conflict, migration confirmed unapplied remotely
+(`supabase migration list` showed a blank Remote column for `20260830000200`), `AGENTS.md`/`CLAUDE.md`
+absent from the PR. Post-merge: all six SF-1 commits confirmed ancestors of `origin/main`; the Park
+Rentals crossover handoff confirmed present; `supabase migration list` re-run against `origin/main`
+confirms the Private Financing migration is *still* local-only, not remote; the Vercel deployment for the
+merge commit reports `state: success`. SF-2 work continues on a fresh branch, `explore/private-financing-sf2`,
+created from the post-merge `origin/main`; `explore/seller-financing-sf0` is preserved (merged, not deleted).
+
+### 1. Read-only integration inspection (source-cited, before any SF-2 code was written)
+
+**Rental Manager navigation and application shell.** Two-part registration for a promoted top-level area:
+`WORKSPACES` array + `PROMOTED_OUT_OF_FORGE` in `src/lib/workspaces.js:12-46`, and `PROMOTED_PREFIXES` in
+`src/components/forge/ForgeApplicationRail.jsx:63`. App Router: `src/app/forge/rental/layout.js` (wraps in
+`WorkspaceShell`) + `src/app/forge/rental/page.js` (server auth/redirect, then a client page) — this is
+the *top-level workspace* pattern, not what SF-2 needs. Inside Rental Manager itself, sections are config
+entries, not routes: `RENTAL_NAVIGATION` in `src/components/forge/rental/RentalApplicationShell.jsx:16-22`
+(grouped `{label, items:[{id,label}]}`), rendered by `RentalNavSidebar` (lines 82-137), with
+`buildRentalSurface()` (lines 25-29) mapping an `id` to its panel component. **SF-2's own instruction names
+this exact layer** ("SF-2B — Rental Manager navigation, account list") — so Private Financing becomes a
+new `RENTAL_NAVIGATION` entry plus a panel registered in the surfaces map, not a new top-level workspace.
+
+**Existing seller-facing payment/adjustment panels.**
+`src/components/forge/rental/RentalPaymentsPanel.jsx` (177 lines) is the closest analog: a merged
+charge/payment/settlement timeline (`buildRentActivity`, lines 14-17), `Intl.NumberFormat` money
+formatting, a toggleable "Record offline payment" form, and a void action gated by an inline confirm
+sub-form (`showVoidConfirm`, lines 166-170) — not a modal.
+`src/components/forge/rental/RentalLeaseLifecyclePanel.jsx` shows the same shape for late-fee
+assessment: a create-rule form plus a separate "assess" form, each requiring an explicit `required`
+checkbox ("I confirm...") before the consequential POST fires. `RentalReconciliationPanel.jsx` and
+`RentalDepositsPanel.jsx` are the other adjacent balance-display precedents.
+
+**Accessible modal/form/confirmation patterns.** No shared Modal/Dialog component exists — each of
+`RentalHelpModal.jsx` and `src/components/forge/scheduling/SchedulingCalendarsModal.jsx` hand-rolls its
+own overlay (`role="dialog" aria-modal="true" aria-labelledby`, backdrop `onClick`+`stopPropagation`,
+`autoFocus` on close, manual Escape-key `useEffect`). For a *single consequential action* (void a charge,
+assess a fee), the established pattern is an inline reveal-form plus a `required` confirmation checkbox,
+not a modal at all (`RentalPaymentsPanel.jsx:168-170`, `RentalLeaseLifecyclePanel.jsx`). Forms are plain
+`<form onSubmit>` + `new FormData(event.currentTarget)` — no react-hook-form or any form library anywhere
+in this repo (repo-wide grep, zero matches). Errors render via `<p role="alert">`.
+
+**API/application-layer authorization pattern.** Every authenticated route opens with a per-domain
+factory (`createAuthenticatedForgeApplication.js:17-74`, `createAuthenticatedFinancialApplication.js`) that:
+builds a request-scoped Supabase server client (`src/lib/supabase/server.js:9-47`, `@supabase/ssr` +
+Next `cookies()`), calls `auth.getUser()`, returns a 401 `NextResponse` on failure (checked via
+`if (authenticated.response) return authenticated.response;` everywhere), and resolves
+`effectiveOwnerId`. Routes then either query directly through `authenticated.supabaseClient` relying on
+RLS (`/api/workspace/members/route.js:22-46`, GET), call an RPC (`.rpc("invite_workspace_member", ...)`,
+same file, POST/PATCH), or go through a domain repository class
+(`/api/rental/manual-financial-event/route.js`). **One inconsistency flagged, not to be replicated**:
+`/api/financial/accounts/route.js:13` filters `.eq("owner_id", authenticated.user.id)` instead of
+`effectiveOwnerId` — a co-owner-scoping bug in an older route. SF-2 always uses `effectiveOwnerId` and/or
+plain RLS, matching the newer, correct `/api/workspace/members` pattern.
+
+**Primary-owner/co-owner workspace resolution.** `src/lib/supabase/resolveEffectiveOwnerId.js:14-28`
+queries `workspace_members` for an active `co_owner` row and returns its `owner_id`, falling back to the
+actor's own id; every `createAuthenticated*Application` factory calls it. There is **no shared
+client-side hook/context** — `WorkspaceMembersPanel.jsx:8-9,23-24` keeps local `viewerRole`/`viewerId`
+state populated straight from the API response, matching the server contract set at
+`/api/workspace/members/route.js:38` (`viewerRole = user.id === effectiveOwnerId ? "primary_owner" : "co_owner"`).
+SF-2 follows this same per-fetch pattern rather than introducing new shared client infrastructure.
+
+**Local disposable Supabase development.** Fully established across SF-1's own Checkpoint D validation:
+`supabase init` (local-only `config.toml`/`.gitignore`/`.branches`, none committed), `supabase start
+--exclude <heavy services>` for a Postgres-only stack, migrations applied fail-fast, a one-time local
+grant bootstrap (`grant all privileges on all tables/sequences in schema public to anon, authenticated,
+service_role; alter default privileges ...`) since the local CLI doesn't replicate Production's
+one-time platform-level bootstrap, `SET ROLE authenticated; SET request.jwt.claim.sub = '<uuid>';` for
+identity simulation, `supabase stop --no-backup` for full teardown (confirmed via `docker ps -a`), and
+`supabase migration list` to compare local-vs-remote applied state (the exact command used to confirm
+the migration remains unapplied both before and after the SF-1 merge).
+
+**Handling when the Private Financing migration is absent remotely.** **No precedent exists.** A
+repo-wide grep for Postgres error codes `42P01`/`42883`/`undefined_table`/`undefined_function` across
+`src/app/api/**/route.js`, `src/lib/supabase/**`, `src/domains/**` returns nothing; the only existing
+Postgres error-code branching in this codebase is unique-violation handling (`23505`) in
+`/api/financial/investment-accounts/route.js:115` and `/api/rental/route.js:423`, both just producing a
+friendlier duplicate-key message. No UI component renders a "not available yet" state tied to a missing
+backend table/RPC either. **SF-2A introduces this guard itself** (see below) — it is the first API
+surface in this repository whose own migration may not yet be applied to every environment it ships to.
+
+**Test and visual-verification conventions.** Only Vitest is used (`package.json` `test`/`test:watch`/
+`test:coverage` scripts); there is no Playwright, Cypress, Puppeteer, or `@testing-library/*` dependency
+anywhere in this repo. React component tests render manually via `react-dom/client`'s `createRoot` +
+`act()` inside `// @vitest-environment jsdom` files (e.g.
+`RentalLeaseRenewalPanel.test.jsx`, `WorkspaceMembersPanel.test.jsx`). API route handlers are
+consistently unit-tested by mocking the auth factory and stubbing a fake Supabase client
+(`/api/workspace/members/route.test.js`) — this is the pattern SF-2A's own route tests follow. UI/visual
+verification is manual-only in this repository; there is no browser-driven automated check to reuse.
+
+### 2. Ordered SF-2 checkpoints
+
+- **SF-2A — Authenticated application services, read models, and API boundaries.** No UI. Delivers:
+  `createAuthenticatedPrivateFinancingApplication.js` (auth + `effectiveOwnerId`, mirroring
+  `createAuthenticatedForgeApplication.js`'s shape but without a multi-repository "application suite" —
+  SF-2A's reads are simple RLS-scoped selects, matching `/api/workspace/members` GET's own precedent, not
+  the larger Forge/Financial operation surface that pattern was built for); `isMissingRemoteSchemaError.js`
+  (the 42P01/42883 guard this repo has never needed before); `persistedRowMapping.js` (a pure,
+  independently-tested translation from `private_financing_events`/`private_financing_components` DB rows
+  into the exact camelCase shape `replayEvents.js` already requires — never a second balance engine);
+  and three read-only routes: `GET /api/private-financing/accounts` (list, RLS-scoped), `GET
+  /api/private-financing/accounts/[accountId]` (account + current components + current servicing policy +
+  a computed balance summary via `replayEvents`), and `GET /api/private-financing/accounts/[accountId]/events`
+  (full seller-facing ledger history — every column the seller's own RLS already grants, unlike the
+  borrower-safe RPC). Every route returns `{ available: false, ... }` with HTTP 200 rather than a 500 when
+  the schema doesn't exist remotely yet, satisfying "missing remote tables must produce a controlled
+  unavailable/empty state, not crash existing Rental Manager." Payoff-quote generation (which needs a
+  UI-supplied target date) is deliberately deferred to SF-2C, not built here.
+- **SF-2B — Rental Manager navigation, account list, and empty state.** Adds a `RENTAL_NAVIGATION` entry
+  and a list panel (mirroring `RentalPaymentsPanel.jsx`'s structure) consuming SF-2A's list endpoint,
+  including the `available:false` empty/coming-soon state.
+- **SF-2C — Account details, balances, history, and payoff presentation.** A detail panel consuming
+  SF-2A's detail + events endpoints; payoff-quote generation (via `payoffQuote.js`, UI-supplied target
+  date) is added here, in the API layer, the first time a UI actually needs it.
+- **SF-2D — Seller adjustment previews and explicit confirmations.** Adjustment preview
+  (`adjustmentPreview.js`, already pure/reused) surfaced in the UI with the established
+  inline-reveal-form-plus-required-checkbox confirmation pattern (`RentalLeaseLifecyclePanel.jsx`'s
+  precedent) before any real `append_private_financing_event` call.
+- **SF-2E — Seller-confirmed external payments and payment-policy controls.** Venmo/Cash App/etc. recording
+  UI (`manual_external`) and the servicing-policy-version UI
+  (`append_private_financing_servicing_policy_version`), both following the same confirmation pattern.
+- **SF-2F — Local disposable-database and visual/accessibility verification.** A full disposable
+  Supabase pass (per the established SF-1 methodology) plus manual browser verification of every SF-2B–E
+  surface, since this repo has no automated visual-verification tooling to invoke instead.
+
+### 3. SF-2A delivered (this pass)
+
+6 new files, all tested and lint-clean: `src/lib/supabase/isMissingRemoteSchemaError.js` (+test),
+`src/lib/supabase/createAuthenticatedPrivateFinancingApplication.js` (+test),
+`src/domains/private-financing/persistedRowMapping.js` (+test, including a round-trip test through the
+real `replayEvents`/`allocatePayment`/`computeAccrual` engine — fixture figures are generated by that same
+engine, never hand-computed, so the test is correct by construction), and the three
+`/api/private-financing/accounts*` routes (+tests). No owner decision was required to proceed: every open
+question (nav placement, authorization shape, missing-schema handling) was already settled either by
+existing repository precedent or by this checkpoint's own explicit instructions.
+
+### 4. SF-2A approved — pre-SF-2B API corrections
+
+Three gaps identified in review, all closed before SF-2B began:
+
+1. **Missing-schema semantics.** All three routes now return **HTTP 503** with a stable
+   `code: "private_financing_schema_unavailable"` and a safe, generic message — never a 200 with an empty
+   array, and never the underlying Postgres error's own code/message. A caller can now always distinguish
+   four states: 401 (unauthorized, from the auth factory), 503+code (feature not activated in this
+   environment), 500 (an ordinary, safe-messaged failure), and 200 (available — `accounts: []` for a
+   genuinely empty portfolio, non-empty otherwise). `isMissingRemoteSchemaError` gained 7 explicit negative
+   tests proving it never matches authorization failures (42501), malformed queries (42601), schema-drift
+   (42703), connectivity failures (08006), resource exhaustion (53300), or constraint violations (23514) —
+   only the two exact codes it was built for (42P01, 42883). New shared helper:
+   `src/lib/supabase/privateFinancingSchemaUnavailableResponse.js`.
+2. **Event-history pagination.** `GET .../events` is now keyset-paginated on `ledger_sequence` (stable,
+   gapless, append-only — chosen specifically because it cannot duplicate or skip rows when new events
+   append between page fetches, unlike OFFSET). New module `src/domains/private-financing/eventHistoryCursor.js`:
+   an opaque, account-bound cursor (malformed, wrong-shaped, or cross-account cursors all fail closed with
+   400 + `code: "private_financing_invalid_cursor"`, never silently restarting from page one), an explicit
+   default (50) and maximum (200) page size, and a `pageInfo: { hasMore, nextCursor, pageSize }` envelope.
+   The account-detail route's own balance computation is unaffected — it still replays the **complete**
+   authorized event history internally regardless of what page a caller of the history endpoint happens to
+   be viewing; nothing paginated ever feeds a partial page into `replayEvents`.
+3. **Numeric mapping.** `persistedRowMapping.js` now asserts every `*_cents`/`rate_bps`/`ledger_sequence`
+   field is within `Number.isSafeInteger` range before it ever reaches the replay engine, throwing a new
+   `PersistedRowMappingError` (not silently truncating) on an out-of-range or non-integer value. Sign/range
+   *business rules* (e.g. "amount_cents must be positive") remain solely `privateFinancingContracts.js`'s
+   responsibility, re-enforced immediately downstream by `replayEvents.js` — deliberately not duplicated in
+   the mapping layer, proven by a new integration test (a negative `amount_cents` row maps successfully at
+   the numeric-safety layer, then is rejected by `replayEvents` the moment it's folded). Additional tests
+   confirm no `Date`/`parseInt`/`parseFloat`/`Number(...)` parsing exists anywhere in the module (dates and
+   numbers pass through byte-for-byte) and that the module can never itself produce a "balance"-shaped
+   field, only event/component-shaped input for `replayEvents` to fold.
+
+### 5. SF-2B — Rental Manager navigation, account list, and honest empty/unavailable states
+
+**Navigation**: added `{ id: "private-financing", label: "Private Financing" }` to `RENTAL_NAVIGATION`'s
+existing "Money" group (`RentalApplicationShell.jsx`), and registered
+`"private-financing": <PrivateFinancingAccountsPanel />` in `buildRentalSurface()` — the exact same
+config-array + surfaces-map pattern every other Rental Manager section uses; no new top-level FORGE
+application, no new route. `RentalHelpModal`'s per-function help content was deliberately left unauthored
+for this id — its own `getRentalFunctionHelp` already falls back to the Overview help text for any
+unregistered id, so nothing breaks; authoring Private-Financing-specific help copy was out of this
+checkpoint's explicit scope and is noted here as a real, minor, non-blocking gap for a later pass.
+
+**Account-list panel**: `src/components/forge/rental/PrivateFinancingAccountsPanel.jsx`. Consumes SF-2A's
+list endpoint only — every displayed figure (principal remaining, next-amount-due, payment-acceptance
+policy) is exactly what the API returned; nothing is recomputed in React. Two required display fields —
+**due date** and **past-due status** — have **no backing data model anywhere in SF-1's schema**: there is
+no due-day column, no recurrence rule, and no "next due date" concept stored or computable from what
+exists today (confirmed by inspection of `private_financing_accounts`/`private_financing_components`).
+Rather than infer or fabricate either figure (e.g. assuming a monthly cadence from the last payment date,
+which the schema does not actually guarantee), both render as the honest, explicit string "Not tracked
+yet," and the API's own `dueDateTrackingAvailable: false` flag makes this a structural fact of the
+response, not a UI guess. This is flagged here as a genuine design gap for a future checkpoint (a due-date/
+cadence concept would need its own additive migration) rather than something SF-2B silently worked around.
+To support the remaining required fields honestly, SF-2A's list endpoint (`GET /api/private-financing/accounts`)
+was extended, still read-only: a real joined **borrower label** (from `private_financing_account_borrowers`
++ `private_financing_borrowers`, excluding only revoked memberships; `null` — never a placeholder string —
+when no borrower exists yet), the real **payment-acceptance policy** (from
+`private_financing_current_servicing_policy`), and a real computed **balance** per account via the newly
+extracted, shared `src/domains/private-financing/accountBalanceSummary.js` (now used by both the list and
+detail routes, so a balance is never computed two different ways). All of this is bulk-fetched (accounts,
+memberships, borrowers, policies, events, and version-1 components are each one `.in(accountIds)` query
+regardless of portfolio size) — no N+1 pattern.
+
+**Four states, all implemented and tested**: a calm, duplicate-request-guarded loading state (a `useRef`
+flag makes a second concurrent load a no-op, not a race); the genuine empty state ("No private financing
+accounts yet," explicitly explaining account creation/import comes in a later checkpoint, with zero
+fabricated South Main or any other placeholder data); the schema-unavailable state (503 + stable code,
+explicitly worded as "not activated for this environment," never described as an empty portfolio, with a
+working Retry); and an ordinary-error state (safe, generic message only, Retry, no database internals ever
+rendered).
+
+**No premature actions**: no create/import/adjustment/external-payment/payoff-offer/policy-change/borrower-
+access/Stripe control exists anywhere in this panel — verified by an explicit test asserting none of that
+copy appears. **Open** is a real, working control (not a dead button): it toggles an inline, honestly-worded
+notice — "Full account details, balances, history, and payoff presentation are not available yet — they
+are coming in a later checkpoint" — rather than linking to a nonexistent detail page or pretending to show
+one.
+
+**Authorization and isolation**: the panel calls only `GET /api/private-financing/accounts`, which is
+itself gated by `createAuthenticatedPrivateFinancingApplication` (401 on no session) and RLS
+(`has_workspace_access(owner_id)`) on every underlying table; there is no direct Supabase client call and
+no service-role path anywhere in the component (verified by a test asserting `fetch` is the only method
+used, GET only, no mutating verb). A co-owner viewer receives the identical canonical-workspace list a
+primary owner would (verified). No borrower-facing path exists in this panel at all.
+
+**Accessibility and presentation**: native `<button>` elements throughout (inherently keyboard-reachable),
+explicit `focus-visible:outline` utility classes on every interactive control (matching
+`RentalNavSidebar`'s own precedent, stricter than the plain `goldControlClassName` buttons elsewhere in
+Rental Manager rely on), `role="status"`/`role="alert"` on loading/error announcements, semantic
+`<h2>`/`<dl>`/`<dt>`/`<dd>` structure, `dark:` classes on every colored surface, and a responsive
+`sm:grid-cols-2 lg:grid-cols-3` fact grid with no fixed-width elements. No status is communicated by color
+alone — every state (loading/empty/unavailable/error) carries its own explicit text.
+
+**Guided-workflow compatibility**: the panel root carries `data-guided-workflow-panel` and its two controls
+carry `data-guided-workflow-control="open-account"` / `"retry"` — the exact attribute vocabulary
+`RentalLeaseRenewalPanel.jsx`/`RentalFirstTenantReadinessPanel.jsx` (GW-1/GW-2/GW-3) already established,
+applied here purely for semantic-targeting consistency. This panel implements no step machine, no restart/
+why affordances, and no `data-guided-workflow-step` — it is not a guided workflow, and GW-1/GW-2/GW-3
+behavior is untouched (confirmed: no file under `guided-workflow/` was modified).
+
+**Tests**: `RentalApplicationShell.test.jsx` gained a navigation-registration assertion (the "Money" group
+contains `private-financing`) and a surface-reachability assertion; its existing full-function-list
+assertion was updated to include the new id. `PrivateFinancingAccountsPanel.test.jsx` (16 tests) covers:
+initial loading render, duplicate-request prevention, real-account rendering (every required field), no
+fabricated records, the genuine empty state, the schema-unavailable state (distinct wording, no empty-
+portfolio language), the ordinary-error state (no leaked internals), Retry (including recovery from
+schema-unavailable to available), canonical-owner and co-owner response handling, fetch-only/no-mutating-
+method usage, absence of every premature action, the Open toggle's real behavior, keyboard/focus-visible
+semantics, and status/alert roles plus dark-mode class presence.
+
+## SF-2C — Account details, balances, history, and payoff presentation
+
+Preserved SF-2A and SF-2B unchanged, per instruction — `RentalApplicationShell.jsx`'s nav registration and
+`buildRentalSurface()` entry from SF-2B are untouched this pass; only the account-list panel's own Open
+button now navigates to a real detail view instead of SF-2B's honest placeholder notice (the one necessary
+integration point SF-2C itself required — "Open selects the exact account").
+
+### 1. Backend extensions (still read-only, still API-only)
+
+`GET /api/private-financing/accounts/[accountId]` gained three things, all still through the exact same
+RLS-scoped, `has_workspace_access`-gated query pattern as before:
+
+- **`interestDayCountConvention`** added to the account row mapper (was selected via `select("*")` but
+  never surfaced in the response).
+- **Borrower memberships**: `private_financing_account_borrowers` joined against `private_financing_borrowers`
+  (two flat, bulk queries — id/borrower_id/role/status, then id/full_name/email — never a PostgREST
+  relational embed, matching the same safer, more predictable pattern SF-2B's list-route join already
+  established). Returns `{ membershipId, borrowerId, displayName, email, role, status }` only —
+  `private_financing_borrowers` has no SSN/birth-date/identity-document column anywhere in its schema (see
+  the migration's own Revision 1 comment), so "no hidden identity fields" is true by construction; `phone`
+  and `auth_user_id`, though present on the underlying table, are deliberately left out of this read model
+  as unnecessary for a seller-facing membership summary. This is the "seller-only authenticated read
+  boundary" requirement 7 asked for if the detail API didn't already have one — it didn't, so this is new,
+  fully tested, and does not reuse `rental_tenants`.
+- **A read-only payoff estimate**, via new `src/domains/private-financing/payoffEstimate.js` wrapping SF-1's
+  own `computePayoffQuote` (`payoffQuote.js`, Checkpoint C, untouched). Computed fresh on every request —
+  never persisted, never a stored offer or concession (`computeAccountPayoffEstimate` is a strictly
+  read-only wrapper; nothing under `src/domains/private-financing` gained a write path). `payoffThroughDate`
+  is always `asOfDate` (today) — no funds-clearing buffer is assumed, avoiding an invented constant.
+  `quoteId` is deterministic (`pf_estimate_{accountId}_{asOfDate}`), not randomly generated, so the same
+  day's estimate is reproducible. Returns `null` (not an error, not a thrown exception) when the account has
+  no balance yet or is already closed — checked via the already-computed `balanceSummary.closed` flag
+  *before* calling `computePayoffQuote`, since that function itself throws on a closed account; this
+  boundary check means the API caller never sees that throw. Late charges are always `0` and no fee field
+  exists anywhere in the return shape — both true by inheritance from `payoffQuote.js`'s own design, not
+  reimplemented here.
+
+`src/domains/private-financing/accountBalanceSummary.js` (shared by list and detail routes since SF-2B)
+gained two more pass-through fields from `replayEvents`' own return shape: `cumulativePrincipalForgivenCents`
+("seller credits/concessions to date") and `unpaidAccruedInterestCents`.
+
+### 2. The due-date/past-due gap, restated and applied consistently
+
+SF-2B already found that this schema has no due-day column, no recurrence rule, and no "next due date"
+concept anywhere. SF-2C's account-summary requirements name **three** fields that inherit this same gap:
+"current amount due," "past-due amount," and "next due date." Rather than invent three different partial
+workarounds, one consistent rule was applied: "current amount due" is shown as the real, already-computed
+regular-payment figure (labeled "Current amount due (regular payment)," identical in meaning to SF-2B's
+list-panel "Next amount due"), while "past-due amount" and "next due date" render as the same honest
+"Not tracked yet" string SF-2B already established, with no invented cadence or inferred date. This is a
+restatement of an already-flagged gap, not a new one.
+
+### 3. UI: master-detail within the existing panel, not a new route
+
+`PrivateFinancingAccountsPanel.jsx` (SF-2B) now conditionally renders `PrivateFinancingAccountDetail.jsx`
+in place of the list when an account is open — the same single component instance, so the already-fetched
+`accounts` array and list `status` state are never cleared or re-fetched by Back (verified by a test
+asserting the list's own fetch is called exactly once across an Open→Back round trip). This mirrors
+`RentalPaymentsPanel.jsx`'s own established master-detail pattern more closely than the `recordContext`
+mechanism `RentalApplicationShell` uses for tenant/property drill-down elsewhere, chosen deliberately to
+avoid touching `RentalPageClient.jsx`/shell-level record-context plumbing for a self-contained feature.
+
+**`PrivateFinancingAccountDetail.jsx`** — fetches the detail endpoint, renders five sections (Account
+summary, Loan components, Payoff estimate, Borrowers, then embeds the ledger history component), and
+handles five distinct states: loading, schema-unavailable, not-found/inaccessible (both a missing and a
+cross-workspace account id produce the identical 404-driven message, never a distinguishing side channel),
+ordinary error with Retry, and available. Refresh re-fetches unconditionally. The stale-payoff banner
+imports and calls `isQuoteExpired` from `payoffQuote.js` directly (a date-string comparison against an
+already-computed `expirationDate`, not a financial recalculation) rather than reimplementing that check.
+
+**`PrivateFinancingLedgerHistory.jsx`** — a separate component consuming the paginated SF-2A events
+endpoint. Tracks loaded event ids in a `Set` and filters any server-resent id before rendering, as a
+defensive belt-and-suspenders check on top of the keyset cursor's own no-duplicate guarantee (SF-2B's
+pre-SF-2B correction). "Load more" disappears once `pageInfo.hasMore` is false, never lingering as a dead
+control. Each `payment_posted`/`payment_reversal` row has an expandable, `aria-expanded`-driven allocation
+explanation (amount received, interest applied, each principal component applied, unapplied amount if
+present, and the authoritative post-payment balance per component — taken directly from the event's own
+stored `principalRemaining*Cents`, never recomputed). Event origins render in plain language
+(`interactive_user`→"Recorded live by seller", `manual_import`→"Imported historical record",
+`manual_external`→"Seller-confirmed external payment", `stripe_webhook`→"Online payment
+(provider-originated)" — labeled even though no live caller of that origin exists anywhere in this repo
+yet, so the ledger never renders a raw enum value if one ever appears).
+
+### 4. No premature actions, still true under detail view
+
+No create/import/adjustment/payment/payoff-offer/policy-change/borrower-invitation control exists anywhere
+in the detail view or ledger history — verified by an explicit test. Every fetch anywhere in SF-2C's three
+new components is GET-only (verified). No direct Supabase client call exists in any component (verified by
+inspection — every data access goes through `fetch()` against the SF-2A/SF-2C API routes).
+
+### 5. Tests
+
+`payoffEstimate.test.js` (7), `accountBalanceSummary.test.js` (+3 for the two new fields), the detail
+route's own test file (+5 for day-count/components/payoff/borrowers), `PrivateFinancingAccountDetail.test.jsx`
+(18: loading, real rendering of every required summary field, no fabricated data, component separation,
+payoff date/fee-exclusion/late-charge-zero, stale and fresh payoff-warning states, borrower summaries and
+privacy, the genuine no-borrower state, schema-unavailable, not-found, ordinary error + Retry, Refresh,
+Back invocation, no mutating fetch, no premature-action controls, keyboard/focus-visible/heading semantics,
+screen-reader description presence), `PrivateFinancingLedgerHistory.test.jsx` (8: loading, empty history,
+real rendering with plain-language origin labels, Load-more pagination with no duplicates, defensive
+duplicate filtering, ordinary error + Retry, the payment-allocation disclosure, GET-only fetch usage), and
+two replaced/added tests in `PrivateFinancingAccountsPanel.test.jsx` (Open navigates to the real detail
+view for the exact account clicked; Back returns without a redundant list re-fetch).
+
+## SF-2C correction — the regular payment is not a current-due claim
+
+**Owner finding.** SF-2C's account summary labeled the account's contractual regular-payment figure as
+"Current amount due (regular payment)." The owner correctly identified this as a false claim: nothing in
+this schema tracks payment cadence, arrears, or due dates (a gap SF-2B and SF-2C had both already flagged
+in prose), so presenting the regular-payment figure *as* the current obligation implies a calculated,
+arrears-aware present-due amount that does not exist. The correction required: never label the regular
+payment as a present obligation; show it honestly as "Regular scheduled payment"; show "Current amount
+due," "Past-due amount," and "Next due date" as three separate, honestly "Not tracked yet" facts; and
+never expose the regular-payment figure through an API field name that implies a calculated due-state.
+
+**Read-model rename.** `accountBalanceSummary.js`'s `regularPaymentCents` output field is renamed
+`regularScheduledPaymentCents`, with an explicit comment warning any future caller never to rename it back
+to imply arrears-awareness. This is the account-level summary field only — the unrelated, unambiguous
+per-*component* `regularPaymentCents` field used throughout `paymentAllocation.js`, `replayEvents.js`,
+`privateFinancingContracts.js`, `persistedRowMapping.js`, and the detail route's `rowToComponent` mapper is
+untouched (confirmed by a repo-wide grep that every remaining hit is a genuine component-level field, never
+the account-summary one).
+
+**UI correction.** Both `PrivateFinancingAccountsPanel.jsx` (list) and `PrivateFinancingAccountDetail.jsx`
+(detail) now render "Regular scheduled payment" (the real figure) and "Current amount due" (the honest
+"Not tracked yet" string) as two separate facts, never one combined label; the detail view additionally
+separates "Past-due amount" and "Next due date," each "Not tracked yet" — four honest facts where SF-2C
+had one dishonest one.
+
+**Tests.** `accountBalanceSummary.test.js` gained a test asserting the read model carries no
+`currentAmountDue`/`amountDue`/`amountOwed`/`regularPaymentCents` property under any name.
+`PrivateFinancingAccountDetail.test.jsx` gained a test asserting the rendered summary section contains
+"Regular scheduled payment," does not contain the old combined label, and contains "Current amount due,"
+"Past-due amount," and "Next due date" as three separate facts (each "Not tracked yet," verified as exactly
+three occurrences within the summary section). `PrivateFinancingAccountsPanel.test.jsx` and the accounts
+list route's own test were updated for the renamed field. All pre-existing SF-2A/2B/2C tests continued to
+pass under the rename (fixtures updated, no behavior other than the label/field name changed).
+
+## SF-2D — Seller adjustment previews and confirmed postings
+
+### 1. Preview-first workflow, one dispatch point for both routes
+
+Every one of the nine supported seller actions — bring-current/reporting credit, contractual principal
+correction, discretionary principal concession, interest correction, interest waiver, Stripe-fee
+reimbursement preview, compensating correction, payment reversal, and account closure — flows through a
+single new dispatch function, `computeAdjustmentPreview` (`adjustmentActionRegistry.js`), called by BOTH
+the preview route and the confirm route. This closes the one gap SF-1 Checkpoint C's own design intended
+but SF-2D had to guarantee structurally: preview and posting can never compute an adjustment two different
+ways, because there is only one function that computes either. `previewPaymentReversal` did not exist in
+SF-1 Checkpoint C (the `payment_reversal` event type and RPC support did, but no preview function did) and
+was added to `adjustmentPreview.js` as an SF-1-consistent extension, reusing `validateReversalReference`
+and `buildPreviewEnvelope` identically to the existing `previewCompensatingCorrection`. Discounted payoff
+offers were kept deferred (not part of SF-2D), consistent with the existing SF-2 checkpoint plan.
+
+### 2. Staleness and idempotency without a database idempotency key
+
+`interactive_user`-origin events structurally cannot carry an `idempotency_key`
+(`private_financing_events_check3` forbids it), so double-click/duplicate-submit protection could not reuse
+the pattern `manual_import`/`manual_external` events use. `adjustmentPreviewToken.js` instead binds an
+opaque, unsigned token to `{ accountId, actionType, inputs, ledgerSequenceAtPreview, asOfDate }` — not a
+security boundary itself (the guarded RPC and RLS remain the real boundary), only a staleness detector.
+`assertAdjustmentPreviewTokenFresh` rejects a changed account, action, or input, and a moved ledger
+sequence. The moved-ledger-sequence check does double duty as the double-submit guard: a first successful
+post advances the account's real ledger sequence, so an immediately-repeated confirm call with the same
+token is rejected on the second call even though no idempotency key exists for this event origin.
+
+### 3. Truthful attribution, reused from SF-1 exactly
+
+`appendEventRpcParams.js` never sends `p_created_by` — the RPC (`append_private_financing_event`, from SF-1
+Checkpoint D, unmodified) forces it to the real `auth.uid()` for `interactive_user` events and rejects a
+caller-supplied value otherwise. `p_owner_id` always comes from `authenticated.effectiveOwnerId` (the
+workspace resolver), never from the replayed ledger snapshot or any client input. `p_event_origin` is always
+`interactive_user`, baked into every SF-2D preview function's own `proposedEventPayload`, never read from
+the request body.
+
+### 4. Backdating restricted to today/prospective
+
+Per the checkpoint spec's own stated fallback ("If safe backdating is not fully supported, restrict SF-2D
+UI actions to today/prospective dates"), the preview route rejects any `effectiveDate` earlier than the
+server's own `todayISODate()` with a stable `private_financing_backdating_not_supported` code, rather than
+building the full preview-the-downstream-replay-effect machinery a general backdating feature would
+require. Historical corrections remain explicitly deferred.
+
+### 5. API routes
+
+**`/api/private-financing/accounts/[accountId]/adjustments/preview`** (`POST`) — genuinely non-mutating:
+never calls `.rpc(...)` anywhere in the route. Resolves the account, replays current events through
+`computeAdjustmentPreview`, and returns the preview envelope plus an `adjustmentPreviewToken`. Unknown
+action type, invalid input, and backdated `effectiveDate` all return stable 400s with distinct codes;
+missing/inaccessible account returns 404; missing schema returns 503.
+
+**`/api/private-financing/accounts/[accountId]/adjustments/confirm`** (`POST`) — the one place in this
+repository that appends an SF-2D ledger event. Decodes the token (malformed → 409), reloads fresh
+events/components, recomputes the current ledger sequence, asserts token freshness (409 on any staleness),
+recomputes the preview fresh (never trusts the token's cached preview), rejects if the fresh preview still
+blocks (400), and only then calls the guarded RPC. RPC failures return either 503 (missing schema) or a
+safe 500 that never surfaces raw Postgres detail.
+
+### 6. UI: `PrivateFinancingSellerActions.jsx`
+
+A single, data-driven component (`ACTION_CONFIGS`) implementing the inline reveal-form pattern for all
+nine action types, matching the repository's established convention (no shared modal exists in this repo,
+confirmed by SF-2's own read-only inspection) rather than introducing one. One action open at a time; a
+Preview step (calls the preview endpoint only) before any acknowledgement UI renders; an explicit
+acknowledgement checkbox; a stronger, typed "CONFIRM" requirement for `HIGH_IMPACT_ACTION_TYPES` (principal
+concessions, bring-current credit, interest waiver, compensating correction, payment reversal, account
+closure); a submitting/disabled state on Confirm (prevents double-submit); a success receipt naming the
+newly posted event's id, type, and ledger sequence; safe error text with the form left intact for retry;
+`data-guided-workflow-control="..."` attributes on every new control (borrowed vocabulary only, no step
+machine implemented).
+
+State-adjustment note: prefilling the reversal/correction form from a ledger-row click uses React's
+documented "adjusting state when a prop changes" pattern (a render-time comparison against the previous
+prop, not a `useEffect`) — `PrivateFinancingLedgerHistory.jsx`'s new "Reverse this payment" /"Correct this
+adjustment" buttons construct a fresh object on every click, so reference inequality alone detects a new
+request even for the same event clicked twice. This repo's `react-hooks/set-state-in-effect` lint rule
+flags the more obvious `useEffect`-based version, which is why the render-time form was used instead.
+
+**Wiring.** `PrivateFinancingAccountDetail.jsx` holds the `prefillReversalTarget` state and a
+`historyRefreshSignal` counter; a successful post calls both the detail `load()` and bumps the refresh
+signal, satisfying the spec's own requirement ("server reloads authoritative state... UI refetches account
+detail and history") for both halves, not just one.
+
+### 7. Tests
+
+535 tests pass across the full Private Financing domain and API layer (32 files) after SF-2D, including
+new files: `adjustmentActionRegistry.test.js` (9), `adjustmentPreviewToken.test.js` (11),
+`appendEventRpcParams.test.js` (5), the preview route's test (12: non-mutating, token shape, bring-current
+and payment-reversal computation, blocking-validation surfaced not thrown, unknown action type, invalid
+input, backdating rejection, prospective-date acceptance, 404, 503, 401 propagation), the confirm route's
+test (16: valid post + receipt, co-owner attribution via `effectiveOwnerId`, no `p_created_by` ever sent,
+stale-ledger/changed-input/cross-account/malformed-token rejection, duplicate-submit rejection via a real
+second-POST simulation, fresh-validation-failure rejection, duplicate-reversal rejection, 404/503/401,
+internal-note trimming), `PrivateFinancingSellerActions.test.jsx` (15: every action type renders, one
+action open at a time with no-mutation Cancel, Preview-only never posts on initial submit, before/after
+balances render with a disabled Confirm until acknowledged, posting only after Confirm with `onPosted`
+firing and a receipt naming the new event, high-impact CONFIRM-phrase gating, non-high-impact actions skip
+that gate, warnings/blockers render with Confirm hidden when blocked, safe preview-failure and
+confirm-failure error states, double-submit prevented via a disabled Confirm while in flight, prefill
+opens and fills the correct form and re-triggers on a new target, borrower-visible vs. seller-only field
+labeling, keyboard-reachable controls), and 8 new tests in `PrivateFinancingLedgerHistory.test.jsx`
+(Reverse/Correct controls appear only where valid, already-reversed rows hide Reverse, no callback means no
+button, `refreshSignal` triggers a refetch). `PrivateFinancingAccountDetail.test.jsx`'s SF-2C-era
+"no premature write actions" test was renamed and updated to assert SF-2D's actions now exist while SF-2E's
+still don't (external payment recording, payoff offers, policy changes, borrower invitations), rather than
+silently becoming a stale, vacuously-passing check now that this screen genuinely has write actions.
+
+Full regression: 831 files / 5713 tests pass; scoped lint clean on every new/changed file; `npm run build`
+succeeds; `git diff --check` clean.
+
+### 8. Disposable local Supabase validation
+
+A local stack was started (`supabase init` → `supabase start --exclude <heavy services>`, migrations
+applied fail-fast including the unmodified `20260830000200_create_private_financing_foundation.sql`), the
+one-time local grant bootstrap applied, and a real identity matrix exercised directly against
+`append_private_financing_event` and RLS via `SET ROLE authenticated; SET request.jwt.claim.sub = '<uuid>'`
+— ten scenarios, all confirming expected behavior against real Postgres rather than mocks:
+
+1. Primary owner posts a `principal_correction` — succeeds, correctly attributed.
+2. Co-owner (an active `workspace_members` row under the owner) posts an `interest_correction` — succeeds,
+   `created_by` is the co-owner's own uuid, never the owner's.
+3. An unrelated authenticated user attempts the same call — denied (`has_workspace_access` false).
+4. A claimed borrower (an active `private_financing_account_borrowers` row, no workspace membership)
+   attempts the same call — denied identically to (3), confirming `has_workspace_access` checks workspace
+   membership specifically and grants a borrower nothing here.
+5. Owner posts a `payment_reversal` against a seeded `payment_posted` event — succeeds.
+6. Owner attempts to reverse the same payment a second time — denied by the RPC's own guard ("Event has
+   already been reversed and cannot be reversed again," `23505`), independent of and in addition to the JS
+   `validateReversalReference` check the preview/confirm routes already run.
+7. Owner attempts to post with `event_origin = 'stripe_webhook'` from the authenticated role — denied
+   (the RPC only accepts `interactive_user`/`manual_import`/`manual_external` from `authenticated`).
+8. Co-owner attempts to pass `p_created_by` as the owner's uuid while posting as `interactive_user` — the
+   inserted row's `created_by` is the co-owner's own real uuid regardless, confirming the spoof attempt has
+   no effect.
+9. The unrelated user from (3) queries `private_financing_events` directly — zero rows returned, confirming
+   the RLS `SELECT` boundary independently of the RPC's own `INSERT` boundary.
+10. Owner queries the same table — sees the real, complete 4-event history, confirming (9) was a genuine
+    RLS boundary and not a broken query.
+
+One real drift was caught and fixed by this pass: a hand-written raw-SQL rehearsal of scenario 2 initially
+omitted `p_correction_basis`, which the live `private_financing_events_check8` CASE constraint requires for
+every `interest_correction` row. Inspection confirmed the actual JS code path
+(`previewInterestAdjustment` → `appendEventRpcParams.js`) already sets `correctionBasis` correctly on every
+`proposedEventPayload` it produces — the gap was in the manual validation script, not the shipped product
+code — and the script was corrected before the scenario was re-run and passed. The local stack was reset
+(`supabase db reset`) between the flawed and corrected runs for a clean, reproducible record, and fully torn
+down afterward (`supabase stop --no-backup`, confirmed empty via `docker ps -a`). The migration was not
+applied to any remote database.
+
+### 9. Explicitly not in SF-2D
+
+External/off-platform payment recording, payment-policy changes, discounted payoff offers, borrower
+invitations, Stripe activation, and South Main import all remain out of scope, matching the checkpoint
+spec exactly. `adjustmentActionRegistry.test.js` asserts the external-payment/policy-change and
+payoff-offer/concession action-type names are NOT recognized by `isKnownAdjustmentActionType`, so this
+boundary is enforced by a test, not only by omission.
+
+## Product-generalization audit (owner-requested, before SF-2D UI was reviewed)
+
+**South Main is the first validation account for FORGE Private Financing, not the product's schema or
+default configuration.** FORGE Private Financing is built for every qualified lender/seller and borrower
+this platform serves — South Main is a golden calculation fixture, the first real validation account, and
+a later controlled import; it is never the platform default, a hard-coded loan structure, the only
+supported allocation method, or the source of universal fee/interest/payment/late-charge rules. This
+statement is recorded here prominently per explicit owner instruction, and the findings below are the
+result of auditing SF-1 through SF-2D against it.
+
+### 1. Audit method
+
+A systematic, source-grep-based audit of every production (non-test, non-fixture) file under
+`src/domains/private-financing/`, `src/app/api/private-financing/`, and
+`src/components/forge/rental/PrivateFinancing*` for: hard-coded South Main dollar figures, dates, and
+payment counts; hard-coded "3%"/"0%" labels; a hard-coded single-borrower, single-property, or family-
+relationship assumption; a hard-coded ten-year-term assumption; globally-disabled late fees or seller-
+absorbed fees; and confirmation that `late_fee_policy`, `fee_payer`, `payment_acceptance_policy`, and
+`product` (financing type) are genuinely read per-account, never hard-coded. Two real defects were found
+and corrected; several suspected issues were checked and confirmed to already be correctly generalized.
+
+### 2. Corrected — late-fee calculation now fails closed instead of fabricating $0
+
+`payoffQuote.js`'s `computePayoffQuote` previously set `lateChargesCents = 0` unconditionally for every
+account, regardless of that account's own `late_fee_policy`. An account with late fees legitimately
+*enabled* (a lawful, contract-authorized configuration this schema has always permitted, `late_fee_policy
+in ('disabled', 'enabled')`) would have silently received a payoff quote claiming $0 in late charges —
+exactly the "quietly wrong number that looks complete" failure mode the owner's instruction warns against.
+
+Fixed: `computePayoffQuote` now requires an explicit `lateFeePolicy` argument and throws a new
+`UnsupportedAccountPolicyError` (fail-closed, not a `LedgerIntegrityViolationError` — nothing is corrupt,
+V1 simply has no late-charge calculation engine yet) for any value other than `"disabled"`.
+`computeAccountPayoffEstimate` (`payoffEstimate.js`) catches that error and returns `null`, folding into
+the same "no estimate available" contract every other caller already handles; the detail route
+(`/api/private-financing/accounts/[accountId]/route.js`) now passes the account's real
+`late_fee_policy` through; the UI (`PrivateFinancingAccountDetail.jsx`'s `PayoffPresentation`) explains the
+null honestly — "this account's late-fee policy is enabled, and late-charge calculation is not yet
+supported" — distinct from the ordinary "no history yet / already closed" message. Tests added in
+`payoffQuote.test.js`, `payoffEstimate.test.js`, the detail route's test, and
+`PrivateFinancingAccountDetail.test.jsx` cover both the disabled (honest $0) and enabled (fails closed,
+never fabricates) cases.
+
+### 3. Corrected — "Seller" was hard-coded in the SF-2D UI regardless of financing type
+
+`PrivateFinancingSellerActions.jsx`, `PrivateFinancingLedgerHistory.jsx`, and
+`PrivateFinancingAccountDetail.jsx` hard-coded the word "Seller" in several user-visible strings ("Seller
+actions," "Reason (seller record)," "Seller credits/concessions to date," "Recorded live by seller,"
+"Seller-only note") regardless of the account's own `product`. A `personal_loan` account (a real,
+already-supported financing type in the schema) would have shown "Seller" throughout, which is simply the
+wrong word for that product.
+
+Fixed: a new `financingPartyLabel(product)` helper
+(`src/domains/private-financing/financingPartyLabel.js`) resolves `"Seller"` for `seller_financing` and
+`"Lender"` for `personal_loan` (falling back to `"Seller"` for an unrecognized value, since this is a
+display lookup, never a validation gate). `PrivateFinancingSellerActions.jsx`'s field-label/description
+config is now built as a function of this label (`buildActionConfigs(partyLabel)`) rather than a fixed
+module-level constant; all three components now accept `product` and thread it down. Tests confirm a
+`personal_loan` account renders "Lender" throughout and never renders the literal string "Seller."
+
+### 4. Confirmed already correct — no further change needed
+
+- **SF-2C's component presentation** (`ComponentDetails` in `PrivateFinancingAccountDetail.jsx`) already
+  renders every component's label and rate dynamically (`COMPONENT_TYPE_LABELS[component.componentType]`,
+  `bpsToPercent(component.rateBps)`) — no hard-coded "3% principal"/"0% principal" string exists anywhere
+  in production code; a repo-wide grep for those literals returns nothing outside test assertions.
+- **`late_fee_policy`, `fee_payer`, and `payment_acceptance_policy`** are genuine per-account database
+  columns, read via `row.late_fee_policy` / `row.fee_payer` / `policyByAccountId.get(...)` in both API
+  routes — never hard-coded constants. `paymentAcceptancePolicy.js` and its test file already cover all
+  three policy values (`partial_allowed`, `full_amount_or_more`, `exact_amount_only`) with partial/exact/
+  extra scenarios for each.
+- **`product`** (financing type) is a genuine per-account enum already supporting both `seller_financing`
+  and `personal_loan` in the schema's own `check (product in (...))` constraint; the detail/list UI already
+  reads it dynamically via a `PRODUCT_LABELS` lookup, never assuming `seller_financing`.
+- **`property_id` is correctly omitted** from `private_financing_accounts` entirely (a deliberate SF-1
+  Checkpoint D decision, not an oversight — see that migration's own Revision 3 comment) — this means
+  Personal Loans already "work without a property" trivially, and Seller Financing is not falsely tied to
+  one either. No UI component renders an address or assumes a single-family-house shape.
+- **Multiple borrowers already work.** `BorrowerMemberships` renders `borrowers.map(...)` generically with
+  no cap; a new test (`PrivateFinancingAccountDetail.test.jsx`) proves three borrowers with three distinct
+  roles (`primary_borrower`, `co_borrower`, `guarantor`) render correctly on one account.
+- **No hard-coded loan-term/maturity assumption exists anywhere in code** — the concept of a fixed term or
+  maturity date does not appear in the schema or domain layer at all (see the scope boundary below), so
+  there is no "ten-year" constant to find or remove.
+- **`previewBringCurrentCredit` and `previewStripeFeeReimbursement`'s component-selection default**
+  (interest-bearing) is exactly that — a sensible default for a caller that doesn't specify one. The real
+  SF-2D UI always lets the seller/lender select the applicable component explicitly (`ACTION_CONFIGS`'s
+  `componentType` select field on both actions), satisfying "the seller must select the applicable
+  component when an adjustment could affect more than one component" already. Only the *comment wording*
+  implied these defaults were derived from South Main rather than being general design choices South
+  Main's own facts happen to validate — reworded in `adjustmentPreview.js` for honesty about generality.
+
+### 5. Reported, not "corrected" — real V1 architecture boundaries, disclosed rather than silently patched
+
+Two structural facts were found that are genuine V1 scope boundaries inherited from SF-1 Checkpoints A/B/D
+— not South Main leaks, and not something a "focused audit + necessary corrections" pass should redesign
+without a dedicated checkpoint of its own. Both are now enforced by a test that would fail if a future
+change silently regressed the disclosed boundary, and both are recorded here so they are a known, chosen
+scope limit rather than an undocumented gap:
+
+- **At most one interest-bearing and one zero-interest component per account — never three, never two of
+  the same type.** `private_financing_components.component_type` accepts exactly two values by CHECK
+  constraint, and `unique (owner_id, account_id, component_type, version_number)` makes a second component
+  of the same type at the same version structurally impossible. `replayEvents.js` mirrors this exactly
+  (`componentTerms[component.componentType] = component`, a two-key lookup, never a general list). A
+  zero-interest component is correctly optional (one possible component, not required — proved by the new
+  single-component tests in `replayEvents.test.js`), but "more than two components" is not something V1's
+  contracts permit at all, so the requested test for that case is instead a boundary-enforcement test
+  (`private-financing-component-cap.migration.test.js`) proving the cap is real and intentional, not an
+  attempt to exercise a >2-component scenario that cannot occur.
+- **No `allocation_policy`, `prepayment_policy`, `payment_frequency`, or `term`/`maturity` column exists
+  anywhere in the schema.** V1 has exactly one allocation algorithm (`paymentAllocation.js`: interest on
+  the interest-bearing component first, then that component's own regular principal, then the
+  zero-interest component's regular principal, then any excess to interest-bearing principal), applied
+  uniformly to every account with no per-account variability, and tracks no term, maturity date, or payment
+  cadence at all — "next due date" and "past-due amount" are the same disclosed, honest "Not tracked yet"
+  gap already recorded in the SF-2C correction above, for the same underlying reason. Prepayment already
+  works correctly for every account regardless (interest stops accruing on prepaid principal immediately,
+  by construction of the actual-day accrual math, not by a policy flag), so that specific item from the
+  requested coverage list is already generically true. Adding real `allocation_policy`/`prepayment_policy`/
+  `payment_frequency`/term-tracking columns would mean an additive migration and a materially different,
+  more general allocation engine — correctly scoped as a future checkpoint of its own, not a change folded
+  into this audit pass, and specifically **not** made to the already-merged
+  `20260830000200_create_private_financing_foundation.sql` migration file (forward-only discipline: a
+  merged migration is never edited after merge in this codebase).
+
+### 6. New generic (non-South-Main) test coverage added
+
+- `financingPartyLabel.test.js` — the new Seller/Lender resolver, including its safe fallback.
+- `replayEvents.test.js` — a new "component generality" block: an interest-bearing-only account and a
+  zero-interest-only account (a personal loan with no interest, as an example), both using numbers that
+  share nothing with South Main, both replaying correctly, including a payment.
+- `paymentAllocation.test.js` — a new "independent account terms" block re-running the regular-payment,
+  wide-amount-range, remaining-principal-cap, and above-envelope scenarios against a `GENERIC_LOAN_SHAPE`
+  fixture sharing no numbers with `SOUTH_MAIN_SHAPE`.
+- `payoffEstimate.test.js` — a new test computing a correct estimate for a single-component account with a
+  different rate, principal, and start date than South Main's own.
+- `productGenericity.test.js` (new) — a structural test proving the five core calculation modules
+  (`accountBalanceSummary.js`, `replayEvents.js`, `paymentAllocation.js`, `interestAccrual.js`,
+  `payoffQuote.js`) never reference the identifier `product` at all (financing type is not one of their
+  inputs), plus two tests proving no production module under `private-financing/` imports the South Main
+  fixture or hard-codes its specific dollar figures.
+- `private-financing-component-cap.migration.test.js` (new) — the component-cap boundary test described
+  above.
+- `PrivateFinancingAccountDetail.test.jsx` — a new multi-borrower rendering test (three borrowers, three
+  roles) and a new `personal_loan` terminology test; the SF-2C-era "no premature write actions" test was
+  already renamed for SF-2D and is unaffected by this pass.
+- `PrivateFinancingSellerActions.test.jsx` / `PrivateFinancingLedgerHistory.test.jsx` — new `personal_loan`
+  terminology tests confirming "Lender" renders and "Seller" never does.
+
+### 7. Gate
+
+535+ new/updated tests across the Private Financing domain and UI pass; full regression suite passes with
+zero unrelated regressions; scoped lint clean on every changed/new file; migration/authorization tests
+pass unchanged (no migration file was touched); production build succeeds; `git diff --check` clean. SF-2D
+itself (built in the prior pass) is unaffected in behavior by this audit except for the three corrections
+above, which are additive/corrective, not a redesign of anything already reviewed.
+
+Not committed, pushed, merged, or deployed. No migration applied remotely. No South Main import. No
+borrower invitation. No payment activation.
+
+## V1 Terms Generalization — bounded checkpoint (owner-directed, after the product-generalization audit)
+
+### 0. Why this checkpoint exists
+
+The product-generalization audit above fixed two immediate leaks, but the owner's follow-up instruction
+identified two remaining architecture boundaries that could not stay documentation-only: (1) at most one
+interest-bearing plus one zero-interest component, and (2) one universal allocation algorithm with no
+explicit payment-frequency, allocation-policy, or prepayment-policy terms. Left in place, those constraints
+would make another customer's agreement behave according to South Main's own structure. This checkpoint
+replaces both with a bounded, closed V1 support envelope — explicitly NOT an attempt to support every
+possible loan — covering seller-financed real estate and personal loans, one-or-more fixed-rate components
+(any may be zero-rate), simple actual/365 interest, irregular/partial/exact/extra payments, multiple
+borrowers, and account-specific payment-acceptance/fee-payer/schedule/allocation/prepayment policy, while
+explicitly deferring variable rates, compounding, negative amortization, escrow, interest-only periods,
+graduated payments, legally calculated late fees, prepayment penalties, revolving credit, automatic balloon
+refinancing, credit reporting, and document generation (unchanged from SF-1's own scope boundary).
+
+### 1. Component generalization
+
+`private_financing_components` no longer hard-codes exactly one `interest_bearing` and one `zero_interest`
+row (the CHECK constraint and its two-value enum are gone). A component is now an ordered collection member
+with a stable `component_key`, a `label`, `original_principal_cents`, `rate_bps` (zero is a fully valid
+rate, not a special case), `day_count_convention` (closed to `actual_365`), `scheduled_component_amount_cents`,
+`allocation_priority`, `effective_date`, and `version_number` — one or more per account, no maximum. The
+domain layer never imports or references `interestBearing`/`zeroInterest`/`PRIVATE_FINANCING_COMPONENT_TYPE`
+anywhere in production code (confirmed by a repo-wide grep sweep before the test-rewrite pass began, and by
+`productGenericity.test.js`'s own structural check). `replayEvents.js` accrues interest, and
+`paymentAllocation.js` allocates payments, generically across however many components an account actually
+has — proved by dedicated fixtures for one fixed-interest component, one zero-interest-only component, and
+three components at three different rates (`replayEvents.test.js`).
+
+### 2. Explicit, versioned account terms
+
+A new table, `private_financing_account_terms_versions`, holds insert-only, trigger-ordered (strictly
+increasing `effective_date` per account, mirroring the components table's own established discipline)
+versions of: `payment_frequency` (closed to `monthly` — the schema reserves room for future closed values,
+but the engine only calculates what it has deterministic, tested date/arrears math for), `first_payment_due_date`,
+`regular_scheduled_payment_amount_cents`, `maturity_date`, `allocation_policy`, `extra_payment_allocation_policy`,
+`prepayment_policy`, `day_count_convention`, `effective_date`/`version_number`, `acting_seller_id`, and
+`amendment_reason` (required once `version_number > 1`). `resolveAccountTermsAsOf` resolves the single
+version in effect as of any date, exactly like `resolveComponentsAsOf` already does for components.
+
+### 3. Closed allocation-policy design (two axes, not one hidden universal algorithm)
+
+Rather than trying to force four named contractual behaviors onto one linear scale, this checkpoint splits
+allocation into two independent, closed axes: `allocation_policy` governs the REQUIRED phase (closed to one
+value, `scheduled_component_order` — accrued interest then each component's own scheduled amount, in
+priority order) and `extra_payment_allocation_policy` governs what happens to any amount ABOVE the required
+envelope (closed to three values — `highest_rate_first_extra`, `proportional_extra` via a new
+largest-remainder `allocateCentsByRatio` helper in `currencyMath.js`, and `selected_component_extra`, which
+requires the caller to name an eligible component explicitly and leaves the extra entirely unapplied
+otherwise, rather than guessing). South Main's own real historical behavior — "excess reduces the
+interest-bearing component" — is expressed as ordinary `highest_rate_first_extra` configuration, satisfying
+the requirement that South Main be expressible through terms and policy, never a special code branch. All
+four described behaviors map cleanly onto this two-axis model; an unrecognized value on either axis throws
+`UnsupportedAllocationPolicyError` and fails the whole payment, never silently substituting a default —
+proved at three layers: the `allocatePayment` unit level, the full `replayEvents` level (a new
+`extraPaymentAllocationPolicy` describe block covering `proportional_extra` and `selected_component_extra`
+end-to-end, plus an unsupported-policy-fails-closed replay test), and live against real Postgres (§8 below).
+
+### 4. Prepayment policy
+
+Closed to three values: `allowed_without_penalty_does_not_advance_due_date`, `allowed_without_penalty_advances_due_date`,
+and `unsupported` (a real, storable value — V1 can declare an account has no computable prepayment
+behavior yet, rather than being forced to guess). No penalty calculation exists in V1 for any value. The
+due-state engine (§5) is the only place this policy has a computable effect, and extra principal never
+silently satisfies a future scheduled installment unless the account's own policy says it advances the due
+date.
+
+### 5. Due-state engine (`dueState.js`, new)
+
+A pure, deterministic function computing — for an account within V1's supported envelope only — scheduled
+installments through an as-of date, the qualifying-payment shortfall split into current vs. past-due
+amounts (the ordinary servicer convention), the next due date (computed differently depending on whether
+the account's prepayment policy advances it), and the remaining scheduled obligation (always the real
+replayed balance, never schedule-count arithmetic). Month-end due dates are handled explicitly and tested:
+a first due date on the 31st clamps only when the target month is too short (Jan 31 → Feb 28) and returns
+to the 31st the moment a long-enough month comes around again (→ Mar 31), never staying stuck at the
+clamped value. Fails closed (`UnsupportedDueStateError`) for any non-monthly frequency, `prepaymentPolicy:
+"unsupported"`, or a non-positive scheduled payment amount — the account-detail route only ever substitutes
+a real `dueState` for the previously honest "Not tracked yet" placeholders when this engine can actually
+compute one; every other account keeps the placeholder unchanged. 16 new tests in `dueState.test.js` cover
+calendar clamping, the current/past-due split, partial payment, both prepayment-policy behaviors under an
+identical "2.5 installments paid ahead" scenario (proving the SAME extra payment produces a materially
+different next-due-date depending solely on the account's own configured policy), and all three fail-closed
+paths.
+
+### 6. Migration discipline
+
+The original, already-merged `20260830000200_create_private_financing_foundation.sql` was never edited.
+All changes are a new, additive, forward-only file,
+`supabase/migrations/20260830000300_add_private_financing_v1_terms_generalization.sql`, which: ALTERs
+`private_financing_components` (rename `component_type`→`component_key`, rename
+`regular_payment_cents`→`scheduled_component_amount_cents`, add `label`/`day_count_convention`/
+`allocation_priority`, drop the two-value CHECK, add a non-empty-string CHECK instead); creates
+`private_financing_account_terms_versions` with its own ordering trigger and a `select`-only RLS policy
+(intentionally no `authenticated`-role insert/update/delete — every write goes through
+`open_private_financing_account` for version 1 or a **future, not-yet-built amendment RPC** for version 2+,
+mirrored below); restructures `private_financing_events`' per-component monetary fields from two fixed
+named columns into jsonb maps keyed by `component_key`, enforced by two independent layers (the JS
+contracts layer AND a PL/pgSQL loop inside `append_private_financing_event` itself, since Postgres CHECK
+constraints cannot contain subqueries) checking both "allocation sums exactly to the payment amount" and
+"every referenced component actually exists on this account"; and DROP+CREATEs
+`append_private_financing_event`, `open_private_financing_account`, and `read_private_financing_borrower_events`
+for their new signatures (Postgres cannot `CREATE OR REPLACE` a function whose parameter list changes).
+Because no Private Financing row of any kind exists in Production, every ALTER is written as a plain,
+unconditional change rather than a data-preserving backfill — a deliberate, disclosed simplification, noted
+in the migration's own header comment.
+
+### 7. Generic fixtures and test coverage
+
+South Main remains one golden fixture (`southMainGoldenReplay.test.js`, `replayEvents.test.js`'s South Main
+reconciliation block) — both re-verified to still reproduce the owner-approved numbers solely through
+ordinary configuration (`highest_rate_first_extra`, `scheduled_component_order`), never a special code path.
+Independent, non-South-Main fixtures now cover: one fixed-interest-only component; one zero-interest-only
+component; three components at three different rates; a personal loan with no property (structurally true
+by construction — `private_financing_accounts` has no `property_id` column at all, confirmed by a static
+migration test); multiple borrowers with distinct roles on one account; a monthly due date on the 31st
+across short months; partial payment; an extra payment that does not advance the due date vs. one that
+does, from an identical starting position; highest-rate-first, proportional, and selected-component extra
+allocation, each exercised at both the unit and full-replay level; unsupported frequency, unsupported
+extra-payment-allocation-policy, and unsupported prepayment-policy all failing closed, at both the JS layer
+and live against real Postgres; and a structural proof that no production module imports South Main
+constants (`productGenericity.test.js`, `southMainPayments.js` remains test/fixture-only). All 22
+previously-shape-coupled test files were rewritten end to end (domain, API route, and UI layers); the
+Private Financing test surface now totals **36 files / 607 tests**, all passing, up from 535 before this
+checkpoint.
+
+### 8. UI/read-model correction
+
+`ComponentDetails` renders `components.map(...)` dynamically for however many components an account
+actually has, each with its own rate/day-count/scheduled-amount/effective-version facts — never assuming
+two fixed named slots. `PrivateFinancingSellerActions.jsx` builds every `componentId` select field's options
+from the account's own real `components` prop (`componentOptions`), never a hard-coded pair, and no longer
+defaults `INTEREST_CORRECTION`/`INTEREST_WAIVER` to `"interest_bearing"` — the seller/lender always selects
+explicitly. `AccountSummary` now accepts a `dueState` prop: once the due-state engine returns a real value
+for an in-envelope account, "Current amount due"/"Past-due amount"/"Next due date" show the real, calculated
+figures; every other account keeps the honest "Not tracked yet" labels from the SF-2C correction, unchanged.
+
+### 9. SF-2D status
+
+SF-2D's own implementation was already given a complete, dedicated report in this document (see the
+"SF-2D — Seller adjustment previews and confirmed postings" section above) before this checkpoint began.
+This checkpoint's own changes to `adjustmentPreview.js`/`adjustmentActionRegistry.js` are limited to
+threading the new generic `componentVersions`/`accountTermsVersions` parameters and generic per-component
+maps through every one of SF-2D's nine preview functions — no adjustment kind's approved behavior, business
+rule, or high-impact/strong-confirmation classification changed. SF-2D is now built on the generalized
+engine and terms, per the instruction not to extend or approve its posting behavior until that was true.
+
+### 10. Live Supabase validation — one real defect fixed, one intentional safety boundary applied on owner review
+
+Both migrations were applied in sequence (the full, real 107-file migration chain, ending with the
+original foundation migration followed immediately by this checkpoint's additive migration) to a fresh
+disposable local Supabase instance (`supabase init` → `supabase start --exclude <heavy services>`, a local
+grant-only bootstrap file — see note below — → real identity simulation via `SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claim.sub = '<uuid>'`), then fully torn down (`supabase stop --no-backup`, confirmed
+empty via `docker ps -a`).
+
+**Local-environment note, not a Production bug:** this disposable `supabase init` project's own default
+table privileges (tables created by `postgres` inherit only `TRIGGER`/`REFERENCES`/`TRUNCATE` to
+`authenticated`, not `SELECT`/`INSERT`/`UPDATE`/`DELETE`) do not match what Supabase's own hosted platform
+provides by default. No migration in this repository grants table-level privileges explicitly (confirmed by
+grepping every migration), and every other already-Production-validated FORGE domain works fine without
+them — so a one-line `grant select, insert, update, delete on all tables in schema public to authenticated;`
+was added ONLY to this disposable session's own local bootstrap file, never to any migration.
+
+**Real defect #1 — found and fixed in the new migration.** `enforce_private_financing_component_version_ordering()`,
+the BEFORE INSERT trigger enforcing "a new component version's effective_date must strictly postdate every
+prior version," still referenced the just-renamed `component_type` column in its own PL/pgSQL body (a
+`rename column` updates every dependent view/constraint automatically, but not the text of a function body,
+which Postgres treats as opaque until executed). This made every real component-version insert fail with
+`column "component_type" does not exist`, regardless of caller or authorization — a defect only live SQL
+execution against real Postgres could catch; no static migration-text test exercises a real INSERT. Fixed
+by adding a `create or replace function` for the corrected body (referencing `component_key`) directly in
+the new migration, immediately after the column rename — no DROP needed, since the function takes no
+arguments and the existing trigger already resolves it by name. Re-validated after the fix: a co-owner
+successfully posted a real version-2 component amendment (rate reduced from 3% to 2.5%, `created_by`
+correctly the co-owner's own uuid) against real Postgres.
+
+**No authorized terms/component amendment path — an OWNER-DIRECTED, INTENTIONAL V1 SAFETY PROTECTION, not a
+defect or an unfinished feature.** `private_financing_account_terms_versions` has no `authenticated`-role
+INSERT policy at all. Live validation also surfaced that `private_financing_components` DID still carry its
+original `owner_insert` policy (inherited unchanged from the foundation migration), which meant a co-owner
+could directly amend a component's own rate/principal/scheduled amount through ordinary workspace
+authorization alone — successfully exercised once, live, before the owner reviewed this finding. On review,
+the owner determined that changing signed loan terms — whether at the account level or a single component's
+own rate/principal — is not an ordinary seller adjustment: it may require borrower consent, a signed
+amendment, updated disclosures, a recalculated schedule, and jurisdiction-specific legal review, none of
+which primary-owner/co-owner workspace authorization alone can satisfy. Per that explicit direction, the
+migration was revised to `drop policy if exists "private_financing_components_owner_insert"`, closing the
+component path to match the terms path exactly. **In V1, no seller, co-owner, borrower, browser route, or
+ordinary authenticated RPC can append a term or component amendment of any kind — only
+`open_private_financing_account` (version 1, at account opening, `SECURITY DEFINER`) may ever write either
+table.** The versioning columns and ordering triggers remain in the schema as future-compatible structure
+for a properly designed Terms Amendments phase (amendment document/reference, borrower/co-borrower consent,
+acting lender, disclosure requirements, schedule recalculation, treatment of existing payments, whether an
+amendment is legally permitted, and immutable acceptance evidence — none of which V1 attempts or implies).
+Re-validated live, after the policy was dropped: with real identities for both the primary owner and the
+same active co-owner who had previously succeeded, all four amendment attempts (owner and co-owner, against
+both components and terms) were denied with a clean "new row violates row-level security policy" error, and
+a superuser-vantage-point count confirmed exactly one version of each row ever existed afterward — none of
+the four denied attempts left any row.
+
+**Minor, non-blocking observation (informational, not actionable in V1).** Neither version-ordering trigger
+function (components or account terms) is `SECURITY DEFINER`, so its own internal
+`SELECT ... max(effective_date)` runs under the INSERTing caller's own RLS visibility. This was visible
+earlier in validation (before the policy was dropped) as a misleading date-ordering error surfacing instead
+of a clean permission-denied message for a caller who couldn't see the prior version being compared against
+— never a security gap (the row was never written either way) but worth designing around explicitly (e.g. a
+`SECURITY DEFINER` ordering check, or validating ordering inside the eventual RPC itself instead of a bare
+table trigger) whenever the future Terms Amendments phase adds a real, properly-gated write path.
+
+**Scenarios validated, all against real Postgres, not mocks, across two full validation passes (before and
+after the component `owner_insert` policy was dropped):** foundation migration followed by the additive
+terms migration applying cleanly in the real, full sequence, both times; a personal-loan account opened
+with three components at three different rates and `proportional_extra`, proving no maximum component
+count; a South-Main-shaped account opened and its first real payment posted through
+`append_private_financing_event` with the exact accrued-interest figure ($114.66 over 31 days at 3%),
+matching the JS engine's own independent computation exactly; terms versioning (version 1 → version 2 with
+a required amendment reason, and a rejected backdated version 3, validated at the schema/trigger level since
+no application write path to this table exists at all); zero UPDATE/DELETE policies on either table,
+confirming immutable prior terms and prior components alike; **primary-owner and co-owner amendment attempts
+against BOTH components and terms now uniformly denied**, matching the owner's explicit V1 safety decision
+(superseding the earlier finding that a co-owner could amend a component directly, which prompted the
+policy drop); borrower and unrelated-user denial on the same amendment attempts; and four distinct
+unsupported-terms scenarios (`biweekly` frequency, an unrecognized extra-payment-allocation-policy, zero
+components, and `late_fee_policy: 'enabled'`) all rejected at the RPC boundary with clear errors, alongside
+confirming `prepaymentPolicy: 'unsupported'` itself is correctly ACCEPTED and stored as a legitimate
+closed-set value. Due-state calculation has no database-level surface (it is a pure function over
+already-fetched rows) and was instead validated by `dueState.test.js`'s own 16 tests, referenced above.
+
+### 11. V1 supported-term matrix
+
+| Supported now | Deferred (explicitly, not silently) |
+|---|---|
+| Seller-financed real estate and personal loans, no required property relationship | Variable/adjustable rates |
+| One or more fixed-rate components per account, any may be zero-rate | Compounding interest |
+| Simple interest, actual/365 day-count (the only closed value) | Negative amortization |
+| Irregular partial, exact, and extra payments | Escrow |
+| Multiple borrowers, distinct roles | Interest-only periods |
+| Account-specific payment-acceptance and fee-payer policy | Graduated payments |
+| Account-specific payment schedule (monthly only, closed) | Legally calculated late fees |
+| Account-specific allocation (`scheduled_component_order`, the only closed required-phase value) | Prepayment penalties |
+| Account-specific extra-payment allocation (`highest_rate_first_extra` / `proportional_extra` / `selected_component_extra`) | Revolving credit |
+| Account-specific prepayment policy, including a storable `unsupported` value | Automatic balloon refinancing |
+| Seller credits, corrections, concessions, reversals, and payoff | Credit reporting |
+| Unsupported terms failing closed, at both the JS and live-Postgres layer | Document generation |
+| Due-state calculation (current/past-due/next-due-date) for in-envelope accounts | Terms/component AMENDMENT write path — an OWNER-DIRECTED V1 SAFETY BOUNDARY, not merely unbuilt: no seller, co-owner, borrower, browser route, or ordinary authenticated RPC may append a version-2+ term or component row (see §10); versioning schema/triggers remain as future-compatible structure only |
+| | Weekly/biweekly/semimonthly/custom payment frequency (schema reserves the enum space; no calculation engine yet) |
+
+### 12. Gate
+
+Full private-financing surface: 36 files / 607 tests passing (up from 535). Full repository regression:
+835 files / 5785 tests passing, zero unrelated regressions. Scoped lint clean on every new/changed
+private-financing file. `npm run build` succeeds. `git diff --check` clean. Both migrations validated
+together against real Postgres per §10, including one real defect found and fixed in the new migration.
+
+Not committed, pushed, merged, or deployed. No migration applied remotely. No South Main import. No
+borrower invitation. No Stripe activation. SF-2D/SF-2E were not extended further. AGENTS.md/CLAUDE.md
+remain untracked and untouched throughout.
+
+## SF-2D — V1 amendment-boundary correction and generalized-engine compatibility audit (owner review of the above)
+
+On review of the checkpoint above, the owner made one explicit safety decision and requested one
+compatibility audit before SF-2D could resume:
+
+**Owner safety decision — no generic terms-amendment RPC in V1, and the component amendment path (found
+open during live validation above) is closed to match.** See §10's rewritten text above for the full
+rationale and the live-Postgres re-validation proving both tables now uniformly deny every amendment
+attempt, from every non-`SECURITY DEFINER` caller, in V1.
+
+**Compatibility audit finding and fix — `previewBringCurrentCredit` was not yet using the authoritative
+due-state engine.** Auditing SF-2D's own implementation against the generalized engine surfaced one real
+gap: `scheduledAmountThroughAsOfDateCents`, `nextDueDate`, and `nextDueAmountCents` were still plain
+seller-typed form fields (`PrivateFinancingSellerActions.jsx`'s `BRING_CURRENT_CREDIT` field config),
+never derived from `computeDueState` (`dueState.js`), even though that engine now exists and is
+authoritative for exactly this figure. Fixed: `previewBringCurrentCredit` now calls `computeDueState`
+itself (using the same replayed snapshot and resolved terms it already had) and derives the shortage,
+next-due-date, and next-due-amount from its real output; the three now-computed fields were removed from
+the seller-facing form entirely (the seller only ever picks the component and the credit amount); the
+preview panel now renders the authoritative scheduled-amount/shortage/next-due-date figures so the seller
+reviews real numbers before confirming, never a number they typed themselves. For an account outside
+V1's due-state envelope (non-monthly frequency, or `prepaymentPolicy: "unsupported"`), this action now
+fails closed via `blockingValidation` (never a guessed or partially-computed credit), proven at both the
+domain level and end-to-end through the preview API route. `dueState.js` was extended with two additional
+output fields (`scheduledThroughAsOfDateCents`, `alreadyPostedCents`) so this consuming code has a single
+authoritative source for both, rather than re-deriving them a second, potentially divergent way. Every
+other SF-2D compatibility criterion (dynamic N-component arrays, Lender/Seller terminology, configured
+allocation/extra-payment policy, unsupported-policy fail-closed, no South Main constants, no universal
+$0 late-fee claim, no terms-edit controls) was already correct from the V1 Terms Generalization checkpoint
+itself and required no further change.
+
+**New/extended test coverage:** a three-component adjustment; selected-component identity validated
+against the account (an unknown key rejected); a cross-account component key rejected identically (proving
+no leak even when a caller submits another account's own real component identifier); bring-current credit
+proven to derive its shortage from an account's own uncommon schedule numbers, never South Main's; a
+stale-ledger-state test proving a payment posted between preview and confirm changes the freshly
+recomputed shortage (the confirm route's existing "always recompute fresh, never trust the cached preview"
+design already covers this generically); a structural proof that every SF-2D `proposedEventPayload` is one
+of the seven closed ledger event types, never a components/terms table write; a purity test proving the
+account's own component/terms version arrays are never mutated by computing (or posting) any adjustment;
+and a migration-level test suite (`private-financing-v1-amendment-lockdown.migration.test.js`) proving the
+new migration actively drops the components table's own original INSERT policy and that neither table ever
+re-grants one. Full private-financing surface: **37 files / 622 tests** passing (up from 36/607). Full
+repository regression: **836 files / 5800 tests** passing, zero unrelated regressions. Lint clean. Build
+succeeds. `git diff --check` clean. Both migrations re-validated live against real Postgres with the policy
+drop in place, per §10's rewritten text above.
+
+Not committed, pushed, merged, or deployed. No migration applied remotely. No South Main import. No
+borrower invitation. No live payment activation. SF-2E was not begun. AGENTS.md/CLAUDE.md remain untracked
+and untouched throughout. See the standalone SF-2D report delivered in chat for the full 17-point summary
+of SF-2D's complete current implementation.

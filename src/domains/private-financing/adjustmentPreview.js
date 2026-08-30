@@ -5,13 +5,21 @@
 // uniformly. Malformed/type-level input throws (fail closed); a business-rule problem (would go negative,
 // quote expired, insufficient funds) is surfaced in the envelope's blockingValidation array instead of
 // throwing, so the caller can inspect exactly why an action isn't currently postable.
+//
+// V1 TERMS GENERALIZATION: every function now takes componentVersions/accountTermsVersions (the account's
+// full, versioned component/terms history -- replayEvents.js resolves what's active as of asOfDate) and
+// operates on a generic {[componentId]: cents} shape throughout. componentId is always REQUIRED where a
+// specific component matters (bring-current credit, principal/interest corrections, fee reimbursement) --
+// there is no default component anymore, since a default would silently pick one of possibly several
+// components. The seller/lender always selects explicitly (see PrivateFinancingSellerActions.jsx).
 
 import { replayEvents, evaluateClosureEligibility } from "./replayEvents.js";
 import { allocatePayment } from "./paymentAllocation.js";
+import { resolveAccountTermsAsOf } from "./financingTermsContracts.js";
+import { computeDueState, UnsupportedDueStateError } from "./dueState.js";
 import {
   PRIVATE_FINANCING_EVENT_TYPE,
   PRIVATE_FINANCING_EVENT_ORIGIN,
-  PRIVATE_FINANCING_COMPONENT_TYPE,
   CORRECTION_BASIS,
 } from "./privateFinancingContracts.js";
 import { LedgerIntegrityViolationError, validateReversalReference } from "./ledgerIntegrity.js";
@@ -28,19 +36,15 @@ function requireInteger(value, label) {
   if (!Number.isInteger(value)) violate(`${label} must be an integer.`);
 }
 
-function requireComponentType(value, label) {
-  if (!Object.values(PRIVATE_FINANCING_COMPONENT_TYPE).includes(value)) {
-    violate(`${label} must be one of ${Object.values(PRIVATE_FINANCING_COMPONENT_TYPE).join(", ")}.`);
-  }
-}
-
-// The single common shape every preview function returns -- see file header and Checkpoint C section 1.
+// The single common shape every preview function returns -- see file header. principalByComponent /
+// balanceBefore / balanceAfter are all {[componentId]: cents} maps now, covering however many components
+// the account actually has (one or more), never two fixed named slots.
 function buildPreviewEnvelope({
   snapshot,
   asOfDate,
   proposedAdjustment,
   allocationBreakdown,
-  balanceAfter,
+  balanceAfterByComponent,
   interestEffect,
   pastDueEffect = null,
   payoffEffect = null,
@@ -48,22 +52,23 @@ function buildPreviewEnvelope({
   blockingValidation,
   proposedEventPayload,
 }) {
+  const principalByComponent = {};
+  for (const componentId of Object.keys(snapshot.remainingPrincipalByComponentCents)) {
+    principalByComponent[componentId] = Object.freeze({
+      before: snapshot.remainingPrincipalByComponentCents[componentId],
+      after: balanceAfterByComponent[componentId] ?? snapshot.remainingPrincipalByComponentCents[componentId],
+    });
+  }
   return Object.freeze({
     ownerId: snapshot.ownerId,
     accountId: snapshot.accountId,
     asOfDate,
-    balanceBefore: Object.freeze({
-      interestBearing: snapshot.interestBearingRemainingCents,
-      zeroInterest: snapshot.zeroInterestRemainingCents,
-      unpaidAccruedInterestCents: snapshot.unpaidAccruedInterestCents,
-    }),
+    balanceBeforeByComponentCents: Object.freeze({ ...snapshot.remainingPrincipalByComponentCents }),
+    unpaidAccruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents,
     proposedAdjustment: Object.freeze(proposedAdjustment),
     allocationBreakdown: allocationBreakdown ? Object.freeze(allocationBreakdown) : null,
-    balanceAfter: Object.freeze(balanceAfter),
-    principalByComponent: Object.freeze({
-      interestBearing: Object.freeze({ before: snapshot.interestBearingRemainingCents, after: balanceAfter.interestBearing }),
-      zeroInterest: Object.freeze({ before: snapshot.zeroInterestRemainingCents, after: balanceAfter.zeroInterest }),
-    }),
+    balanceAfterByComponentCents: Object.freeze({ ...balanceAfterByComponent }),
+    principalByComponent: Object.freeze(principalByComponent),
     interestEffect: Object.freeze(interestEffect),
     pastDueEffect: pastDueEffect ? Object.freeze(pastDueEffect) : null,
     payoffEffect: payoffEffect ? Object.freeze(payoffEffect) : null,
@@ -73,14 +78,14 @@ function buildPreviewEnvelope({
   });
 }
 
-function replayFor(events, asOfDate) {
-  return replayEvents({ events, asOfDate });
+function replayFor(events, componentVersions, accountTermsVersions, asOfDate) {
+  return replayEvents({ events, componentVersions, accountTermsVersions, asOfDate });
 }
 
 // -- 1/2. Principal correction (contractual) and principal concession (discretionary) --------------------
 
-function previewPrincipalAdjustment({ events, asOfDate, componentType, deltaCents, correctionBasis, reason, borrowerVisibleExplanation = null, createdBy }) {
-  requireComponentType(componentType, "componentType");
+function previewPrincipalAdjustment({ events, componentVersions, accountTermsVersions, asOfDate, componentId, deltaCents, correctionBasis, reason, borrowerVisibleExplanation = null, createdBy }) {
+  requireNonEmptyString(componentId, "componentId");
   requireInteger(deltaCents, "deltaCents");
   if (deltaCents === 0) violate("deltaCents must be non-zero.");
   requireNonEmptyString(reason, "reason");
@@ -89,28 +94,27 @@ function previewPrincipalAdjustment({ events, asOfDate, componentType, deltaCent
     requireNonEmptyString(borrowerVisibleExplanation, "borrowerVisibleExplanation");
   }
 
-  const snapshot = replayFor(events, asOfDate);
-  const priorBalance = componentType === PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING ? snapshot.interestBearingRemainingCents : snapshot.zeroInterestRemainingCents;
-  const afterBalance = priorBalance + deltaCents;
-
+  const snapshot = replayFor(events, componentVersions, accountTermsVersions, asOfDate);
   const warnings = [];
   const blockingValidation = [];
-  if (afterBalance < 0) {
-    blockingValidation.push(`This correction would reduce ${componentType} principal below zero (from ${priorBalance} by ${deltaCents}).`);
+  const priorBalance = snapshot.remainingPrincipalByComponentCents[componentId];
+  if (priorBalance === undefined) {
+    blockingValidation.push(`Component "${componentId}" does not exist on this account as of ${asOfDate}.`);
+  }
+  const afterBalance = (priorBalance ?? 0) + deltaCents;
+  if (priorBalance !== undefined && afterBalance < 0) {
+    blockingValidation.push(`This correction would reduce component "${componentId}" principal below zero (from ${priorBalance} by ${deltaCents}).`);
   }
   if (snapshot.closed) blockingValidation.push("The account is already closed.");
 
-  const balanceAfter = {
-    interestBearing: componentType === PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING ? afterBalance : snapshot.interestBearingRemainingCents,
-    zeroInterest: componentType === PRIVATE_FINANCING_COMPONENT_TYPE.ZERO_INTEREST ? afterBalance : snapshot.zeroInterestRemainingCents,
-  };
+  const balanceAfterByComponent = { ...snapshot.remainingPrincipalByComponentCents, [componentId]: priorBalance !== undefined ? afterBalance : priorBalance };
 
   return buildPreviewEnvelope({
     snapshot,
     asOfDate,
-    proposedAdjustment: { kind: correctionBasis === CORRECTION_BASIS.DISCRETIONARY_CONCESSION ? "discretionary_principal_concession" : "contractual_principal_correction", componentType, deltaCents, correctionBasis },
-    allocationBreakdown: { componentType, deltaCents },
-    balanceAfter,
+    proposedAdjustment: { kind: correctionBasis === CORRECTION_BASIS.DISCRETIONARY_CONCESSION ? "discretionary_principal_concession" : "contractual_principal_correction", componentId, deltaCents, correctionBasis },
+    allocationBreakdown: { componentId, deltaCents },
+    balanceAfterByComponent,
     interestEffect: { accruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents, accruedInterestAfterCents: snapshot.unpaidAccruedInterestCents },
     warnings,
     blockingValidation,
@@ -122,7 +126,7 @@ function previewPrincipalAdjustment({ events, asOfDate, componentType, deltaCent
             accountId: snapshot.accountId,
             eventOrigin: PRIVATE_FINANCING_EVENT_ORIGIN.INTERACTIVE_USER,
             createdBy,
-            componentType,
+            componentId,
             correctionBasis,
             deltaCents,
             correctedComponentPrincipalRemainingCentsAfter: afterBalance,
@@ -144,72 +148,85 @@ export function previewDiscretionaryPrincipalConcession(args) {
 
 // -- 3. Bring-current / reporting credit -------------------------------------------------------------
 
-// South Main's own bring-current credit is applied to the interest-bearing component, per the accepted
-// reconciliation -- see __tests__/adjustmentPreview.test.js for the exact reproduction.
+// componentId is always the seller/lender's own explicit choice -- see
+// PrivateFinancingSellerActions.jsx's componentId select field for this action. No default is offered:
+// with an ordered collection of one or more components, defaulting to "the first one" or "the
+// highest-rate one" would silently pick for the seller/lender rather than let them choose, which section 6
+// of the terms-generalization checkpoint explicitly requires.
+//
+// AUTHORITATIVE DUE-STATE ONLY: the scheduled-amount/next-due-date/next-due-amount figures this credit is
+// calculated against are never seller-typed input -- they come from computeDueState (dueState.js), the
+// same engine the account-detail read model uses, so a bring-current credit can never be computed against
+// a number the seller made up or against a stale/incorrect schedule. For an account outside V1's due-state
+// support envelope (non-monthly frequency, or prepaymentPolicy "unsupported"), this action is not
+// computable at all and fails closed via blockingValidation, exactly like every other "unsupported terms"
+// case in this codebase -- never a guessed or partially-computed credit.
 export function previewBringCurrentCredit({
   events,
+  componentVersions,
+  accountTermsVersions,
   asOfDate,
-  scheduledAmountThroughAsOfDateCents,
   proposedCreditCents,
-  nextDueDate,
-  nextDueAmountCents,
-  componentType = PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING,
+  componentId,
   reason,
   borrowerVisibleExplanation,
   createdBy,
 }) {
-  requireInteger(scheduledAmountThroughAsOfDateCents, "scheduledAmountThroughAsOfDateCents");
   requireInteger(proposedCreditCents, "proposedCreditCents");
   if (proposedCreditCents < 0) violate("proposedCreditCents cannot be negative.");
   requireNonEmptyString(reason, "reason");
   requireNonEmptyString(borrowerVisibleExplanation, "borrowerVisibleExplanation");
-  requireNonEmptyString(nextDueDate, "nextDueDate");
-  requireInteger(nextDueAmountCents, "nextDueAmountCents");
-  requireComponentType(componentType, "componentType");
+  requireNonEmptyString(componentId, "componentId");
   requireNonEmptyString(createdBy, "createdBy");
 
-  const snapshot = replayFor(events, asOfDate);
-  // "Qualifying payments and credits already posted": every dollar of interest paid, cash applied to
-  // principal, and principal already forgiven by a prior correction/concession -- exactly what replay
-  // has independently reconstructed, never a separately-tracked running total.
-  const alreadyPostedCents = snapshot.cumulativeInterestPaidCents + snapshot.cumulativeCashPrincipalPaidCents + snapshot.cumulativePrincipalForgivenCents;
-  const shortageCents = Math.max(scheduledAmountThroughAsOfDateCents - alreadyPostedCents, 0);
-  const pastDueBeforeCents = shortageCents;
-  const pastDueAfterCents = Math.max(shortageCents - proposedCreditCents, 0);
+  const snapshot = replayFor(events, componentVersions, accountTermsVersions, asOfDate);
+  const terms = resolveAccountTermsAsOf(accountTermsVersions, asOfDate);
 
   const warnings = [];
   const blockingValidation = [];
-  if (proposedCreditCents > shortageCents) {
+
+  let dueState = null;
+  try {
+    dueState = computeDueState({ snapshot, accountTerms: terms, asOfDate });
+  } catch (error) {
+    if (!(error instanceof UnsupportedDueStateError)) throw error;
+    blockingValidation.push(`A bring-current credit requires a computable due schedule for this account, which is not available: ${error.message}`);
+  }
+
+  const shortageCents = dueState ? dueState.currentAmountDueCents + dueState.pastDueAmountCents : null;
+  const pastDueAfterCents = dueState ? Math.max(shortageCents - proposedCreditCents, 0) : null;
+
+  if (dueState && proposedCreditCents > shortageCents) {
     warnings.push(`The proposed credit (${proposedCreditCents}) exceeds the calculated shortage (${shortageCents}) -- this is extra seller-granted goodwill beyond bringing the account current.`);
   }
 
-  const priorBalance = componentType === PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING ? snapshot.interestBearingRemainingCents : snapshot.zeroInterestRemainingCents;
-  const afterBalance = priorBalance - proposedCreditCents;
-  if (afterBalance < 0) blockingValidation.push(`The proposed credit would reduce ${componentType} principal below zero.`);
+  const priorBalance = snapshot.remainingPrincipalByComponentCents[componentId];
+  if (priorBalance === undefined) blockingValidation.push(`Component "${componentId}" does not exist on this account as of ${asOfDate}.`);
+  const afterBalance = (priorBalance ?? 0) - proposedCreditCents;
+  if (priorBalance !== undefined && afterBalance < 0) blockingValidation.push(`The proposed credit would reduce component "${componentId}" principal below zero.`);
   if (snapshot.closed) blockingValidation.push("The account is already closed.");
 
-  const balanceAfter = {
-    interestBearing: componentType === PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING ? afterBalance : snapshot.interestBearingRemainingCents,
-    zeroInterest: componentType === PRIVATE_FINANCING_COMPONENT_TYPE.ZERO_INTEREST ? afterBalance : snapshot.zeroInterestRemainingCents,
-  };
+  const balanceAfterByComponent = { ...snapshot.remainingPrincipalByComponentCents, [componentId]: priorBalance !== undefined ? afterBalance : priorBalance };
 
   return buildPreviewEnvelope({
     snapshot,
     asOfDate,
-    proposedAdjustment: { kind: "bring_current_credit", componentType, proposedCreditCents },
-    allocationBreakdown: { componentType, deltaCents: -proposedCreditCents },
-    balanceAfter,
+    proposedAdjustment: { kind: "bring_current_credit", componentId, proposedCreditCents },
+    allocationBreakdown: { componentId, deltaCents: -proposedCreditCents },
+    balanceAfterByComponent,
     interestEffect: { accruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents, accruedInterestAfterCents: snapshot.unpaidAccruedInterestCents },
-    pastDueEffect: {
-      scheduledAmountCents: scheduledAmountThroughAsOfDateCents,
-      alreadyPostedCents,
-      shortageCents,
-      proposedCreditCents,
-      pastDueBeforeCents,
-      pastDueAfterCents,
-      nextDueDate,
-      nextDueAmountCents,
-    },
+    pastDueEffect: dueState
+      ? {
+          scheduledAmountCents: dueState.scheduledThroughAsOfDateCents,
+          alreadyPostedCents: dueState.alreadyPostedCents,
+          shortageCents,
+          proposedCreditCents,
+          pastDueBeforeCents: shortageCents,
+          pastDueAfterCents,
+          nextDueDate: dueState.nextDueDate,
+          nextDueAmountCents: dueState.regularScheduledPaymentAmountCents,
+        }
+      : null,
     warnings,
     blockingValidation,
     proposedEventPayload:
@@ -220,7 +237,7 @@ export function previewBringCurrentCredit({
             accountId: snapshot.accountId,
             eventOrigin: PRIVATE_FINANCING_EVENT_ORIGIN.INTERACTIVE_USER,
             createdBy,
-            componentType,
+            componentId,
             correctionBasis: CORRECTION_BASIS.DISCRETIONARY_CONCESSION,
             deltaCents: -proposedCreditCents,
             correctedComponentPrincipalRemainingCentsAfter: afterBalance,
@@ -234,7 +251,8 @@ export function previewBringCurrentCredit({
 
 // -- 4/5. Interest correction (contractual) and interest waiver (discretionary) -----------------------
 
-function previewInterestAdjustment({ events, asOfDate, deltaCents, correctionBasis, reason, borrowerVisibleExplanation = null, createdBy }) {
+function previewInterestAdjustment({ events, componentVersions, accountTermsVersions, asOfDate, componentId, deltaCents, correctionBasis, reason, borrowerVisibleExplanation = null, createdBy }) {
+  requireNonEmptyString(componentId, "componentId");
   requireInteger(deltaCents, "deltaCents");
   if (deltaCents === 0) violate("deltaCents must be non-zero.");
   requireNonEmptyString(reason, "reason");
@@ -243,21 +261,24 @@ function previewInterestAdjustment({ events, asOfDate, deltaCents, correctionBas
     requireNonEmptyString(borrowerVisibleExplanation, "borrowerVisibleExplanation");
   }
 
-  const snapshot = replayFor(events, asOfDate);
-  const afterInterest = snapshot.unpaidAccruedInterestCents + deltaCents;
-
+  const snapshot = replayFor(events, componentVersions, accountTermsVersions, asOfDate);
   const warnings = [];
   const blockingValidation = [];
-  if (afterInterest < 0) blockingValidation.push(`This correction would reduce unpaid accrued interest below zero (from ${snapshot.unpaidAccruedInterestCents} by ${deltaCents}).`);
+  const priorInterest = snapshot.unpaidAccruedInterestByComponentCents[componentId];
+  if (priorInterest === undefined) blockingValidation.push(`Component "${componentId}" does not exist on this account as of ${asOfDate}.`);
+  const afterInterest = (priorInterest ?? 0) + deltaCents;
+  if (priorInterest !== undefined && afterInterest < 0) {
+    blockingValidation.push(`This correction would reduce unpaid accrued interest on component "${componentId}" below zero (from ${priorInterest} by ${deltaCents}).`);
+  }
   if (snapshot.closed) blockingValidation.push("The account is already closed.");
 
   return buildPreviewEnvelope({
     snapshot,
     asOfDate,
-    proposedAdjustment: { kind: correctionBasis === CORRECTION_BASIS.DISCRETIONARY_CONCESSION ? "interest_waiver" : "interest_correction", deltaCents, correctionBasis },
-    allocationBreakdown: { deltaCents },
-    balanceAfter: { interestBearing: snapshot.interestBearingRemainingCents, zeroInterest: snapshot.zeroInterestRemainingCents },
-    interestEffect: { accruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents, accruedInterestAfterCents: Math.max(afterInterest, 0) },
+    proposedAdjustment: { kind: correctionBasis === CORRECTION_BASIS.DISCRETIONARY_CONCESSION ? "interest_waiver" : "interest_correction", componentId, deltaCents, correctionBasis },
+    allocationBreakdown: { componentId, deltaCents },
+    balanceAfterByComponent: snapshot.remainingPrincipalByComponentCents,
+    interestEffect: { accruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents, accruedInterestAfterCents: snapshot.unpaidAccruedInterestCents + (afterInterest - (priorInterest ?? 0)) },
     warnings,
     blockingValidation,
     proposedEventPayload:
@@ -268,6 +289,7 @@ function previewInterestAdjustment({ events, asOfDate, deltaCents, correctionBas
             accountId: snapshot.accountId,
             eventOrigin: PRIVATE_FINANCING_EVENT_ORIGIN.INTERACTIVE_USER,
             createdBy,
+            componentId,
             correctionBasis,
             deltaCents,
             reason,
@@ -292,17 +314,19 @@ export function previewInterestWaiver(args) {
 // -- 6. Stripe-fee reimbursement -----------------------------------------------------------------------
 
 // By default this NEVER touches the loan ledger -- proposedEventPayload is null and balanceAfter equals
-// balanceBefore -- because a Stripe processing fee the seller absorbs is tracked separately from
-// principal and interest (South Main: "Stripe fee is borne by seller, never reduces buyer credit"). Only
-// when the seller EXPLICITLY elects postAsLoanCredit: true does this become a real
-// discretionary_concession principal_correction -- and even then it never touches a payment_posted
-// event's own allocation; it is always its own separate event.
-export function previewStripeFeeReimbursement({ events, asOfDate, feeAmountCents, postAsLoanCredit = false, componentType = PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING, reason, borrowerVisibleExplanation = null, createdBy = null }) {
+// balanceBefore -- because a processor fee the seller/lender personally absorbed is bookkeeping, tracked
+// separately from principal and interest, never assumed to reduce a borrower's credit for a payment they
+// already made in full. This is a general rule for every account, independent of that account's own
+// fee_payer servicing policy. Only when the seller/lender EXPLICITLY elects postAsLoanCredit: true does
+// this become a real discretionary_concession principal_correction against an explicitly selected
+// component -- and even then it never touches a payment_posted event's own allocation; it is always its
+// own separate event.
+export function previewStripeFeeReimbursement({ events, componentVersions, accountTermsVersions, asOfDate, feeAmountCents, postAsLoanCredit = false, componentId = null, reason, borrowerVisibleExplanation = null, createdBy = null }) {
   requireInteger(feeAmountCents, "feeAmountCents");
   if (feeAmountCents <= 0) violate("feeAmountCents must be a positive integer.");
   requireNonEmptyString(reason, "reason");
 
-  const snapshot = replayFor(events, asOfDate);
+  const snapshot = replayFor(events, componentVersions, accountTermsVersions, asOfDate);
 
   if (!postAsLoanCredit) {
     return buildPreviewEnvelope({
@@ -310,7 +334,7 @@ export function previewStripeFeeReimbursement({ events, asOfDate, feeAmountCents
       asOfDate,
       proposedAdjustment: { kind: "stripe_fee_reimbursement", feeAmountCents, postAsLoanCredit: false },
       allocationBreakdown: null,
-      balanceAfter: { interestBearing: snapshot.interestBearingRemainingCents, zeroInterest: snapshot.zeroInterestRemainingCents },
+      balanceAfterByComponent: snapshot.remainingPrincipalByComponentCents,
       interestEffect: { accruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents, accruedInterestAfterCents: snapshot.unpaidAccruedInterestCents },
       warnings: [
         "This reimbursement does not affect the loan ledger. It is tracked separately from principal and interest, and never reduces the amount credited from a borrower payment.",
@@ -320,11 +344,14 @@ export function previewStripeFeeReimbursement({ events, asOfDate, feeAmountCents
     });
   }
 
+  requireNonEmptyString(componentId, "componentId");
   requireNonEmptyString(borrowerVisibleExplanation, "borrowerVisibleExplanation");
   const preview = previewPrincipalAdjustment({
     events,
+    componentVersions,
+    accountTermsVersions,
     asOfDate,
-    componentType,
+    componentId,
     deltaCents: -feeAmountCents,
     correctionBasis: CORRECTION_BASIS.DISCRETIONARY_CONCESSION,
     reason,
@@ -334,11 +361,11 @@ export function previewStripeFeeReimbursement({ events, asOfDate, feeAmountCents
   return buildPreviewEnvelope({
     snapshot,
     asOfDate,
-    proposedAdjustment: { kind: "stripe_fee_reimbursement", feeAmountCents, postAsLoanCredit: true, componentType },
+    proposedAdjustment: { kind: "stripe_fee_reimbursement", feeAmountCents, postAsLoanCredit: true, componentId },
     allocationBreakdown: preview.allocationBreakdown,
-    balanceAfter: preview.balanceAfter,
+    balanceAfterByComponent: preview.balanceAfterByComponentCents,
     interestEffect: preview.interestEffect,
-    warnings: ["The seller explicitly elected to post this Stripe-fee reimbursement as a loan credit -- an unusual, deliberate action, not the default."],
+    warnings: ["The seller/lender explicitly elected to post this Stripe-fee reimbursement as a loan credit -- an unusual, deliberate action, not the default."],
     blockingValidation: preview.blockingValidation,
     proposedEventPayload: preview.proposedEventPayload,
   });
@@ -346,14 +373,14 @@ export function previewStripeFeeReimbursement({ events, asOfDate, feeAmountCents
 
 // -- 7. Compensating correction ------------------------------------------------------------------------
 
-export function previewCompensatingCorrection({ events, asOfDate, reversesEventId, deltaCents, componentType = null, reason, createdBy }) {
+export function previewCompensatingCorrection({ events, componentVersions, accountTermsVersions, asOfDate, reversesEventId, deltaCents, reason, createdBy }) {
   requireNonEmptyString(reversesEventId, "reversesEventId");
   requireInteger(deltaCents, "deltaCents");
   if (deltaCents === 0) violate("deltaCents must be non-zero.");
   requireNonEmptyString(reason, "reason");
   requireNonEmptyString(createdBy, "createdBy");
 
-  const snapshot = replayFor(events, asOfDate);
+  const snapshot = replayFor(events, componentVersions, accountTermsVersions, asOfDate);
   const target = events.find((event) => event.id === reversesEventId);
 
   const warnings = [];
@@ -373,36 +400,39 @@ export function previewCompensatingCorrection({ events, asOfDate, reversesEventI
   }
 
   let afterBalance = null;
-  let resolvedComponentType = componentType;
+  let resolvedComponentId = null;
+  let isInterestTarget = false;
   if (blockingValidation.length === 0) {
     if (target.eventType === PRIVATE_FINANCING_EVENT_TYPE.PRINCIPAL_CORRECTION) {
-      resolvedComponentType = target.componentType;
-      const priorBalance = resolvedComponentType === PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING ? snapshot.interestBearingRemainingCents : snapshot.zeroInterestRemainingCents;
-      afterBalance = priorBalance + deltaCents;
-      if (afterBalance < 0) blockingValidation.push(`This compensating correction would reduce ${resolvedComponentType} principal below zero.`);
+      resolvedComponentId = target.componentId;
+      const priorBalance = snapshot.remainingPrincipalByComponentCents[resolvedComponentId];
+      afterBalance = (priorBalance ?? 0) + deltaCents;
+      if (afterBalance < 0) blockingValidation.push(`This compensating correction would reduce component "${resolvedComponentId}" principal below zero.`);
     } else if (target.eventType === PRIVATE_FINANCING_EVENT_TYPE.INTEREST_CORRECTION) {
-      afterBalance = snapshot.unpaidAccruedInterestCents + deltaCents;
-      if (afterBalance < 0) blockingValidation.push("This compensating correction would reduce unpaid accrued interest below zero.");
+      resolvedComponentId = target.componentId;
+      isInterestTarget = true;
+      const priorInterest = snapshot.unpaidAccruedInterestByComponentCents[resolvedComponentId] ?? 0;
+      afterBalance = priorInterest + deltaCents;
+      if (afterBalance < 0) blockingValidation.push(`This compensating correction would reduce unpaid accrued interest on component "${resolvedComponentId}" below zero.`);
     } else {
       blockingValidation.push(`replayEvents does not support reversing a ${target.eventType} event via compensating_correction.`);
     }
   }
 
-  const balanceAfter = {
-    interestBearing: resolvedComponentType === PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING && afterBalance !== null ? afterBalance : snapshot.interestBearingRemainingCents,
-    zeroInterest: resolvedComponentType === PRIVATE_FINANCING_COMPONENT_TYPE.ZERO_INTEREST && afterBalance !== null ? afterBalance : snapshot.zeroInterestRemainingCents,
-  };
-  const isInterestTarget = target?.eventType === PRIVATE_FINANCING_EVENT_TYPE.INTEREST_CORRECTION;
+  const balanceAfterByComponent =
+    resolvedComponentId && !isInterestTarget && afterBalance !== null
+      ? { ...snapshot.remainingPrincipalByComponentCents, [resolvedComponentId]: afterBalance }
+      : snapshot.remainingPrincipalByComponentCents;
 
   return buildPreviewEnvelope({
     snapshot,
     asOfDate,
-    proposedAdjustment: { kind: "compensating_correction", reversesEventId, deltaCents, componentType: resolvedComponentType },
+    proposedAdjustment: { kind: "compensating_correction", reversesEventId, deltaCents, componentId: resolvedComponentId },
     allocationBreakdown: { reversesEventId, deltaCents },
-    balanceAfter,
+    balanceAfterByComponent,
     interestEffect: {
       accruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents,
-      accruedInterestAfterCents: isInterestTarget && afterBalance !== null ? afterBalance : snapshot.unpaidAccruedInterestCents,
+      accruedInterestAfterCents: isInterestTarget && afterBalance !== null ? snapshot.unpaidAccruedInterestCents + (afterBalance - (snapshot.unpaidAccruedInterestByComponentCents[resolvedComponentId] ?? 0)) : snapshot.unpaidAccruedInterestCents,
     },
     warnings,
     blockingValidation,
@@ -415,7 +445,7 @@ export function previewCompensatingCorrection({ events, asOfDate, reversesEventI
             eventOrigin: PRIVATE_FINANCING_EVENT_ORIGIN.INTERACTIVE_USER,
             createdBy,
             reversesEventId,
-            componentType: resolvedComponentType,
+            componentId: resolvedComponentId,
             deltaCents,
             reason,
             effectiveDate: asOfDate,
@@ -428,56 +458,72 @@ export function previewCompensatingCorrection({ events, asOfDate, reversesEventI
 
 export function previewExternalManualPayment({
   events,
+  componentVersions,
+  accountTermsVersions,
   asOfDate,
   amountCents,
   eventOrigin = PRIVATE_FINANCING_EVENT_ORIGIN.MANUAL_IMPORT,
   idempotencyKey,
   reason = null,
   acknowledgeOverpayment = false,
+  selectedExtraComponentId = null,
 }) {
   requireInteger(amountCents, "amountCents");
   if (amountCents <= 0) violate("amountCents must be a positive integer.");
   requireNonEmptyString(idempotencyKey, "idempotencyKey");
 
-  const snapshot = replayFor(events, asOfDate);
+  const snapshot = replayFor(events, componentVersions, accountTermsVersions, asOfDate);
+  const terms = resolveAccountTermsAsOf(accountTermsVersions, asOfDate);
   const warnings = [];
   const blockingValidation = [];
   if (snapshot.closed) blockingValidation.push("The account is already closed.");
 
+  const accruedInterestCentsByComponent = {};
+  for (const component of snapshot.components) accruedInterestCentsByComponent[component.componentKey] = snapshot.unpaidAccruedInterestByComponentCents[component.componentKey] ?? 0;
+
   const result = allocatePayment({
-    interestBearing: { remainingPrincipalCents: snapshot.interestBearingRemainingCents, regularPaymentCents: snapshot.interestBearingRegularPaymentCents },
-    zeroInterest: { remainingPrincipalCents: snapshot.zeroInterestRemainingCents, regularPaymentCents: snapshot.zeroInterestRegularPaymentCents },
-    accruedInterestCents: snapshot.unpaidAccruedInterestCents,
+    components: snapshot.components.map((component) => ({
+      componentId: component.componentKey,
+      remainingPrincipalCents: snapshot.remainingPrincipalByComponentCents[component.componentKey],
+      scheduledComponentAmountCents: component.scheduledComponentAmountCents,
+      rateBps: component.rateBps,
+      allocationPriority: component.allocationPriority,
+    })),
+    accruedInterestCentsByComponent,
     paymentAmountCents: amountCents,
+    allocationPolicy: terms.allocationPolicy,
+    extraPaymentAllocationPolicy: terms.extraPaymentAllocationPolicy,
+    selectedExtraComponentId,
   });
 
   // An overpayment must become an explicit unapplied amount, never disappear and never go negative -- it
   // is ALWAYS reported here (see allocationBreakdown.unallocatedCents), and by default blocks posting
   // until the caller explicitly acknowledges how it should be handled (fail-closed default).
   if (result.unallocatedCents > 0) {
-    warnings.push(`This payment exceeds everything currently owed by ${result.unallocatedCents} cent(s) -- an unapplied/refundable amount, never silently dropped.`);
+    warnings.push(`This payment leaves ${result.unallocatedCents} cent(s) unapplied -- an unapplied/refundable amount, never silently dropped.`);
     if (!acknowledgeOverpayment) {
-      blockingValidation.push(`An unapplied overpayment of ${result.unallocatedCents} cent(s) requires explicit acknowledgement (acknowledgeOverpayment: true) before this payment can be posted as-is.`);
+      blockingValidation.push(`An unapplied amount of ${result.unallocatedCents} cent(s) requires explicit acknowledgement (acknowledgeOverpayment: true) before this payment can be posted as-is.`);
     }
   }
 
-  const balanceAfter = {
-    interestBearing: snapshot.interestBearingRemainingCents - result.interestBearingPrincipalPaidCents,
-    zeroInterest: snapshot.zeroInterestRemainingCents - result.zeroInterestPrincipalPaidCents,
-  };
+  const balanceAfterByComponent = { ...snapshot.remainingPrincipalByComponentCents };
+  for (const [componentId, principalPaid] of Object.entries(result.principalPaidByComponentCents)) {
+    balanceAfterByComponent[componentId] -= principalPaid;
+  }
+  const paysAccountInFull = Object.values(balanceAfterByComponent).every((balance) => balance === 0);
 
   return buildPreviewEnvelope({
     snapshot,
     asOfDate,
     proposedAdjustment: { kind: "external_manual_payment", amountCents, eventOrigin },
     allocationBreakdown: result,
-    balanceAfter,
+    balanceAfterByComponent,
     interestEffect: {
       accruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents,
-      accruedInterestAfterCents: snapshot.unpaidAccruedInterestCents - result.interestPaidCents,
-      interestPaidCents: result.interestPaidCents,
+      accruedInterestAfterCents: snapshot.unpaidAccruedInterestCents - Object.values(result.interestPaidByComponentCents).reduce((sum, cents) => sum + cents, 0),
+      interestPaidCents: Object.values(result.interestPaidByComponentCents).reduce((sum, cents) => sum + cents, 0),
     },
-    payoffEffect: balanceAfter.interestBearing === 0 && balanceAfter.zeroInterest === 0 ? { paysAccountInFull: true } : null,
+    payoffEffect: paysAccountInFull ? { paysAccountInFull: true } : null,
     warnings,
     blockingValidation,
     proposedEventPayload:
@@ -490,7 +536,8 @@ export function previewExternalManualPayment({
             idempotencyKey,
             amountCents,
             allocation: result,
-            principalRemainingCentsAfter: balanceAfter,
+            principalRemainingByComponentCents: balanceAfterByComponent,
+            selectedExtraComponentId,
             reason,
             effectiveDate: asOfDate,
           }
@@ -500,38 +547,55 @@ export function previewExternalManualPayment({
 
 // -- 9. Payoff concession -------------------------------------------------------------------------------
 
-export function previewPayoffConcession({ events, asOfDate, interestBearingDeltaCents, zeroInterestDeltaCents, reason, borrowerVisibleExplanation, createdBy }) {
-  requireInteger(interestBearingDeltaCents, "interestBearingDeltaCents");
-  requireInteger(zeroInterestDeltaCents, "zeroInterestDeltaCents");
-  if (interestBearingDeltaCents > 0 || zeroInterestDeltaCents > 0) violate("A payoff concession only ever forgives -- both deltas must be zero or negative.");
-  if (interestBearingDeltaCents === 0 && zeroInterestDeltaCents === 0) violate("A payoff concession must forgive a non-zero amount on at least one component.");
+export function previewPayoffConcession({ events, componentVersions, accountTermsVersions, asOfDate, deltaCentsByComponentCents, reason, borrowerVisibleExplanation, createdBy }) {
+  if (typeof deltaCentsByComponentCents !== "object" || deltaCentsByComponentCents === null) {
+    violate("deltaCentsByComponentCents must be an object keyed by componentId.");
+  }
+  const entries = Object.entries(deltaCentsByComponentCents);
+  if (entries.length === 0) violate("deltaCentsByComponentCents must have at least one entry.");
+  for (const [componentId, delta] of entries) {
+    if (!Number.isInteger(delta) || delta > 0) violate(`deltaCentsByComponentCents.${componentId} must be a non-positive integer.`);
+  }
+  if (entries.every(([, delta]) => delta === 0)) violate("A payoff concession must forgive a non-zero amount on at least one component.");
   requireNonEmptyString(reason, "reason");
   requireNonEmptyString(borrowerVisibleExplanation, "borrowerVisibleExplanation");
   requireNonEmptyString(createdBy, "createdBy");
 
-  const snapshot = replayFor(events, asOfDate);
-  const afterInterestBearing = snapshot.interestBearingRemainingCents + interestBearingDeltaCents;
-  const afterZeroInterest = snapshot.zeroInterestRemainingCents + zeroInterestDeltaCents;
+  const snapshot = replayFor(events, componentVersions, accountTermsVersions, asOfDate);
+  const balanceAfterByComponent = { ...snapshot.remainingPrincipalByComponentCents };
+  for (const [componentId, delta] of entries) {
+    if (balanceAfterByComponent[componentId] === undefined) {
+      balanceAfterByComponent[componentId] = undefined;
+    } else {
+      balanceAfterByComponent[componentId] += delta;
+    }
+  }
 
   const warnings = [];
   const blockingValidation = [];
-  if (afterInterestBearing !== 0 || afterZeroInterest !== 0) {
-    blockingValidation.push(
-      `A payoff_concession must bring both components to exactly zero -- these deltas would leave {interestBearing: ${afterInterestBearing}, zeroInterest: ${afterZeroInterest}}.`,
-    );
+  for (const [componentId, delta] of entries) {
+    if (snapshot.remainingPrincipalByComponentCents[componentId] === undefined) {
+      blockingValidation.push(`Component "${componentId}" does not exist on this account as of ${asOfDate}.`);
+    }
+  }
+  if (blockingValidation.length === 0) {
+    const stillOwed = Object.entries(balanceAfterByComponent).filter(([, balance]) => balance !== 0);
+    if (stillOwed.length > 0) {
+      blockingValidation.push(
+        `A payoff_concession must bring every component to exactly zero -- these deltas would leave a nonzero balance on: ${stillOwed.map(([id]) => id).join(", ")}.`,
+      );
+    }
   }
   if (snapshot.closed) blockingValidation.push("The account is already closed.");
-
-  const balanceAfter = { interestBearing: afterInterestBearing, zeroInterest: afterZeroInterest };
 
   return buildPreviewEnvelope({
     snapshot,
     asOfDate,
-    proposedAdjustment: { kind: "payoff_concession", interestBearingDeltaCents, zeroInterestDeltaCents },
-    allocationBreakdown: { interestBearingDeltaCents, zeroInterestDeltaCents },
-    balanceAfter,
+    proposedAdjustment: { kind: "payoff_concession", deltaCentsByComponentCents },
+    allocationBreakdown: { deltaCentsByComponentCents },
+    balanceAfterByComponent,
     interestEffect: { accruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents, accruedInterestAfterCents: snapshot.unpaidAccruedInterestCents },
-    payoffEffect: { closesAccount: blockingValidation.length === 0, forgivenCents: -interestBearingDeltaCents + -zeroInterestDeltaCents },
+    payoffEffect: { closesAccount: blockingValidation.length === 0, forgivenCents: entries.reduce((sum, [, delta]) => sum - delta, 0) },
     warnings,
     blockingValidation,
     proposedEventPayload:
@@ -542,9 +606,8 @@ export function previewPayoffConcession({ events, asOfDate, interestBearingDelta
             accountId: snapshot.accountId,
             eventOrigin: PRIVATE_FINANCING_EVENT_ORIGIN.INTERACTIVE_USER,
             createdBy,
-            interestBearingDeltaCents,
-            zeroInterestDeltaCents,
-            principalRemainingCentsAfter: balanceAfter,
+            deltaCentsByComponentCents,
+            principalRemainingByComponentCents: balanceAfterByComponent,
             reason,
             borrowerVisibleExplanation,
             effectiveDate: asOfDate,
@@ -553,12 +616,86 @@ export function previewPayoffConcession({ events, asOfDate, interestBearingDelta
   });
 }
 
+// -- 10. Payment reversal (undoes a specific payment_posted event) -------------------------------------
+
+// Reverses EXACTLY the allocation the target payment made -- the reversal event's own amountCents and
+// allocation are a direct copy of the target's (positive numbers, matching validatePaymentReversalFields'
+// contract exactly), never negated here: replayEvents.js's own PAYMENT_REVERSAL fold ADDS the allocation
+// back onto the running balance, so the sign convention is "undo this much," not "this much backward."
+export function previewPaymentReversal({ events, componentVersions, accountTermsVersions, asOfDate, reversesEventId, reason, createdBy }) {
+  requireNonEmptyString(reversesEventId, "reversesEventId");
+  requireNonEmptyString(reason, "reason");
+  requireNonEmptyString(createdBy, "createdBy");
+
+  const snapshot = replayFor(events, componentVersions, accountTermsVersions, asOfDate);
+  const target = events.find((event) => event.id === reversesEventId);
+
+  const warnings = [];
+  const blockingValidation = [];
+  const candidateReversal = {
+    id: "__preview__",
+    eventType: PRIVATE_FINANCING_EVENT_TYPE.PAYMENT_REVERSAL,
+    ownerId: snapshot.ownerId,
+    accountId: snapshot.accountId,
+    reversesEventId,
+    effectiveDate: asOfDate,
+  };
+  try {
+    validateReversalReference(candidateReversal, target, events);
+  } catch (error) {
+    blockingValidation.push(error.message);
+  }
+  if (snapshot.closed) blockingValidation.push("The account is already closed.");
+
+  let balanceAfterByComponent = snapshot.remainingPrincipalByComponentCents;
+  let allocation = null;
+  if (blockingValidation.length === 0) {
+    allocation = { ...target.allocation };
+    balanceAfterByComponent = { ...snapshot.remainingPrincipalByComponentCents };
+    for (const [componentId, principalPaid] of Object.entries(target.allocation.principalPaidByComponentCents)) {
+      balanceAfterByComponent[componentId] = (balanceAfterByComponent[componentId] ?? 0) + principalPaid;
+    }
+  }
+
+  const interestPaidTotal = allocation ? Object.values(allocation.interestPaidByComponentCents).reduce((sum, cents) => sum + cents, 0) : 0;
+
+  return buildPreviewEnvelope({
+    snapshot,
+    asOfDate,
+    proposedAdjustment: { kind: "payment_reversal", reversesEventId, amountCents: target?.amountCents ?? null },
+    allocationBreakdown: allocation,
+    balanceAfterByComponent,
+    interestEffect: {
+      accruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents,
+      accruedInterestAfterCents: snapshot.unpaidAccruedInterestCents + interestPaidTotal,
+    },
+    warnings,
+    blockingValidation,
+    proposedEventPayload:
+      blockingValidation.length === 0
+        ? {
+            eventType: PRIVATE_FINANCING_EVENT_TYPE.PAYMENT_REVERSAL,
+            ownerId: snapshot.ownerId,
+            accountId: snapshot.accountId,
+            eventOrigin: PRIVATE_FINANCING_EVENT_ORIGIN.INTERACTIVE_USER,
+            createdBy,
+            reversesEventId,
+            amountCents: target.amountCents,
+            allocation,
+            principalRemainingByComponentCents: balanceAfterByComponent,
+            reason,
+            effectiveDate: asOfDate,
+          }
+        : null,
+  });
+}
+
 // -- Account closure preview (not one of the 9 adjustment kinds, but required by section 7) ------------
 
-export function previewAccountClosure({ events, asOfDate, closureReason, payoffConcessionEventId = null, createdBy }) {
+export function previewAccountClosure({ events, componentVersions, accountTermsVersions, asOfDate, closureReason, payoffConcessionEventId = null, createdBy }) {
   requireNonEmptyString(closureReason, "closureReason");
   requireNonEmptyString(createdBy, "createdBy");
-  const snapshot = replayFor(events, asOfDate);
+  const snapshot = replayFor(events, componentVersions, accountTermsVersions, asOfDate);
   const eligibility = evaluateClosureEligibility(snapshot);
 
   return buildPreviewEnvelope({
@@ -566,7 +703,7 @@ export function previewAccountClosure({ events, asOfDate, closureReason, payoffC
     asOfDate,
     proposedAdjustment: { kind: "account_closure", closureReason, payoffConcessionEventId },
     allocationBreakdown: null,
-    balanceAfter: { interestBearing: snapshot.interestBearingRemainingCents, zeroInterest: snapshot.zeroInterestRemainingCents },
+    balanceAfterByComponent: snapshot.remainingPrincipalByComponentCents,
     interestEffect: { accruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents, accruedInterestAfterCents: snapshot.unpaidAccruedInterestCents },
     payoffEffect: { closesAccount: eligibility.eligible },
     warnings: [],

@@ -3,7 +3,6 @@ import {
   validatePrivateFinancingEvent,
   PRIVATE_FINANCING_EVENT_TYPE,
   PRIVATE_FINANCING_EVENT_ORIGIN,
-  PRIVATE_FINANCING_COMPONENT_TYPE,
   CORRECTION_BASIS,
 } from "../privateFinancingContracts.js";
 import { assertBalanceAfterMatchesDelta, LedgerIntegrityViolationError } from "../ledgerIntegrity.js";
@@ -11,16 +10,15 @@ import { assertBalanceAfterMatchesDelta, LedgerIntegrityViolationError } from ".
 // Regression tests for the corrected zero-balance invariant (owner clarification following Checkpoint B
 // review). The prior Checkpoint B report described "payoff_concession is the only event allowed to zero
 // a balance" -- inspection confirmed this was an imprecise description of the code, not an actual
-// restriction: validateComponentBalanceSnapshot's requireBothZero flag only ADDS a requirement onto
-// payoff_concession (it must reach exactly zero); it never withheld that ability from any other event
-// type. Nothing here changes that validator's behavior -- these tests exist to pin it down explicitly so
-// the corrected understanding never regresses back into an accidental restriction.
+// restriction: validateComponentCentsMap's requireAllZero flag only ADDS a requirement onto
+// payoff_concession (it must reach exactly zero on every component); it never withheld that ability from
+// any other event type. Nothing here changes that validator's behavior -- these tests exist to pin it
+// down explicitly so the corrected understanding never regresses back into an accidental restriction.
 //
 // Two required paths -- "a payment plus a payoff concession may jointly close the account" and "an
 // overpayment must become an explicit unapplied amount, never disappear or go negative" -- are genuinely
 // stateful (they require replaying more than one event against real prior balances) and are NOT
-// re-tested here; they are covered in __tests__/replayEvents.test.js ("payment plus concession jointly
-// close the account" and "overpayment produces an explicit, non-negative unappliedCents, never dropped").
+// re-tested here; they are covered in __tests__/replayEvents.test.js.
 
 function baseEvent(overrides = {}) {
   return {
@@ -37,39 +35,38 @@ function baseEvent(overrides = {}) {
 }
 
 describe("a normal cleared payment may pay the exact calculated payoff and reduce the account to exactly zero", () => {
-  it("accepts a payment_posted event whose principalRemainingCentsAfter is exactly {0, 0}", () => {
+  it("accepts a payment_posted event whose principalRemainingByComponentCents is exactly 0 on every component", () => {
     const result = validatePrivateFinancingEvent(
       baseEvent({
         eventType: PRIVATE_FINANCING_EVENT_TYPE.PAYMENT_POSTED,
         amountCents: 3_184_347,
         allocation: {
-          interestPaidCents: 0,
-          interestBearingPrincipalPaidCents: 2_184_347,
-          zeroInterestPrincipalPaidCents: 1_000_000,
+          interestPaidByComponentCents: {},
+          principalPaidByComponentCents: { ib: 2_184_347, zi: 1_000_000 },
           unallocatedCents: 0,
         },
-        principalRemainingCentsAfter: { interestBearing: 0, zeroInterest: 0 },
+        principalRemainingByComponentCents: { ib: 0, zi: 0 },
       }),
     );
-    expect(result.principalRemainingCentsAfter).toEqual({ interestBearing: 0, zeroInterest: 0 });
+    expect(result.principalRemainingByComponentCents).toEqual({ ib: 0, zi: 0 });
   });
 });
 
 describe("a normal payment must never reduce principal or accrued interest below zero", () => {
-  it("rejects a payment_posted event whose principalRemainingCentsAfter has a negative component", () => {
+  it("rejects a payment_posted event whose principalRemainingByComponentCents has a negative component", () => {
     expect(() =>
       validatePrivateFinancingEvent(
         baseEvent({
           eventType: PRIVATE_FINANCING_EVENT_TYPE.PAYMENT_POSTED,
           amountCents: 100,
-          allocation: { interestPaidCents: 0, interestBearingPrincipalPaidCents: 100, zeroInterestPrincipalPaidCents: 0, unallocatedCents: 0 },
-          principalRemainingCentsAfter: { interestBearing: -1, zeroInterest: 0 },
+          allocation: { interestPaidByComponentCents: {}, principalPaidByComponentCents: { ib: 100 }, unallocatedCents: 0 },
+          principalRemainingByComponentCents: { ib: -1, zi: 0 },
         }),
       ),
     ).toThrow(/non-negative integer/);
   });
 
-  it("rejects a payment_reversal event whose principalRemainingCentsAfter has a negative component", () => {
+  it("rejects a payment_reversal event whose principalRemainingByComponentCents has a negative component", () => {
     expect(() =>
       validatePrivateFinancingEvent(
         baseEvent({
@@ -77,26 +74,37 @@ describe("a normal payment must never reduce principal or accrued interest below
           reversesEventId: "evt_original",
           reason: "chargeback",
           amountCents: 100,
-          allocation: { interestPaidCents: 0, interestBearingPrincipalPaidCents: 100, zeroInterestPrincipalPaidCents: 0, unallocatedCents: 0 },
-          principalRemainingCentsAfter: { interestBearing: 0, zeroInterest: -1 },
+          allocation: { interestPaidByComponentCents: {}, principalPaidByComponentCents: { ib: 100 }, unallocatedCents: 0 },
+          principalRemainingByComponentCents: { ib: 0, zi: -1 },
         }),
       ),
     ).toThrow(/non-negative integer/);
   });
 });
 
-describe("a payoff concession may reduce a remaining legitimate balance to zero", () => {
-  it("accepts a payoff_concession that forgives exactly the remaining balance on both components", () => {
+describe("a payoff concession may reduce a remaining legitimate balance to zero, on any number of components", () => {
+  it("accepts a payoff_concession that forgives exactly the remaining balance on two components", () => {
     const result = validatePrivateFinancingEvent(
       baseEvent({
         eventType: PRIVATE_FINANCING_EVENT_TYPE.PAYOFF_CONCESSION,
-        interestBearingDeltaCents: -5_000,
-        zeroInterestDeltaCents: -1_200,
-        principalRemainingCentsAfter: { interestBearing: 0, zeroInterest: 0 },
+        deltaCentsByComponentCents: { ib: -5_000, zi: -1_200 },
+        principalRemainingByComponentCents: { ib: 0, zi: 0 },
         reason: "Seller accepted less than the calculated payoff to close the account",
       }),
     );
-    expect(result.principalRemainingCentsAfter).toEqual({ interestBearing: 0, zeroInterest: 0 });
+    expect(result.principalRemainingByComponentCents).toEqual({ ib: 0, zi: 0 });
+  });
+
+  it("accepts a payoff_concession on a single-component account", () => {
+    const result = validatePrivateFinancingEvent(
+      baseEvent({
+        eventType: PRIVATE_FINANCING_EVENT_TYPE.PAYOFF_CONCESSION,
+        deltaCentsByComponentCents: { only: -300 },
+        principalRemainingByComponentCents: { only: 0 },
+        reason: "Final balance forgiven",
+      }),
+    );
+    expect(result.principalRemainingByComponentCents).toEqual({ only: 0 });
   });
 });
 
@@ -105,7 +113,7 @@ describe("account_closed records lifecycle status only -- it cannot manufacture 
     const result = validatePrivateFinancingEvent(
       baseEvent({ eventType: PRIVATE_FINANCING_EVENT_TYPE.ACCOUNT_CLOSED, closureReason: "paid_in_full" }),
     );
-    for (const forbiddenField of ["amountCents", "allocation", "deltaCents", "principalRemainingCentsAfter", "interestBearingDeltaCents", "zeroInterestDeltaCents"]) {
+    for (const forbiddenField of ["amountCents", "allocation", "deltaCents", "principalRemainingByComponentCents", "deltaCentsByComponentCents"]) {
       expect(result).not.toHaveProperty(forbiddenField);
     }
   });
@@ -134,7 +142,7 @@ describe("interest/principal corrections may reach zero only when the delta exac
     const result = validatePrivateFinancingEvent(
       baseEvent({
         eventType: PRIVATE_FINANCING_EVENT_TYPE.PRINCIPAL_CORRECTION,
-        componentType: PRIVATE_FINANCING_COMPONENT_TYPE.ZERO_INTEREST,
+        componentId: "zi",
         correctionBasis: CORRECTION_BASIS.DISCRETIONARY_CONCESSION,
         deltaCents: -500,
         correctedComponentPrincipalRemainingCentsAfter: 0,

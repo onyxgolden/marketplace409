@@ -7,8 +7,8 @@ import {
   PRIVATE_FINANCING_EVENT_TYPE,
   PRIVATE_FINANCING_EVENT_ORIGIN,
   CORRECTION_BASIS,
-  PRIVATE_FINANCING_COMPONENT_TYPE,
   ACCOUNT_CLOSURE_REASON,
+  PRIVATE_FINANCING_DAY_COUNT_CONVENTION,
 } from "../privateFinancingContracts.js";
 
 function baseEvent(overrides = {}) {
@@ -25,70 +25,70 @@ function baseEvent(overrides = {}) {
   };
 }
 
+// V1 Terms Generalization: allocation/principalRemaining fields are generic {[componentId]: cents} maps
+// now, not two fixed named keys -- this fixture uses two components ("note_a", "note_b") purely as an
+// EXAMPLE shape, never as evidence the contract requires exactly two.
 function paymentPostedEvent(overrides = {}) {
   return baseEvent({
     eventType: PRIVATE_FINANCING_EVENT_TYPE.PAYMENT_POSTED,
     amountCents: 51_785,
     allocation: {
-      interestPaidCents: 11_452,
-      interestBearingPrincipalPaidCents: 32_000,
-      zeroInterestPrincipalPaidCents: 8_333,
+      interestPaidByComponentCents: { note_a: 11_452 },
+      principalPaidByComponentCents: { note_a: 32_000, note_b: 8_333 },
       unallocatedCents: 0,
     },
-    principalRemainingCentsAfter: { interestBearing: 4_468_000, zeroInterest: 991_667 },
+    principalRemainingByComponentCents: { note_a: 4_468_000, note_b: 991_667 },
     ...overrides,
   });
 }
 
 describe("validatePrivateFinancingEvent -- account_opened", () => {
-  it("accepts a well-formed account_opened event", () => {
-    const result = validatePrivateFinancingEvent(
-      baseEvent({
-        eventType: PRIVATE_FINANCING_EVENT_TYPE.ACCOUNT_OPENED,
-        openingComponents: [
-          { componentType: PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING, originalPrincipalCents: 4_500_000, rateBps: 300, regularPaymentCents: 43_452 },
-          { componentType: PRIVATE_FINANCING_COMPONENT_TYPE.ZERO_INTEREST, originalPrincipalCents: 1_000_000, rateBps: 0, regularPaymentCents: 8_333 },
-        ],
-      }),
-    );
-    expect(result.openingComponents).toHaveLength(2);
+  it("accepts a well-formed account_opened event -- a pure lifecycle marker with no embedded terms", () => {
+    const result = validatePrivateFinancingEvent(baseEvent({ eventType: PRIVATE_FINANCING_EVENT_TYPE.ACCOUNT_OPENED }));
+    expect(result.eventType).toBe("account_opened");
     expect(Object.isFrozen(result)).toBe(true);
-  });
-
-  it("rejects an empty openingComponents array", () => {
-    expect(() => validatePrivateFinancingEvent(baseEvent({ eventType: PRIVATE_FINANCING_EVENT_TYPE.ACCOUNT_OPENED, openingComponents: [] }))).toThrow(
-      MalformedPrivateFinancingContractError,
-    );
-  });
-
-  it("rejects a duplicate componentType within openingComponents", () => {
-    expect(() =>
-      validatePrivateFinancingEvent(
-        baseEvent({
-          eventType: PRIVATE_FINANCING_EVENT_TYPE.ACCOUNT_OPENED,
-          openingComponents: [
-            { componentType: PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING, originalPrincipalCents: 100, rateBps: 100, regularPaymentCents: 10 },
-            { componentType: PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING, originalPrincipalCents: 200, rateBps: 200, regularPaymentCents: 20 },
-          ],
-        }),
-      ),
-    ).toThrow(/must not repeat/);
   });
 });
 
 describe("validatePrivateFinancingEvent -- payment_posted", () => {
-  it("accepts a well-formed payment with an allocation that sums exactly to amountCents", () => {
+  it("accepts a well-formed payment with an allocation that sums exactly to amountCents, across any number of components", () => {
     const result = validatePrivateFinancingEvent(paymentPostedEvent());
     expect(result.amountCents).toBe(51_785);
     expect(Object.isFrozen(result.allocation)).toBe(true);
-    expect(Object.isFrozen(result.principalRemainingCentsAfter)).toBe(true);
+    expect(Object.isFrozen(result.principalRemainingByComponentCents)).toBe(true);
+  });
+
+  it("accepts a single-component payment (interest-only or zero-interest-only account)", () => {
+    const result = validatePrivateFinancingEvent(
+      paymentPostedEvent({
+        allocation: { interestPaidByComponentCents: { only: 1_000 }, principalPaidByComponentCents: { only: 5_000 }, unallocatedCents: 0 },
+        principalRemainingByComponentCents: { only: 95_000 },
+        amountCents: 6_000,
+      }),
+    );
+    expect(result.amountCents).toBe(6_000);
+  });
+
+  it("accepts a three-component payment -- V1 imposes no maximum component count", () => {
+    const result = validatePrivateFinancingEvent(
+      paymentPostedEvent({
+        allocation: {
+          interestPaidByComponentCents: { a: 100, b: 50 },
+          principalPaidByComponentCents: { a: 200, b: 100, c: 50 },
+          unallocatedCents: 0,
+        },
+        principalRemainingByComponentCents: { a: 1, b: 2, c: 3 },
+        amountCents: 500,
+      }),
+    );
+    expect(Object.keys(result.principalRemainingByComponentCents)).toHaveLength(3);
   });
 
   it("rejects an allocation that does not sum exactly to amountCents -- no event may manufacture or lose money", () => {
     expect(() =>
       validatePrivateFinancingEvent(
         paymentPostedEvent({
-          allocation: { interestPaidCents: 11_452, interestBearingPrincipalPaidCents: 32_000, zeroInterestPrincipalPaidCents: 8_000, unallocatedCents: 0 },
+          allocation: { interestPaidByComponentCents: { note_a: 11_452 }, principalPaidByComponentCents: { note_a: 32_000, note_b: 8_000 }, unallocatedCents: 0 },
         }),
       ),
     ).toThrow(/must sum exactly/);
@@ -99,14 +99,19 @@ describe("validatePrivateFinancingEvent -- payment_posted", () => {
     expect(() => validatePrivateFinancingEvent(paymentPostedEvent({ amountCents: -100 }))).toThrow(MalformedPrivateFinancingContractError);
   });
 
-  it("rejects a negative principalRemainingCentsAfter component", () => {
+  it("rejects a negative principalRemainingByComponentCents entry", () => {
     expect(() =>
-      validatePrivateFinancingEvent(paymentPostedEvent({ principalRemainingCentsAfter: { interestBearing: -1, zeroInterest: 0 } })),
+      validatePrivateFinancingEvent(paymentPostedEvent({ principalRemainingByComponentCents: { note_a: -1, note_b: 0 } })),
     ).toThrow(MalformedPrivateFinancingContractError);
   });
 
   it("rejects reversesEventId being set on a non-reversal event type", () => {
     expect(() => validatePrivateFinancingEvent(paymentPostedEvent({ reversesEventId: "evt_0" }))).toThrow(/must not set reversesEventId/);
+  });
+
+  it("accepts an optional selectedExtraComponentId (selected_component_extra policy)", () => {
+    const result = validatePrivateFinancingEvent(paymentPostedEvent({ selectedExtraComponentId: "note_a" }));
+    expect(result.selectedExtraComponentId).toBe("note_a");
   });
 });
 
@@ -227,12 +232,11 @@ describe("validatePrivateFinancingEvent -- payment_reversal", () => {
       reason: "ACH payment bounced -- insufficient funds",
       amountCents: 51_785,
       allocation: {
-        interestPaidCents: 11_452,
-        interestBearingPrincipalPaidCents: 32_000,
-        zeroInterestPrincipalPaidCents: 8_333,
+        interestPaidByComponentCents: { note_a: 11_452 },
+        principalPaidByComponentCents: { note_a: 32_000, note_b: 8_333 },
         unallocatedCents: 0,
       },
-      principalRemainingCentsAfter: { interestBearing: 4_500_000, zeroInterest: 1_000_000 },
+      principalRemainingByComponentCents: { note_a: 4_500_000, note_b: 1_000_000 },
       ...overrides,
     });
   }
@@ -255,7 +259,7 @@ describe("validatePrivateFinancingEvent -- principal_correction", () => {
   function correctionEvent(overrides = {}) {
     return baseEvent({
       eventType: PRIVATE_FINANCING_EVENT_TYPE.PRINCIPAL_CORRECTION,
-      componentType: PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING,
+      componentId: "note_a",
       correctionBasis: CORRECTION_BASIS.DISCRETIONARY_CONCESSION,
       deltaCents: -138_690,
       correctedComponentPrincipalRemainingCentsAfter: 4_361_310,
@@ -268,6 +272,7 @@ describe("validatePrivateFinancingEvent -- principal_correction", () => {
     const result = validatePrivateFinancingEvent(correctionEvent());
     expect(result.correctionBasis).toBe("discretionary_concession");
     expect(result.deltaCents).toBe(-138_690);
+    expect(result.componentId).toBe("note_a");
   });
 
   it("accepts a contractual/administrative correction with a positive delta", () => {
@@ -287,23 +292,44 @@ describe("validatePrivateFinancingEvent -- principal_correction", () => {
     );
   });
 
-  it("requires componentType", () => {
-    expect(() => validatePrivateFinancingEvent(correctionEvent({ componentType: undefined }))).toThrow(/componentType to be one of/);
+  it("requires componentId -- a free-form, account-specific identity, never a fixed enum of two", () => {
+    expect(() => validatePrivateFinancingEvent(correctionEvent({ componentId: undefined }))).toThrow(/requires a non-empty componentId/);
+    expect(() => validatePrivateFinancingEvent(correctionEvent({ componentId: "" }))).toThrow(/requires a non-empty componentId/);
+  });
+
+  it("accepts any non-empty componentId string -- component existence is a replay-time concern, not a shape-time one", () => {
+    const result = validatePrivateFinancingEvent(correctionEvent({ componentId: "some_arbitrary_component_key" }));
+    expect(result.componentId).toBe("some_arbitrary_component_key");
   });
 });
 
 describe("validatePrivateFinancingEvent -- interest_correction", () => {
-  it("accepts a waiver (discretionary_concession) with no principal-balance field at all", () => {
+  it("accepts a waiver (discretionary_concession) naming which component's accrued interest it adjusts", () => {
     const result = validatePrivateFinancingEvent(
       baseEvent({
         eventType: PRIVATE_FINANCING_EVENT_TYPE.INTEREST_CORRECTION,
+        componentId: "note_a",
         correctionBasis: CORRECTION_BASIS.DISCRETIONARY_CONCESSION,
         deltaCents: -2_000,
         reason: "Owner waived one month of interest as a goodwill gesture",
       }),
     );
     expect(result.deltaCents).toBe(-2_000);
+    expect(result.componentId).toBe("note_a");
     expect(result.correctedComponentPrincipalRemainingCentsAfter).toBeUndefined();
+  });
+
+  it("requires componentId -- interest now accrues independently per component, never one shared bucket", () => {
+    expect(() =>
+      validatePrivateFinancingEvent(
+        baseEvent({
+          eventType: PRIVATE_FINANCING_EVENT_TYPE.INTEREST_CORRECTION,
+          correctionBasis: CORRECTION_BASIS.CONTRACTUAL_ADMINISTRATIVE,
+          deltaCents: -100,
+          reason: "typo",
+        }),
+      ),
+    ).toThrow(/requires a non-empty componentId/);
   });
 });
 
@@ -314,11 +340,23 @@ describe("validatePrivateFinancingEvent -- compensating_correction", () => {
         eventType: PRIVATE_FINANCING_EVENT_TYPE.COMPENSATING_CORRECTION,
         reversesEventId: "evt_wrong_correction",
         deltaCents: 138_690,
-        componentType: PRIVATE_FINANCING_COMPONENT_TYPE.INTEREST_BEARING,
+        componentId: "note_a",
         reason: "The original bring-current credit was entered against the wrong component",
       }),
     );
     expect(result.reversesEventId).toBe("evt_wrong_correction");
+  });
+
+  it("accepts a null componentId -- resolved from the target event at replay time when reversing an interest_correction", () => {
+    const result = validatePrivateFinancingEvent(
+      baseEvent({
+        eventType: PRIVATE_FINANCING_EVENT_TYPE.COMPENSATING_CORRECTION,
+        reversesEventId: "evt_wrong_interest_correction",
+        deltaCents: 2_000,
+        reason: "The original waiver was granted in error",
+      }),
+    );
+    expect(result.componentId).toBeNull();
   });
 });
 
@@ -326,37 +364,43 @@ describe("validatePrivateFinancingEvent -- payoff_concession", () => {
   function payoffConcessionEvent(overrides = {}) {
     return baseEvent({
       eventType: PRIVATE_FINANCING_EVENT_TYPE.PAYOFF_CONCESSION,
-      interestBearingDeltaCents: -500,
-      zeroInterestDeltaCents: 0,
-      principalRemainingCentsAfter: { interestBearing: 0, zeroInterest: 0 },
+      deltaCentsByComponentCents: { note_a: -500, note_b: 0 },
+      principalRemainingByComponentCents: { note_a: 0, note_b: 0 },
       reason: "Final $5 forgiven to close the account cleanly",
       ...overrides,
     });
   }
 
-  it("accepts a concession that brings both components to exactly 0", () => {
+  it("accepts a concession that brings every component to exactly 0", () => {
     const result = validatePrivateFinancingEvent(payoffConcessionEvent());
-    expect(result.principalRemainingCentsAfter).toEqual({ interestBearing: 0, zeroInterest: 0 });
+    expect(result.principalRemainingByComponentCents).toEqual({ note_a: 0, note_b: 0 });
   });
 
-  it("rejects a positive deltaCents on either component -- a concession only ever forgives, never adds", () => {
-    expect(() => validatePrivateFinancingEvent(payoffConcessionEvent({ interestBearingDeltaCents: 500 }))).toThrow(
-      /non-positive integer interestBearingDeltaCents/,
+  it("accepts a single-component payoff concession", () => {
+    const result = validatePrivateFinancingEvent(
+      payoffConcessionEvent({ deltaCentsByComponentCents: { only: -100 }, principalRemainingByComponentCents: { only: 0 } }),
+    );
+    expect(result.principalRemainingByComponentCents).toEqual({ only: 0 });
+  });
+
+  it("rejects a positive delta on any component -- a concession only ever forgives, never adds", () => {
+    expect(() => validatePrivateFinancingEvent(payoffConcessionEvent({ deltaCentsByComponentCents: { note_a: 500, note_b: 0 } }))).toThrow(
+      /must be zero or negative/,
     );
   });
 
-  it("rejects both deltas being zero", () => {
-    expect(() => validatePrivateFinancingEvent(payoffConcessionEvent({ interestBearingDeltaCents: 0, zeroInterestDeltaCents: 0 }))).toThrow(
+  it("rejects every delta being zero", () => {
+    expect(() => validatePrivateFinancingEvent(payoffConcessionEvent({ deltaCentsByComponentCents: { note_a: 0, note_b: 0 } }))).toThrow(
       /must forgive a non-zero amount/,
     );
   });
 
-  it("rejects an after-balance that is not exactly {0, 0} -- bounded final adjustment only", () => {
+  it("rejects an after-balance that is not exactly 0 on every component -- bounded final adjustment only", () => {
     expect(() =>
-      validatePrivateFinancingEvent(payoffConcessionEvent({ principalRemainingCentsAfter: { interestBearing: 1, zeroInterest: 0 } })),
-    ).toThrow(/exactly 0/);
+      validatePrivateFinancingEvent(payoffConcessionEvent({ principalRemainingByComponentCents: { note_a: 1, note_b: 0 } })),
+    ).toThrow(/must be exactly 0/);
     expect(() =>
-      validatePrivateFinancingEvent(payoffConcessionEvent({ principalRemainingCentsAfter: { interestBearing: -1, zeroInterest: 0 } })),
+      validatePrivateFinancingEvent(payoffConcessionEvent({ principalRemainingByComponentCents: { note_a: -1, note_b: 0 } })),
     ).toThrow(MalformedPrivateFinancingContractError);
   });
 });
@@ -437,6 +481,11 @@ describe("validatePrivateFinancingAccount", () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
+  it("accepts a personal_loan account", () => {
+    const result = validatePrivateFinancingAccount(account({ product: "personal_loan", propertyId: null }));
+    expect(result.product).toBe("personal_loan");
+  });
+
   it("rejects an unrecognized product", () => {
     expect(() => validatePrivateFinancingAccount(account({ product: "credit_card" }))).toThrow(MalformedPrivateFinancingContractError);
   });
@@ -457,19 +506,29 @@ describe("validatePrivateFinancingComponent", () => {
       ownerId: "owner_1",
       id: "comp_1",
       accountId: "acct_1",
-      componentType: "interest_bearing",
+      componentKey: "note_a",
+      label: "Primary note",
       originalPrincipalCents: 4_500_000,
       rateBps: 300,
-      regularPaymentCents: 43_452,
-      applicationPriority: 1,
+      dayCountConvention: PRIVATE_FINANCING_DAY_COUNT_CONVENTION.ACTUAL_365,
+      scheduledComponentAmountCents: 43_452,
+      allocationPriority: 1,
+      effectiveDate: "2022-03-23",
+      versionNumber: 1,
       ...overrides,
     };
   }
 
   it("accepts a well-formed component", () => {
     const result = validatePrivateFinancingComponent(component());
-    expect(result.componentType).toBe("interest_bearing");
+    expect(result.componentKey).toBe("note_a");
+    expect(result.label).toBe("Primary note");
     expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it("accepts a zero-rate component -- a zero-interest component is one possible component, never required", () => {
+    const result = validatePrivateFinancingComponent(component({ componentKey: "note_zero", rateBps: 0 }));
+    expect(result.rateBps).toBe(0);
   });
 
   it("rejects a negative rateBps", () => {
@@ -478,5 +537,14 @@ describe("validatePrivateFinancingComponent", () => {
 
   it("rejects a non-positive originalPrincipalCents", () => {
     expect(() => validatePrivateFinancingComponent(component({ originalPrincipalCents: 0 }))).toThrow(MalformedPrivateFinancingContractError);
+  });
+
+  it("rejects an empty componentKey or label", () => {
+    expect(() => validatePrivateFinancingComponent(component({ componentKey: "" }))).toThrow(MalformedPrivateFinancingContractError);
+    expect(() => validatePrivateFinancingComponent(component({ label: "" }))).toThrow(MalformedPrivateFinancingContractError);
+  });
+
+  it("rejects an unsupported dayCountConvention -- fails closed", () => {
+    expect(() => validatePrivateFinancingComponent(component({ dayCountConvention: "thirty_360" }))).toThrow(MalformedPrivateFinancingContractError);
   });
 });

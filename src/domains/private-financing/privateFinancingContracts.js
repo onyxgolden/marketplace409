@@ -3,6 +3,13 @@
 // src/domains/guided-workflow/guidedWorkflowContracts.js: an unknown or malformed shape is rejected here,
 // not passed through and discovered later as a runtime crash or, worse, a silently wrong ledger row.
 //
+// V1 TERMS GENERALIZATION (this revision): components are no longer two fixed named buckets
+// (interest_bearing/zero_interest). Every account has an ORDERED COLLECTION of one or more financing
+// components, each with its own stable componentId, seller-facing label, fixed rate (including zero), and
+// scheduled amount. South Main happens to have two components; that is a fact about South Main's contract,
+// never a structural limit the engine imposes. See financingTermsContracts.js for the versioned
+// account-level schedule/allocation/prepayment terms this revision also introduces.
+//
 // EVENT TAXONOMY -- why 8 event types, not the 12 concepts originally listed:
 //
 // "payment received", "payment allocation", and "external/manual payment" collapse into ONE event type,
@@ -34,11 +41,14 @@
 //
 // ACCOUNT_OPENED and ACCOUNT_CLOSED remain their own event types (genesis and terminal bookends of the
 // ledger stream) exactly as originally proposed -- there was no safe merge available for either.
+// ACCOUNT_OPENED no longer embeds openingComponents (this revision) -- components are a fully separate,
+// externally versioned entity now (they always were real DB rows; this revision stops ALSO duplicating
+// them inline inside the opening event).
 //
 // Final taxonomy: account_opened, payment_posted, payment_reversal, principal_correction,
 // interest_correction, compensating_correction, payoff_concession, account_closed.
 
-export const PRIVATE_FINANCING_SCHEMA_VERSION = "1.0";
+export const PRIVATE_FINANCING_SCHEMA_VERSION = "2.0";
 
 export class MalformedPrivateFinancingContractError extends Error {
   constructor(contractName, reason) {
@@ -66,7 +76,7 @@ function isPlainObject(value) {
 // format is defined by spec to be UTC and locale-independent, unlike parsing "MM/DD/YYYY" or any other
 // non-ISO format. This is part of what makes replay runtime- and locale-independent (Checkpoint B
 // calculation invariant #5 -- see __tests__/calculationInvariants.test.js).
-function isValidISODateOnly(value) {
+export function isValidISODateOnly(value) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   return !Number.isNaN(Date.parse(value));
 }
@@ -104,16 +114,61 @@ export const CORRECTION_BASIS = Object.freeze({
   CONTRACTUAL_ADMINISTRATIVE: "contractual_administrative",
 });
 
-export const PRIVATE_FINANCING_COMPONENT_TYPE = Object.freeze({
-  INTEREST_BEARING: "interest_bearing",
-  ZERO_INTEREST: "zero_interest",
-});
-
 export const ACCOUNT_CLOSURE_REASON = Object.freeze({
   PAID_IN_FULL: "paid_in_full",
   PAYOFF_CONCESSION_APPLIED: "payoff_concession_applied",
   WRITTEN_OFF: "written_off",
   CANCELLED: "cancelled",
+});
+
+// -- V1 TERMS GENERALIZATION: closed support envelope -----------------------------------------------------
+// Every enum below is deliberately closed to exactly what V1 can calculate correctly and has tests for.
+// The schema may reserve additional values in a future migration; the ENGINE must reject (fail closed) any
+// value it does not recognize here, never silently guess at unsupported behavior. See the governance
+// handoff's "V1 supported-term matrix" for the full deferred list (variable rates, compounding, negative
+// amortization, escrow, interest-only periods, graduated payments, legally calculated late fees,
+// prepayment penalties, revolving credit, automatic balloon refinancing, credit reporting, document
+// generation).
+
+export const PRIVATE_FINANCING_DAY_COUNT_CONVENTION = Object.freeze({
+  ACTUAL_365: "actual_365",
+});
+
+export const PRIVATE_FINANCING_PAYMENT_FREQUENCY = Object.freeze({
+  MONTHLY: "monthly",
+});
+
+// A single V1 value, expressed as a stored enum (not a hard-coded assumption) so a future, fully-tested
+// alternative can be added additively later without a schema change. Governs the REQUIRED phase only
+// (accrued interest per component, then each component's own scheduledComponentAmountCents, in
+// allocationPriority order) -- what happens to payment amount ABOVE that combined required total is a
+// separate axis, extraPaymentAllocationPolicy, below.
+export const PRIVATE_FINANCING_ALLOCATION_POLICY = Object.freeze({
+  SCHEDULED_COMPONENT_ORDER: "scheduled_component_order",
+});
+
+// Real contracts vary in what happens to an EXTRA (above-required) payment amount, not in how required
+// interest/principal gets allocated -- this is the axis section 3 of the terms-generalization checkpoint
+// asks to make explicit and closed, rather than one hidden universal rule. South Main's own historical
+// behavior ("anything above the combined regular payment reduces the interest-bearing component's
+// principal, so interest stops accruing sooner") is expressed as HIGHEST_RATE_FIRST_EXTRA -- South Main's
+// only rate>0 component trivially IS the highest-rate component, so this is ordinary configuration, not a
+// special code branch.
+export const PRIVATE_FINANCING_EXTRA_PAYMENT_ALLOCATION_POLICY = Object.freeze({
+  HIGHEST_RATE_FIRST_EXTRA: "highest_rate_first_extra",
+  PROPORTIONAL_EXTRA: "proportional_extra",
+  SELECTED_COMPONENT_EXTRA: "selected_component_extra",
+});
+
+// Distinguishes at least these three; penalties are NOT implemented in V1 (an "unsupported" account simply
+// cannot post extra/prepayment amounts under an automatically-calculated due-state assumption -- the due-
+// state engine fails closed for that account rather than guessing). The due-date effect must be explicit,
+// never assumed: extra principal does not automatically satisfy the next scheduled installment unless the
+// policy says so.
+export const PRIVATE_FINANCING_PREPAYMENT_POLICY = Object.freeze({
+  ALLOWED_WITHOUT_PENALTY_DOES_NOT_ADVANCE_DUE_DATE: "allowed_without_penalty_does_not_advance_due_date",
+  ALLOWED_WITHOUT_PENALTY_ADVANCES_DUE_DATE: "allowed_without_penalty_advances_due_date",
+  UNSUPPORTED: "unsupported",
 });
 
 const REVERSAL_EVENT_TYPES = new Set([
@@ -129,80 +184,98 @@ const REASON_REQUIRED_EVENT_TYPES = new Set([
   PRIVATE_FINANCING_EVENT_TYPE.PAYOFF_CONCESSION,
 ]);
 
-function validateAllocationShape(allocation, amountCents, contractName) {
-  if (!isPlainObject(allocation)) fail(contractName, "allocation must be an object");
-  const fields = ["interestPaidCents", "interestBearingPrincipalPaidCents", "zeroInterestPrincipalPaidCents", "unallocatedCents"];
-  for (const field of fields) {
-    if (!Number.isInteger(allocation[field]) || allocation[field] < 0) {
-      fail(contractName, `allocation.${field} must be a non-negative integer number of cents`);
+// A generic {[componentId]: cents} map -- the shape every per-component monetary field now uses instead of
+// two fixed named keys. `allowNegative` supports payoff_concession's deltas (each entry <= 0);
+// `requireAllZero` supports payoff_concession's principalRemainingByComponentCents (every entry must land
+// at exactly 0 -- the entire point of that event).
+function validateComponentCentsMap(map, contractName, fieldLabel, { allowNegative = false, requireAllZero = false } = {}) {
+  if (!isPlainObject(map)) fail(contractName, `${fieldLabel} must be an object keyed by componentId`);
+  const keys = Object.keys(map);
+  if (keys.length === 0) fail(contractName, `${fieldLabel} must have at least one componentId entry`);
+  const result = {};
+  for (const key of keys) {
+    if (!isNonEmptyString(key)) fail(contractName, `${fieldLabel} keys must be non-empty componentId strings`);
+    const value = map[key];
+    if (!Number.isInteger(value)) fail(contractName, `${fieldLabel}.${key} must be an integer number of cents`);
+    if (requireAllZero) {
+      if (value !== 0) fail(contractName, `${fieldLabel}.${key} must be exactly 0`);
+    } else if (allowNegative) {
+      if (value > 0) fail(contractName, `${fieldLabel}.${key} must be zero or negative`);
+    } else if (value < 0) {
+      fail(contractName, `${fieldLabel}.${key} must be a non-negative integer number of cents`);
     }
+    result[key] = value;
   }
-  const sum = fields.reduce((total, field) => total + allocation[field], 0);
+  return Object.freeze(result);
+}
+
+function sumComponentCentsMap(map) {
+  return Object.values(map).reduce((sum, value) => sum + Math.abs(value), 0);
+}
+
+// Interest/principal-paid maps are allowed to be EMPTY objects, unlike every other component-cents map,
+// because a component that received nothing this payment simply has no entry -- only unallocatedCents
+// plus at least one component receiving something overall is required, enforced by the sum check below.
+function validateComponentCentsMapAllowEmpty(map, contractName, fieldLabel) {
+  if (!isPlainObject(map)) fail(contractName, `${fieldLabel} must be an object keyed by componentId`);
+  const result = {};
+  for (const key of Object.keys(map)) {
+    if (!isNonEmptyString(key)) fail(contractName, `${fieldLabel} keys must be non-empty componentId strings`);
+    const value = map[key];
+    if (!Number.isInteger(value) || value < 0) fail(contractName, `${fieldLabel}.${key} must be a non-negative integer number of cents`);
+    result[key] = value;
+  }
+  return Object.freeze(result);
+}
+
+function validateAllocationShape(allocation, amountCents, contractName) {
+  const interestPaidByComponentCents = validateComponentCentsMapAllowEmpty(
+    allocation.interestPaidByComponentCents ?? {},
+    contractName,
+    "allocation.interestPaidByComponentCents",
+  );
+  const principalPaidByComponentCents = validateComponentCentsMapAllowEmpty(
+    allocation.principalPaidByComponentCents ?? {},
+    contractName,
+    "allocation.principalPaidByComponentCents",
+  );
+  if (!Number.isInteger(allocation.unallocatedCents) || allocation.unallocatedCents < 0) {
+    fail(contractName, "allocation.unallocatedCents must be a non-negative integer number of cents");
+  }
+  const sum = sumComponentCentsMap(interestPaidByComponentCents) + sumComponentCentsMap(principalPaidByComponentCents) + allocation.unallocatedCents;
   if (sum !== amountCents) {
     fail(contractName, `allocation fields must sum exactly to amountCents (${amountCents}), got ${sum} -- no event may manufacture or lose money`);
   }
-  return Object.freeze(Object.fromEntries(fields.map((field) => [field, allocation[field]])));
+  return Object.freeze({ interestPaidByComponentCents, principalPaidByComponentCents, unallocatedCents: allocation.unallocatedCents });
 }
 
-// requireBothZero is ADDITIVE, not exclusive: it puts an extra REQUIREMENT on payoff_concession (it must
-// land at exactly {0, 0} -- that's the entire point of the event), it does not take away any OTHER event
-// type's ability to also reach {0, 0} on its own terms. A payment_posted event paying the exact
-// calculated payoff, or a principal_correction whose delta exactly zeroes a component, both validate fine
-// here with requireBothZero left at its default false -- non-negative is the only universal floor. The
-// only thing genuinely exclusive to payoff_concession is the requirement (not permission) to reach zero.
-function validateComponentBalanceSnapshot(snapshot, contractName, { requireBothZero = false } = {}) {
-  if (!isPlainObject(snapshot)) fail(contractName, "principalRemainingCentsAfter must be an object");
-  for (const key of ["interestBearing", "zeroInterest"]) {
-    if (!Number.isInteger(snapshot[key]) || snapshot[key] < 0) {
-      fail(contractName, `principalRemainingCentsAfter.${key} must be a non-negative integer number of cents`);
-    }
-  }
-  if (requireBothZero && (snapshot.interestBearing !== 0 || snapshot.zeroInterest !== 0)) {
-    fail(contractName, "a payoff_concession must bring both components' principalRemainingCentsAfter to exactly 0, never negative and never partial");
-  }
-  return Object.freeze({ interestBearing: snapshot.interestBearing, zeroInterest: snapshot.zeroInterest });
+// requireAllZero is ADDITIVE, not exclusive: it puts an extra REQUIREMENT on payoff_concession (every
+// component must land at exactly 0 -- that's the entire point of the event), it does not take away any
+// OTHER event type's ability to also reach all-zero on its own terms.
+function validatePrincipalRemainingByComponent(snapshot, contractName, { requireAllZero = false } = {}) {
+  return validateComponentCentsMap(snapshot, contractName, "principalRemainingByComponentCents", { requireAllZero });
 }
 
-function validateOpeningComponent(component, contractName) {
-  if (!isPlainObject(component)) fail(contractName, "each openingComponents entry must be an object");
-  if (!Object.values(PRIVATE_FINANCING_COMPONENT_TYPE).includes(component.componentType)) {
-    fail(contractName, `openingComponents.componentType must be one of ${Object.values(PRIVATE_FINANCING_COMPONENT_TYPE).join(", ")}`);
-  }
-  if (!Number.isInteger(component.originalPrincipalCents) || component.originalPrincipalCents <= 0) {
-    fail(contractName, "openingComponents.originalPrincipalCents must be a positive integer");
-  }
-  if (!Number.isInteger(component.rateBps) || component.rateBps < 0) {
-    fail(contractName, "openingComponents.rateBps must be a non-negative integer");
-  }
-  if (!Number.isInteger(component.regularPaymentCents) || component.regularPaymentCents < 0) {
-    fail(contractName, "openingComponents.regularPaymentCents must be a non-negative integer");
-  }
-  return Object.freeze({
-    componentType: component.componentType,
-    originalPrincipalCents: component.originalPrincipalCents,
-    rateBps: component.rateBps,
-    regularPaymentCents: component.regularPaymentCents,
-  });
-}
-
-function validateAccountOpenedFields(event, contractName) {
-  if (!Array.isArray(event.openingComponents) || event.openingComponents.length === 0) {
-    fail(contractName, "account_opened requires a non-empty openingComponents array");
-  }
-  const validated = event.openingComponents.map((component) => validateOpeningComponent(component, contractName));
-  const types = validated.map((component) => component.componentType);
-  if (new Set(types).size !== types.length) fail(contractName, "openingComponents must not repeat a componentType");
-  return { openingComponents: Object.freeze(validated) };
+function validateAccountOpenedFields() {
+  // account_opened is now a pure lifecycle/genesis marker -- it carries no terms of its own. Components
+  // and account terms are separate, externally versioned entities (see financingTermsContracts.js and the
+  // v1_terms_generalization migration); replayEvents.js resolves them by effective date, never from a
+  // payload embedded in this event.
+  return {};
 }
 
 function validatePaymentPostedFields(event, contractName) {
   if (!Number.isInteger(event.amountCents) || event.amountCents <= 0) {
     fail(contractName, "payment_posted requires a positive integer amountCents");
   }
+  if (event.selectedExtraComponentId !== undefined && event.selectedExtraComponentId !== null && !isNonEmptyString(event.selectedExtraComponentId)) {
+    fail(contractName, "selectedExtraComponentId must be a non-empty string or null when present");
+  }
   return {
     amountCents: event.amountCents,
     allocation: validateAllocationShape(event.allocation, event.amountCents, contractName),
-    principalRemainingCentsAfter: validateComponentBalanceSnapshot(event.principalRemainingCentsAfter, contractName),
+    principalRemainingByComponentCents: validatePrincipalRemainingByComponent(event.principalRemainingByComponentCents, contractName),
+    selectedExtraComponentId: event.selectedExtraComponentId ?? null,
   };
 }
 
@@ -213,14 +286,12 @@ function validatePaymentReversalFields(event, contractName) {
   return {
     amountCents: event.amountCents,
     allocation: validateAllocationShape(event.allocation, event.amountCents, contractName),
-    principalRemainingCentsAfter: validateComponentBalanceSnapshot(event.principalRemainingCentsAfter, contractName),
+    principalRemainingByComponentCents: validatePrincipalRemainingByComponent(event.principalRemainingByComponentCents, contractName),
   };
 }
 
 function validatePrincipalCorrectionFields(event, contractName) {
-  if (!Object.values(PRIVATE_FINANCING_COMPONENT_TYPE).includes(event.componentType)) {
-    fail(contractName, `principal_correction requires componentType to be one of ${Object.values(PRIVATE_FINANCING_COMPONENT_TYPE).join(", ")}`);
-  }
+  if (!isNonEmptyString(event.componentId)) fail(contractName, "principal_correction requires a non-empty componentId");
   if (!Object.values(CORRECTION_BASIS).includes(event.correctionBasis)) {
     fail(contractName, `principal_correction requires correctionBasis to be one of ${Object.values(CORRECTION_BASIS).join(", ")}`);
   }
@@ -231,7 +302,7 @@ function validatePrincipalCorrectionFields(event, contractName) {
     fail(contractName, "principal_correction requires a non-negative integer correctedComponentPrincipalRemainingCentsAfter");
   }
   return {
-    componentType: event.componentType,
+    componentId: event.componentId,
     correctionBasis: event.correctionBasis,
     deltaCents: event.deltaCents,
     correctedComponentPrincipalRemainingCentsAfter: event.correctedComponentPrincipalRemainingCentsAfter,
@@ -239,44 +310,42 @@ function validatePrincipalCorrectionFields(event, contractName) {
 }
 
 function validateInterestCorrectionFields(event, contractName) {
+  // Interest now accrues independently per component (each may carry its own rate) -- a correction must
+  // name WHICH component's accrued-interest bucket it adjusts, unlike the single-bucket South-Main-shaped
+  // model this replaces.
+  if (!isNonEmptyString(event.componentId)) fail(contractName, "interest_correction requires a non-empty componentId");
   if (!Object.values(CORRECTION_BASIS).includes(event.correctionBasis)) {
     fail(contractName, `interest_correction requires correctionBasis to be one of ${Object.values(CORRECTION_BASIS).join(", ")}`);
   }
   if (!Number.isInteger(event.deltaCents) || event.deltaCents === 0) {
     fail(contractName, "interest_correction requires a non-zero integer deltaCents");
   }
-  return { correctionBasis: event.correctionBasis, deltaCents: event.deltaCents };
+  return { componentId: event.componentId, correctionBasis: event.correctionBasis, deltaCents: event.deltaCents };
 }
 
 function validateCompensatingCorrectionFields(event, contractName) {
   if (!Number.isInteger(event.deltaCents) || event.deltaCents === 0) {
     fail(contractName, "compensating_correction requires a non-zero integer deltaCents");
   }
-  if (event.componentType != null && !Object.values(PRIVATE_FINANCING_COMPONENT_TYPE).includes(event.componentType)) {
-    fail(contractName, `compensating_correction.componentType must be null or one of ${Object.values(PRIVATE_FINANCING_COMPONENT_TYPE).join(", ")}`);
+  if (event.componentId != null && !isNonEmptyString(event.componentId)) {
+    fail(contractName, "compensating_correction.componentId must be null or a non-empty string");
   }
-  return { deltaCents: event.deltaCents, componentType: event.componentType ?? null };
+  return { deltaCents: event.deltaCents, componentId: event.componentId ?? null };
 }
 
 function validatePayoffConcessionFields(event, contractName) {
-  if (!Number.isInteger(event.interestBearingDeltaCents) || event.interestBearingDeltaCents > 0) {
-    fail(contractName, "payoff_concession requires a non-positive integer interestBearingDeltaCents");
-  }
-  if (!Number.isInteger(event.zeroInterestDeltaCents) || event.zeroInterestDeltaCents > 0) {
-    fail(contractName, "payoff_concession requires a non-positive integer zeroInterestDeltaCents");
-  }
-  if (event.interestBearingDeltaCents === 0 && event.zeroInterestDeltaCents === 0) {
+  const deltaCentsByComponent = validateComponentCentsMap(event.deltaCentsByComponentCents, contractName, "deltaCentsByComponentCents", { allowNegative: true });
+  if (Object.values(deltaCentsByComponent).every((value) => value === 0)) {
     fail(contractName, "payoff_concession must forgive a non-zero amount on at least one component");
   }
   return {
-    interestBearingDeltaCents: event.interestBearingDeltaCents,
-    zeroInterestDeltaCents: event.zeroInterestDeltaCents,
-    principalRemainingCentsAfter: validateComponentBalanceSnapshot(event.principalRemainingCentsAfter, contractName, { requireBothZero: true }),
+    deltaCentsByComponentCents: deltaCentsByComponent,
+    principalRemainingByComponentCents: validatePrincipalRemainingByComponent(event.principalRemainingByComponentCents, contractName, { requireAllZero: true }),
   };
 }
 
 // account_closed carries no monetary field at all (no amountCents, no allocation, no deltaCents, no
-// principalRemainingCentsAfter) -- structurally, by omission, it cannot manufacture a financial
+// principalRemainingByComponentCents) -- structurally, by omission, it cannot manufacture a financial
 // reduction. It only ever records a lifecycle fact (that replay had already independently produced a
 // zero balance by the time this event was posted); replayEvents.js re-verifies that independently rather
 // than trusting the event's mere presence (see replayEvents.js's ACCOUNT_CLOSED case).
@@ -310,6 +379,9 @@ const EVENT_TYPE_FIELD_VALIDATORS = {
 // (no updatedBy/updatedAt), and every event type's own required fields -- returning a frozen, whitelisted
 // object on success. Cross-event invariants (reversal targeting, idempotency, ordering) are NOT this
 // function's job -- see ledgerIntegrity.js and ledgerOrdering.js, which need more than one event's shape.
+// Component EXISTENCE (does this componentId actually belong to this account as of this date) is also not
+// this function's job -- shape validation has no access to the account's component list; that check
+// happens in replayEvents.js, which does.
 export function validatePrivateFinancingEvent(event) {
   const contractName = "PrivateFinancingEvent";
   if (!isPlainObject(event)) fail(contractName, "must be an object");
@@ -426,8 +498,8 @@ export function validatePrivateFinancingEvent(event) {
 }
 
 // PrivateFinancingAccount / PrivateFinancingComponent -- mutable rows (ordinary created_by/updated_by
-// semantics apply, unlike the immutable event above), mirroring the Checkpoint D proposed DDL field for
-// field in camelCase. These exist so the eventual RPC/API layer never has to hand-validate a raw row.
+// semantics apply, unlike the immutable event above), mirroring the migration's DDL field for field in
+// camelCase. These exist so the eventual RPC/API layer never has to hand-validate a raw row.
 
 export function validatePrivateFinancingAccount(account) {
   const contractName = "PrivateFinancingAccount";
@@ -447,7 +519,9 @@ export function validatePrivateFinancingAccount(account) {
     fail(contractName, "originationPrincipalCents must be a positive integer");
   }
   if (!["disabled", "enabled"].includes(account.lateFeePolicy)) fail(contractName, "lateFeePolicy must be disabled or enabled");
-  if (account.interestDayCountConvention !== "actual_365") fail(contractName, "interestDayCountConvention must be actual_365");
+  if (account.interestDayCountConvention !== PRIVATE_FINANCING_DAY_COUNT_CONVENTION.ACTUAL_365) {
+    fail(contractName, `interestDayCountConvention must be ${PRIVATE_FINANCING_DAY_COUNT_CONVENTION.ACTUAL_365}`);
+  }
   if (!Number.isInteger(account.platformFeeCents) || account.platformFeeCents < 0 || account.platformFeeCents > 1000) {
     fail(contractName, "platformFeeCents must be an integer between 0 and 1000");
   }
@@ -475,31 +549,45 @@ export function validatePrivateFinancingAccount(account) {
   });
 }
 
+// A single financing component -- one entry in the account's ordered collection (at least one; V1 imposes
+// no maximum). componentId is a stable identity chosen at creation and never reused; label is the only
+// seller-facing text. rateBps may be 0 (a zero-rate component is one possible component, never required).
+// version_number/prior_version_id/effective_date follow the exact same insert-only, trigger-enforced
+// ordering pattern the migration already established (see the migration's own
+// enforce_private_financing_component_version_ordering trigger, unchanged by this revision).
 export function validatePrivateFinancingComponent(component) {
   const contractName = "PrivateFinancingComponent";
   if (!isPlainObject(component)) fail(contractName, "must be an object");
   if (!isNonEmptyString(component.ownerId)) fail(contractName, "ownerId must be a non-empty string");
   if (!isNonEmptyString(component.id)) fail(contractName, "id must be a non-empty string");
   if (!isNonEmptyString(component.accountId)) fail(contractName, "accountId must be a non-empty string");
-  if (!Object.values(PRIVATE_FINANCING_COMPONENT_TYPE).includes(component.componentType)) {
-    fail(contractName, `componentType must be one of ${Object.values(PRIVATE_FINANCING_COMPONENT_TYPE).join(", ")}`);
-  }
+  if (!isNonEmptyString(component.componentKey)) fail(contractName, "componentKey must be a non-empty string (the component's stable identity)");
+  if (!isNonEmptyString(component.label)) fail(contractName, "label must be a non-empty string (the seller-facing name for this component)");
   if (!Number.isInteger(component.originalPrincipalCents) || component.originalPrincipalCents <= 0) {
     fail(contractName, "originalPrincipalCents must be a positive integer");
   }
   if (!Number.isInteger(component.rateBps) || component.rateBps < 0) fail(contractName, "rateBps must be a non-negative integer");
-  if (!Number.isInteger(component.regularPaymentCents) || component.regularPaymentCents < 0) {
-    fail(contractName, "regularPaymentCents must be a non-negative integer");
+  if (component.dayCountConvention !== PRIVATE_FINANCING_DAY_COUNT_CONVENTION.ACTUAL_365) {
+    fail(contractName, `dayCountConvention must be ${PRIVATE_FINANCING_DAY_COUNT_CONVENTION.ACTUAL_365}`);
   }
-  if (!Number.isInteger(component.applicationPriority)) fail(contractName, "applicationPriority must be an integer");
+  if (!Number.isInteger(component.scheduledComponentAmountCents) || component.scheduledComponentAmountCents < 0) {
+    fail(contractName, "scheduledComponentAmountCents must be a non-negative integer");
+  }
+  if (!Number.isInteger(component.allocationPriority)) fail(contractName, "allocationPriority must be an integer");
+  if (!isValidISODateOnly(component.effectiveDate)) fail(contractName, "effectiveDate must be a valid ISO date string");
+  if (!Number.isInteger(component.versionNumber) || component.versionNumber < 1) fail(contractName, "versionNumber must be a positive integer");
   return Object.freeze({
     ownerId: component.ownerId,
     id: component.id,
     accountId: component.accountId,
-    componentType: component.componentType,
+    componentKey: component.componentKey,
+    label: component.label,
     originalPrincipalCents: component.originalPrincipalCents,
     rateBps: component.rateBps,
-    regularPaymentCents: component.regularPaymentCents,
-    applicationPriority: component.applicationPriority,
+    dayCountConvention: component.dayCountConvention,
+    scheduledComponentAmountCents: component.scheduledComponentAmountCents,
+    allocationPriority: component.allocationPriority,
+    effectiveDate: component.effectiveDate,
+    versionNumber: component.versionNumber,
   });
 }

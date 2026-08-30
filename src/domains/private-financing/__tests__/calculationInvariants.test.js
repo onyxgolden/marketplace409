@@ -19,10 +19,11 @@ describe("Checkpoint B calculation invariant verification", () => {
     // silently truncated into a ledger entry.
     expect(() =>
       allocatePayment({
-        interestBearing: { remainingPrincipalCents: 4_500_000, regularPaymentCents: 43_452 },
-        zeroInterest: { remainingPrincipalCents: 1_000_000, regularPaymentCents: 8_333 },
-        accruedInterestCents: 11_465.75, // the raw fractional accrual, unrounded -- must be rejected here
+        components: [{ componentId: "note_a", remainingPrincipalCents: 4_500_000, scheduledComponentAmountCents: 43_452, rateBps: 300, allocationPriority: 1 }],
+        accruedInterestCentsByComponent: { note_a: 11_465.75 }, // the raw fractional accrual, unrounded -- must be rejected here
         paymentAmountCents: 51_785,
+        allocationPolicy: "scheduled_component_order",
+        extraPaymentAllocationPolicy: "highest_rate_first_extra",
       }),
     ).toThrow(/must be an integer/);
     // The caller is required to round (see invariant 4) before this boundary, never after.
@@ -89,10 +90,14 @@ describe("Checkpoint B calculation invariant verification", () => {
     expect(new Set(results).size).toBe(1);
 
     const allocationArgs = {
-      interestBearing: { remainingPrincipalCents: 4_500_000, regularPaymentCents: 43_452 },
-      zeroInterest: { remainingPrincipalCents: 1_000_000, regularPaymentCents: 8_333 },
-      accruedInterestCents: 11_452,
+      components: [
+        { componentId: "note_a", remainingPrincipalCents: 4_500_000, scheduledComponentAmountCents: 43_452, rateBps: 300, allocationPriority: 1 },
+        { componentId: "note_b", remainingPrincipalCents: 1_000_000, scheduledComponentAmountCents: 8_333, rateBps: 0, allocationPriority: 2 },
+      ],
+      accruedInterestCentsByComponent: { note_a: 11_452 },
       paymentAmountCents: 51_785,
+      allocationPolicy: "scheduled_component_order",
+      extraPaymentAllocationPolicy: "highest_rate_first_extra",
     };
     const allocationResults = Array.from({ length: 5 }, () => allocatePayment(allocationArgs));
     expect(allocationResults.every((result) => JSON.stringify(result) === JSON.stringify(allocationResults[0]))).toBe(true);

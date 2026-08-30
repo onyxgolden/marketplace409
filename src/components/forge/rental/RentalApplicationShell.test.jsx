@@ -46,7 +46,7 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
 
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
-    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "renewal", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "renewal", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "private-financing", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
   });
   it("renders an exception-first summary in grouped navigation", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
@@ -67,6 +67,12 @@ describe("RentalApplicationShell", () => {
   it("renders the first-tenant readiness surface as its own reachable function", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("readiness"));
     expect(markup).toContain("Prepare a tenant for move-in");
+  });
+  it("renders the private-financing surface as its own reachable function under Money", () => {
+    const moneyGroup = RENTAL_NAVIGATION.find((group) => group.label === "Money");
+    expect(moneyGroup.items.map(({ id }) => id)).toContain("private-financing");
+    const markup = renderToStaticMarkup(buildRentalSurface("private-financing"));
+    expect(markup).toContain("Private Financing");
   });
   it("renders the lease-renewal surface as its own reachable function", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("renewal"));

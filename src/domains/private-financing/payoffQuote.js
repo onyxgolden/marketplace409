@@ -12,6 +12,18 @@ function violate(reason) {
   throw new LedgerIntegrityViolationError(reason);
 }
 
+// Thrown when an account's own configured policy calls for a calculation V1 does not yet implement.
+// This is deliberately NOT a LedgerIntegrityViolationError (nothing is corrupt) and NOT silently
+// absorbed into a fabricated result -- fail closed, per the rule that an unsupported policy must
+// block the calculation it affects rather than quietly produce a number that looks complete but omits a
+// charge the account's own terms say should exist.
+export class UnsupportedAccountPolicyError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UnsupportedAccountPolicyError";
+  }
+}
+
 function isValidISODateOnly(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value));
 }
@@ -20,11 +32,14 @@ function isValidISODateOnly(value) {
 // time -- asOfDate, payoffThroughDate, issuedAt, and expiresAt are always caller-supplied.
 export function computePayoffQuote({
   events,
+  componentVersions,
+  accountTermsVersions,
   asOfDate,
   payoffThroughDate,
   quoteId,
   issuedAt,
   expiresAt,
+  lateFeePolicy,
   authorizedAdditionalAmountsCents = 0,
   sellerConcessionCents = 0,
 }) {
@@ -44,27 +59,44 @@ export function computePayoffQuote({
     violate("sellerConcessionCents must be a non-negative integer.");
   }
 
-  const stateAsOfToday = replayEvents({ events, asOfDate });
+  const stateAsOfToday = replayEvents({ events, componentVersions, accountTermsVersions, asOfDate });
   if (stateAsOfToday.closed) violate(`computePayoffQuote: account "${stateAsOfToday.accountId}" is already closed.`);
 
-  // Interest continues to accrue, per the loan terms, from today through the date funds are expected to
-  // clear -- projected here, never silently capitalized into principal (interestBearingPrincipalCents/
-  // zeroInterestPrincipalCents below are exactly replay's current remaining balances, untouched).
-  const additionalAccrualFractionalCents = computeAccrual({
-    principalRemainingCents: stateAsOfToday.interestBearingRemainingCents,
-    rateBps: stateAsOfToday.interestBearingRateBps,
-    fromDate: asOfDate,
-    toDate: payoffThroughDate,
-  });
-  const accruedInterestCents = roundToNearestCent(stateAsOfToday.unpaidAccruedInterestFractionalCents + additionalAccrualFractionalCents);
+  // Interest continues to accrue, per each component's own rate, from today through the date funds are
+  // expected to clear -- projected here, never silently capitalized into principal
+  // (principalByComponentCents below is exactly replay's current remaining balances, untouched).
+  const accruedInterestByComponentCents = {};
+  let accruedInterestCents = 0;
+  for (const component of stateAsOfToday.components) {
+    const additionalAccrualFractionalCents = computeAccrual({
+      principalRemainingCents: stateAsOfToday.remainingPrincipalByComponentCents[component.componentKey],
+      rateBps: component.rateBps,
+      fromDate: asOfDate,
+      toDate: payoffThroughDate,
+    });
+    const componentAccrued = roundToNearestCent(
+      (stateAsOfToday.unpaidAccruedInterestFractionalByComponentCents[component.componentKey] ?? 0) + additionalAccrualFractionalCents,
+    );
+    accruedInterestByComponentCents[component.componentKey] = componentAccrued;
+    accruedInterestCents += componentAccrued;
+  }
 
-  const interestBearingPrincipalCents = stateAsOfToday.interestBearingRemainingCents;
-  const zeroInterestPrincipalCents = stateAsOfToday.zeroInterestRemainingCents;
-  // South Main has late charges disabled and never assessed (per the handoff) -- this field is always
-  // present at 0 rather than omitted, so a written quote can never silently drop a late-charge line item.
+  const principalByComponentCents = { ...stateAsOfToday.remainingPrincipalByComponentCents };
+  const totalPrincipalCents = stateAsOfToday.totalPrincipalRemainingCents;
+
+  // lateChargesCents is driven by the ACCOUNT's own lateFeePolicy, never a fixed constant -- an account
+  // with late fees enabled has no calculation engine yet in V1, so this fails closed (throws) rather than
+  // silently reporting 0 as if nothing were owed. Only an account whose own terms disable late fees gets
+  // the honest, correct 0. This field stays present (never omitted) for a disabled-policy account so a
+  // written quote can never silently drop a late-charge line item.
+  if (lateFeePolicy !== "disabled") {
+    throw new UnsupportedAccountPolicyError(
+      `computePayoffQuote cannot calculate a payoff for an account with lateFeePolicy "${lateFeePolicy}" -- late-charge calculation is not yet implemented in V1. Only lateFeePolicy "disabled" is supported.`,
+    );
+  }
   const lateChargesCents = 0;
 
-  const calculatedPayoffCents = interestBearingPrincipalCents + zeroInterestPrincipalCents + accruedInterestCents + lateChargesCents + authorizedAdditionalAmountsCents;
+  const calculatedPayoffCents = totalPrincipalCents + accruedInterestCents + lateChargesCents + authorizedAdditionalAmountsCents;
   if (sellerConcessionCents > calculatedPayoffCents) {
     violate(`sellerConcessionCents (${sellerConcessionCents}) cannot exceed the calculated payoff (${calculatedPayoffCents}).`);
   }
@@ -81,8 +113,9 @@ export function computePayoffQuote({
     calculatedThroughDate: payoffThroughDate,
     issuedAt,
     expirationDate: expiresAt,
-    interestBearingPrincipalCents,
-    zeroInterestPrincipalCents,
+    principalByComponentCents: Object.freeze(principalByComponentCents),
+    totalPrincipalCents,
+    accruedInterestByComponentCents: Object.freeze(accruedInterestByComponentCents),
     accruedInterestCents,
     lateChargesCents,
     authorizedAdditionalAmountsCents,
