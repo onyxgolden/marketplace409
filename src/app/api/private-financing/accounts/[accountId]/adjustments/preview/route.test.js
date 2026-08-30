@@ -64,7 +64,10 @@ function buildClient({ account = { id: "pf_acct_1" }, accountError = null, event
 const today = new Date().toISOString().slice(0, 10);
 
 describe("POST /api/private-financing/accounts/[accountId]/adjustments/preview", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.PRIVATE_FINANCING_PREVIEW_TOKEN_SECRET = "test-only-private-financing-preview-secret-123456";
+  });
 
   it("is non-mutating: computes a preview and never touches the RPC (the mock client doesn't even define one)", async () => {
     const client = buildClient();
