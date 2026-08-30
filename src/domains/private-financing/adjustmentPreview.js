@@ -51,6 +51,7 @@ function buildPreviewEnvelope({
   warnings,
   blockingValidation,
   proposedEventPayload,
+  proposedEventPayloads = null,
 }) {
   const principalByComponent = {};
   for (const componentId of Object.keys(snapshot.remainingPrincipalByComponentCents)) {
@@ -75,6 +76,7 @@ function buildPreviewEnvelope({
     warnings: Object.freeze([...warnings]),
     blockingValidation: Object.freeze([...blockingValidation]),
     proposedEventPayload: proposedEventPayload ? Object.freeze(proposedEventPayload) : null,
+    proposedEventPayloads: proposedEventPayloads ? Object.freeze(proposedEventPayloads.map((payload) => Object.freeze(payload))) : null,
   });
 }
 
@@ -166,22 +168,17 @@ export function previewBringCurrentCredit({
   componentVersions,
   accountTermsVersions,
   asOfDate,
-  proposedCreditCents,
   componentId,
   reason,
   borrowerVisibleExplanation,
   createdBy,
 }) {
-  requireInteger(proposedCreditCents, "proposedCreditCents");
-  if (proposedCreditCents < 0) violate("proposedCreditCents cannot be negative.");
   requireNonEmptyString(reason, "reason");
   requireNonEmptyString(borrowerVisibleExplanation, "borrowerVisibleExplanation");
-  requireNonEmptyString(componentId, "componentId");
   requireNonEmptyString(createdBy, "createdBy");
 
   const snapshot = replayFor(events, componentVersions, accountTermsVersions, asOfDate);
   const terms = resolveAccountTermsAsOf(accountTermsVersions, asOfDate);
-
   const warnings = [];
   const blockingValidation = [];
 
@@ -193,26 +190,75 @@ export function previewBringCurrentCredit({
     blockingValidation.push(`A bring-current credit requires a computable due schedule for this account, which is not available: ${error.message}`);
   }
 
-  const shortageCents = dueState ? dueState.currentAmountDueCents + dueState.pastDueAmountCents : null;
-  const pastDueAfterCents = dueState ? Math.max(shortageCents - proposedCreditCents, 0) : null;
-
-  if (dueState && proposedCreditCents > shortageCents) {
-    warnings.push(`The proposed credit (${proposedCreditCents}) exceeds the calculated shortage (${shortageCents}) -- this is extra seller-granted goodwill beyond bringing the account current.`);
-  }
-
-  const priorBalance = snapshot.remainingPrincipalByComponentCents[componentId];
-  if (priorBalance === undefined) blockingValidation.push(`Component "${componentId}" does not exist on this account as of ${asOfDate}.`);
-  const afterBalance = (priorBalance ?? 0) - proposedCreditCents;
-  if (priorBalance !== undefined && afterBalance < 0) blockingValidation.push(`The proposed credit would reduce component "${componentId}" principal below zero.`);
+  const shortageCents = dueState ? dueState.currentAmountDueCents + dueState.pastDueAmountCents : 0;
+  if (dueState && shortageCents === 0) blockingValidation.push("This account is already current; no bring-current credit is needed.");
   if (snapshot.closed) blockingValidation.push("The account is already closed.");
 
-  const balanceAfterByComponent = { ...snapshot.remainingPrincipalByComponentCents, [componentId]: priorBalance !== undefined ? afterBalance : priorBalance };
+  let allocation = null;
+  if (dueState && shortageCents > 0) {
+    allocation = allocatePayment({
+      components: snapshot.components.map((component) => ({
+        componentId: component.componentKey,
+        remainingPrincipalCents: snapshot.remainingPrincipalByComponentCents[component.componentKey],
+        scheduledComponentAmountCents: component.scheduledComponentAmountCents,
+        rateBps: component.rateBps,
+        allocationPriority: component.allocationPriority,
+      })),
+      accruedInterestCentsByComponent: {},
+      paymentAmountCents: shortageCents,
+      allocationPolicy: terms.allocationPolicy,
+      extraPaymentAllocationPolicy: terms.extraPaymentAllocationPolicy,
+      selectedExtraComponentId: componentId ?? null,
+    });
+    if (allocation.unallocatedCents > 0) {
+      const selectionHelp = terms.extraPaymentAllocationPolicy === "selected_component_extra"
+        ? " Select the component that should receive credit above the scheduled component amounts."
+        : "";
+      blockingValidation.push(`The account's allocation policy could not apply ${allocation.unallocatedCents} cents of the exact bring-current credit.${selectionHelp}`);
+    }
+  }
+
+  const creditedByComponentCents = allocation?.principalPaidByComponentCents ?? {};
+  const balanceAfterByComponent = { ...snapshot.remainingPrincipalByComponentCents };
+  for (const [allocatedComponentId, creditCents] of Object.entries(creditedByComponentCents)) {
+    balanceAfterByComponent[allocatedComponentId] -= creditCents;
+  }
+  const allocatedCreditCents = Object.values(creditedByComponentCents).reduce((sum, cents) => sum + cents, 0);
+  if (allocation && allocatedCreditCents + allocation.unallocatedCents !== shortageCents) {
+    blockingValidation.push("The bring-current allocation did not conserve the exact shortage amount.");
+  }
+
+  const proposedEventPayloads =
+    blockingValidation.length === 0
+      ? Object.entries(creditedByComponentCents)
+          .filter(([, creditCents]) => creditCents > 0)
+          .map(([allocatedComponentId, creditCents]) => ({
+            eventType: PRIVATE_FINANCING_EVENT_TYPE.PRINCIPAL_CORRECTION,
+            ownerId: snapshot.ownerId,
+            accountId: snapshot.accountId,
+            eventOrigin: PRIVATE_FINANCING_EVENT_ORIGIN.INTERACTIVE_USER,
+            createdBy,
+            componentId: allocatedComponentId,
+            correctionBasis: CORRECTION_BASIS.DISCRETIONARY_CONCESSION,
+            deltaCents: -creditCents,
+            correctedComponentPrincipalRemainingCentsAfter: balanceAfterByComponent[allocatedComponentId],
+            reason,
+            borrowerVisibleExplanation,
+            effectiveDate: asOfDate,
+          }))
+      : null;
 
   return buildPreviewEnvelope({
     snapshot,
     asOfDate,
-    proposedAdjustment: { kind: "bring_current_credit", componentId, proposedCreditCents },
-    allocationBreakdown: { componentId, deltaCents: -proposedCreditCents },
+    proposedAdjustment: {
+      kind: "bring_current_credit",
+      exactCreditCents: shortageCents,
+      allocationPolicy: terms.allocationPolicy,
+      extraPaymentAllocationPolicy: terms.extraPaymentAllocationPolicy,
+      selectedExtraComponentId: componentId ?? null,
+    },
+    allocationBreakdown: { creditedByComponentCents, unallocatedCents: allocation?.unallocatedCents ?? 0 },
     balanceAfterByComponent,
     interestEffect: { accruedInterestBeforeCents: snapshot.unpaidAccruedInterestCents, accruedInterestAfterCents: snapshot.unpaidAccruedInterestCents },
     pastDueEffect: dueState
@@ -220,32 +266,17 @@ export function previewBringCurrentCredit({
           scheduledAmountCents: dueState.scheduledThroughAsOfDateCents,
           alreadyPostedCents: dueState.alreadyPostedCents,
           shortageCents,
-          proposedCreditCents,
+          proposedCreditCents: shortageCents,
           pastDueBeforeCents: shortageCents,
-          pastDueAfterCents,
+          pastDueAfterCents: blockingValidation.length === 0 ? 0 : shortageCents,
           nextDueDate: dueState.nextDueDate,
           nextDueAmountCents: dueState.regularScheduledPaymentAmountCents,
         }
       : null,
     warnings,
     blockingValidation,
-    proposedEventPayload:
-      blockingValidation.length === 0
-        ? {
-            eventType: PRIVATE_FINANCING_EVENT_TYPE.PRINCIPAL_CORRECTION,
-            ownerId: snapshot.ownerId,
-            accountId: snapshot.accountId,
-            eventOrigin: PRIVATE_FINANCING_EVENT_ORIGIN.INTERACTIVE_USER,
-            createdBy,
-            componentId,
-            correctionBasis: CORRECTION_BASIS.DISCRETIONARY_CONCESSION,
-            deltaCents: -proposedCreditCents,
-            correctedComponentPrincipalRemainingCentsAfter: afterBalance,
-            reason,
-            borrowerVisibleExplanation,
-            effectiveDate: asOfDate,
-          }
-        : null,
+    proposedEventPayload: proposedEventPayloads?.length === 1 ? proposedEventPayloads[0] : null,
+    proposedEventPayloads,
   });
 }
 
