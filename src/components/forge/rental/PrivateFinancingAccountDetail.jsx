@@ -5,6 +5,7 @@ import { ADJUSTMENT_ACTION_TYPES } from "@/domains/private-financing/adjustmentA
 import { financingPartyLabel } from "@/domains/private-financing/financingPartyLabel";
 import PrivateFinancingLedgerHistory from "./PrivateFinancingLedgerHistory";
 import PrivateFinancingSellerActions from "./PrivateFinancingSellerActions";
+import PrivateFinancingExternalPaymentForm from "./PrivateFinancingExternalPaymentForm";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToMoney = (cents) => (typeof cents === "number" ? money.format(cents / 100) : "—");
@@ -147,6 +148,11 @@ export default function PrivateFinancingAccountDetail({ accountId, onBack }) {
           <ComponentDetails components={detail.components} balance={detail.balance} />
           <PayoffPresentation payoffEstimate={detail.payoffEstimate} account={detail.account} onRecalculate={load} />
           <BorrowerMemberships borrowers={detail.borrowers} />
+          <PrivateFinancingExternalPaymentForm
+            accountId={accountId}
+            components={detail.components}
+            onPosted={handlePosted}
+          />
           <PrivateFinancingSellerActions
             accountId={accountId}
             product={detail.account.product}
