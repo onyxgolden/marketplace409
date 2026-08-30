@@ -38,6 +38,7 @@ const termsVersionRows = [
 ];
 const inputs = { componentId: "zi", deltaCents: -1000, reason: "typo" };
 const actionType = "contractual_principal_correction";
+const previewSecret = "test-only-private-financing-preview-secret-123456";
 
 function buildClient({
   account = { id: "pf_acct_1" },
@@ -77,12 +78,17 @@ function freshToken(overrides = {}) {
     inputs,
     ledgerSequenceAtPreview: 1, // matches openEventRow's own ledger_sequence -- the current max
     asOfDate: "2026-08-30",
+    ownerId: "owner-1",
+    actingUserId: "owner-1",
     ...overrides,
-  });
+  }, { secret: previewSecret });
 }
 
 describe("POST /api/private-financing/accounts/[accountId]/adjustments/confirm", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.PRIVATE_FINANCING_PREVIEW_TOKEN_SECRET = previewSecret;
+  });
 
   it("posts a valid, fresh preview and returns a receipt identifying the newly posted event", async () => {
     const client = buildClient();
@@ -100,9 +106,9 @@ describe("POST /api/private-financing/accounts/[accountId]/adjustments/confirm",
     const client = buildClient();
     mocks.authenticate.mockResolvedValue({ user: { id: "co-owner-1" }, effectiveOwnerId: "owner-1", supabaseClient: client });
 
-    const response = await POST(req({ actionType, inputs, previewToken: freshToken() }), { params });
+    const response = await POST(req({ actionType, inputs, previewToken: freshToken({ actingUserId: "co-owner-1" }) }), { params });
     expect(response.status).toBe(200);
-    expect(client.rpc).toHaveBeenCalledWith("append_private_financing_event", expect.objectContaining({ p_owner_id: "owner-1" }));
+    expect(client.rpc).toHaveBeenCalledWith("confirm_private_financing_adjustment", expect.objectContaining({ p_owner_id: "owner-1" }));
   });
 
   it("never sends p_created_by, p_event_origin other than interactive_user, or a client-suppliable p_owner_id -- the RPC call is fully attribution-locked", async () => {
@@ -112,8 +118,9 @@ describe("POST /api/private-financing/accounts/[accountId]/adjustments/confirm",
     await POST(req({ actionType, inputs, previewToken: freshToken() }), { params });
     const rpcCallParams = client.rpc.mock.calls[0][1];
     expect(Object.prototype.hasOwnProperty.call(rpcCallParams, "p_created_by")).toBe(false);
-    expect(rpcCallParams.p_event_origin).toBe("interactive_user");
     expect(rpcCallParams.p_owner_id).toBe("owner-1");
+    expect(rpcCallParams.p_event_payload.p_event_origin).toBe("interactive_user");
+    expect(rpcCallParams.p_confirmation_id).toEqual(expect.any(String));
   });
 
   it("rejects a stale preview when the ledger sequence has moved since preview (a new event posted)", async () => {
@@ -174,7 +181,7 @@ describe("POST /api/private-financing/accounts/[accountId]/adjustments/confirm",
     const client = buildClient();
     mocks.authenticate.mockResolvedValue({ user: { id: "owner-1" }, effectiveOwnerId: "owner-1", supabaseClient: client });
     const badInputs = { componentId: "zi", deltaCents: -99_999_999, reason: "oops" };
-    const token = encodeAdjustmentPreviewToken({ accountId: "pf_acct_1", actionType, inputs: badInputs, ledgerSequenceAtPreview: 1, asOfDate: "2026-08-30" });
+    const token = encodeAdjustmentPreviewToken({ accountId: "pf_acct_1", actionType, inputs: badInputs, ledgerSequenceAtPreview: 1, asOfDate: "2026-08-30", ownerId: "owner-1", actingUserId: "owner-1" }, { secret: previewSecret });
 
     const response = await POST(req({ actionType, inputs: badInputs, previewToken: token }), { params });
     expect(response.status).toBe(400);
@@ -200,7 +207,7 @@ describe("POST /api/private-financing/accounts/[accountId]/adjustments/confirm",
     mocks.authenticate.mockResolvedValue({ user: { id: "owner-1" }, effectiveOwnerId: "owner-1", supabaseClient: client });
 
     const compInputs = { reversesEventId: "evt_correction", deltaCents: 2000, reason: "undo again" };
-    const token = encodeAdjustmentPreviewToken({ accountId: "pf_acct_1", actionType: "compensating_correction", inputs: compInputs, ledgerSequenceAtPreview: 3, asOfDate: "2026-08-30" });
+    const token = encodeAdjustmentPreviewToken({ accountId: "pf_acct_1", actionType: "compensating_correction", inputs: compInputs, ledgerSequenceAtPreview: 3, asOfDate: "2026-08-30", ownerId: "owner-1", actingUserId: "owner-1" }, { secret: previewSecret });
     const response = await POST(req({ actionType: "compensating_correction", inputs: compInputs, previewToken: token }), { params });
     expect(response.status).toBe(400);
     expect(client.rpc).not.toHaveBeenCalled();
