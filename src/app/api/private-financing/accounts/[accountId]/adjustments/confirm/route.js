@@ -16,6 +16,10 @@ import { MalformedPrivateFinancingContractError } from "@/domains/private-financ
 
 const STALE_PREVIEW_CODE = "private_financing_stale_preview";
 
+function previewTokenSecret() {
+  return process.env.PRIVATE_FINANCING_PREVIEW_TOKEN_SECRET;
+}
+
 function rowToReceipt(row) {
   return {
     id: row.id,
@@ -58,7 +62,7 @@ export async function POST(request, { params }) {
 
   let decodedToken;
   try {
-    decodedToken = decodeAdjustmentPreviewToken(body?.previewToken);
+    decodedToken = decodeAdjustmentPreviewToken(body?.previewToken, { secret: previewTokenSecret() });
   } catch (error) {
     if (error instanceof InvalidAdjustmentPreviewTokenError) {
       return NextResponse.json({ error: "This preview is invalid or has expired. Please preview again.", code: STALE_PREVIEW_CODE }, { status: 409 });
@@ -89,7 +93,14 @@ export async function POST(request, { params }) {
   // ledger sequence, so a second confirm reusing the same token fails here even with no separate
   // idempotency key, since interactive_user-origin events never carry one).
   try {
-    assertAdjustmentPreviewTokenFresh(decodedToken, { accountId, actionType, inputs, currentLedgerSequence });
+    assertAdjustmentPreviewTokenFresh(decodedToken, {
+      accountId,
+      actionType,
+      inputs,
+      currentLedgerSequence,
+      ownerId: authenticated.effectiveOwnerId,
+      actingUserId: authenticated.user.id,
+    });
   } catch (error) {
     if (error instanceof StaleAdjustmentPreviewError) {
       return NextResponse.json({ error: error.message, code: STALE_PREVIEW_CODE }, { status: 409 });
@@ -125,9 +136,24 @@ export async function POST(request, { params }) {
     internalNote,
   });
 
-  const { data: eventRow, error: rpcError } = await authenticated.supabaseClient.rpc("append_private_financing_event", rpcParams);
+  // The database takes the account row lock, re-checks the expected sequence, and appends in one
+  // transaction. The signed confirmationId is also the event idempotency key. Application-level checks
+  // above improve the error message; this RPC is the correctness boundary for concurrent confirms.
+  const { data: eventRow, error: rpcError } = await authenticated.supabaseClient.rpc(
+    "confirm_private_financing_adjustment",
+    {
+      p_owner_id: authenticated.effectiveOwnerId,
+      p_account_id: accountId,
+      p_expected_ledger_sequence: decodedToken.ledgerSequenceAtPreview,
+      p_confirmation_id: decodedToken.confirmationId,
+      p_event_payload: rpcParams,
+    },
+  );
   if (rpcError) {
     if (isMissingRemoteSchemaError(rpcError)) return privateFinancingSchemaUnavailableResponse();
+    if (rpcError.code === "40001") {
+      return NextResponse.json({ error: "The ledger changed while this adjustment was being confirmed. Please preview again.", code: STALE_PREVIEW_CODE }, { status: 409 });
+    }
     return NextResponse.json({ error: "Unable to post this adjustment." }, { status: 500 });
   }
 
