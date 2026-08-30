@@ -77,7 +77,8 @@ describe("POST /api/private-financing/accounts/[accountId]/adjustments/preview",
     const response = await POST(req({ actionType: "contractual_principal_correction", inputs: { componentId: "zi", deltaCents: -1000, reason: "typo" } }), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.preview.proposedEventPayload.eventType).toBe("principal_correction");
+    expect(body.preview.proposedEventPayloads.length).toBeGreaterThan(0);
+    expect(body.preview.proposedEventPayloads.every((event) => event.eventType === "principal_correction")).toBe(true);
   });
 
   it("returns a previewToken binding the account, action, inputs, and current ledger sequence", async () => {
@@ -91,7 +92,7 @@ describe("POST /api/private-financing/accounts/[accountId]/adjustments/preview",
     mocks.authenticate.mockResolvedValue({ user: { id: "owner-1" }, effectiveOwnerId: "owner-1", supabaseClient: buildClient() });
     const body = await (await POST(req({
       actionType: "bring_current_credit",
-      inputs: { proposedCreditCents: 50_000, componentId: "ib", reason: "bring current", borrowerVisibleExplanation: "Credit applied." },
+      inputs: { componentId: "ib", reason: "bring current", borrowerVisibleExplanation: "Credit applied." },
     }), { params })).json();
     expect(body.preview.proposedEventPayload.eventType).toBe("principal_correction");
     expect(body.preview.pastDueEffect).not.toBeNull();
@@ -104,7 +105,7 @@ describe("POST /api/private-financing/accounts/[accountId]/adjustments/preview",
     mocks.authenticate.mockResolvedValue({ user: { id: "owner-1" }, effectiveOwnerId: "owner-1", supabaseClient: buildClient({ termsVersions: unsupportedTerms }) });
     const response = await POST(req({
       actionType: "bring_current_credit",
-      inputs: { proposedCreditCents: 50_000, componentId: "ib", reason: "bring current", borrowerVisibleExplanation: "Credit applied." },
+      inputs: { componentId: "ib", reason: "bring current", borrowerVisibleExplanation: "Credit applied." },
     }), { params });
     const body = await response.json();
     expect(response.status).toBe(200); // a business-rule ineligibility, not a malformed-request error
