@@ -252,6 +252,35 @@ describe("POST /api/private-financing/accounts/[accountId]/adjustments/confirm",
     expect(client.from).not.toHaveBeenCalled();
   });
 
+  it("sends every policy-allocated bring-current component event to the one atomic RPC", async () => {
+    const client = buildClient();
+    mocks.authenticate.mockResolvedValue({ user: { id: "owner-1" }, effectiveOwnerId: "owner-1", supabaseClient: client });
+    const bringInputs = {
+      componentId: "ib",
+      reason: "Bring the account current",
+      borrowerVisibleExplanation: "A one-time credit was applied to bring your account current.",
+    };
+    const previewToken = encodeAdjustmentPreviewToken({
+      accountId: "pf_acct_1",
+      actionType: "bring_current_credit",
+      inputs: bringInputs,
+      ledgerSequenceAtPreview: 1,
+      asOfDate: "2026-08-30",
+      ownerId: "owner-1",
+      actingUserId: "owner-1",
+    }, { secret: previewSecret });
+
+    const response = await POST(req({ actionType: "bring_current_credit", inputs: bringInputs, previewToken }), { params });
+    expect(response.status).toBe(200);
+    const [, rpcParams] = client.rpc.mock.calls[0];
+    expect(client.rpc.mock.calls[0][0]).toBe("confirm_private_financing_adjustment");
+    expect(Array.isArray(rpcParams.p_event_payload)).toBe(true);
+    expect(rpcParams.p_event_payload.length).toBeGreaterThan(1);
+    expect(rpcParams.p_event_payload.every((event) => event.p_event_type === "principal_correction")).toBe(true);
+    const exactCredit = rpcParams.p_event_payload.reduce((sum, event) => sum - event.p_delta_cents, 0);
+    expect(exactCredit).toBeGreaterThan(0);
+  });
+
   it("accepts an optional seller-only internalNote and forwards it to the RPC, trimmed", async () => {
     const client = buildClient();
     mocks.authenticate.mockResolvedValue({ user: { id: "owner-1" }, effectiveOwnerId: "owner-1", supabaseClient: client });
