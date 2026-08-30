@@ -23,6 +23,10 @@ declare
     v_next_sequence bigint;
     v_existing public.private_financing_events%rowtype;
     v_row public.private_financing_events%rowtype;
+    v_payloads jsonb;
+    v_payload jsonb;
+    v_index integer;
+    v_count integer;
 begin
     if v_authenticated_user is null then
         raise exception 'An authenticated user is required.' using errcode = '42501';
@@ -33,8 +37,13 @@ begin
     if p_confirmation_id is null or btrim(p_confirmation_id) = '' then
         raise exception 'p_confirmation_id is required.' using errcode = '22023';
     end if;
-    if p_event_payload is null or jsonb_typeof(p_event_payload) <> 'object' then
-        raise exception 'p_event_payload must be an object.' using errcode = '22023';
+    if p_event_payload is null or jsonb_typeof(p_event_payload) not in ('object', 'array') then
+        raise exception 'p_event_payload must be an event object or a non-empty array of event objects.' using errcode = '22023';
+    end if;
+    v_payloads := case when jsonb_typeof(p_event_payload) = 'array' then p_event_payload else jsonb_build_array(p_event_payload) end;
+    v_count := jsonb_array_length(v_payloads);
+    if v_count = 0 then
+        raise exception 'p_event_payload must contain at least one event.' using errcode = '22023';
     end if;
 
     select next_ledger_sequence into v_next_sequence
@@ -49,7 +58,7 @@ begin
       from public.private_financing_events
      where owner_id = p_owner_id
        and account_id = p_account_id
-       and idempotency_key = p_confirmation_id;
+       and idempotency_key = case when v_count = 1 then p_confirmation_id else p_confirmation_id || ':' || v_count::text end;
     if v_existing.id is not null then
         return v_existing;
     end if;
@@ -59,35 +68,42 @@ begin
             using errcode = '40001';
     end if;
 
-    v_row := append_private_financing_event(
-        p_owner_id := p_owner_id,
-        p_account_id := p_account_id,
-        p_event_type := p_event_payload->>'p_event_type',
-        p_event_origin := 'interactive_user',
-        p_effective_date := (p_event_payload->>'p_effective_date')::date,
-        p_source_reference := null,
-        p_idempotency_key := p_confirmation_id,
-        p_reverses_event_id := p_event_payload->>'p_reverses_event_id',
-        p_reason := p_event_payload->>'p_reason',
-        p_internal_note := p_event_payload->>'p_internal_note',
-        p_borrower_visible_explanation := p_event_payload->>'p_borrower_visible_explanation',
-        p_amount_cents := (p_event_payload->>'p_amount_cents')::bigint,
-        p_interest_paid_by_component_cents := case when jsonb_typeof(p_event_payload->'p_interest_paid_by_component_cents') = 'object' then p_event_payload->'p_interest_paid_by_component_cents' else null end,
-        p_principal_paid_by_component_cents := case when jsonb_typeof(p_event_payload->'p_principal_paid_by_component_cents') = 'object' then p_event_payload->'p_principal_paid_by_component_cents' else null end,
-        p_unallocated_cents := (p_event_payload->>'p_unallocated_cents')::bigint,
-        p_principal_remaining_by_component_cents := case when jsonb_typeof(p_event_payload->'p_principal_remaining_by_component_cents') = 'object' then p_event_payload->'p_principal_remaining_by_component_cents' else null end,
-        p_selected_extra_component_id := p_event_payload->>'p_selected_extra_component_id',
-        p_payment_method := null,
-        p_external_evidence_reference := null,
-        p_component_id := p_event_payload->>'p_component_id',
-        p_correction_basis := p_event_payload->>'p_correction_basis',
-        p_delta_cents := (p_event_payload->>'p_delta_cents')::bigint,
-        p_corrected_component_principal_remaining_cents_after :=
-            (p_event_payload->>'p_corrected_component_principal_remaining_cents_after')::bigint,
-        p_delta_cents_by_component_cents := case when jsonb_typeof(p_event_payload->'p_delta_cents_by_component_cents') = 'object' then p_event_payload->'p_delta_cents_by_component_cents' else null end,
-        p_closure_reason := p_event_payload->>'p_closure_reason',
-        p_payoff_concession_event_id := p_event_payload->>'p_payoff_concession_event_id'
-    );
+    for v_index in 1..v_count
+    loop
+        v_payload := v_payloads->(v_index - 1);
+        if jsonb_typeof(v_payload) <> 'object' then
+            raise exception 'Every p_event_payload entry must be an object.' using errcode = '22023';
+        end if;
+        v_row := append_private_financing_event(
+            p_owner_id := p_owner_id,
+            p_account_id := p_account_id,
+            p_event_type := v_payload->>'p_event_type',
+            p_event_origin := 'interactive_user',
+            p_effective_date := (v_payload->>'p_effective_date')::date,
+            p_source_reference := null,
+            p_idempotency_key := case when v_count = 1 then p_confirmation_id else p_confirmation_id || ':' || v_index::text end,
+            p_reverses_event_id := v_payload->>'p_reverses_event_id',
+            p_reason := v_payload->>'p_reason',
+            p_internal_note := v_payload->>'p_internal_note',
+            p_borrower_visible_explanation := v_payload->>'p_borrower_visible_explanation',
+            p_amount_cents := (v_payload->>'p_amount_cents')::bigint,
+            p_interest_paid_by_component_cents := case when jsonb_typeof(v_payload->'p_interest_paid_by_component_cents') = 'object' then v_payload->'p_interest_paid_by_component_cents' else null end,
+            p_principal_paid_by_component_cents := case when jsonb_typeof(v_payload->'p_principal_paid_by_component_cents') = 'object' then v_payload->'p_principal_paid_by_component_cents' else null end,
+            p_unallocated_cents := (v_payload->>'p_unallocated_cents')::bigint,
+            p_principal_remaining_by_component_cents := case when jsonb_typeof(v_payload->'p_principal_remaining_by_component_cents') = 'object' then v_payload->'p_principal_remaining_by_component_cents' else null end,
+            p_selected_extra_component_id := v_payload->>'p_selected_extra_component_id',
+            p_payment_method := null,
+            p_external_evidence_reference := null,
+            p_component_id := v_payload->>'p_component_id',
+            p_correction_basis := v_payload->>'p_correction_basis',
+            p_delta_cents := (v_payload->>'p_delta_cents')::bigint,
+            p_corrected_component_principal_remaining_cents_after :=
+                (v_payload->>'p_corrected_component_principal_remaining_cents_after')::bigint,
+            p_delta_cents_by_component_cents := case when jsonb_typeof(v_payload->'p_delta_cents_by_component_cents') = 'object' then v_payload->'p_delta_cents_by_component_cents' else null end,
+            p_closure_reason := v_payload->>'p_closure_reason',
+            p_payoff_concession_event_id := v_payload->>'p_payoff_concession_event_id'
+        );
+    end loop;
 
     return v_row;
 end;
