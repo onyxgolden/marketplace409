@@ -128,6 +128,7 @@ insert into partial_payload values ('{
   "p_external_evidence_reference":null,"p_reason":"Partial payment already received",
   "p_internal_note":null,"p_borrower_visible_explanation":"Partial payment received."
 }'::jsonb);
+grant select on partial_payload to authenticated;
 
 set role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', false);
