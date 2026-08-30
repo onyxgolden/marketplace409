@@ -28,10 +28,15 @@ describe("atomic private-financing adjustment confirmation migration", () => {
   });
 
   it("uses the signed confirmation id as the immutable-event idempotency key", () => {
-    expect(sql).toContain("p_idempotency_key := p_confirmation_id");
+    expect(sql).toContain("p_idempotency_key := case when v_count = 1 then p_confirmation_id else p_confirmation_id || ':' || v_index::text end");
   });
 
-  it("returns the existing event for a concurrent retry and fails a different stale preview", () => {
+  it("accepts one event or a non-empty event array and posts arrays inside one transaction", () => {
+    expect(sql).toContain("jsonb_typeof(p_event_payload) not in (\'object\', \'array\')");
+    expect(sql).toContain("for v_index in 1..v_count loop");
+  });
+
+  it("returns the existing final event for a concurrent retry and fails a different stale preview", () => {
     expect(sql).toContain("if v_existing.id is not null then return v_existing;");
     expect(sql).toContain("using errcode = '40001'");
   });
