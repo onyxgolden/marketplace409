@@ -43,7 +43,7 @@ insert into external_payload values ('{
 }'::jsonb);
 
 select (confirm_private_financing_external_payment(
-  '11111111-1111-1111-1111-111111111111', :'account_id', 1,
+  '11111111-1111-1111-1111-111111111111', (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111'), 1,
   (select payload from external_payload)
 )).ledger_sequence as posted_sequence;
 
@@ -52,8 +52,8 @@ do $validation$
 declare v private_financing_events%rowtype; n bigint;
 begin
   select * into v from private_financing_events
-   where account_id = :'account_id' and idempotency_key = 'manual_external:venmo:VENMO-VALIDATION-1';
-  select next_ledger_sequence into n from private_financing_accounts where id = :'account_id';
+   where account_id = (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111') and idempotency_key = 'manual_external:venmo:VENMO-VALIDATION-1';
+  select next_ledger_sequence into n from private_financing_accounts where id = (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111');
   if v.ledger_sequence <> 2 or n <> 3
      or v.created_by <> '11111111-1111-1111-1111-111111111111'
      or v.principal_paid_by_component_cents <> '{"primary":5000,"secondary":1000}'::jsonb then
@@ -65,7 +65,7 @@ $validation$;
 
 set role authenticated;
 select (confirm_private_financing_external_payment(
-  '11111111-1111-1111-1111-111111111111', :'account_id', 1,
+  '11111111-1111-1111-1111-111111111111', (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111'), 1,
   (select payload from external_payload)
 )).ledger_sequence as retry_sequence;
 reset role;
@@ -74,8 +74,8 @@ do $validation$
 declare c integer; n bigint;
 begin
   select count(*) into c from private_financing_events
-   where account_id = :'account_id' and idempotency_key = 'manual_external:venmo:VENMO-VALIDATION-1';
-  select next_ledger_sequence into n from private_financing_accounts where id = :'account_id';
+   where account_id = (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111') and idempotency_key = 'manual_external:venmo:VENMO-VALIDATION-1';
+  select next_ledger_sequence into n from private_financing_accounts where id = (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111');
   if c <> 1 or n <> 3 then raise exception 'Retry assertion failed.'; end if;
   raise notice 'PASS: exact retry returned existing event without duplication';
 end;
@@ -86,7 +86,7 @@ do $validation$
 begin
   begin
     perform confirm_private_financing_external_payment(
-      '11111111-1111-1111-1111-111111111111', :'account_id', 2,
+      '11111111-1111-1111-1111-111111111111', (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111'), 2,
       jsonb_set((select payload from external_payload), '{p_amount_cents}', '7000'::jsonb)
     );
     raise exception 'Expected reference conflict';
@@ -100,7 +100,7 @@ do $validation$
 begin
   begin
     perform confirm_private_financing_external_payment(
-      '11111111-1111-1111-1111-111111111111', :'account_id', 1,
+      '11111111-1111-1111-1111-111111111111', (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111'), 1,
       jsonb_set((select payload from external_payload), '{p_source_reference}', '"STALE-2"'::jsonb)
     );
     raise exception 'Expected stale rejection';
@@ -111,7 +111,7 @@ end;
 $validation$;
 
 select (append_private_financing_servicing_policy_version(
-  '11111111-1111-1111-1111-111111111111', :'account_id',
+  '11111111-1111-1111-1111-111111111111', (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111'),
   'full_amount_or_more', now() + interval '1 second',
   'Validate full-payment rule'
 )).version as policy_version;
@@ -132,7 +132,7 @@ insert into partial_payload values ('{
 set role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', false);
 select (confirm_private_financing_external_payment(
-  '11111111-1111-1111-1111-111111111111', :'account_id', 2,
+  '11111111-1111-1111-1111-111111111111', (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111'), 2,
   (select payload from partial_payload)
 )).ledger_sequence as partial_sequence;
 reset role;
@@ -141,10 +141,10 @@ do $validation$
 declare p text; c integer; n bigint;
 begin
   select payment_acceptance_policy into p from private_financing_servicing_policy_versions
-   where account_id = :'account_id' order by version desc limit 1;
+   where account_id = (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111') order by version desc limit 1;
   select count(*) into c from private_financing_events
-   where account_id = :'account_id' and source_reference = 'CASHAPP-PARTIAL-1';
-  select next_ledger_sequence into n from private_financing_accounts where id = :'account_id';
+   where account_id = (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111') and source_reference = 'CASHAPP-PARTIAL-1';
+  select next_ledger_sequence into n from private_financing_accounts where id = (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111');
   if p <> 'full_amount_or_more' or c <> 1 or n <> 4 then
     raise exception 'Policy/external-payment separation failed.';
   end if;
@@ -158,7 +158,7 @@ do $validation$
 begin
   begin
     perform confirm_private_financing_external_payment(
-      '11111111-1111-1111-1111-111111111111', :'account_id', 3,
+      '11111111-1111-1111-1111-111111111111', (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111'), 3,
       jsonb_set((select payload from partial_payload), '{p_source_reference}', '"FORGED-1"'::jsonb)
     );
     raise exception 'Expected borrower denial';
@@ -173,8 +173,8 @@ do $validation$
 declare c integer; n bigint;
 begin
   select count(*) into c from private_financing_events
-   where account_id = :'account_id' and source_reference = 'FORGED-1';
-  select next_ledger_sequence into n from private_financing_accounts where id = :'account_id';
+   where account_id = (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111') and source_reference = 'FORGED-1';
+  select next_ledger_sequence into n from private_financing_accounts where id = (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111');
   if c <> 0 or n <> 4 then raise exception 'Denied attempt changed ledger.'; end if;
   raise notice 'PASS: denied attempt left ledger and sequence unchanged';
 end;
@@ -182,4 +182,4 @@ $validation$;
 
 select ledger_sequence, event_origin, amount_cents, payment_method, source_reference,
        principal_paid_by_component_cents, principal_remaining_by_component_cents
-  from private_financing_events where account_id = :'account_id' order by ledger_sequence;
+  from private_financing_events where account_id = (select id from private_financing_accounts where owner_id = '11111111-1111-1111-1111-111111111111') order by ledger_sequence;
