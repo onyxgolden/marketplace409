@@ -1,14 +1,7 @@
-// Binds a computed adjustment preview to the exact account, action, inputs, and ledger state it was
-// computed against, so the confirm endpoint can detect staleness (a new event posted since preview),
-// tampering (inputs changed client-side), and cross-account reuse before ever calling the guarded RPC.
-//
-// This token is opaque by convention but carries no capability -- it is not a security boundary. The real
-// security boundary is append_private_financing_event() itself (SECURITY DEFINER, has_workspace_access,
-// server-forced attribution), which never trusts anything this token claims. The confirm route always
-// independently re-fetches the CURRENT max ledger sequence and re-runs the SAME preview computation fresh
-// before ever deciding to post -- this token only lets that route detect "did the seller's screen go
-// stale" without a client round-trip carrying the seller's original inputs a second, separately-editable
-// time.
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+
+const TOKEN_VERSION = 1;
+const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
 export class InvalidAdjustmentPreviewTokenError extends Error {
   constructor(reason) {
@@ -17,28 +10,71 @@ export class InvalidAdjustmentPreviewTokenError extends Error {
   }
 }
 
-export function encodeAdjustmentPreviewToken({ accountId, actionType, inputs, ledgerSequenceAtPreview, asOfDate }) {
-  return Buffer.from(JSON.stringify({ accountId, actionType, inputs, ledgerSequenceAtPreview, asOfDate }), "utf8").toString("base64url");
+function requireSecret(secret) {
+  if (typeof secret !== "string" || secret.length < 32) {
+    throw new InvalidAdjustmentPreviewTokenError("PRIVATE_FINANCING_PREVIEW_TOKEN_SECRET must contain at least 32 characters");
+  }
+  return secret;
 }
 
-// Fails closed on any structurally malformed token. Does NOT compare against expected values itself --
-// see assertAdjustmentPreviewTokenFresh for the staleness/mismatch checks a caller runs against live data.
-export function decodeAdjustmentPreviewToken(tokenString) {
+function sign(encodedPayload, secret) {
+  return createHmac("sha256", requireSecret(secret)).update(encodedPayload, "utf8").digest("base64url");
+}
+
+export function encodeAdjustmentPreviewToken(
+  { accountId, actionType, inputs, ledgerSequenceAtPreview, asOfDate, ownerId, actingUserId },
+  { secret, now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {},
+) {
+  const payload = {
+    version: TOKEN_VERSION,
+    confirmationId: randomUUID(),
+    accountId,
+    actionType,
+    inputs,
+    ledgerSequenceAtPreview,
+    asOfDate,
+    ownerId,
+    actingUserId,
+    issuedAt: now,
+    expiresAt: now + ttlMs,
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  return `${encodedPayload}.${sign(encodedPayload, secret)}`;
+}
+
+export function decodeAdjustmentPreviewToken(tokenString, { secret, now = Date.now() } = {}) {
   if (typeof tokenString !== "string" || tokenString.length === 0) {
     throw new InvalidAdjustmentPreviewTokenError("token must be a non-empty string");
   }
+  const parts = tokenString.split(".");
+  if (parts.length !== 2 || parts.some((part) => part.length === 0)) {
+    throw new InvalidAdjustmentPreviewTokenError("token must contain a payload and signature");
+  }
+  const [encodedPayload, suppliedSignature] = parts;
+  const expectedSignature = sign(encodedPayload, secret);
+  const supplied = Buffer.from(suppliedSignature, "utf8");
+  const expected = Buffer.from(expectedSignature, "utf8");
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+    throw new InvalidAdjustmentPreviewTokenError("signature does not match");
+  }
+
   let parsed;
   try {
-    parsed = JSON.parse(Buffer.from(tokenString, "base64url").toString("utf8"));
+    parsed = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
   } catch {
-    throw new InvalidAdjustmentPreviewTokenError("token is not valid base64url-encoded JSON");
+    throw new InvalidAdjustmentPreviewTokenError("payload is not valid base64url-encoded JSON");
   }
   if (typeof parsed !== "object" || parsed === null) throw new InvalidAdjustmentPreviewTokenError("decoded token must be an object");
-  if (typeof parsed.accountId !== "string" || parsed.accountId.length === 0) throw new InvalidAdjustmentPreviewTokenError("token is missing a valid accountId");
-  if (typeof parsed.actionType !== "string" || parsed.actionType.length === 0) throw new InvalidAdjustmentPreviewTokenError("token is missing a valid actionType");
+  if (parsed.version !== TOKEN_VERSION) throw new InvalidAdjustmentPreviewTokenError("token version is not supported");
+  for (const field of ["confirmationId", "accountId", "actionType", "asOfDate", "ownerId", "actingUserId"]) {
+    if (typeof parsed[field] !== "string" || parsed[field].length === 0) throw new InvalidAdjustmentPreviewTokenError(`token is missing a valid ${field}`);
+  }
   if (typeof parsed.inputs !== "object" || parsed.inputs === null) throw new InvalidAdjustmentPreviewTokenError("token is missing valid inputs");
   if (!Number.isInteger(parsed.ledgerSequenceAtPreview) || parsed.ledgerSequenceAtPreview < -1) throw new InvalidAdjustmentPreviewTokenError("token is missing a valid ledgerSequenceAtPreview");
-  if (typeof parsed.asOfDate !== "string" || parsed.asOfDate.length === 0) throw new InvalidAdjustmentPreviewTokenError("token is missing a valid asOfDate");
+  if (!Number.isSafeInteger(parsed.issuedAt) || !Number.isSafeInteger(parsed.expiresAt) || parsed.expiresAt <= parsed.issuedAt) {
+    throw new InvalidAdjustmentPreviewTokenError("token has an invalid validity window");
+  }
+  if (now > parsed.expiresAt) throw new InvalidAdjustmentPreviewTokenError("token has expired");
   return parsed;
 }
 
@@ -49,18 +85,17 @@ export class StaleAdjustmentPreviewError extends Error {
   }
 }
 
-// Deep-equal via JSON serialization -- `inputs` is always a plain, JSON-round-tripped object (it came
-// from a decoded token and a parsed request body on the two sides being compared), so this is safe and
-// avoids pulling in a deep-equal dependency for a same-shape comparison.
 function deepEqual(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-// Throws StaleAdjustmentPreviewError (never silently proceeds) if the decoded token no longer matches the
-// live request: a different account (cross-account reuse), a different action or inputs (tampering or a
-// genuinely different request reusing an old token), or a ledger sequence that has moved (a new event
-// posted since the preview was computed -- the seller's screen is now stale and must be refreshed).
-export function assertAdjustmentPreviewTokenFresh(decodedToken, { accountId, actionType, inputs, currentLedgerSequence }) {
+export function assertAdjustmentPreviewTokenFresh(
+  decodedToken,
+  { accountId, actionType, inputs, currentLedgerSequence, ownerId, actingUserId },
+) {
+  if (decodedToken.ownerId !== ownerId || decodedToken.actingUserId !== actingUserId) {
+    throw new StaleAdjustmentPreviewError("This preview was issued for a different signed-in workspace user.");
+  }
   if (decodedToken.accountId !== accountId) throw new StaleAdjustmentPreviewError("This preview was issued for a different account.");
   if (decodedToken.actionType !== actionType) throw new StaleAdjustmentPreviewError("This preview was issued for a different action.");
   if (!deepEqual(decodedToken.inputs, inputs)) throw new StaleAdjustmentPreviewError("The adjustment details have changed since this preview was computed.");
