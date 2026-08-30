@@ -20,7 +20,7 @@ describe("atomic private-financing adjustment confirmation migration", () => {
 
   it("locks the account row before either duplicate or sequence decisions", () => {
     const lock = sql.indexOf("for update;");
-    const duplicate = sql.indexOf("idempotency_key = p_confirmation_id");
+    const duplicate = sql.indexOf("idempotency_key = case when v_count = 1 then p_confirmation_id");
     const sequence = sql.indexOf("v_next_sequence - 1 <> p_expected_ledger_sequence");
     expect(lock).toBeGreaterThan(-1);
     expect(duplicate).toBeGreaterThan(lock);
