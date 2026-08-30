@@ -8,11 +8,15 @@ import { encodeAdjustmentPreviewToken } from "@/domains/private-financing/adjust
 import { LedgerIntegrityViolationError } from "@/domains/private-financing/ledgerIntegrity";
 import { MalformedPrivateFinancingContractError } from "@/domains/private-financing/privateFinancingContracts";
 
+function previewTokenSecret() {
+  return process.env.PRIVATE_FINANCING_PREVIEW_TOKEN_SECRET;
+}
+
 function todayISODate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-// PURE READ, NEVER A MUTATION: this endpoint never calls append_private_financing_event and never writes
+// PURE READ, NEVER A FINANCIAL MUTATION: this endpoint never calls append_private_financing_event and never writes
 // to any table. It exists only to compute (via adjustmentActionRegistry -> adjustmentPreview.js, SF-1's
 // own pure engine) what an adjustment WOULD do if confirmed, and to hand back a previewToken binding that
 // computation to the exact ledger state and inputs it saw -- see adjustmentPreviewToken.js. The confirm
@@ -87,7 +91,9 @@ export async function POST(request, { params }) {
     inputs,
     ledgerSequenceAtPreview: highestLedgerSequence,
     asOfDate: resolvedEffectiveDate,
-  });
+    ownerId: authenticated.effectiveOwnerId,
+    actingUserId: authenticated.user.id,
+  }, { secret: previewTokenSecret() });
 
   return NextResponse.json({ success: true, preview, previewToken });
 }
