@@ -12,7 +12,7 @@
 alter table private_financing_events
     drop constraint if exists private_financing_events_check3;
 alter table private_financing_events
-    add constraint private_financing_events_interactive_confirmation_idempotency_check check (
+    add constraint pf_events_interactive_confirmation_idempotency_check check (
         event_origin <> 'interactive_user'
         or (
             source_reference is null
