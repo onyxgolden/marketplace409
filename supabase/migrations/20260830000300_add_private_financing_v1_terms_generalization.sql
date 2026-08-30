@@ -248,6 +248,15 @@ alter table private_financing_events drop column if exists principal_remaining_z
 alter table private_financing_events drop column if exists interest_bearing_delta_cents;
 alter table private_financing_events drop column if exists zero_interest_delta_cents;
 alter table private_financing_events rename column component_type to component_id;
+-- The original column-level CHECK was renamed with the column but still restricted values to the former
+-- two South-Main-shaped identifiers ('interest_bearing', 'zero_interest'). Generic V1 component keys are
+-- validated against this account inside append_private_financing_event; the column constraint should
+-- enforce only the scalar shape, not a retired global key list.
+alter table private_financing_events
+    drop constraint if exists private_financing_events_component_type_check;
+alter table private_financing_events
+    add constraint private_financing_events_component_id_check
+    check (component_id is null or btrim(component_id) <> '');
 
 alter table private_financing_events add column interest_paid_by_component_cents jsonb;
 alter table private_financing_events add column principal_paid_by_component_cents jsonb;
