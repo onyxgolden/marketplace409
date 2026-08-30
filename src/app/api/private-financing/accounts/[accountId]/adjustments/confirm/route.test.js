@@ -256,6 +256,6 @@ describe("POST /api/private-financing/accounts/[accountId]/adjustments/confirm",
     const client = buildClient();
     mocks.authenticate.mockResolvedValue({ user: { id: "owner-1" }, effectiveOwnerId: "owner-1", supabaseClient: client });
     await POST(req({ actionType, inputs, previewToken: freshToken(), internalNote: "  seller-only detail  " }), { params });
-    expect(client.rpc).toHaveBeenCalledWith("append_private_financing_event", expect.objectContaining({ p_internal_note: "seller-only detail" }));
+    expect(client.rpc).toHaveBeenCalledWith(\n      "confirm_private_financing_adjustment",\n      expect.objectContaining({\n        p_event_payload: expect.objectContaining({ p_internal_note: "seller-only detail" }),\n      }),\n    );
   });
 });
