@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const previewExternalManualPayment = vi.fn();
+const { previewExternalManualPayment } = vi.hoisted(() => ({
+  previewExternalManualPayment: vi.fn(),
+}));
 
 vi.mock("../adjustmentPreview.js", () => ({ previewExternalManualPayment }));
 
