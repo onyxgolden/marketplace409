@@ -213,7 +213,6 @@ describe("previewBringCurrentCredit", () => {
       componentVersions: comps,
       accountTermsVersions: terms,
       asOfDate: "2026-02-01",
-      proposedCreditCents: 6_000,
       componentId: "ib",
       reason: "Owner-approved bring-current credit",
       borrowerVisibleExplanation: "We're crediting your account to bring it current.",
@@ -225,14 +224,24 @@ describe("previewBringCurrentCredit", () => {
     expect(preview.pastDueEffect.nextDueDate).toBe("2026-03-01");
     expect(preview.blockingValidation).toEqual([]);
 
+    expect(preview.proposedAdjustment.exactCreditCents).toBe(6_000);
+    expect(preview.allocationBreakdown.creditedByComponentCents).toEqual({ ib: 5_000, zi: 1_000 });
+    expect(preview.proposedEventPayloads).toHaveLength(2);
+
+    const creditedEvents = preview.proposedEventPayloads.map((payload, index) => ({
+      ...payload,
+      id: `evt_credit_${index + 1}`,
+      ledgerSequence: index + 2,
+      recordedAt: "2026-02-01T00:00:00.000Z",
+    }));
     const withCredit = replayEvents({
-      events: [...events, { ...preview.proposedEventPayload, id: "evt_credit", ledgerSequence: 2, recordedAt: "2026-02-01T00:00:00.000Z" }],
+      events: [...events, ...creditedEvents],
       componentVersions: comps,
       accountTermsVersions: terms,
       asOfDate: "2026-02-01",
     });
-    expect(withCredit.remainingPrincipalByComponentCents.ib).toBe(94_000);
-    expect(withCredit.remainingPrincipalByComponentCents.zi).toBe(20_000);
+    expect(withCredit.remainingPrincipalByComponentCents.ib).toBe(95_000);
+    expect(withCredit.remainingPrincipalByComponentCents.zi).toBe(19_000);
   });
 
   it("fails closed with a blocker (never a guessed or partially-computed credit) when the account's own terms are outside the due-state engine's supported envelope", () => {
@@ -243,7 +252,6 @@ describe("previewBringCurrentCredit", () => {
       componentVersions: comps,
       accountTermsVersions: unsupportedTerms,
       asOfDate: "2026-03-01",
-      proposedCreditCents: 6_000,
       componentId: "ib",
       reason: "Attempted bring-current credit",
       borrowerVisibleExplanation: "We're crediting your account.",
@@ -698,7 +706,6 @@ describe("SF-2D generic component selection, cross-account isolation, and terms 
       componentVersions: comps,
       accountTermsVersions: uncommonTerms,
       asOfDate: "2026-03-01",
-      proposedCreditCents: 9_000,
       componentId: "a",
       reason: "Bring current on this account's own schedule",
       borrowerVisibleExplanation: "We're crediting your account.",
@@ -722,7 +729,6 @@ describe("SF-2D generic component selection, cross-account isolation, and terms 
       componentVersions: comps,
       accountTermsVersions: terms,
       asOfDate: "2026-02-01",
-      proposedCreditCents: 6_000,
       componentId: "ib",
       reason: "Bring current",
       borrowerVisibleExplanation: "We're crediting your account.",
@@ -759,7 +765,6 @@ describe("SF-2D generic component selection, cross-account isolation, and terms 
       componentVersions: comps,
       accountTermsVersions: terms,
       asOfDate: "2026-02-01",
-      proposedCreditCents: 6_000,
       componentId: "ib",
       reason: "Bring current",
       borrowerVisibleExplanation: "We're crediting your account.",
