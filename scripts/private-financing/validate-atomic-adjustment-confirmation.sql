@@ -67,7 +67,7 @@ select (
 -- authenticated correctly has no direct base-table inspection grant.
 reset role;
 
-do $
+do $validation$
 declare
   v_account_id text;
   v_count integer;
@@ -88,7 +88,7 @@ begin
   end if;
   raise notice 'PASS: exact 6000-cent credit posted as two consecutive events';
 end;
-$$;
+$validation$;
 
 select (
   confirm_private_financing_adjustment(
@@ -100,7 +100,7 @@ select (
   )
 ).ledger_sequence as retry_sequence;
 
-do $$
+do $validation$$
 declare
   v_account_id text;
   v_count integer;
@@ -114,9 +114,9 @@ begin
   end if;
   raise notice 'PASS: identical retry returned existing event without duplication';
 end;
-$$;
+$validation$;
 
-do $$
+do $validation$$
 declare
   v_account_id text;
 begin
@@ -136,9 +136,9 @@ begin
       raise notice 'PASS: stale confirmation rejected';
   end;
 end;
-$$;
+$validation$;
 
-do $$
+do $validation$$
 declare
   v_account_id text;
   v_bad_count integer;
@@ -172,7 +172,7 @@ begin
   end if;
   raise notice 'PASS: entire invalid batch rolled back without burning a sequence';
 end;
-$$;
+$validation$;
 
 select ledger_sequence, component_id, delta_cents,
        corrected_component_principal_remaining_cents_after, idempotency_key
