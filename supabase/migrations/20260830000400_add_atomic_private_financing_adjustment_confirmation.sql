@@ -72,10 +72,10 @@ begin
         p_internal_note := p_event_payload->>'p_internal_note',
         p_borrower_visible_explanation := p_event_payload->>'p_borrower_visible_explanation',
         p_amount_cents := (p_event_payload->>'p_amount_cents')::bigint,
-        p_interest_paid_by_component_cents := p_event_payload->'p_interest_paid_by_component_cents',
-        p_principal_paid_by_component_cents := p_event_payload->'p_principal_paid_by_component_cents',
+        p_interest_paid_by_component_cents := case when jsonb_typeof(p_event_payload->'p_interest_paid_by_component_cents') = 'object' then p_event_payload->'p_interest_paid_by_component_cents' else null end,
+        p_principal_paid_by_component_cents := case when jsonb_typeof(p_event_payload->'p_principal_paid_by_component_cents') = 'object' then p_event_payload->'p_principal_paid_by_component_cents' else null end,
         p_unallocated_cents := (p_event_payload->>'p_unallocated_cents')::bigint,
-        p_principal_remaining_by_component_cents := p_event_payload->'p_principal_remaining_by_component_cents',
+        p_principal_remaining_by_component_cents := case when jsonb_typeof(p_event_payload->'p_principal_remaining_by_component_cents') = 'object' then p_event_payload->'p_principal_remaining_by_component_cents' else null end,
         p_selected_extra_component_id := p_event_payload->>'p_selected_extra_component_id',
         p_payment_method := null,
         p_external_evidence_reference := null,
@@ -84,7 +84,7 @@ begin
         p_delta_cents := (p_event_payload->>'p_delta_cents')::bigint,
         p_corrected_component_principal_remaining_cents_after :=
             (p_event_payload->>'p_corrected_component_principal_remaining_cents_after')::bigint,
-        p_delta_cents_by_component_cents := p_event_payload->'p_delta_cents_by_component_cents',
+        p_delta_cents_by_component_cents := case when jsonb_typeof(p_event_payload->'p_delta_cents_by_component_cents') = 'object' then p_event_payload->'p_delta_cents_by_component_cents' else null end,
         p_closure_reason := p_event_payload->>'p_closure_reason',
         p_payoff_concession_event_id := p_event_payload->>'p_payoff_concession_event_id'
     );
