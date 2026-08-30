@@ -1877,3 +1877,77 @@ Not committed, pushed, merged, or deployed. No migration applied remotely. No So
 borrower invitation. No live payment activation. SF-2E was not begun. AGENTS.md/CLAUDE.md remain untracked
 and untouched throughout. See the standalone SF-2D report delivered in chat for the full 17-point summary
 of SF-2D's complete current implementation.
+
+## SF-2E — Seller-recorded external payments and servicing payment policy
+
+SF-2E adds a seller/co-owner workflow for recording payments received outside FORGE—Venmo, Cash App,
+Zelle, PayPal, bank transfer, cash, check, money order, or another explicitly named method—without
+misrepresenting them as Stripe payments. The implementation also exposes the account's prospective payment
+acceptance policy while preserving the owner's required distinction: a borrower-facing online rule such as
+`full_amount_or_more` may block a partial online checkout, but it must never prevent the seller from
+truthfully recording a smaller payment already received elsewhere.
+
+### Delivered boundaries
+
+- `externalPaymentRpcParams.js` validates the closed payment-method set, requires an external evidence/source
+  reference, derives deterministic idempotency facts, and never permits the browser to supply
+  `created_by`.
+- `externalPaymentPreview.js` reuses the existing replay and allocation engine, forces
+  `event_origin = manual_external`, and does not create a second balance calculation.
+- `POST /api/private-financing/accounts/[accountId]/payments/external/preview` is read-only. It authenticates
+  through the canonical-owner/acting-user boundary, replays current state, reports possible duplicates,
+  and returns a signed token bound to the account, payment facts, effective date, and ledger sequence.
+- `POST /api/private-financing/accounts/[accountId]/payments/external/confirm` re-fetches and recomputes fresh,
+  rejects stale or altered previews, and calls one atomic database RPC. Exact retries return the existing
+  receipt; changed facts cannot reuse the same external reference.
+- `confirm_private_financing_external_payment` locks the account, verifies the expected ledger sequence,
+  enforces source-reference uniqueness and provenance, appends exactly one immutable payment event, and
+  preserves truthful acting-user attribution.
+- `PrivateFinancingExternalPaymentForm.jsx` provides preview, duplicate acknowledgement, explicit
+  confirmation, and a durable receipt from the account detail screen.
+- `PUT /api/private-financing/accounts/[accountId]/servicing-policy` and
+  `PrivateFinancingPaymentPolicyControl.jsx` support prospective, immutable policy versions for
+  `partial_allowed`, `full_amount_or_more`, and `exact_amount_only`, with a required reason and
+  acknowledgement. They do not rewrite prior payments or contractual history.
+
+### Authorization corrections discovered by live validation
+
+Disposable PostgreSQL/Supabase validation surfaced two real permission-layer gaps that mocks and migration
+text checks could not establish alone:
+
+1. Borrower-facing RLS predicates that joined protected financing tables could recursively lose visibility.
+   Migration `20260830000600_fix_private_financing_borrower_rls_predicates.sql` replaces those joins with
+   narrow `SECURITY DEFINER` boolean authorization helpers.
+2. The local authenticated role lacked the explicit read privileges required before RLS could evaluate
+   permitted reads. Migration `20260830000700_grant_private_financing_authenticated_reads.sql` grants only
+   the necessary `SELECT` privileges. It grants no write privilege, no `ALL`, no anonymous access, and
+   does not bypass RLS.
+
+### Live PostgreSQL evidence
+
+The complete migration chain through `20260830000700` applied successfully to a fresh disposable local
+Supabase database. The validator then proved:
+
+- a seller-recorded $60.00 Venmo payment posted at ledger sequence 2 with
+  `manual_external` provenance and allocation of $50.00 to the primary component and $10.00 to the
+  secondary component;
+- an exact retry returned sequence 2 without creating a duplicate;
+- changed payment facts could not reuse the same source reference;
+- a stale preview was rejected;
+- the servicing policy advanced immutably to version 2;
+- after that account required a full borrower-facing online payment, a seller-recorded $10.00 Cash App
+  partial receipt still posted truthfully at sequence 3;
+- borrower and unrelated-user posting attempts were denied; and
+- the denied attempt changed neither the ledger nor the next sequence.
+
+The disposable database and its uniquely scoped container were then destroyed with
+`supabase stop --no-backup`; `docker ps -a` confirmed no matching container remained.
+
+### Explicitly deferred
+
+SF-2E records money the seller already received outside FORGE. It does not initiate Venmo/Cash App/Zelle
+transfers, inspect those accounts, move funds, or claim processor verification. Borrower-initiated online
+collection and enforcement of the selected checkout policy remain SF-3 processor work. No remote migration,
+Production data, South Main import, borrower invitation, Stripe activation, or live money movement occurred
+during SF-2E validation.
+
