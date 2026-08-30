@@ -312,7 +312,7 @@ describe("PrivateFinancingAccountDetail", () => {
     }
   });
 
-  it("implements SF-2D seller adjustment actions, but still no SF-2E-scope external payment recording, payoff offers, policy changes, or borrower invitations", async () => {
+  it("surfaces SF-2D adjustments and SF-2E external-payment recording while later actions remain deferred", async () => {
     vi.stubGlobal("fetch", stubDetailAndEvents());
     mounted = mount(<PrivateFinancingAccountDetail accountId="pf_acct_1" onBack={() => {}} />);
     await flush();
@@ -320,7 +320,9 @@ describe("PrivateFinancingAccountDetail", () => {
     // SF-2D itself is a write-action surface -- this no longer asserts a zero-write-action screen.
     expect(text).toContain("Seller actions");
     expect(text).toContain("Contractual principal correction");
-    for (const forbidden of ["Post adjustment", "Record payment", "Create payoff offer", "Change policy", "Invite borrower", "Import South Main"]) {
+    expect(text).toContain("Record an external payment");
+    expect(text).toContain("Record payment");
+    for (const forbidden of ["Post adjustment", "Create payoff offer", "Change policy", "Invite borrower", "Import South Main"]) {
       expect(text).not.toContain(forbidden);
     }
   });
