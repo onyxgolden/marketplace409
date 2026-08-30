@@ -119,7 +119,9 @@ export async function POST(request, { params }) {
     throw error;
   }
 
-  if (freshPreview.blockingValidation.length > 0 || !freshPreview.proposedEventPayload) {
+  const proposedEventPayloads = freshPreview.proposedEventPayloads ?? (freshPreview.proposedEventPayload ? [freshPreview.proposedEventPayload] : []);
+
+  if (freshPreview.blockingValidation.length > 0 || proposedEventPayloads.length === 0) {
     return NextResponse.json(
       {
         error: freshPreview.blockingValidation[0] || "This adjustment cannot be posted.",
@@ -130,11 +132,13 @@ export async function POST(request, { params }) {
     );
   }
 
-  const rpcParams = buildAppendEventRpcParams(freshPreview.proposedEventPayload, {
-    ownerId: authenticated.effectiveOwnerId,
-    accountId,
-    internalNote,
-  });
+  const rpcPayloads = proposedEventPayloads.map((payload) =>
+    buildAppendEventRpcParams(payload, {
+      ownerId: authenticated.effectiveOwnerId,
+      accountId,
+      internalNote,
+    }),
+  );
 
   // The database takes the account row lock, re-checks the expected sequence, and appends in one
   // transaction. The signed confirmationId is also the event idempotency key. Application-level checks
@@ -146,7 +150,7 @@ export async function POST(request, { params }) {
       p_account_id: accountId,
       p_expected_ledger_sequence: decodedToken.ledgerSequenceAtPreview,
       p_confirmation_id: decodedToken.confirmationId,
-      p_event_payload: rpcParams,
+      p_event_payload: rpcPayloads.length === 1 ? rpcPayloads[0] : rpcPayloads,
     },
   );
   if (rpcError) {
