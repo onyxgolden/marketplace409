@@ -47,10 +47,9 @@ function buildActionConfigs(partyLabel, componentOptions) {
     [ADJUSTMENT_ACTION_TYPES.BRING_CURRENT_CREDIT]: {
       label: "Bring-current / reporting credit",
       description:
-        "Apply a credit to bring the account current. The scheduled amount, shortage, and next due date are calculated automatically from the account's own schedule -- never typed in.",
+        "Apply the exact calculated shortage using this account's allocation policy. The credit amount is never seller-entered.",
       fields: [
-        { name: "proposedCreditCents", label: "Proposed credit amount ($)", type: "money", required: true },
-        { name: "componentId", label: "Component", type: "select", options: componentOptions, required: true },
+        { name: "componentId", label: "Extra-credit component (only used when this account policy requires a selection)", type: "select", options: componentOptions, required: false },
         { name: "reason", label: `Reason (${partyLabel.toLowerCase()} record)`, type: "text", required: true },
         { name: "borrowerVisibleExplanation", label: "Explanation shown to the borrower", type: "text", required: true },
       ],
