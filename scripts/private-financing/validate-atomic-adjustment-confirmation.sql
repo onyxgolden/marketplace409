@@ -63,7 +63,11 @@ select (
   )
 ).ledger_sequence as final_sequence;
 
-do $$
+-- The RPC above was genuinely executed as authenticated. Reset only for direct catalog/table assertions;
+-- authenticated correctly has no direct base-table inspection grant.
+reset role;
+
+do $
 declare
   v_account_id text;
   v_count integer;
