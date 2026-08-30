@@ -77,8 +77,7 @@ describe("POST /api/private-financing/accounts/[accountId]/adjustments/preview",
     const response = await POST(req({ actionType: "contractual_principal_correction", inputs: { componentId: "zi", deltaCents: -1000, reason: "typo" } }), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.preview.proposedEventPayloads.length).toBeGreaterThan(0);
-    expect(body.preview.proposedEventPayloads.every((event) => event.eventType === "principal_correction")).toBe(true);
+    expect(body.preview.proposedEventPayload.eventType).toBe("principal_correction");
   });
 
   it("returns a previewToken binding the account, action, inputs, and current ledger sequence", async () => {
@@ -94,7 +93,8 @@ describe("POST /api/private-financing/accounts/[accountId]/adjustments/preview",
       actionType: "bring_current_credit",
       inputs: { componentId: "ib", reason: "bring current", borrowerVisibleExplanation: "Credit applied." },
     }), { params })).json();
-    expect(body.preview.proposedEventPayload.eventType).toBe("principal_correction");
+    expect(body.preview.proposedEventPayloads.length).toBeGreaterThan(0);
+    expect(body.preview.proposedEventPayloads.every((event) => event.eventType === "principal_correction")).toBe(true);
     expect(body.preview.pastDueEffect).not.toBeNull();
     expect(body.preview.pastDueEffect.nextDueDate).toBeTruthy();
     expect(typeof body.preview.pastDueEffect.shortageCents).toBe("number");
