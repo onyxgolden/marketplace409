@@ -7,77 +7,92 @@ import {
   encodeAdjustmentPreviewToken,
 } from "../adjustmentPreviewToken.js";
 
-const baseArgs = { accountId: "pf_acct_1", actionType: "contractual_principal_correction", inputs: { componentType: "zero_interest", deltaCents: -1000, reason: "typo" }, ledgerSequenceAtPreview: 5, asOfDate: "2026-08-30" };
+const secret = "test-only-private-financing-preview-secret-123456";
+const now = Date.parse("2026-08-30T12:00:00.000Z");
+const baseArgs = {
+  accountId: "pf_acct_1",
+  actionType: "contractual_principal_correction",
+  inputs: { componentId: "component-a", deltaCents: -1000, reason: "typo" },
+  ledgerSequenceAtPreview: 5,
+  asOfDate: "2026-08-30",
+  ownerId: "owner-1",
+  actingUserId: "user-1",
+};
 
-describe("encodeAdjustmentPreviewToken / decodeAdjustmentPreviewToken round-trip", () => {
-  it("round-trips every bound field exactly", () => {
-    const token = encodeAdjustmentPreviewToken(baseArgs);
-    const decoded = decodeAdjustmentPreviewToken(token);
-    expect(decoded).toEqual(baseArgs);
+function encode(args = baseArgs) {
+  return encodeAdjustmentPreviewToken(args, { secret, now });
+}
+
+function decode(token = encode(), options = {}) {
+  return decodeAdjustmentPreviewToken(token, { secret, now, ...options });
+}
+
+describe("signed adjustment preview token", () => {
+  it("round-trips every bound field and adds a unique confirmation identity", () => {
+    const decoded = decode();
+    expect(decoded).toMatchObject({ ...baseArgs, version: 1, issuedAt: now });
+    expect(decoded.confirmationId).toEqual(expect.any(String));
+    expect(decoded.expiresAt).toBeGreaterThan(decoded.issuedAt);
   });
 
-  it("is opaque -- not a plain, human-guessable string", () => {
-    const token = encodeAdjustmentPreviewToken(baseArgs);
-    expect(token).not.toContain("pf_acct_1");
-    expect(token).not.toContain("contractual_principal_correction");
-  });
-});
-
-describe("decodeAdjustmentPreviewToken -- fails closed on malformed input", () => {
-  it("rejects an empty or non-string token", () => {
-    expect(() => decodeAdjustmentPreviewToken("")).toThrow(InvalidAdjustmentPreviewTokenError);
-    expect(() => decodeAdjustmentPreviewToken(undefined)).toThrow(InvalidAdjustmentPreviewTokenError);
+  it("does not expose account or action text in the token", () => {
+    const token = encode();
+    expect(token).not.toContain(baseArgs.accountId);
+    expect(token).not.toContain(baseArgs.actionType);
   });
 
-  it("rejects a token that isn't valid base64url JSON", () => {
-    expect(() => decodeAdjustmentPreviewToken("not-valid!!!")).toThrow(InvalidAdjustmentPreviewTokenError);
+  it("rejects a one-byte payload change even when the modified payload is valid JSON", () => {
+    const token = encode();
+    const [payload, signature] = token.split(".");
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    parsed.inputs.deltaCents = -999999;
+    const tamperedPayload = Buffer.from(JSON.stringify(parsed), "utf8").toString("base64url");
+    expect(() => decode(`${tamperedPayload}.${signature}`)).toThrow(InvalidAdjustmentPreviewTokenError);
   });
 
-  it("rejects a decoded token missing required fields", () => {
-    const missingAccountId = Buffer.from(JSON.stringify({ actionType: "x", inputs: {}, ledgerSequenceAtPreview: 1, asOfDate: "2026-08-30" }), "utf8").toString("base64url");
-    expect(() => decodeAdjustmentPreviewToken(missingAccountId)).toThrow(/accountId/);
+  it("rejects a forged signature and the wrong signing key", () => {
+    const [payload] = encode().split(".");
+    expect(() => decode(`${payload}.forged`)).toThrow(InvalidAdjustmentPreviewTokenError);
+    expect(() => decodeAdjustmentPreviewToken(encode(), { secret: "different-purpose-secret-that-is-long-enough", now })).toThrow(InvalidAdjustmentPreviewTokenError);
+  });
 
-    const missingLedgerSequence = Buffer.from(JSON.stringify({ accountId: "a", actionType: "x", inputs: {}, asOfDate: "2026-08-30" }), "utf8").toString("base64url");
-    expect(() => decodeAdjustmentPreviewToken(missingLedgerSequence)).toThrow(/ledgerSequenceAtPreview/);
+  it("rejects missing/short secrets rather than falling back to an unrelated secret", () => {
+    expect(() => encodeAdjustmentPreviewToken(baseArgs, { now })).toThrow(/PRIVATE_FINANCING_PREVIEW_TOKEN_SECRET/);
+    expect(() => encodeAdjustmentPreviewToken(baseArgs, { secret: "short", now })).toThrow(/at least 32/);
+  });
+
+  it("rejects malformed and expired tokens", () => {
+    expect(() => decodeAdjustmentPreviewToken("", { secret, now })).toThrow(InvalidAdjustmentPreviewTokenError);
+    expect(() => decodeAdjustmentPreviewToken("not-a-signed-token", { secret, now })).toThrow(InvalidAdjustmentPreviewTokenError);
+    expect(() => decode(encode(), { now: now + (11 * 60 * 1000) })).toThrow(/expired/);
   });
 });
 
 describe("assertAdjustmentPreviewTokenFresh", () => {
-  it("passes silently when everything still matches", () => {
-    const decoded = decodeAdjustmentPreviewToken(encodeAdjustmentPreviewToken(baseArgs));
-    expect(() => assertAdjustmentPreviewTokenFresh(decoded, { accountId: "pf_acct_1", actionType: "contractual_principal_correction", inputs: baseArgs.inputs, currentLedgerSequence: 5 })).not.toThrow();
+  const expected = {
+    accountId: baseArgs.accountId,
+    actionType: baseArgs.actionType,
+    inputs: baseArgs.inputs,
+    currentLedgerSequence: 5,
+    ownerId: baseArgs.ownerId,
+    actingUserId: baseArgs.actingUserId,
+  };
+
+  it("passes when signed identity, request, and live ledger all match", () => {
+    expect(() => assertAdjustmentPreviewTokenFresh(decode(), expected)).not.toThrow();
   });
 
-  it("rejects cross-account preview reuse", () => {
-    const decoded = decodeAdjustmentPreviewToken(encodeAdjustmentPreviewToken(baseArgs));
-    expect(() => assertAdjustmentPreviewTokenFresh(decoded, { accountId: "pf_acct_OTHER", actionType: baseArgs.actionType, inputs: baseArgs.inputs, currentLedgerSequence: 5 }))
-      .toThrow(StaleAdjustmentPreviewError);
+  it.each([
+    ["accountId", "pf_acct_other"],
+    ["actionType", "payment_reversal"],
+    ["ownerId", "owner-other"],
+    ["actingUserId", "user-other"],
+  ])("rejects a changed %s", (field, value) => {
+    expect(() => assertAdjustmentPreviewTokenFresh(decode(), { ...expected, [field]: value })).toThrow(StaleAdjustmentPreviewError);
   });
 
-  it("rejects a mismatched action type", () => {
-    const decoded = decodeAdjustmentPreviewToken(encodeAdjustmentPreviewToken(baseArgs));
-    expect(() => assertAdjustmentPreviewTokenFresh(decoded, { accountId: baseArgs.accountId, actionType: "payment_reversal", inputs: baseArgs.inputs, currentLedgerSequence: 5 }))
-      .toThrow(StaleAdjustmentPreviewError);
-  });
-
-  it("rejects changed adjustment inputs", () => {
-    const decoded = decodeAdjustmentPreviewToken(encodeAdjustmentPreviewToken(baseArgs));
-    expect(() => assertAdjustmentPreviewTokenFresh(decoded, { accountId: baseArgs.accountId, actionType: baseArgs.actionType, inputs: { ...baseArgs.inputs, deltaCents: -9999 }, currentLedgerSequence: 5 }))
-      .toThrow(/adjustment details have changed/);
-  });
-
-  it("rejects a changed ledger sequence -- a new event posted since preview", () => {
-    const decoded = decodeAdjustmentPreviewToken(encodeAdjustmentPreviewToken(baseArgs));
-    expect(() => assertAdjustmentPreviewTokenFresh(decoded, { accountId: baseArgs.accountId, actionType: baseArgs.actionType, inputs: baseArgs.inputs, currentLedgerSequence: 6 }))
-      .toThrow(/ledger has changed/);
-  });
-
-  it("a second confirm attempt with the same token is rejected once the first confirm has advanced the ledger sequence -- this is the duplicate-submit/idempotency protection", () => {
-    const decoded = decodeAdjustmentPreviewToken(encodeAdjustmentPreviewToken(baseArgs));
-    // First attempt succeeds (currentLedgerSequence still matches).
-    expect(() => assertAdjustmentPreviewTokenFresh(decoded, { accountId: baseArgs.accountId, actionType: baseArgs.actionType, inputs: baseArgs.inputs, currentLedgerSequence: 5 })).not.toThrow();
-    // After a successful post, the real ledger sequence advances by 1 -- a second confirm reusing the
-    // SAME token (e.g. a double-click) must now fail.
-    expect(() => assertAdjustmentPreviewTokenFresh(decoded, { accountId: baseArgs.accountId, actionType: baseArgs.actionType, inputs: baseArgs.inputs, currentLedgerSequence: 6 })).toThrow(StaleAdjustmentPreviewError);
+  it("rejects changed inputs and a moved ledger sequence", () => {
+    expect(() => assertAdjustmentPreviewTokenFresh(decode(), { ...expected, inputs: { ...baseArgs.inputs, deltaCents: -2 } })).toThrow(/adjustment details/);
+    expect(() => assertAdjustmentPreviewTokenFresh(decode(), { ...expected, currentLedgerSequence: 6 })).toThrow(/ledger has changed/);
   });
 });
