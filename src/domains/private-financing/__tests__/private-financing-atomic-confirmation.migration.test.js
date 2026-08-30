@@ -27,6 +27,15 @@ describe("atomic private-financing adjustment confirmation migration", () => {
     expect(sequence).toBeGreaterThan(duplicate);
   });
 
+  it("allows server idempotency only for interactive adjustment/reversal/closure facts, never payment posting", () => {
+    expect(sql).toContain("private_financing_events_interactive_confirmation_idempotency_check");
+    expect(sql).toContain("or event_type in ( 'payment_reversal', 'principal_correction', 'interest_correction', 'compensating_correction', 'payoff_concession', 'account_closed' )");
+    const constraintStart = sql.indexOf("add constraint private_financing_events_interactive_confirmation_idempotency_check");
+    const constraintEnd = sql.indexOf(");", constraintStart);
+    expect(sql.slice(constraintStart, constraintEnd)).not.toContain("'payment_posted'");
+    expect(sql.slice(constraintStart, constraintEnd)).not.toContain("'account_opened'");
+  });
+
   it("uses the signed confirmation id as the immutable-event idempotency key", () => {
     expect(sql).toContain("p_idempotency_key := case when v_count = 1 then p_confirmation_id else p_confirmation_id || ':' || v_index::text end");
   });
