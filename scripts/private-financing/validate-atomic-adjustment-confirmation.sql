@@ -100,7 +100,7 @@ select (
   )
 ).ledger_sequence as retry_sequence;
 
-do $validation$$
+do $validation$
 declare
   v_account_id text;
   v_count integer;
@@ -116,7 +116,7 @@ begin
 end;
 $validation$;
 
-do $validation$$
+do $validation$
 declare
   v_account_id text;
 begin
@@ -138,7 +138,7 @@ begin
 end;
 $validation$;
 
-do $validation$$
+do $validation$
 declare
   v_account_id text;
   v_bad_count integer;
