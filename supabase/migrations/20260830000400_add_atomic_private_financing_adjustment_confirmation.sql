@@ -5,6 +5,27 @@
 -- event in the same transaction. A confirmation id is reused as the ledger idempotency key, so concurrent
 -- submissions of the same signed preview return the one existing event instead of posting twice.
 
+-- The foundation deliberately forbids caller-supplied idempotency keys on ordinary interactive
+-- activity. A signed adjustment confirmation is different: its server-generated confirmation id is the
+-- concurrency boundary. Permit that key only on non-cash adjustment/reversal/closure facts; interactive
+-- account_opened and payment_posted events remain unable to carry one.
+alter table private_financing_events
+    drop constraint if exists private_financing_events_check3;
+alter table private_financing_events
+    add constraint private_financing_events_interactive_confirmation_idempotency_check check (
+        event_origin <> 'interactive_user'
+        or (
+            source_reference is null
+            and (
+                idempotency_key is null
+                or event_type in (
+                    'payment_reversal', 'principal_correction', 'interest_correction',
+                    'compensating_correction', 'payoff_concession', 'account_closed'
+                )
+            )
+        )
+    );
+
 create function confirm_private_financing_adjustment(
     p_owner_id text,
     p_account_id text,
