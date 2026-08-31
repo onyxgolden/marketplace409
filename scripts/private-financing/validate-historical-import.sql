@@ -65,11 +65,53 @@ set role authenticated;
 select public.import_private_financing_historical_account(
   '11111111-1111-1111-1111-111111111111',
   'validation-history-1',
-  '{}'::jsonb,
-  '[]'::jsonb,
-  '[]'::jsonb
+  '{
+    "product":"personal_loan",
+    "openedDate":"2026-01-01",
+    "lateFeePolicy":"disabled",
+    "platformFeeCents":0,
+    "feePayer":"lender",
+    "paymentAcceptancePolicy":"partial_allowed",
+    "components":[
+      {"componentKey":"primary","label":"Primary","originalPrincipalCents":100000,"rateBps":0,"dayCountConvention":"actual_365","scheduledComponentAmountCents":5000,"allocationPriority":1},
+      {"componentKey":"secondary","label":"Secondary","originalPrincipalCents":20000,"rateBps":0,"dayCountConvention":"actual_365","scheduledComponentAmountCents":1000,"allocationPriority":2}
+    ],
+    "paymentFrequency":"monthly",
+    "firstPaymentDueDate":"2026-02-01",
+    "regularScheduledPaymentAmountCents":6000,
+    "allocationPolicy":"scheduled_component_order",
+    "extraPaymentAllocationPolicy":"highest_rate_first_extra",
+    "prepaymentPolicy":"allowed_without_penalty_does_not_advance_due_date",
+    "dayCountConvention":"actual_365"
+  }'::jsonb,
+  '[
+    {"ledgerOrder":1,"effectiveDate":"2026-02-01","sourceReference":"history-1","amountCents":6000,"interestPaidByComponentCents":{},"principalPaidByComponentCents":{"primary":5000,"secondary":1000},"unallocatedCents":0,"principalRemainingByComponentCents":{"primary":95000,"secondary":19000}},
+    {"ledgerOrder":2,"effectiveDate":"2026-03-01","sourceReference":"history-2","amountCents":1000,"interestPaidByComponentCents":{},"principalPaidByComponentCents":{"primary":1000},"unallocatedCents":0,"principalRemainingByComponentCents":{"primary":94000,"secondary":19000}}
+  ]'::jsonb,
+  '[
+    {"ledgerOrder":3,"effectiveDate":"2026-03-01","sourceReference":"credit-1","componentId":"primary","amountCents":500,"correctionBasis":"discretionary_concession","correctedComponentPrincipalRemainingCentsAfter":93500,"reason":"Validation credit","borrowerVisibleExplanation":"One-time lender credit."}
+  ]'::jsonb
 ) as retry_result
 \gset
+reset role;
+
+set role authenticated;
+do $changed$
+begin
+  begin
+    perform public.import_private_financing_historical_account(
+      '11111111-1111-1111-1111-111111111111',
+      'validation-history-1',
+      '{"product":"personal_loan"}'::jsonb,
+      '[{"ledgerOrder":1}]'::jsonb,
+      '[]'::jsonb
+    );
+    raise exception 'Expected changed plan to be rejected.';
+  exception
+    when unique_violation then null;
+  end;
+end;
+$changed$;
 reset role;
 
 do $validation$
