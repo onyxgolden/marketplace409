@@ -29,11 +29,13 @@ export async function GET() {
   if(memberships.error)return NextResponse.json({error:"Unable to load borrower access."},{status:500});
   const accounts=[];
   for(const membership of memberships.data||[]){
-    const [accountResult,eventResult]=await Promise.all([
+    const [accountResult,eventResult,termsResult,settingsResult]=await Promise.all([
       db.from("private_financing_accounts").select("id,product,status,opened_date,origination_principal_cents").eq("id",membership.account_id).maybeSingle(),
       db.rpc("read_private_financing_borrower_events",{p_account_id:membership.account_id}),
+      db.from("private_financing_current_account_terms").select("regular_scheduled_payment_amount_cents").eq("account_id",membership.account_id).maybeSingle(),
+      db.from("private_financing_online_payment_settings").select("enabled").eq("account_id",membership.account_id).maybeSingle(),
     ]);
-    if(accountResult.data&&!eventResult.error)accounts.push({account:accountResult.data,role:membership.role,summary:summarizeBorrowerEvents(eventResult.data||[]),events:eventResult.data||[]});
+    if(accountResult.data&&!eventResult.error)accounts.push({account:accountResult.data,role:membership.role,summary:summarizeBorrowerEvents(eventResult.data||[]),events:eventResult.data||[],regularScheduledPaymentCents:Number(termsResult.data?.regular_scheduled_payment_amount_cents||0),onlinePaymentsEnabled:settingsResult.data?.enabled===true});
   }
   return NextResponse.json({success:true,email:user.email,accounts,claim:claim.data});
 }
