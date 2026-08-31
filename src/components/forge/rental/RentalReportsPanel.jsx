@@ -578,12 +578,12 @@ function RentRollView({ report }) {
                   {money.format(row.balanceCents / 100)}
                 </td>
                 <td
-                  className={`p-3 font-bold ${row.overdueCents > 0 ? "text-red-700" : ""}`}
+                  className={`p-3 font-bold ${row.overdueCents > 0 ? "text-red-700 dark:text-red-400" : "text-slate-700 dark:text-slate-300"}`}
                 >
                   {money.format(row.overdueCents / 100)}
                 </td>
                 <td
-                  className={`p-3 ${row.externallyManagedCents > 0 ? "text-amber-700 font-bold" : ""}`}
+                  className={`p-3 ${row.externallyManagedCents > 0 ? "text-amber-700 font-bold dark:text-amber-400" : "text-slate-700 dark:text-slate-300"}`}
                   title="Managed in Rentec — reconciliation required before this can be presented as FORGE collectible"
                 >
                   {money.format(row.externallyManagedCents / 100)}
@@ -645,7 +645,7 @@ function DelinquentTenantsView({ report }) {
                   <td className="p-3 font-bold text-red-700 dark:text-red-400">{money.format(row.overdueCents / 100)}</td>
                   <td className="p-3 text-slate-700 dark:text-slate-300">{row.overdueChargeCount}</td>
                   <td
-                    className={`p-3 ${row.externallyManagedCents > 0 ? "text-amber-700 font-bold" : ""}`}
+                    className={`p-3 ${row.externallyManagedCents > 0 ? "text-amber-700 font-bold dark:text-amber-400" : "text-slate-700 dark:text-slate-300"}`}
                     title="Managed in Rentec — reconciliation required before this can be presented as a FORGE delinquency"
                   >
                     {money.format(row.externallyManagedCents / 100)}
