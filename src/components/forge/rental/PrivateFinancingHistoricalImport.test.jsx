@@ -41,9 +41,9 @@ async function flush() {
 async function choosePlan(container, value = plan()) {
   const input = container.querySelector('input[type="file"]');
   const file = new File([JSON.stringify(value)], "plan.json", { type: "application/json" });
-  Object.defineProperty(file, "text", { value: async () => JSON.stringify(value) });
   Object.defineProperty(input, "files", { configurable: true, value: [file] });
   await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   await flush();
 }
 
