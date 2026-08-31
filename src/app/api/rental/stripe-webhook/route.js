@@ -36,11 +36,13 @@ async function processPrivateFinancingPaymentEvent(db, provider, normalized) {
 }
 
 async function creditPrivateFinancingStripeFee(db, provider, paymentIntentId, feeCents, effectiveDate) {
-  if (!Number.isSafeInteger(feeCents) || feeCents <= 0) return null;
   const found = await db.from("private_financing_online_payments").select("*").eq("provider", "stripe")
     .eq("provider_mode", provider.mode).eq("provider_payment_id", paymentIntentId).maybeSingle();
   if (found.error) throw found.error;
   if (!found.data) return null;
+  if (!Number.isSafeInteger(feeCents) || feeCents <= 0) {
+    return { data: { ignored: true, reason: "no_stripe_fee" }, error: null };
+  }
   const payment = found.data;
   const [events, components, terms] = await Promise.all([
     db.from("private_financing_events").select("*").eq("owner_id", payment.owner_id).eq("account_id", payment.account_id).order("ledger_sequence", { ascending: true }),
