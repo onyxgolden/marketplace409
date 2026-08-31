@@ -118,14 +118,15 @@ describe("PrivateFinancingAccountsPanel", () => {
     expect(mounted.container.textContent).not.toContain("Welch");
   });
 
-  it("shows the genuine empty state, honestly explaining creation/import comes later, when available with zero accounts", async () => {
+  it("shows the genuine empty state with the controlled historical-import path when available with zero accounts", async () => {
     const fetch = vi.fn(async () => jsonResponse(200, { success: true, viewerRole: "primary_owner", accounts: [] }));
     vi.stubGlobal("fetch", fetch);
     mounted = mount(<PrivateFinancingAccountsPanel />);
     await flush();
     const text = mounted.container.textContent;
     expect(text).toContain("No private financing accounts yet.");
-    expect(text).toContain("later checkpoint");
+    expect(text).toContain("approved JSON plan");
+    expect(mounted.container.querySelector('[data-guided-workflow-control="open-historical-import"]')).toBeTruthy();
   });
 
   it("shows the schema-unavailable state -- distinct from the empty state -- on a 503 with the stable code", async () => {
@@ -206,7 +207,7 @@ describe("PrivateFinancingAccountsPanel", () => {
     mounted = mount(<PrivateFinancingAccountsPanel />);
     await flush();
     const text = mounted.container.textContent;
-    for (const forbidden of ["Create account", "Import", "Record payment", "Post adjustment", "Invite borrower", "Connect Stripe"]) {
+    for (const forbidden of ["Create account", "Record payment", "Post adjustment", "Invite borrower", "Connect Stripe"]) {
       expect(text).not.toContain(forbidden);
     }
   });

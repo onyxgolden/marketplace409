@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import PrivateFinancingAccountDetail from "./PrivateFinancingAccountDetail";
+import PrivateFinancingHistoricalImport from "./PrivateFinancingHistoricalImport";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToMoney = (cents) => (typeof cents === "number" ? money.format(cents / 100) : "—");
@@ -24,6 +25,7 @@ export default function PrivateFinancingAccountsPanel() {
   const [accounts, setAccounts] = useState([]);
   const [errorMessage, setErrorMessage] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState(null);
+  const [showHistoricalImport, setShowHistoricalImport] = useState(false);
   const requestInFlight = useRef(false);
 
   const load = useCallback(() => {
@@ -70,6 +72,14 @@ export default function PrivateFinancingAccountsPanel() {
     );
   }
 
+  if (showHistoricalImport) {
+    return (
+      <section data-guided-workflow-panel aria-label="Private Financing historical import" className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <PrivateFinancingHistoricalImport onBack={() => setShowHistoricalImport(false)} onImported={() => load()} />
+      </section>
+    );
+  }
+
   return (
     <section
       data-guided-workflow-panel
@@ -81,6 +91,9 @@ export default function PrivateFinancingAccountsPanel() {
       <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-400">
         Seller-financed and personal-loan accounts you administer directly, separate from rent collection.
       </p>
+      <button type="button" onClick={() => setShowHistoricalImport(true)} data-guided-workflow-control="open-historical-import" className={`mt-5 rounded-xl px-4 py-2 text-sm font-bold ${goldControlClassName} ${FOCUS_RING}`}>
+        Import historical plan
+      </button>
 
       {status === "loading" ? (
         <p role="status" className="mt-6 text-sm text-slate-500 dark:text-slate-400">
@@ -128,7 +141,7 @@ export default function PrivateFinancingAccountsPanel() {
         <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
           <p className="text-sm font-bold text-slate-800 dark:text-slate-200">No private financing accounts yet.</p>
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-            Creating or importing an account is not available in this checkpoint yet — that comes in a later checkpoint.
+            Load an approved JSON plan to create one through the controlled historical-import workflow.
           </p>
         </div>
       ) : null}
