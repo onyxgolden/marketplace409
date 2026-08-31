@@ -82,7 +82,7 @@ create or replace function confirm_owner_reservation(
   p_security_deposit_cents bigint, p_total_due_cents bigint, p_currency_code text,
   p_source_reference text, p_owner_notes text
 ) returns reservations
-language plpgsql security invoker set search_path = public
+language plpgsql security definer set search_path = public
 as $$
 declare v_actor uuid := auth.uid(); v_settings reservation_inventory_settings; v_result reservations; v_buffer_days integer;
 begin

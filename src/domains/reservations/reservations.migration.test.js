@@ -5,4 +5,5 @@ describe("reservation confirmation migration",()=>{
  it("creates the guest, reservation, immutable event, and calendar block atomically",()=>{expect(sql).toContain("insert into reservation_guests");expect(sql).toContain("insert into reservations");expect(sql).toContain("insert into reservation_events");expect(sql).toContain("insert into reservation_calendar_blocks");expect(sql).toContain("Reservation events are immutable")});
  it("returns an exact retry before evaluating overlap",()=>{expect(sql).toContain("where owner_id=p_owner_id and id=p_reservation_id");expect(sql).toContain("if found then return v_result")});
  it("keeps guest records private to authenticated workspace members",()=>{expect(sql).toContain('reservation_guests_workspace_read');expect(sql).not.toMatch(/grant .* to anon/i);expect(sql).toContain("has_workspace_access(p_owner_id)")});
+ it("uses a guarded definer RPC because direct reservation writes are denied",()=>{expect(sql).toContain("security definer set search_path = public");expect(sql).toContain("v_actor is null or not has_workspace_access(p_owner_id)");expect(sql).not.toMatch(/grant insert on reservation_guests/i)});
 });
