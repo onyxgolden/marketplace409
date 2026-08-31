@@ -51,7 +51,7 @@ export default function PrivateFinancingHistoricalImport({ onBack, onImported })
     setMessage("");
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text());
+      const parsed = JSON.parse(await readTextFile(file));
       setPlan(parsed);
     } catch {
       setFileError("Choose a valid JSON historical-import plan.");
@@ -137,6 +137,15 @@ export default function PrivateFinancingHistoricalImport({ onBack, onImported })
       {message ? <p role={status === "error" ? "alert" : "status"} className={`mt-4 text-sm font-bold ${status === "error" ? "text-red-700 dark:text-red-300" : "text-emerald-700 dark:text-emerald-300"}`}>{message}</p> : null}
     </div>
   );
+}
+
+function readTextFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")), { once: true });
+    reader.addEventListener("error", () => reject(reader.error || new Error("Unable to read this file.")), { once: true });
+    reader.readAsText(file);
+  });
 }
 
 function Fact({ term, value }) {
