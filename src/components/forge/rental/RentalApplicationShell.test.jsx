@@ -46,7 +46,7 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
 
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
-    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "renewal", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "private-financing", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "renewal", "setup", "reservable-inventory", "reservations", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "private-financing", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
   });
   it("renders an exception-first summary in grouped navigation", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
@@ -63,6 +63,18 @@ describe("RentalApplicationShell", () => {
   it("renders functional tenant and lease setup surfaces", () => {
     expect(renderToStaticMarkup(buildRentalSurface("tenants"))).toContain("Tenants");
     expect(renderToStaticMarkup(buildRentalSurface("leases"))).toContain("Leases and rent schedules");
+  });
+  it("renders RV and short-term rental inventory without drivable RV operations", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("reservable-inventory"));
+    expect(markup).toContain("RV &amp; short-term rentals");
+    expect(markup).toContain("Drivable RVs are intentionally excluded");
+    expect(markup).not.toMatch(/mileage|fuel|VIN/);
+  });
+  it("renders reservation preview and confirmation as a separate surface", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("reservations"));
+    expect(markup).toContain("Reservation calendar &amp; bookings");
+    expect(markup).toContain("No payment is charged here");
+    expect(markup).toContain("Preview reservation");
   });
   it("renders the first-tenant readiness surface as its own reachable function", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("readiness"));
