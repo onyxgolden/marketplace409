@@ -20,4 +20,14 @@ describe("ReservationInventoryPanel", () => {
     expect(mounted.container.textContent).toContain("RV site");
     expect(mounted.container.textContent).toContain("Drivable RVs are intentionally excluded");
   });
+  it("keeps labels and dropdown values readable in dark mode", async () => {
+    mounted = await mount({ units: [{ id: "unit-1", label: "Site 1" }], inventory: [] });
+    const form = mounted.container.querySelector("form");
+    const selects = Array.from(form.querySelectorAll("select"));
+    expect(form.className).toContain("dark:text-slate-100");
+    expect(selects).toHaveLength(2);
+    selects.forEach((select) => expect(select.className).toContain("dark:text-slate-100"));
+    expect(selects[0].textContent).toContain("Site 1");
+    expect(selects[1].textContent).toContain("RV site");
+  });
 });
