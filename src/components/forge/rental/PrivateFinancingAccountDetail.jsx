@@ -8,6 +8,7 @@ import PrivateFinancingSellerActions from "./PrivateFinancingSellerActions";
 import PrivateFinancingExternalPaymentForm from "./PrivateFinancingExternalPaymentForm";
 import PrivateFinancingPaymentPolicyControl from "./PrivateFinancingPaymentPolicyControl";
 import PrivateFinancingBorrowerInvite from "./PrivateFinancingBorrowerInvite";
+import PrivateFinancingOnlinePaymentControl from "./PrivateFinancingOnlinePaymentControl";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToMoney = (cents) => (typeof cents === "number" ? money.format(cents / 100) : "—");
@@ -151,6 +152,7 @@ export default function PrivateFinancingAccountDetail({ accountId, onBack }) {
           <PayoffPresentation payoffEstimate={detail.payoffEstimate} account={detail.account} onRecalculate={load} />
           <BorrowerMemberships borrowers={detail.borrowers} />
           <PrivateFinancingBorrowerInvite accountId={accountId} onInvited={load} />
+          <PrivateFinancingOnlinePaymentControl accountId={accountId} settings={detail.onlinePaymentSettings} onChanged={load}/>
           {detail.servicingPolicy?.paymentAcceptancePolicy ? (
             <PrivateFinancingPaymentPolicyControl
               accountId={accountId}

@@ -43,6 +43,10 @@ vi.mock("@/lib/supabase/createRentalWebhookClient", () => ({
       if (table === "payment_webhook_events") return { select: mocks.eventsSelect, upsert: mocks.upsert, update: mocks.update };
       if (table === "landlord_payment_accounts") return { select: mocks.landlordSelect };
       if (table === "rental_payments") return { select: mocks.rentalPaymentsSelect };
+      if (table === "private_financing_online_payments") {
+        const query = { select: () => query, eq: () => query, maybeSingle: async () => ({ data: null, error: null }) };
+        return query;
+      }
       throw new Error(`Unexpected table: ${table}`);
     },
     rpc: mocks.rpc,

@@ -79,6 +79,7 @@ function buildClient({
       if (table === "private_financing_events") return chain(events);
       if (table === "private_financing_account_borrowers") return chain(memberships);
       if (table === "private_financing_borrowers") return chain(borrowers);
+      if (table === "private_financing_online_payment_settings") return chain(null);
       throw new Error(`Unexpected table: ${table}`);
     }),
   };

@@ -116,7 +116,7 @@ export async function GET(request, { params }) {
     return NextResponse.json({ error: "Private financing account not found." }, { status: 404 });
   }
 
-  const [componentsResult, policyResult, allComponentVersionsResult, allTermsVersionsResult, currentTermsResult, eventsResult, membershipsResult] = await Promise.all([
+  const [componentsResult, policyResult, allComponentVersionsResult, allTermsVersionsResult, currentTermsResult, eventsResult, membershipsResult, onlineSettingsResult] = await Promise.all([
     authenticated.supabaseClient.from("private_financing_current_components").select("*").eq("account_id", accountId),
     authenticated.supabaseClient.from("private_financing_current_servicing_policy").select("*").eq("account_id", accountId).maybeSingle(),
     authenticated.supabaseClient.from("private_financing_components").select("*").eq("account_id", accountId),
@@ -124,9 +124,10 @@ export async function GET(request, { params }) {
     authenticated.supabaseClient.from("private_financing_current_account_terms").select("*").eq("account_id", accountId).maybeSingle(),
     authenticated.supabaseClient.from("private_financing_events").select("*").eq("account_id", accountId).order("ledger_sequence", { ascending: true }),
     authenticated.supabaseClient.from("private_financing_account_borrowers").select("id, borrower_id, role, status").eq("account_id", accountId),
+    authenticated.supabaseClient.from("private_financing_online_payment_settings").select("enabled,reimburse_stripe_fee_as_principal_credit").eq("account_id",accountId).maybeSingle(),
   ]);
 
-  for (const result of [componentsResult, policyResult, allComponentVersionsResult, allTermsVersionsResult, currentTermsResult, eventsResult, membershipsResult]) {
+  for (const result of [componentsResult, policyResult, allComponentVersionsResult, allTermsVersionsResult, currentTermsResult, eventsResult, membershipsResult, onlineSettingsResult]) {
     if (result.error) return NextResponse.json({ error: "Unable to load this private financing account's details." }, { status: 500 });
   }
 
@@ -169,5 +170,6 @@ export async function GET(request, { params }) {
     dueState,
     payoffEstimate: computeAccountPayoffEstimate({ eventRows, componentRows, termsRows, accountId, balanceSummary: balance, lateFeePolicy: accountResult.data.late_fee_policy }),
     borrowers: memberships.map((membership) => rowToBorrowerMembership(membership, borrowersById)),
+    onlinePaymentSettings:{enabled:onlineSettingsResult.data?.enabled===true,reimburseStripeFeeAsPrincipalCredit:onlineSettingsResult.data?.reimburse_stripe_fee_as_principal_credit!==false},
   });
 }
