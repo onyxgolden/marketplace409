@@ -50,4 +50,20 @@ describe("RentalReportsPanel", () => {
     expect(container.textContent).toContain("Accounting software");
     expect(container.textContent).toContain("$50.00");
   });
+  it("keeps zero and attention balances readable in the dark rent roll", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ report: {
+        rentRoll: [{ leaseId: "lease-1", unitLabel: "Site 1", tenantNames: ["Guest"], status: "active", startDate: "2026-01-01", endDate: null, monthlyRentCents: 100000, balanceCents: 0, overdueCents: 0, externallyManagedCents: 50000, externallyManagedChargeCount: 1, collectedCents: 0 }],
+        availableProperties: [], availableContractors: [],
+        summary: { monthlyScheduledCents: 100000, collectedCents: 0, openBalanceCents: 0, overdueBalanceCents: 0, activeLeases: 1, occupiedUnits: 1, externallyManagedCents: 50000, externallyManagedChargeCount: 1 },
+      } }),
+    })));
+    const container = document.createElement("div"); document.body.appendChild(container); const root = createRoot(container); mounted = { container, root };
+    await act(async () => { root.render(<RentalReportsPanel />); await Promise.resolve(); await Promise.resolve(); });
+    const external = container.querySelector('td[title^="Managed in Rentec"]');
+    expect(external.className).toContain("dark:text-amber-400");
+    const zeroOverdue = Array.from(container.querySelectorAll("td")).find((cell) => cell.className.includes("font-bold") && cell.textContent === "$0.00");
+    expect(zeroOverdue.className).toContain("dark:text-slate-300");
+  });
 });
