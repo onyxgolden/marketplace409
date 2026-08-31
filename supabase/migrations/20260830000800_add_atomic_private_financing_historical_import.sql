@@ -73,7 +73,7 @@ begin
     end if;
 
     v_plan_digest := encode(
-        digest(convert_to(p_account::text || '|' || p_payments::text || '|' || p_principal_credits::text, 'UTF8'), 'sha256'),
+        extensions.digest(convert_to(p_account::text || '|' || p_payments::text || '|' || p_principal_credits::text, 'UTF8'), 'sha256'),
         'hex'
     );
 
