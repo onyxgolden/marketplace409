@@ -4,28 +4,47 @@ import {
   SOUTH_MAIN_TERMS,
 } from "../../src/domains/private-financing/__fixtures__/southMainPayments.js";
 import { buildHistoricalPrivateFinancingImportPreview } from "../../src/domains/private-financing/historicalImportPreview.js";
+import { writeFile } from "node:fs/promises";
 
-const preview = buildHistoricalPrivateFinancingImportPreview({
+const plan = {
+  sourceKey: "south-main-owner-approved-through-2026-08-23-v1",
   calculationStartDate: SOUTH_MAIN_TERMS.calculationStartDate,
   asOfDate: SOUTH_MAIN_ACCEPTED_RECONCILIATION.asOfDate,
-  components: [
-    {
-      componentId: "interest-bearing",
+  account: {
+    product: "seller_financing",
+    openedDate: SOUTH_MAIN_TERMS.calculationStartDate,
+    lateFeePolicy: "disabled",
+    platformFeeCents: 0,
+    feePayer: "lender",
+    paymentAcceptancePolicy: "partial_allowed",
+    paymentFrequency: "monthly",
+    firstPaymentDueDate: SOUTH_MAIN_TERMS.calculationStartDate,
+    regularScheduledPaymentAmountCents: SOUTH_MAIN_TERMS.regularCombinedPaymentCents,
+    allocationPolicy: "scheduled_component_order",
+    extraPaymentAllocationPolicy: "highest_rate_first_extra",
+    prepaymentPolicy: "allowed_without_penalty_does_not_advance_due_date",
+    dayCountConvention: "actual_365",
+    components: [
+      {
+      componentKey: "interest-bearing",
       label: "Interest-bearing note",
       originalPrincipalCents: SOUTH_MAIN_TERMS.interestBearing.originalPrincipalCents,
       rateBps: SOUTH_MAIN_TERMS.interestBearing.rateBps,
       scheduledComponentAmountCents: SOUTH_MAIN_TERMS.interestBearing.regularPaymentCents,
       allocationPriority: 1,
-    },
-    {
-      componentId: "financed-down-payment",
+      dayCountConvention: "actual_365",
+      },
+      {
+      componentKey: "financed-down-payment",
       label: "Financed down payment",
       originalPrincipalCents: SOUTH_MAIN_TERMS.zeroInterest.originalPrincipalCents,
       rateBps: SOUTH_MAIN_TERMS.zeroInterest.rateBps,
       scheduledComponentAmountCents: SOUTH_MAIN_TERMS.zeroInterest.regularPaymentCents,
       allocationPriority: 2,
-    },
-  ],
+      dayCountConvention: "actual_365",
+      },
+    ],
+  },
   payments: SOUTH_MAIN_PAYMENTS.map((payment) => ({
     sourceReference: `south-main-workbook-payment-${payment.pmtNo}`,
     effectiveDate: payment.datePaid,
@@ -35,10 +54,33 @@ const preview = buildHistoricalPrivateFinancingImportPreview({
     {
       componentId: "interest-bearing",
       amountCents: SOUTH_MAIN_ACCEPTED_RECONCILIATION.bringCurrentCreditCents,
+      effectiveDate: SOUTH_MAIN_ACCEPTED_RECONCILIATION.asOfDate,
+      sourceReference: "south-main-owner-approved-bring-current-credit-2026-08-23",
+      correctionBasis: "discretionary_concession",
       reason: "Owner-approved one-time bring-current/reporting credit",
+      borrowerVisibleExplanation: "One-time seller credit applied to bring the historical account current for reporting.",
     },
   ],
+};
+
+const preview = buildHistoricalPrivateFinancingImportPreview({
+  calculationStartDate: plan.calculationStartDate,
+  asOfDate: plan.asOfDate,
+  components: plan.account.components.map((component) => ({ ...component, componentId: component.componentKey })),
+  payments: plan.payments,
+  proposedPrincipalCredits: plan.proposedPrincipalCredits,
+  allocationPolicy: plan.account.allocationPolicy,
+  extraPaymentAllocationPolicy: plan.account.extraPaymentAllocationPolicy,
 });
+
+const jsonOutputIndex = process.argv.indexOf("--json");
+if (jsonOutputIndex !== -1) {
+  const outputPath = process.argv[jsonOutputIndex + 1];
+  if (!outputPath) throw new Error("--json requires an output path");
+  await writeFile(outputPath, `${JSON.stringify(plan, null, 2)}\n`, { flag: "wx" });
+  console.log(`Wrote ${outputPath}`);
+  process.exit(0);
+}
 
 function dollars(cents) {
   return `$${(cents / 100).toLocaleString("en-US", {
