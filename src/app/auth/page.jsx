@@ -37,24 +37,10 @@ export default function AuthPage() {
       password,
     });
 
-    console.log("SIGN IN RESULT", result);
-
     if (result.error) {
       alert(result.error.message);
       return;
     }
-
-    const session = result.data?.session;
-    const user = result.data?.user;
-
-    console.log("SESSION", session);
-    console.log("USER", user);
-
-    alert(
-      `Signed in\nSession: ${session ? "YES" : "NO"}\nUser: ${
-        user?.id ?? "NONE"
-      }`,
-    );
 
     window.location.href = nextDestination();
   }
