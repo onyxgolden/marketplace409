@@ -131,32 +131,38 @@ export function buildFinancialActiveSurface({
     default:
       return (
         <div className="space-y-6">
+          <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+            <div className="lg:sticky lg:top-4">
+              <FinancialAccountBalancesPanel />
+            </div>
+
+            <div className="min-w-0 space-y-6">
+              <FinancialForgeOverviewPanel
+                loadState={loadState}
+                transactions={allScopeTransactions}
+                accounts={accounts}
+              />
+
+              <FinancialExecutiveIntelligence
+                executiveBriefing={
+                  executiveBriefing
+                }
+                riskSummary={riskSummary}
+                riskAssessment={
+                  riskAssessment
+                }
+                insights={insights}
+              />
+
+              <FinancialPositionSnapshot
+                lines={balanceSheetLines}
+              />
+            </div>
+          </div>
+
           <FinancialWorkspaceHeader
             health={health}
             kpis={kpis}
-          />
-
-          <FinancialAccountBalancesPanel />
-
-          <FinancialForgeOverviewPanel
-            loadState={loadState}
-            transactions={allScopeTransactions}
-            accounts={accounts}
-          />
-
-          <FinancialExecutiveIntelligence
-            executiveBriefing={
-              executiveBriefing
-            }
-            riskSummary={riskSummary}
-            riskAssessment={
-              riskAssessment
-            }
-            insights={insights}
-          />
-
-          <FinancialPositionSnapshot
-            lines={balanceSheetLines}
           />
         </div>
       );
