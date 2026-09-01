@@ -647,6 +647,39 @@ export default function ProgrammerDashboard({
           </Link>
         </section>
 
+        <section
+          data-ui-improvement-manager-link
+          aria-labelledby="ui-improvement-manager-link-title"
+          className="mt-5 flex flex-col gap-4 rounded-2xl border border-violet-300 bg-gradient-to-br from-violet-50 via-white to-slate-50 p-5 text-slate-950 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div>
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-violet-700">
+              Recommendation only
+            </div>
+
+            <h2
+              id="ui-improvement-manager-link-title"
+              className="mt-2 text-xl font-black"
+            >
+              FORGE UI Improvement Manager
+            </h2>
+
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+              Review deterministic UI findings (overflow, contrast, touch targets, accessible
+              names, and more) detected from approved screenshot evidence -- never a defect
+              claim without measured evidence, and never authority to commit, push, merge,
+              deploy, or migrate anything on its own.
+            </p>
+          </div>
+
+          <Link
+            href="/forge/developer/ui-improvement-manager"
+            className="inline-flex shrink-0 items-center justify-center rounded-xl bg-violet-600 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-violet-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700"
+          >
+            Review UI proposals
+          </Link>
+        </section>
+
         <div
           data-programmer-dashboard-layout
           className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start"
