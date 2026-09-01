@@ -16,6 +16,11 @@ select import_reservation_inventory_bulk(
   ]'::jsonb
 );
 
+-- The RPC above must execute as an authenticated application user. Validation assertions inspect
+-- the complete atomic result across owner-only tables, so restore the database validation role
+-- while retaining the JWT subject used by auth.uid().
+reset role;
+
 do $validation$
 declare v_result jsonb; v_rejected boolean;
 begin
