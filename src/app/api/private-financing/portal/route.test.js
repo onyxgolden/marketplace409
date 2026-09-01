@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBorrowerProjectionModel, summarizeBorrowerEvents } from "./route";
+import { buildBorrowerPortalModelSafely, buildBorrowerProjectionModel, summarizeBorrowerEvents } from "./route";
 
 describe("private financing borrower portal summary", () => {
   it("includes a later principal correction instead of showing the preceding payment balance", () => {
@@ -33,5 +33,29 @@ describe("private financing borrower portal summary", () => {
     expect(model.summary).toMatchObject({ principalRemainingCents: 100000, interestPaidCents: 0, principalCreditsCents: 0 });
     expect(model.projection.baseline.payoffDate).toBeTruthy();
     expect(model.projection.seed.firstProjectedPaymentDate).toBe("2026-02-01");
+  });
+
+  it("keeps the borrower account available when the optional projection cannot be built", () => {
+    const model = buildBorrowerPortalModelSafely({
+      asOfDate: "2026-01-01",
+      eventRows: [{
+        event_type: "payment_posted",
+        amount_cents: 60000,
+        interest_paid_cents: 10000,
+        principal_remaining_interest_bearing_cents: 3184347,
+        principal_remaining_zero_interest_cents: 0,
+      }],
+      componentRows: [],
+      termsRows: [{
+        version_number: 1,
+        effective_date: "2022-03-23",
+        regular_scheduled_payment_amount_cents: 51785,
+      }],
+    });
+
+    expect(model.progressAvailable).toBe(false);
+    expect(model.projection).toBeNull();
+    expect(model.summary.principalRemainingCents).toBe(3184347);
+    expect(model.regularScheduledPaymentCents).toBe(51785);
   });
 });

@@ -282,4 +282,10 @@ describe("PrivateFinancingAccountsPanel", () => {
     expect(markup).toContain("dark:bg-slate-900");
     expect(markup).toContain("dark:text-white");
   });
+
+  it("provides a permanent borrower-portal link from Private Financing", () => {
+    const markup = renderToStaticMarkup(<PrivateFinancingAccountsPanel />);
+    expect(markup).toContain('href="/forge/private-financing/portal"');
+    expect(markup).toContain("Open borrower portal");
+  });
 });

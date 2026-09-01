@@ -94,6 +94,26 @@ export function buildBorrowerProjectionModel({ eventRows, componentRows, termsRo
   }
 }
 
+export function buildBorrowerPortalModelSafely({ eventRows, componentRows, termsRows, asOfDate = todayISODate() }) {
+  try {
+    return { ...buildBorrowerProjectionModel({ eventRows, componentRows, termsRows, asOfDate }), progressAvailable: true };
+  } catch (error) {
+    console.error("Private financing borrower projection unavailable", {
+      code: error?.code || error?.name || "unknown",
+    });
+    const summary = summarizeBorrowerEvents(eventRows);
+    const currentTerms = [...termsRows]
+      .filter((terms) => !terms.effective_date || terms.effective_date <= asOfDate)
+      .sort((left, right) => Number(right.version_number || 0) - Number(left.version_number || 0))[0];
+    return {
+      summary: { ...summary, asOfDate },
+      regularScheduledPaymentCents: Number(currentTerms?.regular_scheduled_payment_amount_cents || 0),
+      projection: null,
+      progressAvailable: false,
+    };
+  }
+}
+
 export async function GET() {
   const db = await createClient();
   const { data: { user }, error: authError } = await db.auth.getUser();
@@ -118,7 +138,7 @@ export async function GET() {
       db.from("private_financing_online_payment_settings").select("enabled").eq("account_id", membership.account_id).maybeSingle(),
     ]);
     if (!accountResult.data || eventResult.error || componentResult.error || termsResult.error) continue;
-    const model = buildBorrowerProjectionModel({
+    const model = buildBorrowerPortalModelSafely({
       eventRows: eventResult.data || [],
       componentRows: componentResult.data || [],
       termsRows: termsResult.data || [],
@@ -130,6 +150,7 @@ export async function GET() {
       events: eventResult.data || [],
       regularScheduledPaymentCents: model.regularScheduledPaymentCents,
       projection: model.projection,
+      progressAvailable: model.progressAvailable,
       onlinePaymentsEnabled: settingsResult.data?.enabled === true,
     });
   }
