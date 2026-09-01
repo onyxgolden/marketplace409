@@ -33,6 +33,7 @@ export default function PrivateFinancingBorrowerPortal() {
         <p role="alert" className="mt-4">{state.error}</p>
         {state.signedInEmail ? <p className="mt-3 text-sm font-bold">Signed in as {state.signedInEmail}</p> : null}
         {state.claimErrorCode ? <p className="mt-2 text-xs text-slate-500">Access code: {state.claimErrorCode}</p> : null}
+        <a className="mt-4 mr-3 inline-block rounded-xl border border-slate-300 px-5 py-3 font-bold text-slate-800" href="/forge/private-financing/portal">Retry</a>
         {state.signInUrl ? <a className="mt-4 inline-block rounded-xl bg-blue-900 px-5 py-3 font-bold text-white" href={state.signInUrl}>Use a different account</a> : null}
       </main>
     );
@@ -44,7 +45,7 @@ export default function PrivateFinancingBorrowerPortal() {
       <p className="mt-2 text-sm text-slate-600">Signed in as {state.data.email}</p>
       {state.data.accounts.length === 0 ? (
         <p className="mt-6 rounded-xl border p-5">No invitation matches this signed-in email.</p>
-      ) : state.data.accounts.map(({ account, role, summary, events, regularScheduledPaymentCents, projection, onlinePaymentsEnabled }) => (
+      ) : state.data.accounts.map(({ account, role, summary, events, regularScheduledPaymentCents, projection, progressAvailable = true, onlinePaymentsEnabled }) => (
         <section key={account.id} className="mt-6 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
           <div className="flex justify-between gap-4">
             <h2 className="text-xl font-black">Financing account</h2>
@@ -58,12 +59,18 @@ export default function PrivateFinancingBorrowerPortal() {
             <Fact label="Total payments" value={dollars(summary.totalPaidCents)} />
           </dl>
 
-          <PrivateFinancingBorrowerProgress
-            account={account}
-            summary={summary}
-            regularScheduledPaymentCents={regularScheduledPaymentCents}
-            projection={projection}
-          />
+          {progressAvailable ? (
+            <PrivateFinancingBorrowerProgress
+              account={account}
+              summary={summary}
+              regularScheduledPaymentCents={regularScheduledPaymentCents}
+              projection={projection}
+            />
+          ) : (
+            <p className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              Your current balance and payment history are available. The optional payoff chart is temporarily unavailable.
+            </p>
+          )}
 
           {onlinePaymentsEnabled ? (
             paying === account.id ? (
