@@ -116,9 +116,9 @@ describe("FinancialForgeOverviewPanel", () => {
       expect(mounted.container.textContent).toContain("Utilities");
 
       const toggle = group.querySelector("button");
-      expect(toggle.getAttribute("aria-expanded")).toBe("true");
-      act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
       expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
     } finally {
       if (mounted) unmount(mounted);
     }

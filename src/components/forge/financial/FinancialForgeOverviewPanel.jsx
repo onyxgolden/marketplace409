@@ -47,10 +47,11 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
   const [scope, setScope] = useState("business");
   const [periodType, setPeriodType] = useState("sixMonths");
   const [donutPeriodType, setDonutPeriodType] = useState("sixMonths");
-  const [collapsedCategoryGroups, setCollapsedCategoryGroups] = useState(() => new Set());
+  // Tracks which category groups are EXPANDED (default: none, so all start collapsed).
+  const [expandedCategoryGroups, setExpandedCategoryGroups] = useState(() => new Set());
 
   function toggleCategoryGroup(key) {
-    setCollapsedCategoryGroups((current) => {
+    setExpandedCategoryGroups((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
@@ -276,7 +277,7 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
                 ) : (
                   categoryGroups.map((group) => {
                     const groupNetCents = group.items.reduce((sum, item) => sum + item.netCents, 0);
-                    const collapsed = collapsedCategoryGroups.has(group.key);
+                    const collapsed = !expandedCategoryGroups.has(group.key);
                     return (
                       <Fragment key={group.key}>
                         <tr data-category-group={group.key}>

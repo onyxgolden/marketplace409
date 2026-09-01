@@ -6,7 +6,7 @@ import { forgeTheme } from "@/components/forge/theme";
 export default function FinancialPositionSnapshot({
   lines = [],
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   return (
     <section

@@ -18,6 +18,12 @@ function unmount({ container, root }) {
 async function flush() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 }
+// All groups/sub-groups start collapsed -- expand the one at `path` (e.g. "banking" or
+// "investments.retirement") by clicking its own header button.
+function expand(container, path) {
+  const toggle = container.querySelector(`[data-account-category="${path}"]`).querySelector("button");
+  act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+}
 
 const EMPTY = { accountBalances: { success: true, accounts: [] }, assets: { success: true, assets: [] }, investmentAccounts: { success: true, accounts: [] } };
 
@@ -65,6 +71,7 @@ describe("FinancialAccountBalancesPanel", () => {
     });
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
+    expand(mounted.container, "liabilities");
 
     expect(mounted.container.textContent).toContain("Chase Credit Card");
     expect(mounted.container.textContent).toContain("Synced from plaid");
@@ -80,6 +87,7 @@ describe("FinancialAccountBalancesPanel", () => {
     });
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
+    expand(mounted.container, "banking");
 
     const row = mounted.container.querySelector('[data-account-balance-row="acct-1"]');
     const input = row.querySelector('input[type="number"]');
@@ -115,6 +123,7 @@ describe("FinancialAccountBalancesPanel", () => {
     });
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
+    expand(mounted.container, "banking");
 
     const row = mounted.container.querySelector('[data-account-balance-row="acct-1"]');
     expect(row.querySelector("form")).toBeNull();
@@ -133,6 +142,7 @@ describe("FinancialAccountBalancesPanel", () => {
     });
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
+    expand(mounted.container, "banking");
 
     const row = mounted.container.querySelector('[data-account-balance-row="acct-1"]');
     const input = row.querySelector('input[type="number"]');
@@ -182,26 +192,37 @@ describe("FinancialAccountBalancesPanel", () => {
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
 
-    const text = mounted.container.textContent;
-    expect(text).toContain("Banking");
-    expect(text).toContain("Investments");
-    expect(text).toContain("Assets");
-    expect(text).toContain("Liabilities");
+    // Top-level group headers (label + subtotal) are always visible, even collapsed.
+    const collapsedText = mounted.container.textContent;
+    expect(collapsedText).toContain("Banking");
+    expect(collapsedText).toContain("Investments");
+    expect(collapsedText).toContain("Assets");
+    expect(collapsedText).toContain("Liabilities");
     // Liabilities is one combined group -- credit and loan are not split into separate top-level groups.
-    expect(text).not.toContain("Credit Cards");
-    expect(text).not.toContain("Loans");
-    expect(text).toContain("Linked Accounts");
-    expect(text).toContain("Retirement");
-    expect(text).toContain("Real Estate");
-    expect(text).toContain("Vehicles");
-    expect(text).toContain("Other Assets");
-    expect(text).toContain("Traditional IRA");
-    expect(text).toContain("145 Laxon");
-    expect(text).toContain("Box Trailer");
+    expect(collapsedText).not.toContain("Credit Cards");
+    expect(collapsedText).not.toContain("Loans");
 
     // Liabilities combined subtotal: $200.00 credit + $15,000.00 loan = $15,200.00 on the group header.
     const liabilitiesGroup = mounted.container.querySelector('[data-account-category="liabilities"]');
     expect(liabilitiesGroup.querySelector("button").textContent).toContain("$15,200.00");
+
+    // Sub-group labels need their parent top-level group expanded; account rows need the
+    // sub-group itself expanded too.
+    expand(mounted.container, "investments");
+    expand(mounted.container, "assets");
+    expand(mounted.container, "investments.retirement");
+    expand(mounted.container, "assets.real_estate");
+    expand(mounted.container, "assets.other_assets");
+
+    const expandedText = mounted.container.textContent;
+    expect(expandedText).toContain("Linked Accounts");
+    expect(expandedText).toContain("Retirement");
+    expect(expandedText).toContain("Real Estate");
+    expect(expandedText).toContain("Vehicles");
+    expect(expandedText).toContain("Other Assets");
+    expect(expandedText).toContain("Traditional IRA");
+    expect(expandedText).toContain("145 Laxon");
+    expect(expandedText).toContain("Box Trailer");
   });
 
   it("doesn't double-count or double-show an investment account mirrored into financial_accounts", async () => {
@@ -226,15 +247,19 @@ describe("FinancialAccountBalancesPanel", () => {
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
 
-    expect(mounted.container.querySelectorAll('[data-account-balance-row="investment_account_llc"]')).toHaveLength(1);
+    // Net worth is computed from the full data regardless of collapse state: $1,000.00 bank +
+    // $170,017.42 LLC, counted once each -- not $340,034.84 from a double-count.
+    expect(mounted.container.querySelector("[data-net-worth]").textContent).toBe("$171,017.42");
+
+    expand(mounted.container, "investments");
     expect(mounted.container.querySelector('[data-account-category="investments"]').textContent).not.toContain("Linked Accounts");
     expect(mounted.container.querySelector('[data-account-category="investments.other_investments"]').textContent).toContain("Other Investments");
 
-    // Net worth: $1,000.00 bank + $170,017.42 LLC, counted once each -- not $340,034.84 from a double-count.
-    expect(mounted.container.querySelector("[data-net-worth]").textContent).toBe("$171,017.42");
+    expand(mounted.container, "investments.other_investments");
+    expect(mounted.container.querySelectorAll('[data-account-balance-row="investment_account_llc"]')).toHaveLength(1);
   });
 
-  it("collapses and expands a top-level group on click", async () => {
+  it("starts collapsed, and expands/collapses a top-level group on click", async () => {
     stubFetch({
       accountBalances: {
         success: true,
@@ -245,15 +270,17 @@ describe("FinancialAccountBalancesPanel", () => {
     await flush();
 
     const group = mounted.container.querySelector('[data-account-category="banking"]');
-    expect(group.querySelector('[data-account-balance-row="acct-1"]')).not.toBeNull();
-
     const toggle = group.querySelector("button");
-    act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(group.querySelector('[data-account-balance-row="acct-1"]')).toBeNull();
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(group.querySelector('[data-account-balance-row="acct-1"]')).toBeNull();
 
     act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(group.querySelector('[data-account-balance-row="acct-1"]')).not.toBeNull();
+
+    act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(group.querySelector('[data-account-balance-row="acct-1"]')).toBeNull();
   });
 
   it("lets a new liability account be added from the Liabilities group, and shows it after reload", async () => {
@@ -265,6 +292,7 @@ describe("FinancialAccountBalancesPanel", () => {
     });
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
+    expand(mounted.container, "liabilities");
 
     const group = mounted.container.querySelector('[data-account-category="liabilities"]');
     const addToggle = Array.from(group.querySelectorAll("button")).find((b) => b.textContent === "+ Add account");

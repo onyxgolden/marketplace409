@@ -350,7 +350,10 @@ async function fetchJson(url) {
 export default function FinancialAccountBalancesPanel() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
-  const [collapsedKeys, setCollapsedKeys] = useState(() => new Set());
+  // Tracks which groups/sub-groups are EXPANDED (default: none, so everything starts collapsed) --
+  // an empty-set default here naturally covers groups that don't exist yet at mount (e.g. a new
+  // one appearing after "+ Add account"), unlike a "collapsed by default" set would.
+  const [expandedKeys, setExpandedKeys] = useState(() => new Set());
 
   const load = useCallback(async () => {
     try {
@@ -378,9 +381,9 @@ export default function FinancialAccountBalancesPanel() {
     0,
   ), [groups]);
 
-  function isCollapsed(path) { return collapsedKeys.has(path); }
+  function isCollapsed(path) { return !expandedKeys.has(path); }
   function toggle(path) {
-    setCollapsedKeys((current) => {
+    setExpandedKeys((current) => {
       const next = new Set(current);
       if (next.has(path)) next.delete(path); else next.add(path);
       return next;
