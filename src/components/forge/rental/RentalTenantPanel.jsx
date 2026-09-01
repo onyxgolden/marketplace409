@@ -38,14 +38,15 @@ export function tenantHouseholdForSelection(selectedTenant, tenants, leases, lea
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
-export default function RentalTenantPanel({ initialTenants = [], onNavigate: navigate }) {
+export default function RentalTenantPanel({ initialTenants = [], onNavigate: navigate, recordContext = null }) {
   const [message, setMessage] = useState("");
   const [tenants, setTenants] = useState(initialTenants);
   const [leases, setLeases] = useState([]);
   const [leaseMemberships, setLeaseMemberships] = useState([]);
   const [units, setUnits] = useState([]);
   const [openCharges, setOpenCharges] = useState([]);
-  const [showCreate, setShowCreate] = useState(initialTenants.length === 0);
+  const openCreateTenant = recordContext?.openCreateTenant === true;
+  const [showCreate, setShowCreate] = useState(openCreateTenant || initialTenants.length === 0);
   const [selectedId, setSelectedId] = useState(initialTenants[0]?.id || null);
   const [working, setWorking] = useState(false);
   const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, tenants, "display_name"));
@@ -61,9 +62,9 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to load tenants.");
       return result;
-    }).then((result) => { const loadedTenants = result.tenants || []; setTenants(loadedTenants); setSelectedId(loadedTenants[0]?.id || null); setShowCreate(loadedTenants.length === 0);
+    }).then((result) => { const loadedTenants = result.tenants || []; setTenants(loadedTenants); setSelectedId(loadedTenants[0]?.id || null); setShowCreate(openCreateTenant || loadedTenants.length === 0);
       setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setUnits(result.units || []); setOpenCharges(result.openCharges || []); }).catch((error) => setMessage(error.message));
-  }, []);
+  }, [openCreateTenant]);
   async function save(event) {
     event.preventDefault(); setWorking(true); setMessage("");
     const formElement = event.currentTarget;

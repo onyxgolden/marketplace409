@@ -55,4 +55,9 @@ describe("RentalSetupPanel new-unit creation", () => {
     expect(markup).toContain("Active balance");
     expect(markup).toContain("930 Highland Drive");
   });
+  it("offers Add tenant instead of labeling an unleased property vacant", () => {
+    const markup = renderToStaticMarkup(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "available" }]} />);
+    expect(markup).toContain("Add tenant");
+    expect(markup).not.toContain(">Vacant<");
+  });
 });
