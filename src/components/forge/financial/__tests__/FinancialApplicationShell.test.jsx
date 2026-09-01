@@ -9,19 +9,6 @@ import {
   renderToStaticMarkup,
 } from "react-dom/server";
 
-vi.mock(
-  "../FinancialWorkspaceHeader",
-  () => ({
-    default: function MockHeader() {
-      return (
-        <section data-overview-header>
-          Overview header
-        </section>
-      );
-    },
-  }),
-);
-
 vi.mock("../SimplifiImportPanel", () => ({
   default: function MockSimplifiImport() { return <section data-simplifi-import-function>Simplifi import</section>; },
 }));
@@ -167,7 +154,7 @@ describe(
     it.each([
       [
         "overview",
-        "data-overview-header",
+        "data-financial-forge-overview",
       ],
       [
         "transactions",
@@ -217,7 +204,7 @@ describe(
         );
 
         const allMarkers = [
-          "data-overview-header",
+          "data-financial-forge-overview",
           "data-transactions-function",
           "data-properties-function",
           "data-assets-function",

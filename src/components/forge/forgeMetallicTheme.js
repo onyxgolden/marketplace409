@@ -49,3 +49,27 @@ export const metallicSwatchClassName = {
   expense: "bg-[linear-gradient(to_bottom,var(--forge-metal-expense-hi),var(--forge-metal-expense-mid),var(--forge-metal-expense-lo))]",
   net: "bg-[linear-gradient(to_right,var(--forge-metal-net-a),var(--forge-metal-net-b),var(--forge-metal-net-a))]",
 };
+
+// Validated 8-slot categorical palette (identity color for >=3 distinct series -- category
+// donuts/legends, not the 2-tone income/expense scale above). Fixed hue order is the CVD-safety
+// mechanism; never cycle or reassign a slot to a different category once rendered. Validated via
+// the dataviz skill's validate_palette.js against this app's actual card surfaces (white / #0f172a
+// slate-900): all hard gates pass in both modes; slots 3/4/5 (aqua/yellow/magenta) fall below 3:1
+// on the light surface, so any chart using this palette must ship direct labels or a legend/table
+// for every slice -- color alone is not sufficient there.
+export const CATEGORICAL_SLOT_COUNT = 8;
+
+export const metallicCategoricalTokensClassName = [
+  "[--forge-cat-1:#2a78d6] dark:[--forge-cat-1:#3987e5]",
+  "[--forge-cat-2:#eb6834] dark:[--forge-cat-2:#d95926]",
+  "[--forge-cat-3:#1baf7a] dark:[--forge-cat-3:#199e70]",
+  "[--forge-cat-4:#eda100] dark:[--forge-cat-4:#c98500]",
+  "[--forge-cat-5:#e87ba4] dark:[--forge-cat-5:#d55181]",
+  "[--forge-cat-6:#008300] dark:[--forge-cat-6:#008300]",
+  "[--forge-cat-7:#4a3aa7] dark:[--forge-cat-7:#9085e9]",
+  "[--forge-cat-8:#e34948] dark:[--forge-cat-8:#e66767]",
+].join(" ");
+
+export function categoricalSlotVar(index) {
+  return `var(--forge-cat-${(index % CATEGORICAL_SLOT_COUNT) + 1})`;
+}
