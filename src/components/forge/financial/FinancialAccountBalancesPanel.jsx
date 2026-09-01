@@ -334,7 +334,7 @@ function AddAssetRow({ onCreated }) {
       const response = await fetch("/api/financial/assets", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, assetClass, ownershipScope, valueCents: cents, valueDate }),
+        body: JSON.stringify({ name, assetClass, ownershipScope, valueCents: cents, valueDate, purchaseCostCents: null }),
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(body?.error || `Unable to save (${response.status}).`);

@@ -5,7 +5,7 @@ vi.mock("@/lib/supabase/createAuthenticatedFinancialApplication", () => ({
   createAuthenticatedFinancialApplication: mocks.authenticate,
 }));
 
-import { DELETE, PATCH } from "./route";
+import { DELETE, PATCH, POST } from "./route";
 
 const assetBody = {
   assetId: "asset_1",
@@ -29,6 +29,27 @@ function request(method, body) {
 
 describe("financial asset lifecycle route", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("creates a new asset when purchaseCostCents is simply omitted, not just when it's explicitly null", async () => {
+    // Regression: parseAssetBody's optional-field parsing is `body?.purchaseCostCents === null ||
+    // === "" ? null : Number(body?.purchaseCostCents)` -- an omitted (undefined) field skips both
+    // branches and becomes Number(undefined) = NaN, which then fails "must be whole cents"
+    // validation. The sidebar's own "+ Add asset" form doesn't collect a purchase cost at all, so
+    // this is the exact shape it sends.
+    const rpc = vi.fn().mockResolvedValue({ data: {
+      id: "asset_new", name: "2015 Toyota Tacoma", asset_class: "vehicle", ownership_scope: "business", active: true,
+    }, error: null });
+    mocks.authenticate.mockResolvedValue({ user: { id: "owner_1" }, supabaseClient: { rpc } });
+
+    const response = await POST(request("POST", {
+      name: "2015 Toyota Tacoma", assetClass: "vehicle", ownershipScope: "business",
+      valueCents: 1800000, valueDate: "2026-08-25",
+    }));
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith("create_financial_asset_with_valuation", expect.objectContaining({
+      p_purchase_cost_cents: null,
+    }));
+  });
 
   it("updates details and records a new manual valuation atomically", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: {

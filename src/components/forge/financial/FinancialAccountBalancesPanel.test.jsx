@@ -455,6 +455,9 @@ describe("FinancialAccountBalancesPanel", () => {
       body: expect.stringContaining('"name":"2015 Toyota Tacoma"'),
     }));
     const postCall = fetchMock.mock.calls.find(([url, init]) => url === "/api/financial/assets" && init?.method === "POST");
-    expect(JSON.parse(postCall[1].body)).toMatchObject({ assetClass: "vehicle", ownershipScope: "business", valueCents: 1800000 });
+    // purchaseCostCents must be an explicit null, not omitted -- the API's optional-field parsing
+    // (`body?.purchaseCostCents === null || === "" ? null : Number(...)`) turns an omitted/undefined
+    // field into Number(undefined) = NaN, which then fails "must be whole cents" validation.
+    expect(JSON.parse(postCall[1].body)).toMatchObject({ assetClass: "vehicle", ownershipScope: "business", valueCents: 1800000, purchaseCostCents: null });
   });
 });
