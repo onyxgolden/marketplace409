@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { buildBorrowerPortalModelSafely, buildBorrowerProjectionModel, summarizeBorrowerEvents } from "./route";
+import { borrowerIdentityIds, buildBorrowerPortalModelSafely, buildBorrowerProjectionModel, summarizeBorrowerEvents } from "./route";
 
 describe("private financing borrower portal summary", () => {
+  it("scopes memberships to unique borrower identities claimed by the signed-in auth user", () => {
+    expect(borrowerIdentityIds([{ id: "borrower-1" }, { id: "borrower-1" }, { id: "borrower-2" }, { id: null }])).toEqual([
+      "borrower-1",
+      "borrower-2",
+    ]);
+  });
+
   it("includes a later principal correction instead of showing the preceding payment balance", () => {
     const summary = summarizeBorrowerEvents([
       { event_type: "payment_posted", amount_cents: 60000, interest_paid_cents: 10000, principal_remaining_interest_bearing_cents: 3300000, principal_remaining_zero_interest_cents: 0 },
