@@ -204,6 +204,36 @@ describe("FinancialAccountBalancesPanel", () => {
     expect(liabilitiesGroup.querySelector("button").textContent).toContain("$15,200.00");
   });
 
+  it("doesn't double-count or double-show an investment account mirrored into financial_accounts", async () => {
+    // The investment-accounts registry's create/update RPCs mirror themselves into
+    // financial_accounts (same id, type "investment") so Net Worth stays accurate elsewhere in the
+    // app. That mirror must not also render under Investments > Linked Accounts.
+    stubFetch({
+      accountBalances: {
+        success: true,
+        accounts: [
+          { id: "acct-bank", name: "Business Checking", type: "depository", kind: "asset", latestBalance: { currentBalanceCents: 100000, asOf: "2026-08-01", provider: "manual", editable: true } },
+          { id: "investment_account_llc", name: "Limited Liability Company", type: "investment", kind: "asset", latestBalance: { currentBalanceCents: 17001742, asOf: "2026-08-25", provider: "manual_investment", editable: false } },
+        ],
+      },
+      investmentAccounts: {
+        success: true,
+        accounts: [
+          { id: "investment_account_llc", name: "Limited Liability Company", accountType: "private_investment", ownershipScope: "business", latestValuation: { amountCents: 17001742, effectiveDate: "2026-08-25" } },
+        ],
+      },
+    });
+    mounted = mount(<FinancialAccountBalancesPanel />);
+    await flush();
+
+    expect(mounted.container.querySelectorAll('[data-account-balance-row="investment_account_llc"]')).toHaveLength(1);
+    expect(mounted.container.querySelector('[data-account-category="investments"]').textContent).not.toContain("Linked Accounts");
+    expect(mounted.container.querySelector('[data-account-category="investments.other_investments"]').textContent).toContain("Other Investments");
+
+    // Net worth: $1,000.00 bank + $170,017.42 LLC, counted once each -- not $340,034.84 from a double-count.
+    expect(mounted.container.querySelector("[data-net-worth]").textContent).toBe("$171,017.42");
+  });
+
   it("collapses and expands a top-level group on click", async () => {
     stubFetch({
       accountBalances: {

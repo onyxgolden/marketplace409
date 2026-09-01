@@ -252,8 +252,17 @@ function subtotal(rows) {
 }
 
 function buildTree({ accounts, investmentAccounts, assets }, onSaved) {
+  // The investment-accounts registry's create/update RPCs mirror themselves into financial_accounts
+  // (as type "investment") so Net Worth elsewhere in the app, which is computed from
+  // financial_accounts alone, stays accurate. That mirrored row reuses the SAME id as the row
+  // already showing under Investments below, so it must be excluded here or every investment
+  // account would be counted -- and shown -- twice.
+  const investmentAccountIds = new Set(investmentAccounts.map((account) => account.id));
+
   const banking = accounts.filter((account) => account.type === "depository").map((account) => accountRowDescriptor(account, onSaved));
-  const linkedInvestments = accounts.filter((account) => account.type === "investment").map((account) => accountRowDescriptor(account, onSaved));
+  const linkedInvestments = accounts
+    .filter((account) => account.type === "investment" && !investmentAccountIds.has(account.id))
+    .map((account) => accountRowDescriptor(account, onSaved));
   const liabilities = accounts.filter((account) => account.type === "credit" || account.type === "loan").map((account) => accountRowDescriptor(account, onSaved));
 
   const investmentSubgroups = [];
