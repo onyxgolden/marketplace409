@@ -33,7 +33,13 @@ function stubFetch(overrides = {}) {
   const responses = { ...EMPTY, ...overrides };
   const fetchMock = vi.fn(async (url, init) => {
     if (url === "/api/financial/account-balances") return { ok: true, json: async () => responses.accountBalances };
-    if (url === "/api/financial/assets") return { ok: true, json: async () => responses.assets };
+    if (url === "/api/financial/assets" && (!init || init.method === undefined)) return { ok: true, json: async () => responses.assets };
+    if (url === "/api/financial/assets" && init?.method === "POST") {
+      return { ok: true, json: async () => ({ success: true, assetId: "financial_asset_new" }) };
+    }
+    if (url === "/api/financial/assets" && init?.method === "PATCH") {
+      return { ok: true, json: async () => ({ success: true }) };
+    }
     if (url === "/api/financial/investment-accounts") return { ok: true, json: async () => responses.investmentAccounts };
     if (url === "/api/financial/accounts" && init?.method === "POST") {
       return { ok: true, json: async () => ({ success: true, accountId: "financial_account_manual_new" }) };
@@ -336,5 +342,119 @@ describe("FinancialAccountBalancesPanel", () => {
 
     expect(mounted.container.textContent).toContain("Share Lane Mortgage");
     expect(mounted.container.querySelector('[data-account-balance-row="financial_account_manual_new"]').textContent).toContain("$176,012.60");
+  });
+
+  it("lets an existing asset's value be edited via the Edit link", async () => {
+    stubFetch({
+      assets: {
+        success: true,
+        assets: [{
+          id: "asset-1", name: "2016 Lexus GX 460", assetClass: "vehicle", ownershipScope: "personal",
+          purchaseCostCents: null, purchaseDate: null, linkedPropertyId: null, notes: null,
+          latestValuation: { amountCents: 1800000, effectiveDate: "2026-08-25" },
+        }],
+      },
+    });
+    mounted = mount(<FinancialAccountBalancesPanel />);
+    await flush();
+    expand(mounted.container, "assets");
+    expand(mounted.container, "assets.vehicles");
+
+    const row = mounted.container.querySelector('[data-account-balance-row="asset-1"]');
+    expect(row.querySelector("form")).toBeNull();
+    const editButton = Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Edit");
+    act(() => { editButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(row.querySelector("form")).not.toBeNull();
+  });
+
+  it("submits a full record (name/class/scope preserved) when saving an edited asset value", async () => {
+    const fetchMock = stubFetch({
+      assets: {
+        success: true,
+        assets: [{
+          id: "asset-1", name: "2016 Lexus GX 460", assetClass: "vehicle", ownershipScope: "personal",
+          purchaseCostCents: null, purchaseDate: null, linkedPropertyId: null, notes: null,
+          latestValuation: { amountCents: 1800000, effectiveDate: "2026-08-25" },
+        }],
+      },
+    });
+    mounted = mount(<FinancialAccountBalancesPanel />);
+    await flush();
+    expand(mounted.container, "assets");
+    expand(mounted.container, "assets.vehicles");
+
+    const row = mounted.container.querySelector('[data-account-balance-row="asset-1"]');
+    act(() => { Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Edit").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    const valueInput = row.querySelector('input[type="number"]');
+    act(() => {
+      nativeInputValueSetter.call(valueInput, "19000");
+      valueInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const form = row.querySelector("form");
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/financial/assets", expect.objectContaining({
+      method: "PATCH",
+      body: expect.stringContaining('"assetId":"asset-1"'),
+    }));
+    const patchCall = fetchMock.mock.calls.find(([url, init]) => url === "/api/financial/assets" && init?.method === "PATCH");
+    const submittedBody = JSON.parse(patchCall[1].body);
+    expect(submittedBody).toMatchObject({ name: "2016 Lexus GX 460", assetClass: "vehicle", ownershipScope: "personal", valueCents: 1900000 });
+  });
+
+  it("lets a new asset be added from the Assets group", async () => {
+    const fetchMock = stubFetch({
+      assets: {
+        success: true,
+        assets: [{
+          id: "asset-1", name: "145 Laxon", assetClass: "real_estate", ownershipScope: "business",
+          purchaseCostCents: null, purchaseDate: null, linkedPropertyId: null, notes: null,
+          latestValuation: { amountCents: 15000000, effectiveDate: "2026-08-25" },
+        }],
+      },
+    });
+    mounted = mount(<FinancialAccountBalancesPanel />);
+    await flush();
+    expand(mounted.container, "assets");
+
+    const group = mounted.container.querySelector('[data-account-category="assets"]');
+    const addToggle = Array.from(group.querySelectorAll("button")).find((b) => b.textContent === "+ Add asset");
+    act(() => { addToggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const form = group.querySelector("form");
+    expect(form).not.toBeNull();
+    const [classSelect, scopeSelect] = form.querySelectorAll("select");
+    expect(Array.from(classSelect.options).map((option) => option.value)).toEqual(
+      ["real_estate", "vehicle", "equipment", "trailer", "collectible", "crypto", "other"],
+    );
+    expect(classSelect.value).toBe("vehicle");
+
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    const nameInput = form.querySelector("input");
+    const valueInput = form.querySelector('input[type="number"]');
+    act(() => {
+      nativeInputValueSetter.call(nameInput, "2015 Toyota Tacoma");
+      nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+      nativeInputValueSetter.call(valueInput, "18000");
+      valueInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/financial/assets", expect.objectContaining({
+      method: "POST",
+      body: expect.stringContaining('"name":"2015 Toyota Tacoma"'),
+    }));
+    const postCall = fetchMock.mock.calls.find(([url, init]) => url === "/api/financial/assets" && init?.method === "POST");
+    expect(JSON.parse(postCall[1].body)).toMatchObject({ assetClass: "vehicle", ownershipScope: "business", valueCents: 1800000 });
   });
 });
