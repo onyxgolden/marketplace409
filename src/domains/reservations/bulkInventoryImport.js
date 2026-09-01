@@ -85,7 +85,7 @@ export function parseBulkInventoryCsv(csvText, { existingUnits = [] } = {}) {
     else seen.add(duplicateKey);
     if (existing.has(duplicateKey)) errors.push("This property/unit already exists in Rental Manager.");
     const inventoryType = TYPE_ALIASES[key(source.space_type)];
-    if (!inventoryType || !RESERVATION_INVENTORY_TYPES.includes(inventoryType)) errors.push("space_type is not supported; drivable RVs are excluded.");
+    if (!inventoryType || !RESERVATION_INVENTORY_TYPES.includes(inventoryType)) errors.push("space_type is not supported.");
     if (source.booking_status && !["draft", "active", "paused", "inactive"].includes(source.booking_status)) errors.push("booking_status must be draft, active, paused, or inactive.");
     let inventory = null;
     try {

@@ -27,7 +27,7 @@ export default function ReservationInventoryPanel() {
     } catch (error) { setState((current) => ({ ...current, error: error.message })); } finally { setSaving(false); }
   }
   return <section aria-label="RV and short-term rental inventory" className="space-y-5">
-    <div><p className="text-xs font-black uppercase tracking-[0.18em] text-sky-700 dark:text-sky-400">Reservations</p><h2 className="text-2xl font-black text-slate-950 dark:text-white">RV & short-term rentals</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Configure reservable spaces and stays. Drivable RVs are intentionally excluded.</p></div>
+    <div><p className="text-xs font-black uppercase tracking-[0.18em] text-sky-700 dark:text-sky-400">Reservations</p><h2 className="text-2xl font-black text-slate-950 dark:text-white">RV & short-term rentals</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Configure reservable spaces and stays.</p></div>
     {state.error && <p role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-bold text-red-800">{state.error}</p>}
     <ReservationInventoryBulkImport onImported={load}/>
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">

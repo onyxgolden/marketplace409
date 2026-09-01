@@ -18,7 +18,7 @@ describe("ReservationInventoryPanel", () => {
     mounted = await mount({ units: [{ id: "unit-1", label: "Site 1" }], inventory: [{ unit_id: "unit-1", public_name: "Lake Site 1", inventory_type: "rv_site", maximum_guests: 6, minimum_nights: 2, booking_status: "draft" }] });
     expect(mounted.container.textContent).toContain("Lake Site 1");
     expect(mounted.container.textContent).toContain("RV site");
-    expect(mounted.container.textContent).toContain("Drivable RVs are intentionally excluded");
+    expect(mounted.container.textContent).toContain("Configure reservable spaces and stays");
     expect(mounted.container.textContent).toContain("Bulk import RV spots and cabins");
     expect(mounted.container.textContent).toContain("Download CSV template");
   });

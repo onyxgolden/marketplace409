@@ -6,7 +6,7 @@ describe("ReservationInventoryBulkImport", () => {
   afterEach(() => { if (mounted) { act(() => mounted.root.unmount()); mounted.container.remove(); mounted = null; } vi.unstubAllGlobals(); });
   it("offers a template, local CSV selection, preview, and no immediate import", () => {
     const markup = renderToStaticMarkup(<ReservationInventoryBulkImport/>);
-    expect(markup).toContain("Download CSV template"); expect(markup).toContain('type="file"'); expect(markup).toContain("Preview import"); expect(markup).not.toContain("Import all units"); expect(markup).toContain("Drivable RVs are excluded");
+    expect(markup).toContain("Download CSV template"); expect(markup).toContain('type="file"'); expect(markup).toContain("Preview import"); expect(markup).not.toContain("Import all units"); expect(markup).toContain("Create up to 500 Rental Manager units"); expect(markup).not.toMatch(/drivable|motorhome/i);
   });
   it("shows reconciliation and keeps confirmation disabled until acknowledgement plus typed IMPORT", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ previewToken: "signed-token", reconciliation: { totalRows: 1, validRows: 1, errorRows: 0, rows: [{ rowNumber: 2, propertyId: "Pine Park", unitLabel: "Site 1", inventory: { inventoryType: "rv_site", nightlyRateCents: 5500 }, errors: [] }] } }) })));
