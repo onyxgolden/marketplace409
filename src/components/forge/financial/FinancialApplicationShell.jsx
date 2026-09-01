@@ -123,11 +123,6 @@ export function buildFinancialActiveSurface({
     default:
       return (
         <div className="space-y-6">
-          <FinancialWorkspaceHeader
-            health={health}
-            kpis={kpis}
-          />
-
           <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
             <div className="lg:sticky lg:top-4">
               <FinancialAccountBalancesPanel />
@@ -156,6 +151,11 @@ export function buildFinancialActiveSurface({
               />
             </div>
           </div>
+
+          <FinancialWorkspaceHeader
+            health={health}
+            kpis={kpis}
+          />
         </div>
       );
   }
