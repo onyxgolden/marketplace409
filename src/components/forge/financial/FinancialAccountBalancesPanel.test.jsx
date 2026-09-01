@@ -100,7 +100,7 @@ describe("FinancialAccountBalancesPanel", () => {
     }));
   });
 
-  it("lets a manual balance be updated via the Update link", async () => {
+  it("lets a manual balance be updated via the Edit link", async () => {
     stubFetch({
       accountBalances: {
         success: true,
@@ -115,8 +115,8 @@ describe("FinancialAccountBalancesPanel", () => {
 
     const row = mounted.container.querySelector('[data-account-balance-row="acct-1"]');
     expect(row.querySelector("form")).toBeNull();
-    const updateButton = Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Update");
-    act(() => { updateButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const editButton = Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Edit");
+    act(() => { editButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 
     expect(row.querySelector("form")).not.toBeNull();
   });

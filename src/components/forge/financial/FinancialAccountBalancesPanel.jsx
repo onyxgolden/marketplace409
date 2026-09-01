@@ -28,14 +28,6 @@ const ASSET_SUBGROUPS = Object.freeze([
   Object.freeze({ key: "other_assets", label: "Other Assets", classes: Object.freeze(["equipment", "trailer", "collectible", "crypto", "other"]) }),
 ]);
 
-function typeLabel(type) {
-  if (type === "depository") return "Bank account";
-  if (type === "investment") return "Investment";
-  if (type === "credit") return "Credit card";
-  if (type === "loan") return "Loan";
-  return type;
-}
-
 function accountBalanceCents(account) {
   return account.latestBalance ? Math.abs(account.latestBalance.currentBalanceCents) : 0;
 }
@@ -78,54 +70,51 @@ function BalanceRow({ account, onSaved }) {
   const notEditable = account.latestBalance && !account.latestBalance.editable;
 
   return (
-    <div data-account-balance-row={account.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-      <div>
-        <p className="font-bold text-slate-900 dark:text-slate-100">{account.name}</p>
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-          {typeLabel(account.type)} · {account.kind === "asset" ? "Asset" : "Liability"}
-        </p>
-      </div>
+    <div data-account-balance-row={account.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+      <p className="min-w-0 flex-1 truncate text-xs font-bold text-slate-900 dark:text-slate-100" title={account.name}>
+        {account.name}
+      </p>
 
       {notEditable ? (
         <div className="text-right">
-          <p className="font-black tabular-nums text-slate-900 dark:text-slate-100">
+          <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">
             {money.format(Math.abs(account.latestBalance.currentBalanceCents) / 100)}
           </p>
-          <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
-            Synced from {account.latestBalance.provider} · as of {account.latestBalance.asOf?.slice(0, 10)}
+          <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+            Synced from {account.latestBalance.provider}
           </p>
         </div>
       ) : editing ? (
-        <form onSubmit={save} className="flex flex-wrap items-center gap-2">
-          <label className="text-xs font-bold text-slate-600 dark:text-slate-400">
+        <form onSubmit={save} className="flex w-full flex-wrap items-center gap-1.5 pt-1">
+          <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
             <span className="sr-only">Balance</span>
             <input
               type="number" step="0.01" required value={dollars}
               onChange={(event) => setDollars(event.target.value)}
               placeholder="0.00"
-              className="w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-sm font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+              className="w-20 rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
             />
           </label>
-          <label className="text-xs font-bold text-slate-600 dark:text-slate-400">
+          <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
             <span className="sr-only">As of</span>
             <input
               type="date" required value={asOf}
               onChange={(event) => setAsOf(event.target.value)}
-              className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+              className="w-[7.5rem] rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
             />
           </label>
-          <button type="submit" disabled={saving} className={`rounded-full px-4 py-1.5 text-xs font-black disabled:opacity-60 ${goldControlClassName}`}>
+          <button type="submit" disabled={saving} className={`rounded-full px-3 py-1 text-[10px] font-black disabled:opacity-60 ${goldControlClassName}`}>
             {saving ? "Saving…" : "Save"}
           </button>
-          {error ? <span role="alert" className="w-full text-xs font-bold text-rose-700 dark:text-rose-400">{error}</span> : null}
+          {error ? <span role="alert" className="w-full text-[10px] font-bold text-rose-700 dark:text-rose-400">{error}</span> : null}
         </form>
       ) : account.latestBalance ? (
-        <div className="flex items-center gap-3">
-          <p className="font-black tabular-nums text-slate-900 dark:text-slate-100">
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">
             {money.format(Math.abs(account.latestBalance.currentBalanceCents) / 100)}
           </p>
-          <button type="button" onClick={() => setEditing(true)} className="text-xs font-black text-sky-700 hover:underline dark:text-sky-400">
-            Update
+          <button type="button" onClick={() => setEditing(true)} className="text-[10px] font-black text-sky-700 hover:underline dark:text-sky-400">
+            Edit
           </button>
         </div>
       ) : null}
@@ -135,17 +124,13 @@ function BalanceRow({ account, onSaved }) {
 
 // A read-only leaf for Assets/Investments-registry items: those have their own dedicated
 // create/edit forms on the Assets and Investments tabs, so this tree only displays them.
-function ReadOnlyValueRow({ id, name, subtitle, amountCents, asOf }) {
+function ReadOnlyValueRow({ id, name, amountCents }) {
   return (
-    <div data-account-balance-row={id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-      <div>
-        <p className="font-bold text-slate-900 dark:text-slate-100">{name}</p>
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{subtitle}</p>
-      </div>
-      <div className="text-right">
-        <p className="font-black tabular-nums text-slate-900 dark:text-slate-100">{money.format(amountCents / 100)}</p>
-        {asOf ? <p className="text-xs font-bold text-slate-500 dark:text-slate-400">as of {asOf}</p> : null}
-      </div>
+    <div data-account-balance-row={id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+      <p className="min-w-0 flex-1 truncate text-xs font-bold text-slate-900 dark:text-slate-100" title={name}>
+        {name}
+      </p>
+      <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">{money.format(amountCents / 100)}</p>
     </div>
   );
 }
@@ -162,13 +147,7 @@ function investmentAccountRowDescriptor(account) {
   return {
     key: account.id,
     amountCents,
-    node: (
-      <ReadOnlyValueRow
-        key={account.id} id={account.id} name={account.name}
-        subtitle={`${INVESTMENT_TYPE_LABELS[account.accountType] || account.accountType} · ${account.ownershipScope}`}
-        amountCents={amountCents} asOf={account.latestValuation?.effectiveDate}
-      />
-    ),
+    node: <ReadOnlyValueRow key={account.id} id={account.id} name={account.name} amountCents={amountCents} />,
   };
 }
 function assetRowDescriptor(asset) {
@@ -176,13 +155,7 @@ function assetRowDescriptor(asset) {
   return {
     key: asset.id,
     amountCents,
-    node: (
-      <ReadOnlyValueRow
-        key={asset.id} id={asset.id} name={asset.name}
-        subtitle={`${ASSET_CLASS_LABELS[asset.assetClass] || asset.assetClass} · ${asset.ownershipScope}`}
-        amountCents={amountCents} asOf={asset.latestValuation?.effectiveDate}
-      />
-    ),
+    node: <ReadOnlyValueRow key={asset.id} id={asset.id} name={asset.name} amountCents={amountCents} />,
   };
 }
 
@@ -219,19 +192,19 @@ function buildTree({ accounts, investmentAccounts, assets }, onSaved) {
 function SubGroup({ path, label, rows, isCollapsed, onToggle }) {
   const collapsed = isCollapsed(path);
   return (
-    <div data-account-category={path} className="ml-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
+    <div data-account-category={path} className="ml-2">
       <button
         type="button" onClick={() => onToggle(path)} aria-expanded={!collapsed}
-        className="flex w-full items-center justify-between gap-3 bg-slate-50 px-3 py-2 text-left dark:bg-slate-800/40"
+        className="flex w-full items-center justify-between gap-2 rounded-lg px-1.5 py-1 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40"
       >
-        <span className="flex items-center gap-2">
-          <ChevronDown size={14} className={`text-slate-500 transition-transform dark:text-slate-400 ${collapsed ? "-rotate-90" : ""}`} />
-          <span className="text-sm font-black text-slate-800 dark:text-slate-200">{label}</span>
-          <span className="text-xs font-bold text-slate-500 dark:text-slate-400">({rows.length})</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <ChevronDown size={12} className={`shrink-0 text-slate-400 transition-transform dark:text-slate-500 ${collapsed ? "-rotate-90" : ""}`} />
+          <span className="truncate text-[11px] font-black uppercase tracking-wide text-slate-600 dark:text-slate-300">{label}</span>
+          <span className="shrink-0 text-[10px] font-bold text-slate-400 dark:text-slate-500">({rows.length})</span>
         </span>
-        <span className="text-sm font-black tabular-nums text-slate-800 dark:text-slate-200">{money.format(subtotal(rows) / 100)}</span>
+        <span className="shrink-0 text-xs font-black tabular-nums text-slate-700 dark:text-slate-300">{money.format(subtotal(rows) / 100)}</span>
       </button>
-      {!collapsed && <div className="space-y-2 p-2">{rows.map((row) => row.node)}</div>}
+      {!collapsed && <div className="divide-y divide-slate-100 pl-3 dark:divide-slate-800">{rows.map((row) => row.node)}</div>}
     </div>
   );
 }
@@ -242,24 +215,24 @@ function Group({ group, isCollapsed, onToggle }) {
   const itemCount = group.rows ? group.rows.length : group.subgroups.reduce((sum, sub) => sum + sub.rows.length, 0);
 
   return (
-    <div data-account-category={group.key} className="overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
+    <div data-account-category={group.key} className="border-b border-slate-100 py-1 last:border-b-0 dark:border-slate-800">
       <button
         type="button" onClick={() => onToggle(group.key)} aria-expanded={!collapsed}
-        className="flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-left dark:bg-slate-800/60"
+        className="flex w-full items-center justify-between gap-2 rounded-lg px-1.5 py-1.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40"
       >
-        <span className="flex items-center gap-2">
-          <ChevronDown size={16} className={`text-slate-500 transition-transform dark:text-slate-400 ${collapsed ? "-rotate-90" : ""}`} />
-          <span className="font-black text-slate-900 dark:text-slate-100">{group.label}</span>
-          <span className="text-xs font-bold text-slate-500 dark:text-slate-400">({itemCount})</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <ChevronDown size={14} className={`shrink-0 text-slate-500 transition-transform dark:text-slate-400 ${collapsed ? "-rotate-90" : ""}`} />
+          <span className="truncate text-sm font-black text-slate-900 dark:text-slate-100">{group.label}</span>
+          <span className="shrink-0 text-[10px] font-bold text-slate-400 dark:text-slate-500">({itemCount})</span>
         </span>
-        <span className={`font-black tabular-nums ${group.kind === "liability" ? "text-rose-700 dark:text-rose-400" : "text-slate-900 dark:text-slate-100"}`}>
+        <span className={`shrink-0 text-sm font-black tabular-nums ${group.kind === "liability" ? "text-rose-700 dark:text-rose-400" : "text-slate-900 dark:text-slate-100"}`}>
           {money.format(groupSubtotal / 100)}
         </span>
       </button>
       {!collapsed && (
-        <div className="space-y-2 p-3">
+        <div className="space-y-1 pl-1">
           {group.rows
-            ? group.rows.map((row) => row.node)
+            ? <div className="divide-y divide-slate-100 pl-3 dark:divide-slate-800">{group.rows.map((row) => row.node)}</div>
             : group.subgroups.map((sub) => (
               <SubGroup key={sub.key} path={`${group.key}.${sub.key}`} label={sub.label} rows={sub.rows} isCollapsed={isCollapsed} onToggle={onToggle} />
             ))}
@@ -321,23 +294,14 @@ export default function FinancialAccountBalancesPanel() {
   if (groups.length === 0) return null;
 
   return (
-    <section data-financial-account-balances className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-lg font-black text-slate-950 dark:text-white">Account balances</h3>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Banking, Investments, Assets, and Liabilities — enter a balance to get started. Once a bank connection is
-            linked, that account's balance stays synced automatically and can't be edited here. Assets and Investment
-            accounts are managed on their own tabs; this view rolls them up alongside everything else.
-          </p>
-        </div>
-        <div className="text-right">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Net worth</p>
-          <p data-net-worth className="text-xl font-black tabular-nums text-slate-950 dark:text-white">{money.format(netWorthCents / 100)}</p>
-        </div>
+    <section data-financial-account-balances className="max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      <h3 className="px-1.5 text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Accounts</h3>
+      <div className="flex items-center justify-between px-1.5 py-2">
+        <span className="text-sm font-black text-slate-900 dark:text-white">Net Worth</span>
+        <span data-net-worth className="text-sm font-black tabular-nums text-slate-950 dark:text-white">{money.format(netWorthCents / 100)}</span>
       </div>
 
-      <div className="mt-4 space-y-3">
+      <div>
         {groups.map((group) => (
           <Group key={group.key} group={group} isCollapsed={isCollapsed} onToggle={toggle} />
         ))}
