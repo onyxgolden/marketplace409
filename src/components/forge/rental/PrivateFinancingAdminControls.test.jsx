@@ -11,6 +11,8 @@ describe("private-financing admin controls", () => {
     );
 
     expect(markup).toContain("dark:text-slate-100");
+    expect(markup).toContain("dark:bg-slate-800");
+    expect(markup).toContain("dark:text-slate-100");
     expect(markup).toContain("Invite a borrower");
   });
 
