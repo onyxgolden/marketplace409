@@ -34,6 +34,10 @@ vi.mock("../InvestmentAccountsPanel", () => ({
   default: function MockInvestments() { return <section data-investments-function>Investments</section>; },
 }));
 
+vi.mock("../FinancialLoanToolsPanel", () => ({
+  default: function MockTools() { return <section data-tools-function>Loan tools</section>; },
+}));
+
 vi.mock(
   "../FinancialExecutiveIntelligence",
   () => ({
@@ -149,6 +153,10 @@ describe(
             label: "Operations",
           },
           {
+            id: "tools",
+            label: "Tools",
+          },
+          {
             id: "import",
             label: "Import",
           },
@@ -182,6 +190,10 @@ describe(
         "data-operations-function",
       ],
       [
+        "tools",
+        "data-tools-function",
+      ],
+      [
         "import",
         "data-simplifi-import-function",
       ],
@@ -211,6 +223,7 @@ describe(
           "data-assets-function",
           "data-investments-function",
           "data-operations-function",
+          "data-tools-function",
           "data-simplifi-import-function",
         ];
 
