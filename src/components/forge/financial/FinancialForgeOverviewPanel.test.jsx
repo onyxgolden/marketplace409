@@ -80,6 +80,26 @@ describe("FinancialForgeOverviewPanel", () => {
     }
   });
 
+  it("groups expense categories into collapsible parent buckets with a subtotal, and collapses on click", () => {
+    let mounted;
+    try {
+      mounted = mount(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
+      // Business scope here has "utilities" ($200 expense) -> grouped under "Utilities".
+      const group = mounted.container.querySelector('[data-category-group="utilities"]');
+      expect(group).not.toBeNull();
+      expect(group.textContent).toContain("Utilities");
+      expect(group.textContent).toContain("-$200.00");
+      expect(mounted.container.textContent).toContain("Utilities");
+
+      const toggle = group.querySelector("button");
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      if (mounted) unmount(mounted);
+    }
+  });
+
   it("reveals a year selector only once the Year preset is active", () => {
     let mounted;
     try {

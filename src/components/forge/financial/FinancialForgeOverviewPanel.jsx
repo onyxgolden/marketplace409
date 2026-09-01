@@ -1,6 +1,8 @@
 "use client";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { buildFinancialForgePerformance } from "@/application/financial/buildFinancialForgePerformance";
+import { groupExpenseCategory, groupOrderIndex } from "@/application/financial/expenseCategoryGroups";
 import ForgeComparisonBarChart from "@/components/forge/ForgeComparisonBarChart";
 import ForgeMonthlyTrendChart from "@/components/forge/ForgeMonthlyTrendChart";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
@@ -38,6 +40,15 @@ function formatDate(value) {
 export default function FinancialForgeOverviewPanel({ loadState, transactions = [], accounts = [] }) {
   const [scope, setScope] = useState("business");
   const [periodType, setPeriodType] = useState("sixMonths");
+  const [collapsedCategoryGroups, setCollapsedCategoryGroups] = useState(() => new Set());
+
+  function toggleCategoryGroup(key) {
+    setCollapsedCategoryGroups((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
   const [selectedYear, setSelectedYear] = useState(null);
 
   const accountsById = useMemo(
@@ -58,6 +69,16 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
     accountsById,
     period: periodType === "year" ? { type: "year", year: effectiveYear } : { type: periodType },
   }), [transactions, scope, accountsById, periodType, effectiveYear]);
+
+  const categoryGroups = useMemo(() => {
+    const groups = new Map();
+    for (const category of performance.categories) {
+      const group = groupExpenseCategory(category.category);
+      if (!groups.has(group.key)) groups.set(group.key, { key: group.key, label: group.label, items: [] });
+      groups.get(group.key).items.push(category);
+    }
+    return [...groups.values()].sort((left, right) => groupOrderIndex(left.key) - groupOrderIndex(right.key));
+  }, [performance.categories]);
 
   const currentMonth = useMemo(
     () => buildFinancialForgePerformance(transactions, { scope, accountsById, period: { type: "sixMonths" } }),
@@ -200,17 +221,42 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                {performance.categories.length === 0 ? (
+                {categoryGroups.length === 0 ? (
                   <tr><td colSpan={2} className="p-5 text-slate-500 dark:text-slate-400">No categorized activity in this period.</td></tr>
                 ) : (
-                  performance.categories.map((category) => (
-                    <tr key={category.category}>
-                      <td className="p-3 font-bold text-slate-800 dark:text-slate-200">{displayCategory(category.category)}</td>
-                      <td className={`p-3 text-right font-black tabular-nums ${category.netCents < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>
-                        {category.netCents < 0 ? `-${money.format(Math.abs(category.netCents) / 100)}` : money.format(category.netCents / 100)}
-                      </td>
-                    </tr>
-                  ))
+                  categoryGroups.map((group) => {
+                    const groupNetCents = group.items.reduce((sum, item) => sum + item.netCents, 0);
+                    const collapsed = collapsedCategoryGroups.has(group.key);
+                    return (
+                      <Fragment key={group.key}>
+                        <tr data-category-group={group.key}>
+                          <td colSpan={2} className="p-0">
+                            <button
+                              type="button" onClick={() => toggleCategoryGroup(group.key)} aria-expanded={!collapsed}
+                              className="flex w-full items-center justify-between gap-3 bg-slate-50 px-3 py-2 text-left dark:bg-slate-800/40"
+                            >
+                              <span className="flex items-center gap-2">
+                                <ChevronDown size={14} className={`text-slate-500 transition-transform dark:text-slate-400 ${collapsed ? "-rotate-90" : ""}`} />
+                                <span className="text-sm font-black text-slate-800 dark:text-slate-200">{group.label}</span>
+                                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">({group.items.length})</span>
+                              </span>
+                              <span className={`text-sm font-black tabular-nums ${groupNetCents < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>
+                                {groupNetCents < 0 ? `-${money.format(Math.abs(groupNetCents) / 100)}` : money.format(groupNetCents / 100)}
+                              </span>
+                            </button>
+                          </td>
+                        </tr>
+                        {!collapsed && group.items.map((category) => (
+                          <tr key={category.category}>
+                            <td className="p-3 pl-8 font-bold text-slate-800 dark:text-slate-200">{displayCategory(category.category)}</td>
+                            <td className={`p-3 text-right font-black tabular-nums ${category.netCents < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>
+                              {category.netCents < 0 ? `-${money.format(Math.abs(category.netCents) / 100)}` : money.format(category.netCents / 100)}
+                            </td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    );
+                  })
                 )}
               </tbody>
             </table>
