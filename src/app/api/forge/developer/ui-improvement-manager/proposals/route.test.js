@@ -104,4 +104,26 @@ describe("GET/POST /api/forge/developer/ui-improvement-manager/proposals", () =>
     await POST(jsonRequest({ findingId: "finding_1", action: "approve_preview" }));
     expect(mocks.applyProposalAction).toHaveBeenCalledTimes(1);
   });
+
+  it("treats findingId as an opaque lookup key, never as a filesystem path -- a path-traversal-shaped id is passed through unmodified, not resolved", async () => {
+    mocks.loadProgrammerAuthorization.mockResolvedValue(AUTHORIZED);
+    const { ProposalStoreError } = await import("../../../../../../../scripts/ui-improvement-manager/finding-engine/proposalStore.mjs");
+    mocks.applyProposalAction.mockImplementation(() => { throw new ProposalStoreError("not_found", "No finding with that id."); });
+    const traversal = "../../../../../../etc/passwd";
+    const response = await POST(jsonRequest({ findingId: traversal, action: "reject" }));
+    expect(response.status).toBe(404);
+    // The exact string reaches proposalStore untouched -- it is never joined into a path or resolved
+    // by this route before being handed off, so proposalStore's own array .find() lookup (never a
+    // filesystem read keyed by this value) is the only thing that ever sees it.
+    expect(mocks.applyProposalAction.mock.calls[0][1]).toBe(traversal);
+  });
+
+  it("always targets the same fixed local evidence directory regardless of request-supplied values", async () => {
+    mocks.loadProgrammerAuthorization.mockResolvedValue(AUTHORIZED);
+    mocks.applyProposalAction.mockReturnValue({ ...finding, status: "rejected" });
+    await POST(jsonRequest({ findingId: "finding_1", action: "reject", evidenceDir: "/tmp/attacker-controlled" }));
+    const [evidenceDirArg] = mocks.applyProposalAction.mock.calls[0];
+    expect(evidenceDirArg).not.toContain("attacker-controlled");
+    expect(evidenceDirArg).toContain("ui-improvement-manager");
+  });
 });

@@ -10,13 +10,18 @@
 // references as its evidence) -- run that CLI first. This CLI only ever reads that manifest and
 // writes findings-manifest.json; it never edits an application file, never touches Git, and never
 // authorizes commit/push/PR/merge/deployment/migration/Production access.
+//
+// `runCli` is exported separately from the `main()` auto-invocation (mirroring
+// scripts/repair-controller/dryRunRepairAuthorityCli.mjs's own testability pattern) so a test can
+// exercise its argument parsing, fail-closed checks, and manifest-cross-referencing logic against an
+// injected `captureDiagnostics` function, without ever launching a real browser.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { runDiagnosticsEvidenceCapture } from "./captureDiagnosticsEvidence.mjs";
 import { runFindingEngine } from "./findingEngine.mjs";
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const args = { routeIds: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
@@ -28,48 +33,58 @@ function parseArgs(argv) {
   return args;
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+export class FindingEngineCliError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "FindingEngineCliError";
+  }
+}
+
+// `captureDiagnostics` defaults to the real Playwright-backed capture but is injectable so tests can
+// supply a fixture-driven stand-in -- the same shape runDiagnosticsEvidenceCapture returns:
+// [{ routeId, routePath, snapshots: { desktop, tablet, mobile } }, ...].
+export async function runCli(argv, { captureDiagnostics = runDiagnosticsEvidenceCapture } = {}) {
+  const args = parseArgs(argv);
   if (!args.baseUrl || !args.evidenceDir) {
-    console.error("Usage: runFindingEngineCli.mjs --base-url <url> --evidence-dir <dir> [--route <routeId> ...] [--application <name>]");
-    process.exitCode = 1;
-    return;
+    throw new FindingEngineCliError("Usage: runFindingEngineCli.mjs --base-url <url> --evidence-dir <dir> [--route <routeId> ...] [--application <name>]");
   }
 
   const screenshotManifestPath = path.join(args.evidenceDir, "manifest.json");
   if (!existsSync(screenshotManifestPath)) {
-    console.error(`No screenshot-evidence manifest at "${screenshotManifestPath}". Run captureScreenshotEvidenceCli.mjs (FB-UI-1) against the same --evidence-dir first.`);
-    process.exitCode = 1;
-    return;
+    throw new FindingEngineCliError(`No screenshot-evidence manifest at "${screenshotManifestPath}". Run captureScreenshotEvidenceCli.mjs (FB-UI-1) against the same --evidence-dir first.`);
   }
   const screenshotManifest = JSON.parse(readFileSync(screenshotManifestPath, "utf8"));
 
-  try {
-    const diagnosticsByRoute = await runDiagnosticsEvidenceCapture({ baseUrl: args.baseUrl, routeIds: args.routeIds });
+  const diagnosticsByRoute = await captureDiagnostics({ baseUrl: args.baseUrl, routeIds: args.routeIds });
 
-    const routeEvidenceList = diagnosticsByRoute.map((route) => {
-      const screenshotHashes = {};
-      for (const viewport of ["desktop", "tablet", "mobile"]) {
-        const entry = screenshotManifest.entries.find((e) => e.routeId === route.routeId && e.viewport === viewport && e.kind === "full-page");
-        if (!entry) throw new Error(`No full-page screenshot evidence found for route "${route.routeId}" / viewport "${viewport}" in ${screenshotManifestPath}`);
-        screenshotHashes[viewport] = entry.screenshotHash;
-      }
-      return {
-        application: args.application || "409 Marketplace FORGE", routeId: route.routeId, routePath: route.routePath,
-        snapshots: route.snapshots, screenshotHashes,
-      };
-    });
-
-    const manifest = runFindingEngine(routeEvidenceList);
-    writeFileSync(path.join(args.evidenceDir, "findings-manifest.json"), JSON.stringify(manifest, null, 2));
-    console.log(`Wrote ${manifest.findings.length} findings to ${args.evidenceDir}/findings-manifest.json`);
-    for (const finding of manifest.findings) {
-      console.log(`  [${finding.severity}] ${finding.category} @ ${finding.routeId}/${finding.viewport} -> ${finding.affectedComponent || "(page-level)"}`);
+  const routeEvidenceList = diagnosticsByRoute.map((route) => {
+    const screenshotHashes = {};
+    for (const viewport of ["desktop", "tablet", "mobile"]) {
+      const entry = screenshotManifest.entries.find((e) => e.routeId === route.routeId && e.viewport === viewport && e.kind === "full-page");
+      if (!entry) throw new FindingEngineCliError(`No full-page screenshot evidence found for route "${route.routeId}" / viewport "${viewport}" in ${screenshotManifestPath}`);
+      screenshotHashes[viewport] = entry.screenshotHash;
     }
-  } catch (error) {
-    console.error(`Finding engine failed closed: ${error.name}: ${error.message}`);
-    process.exitCode = 1;
-  }
+    return {
+      application: args.application || "409 Marketplace FORGE", routeId: route.routeId, routePath: route.routePath,
+      snapshots: route.snapshots, screenshotHashes,
+    };
+  });
+
+  const manifest = runFindingEngine(routeEvidenceList);
+  writeFileSync(path.join(args.evidenceDir, "findings-manifest.json"), JSON.stringify(manifest, null, 2));
+  return manifest;
 }
 
-main();
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runCli(process.argv.slice(2))
+    .then((manifest) => {
+      console.log(`Wrote ${manifest.findings.length} findings to findings-manifest.json`);
+      for (const finding of manifest.findings) {
+        console.log(`  [${finding.severity}] ${finding.category} @ ${finding.routeId}/${finding.viewport} -> ${finding.affectedComponent || "(page-level)"}`);
+      }
+    })
+    .catch((error) => {
+      console.error(`Finding engine failed closed: ${error.name}: ${error.message}`);
+      process.exitCode = 1;
+    });
+}

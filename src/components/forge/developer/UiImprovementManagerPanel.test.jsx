@@ -82,6 +82,27 @@ describe("UiImprovementManagerPanel", () => {
     for (const expected of ["Review", "Reject", "Request revision", "Approve preview"]) expect(labels).toContain(expected);
   });
 
+  it("disables every review action button while a request is pending, and re-enables them once it resolves", async () => {
+    let resolveAction;
+    const actionPromise = new Promise((resolve) => { resolveAction = resolve; });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, { success: true, findings: [deterministicFinding] }))
+      .mockImplementationOnce(() => actionPromise);
+    vi.stubGlobal("fetch", fetchMock);
+    mounted = mount(<UiImprovementManagerPanel />);
+    await flush();
+
+    const rejectButton = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent === "Reject");
+    act(() => { rejectButton.click(); });
+    await flush();
+    const actionButtonsWhilePending = [...mounted.container.querySelectorAll("button")].filter((b) => ["Review", "Reject", "Request revision", "Approve preview"].includes(b.textContent));
+    expect(actionButtonsWhilePending.every((b) => b.disabled)).toBe(true);
+
+    await act(async () => { resolveAction(response(200, { success: true, finding: { ...deterministicFinding, status: "rejected" } })); await Promise.resolve(); await Promise.resolve(); });
+    const actionButtonsAfter = [...mounted.container.querySelectorAll("button")].filter((b) => ["Review", "Reject", "Request revision", "Approve preview"].includes(b.textContent));
+    expect(actionButtonsAfter.every((b) => !b.disabled)).toBe(true);
+  });
+
   it("posts the correct findingId and action, and updates the displayed status, when Approve preview is clicked", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response(200, { success: true, findings: [deterministicFinding] }))
