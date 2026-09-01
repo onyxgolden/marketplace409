@@ -3,14 +3,17 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { resetPasswordForEmail } = vi.hoisted(() => ({ resetPasswordForEmail: vi.fn() }));
+const { resetPasswordForEmail, signInWithPassword } = vi.hoisted(() => ({
+  resetPasswordForEmail: vi.fn(),
+  signInWithPassword: vi.fn(),
+}));
 
 vi.mock("@/components/Header", () => ({ default: () => React.createElement("header", null, "409 Marketplace") }));
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({
     auth: {
       resetPasswordForEmail,
-      signInWithPassword: vi.fn(),
+      signInWithPassword,
       signOut: vi.fn(),
       signUp: vi.fn(),
     },
@@ -35,6 +38,7 @@ describe("AuthPage password controls", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     resetPasswordForEmail.mockReset().mockResolvedValue({ error: null });
+    signInWithPassword.mockReset().mockResolvedValue({ data: { session: {}, user: { id: "user-1" } }, error: null });
     act(() => root.render(React.createElement(AuthPage)));
   });
 
@@ -65,5 +69,16 @@ describe("AuthPage password controls", () => {
       redirectTo: `${window.location.origin}/auth/reset-password`,
     });
     expect(container.textContent).toContain("Check your email for a secure password-reset link.");
+  });
+
+  it("redirects immediately after sign-in without showing a success alert", async () => {
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const signIn = [...container.querySelectorAll("button")].find((button) => button.textContent === "Sign In");
+
+    await act(async () => signIn.click());
+
+    expect(signInWithPassword).toHaveBeenCalledOnce();
+    expect(alertSpy).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
   });
 });
