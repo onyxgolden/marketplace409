@@ -34,6 +34,10 @@ export function summarizeBorrowerEvents(events) {
   };
 }
 
+export function borrowerIdentityIds(rows) {
+  return [...new Set((rows || []).map((row) => row.id).filter(Boolean))];
+}
+
 export function buildBorrowerProjectionModel({ eventRows, componentRows, termsRows, asOfDate = todayISODate() }) {
   // The borrower-safe ledger RPC intentionally omits owner_id and created_by. Those fields are required
   // for structural contract validation but never participate in balance math, so hydrate them only inside
@@ -121,7 +125,13 @@ export async function GET() {
     return NextResponse.json({ error: "Sign in to view your financing account.", signInUrl: "/auth?next=/forge/private-financing/portal" }, { status: 401 });
   }
   const claim = await db.rpc("claim_private_financing_borrower_portal");
-  const memberships = await db.from("private_financing_account_borrowers").select("account_id,role,status").eq("status", "active");
+  const identities = await db.from("private_financing_borrowers").select("id").eq("auth_user_id", user.id);
+  const identityIds = borrowerIdentityIds(identities.data);
+  const memberships = identities.error
+    ? { data: null, error: identities.error }
+    : identityIds.length
+      ? await db.from("private_financing_account_borrowers").select("account_id,role,status").eq("status", "active").in("borrower_id", identityIds)
+      : { data: [], error: null };
   if (memberships.error) return NextResponse.json({ error: "Unable to load borrower access." }, { status: 500 });
   if (claim.error && !(memberships.data || []).length) {
     console.error("Private financing borrower claim failed", { code: claim.error.code || "unknown" });
