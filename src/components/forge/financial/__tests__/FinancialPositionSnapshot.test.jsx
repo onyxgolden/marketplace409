@@ -1,4 +1,8 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import {
+  afterEach,
   describe,
   expect,
   it,
@@ -56,5 +60,43 @@ describe("FinancialPositionSnapshot", () => {
     );
 
     expect(markup).toContain("<table");
+  });
+
+  describe("collapsing", () => {
+    let mounted;
+
+    afterEach(() => {
+      if (mounted) {
+        act(() => { mounted.root.unmount(); });
+        mounted.container.remove();
+        mounted = null;
+      }
+    });
+
+    it("starts expanded and collapses/expands the table on click, toggling aria-expanded", () => {
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      act(() => {
+        root.render(
+          <FinancialPositionSnapshot
+            lines={[{ accountId: "cash", accountName: "Cash", amount: "$125,000", isNegative: false }]}
+          />,
+        );
+      });
+      mounted = { container, root };
+
+      const toggle = container.querySelector("button");
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(container.querySelector("table")).not.toBeNull();
+
+      act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(container.querySelector("table")).toBeNull();
+
+      act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(container.querySelector("table")).not.toBeNull();
+    });
   });
 });
