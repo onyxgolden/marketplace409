@@ -32,11 +32,12 @@ describe("rental existing-record safety", () => {
     expect(unitMarkup).toContain("File library");
     expect(unitMarkup).not.toContain("Save Kent Avenue unit");
     expect(tenantMarkup).toContain("Add a new tenant");
-    expect(tenantMarkup).toContain("Selected tenant");
+    expect(tenantMarkup).toContain("Tenant household");
+    expect(tenantMarkup).toContain("Primary tenant");
     expect(tenantMarkup).toContain("Tenant actions");
     expect(tenantMarkup).toContain("Rent &amp; payments");
     expect(tenantMarkup).toContain("Messaging");
     expect(tenantMarkup).toContain("File library");
-    expect(tenantMarkup).not.toContain("Save tenant");
+    expect(tenantMarkup).not.toContain(">Save tenant</button>");
   });
 });

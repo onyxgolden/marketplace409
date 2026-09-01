@@ -134,7 +134,7 @@ function Field({
   children,
 }) {
   return (
-    <label className="text-xs font-black uppercase tracking-wide text-slate-600">
+    <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
       {label}
       {children}
     </label>
@@ -142,7 +142,7 @@ function Field({
 }
 
 const INPUT_CLASS =
-  "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950";
+  "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700";
 
 export default function PropertyHVACPanel() {
   const [
@@ -424,21 +424,21 @@ export default function PropertyHVACPanel() {
       data-property-hvac-panel
       className={
         workflow === null
-          ? "max-w-5xl rounded-2xl border border-slate-200 bg-white p-6"
-          : "rounded-2xl border border-slate-200 bg-white p-6"
+          ? "max-w-5xl rounded-2xl border border-slate-200 bg-white p-6 dark:bg-slate-900 dark:border-slate-800"
+          : "rounded-2xl border border-slate-200 bg-white p-6 dark:bg-slate-900 dark:border-slate-800"
       }
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="text-xs font-black uppercase tracking-wide text-sky-700">
+          <div className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">
             Major Systems
           </div>
 
-          <h4 className="mt-2 text-xl font-black text-slate-950">
+          <h4 className="mt-2 text-xl font-black text-slate-950 dark:text-slate-50">
             HVAC systems, components, and service history
           </h4>
 
-          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
             Record each system separately so service, components, failures, and replacements remain easy to follow.
           </p>
         </div>
@@ -446,13 +446,13 @@ export default function PropertyHVACPanel() {
       </div>
 
       {workflow === "add-system" && (
-      <div className="mt-6 rounded-2xl border border-sky-200 bg-sky-50 p-5">
+      <div className="mt-6 rounded-2xl border border-sky-200 bg-sky-50 p-5 dark:bg-sky-950/30">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-xs font-black uppercase tracking-wide text-sky-700">
+            <div className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">
               System Setup
             </div>
-            <h5 className="mt-1 text-lg font-black text-slate-950">
+            <h5 className="mt-1 text-lg font-black text-slate-950 dark:text-slate-50">
               {systems.length === 0
                 ? "Add this property’s first HVAC system"
                 : "Add another HVAC system"}
@@ -464,7 +464,7 @@ export default function PropertyHVACPanel() {
             onClick={() =>
               setWorkflow(null)
             }
-            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-700"
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700"
           >
             Back
           </button>
@@ -775,7 +775,7 @@ export default function PropertyHVACPanel() {
         {message && (
           <p
             role="status"
-            className="mt-3 text-sm font-bold text-slate-600"
+            className="mt-3 text-sm font-bold text-slate-600 dark:text-slate-300"
           >
             {message}
           </p>
@@ -813,9 +813,9 @@ export default function PropertyHVACPanel() {
         </Field>
       </div>
 
-      <div className="mt-7 max-w-3xl border-t border-slate-200 pt-6">
+      <div className="mt-7 max-w-3xl border-t border-slate-200 pt-6 dark:border-slate-800">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h5 className="text-sm font-black text-slate-950">
+          <h5 className="text-sm font-black text-slate-950 dark:text-slate-50">
             HVAC systems
           </h5>
 
@@ -825,7 +825,7 @@ export default function PropertyHVACPanel() {
               onClick={() =>
                 setWorkflow("add-system")
               }
-              className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-black text-sky-800"
+              className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-black text-sky-800 dark:bg-sky-950/30"
             >
               Add another HVAC system
             </button>
@@ -833,12 +833,12 @@ export default function PropertyHVACPanel() {
         </div>
 
         {loading ? (
-          <p className="mt-3 text-sm font-semibold text-slate-500">
+          <p className="mt-3 text-sm font-semibold text-slate-500 dark:text-slate-400">
             Loading HVAC systems...
           </p>
         ) : systems.length === 0 ? (
-          <div className="mt-4 max-w-xl rounded-2xl border border-sky-200 bg-sky-50 p-5">
-            <p className="text-base font-black text-slate-950">
+          <div className="mt-4 max-w-xl rounded-2xl border border-sky-200 bg-sky-50 p-5 dark:bg-sky-950/30">
+            <p className="text-base font-black text-slate-950 dark:text-slate-50">
               No HVAC system is recorded for this property.
             </p>
 
@@ -857,13 +857,13 @@ export default function PropertyHVACPanel() {
             {systems.map((system) => (
               <article
                 key={system.id}
-                className="rounded-xl border border-slate-200 p-4"
+                className="rounded-xl border border-slate-200 p-4 dark:border-slate-800"
               >
-                <div className="text-sm font-black text-slate-950">
+                <div className="text-sm font-black text-slate-950 dark:text-slate-50">
                   {system.name}
                 </div>
 
-                <div className="mt-1 text-xs font-bold text-slate-500">
+                <div className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-400">
                   {displayValue(
                     system.systemType,
                   )}
@@ -873,7 +873,7 @@ export default function PropertyHVACPanel() {
                   )}
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600">
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
                   <span>
                     {system.manufacturer ||
                       "Manufacturer unknown"}

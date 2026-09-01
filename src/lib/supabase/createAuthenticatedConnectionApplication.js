@@ -9,6 +9,8 @@ import {
 
 import { createClient } from "@/lib/supabase/server";
 
+import { resolveEffectiveOwnerId } from "@/lib/supabase/resolveEffectiveOwnerId";
+
 export async function createAuthenticatedConnectionApplication() {
   const supabaseClient = await createClient();
 
@@ -30,7 +32,12 @@ export async function createAuthenticatedConnectionApplication() {
     };
   }
 
-  const currentOwnerId = async () => user.id;
+  const effectiveOwnerId = await resolveEffectiveOwnerId({
+    supabaseClient,
+    actorUserId: user.id,
+  });
+
+  const currentOwnerId = async () => effectiveOwnerId;
 
   let connectionPlatformSuite;
 
@@ -39,7 +46,7 @@ export async function createAuthenticatedConnectionApplication() {
       connectionPlatformSuite =
         await createConnectionPlatformSuite({
           supabaseClient,
-          ownerId: user.id,
+          ownerId: effectiveOwnerId,
           currentOwnerId,
           connectionRepositoryStorage:
             ConnectionRepositoryStorage.SUPABASE,
@@ -56,6 +63,7 @@ export async function createAuthenticatedConnectionApplication() {
   return {
     supabaseClient,
     user,
+    effectiveOwnerId,
     currentOwnerId,
     getConnectionPlatformSuite,
   };

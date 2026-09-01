@@ -4,8 +4,64 @@ import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBill
 import { normalizeStripeConnectEvent } from "@/infrastructure/billing/normalizeStripeConnectEvent";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { isWebhookEventAlreadySettled, webhookLivemodeMatchesServerMode } from "@/application/rental/stripeWebhookLedger";
+import { projectStripePayment, projectStripeFeeCredit, projectStripeRefund } from "@/domains/private-financing/stripePaymentProjection";
 
 export const runtime = "nodejs";
+
+async function processPrivateFinancingPaymentEvent(db, provider, normalized) {
+  const paymentResult = await db.from("private_financing_online_payments").select("*")
+    .eq("provider", "stripe").eq("provider_mode", provider.mode).eq("id", normalized.paymentId).maybeSingle();
+  if (paymentResult.error) throw paymentResult.error;
+  if (!paymentResult.data) throw new Error("Private financing payment was not found.");
+  if (normalized.eventType === "payment_intent.processing") {
+    return db.rpc("update_private_financing_stripe_payment_status", { p_payment_id: normalized.paymentId,
+      p_provider_mode: provider.mode, p_status: "processing", p_failure_code: null, p_failure_message: null });
+  }
+  if (normalized.eventType === "payment_intent.payment_failed") {
+    return db.rpc("update_private_financing_stripe_payment_status", { p_payment_id: normalized.paymentId,
+      p_provider_mode: provider.mode, p_status: "failed", p_failure_code: normalized.failureCode,
+      p_failure_message: normalized.failureMessage ? "Stripe reported that the payment failed." : null });
+  }
+  if (normalized.eventType !== "payment_intent.succeeded") return { data: { ignored: true }, error: null };
+  const payment = paymentResult.data;
+  const [events, components, terms] = await Promise.all([
+    db.from("private_financing_events").select("*").eq("owner_id", payment.owner_id).eq("account_id", payment.account_id).order("ledger_sequence", { ascending: true }),
+    db.from("private_financing_components").select("*").eq("owner_id", payment.owner_id).eq("account_id", payment.account_id),
+    db.from("private_financing_account_terms_versions").select("*").eq("owner_id", payment.owner_id).eq("account_id", payment.account_id),
+  ]);
+  if (events.error || components.error || terms.error) throw events.error || components.error || terms.error;
+  const projected = projectStripePayment({ eventRows: events.data || [], componentRows: components.data || [],
+    termsRows: terms.data || [], payment, effectiveDate: normalized.occurredAt.slice(0, 10) });
+  return db.rpc("complete_private_financing_stripe_payment", projected.rpcParams);
+}
+
+async function creditPrivateFinancingStripeFee(db, provider, paymentIntentId, feeCents, effectiveDate) {
+  const found = await db.from("private_financing_online_payments").select("*").eq("provider", "stripe")
+    .eq("provider_mode", provider.mode).eq("provider_payment_id", paymentIntentId).maybeSingle();
+  if (found.error) throw found.error;
+  if (!found.data) return null;
+  if (!Number.isSafeInteger(feeCents) || feeCents <= 0) {
+    return { data: { ignored: true, reason: "no_stripe_fee" }, error: null };
+  }
+  const payment = found.data;
+  const [events, components, terms] = await Promise.all([
+    db.from("private_financing_events").select("*").eq("owner_id", payment.owner_id).eq("account_id", payment.account_id).order("ledger_sequence", { ascending: true }),
+    db.from("private_financing_components").select("*").eq("owner_id", payment.owner_id).eq("account_id", payment.account_id),
+    db.from("private_financing_account_terms_versions").select("*").eq("owner_id", payment.owner_id).eq("account_id", payment.account_id),
+  ]);
+  if (events.error || components.error || terms.error) throw events.error || components.error || terms.error;
+  return db.rpc("credit_private_financing_stripe_fee", projectStripeFeeCredit({ eventRows: events.data || [],
+    componentRows: components.data || [], termsRows: terms.data || [], payment, feeCents, effectiveDate }));
+}
+
+async function processPrivateFinancingRefund(db, provider, normalized) {
+  let query=db.from("private_financing_online_payments").select("*").eq("provider","stripe").eq("provider_mode",provider.mode);
+  query=normalized.paymentId?.startsWith("pf_payment_")?query.eq("id",normalized.paymentId):query.eq("provider_payment_id",normalized.paymentIntentId);
+  const found=await query.maybeSingle();if(found.error)throw found.error;if(!found.data)return null;const payment=found.data;
+  if(normalized.refundedAmountCents!==Number(payment.amount_cents))return db.rpc("update_private_financing_stripe_payment_status",{p_payment_id:payment.id,p_provider_mode:provider.mode,p_status:"partially_refunded",p_failure_code:"partial_refund_requires_seller_review",p_failure_message:"A partial Stripe refund requires a seller ledger correction."});
+  const [events,components,terms]=await Promise.all([db.from("private_financing_events").select("*").eq("owner_id",payment.owner_id).eq("account_id",payment.account_id).order("ledger_sequence",{ascending:true}),db.from("private_financing_components").select("*").eq("owner_id",payment.owner_id).eq("account_id",payment.account_id),db.from("private_financing_account_terms_versions").select("*").eq("owner_id",payment.owner_id).eq("account_id",payment.account_id)]);if(events.error||components.error||terms.error)throw events.error||components.error||terms.error;
+  return db.rpc("reverse_private_financing_stripe_payment",projectStripeRefund({eventRows:events.data||[],componentRows:components.data||[],termsRows:terms.data||[],payment,refundId:normalized.objectId,effectiveDate:normalized.occurredAt.slice(0,10)}));
+}
 
 function configuredWebhookSecrets(env = process.env) {
   return [env.STRIPE_CONNECT_WEBHOOK_SECRET, env.STRIPE_WEBHOOK_SECRET_PLATFORM]
@@ -103,6 +159,7 @@ export async function POST(request) {
         refundPaymentId = matchedPayment?.id || null;
       }
       let projection;
+      let processedPrivateFinancing = false;
       if (
         (normalized.eventType === "charge.succeeded" || normalized.eventType === "charge.updated")
         && normalized.objectId
@@ -120,7 +177,11 @@ export async function POST(request) {
           { connectedAccountId: normalized.connectedAccountId },
           balanceTransactionId,
         );
-        projection = await supabase.rpc("record_stripe_rental_settlement", {
+        const privateFeeCredit = await creditPrivateFinancingStripeFee(
+          supabase, provider, paymentIntentId, balance.feeAmountCents, normalized.occurredAt.slice(0, 10),
+        );
+        processedPrivateFinancing = Boolean(privateFeeCredit);
+        projection = privateFeeCredit || await supabase.rpc("record_stripe_rental_settlement", {
           p_provider_event_id: normalized.providerEventId,
           p_connected_account_id: normalized.connectedAccountId,
           p_payment_intent_id: paymentIntentId,
@@ -135,11 +196,20 @@ export async function POST(request) {
         });
       }
       else if(normalized.eventType==="payout.paid"){const ids=await provider.listPayoutBalanceTransactionIds({connectedAccountId:normalized.connectedAccountId},normalized.objectId);projection=await supabase.rpc("mark_stripe_rental_settlements_paid_out",{p_provider_event_id:normalized.providerEventId,p_connected_account_id:normalized.connectedAccountId,p_payout_id:normalized.objectId,p_balance_transaction_ids:ids,p_paid_out_at:normalized.occurredAt,p_provider_mode:provider.mode});}
-      else projection = normalized.eventType === "refund.updated" ? await supabase.rpc("process_stripe_rental_refund_event", {
-        p_provider_event_id: normalized.providerEventId, p_connected_account_id: normalized.connectedAccountId,
-        p_payment_id: refundPaymentId, p_refunded_amount_cents: normalized.refundedAmountCents, p_occurred_at: normalized.occurredAt,
-        p_provider_mode: provider.mode,
-      }) : await supabase.rpc("process_stripe_rental_payment_event", {
+      else if(normalized.eventType==="refund.updated"){
+        const privateRefund=await processPrivateFinancingRefund(supabase,provider,normalized);
+        if(privateRefund){projection=privateRefund;processedPrivateFinancing=true;}
+        else projection=await supabase.rpc("process_stripe_rental_refund_event", {
+          p_provider_event_id: normalized.providerEventId, p_connected_account_id: normalized.connectedAccountId,
+          p_payment_id: refundPaymentId, p_refunded_amount_cents: normalized.refundedAmountCents, p_occurred_at: normalized.occurredAt,
+          p_provider_mode: provider.mode,
+        });
+      }
+      else if (normalized.paymentId?.startsWith("pf_payment_") && normalized.eventType.startsWith("payment_intent.")) {
+        projection = await processPrivateFinancingPaymentEvent(supabase, provider, normalized);
+        processedPrivateFinancing = true;
+      }
+      else projection = await supabase.rpc("process_stripe_rental_payment_event", {
         p_provider_event_id: normalized.providerEventId,
         p_connected_account_id: normalized.connectedAccountId,
         p_event_type: normalized.eventType,
@@ -151,6 +221,10 @@ export async function POST(request) {
         p_provider_mode: provider.mode,
       });
       if (projection.error) throw projection.error;
+      if (processedPrivateFinancing) {
+        const completed = await supabase.from("payment_webhook_events").update({ status: "processed", processed_at: new Date().toISOString(), failure_message: null }).eq("id", eventRowId);
+        if (completed.error) throw completed.error;
+      }
       if(normalized.eventType==="payment_intent.succeeded"&&normalized.paymentId&&normalized.paymentMethodId){const activation=await supabase.rpc("activate_rental_autopay_from_payment",{p_connected_account_id:normalized.connectedAccountId,p_payment_id:normalized.paymentId,p_payment_method_id:normalized.paymentMethodId,p_mandate_id:normalized.mandateId,p_provider_mode:provider.mode});if(activation.error)throw activation.error;}
     }
     return NextResponse.json({ received: true });

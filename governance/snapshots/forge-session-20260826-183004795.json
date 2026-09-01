@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "1.0",
+  "sessionId": "forge-session-20260826-183004795",
+  "sessionDate": "2026-08-26",
+  "phase": {
+    "identifier": "REVIEW_REQUIRED",
+    "title": "REVIEW_REQUIRED",
+    "status": "incomplete"
+  },
+  "objective": {
+    "startingObjective": "REVIEW_REQUIRED",
+    "endingObjective": "REVIEW_REQUIRED"
+  },
+  "repository": {
+    "head": "a824b5d713bd124370791f94e27c8137ce5afe0f",
+    "originMain": "a824b5d713bd124370791f94e27c8137ce5afe0f",
+    "branch": "main",
+    "workingTreeClean": true,
+    "implementationCommit": null,
+    "governanceCommit": null
+  },
+  "work": {
+    "delivered": [],
+    "modifiedFiles": [],
+    "knownWarnings": []
+  },
+  "validation": {
+    "focusedTests": {
+      "status": "passing",
+      "command": "npx vitest run scripts/governance/__tests__/collectSessionEvidence.test.mjs",
+      "summary": "RUN  v4.1.9 /home/runner/work/marketplace409/marketplace409\n\n ✓ scripts/governance/__tests__/collectSessionEvidence.test.mjs (11 tests) 1344ms\n\n Test Files  1 passed (1)\n      Tests  11 passed (11)\n   Start at  18:30:02\n   Duration  1.54s (transform 29ms, setup 0ms, import 46ms, tests 1.34s, environment 0ms)"
+    },
+    "fullTests": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    },
+    "productionBuild": {
+      "status": "not-run",
+      "command": null,
+      "summary": null
+    }
+  },
+  "completion": {
+    "workComplete": false,
+    "supportedByEvidence": false,
+    "incompleteReason": "The repository evidence collector does not infer session completion. Human review is required."
+  },
+  "nextSession": {
+    "objective": "REVIEW_REQUIRED",
+    "startingInspection": "REVIEW_REQUIRED"
+  },
+  "evidence": {
+    "capturedAt": "2026-08-26T18:30:04.795Z",
+    "latestCommit": {
+      "hash": "a824b5d713bd124370791f94e27c8137ce5afe0f",
+      "subject": "Merge pull request #30 from onyxgolden/feat/forge-governance-refresh-workflow",
+      "committedAt": "2026-08-26T13:28:54-05:00"
+    },
+    "headMatchesOriginMain": true,
+    "gitStatus": [],
+    "selectedValidationArtifact": {
+      "path": "governance/validation/forge-validation-20260826-183002.json",
+      "validationId": "forge-validation-20260826-183002",
+      "completedAt": "2026-08-26T18:30:04.509Z",
+      "repositoryHead": "a824b5d713bd124370791f94e27c8137ce5afe0f"
+    }
+  }
+}

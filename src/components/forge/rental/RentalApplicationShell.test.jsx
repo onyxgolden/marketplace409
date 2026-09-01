@@ -46,7 +46,7 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
 
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
-    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "renewal", "setup", "reservable-inventory", "reservations", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "private-financing", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
   });
   it("renders an exception-first summary in grouped navigation", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
@@ -63,6 +63,32 @@ describe("RentalApplicationShell", () => {
   it("renders functional tenant and lease setup surfaces", () => {
     expect(renderToStaticMarkup(buildRentalSurface("tenants"))).toContain("Tenants");
     expect(renderToStaticMarkup(buildRentalSurface("leases"))).toContain("Leases and rent schedules");
+  });
+  it("renders RV and short-term rental inventory without drivable RV operations", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("reservable-inventory"));
+    expect(markup).toContain("RV &amp; short-term rentals");
+    expect(markup).toContain("Configure reservable spaces and stays");
+    expect(markup).not.toMatch(/mileage|fuel|VIN/);
+  });
+  it("renders reservation preview and confirmation as a separate surface", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("reservations"));
+    expect(markup).toContain("Reservation calendar &amp; bookings");
+    expect(markup).toContain("No payment is charged here");
+    expect(markup).toContain("Preview reservation");
+  });
+  it("renders the first-tenant readiness surface as its own reachable function", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("readiness"));
+    expect(markup).toContain("Prepare a tenant for move-in");
+  });
+  it("renders the private-financing surface as its own reachable function under Money", () => {
+    const moneyGroup = RENTAL_NAVIGATION.find((group) => group.label === "Money");
+    expect(moneyGroup.items.map(({ id }) => id)).toContain("private-financing");
+    const markup = renderToStaticMarkup(buildRentalSurface("private-financing"));
+    expect(markup).toContain("Private Financing");
+  });
+  it("renders the lease-renewal surface as its own reachable function", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("renewal"));
+    expect(markup).toContain("Renew an expiring lease");
   });
   it("renders a preview-only Rentec migration surface",()=>{const markup=renderToStaticMarkup(buildRentalSurface("rentec-migration"));expect(markup).toContain("Import from Rentec Direct");expect(markup).toContain("cannot write Rentec or FORGE records");});
   it("renders a metadata-only Rentec file inventory",()=>{const markup=renderToStaticMarkup(buildRentalSurface("rentec-files"));expect(markup).toContain("Rentec files and renter photos");expect(markup).toContain("Inspect Rentec files");expect(markup).toContain("file names and contents are not returned");});
@@ -128,4 +154,33 @@ describe("RentalApplicationShell", () => {
     expect(markup).toContain('data-active-function="financial-setup"');
     expect(markup).toContain("Loading financial setup");
   });
+  it("renders a contextual Help control without opening the guide initially", () => {
+    const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="maintenance" onFunctionChange={() => {}} />);
+    expect(markup).toContain('title="Rental Manager workflows and button guide"');
+    expect(markup).not.toContain("data-rental-help");
+  });
+
+  it("opens help for the active section and closes it without changing the selected Rental Manager function", () => {
+    const visited = [];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      act(() => root.render(<RentalApplicationShell activeFunctionId="charges" onFunctionChange={(id) => visited.push(id)} />));
+      const helpButton = container.querySelector('button[title="Rental Manager workflows and button guide"]');
+      expect(helpButton).not.toBeNull();
+      act(() => helpButton.click());
+      const help = container.querySelector("[data-rental-help]");
+      expect(help).not.toBeNull();
+      expect(help.textContent).toContain("Rent & Payments");
+      const closeButton = Array.from(help.querySelectorAll("button")).find((button) => button.textContent === "Close");
+      act(() => closeButton.click());
+      expect(container.querySelector("[data-rental-help]")).toBeNull();
+      expect(visited).toEqual([]);
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
+
 });

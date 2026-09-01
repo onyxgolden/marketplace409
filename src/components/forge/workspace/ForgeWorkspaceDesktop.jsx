@@ -80,25 +80,25 @@ export default function ForgeWorkspaceDesktop({
 
       <details
         data-workspace-information-center
-        className="mb-6 rounded-2xl border border-slate-200 bg-white shadow-sm"
+        className="mb-6 rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
       >
         <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-5 py-4">
           <div>
-            <div className="text-sm font-black text-slate-950">
+            <div className="text-sm font-black text-slate-950 dark:text-slate-50">
               Information center
             </div>
 
-            <div className="mt-1 text-xs font-semibold text-slate-500">
+            <div className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
               Alerts, insights, activity, and quick actions
             </div>
           </div>
 
-          <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700">
+          <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700 dark:bg-slate-800 dark:text-slate-300">
             {(alertItems || []).length} alerts
           </div>
         </summary>
 
-        <div className="border-t border-slate-200 p-4">
+        <div className="border-t border-slate-200 p-4 dark:border-slate-800">
           <ForgeInformationCenter
             alerts={alertItems}
             insights={insightItems}

@@ -25,4 +25,21 @@ describe("RentalRecordBrowser", () => {
     expect(markup).toContain(">Vacant<");
     expect(markup).toContain('role="button"');
   });
+  it("supports a wider list for data-heavy screens", () => {
+    const markup = renderToStaticMarkup(<RentalRecordBrowser title="Tenants" records={[]} selectedId={null} onSelect={() => {}} listSize="wide" emptyMessage="No tenants"><p>Detail</p></RentalRecordBrowser>);
+    expect(markup).toContain('data-list-size="wide"');
+    expect(markup).toContain("minmax(520px,1.4fr)");
+  });
+  it("keeps selected rows and record surfaces readable in dark mode", () => {
+    const records = [{ id: "tenant_1", name: "Ashley George", property: "930 Highland Drive" }];
+    const markup = renderToStaticMarkup(<RentalRecordBrowser title="Tenants" records={records} selectedId="tenant_1" onSelect={() => {}}
+      columns={[{ header: "Tenant", render: (item) => <strong className="dark:text-white">{item.name}</strong> }, { header: "Property", render: (item) => item.property }]}>
+      <p>Tenant detail</p>
+    </RentalRecordBrowser>);
+    expect(markup).toContain("dark:bg-sky-950/60");
+    expect(markup).toContain("dark:bg-slate-900");
+    expect(markup).toContain("dark:text-white");
+    expect(markup).toContain("dark:text-slate-200");
+    expect(markup).toContain("930 Highland Drive");
+  });
 });

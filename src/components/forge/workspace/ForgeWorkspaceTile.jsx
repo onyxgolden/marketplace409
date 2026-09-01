@@ -35,20 +35,20 @@ export default function ForgeWorkspaceTile({
     <section
       data-workspace-tile
       data-workspace-tile-expanded={expanded}
-      className={`flex min-h-[320px] flex-col rounded-3xl border border-slate-200 bg-white p-6 shadow-sm ${tileSpanClass}`}
+      className={`flex min-h-[320px] flex-col rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 ${tileSpanClass}`}
     >
       <header className="flex items-start justify-between gap-4">
         <div>
           {eyebrow && (
-            <div className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">
+            <div className="text-xs font-black uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
               {eyebrow}
             </div>
           )}
 
-          <h2 className="mt-2 text-2xl font-black text-slate-950">{title}</h2>
+          <h2 className="mt-2 text-2xl font-black text-slate-950 dark:text-slate-50">{title}</h2>
 
           {detail && (
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
               {detail}
             </p>
           )}
@@ -56,7 +56,7 @@ export default function ForgeWorkspaceTile({
 
         <div className="flex shrink-0 flex-col items-end gap-2">
           {status && (
-            <div className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-600">
+            <div className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
               {status}
             </div>
           )}
@@ -66,7 +66,7 @@ export default function ForgeWorkspaceTile({
               type="button"
               aria-expanded={expanded}
               onClick={() => setExpanded((current) => !current)}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:border-slate-950 hover:text-slate-950 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-slate-400 dark:hover:text-white"
             >
               {expanded ? collapseLabel : expandLabel}
             </button>
@@ -79,10 +79,10 @@ export default function ForgeWorkspaceTile({
       </div>
 
       {href && (
-        <footer className="mt-6 border-t border-slate-200 pt-4">
+        <footer className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
           <Link
             href={href}
-            className="inline-flex rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800"
+            className="inline-flex rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300"
           >
             {actionLabel}
           </Link>

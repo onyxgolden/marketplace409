@@ -14,7 +14,7 @@ function renderPropertyPortfolioWorkspaceTile({
       actionLabel="Open property application"
       status="Owner scoped"
     >
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/60">
         <ForgePortfolioSummary
           summaryItems={
             portfolioSummaryItems

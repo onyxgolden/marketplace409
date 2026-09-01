@@ -1,19 +1,58 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const application = { saveUnit: vi.fn(), saveTenant: vi.fn(), saveLease: vi.fn(), saveSchedule: vi.fn(), generateMonthlyCharge: vi.fn() };
+const application = { units: { findById: vi.fn() }, findUnitsByProperty: vi.fn(), saveUnit: vi.fn(), saveTenant: vi.fn(), saveLease: vi.fn(), saveSchedule: vi.fn(), generateMonthlyCharge: vi.fn() };
+const emptyTenantQuery = { select: vi.fn(() => emptyTenantQuery), eq: vi.fn(async () => ({ data: [], error: null })) };
 vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
-  createAuthenticatedRentalManagerApplication: vi.fn(async () => ({ application, user: { id: "owner_1" } })),
+  createAuthenticatedRentalManagerApplication: vi.fn(async () => ({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(() => emptyTenantQuery) } })),
 }));
 import { GET, POST } from "./route.js";
 function request(body) { return new Request("http://localhost/api/rental", { method: "POST", body: JSON.stringify(body) }); }
 describe("Rental Manager route", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); application.findUnitsByProperty.mockResolvedValue([]); });
   it("saves a validated owner-scoped unit", async () => {
     application.saveUnit.mockImplementation(async (value) => value);
     const response = await POST(request({ operation: "save-unit", unit: { propertyId: "4800-kent-ave", label: "Main residence",
       status: "preparing", bedrooms: 3, bathrooms: 2, squareFeet: 1450 } }));
     expect(response.status).toBe(200);
     expect(application.saveUnit).toHaveBeenCalledWith(expect.objectContaining({ propertyId: "4800-kent-ave" }), "owner_1");
+  });
+  it("rejects an exact duplicate property/unit before saving", async () => {
+    application.findUnitsByProperty.mockResolvedValue([{ id: "unit_1", label: "1214 Wagner", status: "occupied" }]);
+    const response = await POST(request({ operation: "save-unit", unit: { propertyId: "1214-wagner", label: "1214 WAGNER", status: "preparing" } }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain("already exists");
+    expect(application.saveUnit).not.toHaveBeenCalled();
+  });
+  it("archives an inactive duplicate only when no active lease exists", async () => {
+    const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), limit: vi.fn(async () => ({ data: [], error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { from: vi.fn(() => chain) } });
+    application.units.findById.mockResolvedValue({ id: "unit_1", propertyId: "1214-wagner", label: "1214 Wagner", status: "available", bedrooms: null, bathrooms: null, squareFeet: null, availableAt: null, createdAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-01T00:00:00Z", notes: null });
+    application.saveUnit.mockImplementation(async (value) => value);
+    const response = await POST(request({ operation: "archive-unit", unitId: "unit_1" }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).unit.status).toBe("inactive");
+  });
+  it("permanently deletes an archived empty duplicate", async () => {
+    const emptyReference = () => { const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), limit: vi.fn(async () => ({ data: [], error: null })) }; return chain; };
+    const deleteChain = { delete: vi.fn(() => deleteChain), eq: vi.fn(() => deleteChain), select: vi.fn(() => deleteChain), maybeSingle: vi.fn(async () => ({ data: { id: "unit_1", label: "1214 Wagner" }, error: null })) };
+    const from = vi.fn((table) => table === "rental_units" ? deleteChain : emptyReference());
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { from } });
+    application.units.findById.mockResolvedValue({ id: "unit_1", label: "1214 Wagner", status: "inactive" });
+    const response = await POST(request({ operation: "delete-archived-unit", unitId: "unit_1" }));
+    expect(response.status).toBe(200);
+    expect(deleteChain.delete).toHaveBeenCalled();
+    expect(deleteChain.eq).toHaveBeenCalledWith("status", "inactive");
+  });
+  it("protects an archived property with any linked history from permanent deletion", async () => {
+    const referenced = () => { const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), limit: vi.fn(async () => ({ data: [{ id: "lease_1" }], error: null })) }; return chain; };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { from: vi.fn(() => referenced()) } });
+    application.units.findById.mockResolvedValue({ id: "unit_1", label: "1214 Wagner", status: "inactive" });
+    const response = await POST(request({ operation: "delete-archived-unit", unitId: "unit_1" }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain("linked lease, maintenance, or inspection history");
   });
   it("generates an owner-scoped charge", async () => {
     application.generateMonthlyCharge.mockResolvedValue({ id: "charge_1" });
@@ -36,6 +75,37 @@ describe("Rental Manager route", () => {
     expect(response.status).toBe(500);
     expect(body.error).toContain("already exists");
   });
+  it("rejects a tenant email duplicate regardless of case and returns the existing tenant", async () => {
+    const query = { select: vi.fn(() => query), eq: vi.fn(async () => ({ data: [{ id: "tenant_1", display_name: "Paula Welch", email: "Paula@Example.com" }], error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "manager_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(() => query) } });
+    const response = await POST(request({ operation: "save-tenant", tenant: { displayName: "Paula Welch", email: "paula@example.com" } }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ existingTenant: { id: "tenant_1" } });
+    expect(application.saveTenant).not.toHaveBeenCalled();
+  });
+  it("refuses to delete the Paula record that is assigned to a lease", async () => {
+    const tenantQuery = { select: vi.fn(() => tenantQuery), eq: vi.fn(() => tenantQuery), maybeSingle: vi.fn(async () => ({ data: { id: "paula_assigned", display_name: "Paula", email: "paula@example.com", auth_user_id: null }, error: null })) };
+    const linkedQuery = { select: vi.fn(() => linkedQuery), eq: vi.fn(() => linkedQuery), limit: vi.fn(async () => ({ data: [{ tenant_id: "paula_assigned" }], error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn((table) => table === "rental_tenants" ? tenantQuery : linkedQuery) } });
+    const response = await POST(request({ operation: "delete-unused-tenant", tenantId: "paula_assigned", confirmation: "DELETE" }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain("assigned or has rental history");
+  });
+  it("deletes only the unassigned, unclaimed duplicate after explicit confirmation", async () => {
+    const findQuery = { select: vi.fn(() => findQuery), eq: vi.fn(() => findQuery), maybeSingle: vi.fn(async () => ({ data: { id: "paula_unused", display_name: "Paula", email: "paula+duplicate@example.com", auth_user_id: null }, error: null })) };
+    const emptyReference = () => { const query = { select: vi.fn(() => query), eq: vi.fn(() => query), limit: vi.fn(async () => ({ data: [], error: null })) }; return query; };
+    const deleteQuery = { delete: vi.fn(() => deleteQuery), eq: vi.fn(() => deleteQuery), is: vi.fn(() => deleteQuery), select: vi.fn(() => deleteQuery), maybeSingle: vi.fn(async () => ({ data: { id: "paula_unused", display_name: "Paula", email: "paula+duplicate@example.com" }, error: null })) };
+    let tenantCalls = 0;
+    const from = vi.fn((table) => table === "rental_tenants" ? (++tenantCalls === 1 ? findQuery : deleteQuery) : emptyReference());
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from } });
+    const response = await POST(request({ operation: "delete-unused-tenant", tenantId: "paula_unused", confirmation: "DELETE" }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).deletedTenant.id).toBe("paula_unused");
+    expect(deleteQuery.delete).toHaveBeenCalledOnce();
+  });
   it("loads the persisted setup records needed by the lease form", async () => {
     const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
@@ -53,7 +123,7 @@ describe("Rental Manager route", () => {
       rental_inspection_acknowledgements: result([]),rental_leases:result([{id:"lease_1",status:"active"}]),
       rental_lease_tenants:result([{lease_id:"lease_1",tenant_id:"tenant_1"}]),
       rental_lease_changes:result([{id:"change_1",status:"draft"}]),rental_late_fee_rules:result([{id:"rule_1",status:"active"}]),rental_late_fee_assessments:result([]),
-      rental_contractors:result([{id:"contractor_1",business_name:"Reliable Plumbing"}]),rental_maintenance_work_orders:result([{id:"work_1",request_id:"request_1"}]),rental_maintenance_work_events:result([{id:"event_1",work_order_id:"work_1"}]),rental_lease_preparations:result([{id:"prep_1",lease_id:"lease_1",current_version:1}]),rental_lease_preparation_versions:result([{preparation_id:"prep_1",version_number:1}]),rental_autopay_enrollments:result([{id:"autopay_1",status:"setup_required"}]),renters_insurance_policies:result([{id:"policy_1",status:"pending_verification"}]),rental_animals:result([{id:"animal_1",classification:"pet",approval_status:"requested"}]),rental_support_cases:result([{id:"case_1",case_type:"failed_payment",status:"open"}]),rental_billing_settings:result({billing_enabled:true}),financial_events:result([{event_date:"2026-08-05",amount:"1500.00",transaction_kind:"income",source_system:"rentec",status:"active",is_deleted:false}]) };
+      rental_contractors:result([{id:"contractor_1",business_name:"Reliable Plumbing"}]),rental_maintenance_work_orders:result([{id:"work_1",request_id:"request_1"}]),rental_maintenance_work_events:result([{id:"event_1",work_order_id:"work_1"}]),rental_lease_preparations:result([{id:"prep_1",lease_id:"lease_1",current_version:1}]),rental_lease_preparation_versions:result([{preparation_id:"prep_1",version_number:1}]),rental_autopay_enrollments:result([{id:"autopay_1",status:"setup_required"}]),renters_insurance_policies:result([{id:"policy_1",status:"pending_verification"}]),renters_insurance_requirements:result([{lease_id:"lease_1",required:true}]),rental_animals:result([{id:"animal_1",classification:"pet",approval_status:"requested"}]),rental_support_cases:result([{id:"case_1",case_type:"failed_payment",status:"open"}]),rental_billing_settings:result({billing_enabled:true}),financial_events:result([{event_date:"2026-08-05",amount:"1500.00",transaction_kind:"income",source_system:"rentec",status:"active",is_deleted:false}]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
       supabaseClient: { from: vi.fn((table) => tables[table]) } });
@@ -64,7 +134,57 @@ describe("Rental Manager route", () => {
       notifications: [{ id: "notification_1", status: "queued" }], payments: [{ id: "payment_1", status: "succeeded" }],
       settlements: [{ id: "settlement_1", payment_id: "payment_1", status: "paid_out" }], deposits: [{ id: "deposit_1", status: "held" }],
       depositTransactions: [{ id: "deposit_tx_1", deposit_id: "deposit_1" }], inspections: [{ id: "inspection_1", status: "draft" }],
-      inspectionItems: [{ id: "item_1", inspection_id: "inspection_1" }], inspectionAcknowledgements: [],leases:[{id:"lease_1",status:"active"}],leaseMemberships:[{lease_id:"lease_1",tenant_id:"tenant_1"}],leaseChanges:[{id:"change_1",status:"draft"}],lateFeeRules:[{id:"rule_1",status:"active"}],lateFeeAssessments:[],contractors:[{id:"contractor_1",business_name:"Reliable Plumbing"}],workOrders:[{id:"work_1",request_id:"request_1"}],workEvents:[{id:"event_1",work_order_id:"work_1"}],leasePreparations:[{id:"prep_1",lease_id:"lease_1",current_version:1}],leasePreparationVersions:[{preparation_id:"prep_1",version_number:1}],autopayEnrollments:[{id:"autopay_1",status:"setup_required"}],insurancePolicies:[{id:"policy_1",status:"pending_verification"}],animals:[{id:"animal_1",classification:"pet",approval_status:"requested"}],supportCases:[{id:"case_1",case_type:"failed_payment",status:"open"}], billingEnabled: true, financialEvents: [{ event_date: "2026-08-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec", status: "active", is_deleted: false }] });
+      inspectionItems: [{ id: "item_1", inspection_id: "inspection_1" }], inspectionAcknowledgements: [],leases:[{id:"lease_1",status:"active"}],leaseMemberships:[{lease_id:"lease_1",tenant_id:"tenant_1"}],leaseChanges:[{id:"change_1",status:"draft"}],lateFeeRules:[{id:"rule_1",status:"active"}],lateFeeAssessments:[],contractors:[{id:"contractor_1",business_name:"Reliable Plumbing"}],workOrders:[{id:"work_1",request_id:"request_1"}],workEvents:[{id:"event_1",work_order_id:"work_1"}],leasePreparations:[{id:"prep_1",lease_id:"lease_1",current_version:1}],leasePreparationVersions:[{preparation_id:"prep_1",version_number:1}],autopayEnrollments:[{id:"autopay_1",status:"setup_required"}],insurancePolicies:[{id:"policy_1",status:"pending_verification"}],insuranceRequirements:[{lease_id:"lease_1",required:true}],animals:[{id:"animal_1",classification:"pet",approval_status:"requested"}],supportCases:[{id:"case_1",case_type:"failed_payment",status:"open"}], billingEnabled: true, financialEvents: [{ event_date: "2026-08-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec", status: "active", is_deleted: false }] });
+  });
+  // The guided-workflow session (Today's Priorities) needs the acting user distinguished from the
+  // canonical workspace owner from this same response -- it must never derive its own scoping.
+  it("echoes the authenticated acting user and canonical (effective) owner id", async () => {
+    const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
+      order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
+    const empty = result([]);
+    const tables = { rent_charges: empty, rental_units: empty, rental_tenants: empty, rent_schedules: empty,
+      rental_maintenance_requests: empty, rental_notification_outbox: empty, rental_payments: empty,
+      rental_settlements: empty, rental_security_deposits: empty, rental_security_deposit_transactions: empty,
+      rental_inspections: empty, rental_inspection_items: empty, rental_inspection_acknowledgements: empty,
+      rental_leases: empty, rental_lease_tenants: empty, rental_lease_changes: empty, rental_late_fee_rules: empty,
+      rental_late_fee_assessments: empty, rental_contractors: empty, rental_maintenance_work_orders: empty,
+      rental_maintenance_work_events: empty, rental_lease_preparations: empty, rental_lease_preparation_versions: empty,
+      rental_autopay_enrollments: empty, renters_insurance_policies: empty, renters_insurance_requirements: empty, rental_animals: empty,
+      rental_support_cases: empty, rental_billing_settings: result(null), financial_events: empty };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "acting_user_co_owner" },
+      effectiveOwnerId: "canonical_primary_owner", supabaseClient: { from: vi.fn((table) => tables[table]) } });
+    const response = await GET(); const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.actingUserId).toBe("acting_user_co_owner");
+    expect(body.canonicalOwnerId).toBe("canonical_primary_owner");
+  });
+  // FORGE does not collect tenant birth dates -- confirms the GET query itself never asks Supabase
+  // for date_of_birth, so a legacy value stored on a real row can never even reach the response body,
+  // rather than relying on the UI to simply not render a field it already received.
+  it("never selects date_of_birth from rental_tenants", async () => {
+    const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
+      order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
+    const empty = result([]);
+    const tenantsQuery = result([]);
+    const tables = { rent_charges: empty, rental_units: empty, rental_tenants: tenantsQuery, rent_schedules: empty,
+      rental_maintenance_requests: empty, rental_notification_outbox: empty, rental_payments: empty,
+      rental_settlements: empty, rental_security_deposits: empty, rental_security_deposit_transactions: empty,
+      rental_inspections: empty, rental_inspection_items: empty, rental_inspection_acknowledgements: empty,
+      rental_leases: empty, rental_lease_tenants: empty, rental_lease_changes: empty, rental_late_fee_rules: empty,
+      rental_late_fee_assessments: empty, rental_contractors: empty, rental_maintenance_work_orders: empty,
+      rental_maintenance_work_events: empty, rental_lease_preparations: empty, rental_lease_preparation_versions: empty,
+      rental_autopay_enrollments: empty, renters_insurance_policies: empty, renters_insurance_requirements: empty, rental_animals: empty,
+      rental_support_cases: empty, rental_billing_settings: result(null), financial_events: empty };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
+      supabaseClient: { from: vi.fn((table) => tables[table]) } });
+    const response = await GET();
+    expect(response.status).toBe(200);
+    const selectedColumns = tenantsQuery.select.mock.calls[0][0];
+    expect(selectedColumns).not.toContain("date_of_birth");
   });
   // Regression test for a real production bug: financial_events for a long-tenured owner can
   // exceed PostgREST's default 1000-row page size, and an unbounded .select() ordered by
@@ -91,6 +211,7 @@ describe("Rental Manager route", () => {
       rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_contractors: result([]),
       rental_maintenance_work_orders: result([]), rental_maintenance_work_events: result([]), rental_lease_preparations: result([]),
       rental_lease_preparation_versions: result([]), rental_autopay_enrollments: result([]), renters_insurance_policies: result([]),
+      renters_insurance_requirements: result([]),
       rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null),
       financial_events: financialEventsChain };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
@@ -120,7 +241,7 @@ describe("Rental Manager route", () => {
       rental_inspection_acknowledgements: result([]), rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
       rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
       rental_maintenance_work_events: result([]), rental_lease_preparations: result([]), rental_lease_preparation_versions: result([]),
-      rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), financial_events: result([]) };
+      rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), renters_insurance_requirements: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), financial_events: result([]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, supabaseClient: { from: vi.fn((table) => tables[table]) } });
     const response = await GET(); const body = await response.json();
@@ -144,7 +265,7 @@ describe("Rental Manager route", () => {
       rental_inspection_acknowledgements: result([]), rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
       rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
       rental_maintenance_work_events: result([]), rental_lease_preparations: result([]), rental_lease_preparation_versions: result([]),
-      rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), financial_events: result([]) };
+      rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), renters_insurance_requirements: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), financial_events: result([]) };
     const createSignedUrl = vi.fn(async () => ({ data: { signedUrl: "https://signed.test/unit-photo" }, error: null }));
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
@@ -174,6 +295,76 @@ describe("Rental Manager route", () => {
     expect(response.status).toBe(200);
     expect(query.update).toHaveBeenCalledWith(expect.objectContaining({ email: "owner+tenant@example.com" }));
     expect(query.is).toHaveBeenCalledWith("auth_user_id", null);
+  });
+  it("updates owner-scoped tenant profile details while storing only SSN last four", async () => {
+    const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "tenant_1", display_name: "Ashley George" }, error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "co_owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(() => query) } });
+    const response = await POST(request({ operation: "update-tenant-profile", tenantId: "tenant_1", profile: {
+      phone: "555-1000", workPhone: "555-2000", monthlyIncomeCents: 450000, ssnLastFour: "1234", landlordNotes: "Owner-only note",
+    } }));
+    expect(response.status).toBe(200);
+    expect(query.update).toHaveBeenCalledWith(expect.objectContaining({ work_phone: "555-2000", monthly_income_cents: 450000, ssn_last_four: "1234" }));
+    expect(query.eq).toHaveBeenCalledWith("owner_id", "owner_1");
+    expect(JSON.stringify(query.update.mock.calls[0][0])).not.toContain("social_security_number");
+  });
+  it("rejects anything other than exactly four SSN digits", async () => {
+    const response = await POST(request({ operation: "update-tenant-profile", tenantId: "tenant_1", profile: { ssnLastFour: "123-45-6789" } }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain("exactly four digits");
+  });
+  // FORGE does not collect tenant birth dates. A caller sending dateOfBirth is neither an error nor
+  // silently written -- it's simply not part of the update shape at all, so Supabase's .update()
+  // never touches the date_of_birth column, leaving any birth date already stored on a legacy
+  // record exactly as it was (not erased, not overwritten).
+  it("ignores a dateOfBirth field in an update payload rather than storing, changing, or erasing it", async () => {
+    const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "tenant_1", display_name: "Ashley George" }, error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(() => query) } });
+    const response = await POST(request({ operation: "update-tenant-profile", tenantId: "tenant_1", profile: {
+      phone: "555-1000", dateOfBirth: "1990-01-01",
+    } }));
+    expect(response.status).toBe(200);
+    expect(query.update).toHaveBeenCalledWith(expect.objectContaining({ phone: "555-1000" }));
+    const updatedFields = query.update.mock.calls[0][0];
+    expect(updatedFields).not.toHaveProperty("date_of_birth");
+    expect(JSON.stringify(updatedFields)).not.toContain("1990-01-01");
+  });
+  it("changes the primary tenant through the workspace-scoped RPC", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: null }));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "co_owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { rpc } });
+    const response = await POST(request({ operation: "set-primary-tenant", leaseId: "lease_1", tenantId: "tenant_2" }));
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith("set_rental_primary_tenant", { p_owner_id: "owner_1", p_lease_id: "lease_1", p_tenant_id: "tenant_2" });
+  });
+  it("save-lease-change scopes the lease lookup and the inserted row to the workspace owner, not the acting user", async () => {
+    const leaseQuery = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", monthly_rent_cents: 150000, rent_due_day: 1, end_date: "2026-09-01" }, error: null })) };
+    const insertQuery = { insert: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
+      single: vi.fn(async () => ({ data: { id: "rental_lease_change_1" }, error: null })) };
+    const from = vi.fn((table) => (table === "rental_leases" ? leaseQuery : insertQuery));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "co_owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from } });
+    const response = await POST(request({ operation: "save-lease-change", change: { leaseId: "lease_1", changeType: "renewal", effectiveDate: "2026-09-01", reason: "Renewal" } }));
+    expect(response.status).toBe(200);
+    expect(leaseQuery.eq).toHaveBeenCalledWith("owner_id", "owner_1");
+    expect(leaseQuery.eq).not.toHaveBeenCalledWith("owner_id", "co_owner_1");
+    expect(insertQuery.insert).toHaveBeenCalledWith(expect.objectContaining({ owner_id: "owner_1" }));
+  });
+  it("approve-lease-change scopes the approval update and the apply RPC to the workspace owner, not the acting user", async () => {
+    const approvalQuery = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "change_1" }, error: null })) };
+    const rpc = vi.fn(async () => ({ data: { applied: true }, error: null }));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "co_owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(() => approvalQuery), rpc } });
+    const response = await POST(request({ operation: "approve-lease-change", changeId: "change_1" }));
+    expect(response.status).toBe(200);
+    expect(approvalQuery.eq).toHaveBeenCalledWith("owner_id", "owner_1");
+    expect(approvalQuery.eq).not.toHaveBeenCalledWith("owner_id", "co_owner_1");
+    expect(rpc).toHaveBeenCalledWith("apply_rental_lease_change", { p_owner_id: "owner_1", p_change_id: "change_1" });
   });
   it("cancels only an owner-scoped draft lease", async () => {
     const query = { update: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(),

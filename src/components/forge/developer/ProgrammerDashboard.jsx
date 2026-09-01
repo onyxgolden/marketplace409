@@ -5,6 +5,8 @@ import {
   useState,
 } from "react";
 
+import Link from "next/link";
+
 import {
   validateReviewedSessionMetadata,
 } from "../../../../scripts/governance/reviewedSessionMetadataContract.mjs";
@@ -569,17 +571,81 @@ export default function ProgrammerDashboard({
           </h1>
 
           <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
-            Choose an approved engineering action. FORGE explains what it does, verifies your identity again at the API boundary, and displays the result here.
+            Each card below is a task you can run yourself, in plain English -- what it does, whether it changes anything, and the exact technical command it runs under the hood (safe to ignore if you&apos;re not reading code). You generally don&apos;t need to use this page: when you ask your AI assistant to build or ship something in chat, it already runs the equivalent of these steps for you automatically. This page exists for when you want to check something or run a step yourself, independently.
           </p>
 
           <div className="mt-4 inline-flex rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-900">
-            Authorized as {programmerEmail}
+            Signed in as {programmerEmail}
           </div>
 
           <p className="mt-3 text-xs font-bold text-slate-500">
-            Repository commands execute only from the authorized local FORGE workstation. They are disabled on Vercel.
+            These only work when run from Jason&apos;s own computer, not from the live website -- so this page won&apos;t do anything if you&apos;re viewing it anywhere else.
           </p>
         </header>
+
+        <section
+          data-programmer-command-handbook
+          aria-labelledby="programmer-command-handbook-title"
+          className="mt-5 flex flex-col gap-4 rounded-2xl border border-amber-300 bg-gradient-to-br from-amber-50 via-white to-slate-50 p-5 text-slate-950 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div>
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-amber-700">
+              Copy-ready reference
+            </div>
+
+            <h2
+              id="programmer-command-handbook-title"
+              className="mt-2 text-xl font-black"
+            >
+              FORGE Command Handbook
+            </h2>
+
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+              Download the Excel workbook with copy-ready Terminal, Git,
+              VS Code, Vercel, Supabase, testing, browser-console, SQL,
+              document-updater, and secure-vault guidance.
+            </p>
+          </div>
+
+          <a
+            href="/downloads/FORGE_Copy_Ready_Command_Handbook.xlsx"
+            download="FORGE_Copy_Ready_Command_Handbook.xlsx"
+            className="inline-flex shrink-0 items-center justify-center rounded-xl bg-amber-500 px-5 py-3 text-sm font-black text-slate-950 shadow-sm transition hover:bg-amber-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
+          >
+            Download handbook
+          </a>
+        </section>
+
+        <section
+          data-engineering-brain-link
+          aria-labelledby="engineering-brain-link-title"
+          className="mt-5 flex flex-col gap-4 rounded-2xl border border-sky-300 bg-gradient-to-br from-sky-50 via-white to-slate-50 p-5 text-slate-950 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div>
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-sky-700">
+              Deterministic search
+            </div>
+
+            <h2
+              id="engineering-brain-link-title"
+              className="mt-2 text-xl font-black"
+            >
+              FORGE Engineering Brain
+            </h2>
+
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+              Search the repository&apos;s own indexed source, migrations, tests, and governance
+              documents -- ranked citations, never a fabricated answer.
+            </p>
+          </div>
+
+          <Link
+            href="/forge/developer/engineering-brain"
+            className="inline-flex shrink-0 items-center justify-center rounded-xl bg-sky-600 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-sky-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-700"
+          >
+            Open Engineering Brain
+          </Link>
+        </section>
 
         <div
           data-programmer-dashboard-layout

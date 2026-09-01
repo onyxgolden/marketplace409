@@ -24,4 +24,15 @@ describe("rental tenant persistence", () => {
     await expect(new InMemoryRentalTenantRepository().save(tenant(), {} as never))
       .rejects.toThrow("Rental tenant owner id is required.");
   });
+  // FORGE does not collect tenant birth dates. mapRentalTenantToRow is the final gate before any
+  // Supabase write, and it builds an explicit, fixed-key row -- it never spreads the input tenant
+  // object -- so even a legacy or malicious extra `dateOfBirth` property surviving the JS runtime
+  // (despite the RentalTenant type declaring no such field) can never reach the database.
+  it("never writes a birth date, even if one is present on the input object at runtime", () => {
+    const tenantWithLegacyDateOfBirth = { ...tenant(), dateOfBirth: "1990-01-01" } as unknown as ReturnType<typeof tenant>;
+    const row = mapRentalTenantToRow(tenantWithLegacyDateOfBirth, "owner_1");
+    expect(row).not.toHaveProperty("date_of_birth");
+    expect(row).not.toHaveProperty("dateOfBirth");
+    expect(JSON.stringify(row)).not.toContain("1990-01-01");
+  });
 });

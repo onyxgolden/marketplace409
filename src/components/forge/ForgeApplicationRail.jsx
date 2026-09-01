@@ -12,6 +12,7 @@ import {
   WorkspaceLinks,
   WorkspaceRightRail,
 } from "@/components/workspace-shell";
+import ThemeToggle from "@/components/theme/ThemeToggle";
 
 // Rental Manager and Programmer were promoted to their own sibling
 // workspaces (see src/lib/workspaces.js) — this list is now Forge's
@@ -51,6 +52,11 @@ export const FORGE_APPLICATIONS =
       href: "/forge/import",
       label: "Import",
       shortLabel: "I",
+    }),
+    Object.freeze({
+      href: "/forge/workspace",
+      label: "Members",
+      shortLabel: "M",
     }),
   ]);
 
@@ -171,7 +177,7 @@ export default function ForgeApplicationRail({
   return (
     <div
       data-forge-route-shell
-      className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-950 lg:flex"
+      className="min-h-screen bg-slate-100 text-slate-950 dark:bg-slate-950 dark:text-slate-100 lg:flex"
     >
       <aside
         data-forge-application-rail
@@ -257,30 +263,38 @@ export default function ForgeApplicationRail({
       </aside>
 
       <div className="min-w-0 flex-1">
-        <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:hidden">
+        <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 lg:hidden">
           <Link
             href="/forge"
-            className="font-black tracking-[0.16em] text-slate-950"
+            className="font-black tracking-[0.16em] text-slate-950 dark:text-white"
           >
             FORGE
           </Link>
 
-          <button
-            type="button"
-            aria-label="Open Forge navigation"
-            aria-expanded={
-              mobileOpen
-            }
-            onClick={() =>
-              setMobileOpen(
-                (current) =>
-                  !current,
-              )
-            }
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-black"
-          >
-            Applications
-          </button>
+          <div className="flex items-center gap-2">
+            <ThemeToggle
+              compact
+              menuAlign="bottom-right"
+              variant="onLight"
+            />
+
+            <button
+              type="button"
+              aria-label="Open Forge navigation"
+              aria-expanded={
+                mobileOpen
+              }
+              onClick={() =>
+                setMobileOpen(
+                  (current) =>
+                    !current,
+                )
+              }
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-black dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+            >
+              Applications
+            </button>
+          </div>
         </header>
 
         {mobileOpen && (

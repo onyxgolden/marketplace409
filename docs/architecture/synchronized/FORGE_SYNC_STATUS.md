@@ -18,7 +18,7 @@
 
 **Last Synchronization:** Not yet generated
 **Session ID:** Not recorded
-**Evidence Snapshot:** governance/snapshots/forge-session-20260812-013433938.json
+**Evidence Snapshot:** governance/snapshots/forge-session-20260826-183744688.json
 **Renderer Version:** Not recorded
 **Mode:** shadow
 
@@ -30,9 +30,9 @@
 
 ## Current Architectural Phase
 
-**Phase:** session-20260812-36b80f3
-**Title:** Governance session work
-**Status:** complete
+**Phase:** REVIEW_REQUIRED
+**Title:** REVIEW_REQUIRED
+**Status:** incomplete
 
 <!-- FORGE:SYNC:active_phase:END -->
 
@@ -42,7 +42,7 @@
 
 ## Immediate Objective
 
-Ship: collect complete closeout validation.
+REVIEW_REQUIRED.
 
 <!-- FORGE:SYNC:current_objective:END -->
 
@@ -55,8 +55,8 @@ Ship: collect complete closeout validation.
 | Check                 | Result       |
 | --------------------- | ------------ |
 | Branch                | main |
-| HEAD                  | 36b80f33b349fc1cad17964ceae519ee46500f41 |
-| origin/main           | 36b80f33b349fc1cad17964ceae519ee46500f41 |
+| HEAD                  | edcfa93b4877f9be9e5e06f622dbd6f989a96c67 |
+| origin/main           | edcfa93b4877f9be9e5e06f622dbd6f989a96c67 |
 | Working tree          | clean |
 | Implementation commit | Not recorded |
 | Governance commit     | Not recorded |
@@ -71,118 +71,16 @@ Ship: collect complete closeout validation.
 
 | Validation       | Status | Summary |
 | ---------------- | ------ | ------- |
-| Focused tests    | passing | RUN  v4.1.9 /home/jason/USMarketplace/marketplace409
+| Focused tests    | passing | RUN  v4.1.9 /home/runner/work/marketplace409/marketplace409
 
+ ✓ scripts/governance/__tests__/collectSessionEvidence.test.mjs (11 tests) 1408ms
 
  Test Files  1 passed (1)
       Tests  11 passed (11)
-   Start at  01:33:17
-   Duration  1.41s (transform 26ms, setup 0ms, import 39ms, tests 1.25s, environment 0ms) |
-| Full tests       | passing | RUN  v4.1.9 /home/jason/USMarketplace/marketplace409
-
-
- Test Files  497 passed (497)
-      Tests  2616 passed (2616)
-   Start at  01:33:19
-   Duration  45.06s (transform 26.20s, setup 0ms, import 71.81s, tests 47.78s, environment 2.77s) |
-| Production build | passing | > marketplace409@0.1.0 build
-> next build
-
-▲ Next.js 16.2.6 (Turbopack)
-- Environments: .env.local
-
-  Creating an optimized production build ...
-✓ Compiled successfully in 16.4s
-  Running TypeScript ...
-  Finished TypeScript in 7.3s ...
-  Collecting page data using 7 workers ...
-  Generating static pages using 7 workers (0/49) ...
-  Generating static pages using 7 workers (12/49)
-  Generating static pages using 7 workers (24/49)
-  Generating static pages using 7 workers (36/49)
-✓ Generating static pages using 7 workers (49/49) in 846ms
-  Finalizing page optimization ...
-
-Route (app)
-┌ ƒ /
-├ ○ /_not-found
-├ ƒ /admin/business-claims
-├ ƒ /api/connection/execution-history
-├ ƒ /api/connection/operations
-├ ƒ /api/connection/read-models
-├ ƒ /api/financial/dashboard-intelligence
-├ ƒ /api/financial/explain
-├ ƒ /api/financial/import
-├ ƒ /api/financial/import/bootstrap
-├ ƒ /api/financial/operations
-├ ƒ /api/financial/read-models
-├ ƒ /api/financial/reports
-├ ƒ /api/financial/snapshot
-├ ƒ /api/financial/trace
-├ ƒ /api/forge/developer/commands
-├ ƒ /api/forge/developer/commands/closeout-proposal
-├ ƒ /api/plaid/exchange-token
-├ ƒ /api/plaid/link-token
-├ ƒ /api/property-condition-assessments
-├ ƒ /api/property-evidence
-├ ƒ /api/property-hvac
-├ ƒ /api/property-hvac/invoice-proposal
-├ ƒ /api/property-operating-obligations
-├ ƒ /api/property-operating-obligations/document-proposal
-├ ƒ /api/property-valuations
-├ ƒ /api/transactions/assign-properties
-├ ƒ /api/transactions/assign-property
-├ ○ /auth
-├ ƒ /browse
-├ ƒ /businesses
-├ ƒ /businesses/[id]
-├ ƒ /businesses/[id]/claim
-├ ○ /businesses/add
-├ ƒ /businesses/edit/[id]
-├ ○ /community
-├ ƒ /edit/[id]
-├ ƒ /financial-snapshot
-├ ƒ /forge
-├ ƒ /forge/accounts/add
-├ ƒ /forge/connections
-├ ƒ /forge/developer
-├ ƒ /forge/financial
-├ ƒ /forge/import
-├ ƒ /forge/property
-├ ƒ /forge/results
-├ ○ /import
-├ ƒ /investors
-├ ○ /investors/add-property
-├ ƒ /investors/cash-buyers
-├ ○ /investors/cash-buyers/add
-├ ƒ /investors/cash-buyers/edit/[id]
-├ ƒ /investors/contractors
-├ ƒ /investors/documents
-├ ƒ /investors/properties
-├ ƒ /investors/properties/edit/[id]
-├ ○ /investors/rehab-estimator
-├ ƒ /investors/wholesalers
-├ ○ /investors/wholesalers/add
-├ ƒ /investors/wholesalers/edit/[id]
-├ ƒ /jobs
-├ ○ /jobs/add
-├ ƒ /jobs/edit/[id]
-├ ƒ /listing/[id]
-├ ○ /my-listings
-├ ƒ /pets
-├ ○ /pets/add
-├ ƒ /pets/edit/[id]
-├ ƒ /pets/shelters
-├ ○ /post
-├ ○ /privacy
-├ ○ /saved-listings
-└ ○ /terms
-
-
-ƒ Proxy (Middleware)
-
-○  (Static)   prerendered as static content
-ƒ  (Dynamic)  server-rendered on demand |
+   Start at  18:37:42
+   Duration  1.61s (transform 30ms, setup 0ms, import 46ms, tests 1.41s, environment 0ms) |
+| Full tests       | not-run | Not recorded |
+| Production build | not-run | Not recorded |
 
 <!-- FORGE:SYNC:validation_evidence:END -->
 
@@ -194,23 +92,12 @@ Route (app)
 
 **Recorded completed work:**
 
-- fix(forge): isolate programmer command environments
-- fix(governance): complete session closeout handoffs
-- feat(forge): two-column programmer dashboard with clipboard copy
-- feat(governance): add reviewed session metadata contract
-- feat(governance): apply reviewed session metadata in collector
-- feat(governance): thread reviewed metadata path through session runner
-- feat(governance): accept reviewed session metadata
-- feat(developer): add reviewed session closeout form
-- fix(governance): use one reviewed session snapshot
-- feat(governance): build deterministic closeout proposals
-- feat(developer): approve generated session closeouts
-- fix(governance): collect complete closeout validation
+None recorded.
 
-**Work status:** complete
-**Completion supported by evidence:** yes
+**Work status:** incomplete
+**Completion supported by evidence:** no
 
-Completion is supported by recorded evidence.
+The repository evidence collector does not infer session completion. Human review is required.
 
 <!-- FORGE:SYNC:capability_status:END -->
 

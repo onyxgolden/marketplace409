@@ -79,6 +79,10 @@ describe("createBusinessApplicationSuite", () => {
       suite.supabase,
     );
 
+    expect(suite.businessCreateApplication.imageUploader).toBe(
+      suite.imageUploader,
+    );
+
     expect(suite.businessEditApplication.supabase).toBe(
       suite.supabase,
     );
@@ -120,6 +124,10 @@ describe("createBusinessApplicationSuite", () => {
 
     expect(suite.businessCreateApplication.supabase).toBe(
       supabase,
+    );
+
+    expect(suite.businessCreateApplication.imageUploader).toBe(
+      imageUploader,
     );
 
     expect(suite.businessEditApplication.supabase).toBe(

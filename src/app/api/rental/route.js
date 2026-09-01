@@ -22,14 +22,14 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, autopayResult, insurancePolicyResult, animalResult, supportResult, financialEventResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, autopayResult, insurancePolicyResult, insuranceRequirementResult, animalResult, supportResult, financialEventResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type, related_charge_id")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
       authenticated.supabaseClient.from("rental_units")
         .select("id, property_id, label, status, photo_bucket, photo_object_path").order("label", { ascending: true }),
       authenticated.supabaseClient.from("rental_tenants")
-        .select("id, display_name, email, status, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
+        .select("id, display_name, email, phone, work_phone, employer_name, employer_phone, monthly_income_cents, emergency_contact_name, emergency_contact_phone, application_status, application_submitted_at, screening_provider, screening_reference, screening_status, screening_completed_at, ssn_last_four, landlord_notes, status, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
       authenticated.supabaseClient.from("rent_schedules")
         .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date, collection_mode, collection_provider, forge_cutover_date")
         .order("effective_start_date", { ascending: false }),
@@ -51,7 +51,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_inspection_items").select("*").order("created_at", { ascending: true }),
       authenticated.supabaseClient.from("rental_inspection_acknowledgements").select("*").order("acknowledged_at", { ascending: false }),
       authenticated.supabaseClient.from("rental_leases").select("*").order("start_date",{ascending:false}),
-      authenticated.supabaseClient.from("rental_lease_tenants").select("lease_id, tenant_id").order("lease_id",{ascending:true}),
+      authenticated.supabaseClient.from("rental_lease_tenants").select("lease_id, tenant_id, occupancy_role").order("lease_id",{ascending:true}),
       authenticated.supabaseClient.from("rental_lease_changes").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_late_fee_rules").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_late_fee_assessments").select("*").order("approved_at",{ascending:false}),
@@ -62,6 +62,10 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_lease_preparation_versions").select("*").order("version_number",{ascending:false}),
       authenticated.supabaseClient.from("rental_autopay_enrollments").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("renters_insurance_policies").select("*").order("expiration_date",{ascending:true}),
+      // Whether renter's insurance is even required for a given lease -- distinct from the policies
+      // above (proof it was obtained). Without this, a lease that has deliberately opted out of an
+      // insurance requirement would otherwise be misread as "missing" insurance.
+      authenticated.supabaseClient.from("renters_insurance_requirements").select("lease_id, required, minimum_liability_cents").order("lease_id",{ascending:true}),
       authenticated.supabaseClient.from("rental_animals").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_support_cases").select("*").order("opened_at",{ascending:false}),
       // Read-only, owner-scoped explicitly (not just via RLS) like every table above. Used only to
@@ -77,7 +81,7 @@ export async function GET() {
         columns: "event_date, amount, transaction_kind, source_system, status, is_deleted, business_scope",
       }).then((data) => ({ data, error: null })).catch((caught) => ({ data: null, error: caught })),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || autopayResult.error || insurancePolicyResult.error || animalResult.error || supportResult.error || financialEventResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || autopayResult.error || insurancePolicyResult.error || insuranceRequirementResult.error || animalResult.error || supportResult.error || financialEventResult.error;
     if (error) throw error;
     const [unitsWithPhotos, tenantsWithPhotos] = await Promise.all([
       withPhotoUrls(authenticated.supabaseClient, unitsResult.data || []),
@@ -108,13 +112,14 @@ export async function GET() {
     if (billingSettingsError) throw billingSettingsError;
     const billingEnabled = billingSettingsRow?.billing_enabled === true;
 
-    return NextResponse.json({ success: true, openCharges: chargesResult.data || [], collectionSummary, billingEnabled,
+    return NextResponse.json({ success: true, actingUserId: authenticated.user.id, canonicalOwnerId: authenticated.effectiveOwnerId,
+      openCharges: chargesResult.data || [], collectionSummary, billingEnabled,
       units: unitsWithPhotos, tenants: tenantsWithPhotos, schedules: schedulesResult.data || [],
       maintenanceRequests: maintenanceResult.data || [], notifications: notificationResult.data || [],
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
       depositTransactions: depositTransactionResult.data || [], inspections: inspectionResult.data || [],
       inspectionItems: inspectionItemResult.data || [], inspectionAcknowledgements: inspectionAckResult.data || [],
-      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],financialEvents:financialEventResult.data||[] });
+      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],insuranceRequirements:insuranceRequirementResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],financialEvents:financialEventResult.data||[] });
   } catch (error) {
     console.error("Rental Manager query error", error);
     return NextResponse.json({ error: "Unable to load open rent charges." }, { status: 500 });
@@ -126,26 +131,100 @@ export async function POST(request) {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
     const body = await request.json();
-    const { application, user } = authenticated;
+    const { application, user, effectiveOwnerId } = authenticated;
     const timestamp = now();
 
     switch (body?.operation) {
       case "save-unit": {
         const input = body.unit;
         if (!input || typeof input !== "object") return badRequest("unit is required.");
+        if (!input.id) {
+          const existing = await application.findUnitsByProperty(input.propertyId, user.id);
+          const duplicate = existing.find((item) => item.status !== "inactive" && item.label.trim().toLowerCase() === String(input.label || "").trim().toLowerCase());
+          if (duplicate) return NextResponse.json({ error: `${duplicate.label} already exists. Select it to edit the existing property/unit.` }, { status: 409 });
+        }
         const unit = createRentalUnit({ ...input, id: id("rental_unit", input.id), createdAt: input.createdAt || timestamp,
           updatedAt: timestamp, bedrooms: input.bedrooms ?? null, bathrooms: input.bathrooms ?? null,
           squareFeet: input.squareFeet ?? null, availableAt: input.availableAt ?? null, notes: input.notes ?? null });
         return NextResponse.json({ success: true, unit: await application.saveUnit(unit, user.id) });
       }
+      case "archive-unit": {
+        if (typeof body.unitId !== "string" || body.unitId.trim() === "") return badRequest("unitId is required.");
+        const unit = await application.units.findById(body.unitId.trim(), user.id);
+        if (!unit) return NextResponse.json({ error: "Property/unit not found." }, { status: 404 });
+        const { data: activeLeases, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+          .select("id").eq("owner_id", user.id).eq("unit_id", unit.id).eq("status", "active").limit(1);
+        if (leaseError) throw leaseError;
+        if (activeLeases?.length) return NextResponse.json({ error: "End or transfer the active lease before archiving this property/unit." }, { status: 409 });
+        const archived = createRentalUnit({ ...unit, status: "inactive", updatedAt: timestamp });
+        return NextResponse.json({ success: true, unit: await application.saveUnit(archived, user.id) });
+      }
+      case "delete-archived-unit": {
+        if (typeof body.unitId !== "string" || body.unitId.trim() === "") return badRequest("unitId is required.");
+        const unitId = body.unitId.trim();
+        const unit = await application.units.findById(unitId, user.id);
+        if (!unit) return NextResponse.json({ error: "Property/unit not found." }, { status: 404 });
+        if (unit.status !== "inactive") return NextResponse.json({ error: "Archive the duplicate before permanently deleting it." }, { status: 409 });
+        const referenceTables = ["rental_leases", "rental_maintenance_requests", "rental_inspections"];
+        const referenceResults = await Promise.all(referenceTables.map((table) => authenticated.supabaseClient.from(table)
+          .select("id").eq("owner_id", user.id).eq("unit_id", unitId).limit(1)));
+        const referenceError = referenceResults.find((result) => result.error)?.error;
+        if (referenceError) throw referenceError;
+        if (referenceResults.some((result) => result.data?.length)) return NextResponse.json({
+          error: "This archived property/unit has linked lease, maintenance, or inspection history and cannot be permanently deleted.",
+        }, { status: 409 });
+        const { data, error } = await authenticated.supabaseClient.from("rental_units").delete()
+          .eq("owner_id", user.id).eq("id", unitId).eq("status", "inactive").select("id, label").maybeSingle();
+        if (error) throw error;
+        if (!data) return NextResponse.json({ error: "Archived property/unit was not found." }, { status: 404 });
+        return NextResponse.json({ success: true, deletedUnit: data });
+      }
       case "review-animal": {if(!body.animalId||!["approved","denied"].includes(body.decision)||!body.classification||!body.approvalEvidenceId)return badRequest("Animal, decision, classification, and evidence are required.");const{data,error}=await authenticated.supabaseClient.rpc("review_rental_animal",{p_owner_id:user.id,p_animal_id:body.animalId,p_decision:body.decision,p_classification:body.classification,p_approval_evidence_id:body.approvalEvidenceId,p_monthly_fee_cents:body.monthlyFeeCents??null,p_effective_start_date:body.effectiveStartDate||null});if(error)throw error;return NextResponse.json({success:true,review:data});}
       case "save-tenant": {
         const input = body.tenant;
         if (!input || typeof input !== "object") return badRequest("tenant is required.");
+        const normalizedEmail = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+        if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) return badRequest("A valid tenant email is required.");
+        const { data: existingTenants, error: existingError } = await authenticated.supabaseClient.from("rental_tenants")
+          .select("id, display_name, email, status").eq("owner_id", effectiveOwnerId);
+        if (existingError) throw existingError;
+        const duplicate = existingTenants?.find((item) => item.email?.trim().toLowerCase() === normalizedEmail);
+        if (duplicate) return NextResponse.json({
+          error: `${duplicate.display_name} already exists with ${duplicate.email}. The existing tenant has been selected.`,
+          existingTenant: duplicate,
+        }, { status: 409 });
         const tenant = createRentalTenant({ ...input, id: id("rental_tenant", input.id), authUserId: input.authUserId ?? null,
-          phone: input.phone ?? null, status: input.status ?? "invited", invitedAt: input.invitedAt ?? timestamp,
+          email: normalizedEmail, phone: input.phone ?? null, status: input.status ?? "invited", invitedAt: input.invitedAt ?? timestamp,
           activatedAt: input.activatedAt ?? null, createdAt: input.createdAt || timestamp, updatedAt: timestamp });
-        return NextResponse.json({ success: true, tenant: await application.saveTenant(tenant, user.id) });
+        return NextResponse.json({ success: true, tenant: await application.saveTenant(tenant, effectiveOwnerId) });
+      }
+      case "delete-unused-tenant": {
+        if (typeof body.tenantId !== "string" || !body.tenantId.trim()) return badRequest("tenantId is required.");
+        if (body.confirmation !== "DELETE") return badRequest("Type DELETE to confirm permanent deletion.");
+        const tenantId = body.tenantId.trim();
+        const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
+          .select("id, display_name, email, auth_user_id").eq("owner_id", effectiveOwnerId).eq("id", tenantId).maybeSingle();
+        if (tenantError) throw tenantError;
+        if (!tenant) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
+        if (tenant.auth_user_id) return NextResponse.json({ error: "This tenant has claimed portal access and cannot be deleted." }, { status: 409 });
+        const references = ["rental_lease_tenants", "rental_payments", "billing_customer_references", "rent_reporting_enrollments",
+          "rental_maintenance_requests", "rental_document_acknowledgements", "rental_security_deposits",
+          "pet_liability_policies", "rental_notification_outbox", "rental_autopay_enrollments",
+          "renters_insurance_policies", "renters_insurance_evidence", "rental_animals", "rental_support_cases", "rental_inspections",
+          "rental_inspection_acknowledgements", "rental_notification_preferences"];
+        const checks = await Promise.all(references.map((table) => authenticated.supabaseClient.from(table)
+          .select("tenant_id").eq("owner_id", effectiveOwnerId).eq("tenant_id", tenantId).limit(1)));
+        const checkError = checks.find((result) => result.error)?.error;
+        if (checkError) throw checkError;
+        if (checks.some((result) => result.data?.length)) return NextResponse.json({
+          error: "This tenant is assigned or has rental history. Delete the other, unassigned duplicate instead.",
+        }, { status: 409 });
+        const { data: deleted, error: deleteError } = await authenticated.supabaseClient.from("rental_tenants").delete()
+          .eq("owner_id", effectiveOwnerId).eq("id", tenantId).is("auth_user_id", null)
+          .select("id, display_name, email").maybeSingle();
+        if (deleteError) throw deleteError;
+        if (!deleted) return NextResponse.json({ error: "Unused tenant was not found." }, { status: 404 });
+        return NextResponse.json({ success: true, deletedTenant: deleted });
       }
       case "update-tenant-email": {
         if (typeof body.tenantId !== "string" || body.tenantId.trim() === "") return badRequest("tenantId is required.");
@@ -157,6 +236,40 @@ export async function POST(request) {
         if (error) throw error;
         if (!data) return NextResponse.json({ error: "Only an unlinked tenant email can be changed." }, { status: 409 });
         return NextResponse.json({ success: true, tenant: data });
+      }
+      case "update-tenant-profile": {
+        if (typeof body.tenantId !== "string" || body.tenantId.trim() === "") return badRequest("tenantId is required.");
+        const profile = body.profile && typeof body.profile === "object" ? body.profile : {};
+        const optional = (value) => typeof value === "string" ? value.trim() || null : null;
+        const lastFour = optional(profile.ssnLastFour);
+        if (lastFour && !/^\d{4}$/.test(lastFour)) return badRequest("SSN last four must contain exactly four digits.");
+        const monthlyIncomeCents = profile.monthlyIncomeCents === null || profile.monthlyIncomeCents === "" || profile.monthlyIncomeCents === undefined
+          ? null : Number(profile.monthlyIncomeCents);
+        if (monthlyIncomeCents !== null && (!Number.isSafeInteger(monthlyIncomeCents) || monthlyIncomeCents < 0)) return badRequest("Monthly income must be a non-negative whole-cent amount.");
+        // date_of_birth is deliberately never written here, even if a caller sends dateOfBirth --
+        // FORGE does not collect tenant birth dates (owner privacy decision). Omitting the key
+        // entirely means Supabase's .update() never touches that column, so any birth date already
+        // stored on a legacy record is left exactly as-is, neither erased nor overwritten.
+        const update = { phone: optional(profile.phone), work_phone: optional(profile.workPhone),
+          employer_name: optional(profile.employerName), employer_phone: optional(profile.employerPhone), monthly_income_cents: monthlyIncomeCents,
+          emergency_contact_name: optional(profile.emergencyContactName), emergency_contact_phone: optional(profile.emergencyContactPhone),
+          application_status: optional(profile.applicationStatus), application_submitted_at: optional(profile.applicationSubmittedAt),
+          screening_provider: optional(profile.screeningProvider), screening_reference: optional(profile.screeningReference),
+          screening_status: optional(profile.screeningStatus), screening_completed_at: optional(profile.screeningCompletedAt),
+          ssn_last_four: lastFour, landlord_notes: optional(profile.landlordNotes), updated_at: timestamp };
+        const { data, error } = await authenticated.supabaseClient.from("rental_tenants").update(update)
+          .eq("owner_id", effectiveOwnerId).eq("id", body.tenantId.trim()).select("id, display_name").maybeSingle();
+        if (error) throw error;
+        if (!data) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
+        return NextResponse.json({ success: true, tenant: data });
+      }
+      case "set-primary-tenant": {
+        if (!body.leaseId || !body.tenantId) return badRequest("leaseId and tenantId are required.");
+        const { error } = await authenticated.supabaseClient.rpc("set_rental_primary_tenant", {
+          p_owner_id: effectiveOwnerId, p_lease_id: body.leaseId, p_tenant_id: body.tenantId,
+        });
+        if (error) throw error;
+        return NextResponse.json({ success: true });
       }
       case "save-lease": {
         const input = body.lease;
@@ -307,13 +420,13 @@ export async function POST(request) {
       }
       case "save-lease-change": {
         const input=body.change;if(!input?.leaseId||!["renewal","amendment","proration"].includes(input.changeType)||!input.effectiveDate||!input.reason?.trim())return badRequest("Lease, supported change type, effective date, and reason are required.");
-        const {data:lease,error:leaseError}=await authenticated.supabaseClient.from("rental_leases").select("*").eq("owner_id",user.id).eq("id",input.leaseId).maybeSingle();if(leaseError)throw leaseError;if(!lease)return NextResponse.json({error:"Lease was not found."},{status:404});
+        const {data:lease,error:leaseError}=await authenticated.supabaseClient.from("rental_leases").select("*").eq("owner_id",effectiveOwnerId).eq("id",input.leaseId).maybeSingle();if(leaseError)throw leaseError;if(!lease)return NextResponse.json({error:"Lease was not found."},{status:404});
         const newTerms=input.changeType==="proration"?{amountCents:Number(input.amountCents)}:{monthlyRentCents:Number(input.monthlyRentCents)||lease.monthly_rent_cents,rentDueDay:Number(input.rentDueDay)||lease.rent_due_day,endDate:input.endDate||lease.end_date};
         if(input.changeType==="proration"&&(!Number.isSafeInteger(newTerms.amountCents)||newTerms.amountCents<=0))return badRequest("Proration requires a positive amount.");
-        const {data,error}=await authenticated.supabaseClient.from("rental_lease_changes").insert({owner_id:user.id,id:id("rental_lease_change",input.id),lease_id:lease.id,change_type:input.changeType,status:"draft",effective_date:input.effectiveDate,previous_terms:{monthlyRentCents:Number(lease.monthly_rent_cents),rentDueDay:lease.rent_due_day,endDate:lease.end_date},new_terms:newTerms,reason:input.reason.trim(),document_evidence_id:input.documentEvidenceId||null}).select("*").single();if(error)throw error;return NextResponse.json({success:true,change:data});
+        const {data,error}=await authenticated.supabaseClient.from("rental_lease_changes").insert({owner_id:effectiveOwnerId,id:id("rental_lease_change",input.id),lease_id:lease.id,change_type:input.changeType,status:"draft",effective_date:input.effectiveDate,previous_terms:{monthlyRentCents:Number(lease.monthly_rent_cents),rentDueDay:lease.rent_due_day,endDate:lease.end_date},new_terms:newTerms,reason:input.reason.trim(),document_evidence_id:input.documentEvidenceId||null}).select("*").single();if(error)throw error;return NextResponse.json({success:true,change:data});
       }
       case "approve-lease-change": {
-        if(!body.changeId)return badRequest("changeId is required.");const {data:approved,error:approvalError}=await authenticated.supabaseClient.from("rental_lease_changes").update({status:"approved",approved_at:timestamp}).eq("owner_id",user.id).eq("id",body.changeId).eq("status","draft").select("id").maybeSingle();if(approvalError)throw approvalError;if(!approved)return NextResponse.json({error:"Draft lease change was not found."},{status:404});const {data,error}=await authenticated.supabaseClient.rpc("apply_rental_lease_change",{p_owner_id:user.id,p_change_id:body.changeId});if(error)throw error;return NextResponse.json({success:true,application:data});
+        if(!body.changeId)return badRequest("changeId is required.");const {data:approved,error:approvalError}=await authenticated.supabaseClient.from("rental_lease_changes").update({status:"approved",approved_at:timestamp}).eq("owner_id",effectiveOwnerId).eq("id",body.changeId).eq("status","draft").select("id").maybeSingle();if(approvalError)throw approvalError;if(!approved)return NextResponse.json({error:"Draft lease change was not found."},{status:404});const {data,error}=await authenticated.supabaseClient.rpc("apply_rental_lease_change",{p_owner_id:effectiveOwnerId,p_change_id:body.changeId});if(error)throw error;return NextResponse.json({success:true,application:data});
       }
       case "save-late-fee-rule": {
         const input=body.rule;if(!input?.leaseId||!input.jurisdictionCode?.trim()||!input.ruleSource?.trim()||input.manualApprovalConfirmed!==true)return badRequest("Lease, jurisdiction, rule source, and manual-approval confirmation are required.");const graceDays=Number(input.graceDays);if(!Number.isInteger(graceDays)||graceDays<0||graceDays>31)return badRequest("Grace days must be between 0 and 31.");const calculationType=input.calculationType;const fixed=calculationType==="fixed"?Number(input.fixedAmountCents):null;const percentage=calculationType==="percentage"?Number(input.percentageBasisPoints):null;if((calculationType==="fixed"&&(!Number.isSafeInteger(fixed)||fixed<=0))||(calculationType==="percentage"&&(!Number.isInteger(percentage)||percentage<=0)))return badRequest("A valid late-fee calculation is required.");const {data,error}=await authenticated.supabaseClient.from("rental_late_fee_rules").insert({owner_id:user.id,id:id("rental_late_fee_rule",input.id),lease_id:input.leaseId,status:"active",jurisdiction_code:input.jurisdictionCode.trim().toUpperCase(),grace_days:graceDays,calculation_type:calculationType,fixed_amount_cents:fixed,percentage_basis_points:percentage,maximum_amount_cents:input.maximumAmountCents?Number(input.maximumAmountCents):null,rule_source:input.ruleSource.trim(),requires_manual_approval:true}).select("*").single();if(error)throw error;return NextResponse.json({success:true,rule:data});

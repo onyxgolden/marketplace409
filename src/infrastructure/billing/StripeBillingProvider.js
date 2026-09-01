@@ -131,6 +131,14 @@ export class StripeBillingProvider {
     return Object.freeze({ provider: this.provider, connectedAccountId: context.connectedAccountId, customerId: customer.id });
   }
 
+  async createPrivateFinancingCustomer(context, input, idempotencyKey) {
+    const customer = await this.stripe.customers.create({ email: required(input.email, "a borrower email"),
+      name: required(input.displayName, "a borrower display name"),
+      metadata: { forge_owner_id: context.ownerId, forge_private_financing_borrower_id: required(input.borrowerId, "a borrower id") },
+    }, { stripeAccount: required(context.connectedAccountId, "a connected account id"), idempotencyKey });
+    return Object.freeze({ customerId: customer.id, connectedAccountId: context.connectedAccountId });
+  }
+
   async createPaymentSession(context, rawInput) {
     const input = validateBillingCheckoutInput(rawInput);
     const intent = await this.stripe.paymentIntents.create({
@@ -157,6 +165,18 @@ export class StripeBillingProvider {
     if (!intent.client_secret) throw new Error("Stripe did not return a PaymentIntent client secret.");
     return Object.freeze({ provider: this.provider, connectedAccountId: context.connectedAccountId,
       paymentIntentId: intent.id, paymentId: input.paymentId, clientSecret: intent.client_secret });
+  }
+
+  async createPrivateFinancingPaymentSession(context, input) {
+    const intent = await this.stripe.paymentIntents.create({
+      amount: input.amountCents, currency: "usd", customer: required(input.customerId, "a connected-account customer id"),
+      payment_method_types: input.paymentMethods, application_fee_amount: undefined,
+      payment_method_options: { us_bank_account: { verification_method: "instant", financial_connections: { permissions: ["payment_method"] } } },
+      metadata: { forge_payment_id: input.paymentId, forge_private_financing_account_id: input.accountId,
+        forge_private_financing_borrower_id: input.borrowerId, forge_owner_id: context.ownerId },
+    }, { stripeAccount: required(context.connectedAccountId, "a connected account id"), idempotencyKey: required(input.idempotencyKey, "an idempotency key") });
+    if (!intent.client_secret) throw new Error("Stripe did not return a PaymentIntent client secret.");
+    return Object.freeze({ connectedAccountId: context.connectedAccountId, paymentIntentId: intent.id, clientSecret: intent.client_secret });
   }
 
   async retrievePaymentIntent(context, id) {

@@ -8,6 +8,7 @@ import FinancialWorkspaceHeader from "@/components/forge/financial/FinancialWork
 import FinancialWorkspaceSidebar from "@/components/forge/financial/FinancialWorkspaceSidebar";
 import RentalPortfolioPerformance from "@/components/forge/property/RentalPortfolioPerformance";
 import SimplifiImportPanel from "@/components/forge/financial/SimplifiImportPanel";
+import InvestmentAccountsPanel from "@/components/forge/financial/InvestmentAccountsPanel";
 
 export const FINANCIAL_FUNCTIONS =
   Object.freeze([
@@ -22,6 +23,10 @@ export const FINANCIAL_FUNCTIONS =
     Object.freeze({
       id: "properties",
       label: "Properties",
+    }),
+    Object.freeze({
+      id: "investments",
+      label: "Investments",
     }),
     Object.freeze({
       id: "operations",
@@ -90,6 +95,9 @@ export function buildFinancialActiveSurface({
           }
         />
       );
+
+    case "investments":
+      return <InvestmentAccountsPanel />;
 
     case "operations":
       return (
@@ -165,7 +173,7 @@ export default function FinancialApplicationShell({
       activeSurface={
         <div className="space-y-5">
           {error && (
-            <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-900">
+            <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-900 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
               <div className="font-black">
                 Financial data failed to load.
               </div>

@@ -39,6 +39,7 @@ export function createBusinessApplicationSuite(deps = {}) {
     deps.businessCreateApplication ||
     new BusinessCreateApplication({
       supabase: businessSupabase,
+      imageUploader,
     });
 
   const businessEditApplication =

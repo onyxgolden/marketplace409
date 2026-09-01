@@ -4,7 +4,7 @@
    no-FOUC script in the root layout (localStorage, falling back to the
    OS preference) rather than by prefers-color-scheme alone — that's what
    makes it an actual user-toggleable mode instead of just following the
-   system setting. See src/contexts/ThemeContext.jsx. */
+   system setting. See src/components/theme/ThemeProvider.jsx. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
@@ -15,6 +15,7 @@
 :root.dark {
   --background: #0a0a0a;
   --foreground: #ededed;
+  color-scheme: dark;
 }
 
 @theme inline {
