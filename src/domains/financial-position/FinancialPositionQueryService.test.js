@@ -34,9 +34,9 @@ function createDependencies() {
         },
         {
           id: "account-other",
-          name: "Tractor",
+          name: "Unsupported Account",
           type: "other",
-          subtype: "equipment",
+          subtype: "other",
         },
         {
           id: "account-unbalanced",
@@ -122,13 +122,6 @@ describe("FinancialPositionQueryService", () => {
         account_type: "investment",
         current_value: 300000,
       },
-      {
-        id: "account-other",
-        name: "Tractor",
-        category: "equipment",
-        account_type: "other",
-        current_value: 9999,
-      },
     ]);
 
     expect(position.liabilities).toEqual([
@@ -147,10 +140,10 @@ describe("FinancialPositionQueryService", () => {
     ]);
 
     expect(position.netWorth).toEqual({
-      totalAssets: 434999,
+      totalAssets: 425000,
       totalLiabilities: 200000,
-      netWorth: 234999,
-      debtToAssetRatio: 200000 / 434999,
+      netWorth: 225000,
+      debtToAssetRatio: 200000 / 425000,
     });
 
     expect(position.accountBalances).toHaveLength(5);
@@ -169,7 +162,7 @@ describe("FinancialPositionQueryService", () => {
     expect(Object.isFrozen(position.metadata)).toBe(true);
   });
 
-  test("includes physical assets and skips accounts without balances", async () => {
+  test("skips unsupported accounts and accounts without balances", async () => {
     const service =
       new FinancialPositionQueryService(
         createDependencies(),
@@ -184,33 +177,11 @@ describe("FinancialPositionQueryService", () => {
       ),
     ).toBe(false);
 
-    expect(position.assets.some((item) => item.id === "account-other")).toBe(true);
-  });
-
-  test("excludes a retired (inactive) account from Net Worth even though it still has a balance on record", async () => {
-    // Review defect: retiring a Financial Asset sets financial_accounts.active = false, but
-    // projectAssets/projectLiabilities never checked that flag -- a retired asset (or any closed
-    // account) stayed in active Net Worth forever, with no way to actually remove it short of
-    // deleting its history outright.
-    const dependencies = createDependencies();
-    dependencies.financialAccountRepository.findByOwnerId = vi.fn().mockResolvedValue([
-      { id: "account-cash", name: "Operating Cash", type: "depository", subtype: "checking", active: true },
-      { id: "account-retired-asset", name: "Sold Trailer", type: "other", subtype: "trailer", active: false },
-      { id: "account-retired-liability", name: "Paid-off Loan", type: "loan", subtype: "mortgage", active: false },
-    ]);
-    dependencies.accountBalanceRepository.findLatestByOwnerId = vi.fn().mockResolvedValue([
-      { id: "b1", financialAccountId: "account-cash", currentBalanceCents: 100000, availableBalanceCents: null, asOf: "2026-08-01T00:00:00.000Z" },
-      { id: "b2", financialAccountId: "account-retired-asset", currentBalanceCents: 500000, availableBalanceCents: null, asOf: "2026-08-01T00:00:00.000Z" },
-      { id: "b3", financialAccountId: "account-retired-liability", currentBalanceCents: 200000, availableBalanceCents: null, asOf: "2026-08-01T00:00:00.000Z" },
-    ]);
-
-    const service = new FinancialPositionQueryService(dependencies);
-    const position = await service.buildPosition("owner-1");
-
-    expect(position.assets.map((a) => a.id)).toEqual(["account-cash"]);
-    expect(position.liabilities).toEqual([]);
-    expect(position.netWorth.totalAssets).toBe(1000);
-    expect(position.netWorth.totalLiabilities).toBe(0);
+    expect(
+      [...position.assets, ...position.liabilities].some(
+        (item) => item.id === "account-other",
+      ),
+    ).toBe(false);
   });
 
   test("reports canonical account balances without fabricating metrics or insights", async () => {

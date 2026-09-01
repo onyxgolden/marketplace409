@@ -26,10 +26,6 @@ vi.mock("../SimplifiImportPanel", () => ({
   default: function MockSimplifiImport() { return <section data-simplifi-import-function>Simplifi import</section>; },
 }));
 
-vi.mock("../FinancialAssetsPanel", () => ({
-  default: function MockAssets() { return <section data-assets-function>Assets</section>; },
-}));
-
 vi.mock(
   "../FinancialExecutiveIntelligence",
   () => ({
@@ -133,10 +129,6 @@ describe(
             label: "Properties",
           },
           {
-            id: "assets",
-            label: "Assets",
-          },
-          {
             id: "operations",
             label: "Operations",
           },
@@ -160,10 +152,6 @@ describe(
       [
         "properties",
         "data-properties-function",
-      ],
-      [
-        "assets",
-        "data-assets-function",
       ],
       [
         "operations",
@@ -196,7 +184,6 @@ describe(
           "data-overview-header",
           "data-transactions-function",
           "data-properties-function",
-          "data-assets-function",
           "data-operations-function",
           "data-simplifi-import-function",
         ];

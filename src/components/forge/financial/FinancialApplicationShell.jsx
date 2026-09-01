@@ -8,7 +8,6 @@ import FinancialWorkspaceHeader from "@/components/forge/financial/FinancialWork
 import FinancialWorkspaceSidebar from "@/components/forge/financial/FinancialWorkspaceSidebar";
 import RentalPortfolioPerformance from "@/components/forge/property/RentalPortfolioPerformance";
 import SimplifiImportPanel from "@/components/forge/financial/SimplifiImportPanel";
-import FinancialAssetsPanel from "@/components/forge/financial/FinancialAssetsPanel";
 
 export const FINANCIAL_FUNCTIONS =
   Object.freeze([
@@ -23,10 +22,6 @@ export const FINANCIAL_FUNCTIONS =
     Object.freeze({
       id: "properties",
       label: "Properties",
-    }),
-    Object.freeze({
-      id: "assets",
-      label: "Assets",
     }),
     Object.freeze({
       id: "operations",
@@ -95,9 +90,6 @@ export function buildFinancialActiveSurface({
           }
         />
       );
-
-    case "assets":
-      return <FinancialAssetsPanel />;
 
     case "operations":
       return (
