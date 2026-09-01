@@ -10,10 +10,10 @@ import {
   ShoppingCart,
   Store,
   ClipboardList,
-  Hammer,
   Building2,
 } from "lucide-react";
 
+import ForgeHammerAnvilIcon from "@/components/ForgeHammerAnvilIcon";
 import { supabase } from "@/lib/supabase";
 
 export default function Header() {
@@ -89,7 +89,7 @@ export default function Header() {
             href="/forge"
             className="flex items-center gap-1.5 bg-amber-400 text-slate-950 px-4 py-2 rounded-xl font-black hover:bg-amber-300"
           >
-            <Hammer aria-hidden="true" className="h-4 w-4" />
+            <ForgeHammerAnvilIcon className="h-5 w-5" />
             Launch FORGE
           </a>
 
@@ -158,7 +158,7 @@ export default function Header() {
             href="/forge"
             className="flex items-center gap-2 bg-amber-400 text-slate-950 px-4 py-3 rounded-xl font-black"
           >
-            <Hammer aria-hidden="true" className="h-4 w-4" />
+            <ForgeHammerAnvilIcon className="h-5 w-5" />
             Launch FORGE
           </a>
           <a
