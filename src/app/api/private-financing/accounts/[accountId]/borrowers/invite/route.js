@@ -22,12 +22,16 @@ export async function POST(request, { params }) {
 
   const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://marketplace409.vercel.app").replace(/\/$/, "");
   const senderEmail = process.env.RENTAL_EMAIL_SENDER || "rentals@mail.409marketplace.online";
+  // Carrying the invited email as a query param lets the portal route (when it finds no session)
+  // and the sign-in page pre-fill and lock the email field, instead of a borrower guessing which
+  // address to use or typing one that will never match the invitation.
+  const portalUrl = `${siteUrl}/forge/private-financing/portal?email=${encodeURIComponent(email)}`;
   try {
     const sent = await createResendRentalEmailProvider().send({
       id: `private-financing-${data.membershipId}-${Date.now()}`,
       senderName: "FORGE Private Financing", senderEmail, recipient: email,
       subject: "View your private financing account in FORGE",
-      bodyText: `Hello ${fullName},\n\nYou have been invited to securely view your private financing account in FORGE. Sign in or create an account using this exact email address (${email}), confirm the email if prompted, then open:\n\n${siteUrl}/forge/private-financing/portal\n\nYour access is limited to the financing account shared with you.\n\nFORGE Private Financing`,
+      bodyText: `Hello ${fullName},\n\nYou have been invited to securely view your private financing account in FORGE. Sign in or create an account using this exact email address (${email}), confirm the email if prompted, then open:\n\n${portalUrl}\n\nYour access is limited to the financing account shared with you.\n\nFORGE Private Financing`,
     });
     return NextResponse.json({ success: true, invitation: data, delivery: { sent: true, messageId: sent.messageId } });
   } catch (deliveryError) {

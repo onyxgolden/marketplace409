@@ -12,12 +12,17 @@ export default function PrivateFinancingBorrowerPortal() {
   const [paying, setPaying] = useState(null);
 
   useEffect(() => {
-    fetch("/api/private-financing/portal")
+    // Forward this page's own query string (the invited ?email=, carried here from the invitation
+    // link) so the API can compare it against whoever actually authenticated, even on a direct
+    // reload of this URL rather than a fresh click from the invitation email.
+    const search = typeof window !== "undefined" ? window.location.search : "";
+    fetch(`/api/private-financing/portal${search}`)
       .then(async (response) => ({ response, payload: await response.json() }))
       .then(({ response, payload }) => setState(response.ok ? { data: payload } : {
         error: payload.error,
         signInUrl: payload.signInUrl,
         signedInEmail: payload.signedInEmail,
+        invitedEmail: payload.invitedEmail,
         claimErrorCode: payload.claimErrorCode,
       }))
       .catch(() => setState({ error: "Unable to load your financing account." }));
@@ -32,6 +37,7 @@ export default function PrivateFinancingBorrowerPortal() {
         <h1 className="text-3xl font-black">Private financing</h1>
         <p role="alert" className="mt-4">{state.error}</p>
         {state.signedInEmail ? <p className="mt-3 text-sm font-bold">Signed in as {state.signedInEmail}</p> : null}
+        {state.invitedEmail ? <p className="mt-1 text-sm text-slate-600">This invitation was sent to {state.invitedEmail}.</p> : null}
         {state.claimErrorCode ? <p className="mt-2 text-xs text-slate-500">Access code: {state.claimErrorCode}</p> : null}
         <a className="mt-4 mr-3 inline-block rounded-xl border border-slate-300 px-5 py-3 font-bold text-slate-800" href="/forge/private-financing/portal">Retry</a>
         {state.signInUrl ? <a className="mt-4 inline-block rounded-xl bg-blue-900 px-5 py-3 font-bold text-white" href={state.signInUrl}>Use a different account</a> : null}
@@ -44,7 +50,24 @@ export default function PrivateFinancingBorrowerPortal() {
       <h1 className="text-3xl font-black">Your private financing</h1>
       <p className="mt-2 text-sm text-slate-600">Signed in as {state.data.email}</p>
       {state.data.accounts.length === 0 ? (
-        <p className="mt-6 rounded-xl border p-5">No invitation matches this signed-in email.</p>
+        <div className="mt-6 rounded-xl border p-5">
+          {state.data.mismatched ? (
+            <>
+              <p role="alert" className="font-bold">
+                This invitation was sent to {state.data.invitedEmail}, but you&apos;re signed in as {state.data.email}.
+              </p>
+              <p className="mt-2 text-sm text-slate-600">
+                Sign out and sign in with {state.data.invitedEmail} to continue, or ask the account owner to resend
+                the invitation to the right address.
+              </p>
+              <a className="mt-4 inline-block rounded-xl bg-blue-900 px-5 py-3 font-bold text-white" href={`/auth?next=${encodeURIComponent("/forge/private-financing/portal")}&email=${encodeURIComponent(state.data.invitedEmail)}`}>
+                Use a different account
+              </a>
+            </>
+          ) : (
+            <p>No invitation matches this signed-in email.</p>
+          )}
+        </div>
       ) : state.data.accounts.map(({ account, role, summary, events, regularScheduledPaymentCents, projection, progressAvailable = true, onlinePaymentsEnabled }) => (
         <section key={account.id} className="mt-6 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
           <div className="flex justify-between gap-4">
