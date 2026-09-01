@@ -6,6 +6,43 @@
 
 ---
 
+## 2026-09-01 Turnover Checkpoint — Financial Overview Recovery
+
+**Production HEAD:** `ea731b983f9e0498c2fa17ed5bd048668033233d`
+
+**Live state:** The owner-approved Financial Overview is restored on canonical production.
+
+### Completed
+
+- PR #84 restored the approved Financial Overview from `feat/financial-assets-foundation` onto current `main` without merging that stale branch wholesale.
+- Restored the grouped account/liability tree, category donut charts, adjustable cash-flow view, manual bank/credit/loan accounts, and corrected investment aggregation.
+- Preserved the newer Financial **Tools** tab and adjustable amortization calculator.
+- PR #85 restored top-level account groups collapsed by default and added an **Edit** action for asset rows that opens the Assets workspace.
+- Both PR preview deployments and both production deployments passed Vercel.
+- No database migration or production-data mutation was part of either recovery PR.
+
+### Validation Evidence
+
+- Recovery integration: 42 focused tests passed; scoped ESLint passed; `git diff --check` passed; Next.js production build passed.
+- Controls hotfix: 19 focused tests passed; scoped ESLint passed; `git diff --check` passed.
+- Owner confirmed the recovered Financial Overview visually before identifying the two controls corrected by PR #85.
+
+### Root Cause and Guardrail
+
+Claude's approved Financial Overview work was pushed to `feat/financial-assets-foundation` but never merged into `main`. Preview review therefore showed the new UI while the canonical website continued serving the older overview. That branch also contains unrelated and older changes and **must not be merged wholesale**.
+
+All future Financial work must start from current `main`. Selective recovery from the old branch is complete.
+
+### Next Inspection
+
+1. Fetch current `main` and confirm HEAD is at or after `ea731b9`.
+2. Perform owner visual QA on `https://409marketplace.online/forge/financial`.
+3. Preserve the restored Overview and Tools tab while addressing any newly reported UI defect.
+4. Do not reopen or merge `feat/financial-assets-foundation` as an integration branch.
+
+---
+
+
 # Purpose
 
 FORGE_ENGINEERING_CONTROL_CENTER.md is the live operational control center for the FORGE platform.
