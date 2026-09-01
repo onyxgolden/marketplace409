@@ -61,6 +61,25 @@ describe("classifyProtectedPath", () => {
     expect(classifyProtectedPath("src/domains/financial-position/FinancialPositionQueryService.js").protected).toBe(true);
   });
 
+  // Regression for a real gap found during the FB-UI-0 checkpoint's inspection and documented as
+  // needing a fix before any FB-UI authority above read-only relies on this classifier: "financing"
+  // is not a substring of "financial", so a real, live path this session shipped
+  // (src/app/api/private-financing/portal/route.js) previously passed through unclassified.
+  it("flags a private-financing path as protected (financial_logic and contractual_workflow both)", () => {
+    const result = classifyProtectedPath("src/app/api/private-financing/portal/route.js");
+    expect(result.protected).toBe(true);
+    expect(result.reasons).toEqual(expect.arrayContaining(["financial_logic", "contractual_workflow"]));
+  });
+
+  it("flags a promissory note / loan note / lease agreement path as a protected contractual workflow", () => {
+    expect(classifyProtectedPath("src/domains/private-financing/promissoryNoteTerms.js").reasons).toContain("contractual_workflow");
+    expect(classifyProtectedPath("src/domains/rental/leaseAgreementRenewal.js").reasons).toContain("contractual_workflow");
+  });
+
+  it("flags an accounting-calculation path as financial_logic", () => {
+    expect(classifyProtectedPath("src/domains/ledger/accountingCalculations.js").reasons).toContain("financial_logic");
+  });
+
   it("flags an env/secrets path as protected", () => {
     expect(classifyProtectedPath(".env.local").protected).toBe(true);
     expect(classifyProtectedPath("scripts/deploy/rotate-service-role-key.mjs").protected).toBe(true);

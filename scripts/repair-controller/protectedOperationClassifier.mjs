@@ -13,7 +13,14 @@ import path from "node:path";
 const PROTECTED_PATH_RULES = Object.freeze([
   { reason: "database_migration", test: (p) => p.startsWith("supabase/migrations/") },
   { reason: "authorization_or_rls", test: (p) => /rls|has[_]?workspace[_]?access|resolve[_]?effective[_]?owner[_]?id|workspace[_]?members|authoriz/.test(p) },
-  { reason: "financial_logic", test: (p) => /stripe|payment|rent[-_]collect|reconcil|refund|financial|ledger|billing/.test(p) },
+  { reason: "financial_logic", test: (p) => /stripe|payment|rent[-_]collect|reconcil|refund|financial|financing|ledger|billing|accounting/.test(p) },
+  // Added for FB-UI-4 (governed patch preparation): "financing" is not a substring of "financial", so
+  // the rule above alone let a real path like src/app/api/private-financing/portal/route.js through
+  // unclassified -- found and documented as a gap in the FB-UI-0 checkpoint report, fixed here before
+  // any FB-UI authority above read-only relies on this classifier for real gating. Contract/note terms
+  // are covered separately from financial_logic since a promissory note or lease can be a protected
+  // contractual document even where no payment-processing or ledger code is involved.
+  { reason: "contractual_workflow", test: (p) => /private[-_]financing|promissory|loan[-_]note|contract|agreement/.test(p) },
   { reason: "secrets_or_credentials", test: (p) => /\.env(\.|$)|secret|credential|webhook.*secret|\.pem$|service[-_]role[-_]key/.test(p) },
   { reason: "tenant_or_sensitive_record", test: (p) => /tenant|lease|deposit|insurance|ssn|personally[-_]?identifiable/.test(p) },
   { reason: "cron_schedule", test: (p) => /\.github\/workflows\/.*cron|scripts\/.*cron|cron[-_]schedule/.test(p) },
