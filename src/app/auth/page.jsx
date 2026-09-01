@@ -13,6 +13,9 @@ function nextDestination() {
 export default function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [message, setMessage] = useState("");
+  const [resettingPassword, setResettingPassword] = useState(false);
 
   async function signUp() {
     const { error } = await supabase.auth.signUp({
@@ -67,6 +70,27 @@ export default function AuthPage() {
     }
   }
 
+  async function resetPassword() {
+    if (!email.trim()) {
+      setMessage("Enter your email address first, then select Forgot password?");
+      return;
+    }
+
+    setResettingPassword(true);
+    setMessage("");
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/auth/reset-password`,
+    });
+    setResettingPassword(false);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Check your email for a secure password-reset link.");
+  }
+
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
       <Header />
@@ -86,13 +110,38 @@ export default function AuthPage() {
             onChange={(e) => setEmail(e.target.value)}
           />
 
-          <input
-            className="w-full border rounded-xl px-4 py-4 mb-6"
-            placeholder="Password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <div className="relative mb-2">
+            <input
+              className="w-full border rounded-xl px-4 py-4 pr-20"
+              placeholder="Password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((visible) => !visible)}
+              className="absolute inset-y-0 right-0 px-4 font-semibold text-blue-900"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? "Hide" : "Show"}
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={resetPassword}
+            disabled={resettingPassword}
+            className="mb-6 text-sm font-semibold text-blue-900 underline disabled:opacity-60"
+          >
+            {resettingPassword ? "Sending reset link…" : "Forgot password?"}
+          </button>
+
+          {message ? (
+            <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-950">
+              {message}
+            </p>
+          ) : null}
 
           <button
             onClick={signIn}
