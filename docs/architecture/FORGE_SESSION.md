@@ -7,6 +7,25 @@
 
 ---
 
+## 2026-09-01 Active Assignment — RV Multi-User Operations
+
+**Owner authorization:** Claude may inspect, implement, test, push a branch, and open a PR while the owner is away.
+
+**Specification:** `governance/specifications/rv-multi-user-operational-dashboard-handoff.md`
+
+**Execution order:**
+
+1. Reconcile Claude's current unmerged work against latest `main`.
+2. Prove and harden multi-user RV/cabin workspace access and cross-workspace isolation.
+3. Only after access is green, build the compact operational dashboard and required graphics.
+4. Run focused validation and prepare a PR with evidence.
+5. Stop before merge, Production deployment or migration, real invitations, real-record mutation, or live payment changes.
+
+Do not duplicate completed layers or merge stale branches wholesale.
+
+---
+
+
 ## 2026-09-01 Turnover Checkpoint — Financial Overview Recovery
 
 **Production HEAD:** `ea731b983f9e0498c2fa17ed5bd048668033233d`
