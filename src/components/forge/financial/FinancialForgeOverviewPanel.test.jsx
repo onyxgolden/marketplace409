@@ -65,18 +65,62 @@ describe("FinancialForgeOverviewPanel", () => {
     expect(markup).toMatch(/Imported business transaction history covers/);
   });
 
-  it("shows the income totals as trend charts rather than flat stat cards", () => {
+  it("shows income and expenses as category donuts, each slice a real category from the data", () => {
     const markup = renderToStaticMarkup(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
-    expect(markup).toContain("Income — trailing 6 months");
-    expect(markup).toContain("Income — year to date");
-    // One bar per bucketed period, rendered by ForgeMonthlyTrendChart.
-    expect((markup.match(/data-trend-bar=/g) || []).length).toBeGreaterThan(0);
+    expect(markup).toContain("Income by category");
+    expect(markup).toContain("Expenses by category");
+    expect(markup).toContain("Rental Income");
+    expect(markup).toContain("$1,500.00");
+    expect(markup).toContain("100%");
+    expect(markup).toContain("Utilities");
+    expect(markup).toContain("$200.00");
+  });
+
+  it("gives the category donuts their own This Month / 6 Months / All Time period control, independent of the main period selector", () => {
+    let mounted;
+    try {
+      mounted = mount(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
+      for (const label of ["This Month", "6 Months", "All Time"]) {
+        expect(mounted.container.textContent).toContain(label);
+      }
+      const sixMonthsButton = mounted.container.querySelector('[data-donut-period-option="sixMonths"]');
+      expect(sixMonthsButton.getAttribute("aria-pressed")).toBe("true");
+
+      const monthButton = mounted.container.querySelector('[data-donut-period-option="month"]');
+      act(() => { monthButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      expect(monthButton.getAttribute("aria-pressed")).toBe("true");
+      expect(sixMonthsButton.getAttribute("aria-pressed")).toBe("false");
+      // The main bar-chart/table period selector is untouched by the donut-only control.
+      expect(mounted.container.querySelector('[data-period-option="sixMonths"]').getAttribute("aria-pressed")).toBe("true");
+    } finally {
+      if (mounted) unmount(mounted);
+    }
   });
 
   it("shows all four period preset controls plus a business/personal toggle", () => {
     const markup = renderToStaticMarkup(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
     for (const label of ["6 Months", "YTD", "Year", "All time", "Business", "Personal"]) {
       expect(markup).toContain(label);
+    }
+  });
+
+  it("groups expense categories into collapsible parent buckets with a subtotal, and collapses on click", () => {
+    let mounted;
+    try {
+      mounted = mount(<FinancialForgeOverviewPanel loadState="ready" transactions={transactions} accounts={accounts} />);
+      // Business scope here has "utilities" ($200 expense) -> grouped under "Utilities".
+      const group = mounted.container.querySelector('[data-category-group="utilities"]');
+      expect(group).not.toBeNull();
+      expect(group.textContent).toContain("Utilities");
+      expect(group.textContent).toContain("-$200.00");
+      expect(mounted.container.textContent).toContain("Utilities");
+
+      const toggle = group.querySelector("button");
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      if (mounted) unmount(mounted);
     }
   });
 
