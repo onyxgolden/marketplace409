@@ -91,9 +91,18 @@ export default function PrivateFinancingAccountsPanel() {
       <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-400">
         Seller-financed and personal-loan accounts you administer directly, separate from rent collection.
       </p>
-      <button type="button" onClick={() => setShowHistoricalImport(true)} data-guided-workflow-control="open-historical-import" className={`mt-5 rounded-xl px-4 py-2 text-sm font-bold ${goldControlClassName} ${FOCUS_RING}`}>
-        Import historical plan
-      </button>
+      <div className="mt-5 flex flex-wrap gap-3">
+        <a
+          href="/forge/private-financing/portal"
+          data-guided-workflow-control="open-borrower-portal"
+          className={`rounded-xl border border-sky-300 px-4 py-2 text-sm font-bold text-sky-800 transition hover:bg-sky-50 dark:border-sky-700 dark:text-sky-300 dark:hover:bg-sky-950/40 ${FOCUS_RING}`}
+        >
+          Open borrower portal
+        </a>
+        <button type="button" onClick={() => setShowHistoricalImport(true)} data-guided-workflow-control="open-historical-import" className={`rounded-xl px-4 py-2 text-sm font-bold ${goldControlClassName} ${FOCUS_RING}`}>
+          Import historical plan
+        </button>
+      </div>
 
       {status === "loading" ? (
         <p role="status" className="mt-6 text-sm text-slate-500 dark:text-slate-400">
