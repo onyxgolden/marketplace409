@@ -47,3 +47,8 @@ data/
 
 # Supabase local CLI metadata
 supabase/.temp/
+
+# FB-UI-1 screenshot evidence output -- may contain synthetic-data screenshots and manifests from
+# local runs; never committed (requirement 9: never commit a screenshot with real borrower/tenant/
+# financial/auth/payment information -- the safest default is to never commit the output at all).
+/ui-improvement-manager/evidence/
