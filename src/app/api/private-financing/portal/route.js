@@ -24,9 +24,15 @@ export async function GET() {
   const {data:{user},error:authError}=await db.auth.getUser();
   if(authError||!user?.id)return NextResponse.json({error:"Sign in to view your financing account.",signInUrl:"/auth?next=/forge/private-financing/portal"},{status:401});
   const claim=await db.rpc("claim_private_financing_borrower_portal");
-  if(claim.error)return NextResponse.json({error:"Unable to claim borrower access with this signed-in email."},{status:400});
   const memberships=await db.from("private_financing_account_borrowers").select("account_id,role,status").eq("status","active");
   if(memberships.error)return NextResponse.json({error:"Unable to load borrower access."},{status:500});
+  // A repeat claim must never hide an already-active account. This matters when a borrower opens an
+  // older invitation after access was activated, or when the claim RPC encounters a transient error
+  // after the membership became readable through RLS.
+  if(claim.error&&!(memberships.data||[]).length){
+    console.error("Private financing borrower claim failed",{code:claim.error.code||"unknown"});
+    return NextResponse.json({error:"Unable to match this signed-in account to a borrower invitation.",signedInEmail:user.email||null,claimErrorCode:claim.error.code||"unknown",signInUrl:"/auth?next=/forge/private-financing/portal"},{status:400});
+  }
   const accounts=[];
   for(const membership of memberships.data||[]){
     const [accountResult,eventResult,termsResult,settingsResult]=await Promise.all([
@@ -37,5 +43,5 @@ export async function GET() {
     ]);
     if(accountResult.data&&!eventResult.error)accounts.push({account:accountResult.data,role:membership.role,summary:summarizeBorrowerEvents(eventResult.data||[]),events:eventResult.data||[],regularScheduledPaymentCents:Number(termsResult.data?.regular_scheduled_payment_amount_cents||0),onlinePaymentsEnabled:settingsResult.data?.enabled===true});
   }
-  return NextResponse.json({success:true,email:user.email,accounts,claim:claim.data});
+  return NextResponse.json({success:true,email:user.email,accounts,claim:claim.data||null});
 }
