@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import ReservationInventoryBulkImport from "./ReservationInventoryBulkImport";
 
 const TYPE_LABELS = Object.freeze({ rv_site: "RV site", cabin: "Cabin", furnished_home: "Furnished home", vacation_unit: "Vacation unit", glamping_site: "Glamping site", tent_site: "Tent site", parking_space: "Parking space", storage_space: "Storage space", other: "Other" });
 const INITIAL = Object.freeze({ unitId: "", inventoryType: "rv_site", publicName: "", maximumGuests: "4", minimumNights: "1", maximumNights: "", turnoverBufferHours: "0", amenities: "", bookingStatus: "draft", nightlyRate: "", cleaningFee: "0", securityDeposit: "0", lodgingTaxPercent: "0" });
@@ -28,6 +29,7 @@ export default function ReservationInventoryPanel() {
   return <section aria-label="RV and short-term rental inventory" className="space-y-5">
     <div><p className="text-xs font-black uppercase tracking-[0.18em] text-sky-700 dark:text-sky-400">Reservations</p><h2 className="text-2xl font-black text-slate-950 dark:text-white">RV & short-term rentals</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Configure reservable spaces and stays. Drivable RVs are intentionally excluded.</p></div>
     {state.error && <p role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-bold text-red-800">{state.error}</p>}
+    <ReservationInventoryBulkImport onImported={load}/>
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"><h3 className="font-black">Reservable inventory</h3>{state.loading ? <p className="mt-3 text-sm">Loading inventory…</p> : state.inventory.length === 0 ? <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">No RV or short-term rental inventory configured yet.</p> : <ul className="mt-3 space-y-3">{state.inventory.map((item) => <li key={item.unit_id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700"><div className="flex items-start justify-between gap-3"><div><p className="font-black">{item.public_name}</p><p className="text-sm text-slate-600 dark:text-slate-300">{TYPE_LABELS[item.inventory_type]} · up to {item.maximum_guests} guests · {item.minimum_nights} night minimum</p></div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-black uppercase dark:bg-slate-800">{item.booking_status}</span></div></li>)}</ul>}</div>
       <form onSubmit={save} className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"><h3 className="font-black">Configure a space</h3>

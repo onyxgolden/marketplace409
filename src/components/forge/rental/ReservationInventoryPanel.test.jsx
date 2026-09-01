@@ -19,6 +19,8 @@ describe("ReservationInventoryPanel", () => {
     expect(mounted.container.textContent).toContain("Lake Site 1");
     expect(mounted.container.textContent).toContain("RV site");
     expect(mounted.container.textContent).toContain("Drivable RVs are intentionally excluded");
+    expect(mounted.container.textContent).toContain("Bulk import RV spots and cabins");
+    expect(mounted.container.textContent).toContain("Download CSV template");
   });
   it("keeps labels and dropdown values readable in dark mode", async () => {
     mounted = await mount({ units: [{ id: "unit-1", label: "Site 1" }], inventory: [] });
