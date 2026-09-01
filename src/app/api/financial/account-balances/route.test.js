@@ -46,7 +46,7 @@ describe("GET /api/financial/account-balances", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.accounts.map((a) => a.id)).toEqual(["acct-1", "acct-2", "acct-3"]);
+    expect(body.accounts.map((a) => a.id)).toEqual(["acct-1", "acct-2", "acct-3", "acct-4"]);
     expect(body.accounts[0]).toMatchObject({ kind: "asset", latestBalance: { currentBalanceCents: 500000, provider: "manual", editable: true } });
     expect(body.accounts[1]).toMatchObject({ kind: "liability", latestBalance: { provider: "plaid", editable: false } });
     expect(body.accounts[2]).toMatchObject({ kind: "asset", latestBalance: null });
@@ -109,8 +109,8 @@ describe("POST /api/financial/account-balances", () => {
     expect(response.status).toBe(400);
   });
 
-  it("rejects an account type not tracked in net worth", async () => {
-    const suite = buildSuite({ accounts: [account({ type: "other" })] });
+  it("rejects an unknown account type not tracked in net worth", async () => {
+    const suite = buildSuite({ accounts: [account({ type: "unsupported" })] });
     mocks.authenticate.mockResolvedValue({ user: { id: "owner_1" }, getFinancialApplicationSuite: async () => suite });
 
     const response = await POST(request({ financialAccountId: "acct-1", currentBalanceCents: 500000 }));
