@@ -42,8 +42,11 @@ export class FindingEngineCliError extends Error {
 
 // `captureDiagnostics` defaults to the real Playwright-backed capture but is injectable so tests can
 // supply a fixture-driven stand-in -- the same shape runDiagnosticsEvidenceCapture returns:
-// [{ routeId, routePath, snapshots: { desktop, tablet, mobile } }, ...].
-export async function runCli(argv, { captureDiagnostics = runDiagnosticsEvidenceCapture } = {}) {
+// [{ routeId, routePath, snapshots: { desktop, tablet, mobile } }, ...]. `citeSourceFiles` is passed
+// straight through to runFindingEngine (findingEngine.mjs) -- omitted here, it falls back to
+// findingEngine.mjs's own real Engineering Brain lookup; tests supply a fixture stand-in so a run
+// doesn't depend on this repository's real, evolving index-manifest.json.
+export async function runCli(argv, { captureDiagnostics = runDiagnosticsEvidenceCapture, citeSourceFiles } = {}) {
   const args = parseArgs(argv);
   if (!args.baseUrl || !args.evidenceDir) {
     throw new FindingEngineCliError("Usage: runFindingEngineCli.mjs --base-url <url> --evidence-dir <dir> [--route <routeId> ...] [--application <name>]");
@@ -70,7 +73,7 @@ export async function runCli(argv, { captureDiagnostics = runDiagnosticsEvidence
     };
   });
 
-  const manifest = runFindingEngine(routeEvidenceList);
+  const manifest = runFindingEngine(routeEvidenceList, citeSourceFiles ? { citeSourceFiles } : {});
   writeFileSync(path.join(args.evidenceDir, "findings-manifest.json"), JSON.stringify(manifest, null, 2));
   return manifest;
 }

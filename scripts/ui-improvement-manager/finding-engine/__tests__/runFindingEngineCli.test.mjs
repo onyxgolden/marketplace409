@@ -75,7 +75,7 @@ describe("runCli", () => {
     const brokenSnapshot = { ...CLEAN_SNAPSHOT, documentMetrics: { ...CLEAN_SNAPSHOT.documentMetrics, scrollWidth: 2000 } };
     writeFileSync(path.join(evidenceDir, "manifest.json"), JSON.stringify(screenshotManifest("home")));
     const captureDiagnostics = vi.fn().mockResolvedValue([{ routeId: "home", routePath: "/", snapshots: { desktop: brokenSnapshot, tablet: CLEAN_SNAPSHOT, mobile: CLEAN_SNAPSHOT } }]);
-    const manifest = await runCli(["--base-url", "http://localhost:3000", "--evidence-dir", evidenceDir, "--application", "Custom App"], { captureDiagnostics });
+    const manifest = await runCli(["--base-url", "http://localhost:3000", "--evidence-dir", evidenceDir, "--application", "Custom App"], { captureDiagnostics, citeSourceFiles: () => [] });
     expect(manifest.findings.length).toBeGreaterThan(0);
     expect(manifest.findings.every((finding) => finding.application === "Custom App")).toBe(true);
   });
