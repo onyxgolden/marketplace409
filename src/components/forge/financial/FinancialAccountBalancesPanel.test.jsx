@@ -19,6 +19,15 @@ async function flush() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 }
 
+function expandGroup(container, key) {
+  const group = container.querySelector(`[data-account-category="${key}"]`);
+  const toggle = group.querySelector("button");
+  if (toggle.getAttribute("aria-expanded") === "false") {
+    act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+  }
+  return group;
+}
+
 const EMPTY = { accountBalances: { success: true, accounts: [] }, assets: { success: true, assets: [] }, investmentAccounts: { success: true, accounts: [] } };
 
 // Routes each fetch() call to the matching fixture by URL, independent of call order, so a test
@@ -65,6 +74,7 @@ describe("FinancialAccountBalancesPanel", () => {
     });
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
+    expandGroup(mounted.container, "liabilities");
 
     expect(mounted.container.textContent).toContain("Chase Credit Card");
     expect(mounted.container.textContent).toContain("Synced from plaid");
@@ -80,6 +90,7 @@ describe("FinancialAccountBalancesPanel", () => {
     });
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
+    expandGroup(mounted.container, "banking");
 
     const row = mounted.container.querySelector('[data-account-balance-row="acct-1"]');
     const input = row.querySelector('input[type="number"]');
@@ -115,6 +126,7 @@ describe("FinancialAccountBalancesPanel", () => {
     });
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
+    expandGroup(mounted.container, "banking");
 
     const row = mounted.container.querySelector('[data-account-balance-row="acct-1"]');
     expect(row.querySelector("form")).toBeNull();
@@ -133,6 +145,8 @@ describe("FinancialAccountBalancesPanel", () => {
     });
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
+
+    expandGroup(mounted.container, "banking");
 
     const row = mounted.container.querySelector('[data-account-balance-row="acct-1"]');
     const input = row.querySelector('input[type="number"]');
@@ -181,6 +195,10 @@ describe("FinancialAccountBalancesPanel", () => {
     });
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
+    expandGroup(mounted.container, "banking");
+    expandGroup(mounted.container, "investments");
+    expandGroup(mounted.container, "assets");
+    expandGroup(mounted.container, "liabilities");
 
     const text = mounted.container.textContent;
     expect(text).toContain("Banking");
@@ -225,6 +243,7 @@ describe("FinancialAccountBalancesPanel", () => {
     });
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
+    expandGroup(mounted.container, "investments");
 
     expect(mounted.container.querySelectorAll('[data-account-balance-row="investment_account_llc"]')).toHaveLength(1);
     expect(mounted.container.querySelector('[data-account-category="investments"]').textContent).not.toContain("Linked Accounts");
@@ -234,7 +253,7 @@ describe("FinancialAccountBalancesPanel", () => {
     expect(mounted.container.querySelector("[data-net-worth]").textContent).toBe("$171,017.42");
   });
 
-  it("collapses and expands a top-level group on click", async () => {
+  it("starts top-level groups collapsed and expands them on click", async () => {
     stubFetch({
       accountBalances: {
         success: true,
@@ -245,15 +264,36 @@ describe("FinancialAccountBalancesPanel", () => {
     await flush();
 
     const group = mounted.container.querySelector('[data-account-category="banking"]');
-    expect(group.querySelector('[data-account-balance-row="acct-1"]')).not.toBeNull();
+    expect(group.querySelector('[data-account-balance-row="acct-1"]')).toBeNull();
+    expect(group.querySelector("button").getAttribute("aria-expanded")).toBe("false");
 
     const toggle = group.querySelector("button");
     act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(group.querySelector('[data-account-balance-row="acct-1"]')).toBeNull();
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(group.querySelector('[data-account-balance-row="acct-1"]')).not.toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
 
     act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(group.querySelector('[data-account-balance-row="acct-1"]')).not.toBeNull();
+    expect(group.querySelector('[data-account-balance-row="acct-1"]')).toBeNull();
+  });
+
+  it("offers an Edit action for assets that opens the Assets workspace", async () => {
+    const onEditAsset = vi.fn();
+    stubFetch({
+      assets: {
+        success: true,
+        assets: [{ id: "asset-1", name: "2015 Toyota Tacoma", assetClass: "vehicle", ownershipScope: "personal", latestValuation: { amountCents: 1800000, effectiveDate: "2026-08-01" } }],
+      },
+    });
+    mounted = mount(<FinancialAccountBalancesPanel onEditAsset={onEditAsset} />);
+    await flush();
+
+    const assetsGroup = mounted.container.querySelector('[data-account-category="assets"]');
+    act(() => { assetsGroup.querySelector("button").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const subgroup = mounted.container.querySelector('[data-account-category="assets.vehicles"]');
+    const editButton = Array.from(subgroup.querySelectorAll("button")).find((button) => button.textContent === "Edit");
+    act(() => { editButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    expect(onEditAsset).toHaveBeenCalledTimes(1);
   });
 
   it("lets a new liability account be added from the Liabilities group, and shows it after reload", async () => {
@@ -266,7 +306,7 @@ describe("FinancialAccountBalancesPanel", () => {
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
 
-    const group = mounted.container.querySelector('[data-account-category="liabilities"]');
+    const group = expandGroup(mounted.container, "liabilities");
     const addToggle = Array.from(group.querySelectorAll("button")).find((b) => b.textContent === "+ Add account");
     act(() => { addToggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 
