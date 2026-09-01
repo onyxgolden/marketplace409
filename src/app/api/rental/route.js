@@ -183,10 +183,48 @@ export async function POST(request) {
       case "save-tenant": {
         const input = body.tenant;
         if (!input || typeof input !== "object") return badRequest("tenant is required.");
+        const normalizedEmail = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+        if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) return badRequest("A valid tenant email is required.");
+        const { data: existingTenants, error: existingError } = await authenticated.supabaseClient.from("rental_tenants")
+          .select("id, display_name, email, status").eq("owner_id", effectiveOwnerId);
+        if (existingError) throw existingError;
+        const duplicate = existingTenants?.find((item) => item.email?.trim().toLowerCase() === normalizedEmail);
+        if (duplicate) return NextResponse.json({
+          error: `${duplicate.display_name} already exists with ${duplicate.email}. The existing tenant has been selected.`,
+          existingTenant: duplicate,
+        }, { status: 409 });
         const tenant = createRentalTenant({ ...input, id: id("rental_tenant", input.id), authUserId: input.authUserId ?? null,
-          phone: input.phone ?? null, status: input.status ?? "invited", invitedAt: input.invitedAt ?? timestamp,
+          email: normalizedEmail, phone: input.phone ?? null, status: input.status ?? "invited", invitedAt: input.invitedAt ?? timestamp,
           activatedAt: input.activatedAt ?? null, createdAt: input.createdAt || timestamp, updatedAt: timestamp });
-        return NextResponse.json({ success: true, tenant: await application.saveTenant(tenant, user.id) });
+        return NextResponse.json({ success: true, tenant: await application.saveTenant(tenant, effectiveOwnerId) });
+      }
+      case "delete-unused-tenant": {
+        if (typeof body.tenantId !== "string" || !body.tenantId.trim()) return badRequest("tenantId is required.");
+        if (body.confirmation !== "DELETE") return badRequest("Type DELETE to confirm permanent deletion.");
+        const tenantId = body.tenantId.trim();
+        const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
+          .select("id, display_name, email, auth_user_id").eq("owner_id", effectiveOwnerId).eq("id", tenantId).maybeSingle();
+        if (tenantError) throw tenantError;
+        if (!tenant) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
+        if (tenant.auth_user_id) return NextResponse.json({ error: "This tenant has claimed portal access and cannot be deleted." }, { status: 409 });
+        const references = ["rental_lease_tenants", "rental_payments", "billing_customer_references", "rent_reporting_enrollments",
+          "rental_maintenance_requests", "rental_document_acknowledgements", "rental_security_deposits",
+          "pet_liability_policies", "rental_notification_outbox", "rental_autopay_enrollments",
+          "renters_insurance_policies", "renters_insurance_evidence", "rental_animals", "rental_support_cases", "rental_inspections",
+          "rental_inspection_acknowledgements", "rental_notification_preferences"];
+        const checks = await Promise.all(references.map((table) => authenticated.supabaseClient.from(table)
+          .select("tenant_id").eq("owner_id", effectiveOwnerId).eq("tenant_id", tenantId).limit(1)));
+        const checkError = checks.find((result) => result.error)?.error;
+        if (checkError) throw checkError;
+        if (checks.some((result) => result.data?.length)) return NextResponse.json({
+          error: "This tenant is assigned or has rental history. Delete the other, unassigned duplicate instead.",
+        }, { status: 409 });
+        const { data: deleted, error: deleteError } = await authenticated.supabaseClient.from("rental_tenants").delete()
+          .eq("owner_id", effectiveOwnerId).eq("id", tenantId).is("auth_user_id", null)
+          .select("id, display_name, email").maybeSingle();
+        if (deleteError) throw deleteError;
+        if (!deleted) return NextResponse.json({ error: "Unused tenant was not found." }, { status: 404 });
+        return NextResponse.json({ success: true, deletedTenant: deleted });
       }
       case "update-tenant-email": {
         if (typeof body.tenantId !== "string" || body.tenantId.trim() === "") return badRequest("tenantId is required.");

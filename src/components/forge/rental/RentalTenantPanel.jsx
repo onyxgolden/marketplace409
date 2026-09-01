@@ -49,11 +49,11 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   const [selectedId, setSelectedId] = useState(initialTenants[0]?.id || null);
   const [working, setWorking] = useState(false);
   const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, tenants, "display_name"));
-  async function loadTenants() {
+  async function loadTenants(preferredId = null) {
     const response = await fetch("/api/rental");
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to load tenants.");
-    const loaded = result.tenants || []; setTenants(loaded); setSelectedId((current) => loaded.some((item) => item.id === current) ? current : loaded[0]?.id || null);
+    const loaded = result.tenants || []; setTenants(loaded); setSelectedId((current) => loaded.some((item) => item.id === preferredId) ? preferredId : loaded.some((item) => item.id === current) ? current : loaded[0]?.id || null);
     setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setUnits(result.units || []); setOpenCharges(result.openCharges || []);
   }
   useEffect(() => {
@@ -66,16 +66,34 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   }, []);
   async function save(event) {
     event.preventDefault(); setWorking(true); setMessage("");
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     try {
       const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ operation: "save-tenant", tenant: { displayName: form.get("displayName"),
           email: form.get("email"), phone: form.get("phone") || null, status: "invited" } }) });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Unable to save tenant.");
-      setMessage(`Tenant saved: ${result.tenant.displayName} — ID: ${result.tenant.id}`);
-      event.currentTarget.reset();
+      if (!response.ok) {
+        if (result.existingTenant?.id) { setSelectedId(result.existingTenant.id); setShowCreate(false); }
+        throw new Error(result.error || "Unable to save tenant.");
+      }
+      const savedId = result.tenant.id;
+      formElement.reset();
+      await loadTenants(savedId);
+      setShowCreate(false);
+      setMessage(`New tenant added: ${result.tenant.displayName}. The saved tenant is open below.`);
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
+  async function deleteUnusedTenant(tenant) {
+    if (!window.confirm(`Permanently delete the unassigned duplicate ${tenant.display_name} (${tenant.email})?`)) return;
+    setWorking(true); setMessage("");
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "delete-unused-tenant", tenantId: tenant.id, confirmation: "DELETE" }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to delete the unused tenant.");
       await loadTenants();
+      setMessage(`Deleted unused duplicate: ${result.deletedTenant.display_name}.`);
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function updateEmail(event, tenantId) {
@@ -119,6 +137,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review saved tenants first. Creation remains separate from portal access and lease assignment.</p></div>
       {tenants.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`shrink-0 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a new tenant</button>}
     </div>
+    {message && <p role="status" className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-slate-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-slate-200">{message}</p>}
     {tenants.length > 0 && <RentalRecordBrowser title="Tenants" records={tenants} selectedId={selectedId} onSelect={setSelectedId} getThumbnail={(tenant) => tenant.photo_url} listSize="wide"
       columns={[
         { header: "Tenant", render: (tenant) => <><strong className="block text-sm text-slate-950 dark:text-white">{tenant.display_name}</strong><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{tenant.email} · {tenant.status || "Status not set"}</span></> },
@@ -131,6 +150,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
         <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Tenant household</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{household.unit?.label || "No active property"}</h3></div><RentalRecordActions label="Tenant actions" summaryClassName="cursor-pointer list-none rounded-xl bg-red-600 px-4 py-2 text-sm font-black text-white transition hover:bg-red-700" actions={[{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Messaging",onSelect:()=>onNavigate?.("communications",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)}]}/></div>
         <LeaseSummary lease={household.lease} unit={household.unit}/>
         <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={loadTenants}/>
+        {!leaseMemberships.some((item) => item.tenant_id === tenant.id) && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="text-sm font-bold text-red-900 dark:text-red-200">This tenant is not assigned to any lease.</p><button type="button" disabled={working} onClick={() => deleteUnusedTenant(tenant)} className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Delete unused duplicate</button></div>}
         <div className="mt-6 space-y-4"><h3 className="text-xl font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={loadTenants} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>
         <a href="/auth?next=/forge/rental/portal" className="mt-5 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant sign-in</a></div>; })()}
     </RentalRecordBrowser>}
@@ -138,8 +158,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       <label className="text-sm font-bold text-slate-900 dark:text-white">Tenant name<input name="displayName" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Email<input name="email" type="email" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Phone<input name="phone" type="tel" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
-      <div className="flex items-end"><button disabled={working} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working ? "Saving…" : "Save tenant"}</button></div>
-      {message && <p role="status" className="md:col-span-2 text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}
+      <div className="flex items-end gap-3"><button disabled={working} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working ? "Saving…" : "Save tenant"}</button>{tenants.length > 0 && <button type="button" onClick={() => setShowCreate(false)} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-black text-slate-700 dark:border-slate-600 dark:text-slate-200">Cancel</button>}</div>
     </form>}
   </section>;
 }

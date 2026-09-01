@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const application = { units: { findById: vi.fn() }, findUnitsByProperty: vi.fn(), saveUnit: vi.fn(), saveTenant: vi.fn(), saveLease: vi.fn(), saveSchedule: vi.fn(), generateMonthlyCharge: vi.fn() };
+const emptyTenantQuery = { select: vi.fn(() => emptyTenantQuery), eq: vi.fn(async () => ({ data: [], error: null })) };
 vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
-  createAuthenticatedRentalManagerApplication: vi.fn(async () => ({ application, user: { id: "owner_1" } })),
+  createAuthenticatedRentalManagerApplication: vi.fn(async () => ({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(() => emptyTenantQuery) } })),
 }));
 import { GET, POST } from "./route.js";
 function request(body) { return new Request("http://localhost/api/rental", { method: "POST", body: JSON.stringify(body) }); }
@@ -73,6 +74,37 @@ describe("Rental Manager route", () => {
     const body = await response.json();
     expect(response.status).toBe(500);
     expect(body.error).toContain("already exists");
+  });
+  it("rejects a tenant email duplicate regardless of case and returns the existing tenant", async () => {
+    const query = { select: vi.fn(() => query), eq: vi.fn(async () => ({ data: [{ id: "tenant_1", display_name: "Paula Welch", email: "Paula@Example.com" }], error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "manager_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(() => query) } });
+    const response = await POST(request({ operation: "save-tenant", tenant: { displayName: "Paula Welch", email: "paula@example.com" } }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ existingTenant: { id: "tenant_1" } });
+    expect(application.saveTenant).not.toHaveBeenCalled();
+  });
+  it("refuses to delete the Paula record that is assigned to a lease", async () => {
+    const tenantQuery = { select: vi.fn(() => tenantQuery), eq: vi.fn(() => tenantQuery), maybeSingle: vi.fn(async () => ({ data: { id: "paula_assigned", display_name: "Paula", email: "paula@example.com", auth_user_id: null }, error: null })) };
+    const linkedQuery = { select: vi.fn(() => linkedQuery), eq: vi.fn(() => linkedQuery), limit: vi.fn(async () => ({ data: [{ tenant_id: "paula_assigned" }], error: null })) };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn((table) => table === "rental_tenants" ? tenantQuery : linkedQuery) } });
+    const response = await POST(request({ operation: "delete-unused-tenant", tenantId: "paula_assigned", confirmation: "DELETE" }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain("assigned or has rental history");
+  });
+  it("deletes only the unassigned, unclaimed duplicate after explicit confirmation", async () => {
+    const findQuery = { select: vi.fn(() => findQuery), eq: vi.fn(() => findQuery), maybeSingle: vi.fn(async () => ({ data: { id: "paula_unused", display_name: "Paula", email: "paula+duplicate@example.com", auth_user_id: null }, error: null })) };
+    const emptyReference = () => { const query = { select: vi.fn(() => query), eq: vi.fn(() => query), limit: vi.fn(async () => ({ data: [], error: null })) }; return query; };
+    const deleteQuery = { delete: vi.fn(() => deleteQuery), eq: vi.fn(() => deleteQuery), is: vi.fn(() => deleteQuery), select: vi.fn(() => deleteQuery), maybeSingle: vi.fn(async () => ({ data: { id: "paula_unused", display_name: "Paula", email: "paula+duplicate@example.com" }, error: null })) };
+    let tenantCalls = 0;
+    const from = vi.fn((table) => table === "rental_tenants" ? (++tenantCalls === 1 ? findQuery : deleteQuery) : emptyReference());
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from } });
+    const response = await POST(request({ operation: "delete-unused-tenant", tenantId: "paula_unused", confirmation: "DELETE" }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).deletedTenant.id).toBe("paula_unused");
+    expect(deleteQuery.delete).toHaveBeenCalledOnce();
   });
   it("loads the persisted setup records needed by the lease form", async () => {
     const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
