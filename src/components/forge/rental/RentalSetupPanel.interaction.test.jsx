@@ -6,9 +6,18 @@ import RentalSetupPanel from "./RentalSetupPanel";
 
 const units = [{ id: "unit_1", property_id: "1214-wagner", label: "1214 Wagner", status: "available" }];
 
-describe("RentalSetupPanel create safety", () => {
-  let root; let container;
+describe("RentalSetupPanel tenant action", () => {
+  let container; let root;
   afterEach(() => { if (root) act(() => root.unmount()); container?.remove(); vi.unstubAllGlobals(); });
+
+  it("opens tenant creation for the selected property", async () => {
+    const unit = { id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "available" };
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ units: [unit], leases: [], leaseMemberships: [], tenants: [], openCharges: [] }) })));
+    const onNavigate = vi.fn(); container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root.render(<RentalSetupPanel initialUnits={[unit]} onNavigate={onNavigate} />));
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Add tenant").click());
+    expect(onNavigate).toHaveBeenCalledWith("tenants", expect.objectContaining({ recordId: "unit_1", openCreateTenant: true, recordLabel: "930 Highland Drive" }));
+  });
 
   it("makes create mode visible, hides the property browser, and requires confirmation", async () => {
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ units, leases: [], leaseMemberships: [], tenants: [], openCharges: [] }) }));
@@ -22,6 +31,7 @@ describe("RentalSetupPanel create safety", () => {
     expect(globalThis.confirm).toHaveBeenCalledWith(expect.stringContaining("This creates a separate record"));
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
   it("requires the exact archived unit name before requesting permanent deletion", async () => {
     const archived = [...units, { id: "unit_archived", property_id: "1214-wagner", label: "1214 Wagner duplicate", status: "inactive" }];
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ units: archived, leases: [], leaseMemberships: [], tenants: [], openCharges: [] }) }));

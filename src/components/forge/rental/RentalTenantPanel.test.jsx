@@ -74,3 +74,11 @@ describe("RentalTenantPanel birth-date removal", () => {
     expect(markup).not.toContain('name="dateOfBirth"');
   });
 });
+
+describe("RentalTenantPanel contextual creation", () => {
+  it("opens the add-tenant card when linked from an unleased property", () => {
+    const markup = renderToStaticMarkup(<RentalTenantPanel initialTenants={[{ id: "tenant_1", display_name: "Existing", email: "existing@example.com" }]} recordContext={{ openCreateTenant: true }} />);
+    expect(markup).toContain("Tenant name");
+    expect(markup).toContain("Save tenant");
+  });
+});
