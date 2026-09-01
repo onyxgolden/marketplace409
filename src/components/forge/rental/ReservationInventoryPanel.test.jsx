@@ -27,9 +27,18 @@ describe("ReservationInventoryPanel", () => {
     const form = mounted.container.querySelector("form");
     const selects = Array.from(form.querySelectorAll("select"));
     expect(form.className).toContain("dark:text-slate-100");
-    expect(selects).toHaveLength(2);
+    expect(selects).toHaveLength(3);
     selects.forEach((select) => expect(select.className).toContain("dark:text-slate-100"));
     expect(selects[0].textContent).toContain("Site 1");
     expect(selects[1].textContent).toContain("RV site");
+    expect(selects[2].textContent).toContain("Draft");
+  });
+  it("lets an owner set a maximum stay length and booking status", async () => {
+    mounted = await mount({ units: [{ id: "unit-1", label: "Site 1" }], inventory: [] });
+    const form = mounted.container.querySelector("form");
+    expect(form.textContent).toContain("Maximum nights");
+    expect(form.textContent).toContain("Booking status");
+    const bookingStatus = Array.from(form.querySelectorAll("select")).find((select) => select.textContent.includes("Draft"));
+    expect(Array.from(bookingStatus.options).map((option) => option.value)).toEqual(["draft", "active", "paused", "inactive"]);
   });
 });

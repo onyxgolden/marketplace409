@@ -60,16 +60,14 @@ export async function POST(request) {
     const { data, error } = await authenticated.supabaseClient.from("reservation_inventory_settings")
       .upsert(row, { onConflict: "owner_id,unit_id" }).select("*").single();
     if (error) throw error;
-    if (input.nightlyRateCents > 0) {
-      const { error: rateError } = await authenticated.supabaseClient.from("reservation_rate_plans").upsert({
-        owner_id: ownerId, id: `reservation_rate_${input.unitId}_nightly_base`, unit_id: input.unitId,
-        label: "Base nightly rate", cadence: "nightly", amount_cents: input.nightlyRateCents,
-        currency_code: "USD", effective_start_date: new Date().toISOString().slice(0, 10),
-        effective_end_date: null, day_of_week: null, minimum_nights_override: null,
-        status: "active", created_by: authenticated.user.id,
-      }, { onConflict: "owner_id,id" });
-      if (rateError) throw rateError;
-    }
+    const { error: rateError } = await authenticated.supabaseClient.from("reservation_rate_plans").upsert({
+      owner_id: ownerId, id: `reservation_rate_${input.unitId}_nightly_base`, unit_id: input.unitId,
+      label: "Base nightly rate", cadence: "nightly", amount_cents: input.nightlyRateCents,
+      currency_code: "USD", effective_start_date: new Date().toISOString().slice(0, 10),
+      effective_end_date: null, day_of_week: null, minimum_nights_override: null,
+      status: "active", created_by: authenticated.user.id,
+    }, { onConflict: "owner_id,id" });
+    if (rateError) throw rateError;
     return NextResponse.json({ success: true, inventory: data });
   } catch (error) {
     if (error instanceof Error && /required|supported|positive|minimum|maximum|turnover/i.test(error.message)) {

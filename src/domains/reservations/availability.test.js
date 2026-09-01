@@ -4,18 +4,25 @@ import { buildAvailabilityCalendar, canReserveRange, normalizeReservationInvento
 describe("reservation inventory", () => {
   it("normalizes RV sites without any drivable-RV fields", () => {
     expect(normalizeReservationInventory({ unitId: "site-1", inventoryType: "rv_site", publicName: "Site 1",
-      maximumGuests: 6, minimumNights: 2, amenities: ["50 amp", "Water", "50 amp"] })).toMatchObject({
+      maximumGuests: 6, minimumNights: 2, amenities: ["50 amp", "Water", "50 amp"], nightlyRateCents: 5000 })).toMatchObject({
       inventoryType: "rv_site", publicName: "Site 1", maximumGuests: 6, minimumNights: 2,
       amenities: ["50 amp", "Water"],
     });
   });
 
-  it("uses half-open stays and applies checkout turnover buffers", () => {
-    const calendar = buildAvailabilityCalendar({ rangeStart: "2026-09-01", rangeEnd: "2026-09-07", turnoverBufferHours: 24,
+  it("rejects a zero or missing nightly rate instead of silently leaving the unit unbookable", () => {
+    const base = { unitId: "site-1", inventoryType: "rv_site", publicName: "Site 1", maximumGuests: 6, minimumNights: 2 };
+    expect(() => normalizeReservationInventory({ ...base, nightlyRateCents: 0 })).toThrow(/positive/i);
+    expect(() => normalizeReservationInventory(base)).toThrow(/positive/i);
+    expect(() => normalizeReservationInventory({ ...base, nightlyRateCents: -100 })).toThrow(/positive/i);
+  });
+
+  it("uses half-open stays and applies turnover buffers on both sides of a block", () => {
+    const calendar = buildAvailabilityCalendar({ rangeStart: "2026-08-30", rangeEnd: "2026-09-07", turnoverBufferHours: 24,
       blocks: [{ startDate: "2026-09-02", endDate: "2026-09-04", blockType: "external_booking" }] });
     expect(calendar.map((day) => [day.date, day.available])).toEqual([
-      ["2026-09-01", true], ["2026-09-02", false], ["2026-09-03", false],
-      ["2026-09-04", false], ["2026-09-05", true], ["2026-09-06", true],
+      ["2026-08-30", true], ["2026-08-31", true], ["2026-09-01", false], ["2026-09-02", false],
+      ["2026-09-03", false], ["2026-09-04", false], ["2026-09-05", true], ["2026-09-06", true],
     ]);
   });
 

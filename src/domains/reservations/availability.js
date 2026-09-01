@@ -7,7 +7,7 @@ export const RESERVATION_INVENTORY_TYPES = Object.freeze([
 
 function parseDate(value, field) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new Error(`${field} must be an ISO date.`);
+    throw new Error(`${field} must be a valid ISO date.`);
   }
   const date = new Date(`${value}T00:00:00.000Z`);
   if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
@@ -42,8 +42,9 @@ export function normalizeReservationInventory(input) {
     throw new Error("Turnover buffer must be between 0 and 168 hours.");
   }
   if (![nightlyRateCents, cleaningFeeCents, securityDepositCents, lodgingTaxBasisPoints].every(Number.isSafeInteger)
-    || nightlyRateCents < 0 || cleaningFeeCents < 0 || securityDepositCents < 0
+    || cleaningFeeCents < 0 || securityDepositCents < 0
     || lodgingTaxBasisPoints < 0 || lodgingTaxBasisPoints > 10000) throw new Error("Reservation pricing is invalid.");
+  if (nightlyRateCents < 1) throw new Error("Nightly rate must be a positive number of cents.");
   return Object.freeze({
     unitId: String(input.unitId || "").trim(), inventoryType: input.inventoryType,
     bookingStatus: ["draft", "active", "paused", "inactive"].includes(input.bookingStatus) ? input.bookingStatus : "draft",
@@ -56,7 +57,8 @@ export function normalizeReservationInventory(input) {
 }
 
 // Date ranges are half-open: a stay [2026-09-01, 2026-09-03) occupies the nights of Sep 1 and Sep 2.
-// Checkout on Sep 3 can be a new check-in unless a configured turnover buffer extends the block.
+// A configured turnover buffer needs a gap on both sides of a block -- before its check-in as much
+// as after its checkout -- since a new stay can butt up against either end of an existing one.
 export function buildAvailabilityCalendar({ rangeStart, rangeEnd, blocks = [], turnoverBufferHours = 0 }) {
   const start = parseDate(rangeStart, "rangeStart");
   const end = parseDate(rangeEnd, "rangeEnd");
@@ -67,8 +69,9 @@ export function buildAvailabilityCalendar({ rangeStart, rangeEnd, blocks = [], t
     const blockStart = parseDate(block.startDate, "block.startDate");
     const rawEnd = parseDate(block.endDate, "block.endDate");
     if (rawEnd <= blockStart) throw new Error("Calendar block end must follow its start.");
+    const bufferedStart = addDays(blockStart, -bufferDays);
     const bufferedEnd = addDays(rawEnd, bufferDays);
-    for (let cursor = blockStart; cursor < bufferedEnd; cursor = addDays(cursor, 1)) {
+    for (let cursor = bufferedStart; cursor < bufferedEnd; cursor = addDays(cursor, 1)) {
       if (cursor >= start && cursor < end) blockedDates.set(iso(cursor), block.blockType || "other");
     }
   }

@@ -1,5 +1,22 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-function secret(value){if(typeof value!=="string"||value.length<32)throw new Error("Reservation preview secret is not configured.");return value}
-function signature(payload,key){return createHmac("sha256",secret(key)).update(payload).digest("base64url")}
-export function encodeReservationPreview(payload,{key,now=Date.now(),ttlMs=600000}={}){const encoded=Buffer.from(JSON.stringify({...payload,confirmationId:randomUUID(),version:1,issuedAt:now,expiresAt:now+ttlMs})).toString("base64url");return `${encoded}.${signature(encoded,key)}`}
-export function decodeReservationPreview(token,{key,now=Date.now()}={}){if(typeof token!=="string")throw new Error("Reservation preview token is required.");const parts=token.split(".");if(parts.length!==2)throw new Error("Reservation preview token is invalid.");const expected=Buffer.from(signature(parts[0],key));const supplied=Buffer.from(parts[1]);if(expected.length!==supplied.length||!timingSafeEqual(expected,supplied))throw new Error("Reservation preview token is invalid.");let value;try{value=JSON.parse(Buffer.from(parts[0],"base64url").toString("utf8"))}catch{throw new Error("Reservation preview token is invalid.")}if(value.version!==1||typeof value.confirmationId!=="string"||!value.confirmationId||!Number.isSafeInteger(value.expiresAt)||now>value.expiresAt)throw new Error("Reservation preview has expired.");return value}
+import { randomUUID } from "node:crypto";
+import { decodeSignedPreviewToken, encodeSignedPreviewToken } from "@/domains/core/signedPreviewToken";
+
+const SECRET_MESSAGE = "Reservation preview secret is not configured.";
+const INVALID_MESSAGE = "Reservation preview token is invalid.";
+
+export function encodeReservationPreview(payload, { key, now = Date.now(), ttlMs = 600000 } = {}) {
+  return encodeSignedPreviewToken(
+    { ...payload, confirmationId: randomUUID(), version: 1, issuedAt: now, expiresAt: now + ttlMs },
+    { secret: key, secretMessage: SECRET_MESSAGE },
+  );
+}
+
+export function decodeReservationPreview(token, { key, now = Date.now() } = {}) {
+  if (typeof token !== "string") throw new Error("Reservation preview token is required.");
+  const value = decodeSignedPreviewToken(token, { secret: key, secretMessage: SECRET_MESSAGE, invalidMessage: INVALID_MESSAGE });
+  if (value.version !== 1 || typeof value.confirmationId !== "string" || !value.confirmationId
+    || !Number.isSafeInteger(value.expiresAt) || now > value.expiresAt) {
+    throw new Error("Reservation preview has expired.");
+  }
+  return value;
+}
