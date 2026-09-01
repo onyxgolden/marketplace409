@@ -60,7 +60,7 @@ export async function POST(request) {
     if (error) throw error;
     return NextResponse.json({ success: true, result: data });
   } catch (error) {
-    if (/CSV|column|row|duplicate|required|invalid|expired|supported|drivable|dollar|percentage|whole number|between|already exists/i.test(error?.message || "")) {
+    if (/CSV|column|row|duplicate|required|invalid|expired|supported|dollar|percentage|whole number|between|already exists/i.test(error?.message || "")) {
       return bad(error.message, /already exists/i.test(error.message) ? 409 : 400);
     }
     console.error("Reservation inventory bulk import failed", { name: error?.name || "Error" });

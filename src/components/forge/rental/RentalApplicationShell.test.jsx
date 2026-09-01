@@ -67,7 +67,7 @@ describe("RentalApplicationShell", () => {
   it("renders RV and short-term rental inventory without drivable RV operations", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("reservable-inventory"));
     expect(markup).toContain("RV &amp; short-term rentals");
-    expect(markup).toContain("Drivable RVs are intentionally excluded");
+    expect(markup).toContain("Configure reservable spaces and stays");
     expect(markup).not.toMatch(/mileage|fuel|VIN/);
   });
   it("renders reservation preview and confirmation as a separate surface", () => {

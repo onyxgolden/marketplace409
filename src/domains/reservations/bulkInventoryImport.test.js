@@ -13,11 +13,11 @@ describe("reservation inventory bulk CSV", () => {
     const result = parseBulkInventoryCsv(csv);
     expect(result.rows[0]).toMatchObject({ propertyId: "Lake, South", inventory: { inventoryType: "rv_site", nightlyRateCents: 7550 } });
   });
-  it("reconciles duplicates, existing units, and excluded drivable RVs without producing a confirmable row", () => {
+  it("reconciles duplicates, existing units, and unsupported vehicle inventory without producing a confirmable row", () => {
     const csv = "property_name,unit_name,space_type,public_name,maximum_guests,minimum_nights,nightly_rate\nPark,Site 1,drivable rv,Site 1,4,1,50\nPark,Site 1,cabin,Cabin,4,1,80\n";
     const result = parseBulkInventoryCsv(csv, { existingUnits: [{ property_id: "Park", label: "Site 1", status: "available" }] });
     expect(result).toMatchObject({ totalRows: 2, validRows: 0, errorRows: 2 });
-    expect(result.rows[0].errors.join(" ")).toMatch(/already exists|drivable/i);
+    expect(result.rows[0].errors.join(" ")).toMatch(/already exists|rv_site/i);
     expect(result.rows[1].errors.join(" ")).toMatch(/Duplicate|already exists/i);
   });
   it("requires the documented columns and caps imports at 500 rows", () => {
