@@ -212,13 +212,20 @@ function AddAccountRow({ groupKey, onCreated }) {
 
 // A read-only leaf for Assets/Investments-registry items: those have their own dedicated
 // create/edit forms on the Assets and Investments tabs, so this tree only displays them.
-function ReadOnlyValueRow({ id, name, amountCents }) {
+function ReadOnlyValueRow({ id, name, amountCents, onEdit = null }) {
   return (
     <div data-account-balance-row={id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
       <p className="min-w-0 flex-1 truncate text-xs font-bold text-slate-900 dark:text-slate-100" title={name}>
         {name}
       </p>
-      <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">{money.format(amountCents / 100)}</p>
+      <div className="flex shrink-0 items-center gap-2">
+        <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">{money.format(amountCents / 100)}</p>
+        {onEdit ? (
+          <button type="button" onClick={onEdit} className="text-[10px] font-black text-sky-700 hover:underline dark:text-sky-400">
+            Edit
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -238,12 +245,12 @@ function investmentAccountRowDescriptor(account) {
     node: <ReadOnlyValueRow key={account.id} id={account.id} name={account.name} amountCents={amountCents} />,
   };
 }
-function assetRowDescriptor(asset) {
+function assetRowDescriptor(asset, onEditAsset) {
   const amountCents = asset.latestValuation ? Number(asset.latestValuation.amountCents) || 0 : 0;
   return {
     key: asset.id,
     amountCents,
-    node: <ReadOnlyValueRow key={asset.id} id={asset.id} name={asset.name} amountCents={amountCents} />,
+    node: <ReadOnlyValueRow key={asset.id} id={asset.id} name={asset.name} amountCents={amountCents} onEdit={onEditAsset} />,
   };
 }
 
@@ -251,7 +258,7 @@ function subtotal(rows) {
   return rows.reduce((sum, row) => sum + row.amountCents, 0);
 }
 
-function buildTree({ accounts, investmentAccounts, assets }, onSaved) {
+function buildTree({ accounts, investmentAccounts, assets }, onSaved, onEditAsset) {
   // The investment-accounts registry's create/update RPCs mirror themselves into financial_accounts
   // (as type "investment") so Net Worth elsewhere in the app, which is computed from
   // financial_accounts alone, stays accurate. That mirrored row reuses the SAME id as the row
@@ -274,7 +281,7 @@ function buildTree({ accounts, investmentAccounts, assets }, onSaved) {
 
   const assetSubgroups = [];
   for (const definition of ASSET_SUBGROUPS) {
-    const rows = assets.filter((asset) => definition.classes.includes(asset.assetClass)).map(assetRowDescriptor);
+    const rows = assets.filter((asset) => definition.classes.includes(asset.assetClass)).map((asset) => assetRowDescriptor(asset, onEditAsset));
     if (rows.length > 0) assetSubgroups.push({ key: definition.key, label: definition.label, rows });
   }
 
@@ -347,10 +354,10 @@ async function fetchJson(url) {
   return body;
 }
 
-export default function FinancialAccountBalancesPanel() {
+export default function FinancialAccountBalancesPanel({ onEditAsset = null }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
-  const [collapsedKeys, setCollapsedKeys] = useState(() => new Set());
+  const [collapsedKeys, setCollapsedKeys] = useState(() => new Set(["banking", "investments", "assets", "liabilities"]));
 
   const load = useCallback(async () => {
     try {
@@ -375,7 +382,7 @@ export default function FinancialAccountBalancesPanel() {
     load();
   }, [load]);
 
-  const groups = useMemo(() => (data ? buildTree(data, load) : []), [data, load]);
+  const groups = useMemo(() => (data ? buildTree(data, load, onEditAsset) : []), [data, load, onEditAsset]);
 
   const netWorthCents = useMemo(() => groups.reduce(
     (sum, group) => sum + (group.kind === "liability" ? -1 : 1) * (group.rows ? subtotal(group.rows) : group.subgroups.reduce((s, sub) => s + subtotal(sub.rows), 0)),
