@@ -122,6 +122,94 @@ function BalanceRow({ account, onSaved }) {
   );
 }
 
+const ADD_ACCOUNT_TYPE_OPTIONS = Object.freeze({
+  banking: Object.freeze([{ value: "depository", label: "Bank account" }]),
+  liabilities: Object.freeze([{ value: "credit", label: "Credit card" }, { value: "loan", label: "Loan" }]),
+});
+
+// Plain bank/credit/loan accounts (Banking, Liabilities) can be created directly here; Assets and
+// Investments keep using their own tabs' dedicated create forms.
+function AddAccountRow({ groupKey, onCreated }) {
+  const typeOptions = ADD_ACCOUNT_TYPE_OPTIONS[groupKey];
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [type, setType] = useState(typeOptions[0].value);
+  const [dollars, setDollars] = useState("");
+  const [asOf, setAsOf] = useState(new Date().toISOString().slice(0, 10));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const cents = Math.round(Number(dollars) * 100);
+      if (!Number.isFinite(cents) || cents < 0) throw new Error("Enter a valid, non-negative balance.");
+      const response = await fetch("/api/financial/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, type, currentBalanceCents: cents, asOf }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error || `Unable to save (${response.status}).`);
+      await onCreated();
+      setName(""); setDollars(""); setOpen(false);
+    } catch (thrown) {
+      setError(thrown.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button" onClick={() => setOpen(true)}
+        className="mt-1 w-full rounded-lg px-1.5 py-1.5 text-left text-[11px] font-black text-sky-700 hover:bg-slate-50 dark:text-sky-400 dark:hover:bg-slate-800/40"
+      >
+        + Add account
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-1 space-y-1.5 rounded-lg border border-dashed border-slate-300 p-2 dark:border-slate-600">
+      <input
+        required value={name} onChange={(event) => setName(event.target.value)} placeholder="Account name"
+        className="w-full rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+      />
+      {typeOptions.length > 1 && (
+        <select
+          value={type} onChange={(event) => setType(event.target.value)}
+          className="w-full rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+        >
+          {typeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      )}
+      <div className="flex gap-1.5">
+        <input
+          type="number" step="0.01" required value={dollars} onChange={(event) => setDollars(event.target.value)} placeholder="0.00"
+          className="w-20 rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+        />
+        <input
+          type="date" required value={asOf} onChange={(event) => setAsOf(event.target.value)}
+          className="w-[7.5rem] rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+        />
+      </div>
+      <div className="flex items-center gap-3">
+        <button type="submit" disabled={saving} className={`rounded-full px-3 py-1 text-[10px] font-black disabled:opacity-60 ${goldControlClassName}`}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="text-[10px] font-black text-slate-500 hover:underline dark:text-slate-400">
+          Cancel
+        </button>
+      </div>
+      {error ? <p role="alert" className="text-[10px] font-bold text-rose-700 dark:text-rose-400">{error}</p> : null}
+    </form>
+  );
+}
+
 // A read-only leaf for Assets/Investments-registry items: those have their own dedicated
 // create/edit forms on the Assets and Investments tabs, so this tree only displays them.
 function ReadOnlyValueRow({ id, name, amountCents }) {
@@ -209,7 +297,7 @@ function SubGroup({ path, label, rows, isCollapsed, onToggle }) {
   );
 }
 
-function Group({ group, isCollapsed, onToggle }) {
+function Group({ group, isCollapsed, onToggle, onSaved }) {
   const collapsed = isCollapsed(group.key);
   const groupSubtotal = group.rows ? subtotal(group.rows) : group.subgroups.reduce((sum, sub) => sum + subtotal(sub.rows), 0);
   const itemCount = group.rows ? group.rows.length : group.subgroups.reduce((sum, sub) => sum + sub.rows.length, 0);
@@ -236,6 +324,7 @@ function Group({ group, isCollapsed, onToggle }) {
             : group.subgroups.map((sub) => (
               <SubGroup key={sub.key} path={`${group.key}.${sub.key}`} label={sub.label} rows={sub.rows} isCollapsed={isCollapsed} onToggle={onToggle} />
             ))}
+          {ADD_ACCOUNT_TYPE_OPTIONS[group.key] ? <div className="pl-3"><AddAccountRow groupKey={group.key} onCreated={onSaved} /></div> : null}
         </div>
       )}
     </div>
@@ -303,7 +392,7 @@ export default function FinancialAccountBalancesPanel() {
 
       <div>
         {groups.map((group) => (
-          <Group key={group.key} group={group} isCollapsed={isCollapsed} onToggle={toggle} />
+          <Group key={group.key} group={group} isCollapsed={isCollapsed} onToggle={toggle} onSaved={load} />
         ))}
       </div>
     </section>

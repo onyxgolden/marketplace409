@@ -25,10 +25,13 @@ const EMPTY = { accountBalances: { success: true, accounts: [] }, assets: { succ
 // only needs to override the endpoint(s) it actually cares about.
 function stubFetch(overrides = {}) {
   const responses = { ...EMPTY, ...overrides };
-  const fetchMock = vi.fn(async (url) => {
+  const fetchMock = vi.fn(async (url, init) => {
     if (url === "/api/financial/account-balances") return { ok: true, json: async () => responses.accountBalances };
     if (url === "/api/financial/assets") return { ok: true, json: async () => responses.assets };
     if (url === "/api/financial/investment-accounts") return { ok: true, json: async () => responses.investmentAccounts };
+    if (url === "/api/financial/accounts" && init?.method === "POST") {
+      return { ok: true, json: async () => ({ success: true, accountId: "financial_account_manual_new" }) };
+    }
     throw new Error(`Unexpected fetch: ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -221,5 +224,59 @@ describe("FinancialAccountBalancesPanel", () => {
 
     act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(group.querySelector('[data-account-balance-row="acct-1"]')).not.toBeNull();
+  });
+
+  it("lets a new liability account be added from the Liabilities group, and shows it after reload", async () => {
+    stubFetch({
+      accountBalances: {
+        success: true,
+        accounts: [{ id: "acct-credit", name: "Chase Credit Card", type: "credit", kind: "liability", latestBalance: { currentBalanceCents: 20000, asOf: "2026-08-01", provider: "manual", editable: true } }],
+      },
+    });
+    mounted = mount(<FinancialAccountBalancesPanel />);
+    await flush();
+
+    const group = mounted.container.querySelector('[data-account-category="liabilities"]');
+    const addToggle = Array.from(group.querySelectorAll("button")).find((b) => b.textContent === "+ Add account");
+    act(() => { addToggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const form = group.querySelector("form");
+    expect(form).not.toBeNull();
+    // Loan is a real option alongside Credit card, since Liabilities isn't split into two groups.
+    const typeSelect = form.querySelector("select");
+    expect(Array.from(typeSelect.options).map((option) => option.value)).toEqual(["credit", "loan"]);
+
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    const nativeSelectValueSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+    const nameInput = form.querySelector("input");
+    const balanceInput = form.querySelector('input[type="number"]');
+
+    act(() => {
+      nativeInputValueSetter.call(nameInput, "Share Lane Mortgage");
+      nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+      nativeSelectValueSetter.call(typeSelect, "loan");
+      typeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      nativeInputValueSetter.call(balanceInput, "176012.60");
+      balanceInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // Once the new account is created, the next reload picks it up.
+    stubFetch({
+      accountBalances: {
+        success: true,
+        accounts: [
+          { id: "acct-credit", name: "Chase Credit Card", type: "credit", kind: "liability", latestBalance: { currentBalanceCents: 20000, asOf: "2026-08-01", provider: "manual", editable: true } },
+          { id: "financial_account_manual_new", name: "Share Lane Mortgage", type: "loan", kind: "liability", latestBalance: { currentBalanceCents: 17601260, asOf: "2026-09-01", provider: "manual", editable: true } },
+        ],
+      },
+    });
+
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(mounted.container.textContent).toContain("Share Lane Mortgage");
+    expect(mounted.container.querySelector('[data-account-balance-row="financial_account_manual_new"]').textContent).toContain("$176,012.60");
   });
 });
