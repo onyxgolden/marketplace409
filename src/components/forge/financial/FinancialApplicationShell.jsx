@@ -71,7 +71,6 @@ export function buildFinancialActiveSurface({
   statusItems,
   activities,
   operations,
-  onFunctionChange,
 }) {
   switch (activeFunctionId) {
     case "transactions":
@@ -134,7 +133,7 @@ export function buildFinancialActiveSurface({
         <div className="space-y-6">
           <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
             <div className="lg:sticky lg:top-4">
-          <FinancialAccountBalancesPanel onEditAsset={() => onFunctionChange?.("assets")} />
+              <FinancialAccountBalancesPanel />
             </div>
 
             <div className="min-w-0 space-y-6">
@@ -179,7 +178,6 @@ export default function FinancialApplicationShell({
   const activeSurface =
     buildFinancialActiveSurface({
       activeFunctionId,
-      onFunctionChange,
       ...presentation,
     });
 

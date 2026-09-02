@@ -14,6 +14,11 @@ const ASSET_CLASS_LABELS = Object.freeze({
   real_estate: "Real estate", vehicle: "Vehicle", equipment: "Equipment", trailer: "Trailer",
   collectible: "Collectible", crypto: "Crypto", other: "Other asset",
 });
+const OWNERSHIP_SCOPE_OPTIONS = Object.freeze([
+  { value: "business", label: "Business" },
+  { value: "personal", label: "Personal" },
+  { value: "mixed", label: "Mixed" },
+]);
 
 // Sub-groups within "Investments" and "Assets", modeled on Quicken Simplifi's account tree.
 // Order controls both display order and which sub-group an account_type/asset_class falls into.
@@ -210,23 +215,187 @@ function AddAccountRow({ groupKey, onCreated }) {
   );
 }
 
-// A read-only leaf for Assets/Investments-registry items: those have their own dedicated
-// create/edit forms on the Assets and Investments tabs, so this tree only displays them.
-function ReadOnlyValueRow({ id, name, amountCents, onEdit = null }) {
+// A read-only leaf for Investments-registry items: that table has its own dedicated create/edit
+// form on the Investments tab, so this tree only displays it. Assets get EditableAssetRow instead
+// (below) -- the same quick add/edit convenience Banking/Liabilities already have via AddAccountRow.
+function ReadOnlyValueRow({ id, name, amountCents }) {
   return (
     <div data-account-balance-row={id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
       <p className="min-w-0 flex-1 truncate text-xs font-bold text-slate-900 dark:text-slate-100" title={name}>
         {name}
       </p>
-      <div className="flex shrink-0 items-center gap-2">
-        <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">{money.format(amountCents / 100)}</p>
-        {onEdit ? (
-          <button type="button" onClick={onEdit} className="text-[10px] font-black text-sky-700 hover:underline dark:text-sky-400">
+      <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">{money.format(amountCents / 100)}</p>
+    </div>
+  );
+}
+
+// Quick value-only update for an existing asset. PATCH /api/financial/assets requires the full
+// record (name/class/scope, not just the value), so those are resubmitted unchanged from `asset`
+// -- the owner only edits the value and its as-of date here; a rename or class change still goes
+// through the Assets tab's full edit form.
+function EditableAssetRow({ asset, onSaved }) {
+  const [editing, setEditing] = useState(false);
+  const amountCents = asset.latestValuation ? Number(asset.latestValuation.amountCents) || 0 : 0;
+  const [dollars, setDollars] = useState(String(amountCents / 100));
+  const [valueDate, setValueDate] = useState(asset.latestValuation?.effectiveDate?.slice(0, 10) || new Date().toISOString().slice(0, 10));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const cents = Math.round(Number(dollars) * 100);
+      if (!Number.isFinite(cents) || cents < 0) throw new Error("Enter a valid, non-negative value.");
+      const response = await fetch("/api/financial/assets", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          assetId: asset.id, name: asset.name, assetClass: asset.assetClass, ownershipScope: asset.ownershipScope,
+          valueCents: cents, valueDate,
+          purchaseCostCents: asset.purchaseCostCents ?? null, purchaseDate: asset.purchaseDate ?? null,
+          linkedPropertyId: asset.linkedPropertyId ?? null, notes: asset.notes ?? null,
+        }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error || `Unable to save (${response.status}).`);
+      await onSaved();
+      setEditing(false);
+    } catch (thrown) {
+      setError(thrown.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div data-account-balance-row={asset.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+      <p className="min-w-0 flex-1 truncate text-xs font-bold text-slate-900 dark:text-slate-100" title={asset.name}>
+        {asset.name}
+      </p>
+
+      {editing ? (
+        <form onSubmit={save} className="flex w-full flex-wrap items-center gap-1.5 pt-1">
+          <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
+            <span className="sr-only">Value</span>
+            <input
+              type="number" step="0.01" required value={dollars}
+              onChange={(event) => setDollars(event.target.value)}
+              placeholder="0.00"
+              className="w-20 rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+            />
+          </label>
+          <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
+            <span className="sr-only">As of</span>
+            <input
+              type="date" required value={valueDate}
+              onChange={(event) => setValueDate(event.target.value)}
+              className="w-[7.5rem] rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+            />
+          </label>
+          <button type="submit" disabled={saving} className={`rounded-full px-3 py-1 text-[10px] font-black disabled:opacity-60 ${goldControlClassName}`}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+          {error ? <span role="alert" className="w-full text-[10px] font-bold text-rose-700 dark:text-rose-400">{error}</span> : null}
+        </form>
+      ) : (
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">{money.format(amountCents / 100)}</p>
+          <button type="button" onClick={() => setEditing(true)} className="text-[10px] font-black text-sky-700 hover:underline dark:text-sky-400">
             Edit
           </button>
-        ) : null}
-      </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+// Create a new asset directly from the sidebar, same "+ Add" convenience as Banking/Liabilities.
+function AddAssetRow({ onCreated }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [assetClass, setAssetClass] = useState("vehicle");
+  const [ownershipScope, setOwnershipScope] = useState("business");
+  const [dollars, setDollars] = useState("");
+  const [valueDate, setValueDate] = useState(new Date().toISOString().slice(0, 10));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const cents = Math.round(Number(dollars) * 100);
+      if (!Number.isFinite(cents) || cents < 0) throw new Error("Enter a valid, non-negative value.");
+      const response = await fetch("/api/financial/assets", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, assetClass, ownershipScope, valueCents: cents, valueDate, purchaseCostCents: null }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error || `Unable to save (${response.status}).`);
+      await onCreated();
+      setName(""); setDollars(""); setOpen(false);
+    } catch (thrown) {
+      setError(thrown.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button" onClick={() => setOpen(true)}
+        className="mt-1 w-full rounded-lg px-1.5 py-1.5 text-left text-[11px] font-black text-sky-700 hover:bg-slate-50 dark:text-sky-400 dark:hover:bg-slate-800/40"
+      >
+        + Add asset
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-1 space-y-1.5 rounded-lg border border-dashed border-slate-300 p-2 dark:border-slate-600">
+      <input
+        required value={name} onChange={(event) => setName(event.target.value)} placeholder="Asset name"
+        className="w-full rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+      />
+      <div className="flex gap-1.5">
+        <select
+          value={assetClass} onChange={(event) => setAssetClass(event.target.value)}
+          className="flex-1 rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+        >
+          {Object.entries(ASSET_CLASS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+        <select
+          value={ownershipScope} onChange={(event) => setOwnershipScope(event.target.value)}
+          className="flex-1 rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+        >
+          {OWNERSHIP_SCOPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </div>
+      <div className="flex gap-1.5">
+        <input
+          type="number" step="0.01" required value={dollars} onChange={(event) => setDollars(event.target.value)} placeholder="0.00"
+          className="w-20 rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+        />
+        <input
+          type="date" required value={valueDate} onChange={(event) => setValueDate(event.target.value)}
+          className="w-[7.5rem] rounded-lg border border-slate-300 px-1.5 py-1 text-xs font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+        />
+      </div>
+      <div className="flex items-center gap-3">
+        <button type="submit" disabled={saving} className={`rounded-full px-3 py-1 text-[10px] font-black disabled:opacity-60 ${goldControlClassName}`}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="text-[10px] font-black text-slate-500 hover:underline dark:text-slate-400">
+          Cancel
+        </button>
+      </div>
+      {error ? <p role="alert" className="text-[10px] font-bold text-rose-700 dark:text-rose-400">{error}</p> : null}
+    </form>
   );
 }
 
@@ -245,12 +414,12 @@ function investmentAccountRowDescriptor(account) {
     node: <ReadOnlyValueRow key={account.id} id={account.id} name={account.name} amountCents={amountCents} />,
   };
 }
-function assetRowDescriptor(asset, onEditAsset) {
+function assetRowDescriptor(asset, onSaved) {
   const amountCents = asset.latestValuation ? Number(asset.latestValuation.amountCents) || 0 : 0;
   return {
     key: asset.id,
     amountCents,
-    node: <ReadOnlyValueRow key={asset.id} id={asset.id} name={asset.name} amountCents={amountCents} onEdit={onEditAsset} />,
+    node: <EditableAssetRow key={asset.id} asset={asset} onSaved={onSaved} />,
   };
 }
 
@@ -258,7 +427,7 @@ function subtotal(rows) {
   return rows.reduce((sum, row) => sum + row.amountCents, 0);
 }
 
-function buildTree({ accounts, investmentAccounts, assets }, onSaved, onEditAsset) {
+function buildTree({ accounts, investmentAccounts, assets }, onSaved) {
   // The investment-accounts registry's create/update RPCs mirror themselves into financial_accounts
   // (as type "investment") so Net Worth elsewhere in the app, which is computed from
   // financial_accounts alone, stays accurate. That mirrored row reuses the SAME id as the row
@@ -281,7 +450,7 @@ function buildTree({ accounts, investmentAccounts, assets }, onSaved, onEditAsse
 
   const assetSubgroups = [];
   for (const definition of ASSET_SUBGROUPS) {
-    const rows = assets.filter((asset) => definition.classes.includes(asset.assetClass)).map((asset) => assetRowDescriptor(asset, onEditAsset));
+    const rows = assets.filter((asset) => definition.classes.includes(asset.assetClass)).map((asset) => assetRowDescriptor(asset, onSaved));
     if (rows.length > 0) assetSubgroups.push({ key: definition.key, label: definition.label, rows });
   }
 
@@ -341,6 +510,7 @@ function Group({ group, isCollapsed, onToggle, onSaved }) {
               <SubGroup key={sub.key} path={`${group.key}.${sub.key}`} label={sub.label} rows={sub.rows} isCollapsed={isCollapsed} onToggle={onToggle} />
             ))}
           {ADD_ACCOUNT_TYPE_OPTIONS[group.key] ? <div className="pl-3"><AddAccountRow groupKey={group.key} onCreated={onSaved} /></div> : null}
+          {group.key === "assets" ? <div className="pl-3"><AddAssetRow onCreated={onSaved} /></div> : null}
         </div>
       )}
     </div>
@@ -354,7 +524,7 @@ async function fetchJson(url) {
   return body;
 }
 
-export default function FinancialAccountBalancesPanel({ onEditAsset = null }) {
+export default function FinancialAccountBalancesPanel() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [collapsedKeys, setCollapsedKeys] = useState(() => new Set(["banking", "investments", "assets", "liabilities"]));
@@ -382,7 +552,7 @@ export default function FinancialAccountBalancesPanel({ onEditAsset = null }) {
     load();
   }, [load]);
 
-  const groups = useMemo(() => (data ? buildTree(data, load, onEditAsset) : []), [data, load, onEditAsset]);
+  const groups = useMemo(() => (data ? buildTree(data, load) : []), [data, load]);
 
   const netWorthCents = useMemo(() => groups.reduce(
     (sum, group) => sum + (group.kind === "liability" ? -1 : 1) * (group.rows ? subtotal(group.rows) : group.subgroups.reduce((s, sub) => s + subtotal(sub.rows), 0)),

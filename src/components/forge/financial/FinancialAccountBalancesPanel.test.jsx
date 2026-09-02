@@ -41,6 +41,9 @@ function stubFetch(overrides = {}) {
     if (url === "/api/financial/accounts" && init?.method === "POST") {
       return { ok: true, json: async () => ({ success: true, accountId: "financial_account_manual_new" }) };
     }
+    if (url === "/api/financial/assets" && (init?.method === "POST" || init?.method === "PATCH")) {
+      return { ok: true, json: async () => ({ success: true, assetId: "asset_manual_new" }) };
+    }
     throw new Error(`Unexpected fetch: ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -276,24 +279,85 @@ describe("FinancialAccountBalancesPanel", () => {
     expect(group.querySelector('[data-account-balance-row="acct-1"]')).toBeNull();
   });
 
-  it("offers an Edit action for assets that opens the Assets workspace", async () => {
-    const onEditAsset = vi.fn();
-    stubFetch({
+  it("lets an existing asset's value be updated via the Edit link, without touching its name or class", async () => {
+    const fetchMock = stubFetch({
       assets: {
         success: true,
-        assets: [{ id: "asset-1", name: "2015 Toyota Tacoma", assetClass: "vehicle", ownershipScope: "personal", latestValuation: { amountCents: 1800000, effectiveDate: "2026-08-01" } }],
+        assets: [{
+          id: "asset-1", name: "2015 Toyota Tacoma", assetClass: "vehicle", ownershipScope: "personal",
+          latestValuation: { amountCents: 1800000, effectiveDate: "2026-08-01" },
+        }],
       },
     });
-    mounted = mount(<FinancialAccountBalancesPanel onEditAsset={onEditAsset} />);
+    mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
 
-    const assetsGroup = mounted.container.querySelector('[data-account-category="assets"]');
-    act(() => { assetsGroup.querySelector("button").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    const subgroup = mounted.container.querySelector('[data-account-category="assets.vehicles"]');
-    const editButton = Array.from(subgroup.querySelectorAll("button")).find((button) => button.textContent === "Edit");
+    expandGroup(mounted.container, "assets");
+
+    const row = mounted.container.querySelector('[data-account-balance-row="asset-1"]');
+    const editButton = Array.from(row.querySelectorAll("button")).find((button) => button.textContent === "Edit");
     act(() => { editButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 
-    expect(onEditAsset).toHaveBeenCalledTimes(1);
+    expect(row.querySelector("form")).not.toBeNull();
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    const valueInput = row.querySelector('input[type="number"]');
+    act(() => {
+      nativeInputValueSetter.call(valueInput, "19500.00");
+      valueInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      row.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    const patchCall = fetchMock.mock.calls.find(([url, init]) => url === "/api/financial/assets" && init?.method === "PATCH");
+    expect(patchCall).toBeTruthy();
+    expect(JSON.parse(patchCall[1].body)).toMatchObject({
+      assetId: "asset-1", name: "2015 Toyota Tacoma", assetClass: "vehicle", ownershipScope: "personal", valueCents: 1950000,
+    });
+  });
+
+  it("lets a new asset be added from the Assets group, defaulting to Vehicle", async () => {
+    const fetchMock = stubFetch({
+      assets: {
+        success: true,
+        assets: [{ id: "asset-1", name: "Existing Boat", assetClass: "other", ownershipScope: "business", latestValuation: { amountCents: 500000, effectiveDate: "2026-08-01" } }],
+      },
+    });
+    mounted = mount(<FinancialAccountBalancesPanel />);
+    await flush();
+
+    const assetsGroup = expandGroup(mounted.container, "assets");
+    const addToggle = Array.from(assetsGroup.querySelectorAll("button")).find((b) => b.textContent === "+ Add asset");
+    act(() => { addToggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const form = Array.from(assetsGroup.querySelectorAll("form")).find((f) => f.querySelector('input[placeholder="Asset name"]'));
+    expect(form).not.toBeNull();
+
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    const nameInput = form.querySelector('input[placeholder="Asset name"]');
+    const valueInput = form.querySelector('input[type="number"]');
+    act(() => {
+      nativeInputValueSetter.call(nameInput, "2015 Toyota Tacoma");
+      nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+      nativeInputValueSetter.call(valueInput, "18000.00");
+      valueInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    const postCall = fetchMock.mock.calls.find(([url, init]) => url === "/api/financial/assets" && init?.method === "POST");
+    expect(postCall).toBeTruthy();
+    // purchaseCostCents must be an explicit null, not omitted -- the API's optional-field parsing
+    // (`body?.purchaseCostCents === null || === undefined || === "" ? null : Number(...)`) would
+    // otherwise turn an omitted field into Number(undefined) = NaN and fail "must be whole cents".
+    expect(JSON.parse(postCall[1].body)).toMatchObject({
+      name: "2015 Toyota Tacoma", assetClass: "vehicle", ownershipScope: "business", valueCents: 1800000, purchaseCostCents: null,
+    });
   });
 
   it("lets a new liability account be added from the Liabilities group, and shows it after reload", async () => {

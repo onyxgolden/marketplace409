@@ -30,7 +30,7 @@ function parseAssetBody(body) {
   const ownershipScope = String(body?.ownershipScope || "").trim();
   const valueCents = Number(body?.valueCents);
   const valueDate = String(body?.valueDate || "").trim();
-  const purchaseCostCents = body?.purchaseCostCents === null || body?.purchaseCostCents === ""
+  const purchaseCostCents = body?.purchaseCostCents === null || body?.purchaseCostCents === undefined || body?.purchaseCostCents === ""
     ? null : Number(body?.purchaseCostCents);
 
   if (!name) return { error: "Asset name is required." };
