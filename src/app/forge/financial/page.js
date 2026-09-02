@@ -9,6 +9,7 @@ import {
   FinancialPeriodApplication,
 } from "@/application/financial/FinancialPeriodApplication";
 import FinancialApplicationShell from "@/components/forge/financial/FinancialApplicationShell";
+import { isCacheableDashboardLoad, readDashboardCache, writeDashboardCache } from "./dashboardCache.js";
 import { money } from "./formatMoney.js";
 import { getCurrentMonthProfitKpi } from "./getCurrentMonthProfitKpi.js";
 
@@ -105,6 +106,17 @@ export default function FinancialPage() {
 
   useEffect(() => {
     async function load() {
+      // The three loads below combined take 10-15s on a real dataset (see dashboardCache.js for
+      // why). A cache hit means this visit is a revisit within the TTL window -- render the last
+      // known-good result immediately instead of re-running all three from scratch.
+      const cached = readDashboardCache();
+      if (cached) {
+        setViewModel(cached.viewModel);
+        setIntelligenceModel(cached.intelligenceModel);
+        setPropertyOperatingObligations(cached.propertyOperatingObligations);
+        return;
+      }
+
       const [
         result,
         intelligenceResult,
@@ -120,6 +132,10 @@ export default function FinancialPage() {
       setPropertyOperatingObligations(
         obligations,
       );
+
+      if (isCacheableDashboardLoad({ viewModel: result, intelligenceModel: intelligenceResult })) {
+        writeDashboardCache({ viewModel: result, intelligenceModel: intelligenceResult, propertyOperatingObligations: obligations });
+      }
     }
 
     load();

@@ -2,6 +2,7 @@
 
 import Header from "@/components/Header";
 import { createClient } from "@/lib/supabase/client";
+import { clearDashboardCache } from "@/app/forge/financial/dashboardCache.js";
 import { useEffect, useState } from "react";
 
 const supabase = createClient();
@@ -88,6 +89,9 @@ export default function AuthPage() {
     if (error) {
       alert(error.message);
     } else {
+      // sessionStorage survives a same-tab navigation -- clear the cached Financial Overview data
+      // so it can't leak to whoever signs in next on this tab/browser.
+      clearDashboardCache();
       window.location.href = "/";
     }
   }
