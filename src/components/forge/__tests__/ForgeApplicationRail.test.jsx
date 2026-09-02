@@ -148,6 +148,29 @@ describe(
     );
 
     it(
+      "offers a one-click way back to the outer workspace picker from deep inside Forge",
+      () => {
+        const markup =
+          renderToStaticMarkup(
+            <ThemeProvider>
+              <ForgeApplicationRail>
+                <main>
+                  Property workspace
+                </main>
+              </ForgeApplicationRail>
+            </ThemeProvider>,
+          );
+
+        expect(markup).toContain(
+          "All apps",
+        );
+        expect(
+          markup.match(/href="\/"/g),
+        ).not.toBeNull();
+      },
+    );
+
+    it(
       "renders a compact, accessible theme menu button in the persistent nav",
       () => {
         const markup =
