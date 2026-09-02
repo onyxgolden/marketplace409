@@ -25,6 +25,7 @@ vi.mock(
                     Financial tile
                   </section>
                 ),
+              isVisible: () => true,
             },
             {
               moduleIdentity:
@@ -35,6 +36,20 @@ vi.mock(
                     Property tile
                   </section>
                 ),
+              isVisible: () => true,
+            },
+            {
+              moduleIdentity:
+                "health",
+              renderTile:
+                () => (
+                  <section data-health-tile>
+                    Health tile
+                  </section>
+                ),
+              isVisible:
+                (context) =>
+                  context.isOwnerOrCoOwner === true,
             },
           ],
       }),
@@ -104,6 +119,35 @@ describe(
         expect(markup).toContain(
           "xl:grid-cols-3",
         );
+
+        expect(markup).not.toContain(
+          "data-health-tile",
+        );
+      },
+    );
+
+    it(
+      "renders a module gated by isVisible only when its condition is met",
+      () => {
+        const hiddenMarkup =
+          renderToStaticMarkup(
+            <ForgeWorkspaceDesktop
+              riskSummary={{ severity: "low", score: 0 }}
+              alertItems={[]}
+              isOwnerOrCoOwner={false}
+            />,
+          );
+        expect(hiddenMarkup).not.toContain("data-health-tile");
+
+        const visibleMarkup =
+          renderToStaticMarkup(
+            <ForgeWorkspaceDesktop
+              riskSummary={{ severity: "low", score: 0 }}
+              alertItems={[]}
+              isOwnerOrCoOwner
+            />,
+          );
+        expect(visibleMarkup).toContain("data-health-tile");
       },
     );
   },

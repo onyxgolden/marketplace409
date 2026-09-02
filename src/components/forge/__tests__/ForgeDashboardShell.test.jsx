@@ -38,9 +38,9 @@ vi.mock(
 vi.mock(
   "@/components/forge/workspace/ForgeWorkspaceDesktop",
   () => ({
-    default: function MockWorkspace() {
+    default: function MockWorkspace({ isOwnerOrCoOwner }) {
       return (
-        <section data-workspace-desktop>
+        <section data-workspace-desktop data-is-owner-or-co-owner={String(Boolean(isOwnerOrCoOwner))}>
           Workspace
         </section>
       );
@@ -122,6 +122,23 @@ describe(
 
         expect(markup).not.toContain(
           "data-forge-top-bar",
+        );
+      },
+    );
+
+    it(
+      "threads isOwnerOrCoOwner down to the workspace desktop",
+      () => {
+        const markup =
+          renderToStaticMarkup(
+            <ForgeDashboardShell
+              view="dashboard"
+              isOwnerOrCoOwner
+            />,
+          );
+
+        expect(markup).toContain(
+          'data-is-owner-or-co-owner="true"',
         );
       },
     );
