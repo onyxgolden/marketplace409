@@ -1,5 +1,75 @@
-import { describe, expect, it } from "vitest";
-import { borrowerIdentityIds, buildBorrowerPortalModelSafely, buildBorrowerProjectionModel, summarizeBorrowerEvents } from "./route";
+import { describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({ createClient: vi.fn() }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: mocks.createClient }));
+
+import { GET, borrowerIdentityIds, buildBorrowerPortalModelSafely, buildBorrowerProjectionModel, summarizeBorrowerEvents } from "./route";
+
+// A minimal chainable Supabase query-builder stand-in: every chain method returns itself, and it
+// resolves (via `.then` or `.maybeSingle()`) to the canned `result` regardless of how it was built.
+function chainable(result) {
+  const builder = {
+    select: () => builder,
+    eq: () => builder,
+    in: () => builder,
+    maybeSingle: () => Promise.resolve(result),
+    then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),
+  };
+  return builder;
+}
+
+function fakeDb({ user, authError = null, claim = { data: { claimedIdentityCount: 0 }, error: null }, fromResults = {} }) {
+  return {
+    auth: { getUser: vi.fn().mockResolvedValue({ data: { user }, error: authError }) },
+    rpc: vi.fn().mockResolvedValue(claim),
+    from: vi.fn((table) => chainable(fromResults[table] ?? { data: [], error: null })),
+  };
+}
+
+function request(search = "") {
+  return new Request(`https://test/api/private-financing/portal${search}`);
+}
+
+describe("GET private financing borrower portal", () => {
+  it("carries the invited email from the query string through the 401 sign-in URL when unauthenticated", async () => {
+    mocks.createClient.mockResolvedValue(fakeDb({ user: null, authError: { message: "no session" } }));
+    const response = await GET(request("?email=Borrower@Example.com"));
+    const body = await response.json();
+    expect(response.status).toBe(401);
+    expect(body.invitedEmail).toBe("borrower@example.com");
+    expect(body.signInUrl).toBe("/auth?next=%2Fforge%2Fprivate-financing%2Fportal&email=borrower%40example.com");
+  });
+
+  it("carries the invited email through a failed-claim 400 response", async () => {
+    mocks.createClient.mockResolvedValue(fakeDb({
+      user: { id: "user-1", email: "wrong@example.com" },
+      claim: { data: null, error: { code: "P0001" } },
+    }));
+    const response = await GET(request("?email=borrower@example.com"));
+    const body = await response.json();
+    expect(response.status).toBe(400);
+    expect(body.invitedEmail).toBe("borrower@example.com");
+    expect(body.signInUrl).toContain("email=borrower%40example.com");
+  });
+
+  it("flags mismatched:true when the signed-in email differs from the invited email and nothing matched", async () => {
+    mocks.createClient.mockResolvedValue(fakeDb({ user: { id: "user-1", email: "wrong@example.com" } }));
+    const response = await GET(request("?email=borrower@example.com"));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.mismatched).toBe(true);
+    expect(body.invitedEmail).toBe("borrower@example.com");
+    expect(body.accounts).toEqual([]);
+  });
+
+  it("does not flag a mismatch when there was no invited email to compare against", async () => {
+    mocks.createClient.mockResolvedValue(fakeDb({ user: { id: "user-1", email: "wrong@example.com" } }));
+    const response = await GET(request());
+    const body = await response.json();
+    expect(body.mismatched).toBe(false);
+    expect(body.invitedEmail).toBeNull();
+  });
+});
 
 describe("private financing borrower portal summary", () => {
   it("scopes memberships to unique borrower identities claimed by the signed-in auth user", () => {

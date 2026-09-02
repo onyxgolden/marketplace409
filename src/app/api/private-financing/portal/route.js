@@ -118,11 +118,22 @@ export function buildBorrowerPortalModelSafely({ eventRows, componentRows, terms
   }
 }
 
-export async function GET() {
+// Builds "/auth?next=/forge/private-financing/portal[&email=...]" -- the invited email (read from
+// this request's own ?email= query param, set by the invitation link) rides along so the sign-in
+// page can pre-fill and lock it, and so a mismatch can be explained by comparing it against
+// whichever email the borrower actually authenticates with.
+function signInUrl(invitedEmail) {
+  const params = new URLSearchParams({ next: "/forge/private-financing/portal" });
+  if (invitedEmail) params.set("email", invitedEmail);
+  return `/auth?${params.toString()}`;
+}
+
+export async function GET(request) {
+  const invitedEmail = new URL(request.url).searchParams.get("email")?.trim().toLowerCase() || null;
   const db = await createClient();
   const { data: { user }, error: authError } = await db.auth.getUser();
   if (authError || !user?.id) {
-    return NextResponse.json({ error: "Sign in to view your financing account.", signInUrl: "/auth?next=/forge/private-financing/portal" }, { status: 401 });
+    return NextResponse.json({ error: "Sign in to view your financing account.", signInUrl: signInUrl(invitedEmail), invitedEmail }, { status: 401 });
   }
   const claim = await db.rpc("claim_private_financing_borrower_portal");
   const identities = await db.from("private_financing_borrowers").select("id").eq("auth_user_id", user.id);
@@ -135,8 +146,13 @@ export async function GET() {
   if (memberships.error) return NextResponse.json({ error: "Unable to load borrower access." }, { status: 500 });
   if (claim.error && !(memberships.data || []).length) {
     console.error("Private financing borrower claim failed", { code: claim.error.code || "unknown" });
-    return NextResponse.json({ error: "Unable to match this signed-in account to a borrower invitation.", signedInEmail: user.email || null, claimErrorCode: claim.error.code || "unknown", signInUrl: "/auth?next=/forge/private-financing/portal" }, { status: 400 });
+    return NextResponse.json({ error: "Unable to match this signed-in account to a borrower invitation.", signedInEmail: user.email || null, invitedEmail, claimErrorCode: claim.error.code || "unknown", signInUrl: signInUrl(invitedEmail) }, { status: 400 });
   }
+  // Authenticated, claim ran clean, but nothing matched -- almost always because the signed-in
+  // email differs from the one this invitation was sent to (the claim RPC only links a borrower
+  // identity to auth.uid() when they match). Surface both emails on the success payload so the
+  // frontend can explain exactly what to fix, instead of a bare "no accounts".
+  const mismatched = Boolean(!(memberships.data || []).length && invitedEmail && user.email && invitedEmail !== user.email.toLowerCase());
 
   const accounts = [];
   for (const membership of memberships.data || []) {
@@ -164,5 +180,5 @@ export async function GET() {
       onlinePaymentsEnabled: settingsResult.data?.enabled === true,
     });
   }
-  return NextResponse.json({ success: true, email: user.email, accounts, claim: claim.data || null });
+  return NextResponse.json({ success: true, email: user.email, invitedEmail, mismatched, accounts, claim: claim.data || null });
 }
