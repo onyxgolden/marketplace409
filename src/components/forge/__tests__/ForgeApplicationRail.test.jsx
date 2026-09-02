@@ -38,6 +38,7 @@ describe(
         ).toEqual([
           "Workspace",
           "Financial",
+          "Health",
           "Property",
           "Connections",
           "Results",
@@ -78,7 +79,7 @@ describe(
         ).toBe(false);
 
         expect(
-          FORGE_APPLICATIONS[5].href,
+          FORGE_APPLICATIONS[6].href,
         ).toBe(
           "/forge/import",
         );
@@ -86,12 +87,12 @@ describe(
         expect(
           isForgeApplicationActive(
             "/forge/import/review",
-            FORGE_APPLICATIONS[5],
+            FORGE_APPLICATIONS[6],
           ),
         ).toBe(true);
 
         expect(
-          FORGE_APPLICATIONS[6].href,
+          FORGE_APPLICATIONS[7].href,
         ).toBe(
           "/forge/workspace",
         );
@@ -99,7 +100,7 @@ describe(
         expect(
           isForgeApplicationActive(
             "/forge/workspace",
-            FORGE_APPLICATIONS[6],
+            FORGE_APPLICATIONS[7],
           ),
         ).toBe(true);
       },
