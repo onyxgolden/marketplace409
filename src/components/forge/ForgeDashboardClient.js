@@ -49,6 +49,7 @@ export default function ForgeDashboardClient({
         ownerId={readModels.ownerId}
         properties={readModels.workspace?.properties || []}
         transactionReview={readModels.transactionReview}
+        isOwnerOrCoOwner={readModels.isOwnerOrCoOwner}
       />
 
       {readModels && (

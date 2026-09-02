@@ -24,6 +24,38 @@ Do not duplicate completed layers or merge stale branches wholesale.
 
 ---
 
+## 2026-09-02 Turnover Checkpoint — Private FORGE Health
+
+**Active branch/worktree:** `feat/forge-health-private` in `marketplace409-health`
+**Deployment state:** Published to this feature branch; not merged, migrated, or deployed.
+
+### Owner-approved scope and completed foundation
+
+- Private shared health workspace for the primary owner and the single active co-owner; no general workspace membership inheritance.
+- Managed-dependent profiles without logins, including the wife's ability to manage an elderly parent's records.
+- Structured conditions, clinicians, provider/insurance history, record requests, medical authority/POA verification, labs, prescriptions, supplements, peptides, measurements, workouts, and clinical timeline.
+- Photo/PDF-first intake for medication labels and laboratory reports using existing native-PDF extraction and Google Vision OCR.
+- Every source remains in a private `health-documents` bucket; proposed values are shown for correction and require explicit confirmation before an atomic database function creates structured records.
+- OCR does not diagnose, calculate clinical flags, recommend dosing, or silently update the record.
+
+### Validation and next Claude assignment
+
+- Focused Vitest suite: 16 tests passed. Scoped ESLint and `git diff --check` passed.
+- Inspect the isolated branch and preserve its privacy/review boundaries. Add route/RPC integration validation and visual QA for light/dark/mobile.
+- Expand reviewed extraction to visit summaries, prescriptions, insurance, authorization/POA, and record-request documents only after each document type has an explicit schema and confirmation screen.
+- Do not merge, deploy, run the production migration, import the owner's medical images, or invite any additional user without fresh owner approval.
+
+### Latest owner direction and private-data boundary
+
+- Photo/document intake is the preferred way to populate health fields; manual entry is the fallback.
+- Preserve separate profiles for both spouses and managed dependents. Every uploaded source and extracted proposal must be assigned to the selected profile before confirmation.
+- Support medication strength, administered volume/syringe units, calculated dose, route, weekly schedule, start/end status, product-supply changes, and alternating therapies without flattening them into one concurrent regimen.
+- The owner has supplied private laboratory, medication, supplement, peptide, and workout-history evidence in ChatGPT. **Do not copy PHI, images, addresses, prescription numbers, doses, or lab values into repository files, fixtures, commits, logs, or PR descriptions.** Import them only after Production privacy controls exist and the owner reviews each proposal in the application.
+- The branch contains the private tracker foundation, reviewed document-field imports, and this turnover checkpoint. Verify current commit IDs from Git rather than relying on an earlier local-only hash.
+- Claude's next safe task is code review plus route/RPC integration tests. Stop for owner approval before pushing, opening a PR, merging, applying the migration, deploying, or importing any real family record.
+
+---
+
 
 ## 2026-09-01 Turnover Checkpoint — Financial Overview Recovery
 

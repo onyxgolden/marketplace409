@@ -28,6 +28,7 @@ export default function ForgeDashboardShell({
   ownerId,
   properties,
   transactionReview,
+  isOwnerOrCoOwner,
 }) {
   const workspaceDesktop = (
     <ForgeWorkspaceDesktop
@@ -63,6 +64,7 @@ export default function ForgeDashboardShell({
       transactionReview={
         transactionReview
       }
+      isOwnerOrCoOwner={isOwnerOrCoOwner}
     />
   );
 

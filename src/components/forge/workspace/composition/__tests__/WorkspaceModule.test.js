@@ -62,6 +62,26 @@ describe("WorkspaceModule", () => {
     expect(workspaceModule.priority).toBe(100);
   });
 
+  it("defaults isVisible to always-visible when omitted", () => {
+    const workspaceModule = createWorkspaceModule({ isVisible: undefined });
+    expect(workspaceModule.isVisible({})).toBe(true);
+  });
+
+  it("uses a supplied isVisible predicate, given the render context", () => {
+    const isVisible = vi.fn((context) => context.isOwnerOrCoOwner === true);
+    const workspaceModule = createWorkspaceModule({ isVisible });
+
+    expect(workspaceModule.isVisible({ isOwnerOrCoOwner: true })).toBe(true);
+    expect(workspaceModule.isVisible({ isOwnerOrCoOwner: false })).toBe(false);
+    expect(isVisible).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a non-function isVisible", () => {
+    expect(() => createWorkspaceModule({ isVisible: "always" })).toThrow(
+      "WorkspaceModule's isVisible must be a function.",
+    );
+  });
+
   it.each([
     [
       { moduleIdentity: "" },

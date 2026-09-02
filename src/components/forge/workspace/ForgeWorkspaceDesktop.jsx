@@ -25,6 +25,7 @@ export default function ForgeWorkspaceDesktop({
   ownerId,
   properties,
   transactionReview,
+  isOwnerOrCoOwner = false,
 }) {
   const workspaceContext = {
     netWorth,
@@ -42,6 +43,7 @@ export default function ForgeWorkspaceDesktop({
     ownerId,
     properties,
     transactionReview,
+    isOwnerOrCoOwner,
   };
 
   return (
@@ -113,6 +115,7 @@ export default function ForgeWorkspaceDesktop({
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
         {workspaceRegistry
           .list()
+          .filter((workspaceModule) => workspaceModule.isVisible(workspaceContext))
           .map((workspaceModule) => (
             <Fragment
               key={

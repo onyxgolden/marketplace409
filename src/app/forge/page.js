@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import ForgeDashboardClient from "@/components/forge/ForgeDashboardClient";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
+import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,7 @@ export default async function ForgePage() {
     executiveSummary,
     workspace,
     transactionReview,
+    isOwnerOrCoOwner,
   ] = await Promise.all([
     readModelApplication.buildBusinessDashboard(),
     readModelApplication.buildInvestorDashboard(),
@@ -52,6 +54,12 @@ export default async function ForgePage() {
           ),
         )
       : null,
+    // Gates the private Health tile to the owner or their active co-owner (spouse) only -- staff
+    // roles (manager, bookkeeper, read_only) must never see it on this shared dashboard.
+    isOwnerOrActiveCoOwner({
+      supabaseClient: forgeApplication.supabaseClient,
+      actorUserId: forgeApplication.user.id,
+    }),
   ]);
 
   const initialReadModels = {
@@ -64,6 +72,7 @@ export default async function ForgePage() {
     transactionReview,
     ownerId: forgeApplication.user.id,
     decisionOutcome: null,
+    isOwnerOrCoOwner,
   };
 
   return (

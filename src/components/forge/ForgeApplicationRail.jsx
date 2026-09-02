@@ -7,6 +7,7 @@ import {
 import {
   useState,
 } from "react";
+import { LayoutGrid } from "lucide-react";
 
 import {
   WorkspaceLinks,
@@ -32,6 +33,11 @@ export const FORGE_APPLICATIONS =
       href: "/forge/financial",
       label: "Financial",
       shortLabel: "$",
+    }),
+    Object.freeze({
+      href: "/forge/health",
+      label: "Health",
+      shortLabel: "H",
     }),
     Object.freeze({
       href: "/forge/property",
@@ -239,6 +245,22 @@ export default function ForgeApplicationRail({
           </button>
         </div>
 
+        {/* Deep inside Forge (e.g. /forge/financial), WorkspaceLinks below still keeps you
+           inside Forge -- its own "Forge" tile just points back to /forge. This is the only
+           one-click way back to the outer picker itself -- identical markup to WorkspaceShell's
+           own "All apps" link, so the affordance looks and reads the same everywhere. */}
+        <Link
+          href="/"
+          title={expanded ? undefined : "All apps"}
+          className={[
+            "mb-5 flex min-h-12 items-center rounded-xl border border-white/10 bg-white/5 text-sm font-black text-slate-300 transition hover:bg-white/10 hover:text-white",
+            expanded ? "gap-3 px-3" : "justify-center px-2",
+          ].join(" ")}
+        >
+          <LayoutGrid aria-hidden="true" className="h-5 w-5 shrink-0" />
+          {expanded && <span>All apps</span>}
+        </Link>
+
         {/* Outer cross-workspace switcher — identical to WorkspaceShell's,
            so switching to Rentals/Marketplace/Dev from inside Forge looks
            and behaves the same as it does everywhere else. */}
@@ -323,6 +345,15 @@ export default function ForgeApplicationRail({
                   ×
                 </button>
               </div>
+
+              <Link
+                href="/"
+                onClick={() => setMobileOpen(false)}
+                className="mb-5 flex min-h-12 items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 text-sm font-black text-slate-300"
+              >
+                <LayoutGrid aria-hidden="true" className="h-5 w-5" />
+                All apps
+              </Link>
 
               <div className="mb-5">
                 <WorkspaceLinks

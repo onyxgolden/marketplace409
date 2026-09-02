@@ -38,6 +38,7 @@ describe(
         ).toEqual([
           "Workspace",
           "Financial",
+          "Health",
           "Property",
           "Connections",
           "Results",
@@ -78,7 +79,7 @@ describe(
         ).toBe(false);
 
         expect(
-          FORGE_APPLICATIONS[5].href,
+          FORGE_APPLICATIONS[6].href,
         ).toBe(
           "/forge/import",
         );
@@ -86,12 +87,12 @@ describe(
         expect(
           isForgeApplicationActive(
             "/forge/import/review",
-            FORGE_APPLICATIONS[5],
+            FORGE_APPLICATIONS[6],
           ),
         ).toBe(true);
 
         expect(
-          FORGE_APPLICATIONS[6].href,
+          FORGE_APPLICATIONS[7].href,
         ).toBe(
           "/forge/workspace",
         );
@@ -99,7 +100,7 @@ describe(
         expect(
           isForgeApplicationActive(
             "/forge/workspace",
-            FORGE_APPLICATIONS[6],
+            FORGE_APPLICATIONS[7],
           ),
         ).toBe(true);
       },
@@ -143,6 +144,29 @@ describe(
         expect(markup).toContain(
           "Open Forge navigation",
         );
+      },
+    );
+
+    it(
+      "offers a one-click way back to the outer workspace picker from deep inside Forge",
+      () => {
+        const markup =
+          renderToStaticMarkup(
+            <ThemeProvider>
+              <ForgeApplicationRail>
+                <main>
+                  Property workspace
+                </main>
+              </ForgeApplicationRail>
+            </ThemeProvider>,
+          );
+
+        expect(markup).toContain(
+          "All apps",
+        );
+        expect(
+          markup.match(/href="\/"/g),
+        ).not.toBeNull();
       },
     );
 

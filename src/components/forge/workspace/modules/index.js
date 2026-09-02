@@ -7,6 +7,10 @@ export {
 } from "./ForgeOperatingSystemWorkspaceModule";
 
 export {
+  HealthWorkspaceModule,
+} from "./HealthWorkspaceModule";
+
+export {
   PropertyPortfolioWorkspaceModule,
 } from "./PropertyPortfolioWorkspaceModule";
 

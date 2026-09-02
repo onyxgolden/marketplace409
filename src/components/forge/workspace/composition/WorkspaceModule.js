@@ -23,6 +23,7 @@ export class WorkspaceModule {
     category,
     priority = 100,
     renderTile,
+    isVisible = () => true,
   }) {
     this.moduleIdentity = requireNonEmptyString(
       moduleIdentity,
@@ -50,7 +51,14 @@ export class WorkspaceModule {
       );
     }
 
+    if (typeof isVisible !== "function") {
+      throw new Error(
+        "WorkspaceModule's isVisible must be a function.",
+      );
+    }
+
     this.renderTile = renderTile;
+    this.isVisible = isVisible;
 
     Object.freeze(this);
   }
