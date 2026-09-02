@@ -81,6 +81,12 @@ describe.skipIf(!reachable)("private FORGE Health RPCs and RLS (real local Supab
     psql(`drop table if exists ${HEALTH_TABLES.map((t) => `public.${t}`).join(", ")} cascade;`);
     psql(`drop function if exists ${HEALTH_FUNCTIONS.map((fn) => `public.${fn}`).join(", ")} cascade;`);
     psql(MIGRATION_SQL);
+    // Raw psql DDL doesn't go through Supabase's migration tooling, which normally triggers
+    // PostgREST's schema-cache reload automatically. Without this, PostgREST can still 404 the
+    // brand-new tables for a few seconds after they exist, causing exactly the kind of flake this
+    // suite is meant to catch real bugs, not infrastructure lag.
+    psql("notify pgrst, 'reload schema';");
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     const suffix = crypto.randomUUID().slice(0, 8);
     const created = await Promise.all([
