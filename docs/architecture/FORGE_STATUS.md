@@ -27,7 +27,7 @@ Do not duplicate completed layers or merge stale branches wholesale.
 ## 2026-09-02 Turnover Checkpoint — Private FORGE Health
 
 **Active branch/worktree:** `feat/forge-health-private` in `marketplace409-health`
-**Deployment state:** Local implementation only; not pushed, merged, migrated, or deployed.
+**Deployment state:** Published to this feature branch; not merged, migrated, or deployed.
 
 ### Owner-approved scope and completed foundation
 
