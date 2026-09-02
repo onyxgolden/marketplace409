@@ -31,7 +31,7 @@ describe(
 
         const homePage =
           source(
-            "../../../app/page.js",
+            "../../../app/page.jsx",
           );
 
         expect(
