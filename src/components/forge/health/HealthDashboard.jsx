@@ -76,6 +76,75 @@ function HealthDocumentImporter({ workspaceId, profiles, defaultCategory, onConf
   </Card>;
 }
 
+function emptyExerciseRow() { return { exercise: "", sets: "", reps: "", weight: "" }; }
+
+function HealthWorkoutForm({ workspaceId, profiles, onSaved }) {
+  const supabase = useMemo(() => createClient(), []);
+  const [profileId, setProfileId] = useState(profiles[0]?.id || "");
+  const [performedAt, setPerformedAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [workoutType, setWorkoutType] = useState("");
+  const [durationMinutes, setDurationMinutes] = useState("");
+  const [perceivedExertion, setPerceivedExertion] = useState("");
+  const [notes, setNotes] = useState("");
+  const [exercises, setExercises] = useState([emptyExerciseRow()]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  function updateExercise(index, key, value) {
+    setExercises((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row));
+  }
+  function addExercise() { setExercises((current) => [...current, emptyExerciseRow()]); }
+  function removeExercise(index) { setExercises((current) => current.length > 1 ? current.filter((_, rowIndex) => rowIndex !== index) : current); }
+
+  async function save(event) {
+    event.preventDefault(); setBusy(true); setMessage("");
+    const details = exercises.filter((row) => row.exercise.trim()).map((row) => ({
+      exercise: row.exercise.trim(),
+      sets: row.sets ? Number(row.sets) : null,
+      reps: row.reps.trim() || null,
+      weight: row.weight.trim() || null,
+    }));
+    const { error } = await supabase.from("health_workouts").insert({
+      workspace_id: workspaceId, profile_id: profileId,
+      performed_at: new Date(performedAt).toISOString(),
+      workout_type: workoutType.trim() || "Workout",
+      duration_minutes: durationMinutes ? Number(durationMinutes) : null,
+      perceived_exertion: perceivedExertion ? Number(perceivedExertion) : null,
+      notes: notes.trim() || null,
+      details,
+    });
+    setBusy(false);
+    if (error) { setMessage(error.message); return; }
+    setWorkoutType(""); setDurationMinutes(""); setPerceivedExertion(""); setNotes(""); setExercises([emptyExerciseRow()]);
+    setMessage("Workout saved.");
+    await onSaved();
+  }
+
+  return <Card title="Log a workout">
+    <form onSubmit={save} className="grid gap-3 sm:grid-cols-2">
+      <label className="text-sm font-bold">Person<select value={profileId} onChange={(event) => setProfileId(event.target.value)} required className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600">{profiles.map((profile) => <option className="text-slate-950" key={profile.id} value={profile.id}>{profile.display_name}</option>)}</select></label>
+      <label className="text-sm font-bold">Date<input type="date" value={performedAt} onChange={(event) => setPerformedAt(event.target.value)} required className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
+      <label className="text-sm font-bold">Workout type<input value={workoutType} onChange={(event) => setWorkoutType(event.target.value)} placeholder="Strength & cardio" className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
+      <label className="text-sm font-bold">Duration (minutes)<input type="number" min="1" value={durationMinutes} onChange={(event) => setDurationMinutes(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
+      <label className="text-sm font-bold">Perceived exertion (1-10)<input type="number" min="1" max="10" value={perceivedExertion} onChange={(event) => setPerceivedExertion(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
+      <label className="text-sm font-bold">Notes<input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="e.g. performed 3 days a week" className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
+      <div className="sm:col-span-2 space-y-2">
+        <p className="text-sm font-bold">Exercises</p>
+        {exercises.map((row, index) => <div key={index} className="grid grid-cols-12 gap-2 rounded-xl bg-slate-100 p-3 dark:bg-slate-800">
+          <input aria-label={`Exercise ${index + 1}`} value={row.exercise} onChange={(event) => updateExercise(index, "exercise", event.target.value)} placeholder="Exercise" className="col-span-5 rounded-lg border bg-transparent px-2 py-1"/>
+          <input aria-label={`Sets ${index + 1}`} value={row.sets} onChange={(event) => updateExercise(index, "sets", event.target.value)} placeholder="Sets" className="col-span-2 rounded-lg border bg-transparent px-2 py-1"/>
+          <input aria-label={`Reps ${index + 1}`} value={row.reps} onChange={(event) => updateExercise(index, "reps", event.target.value)} placeholder="Reps" className="col-span-2 rounded-lg border bg-transparent px-2 py-1"/>
+          <input aria-label={`Weight ${index + 1}`} value={row.weight} onChange={(event) => updateExercise(index, "weight", event.target.value)} placeholder="Weight" className="col-span-2 rounded-lg border bg-transparent px-2 py-1"/>
+          <button type="button" onClick={() => removeExercise(index)} aria-label={`Remove exercise ${index + 1}`} className="col-span-1 rounded-lg bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-200">×</button>
+        </div>)}
+        <button type="button" onClick={addExercise} className="rounded-xl bg-slate-200 px-3 py-1.5 text-sm font-black dark:bg-slate-700">+ Add exercise</button>
+      </div>
+      <button disabled={busy} className="rounded-xl bg-amber-400 px-4 py-3 font-black text-slate-950 disabled:opacity-50 sm:col-span-2">{busy ? "Saving…" : "Save workout"}</button>
+    </form>
+    {message && <p role="status" className="mt-4 rounded-xl bg-slate-100 p-3 text-sm font-bold dark:bg-slate-800">{message}</p>}
+  </Card>;
+}
+
 export default function HealthDashboard({ initialMembership }) {
   const supabase = useMemo(() => createClient(), []);
   const [workspaceId, setWorkspaceId] = useState(initialMembership?.workspace_id ?? null);
@@ -143,7 +212,7 @@ export default function HealthDashboard({ initialMembership }) {
         {activeTab === "Labs" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultCategory="lab_report" onConfirmed={() => load(workspaceId)}/><Card title="Laboratory history"><p className="text-sm text-slate-500">Structured results and trend charts will appear here. The database preserves values, units, ranges, flags, dates, panels and source documents independently.</p></Card></>}
         {activeTab === "Regimen" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultCategory="medication_label" onConfirmed={() => load(workspaceId)}/><Card title="Prescriptions and supplements"><div className="space-y-3">{data.regimen.filter((x) => x.category !== "peptide").map((item) => <div key={item.id} className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800"><div className="flex justify-between"><p className="font-black">{item.name}</p><span className="text-xs font-black uppercase text-emerald-600">{item.status}</span></div><p className="text-sm">{[item.dose,item.route,item.frequency].filter(Boolean).join(" · ")}</p></div>)}</div></Card></>}
         {activeTab === "Peptides" && <Card title="Peptides"><p className="text-sm text-slate-500">Track the prescribed or supervised product, concentration, dose, route, cycle, individual injections, injection site, missed doses and reactions.</p></Card>}
-        {activeTab === "Workouts" && <Card title="Workout regimen"><p className="text-sm text-slate-500">Record strength, cardio and mobility sessions with duration, exercises, sets, repetitions, weight and perceived exertion.</p></Card>}
+        {activeTab === "Workouts" && <><HealthWorkoutForm workspaceId={workspaceId} profiles={data.profiles} onSaved={() => load(workspaceId)}/><Card title="Workout history"><div className="space-y-3">{data.workouts.map((workout) => <div key={workout.id} className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800"><div className="flex justify-between"><p className="font-black">{workout.workout_type}</p><span className="text-xs text-slate-500 dark:text-slate-400">{new Date(workout.performed_at).toLocaleDateString()}</span></div><p className="text-sm">{[workout.duration_minutes ? `${workout.duration_minutes} min` : null, workout.perceived_exertion ? `RPE ${workout.perceived_exertion}` : null].filter(Boolean).join(" · ")}</p>{(workout.details || []).length > 0 && <ul className="mt-2 space-y-1 text-sm">{workout.details.map((exercise, index) => <li key={index}>{[exercise.exercise, exercise.sets && exercise.reps ? `${exercise.sets}×${exercise.reps}` : exercise.reps, exercise.weight ? `@ ${exercise.weight}` : null].filter(Boolean).join(" — ")}</li>)}</ul>}{workout.notes && <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{workout.notes}</p>}</div>)}{!data.workouts.length && <p className="text-sm text-slate-500">No workouts logged yet.</p>}</div></Card></>}
         {activeTab === "Timeline" && <Card title="Clinical timeline"><p className="text-sm text-slate-500">Physician visits, recommendations, insurance decisions and regimen changes are kept in date order without rewriting the original event.</p></Card>}
       </div>}
       <p className="mt-8 text-xs text-slate-500">FORGE Health organizes records and trends. It does not diagnose conditions or change treatment without clinician review.</p>
