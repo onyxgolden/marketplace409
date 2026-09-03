@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { compressImageFile } from "@/components/forge/rental/compressImageFile";
 
 const tabs = ["Overview", "Labs", "Regimen", "Peptides", "Workouts", "Timeline"];
 
@@ -58,7 +59,7 @@ function HealthDocumentImporter({ workspaceId, profiles, defaultCategory, onConf
       <label className="text-sm font-bold">Document type<select value={category} onChange={(event) => setCategory(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"><option className="text-slate-950" value="medication_label">Medication label</option><option className="text-slate-950" value="lab_report">Lab report</option><option className="text-slate-950" value="prescription">Prescription</option><option className="text-slate-950" value="visit_summary">Visit summary</option><option className="text-slate-950" value="insurance">Insurance</option><option className="text-slate-950" value="authorization">Authorization / POA</option><option className="text-slate-950" value="other">Other</option></select></label>
       <label className="text-sm font-bold">Title<input value={title} onChange={(event) => setTitle(event.target.value)} required placeholder="August 2026 lab report" className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
       <label className="text-sm font-bold">Document date<input type="date" value={documentDate} onChange={(event) => setDocumentDate(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
-      <label className="text-sm font-bold sm:col-span-2">Photo or PDF<input type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => setFile(event.target.files?.[0] || null)} required className="mt-1 block w-full rounded-xl border border-dashed border-slate-400 p-3 text-sm"/></label>
+      <label className="text-sm font-bold sm:col-span-2">Photo or PDF<input type="file" accept="application/pdf,image/jpeg,image/png" onChange={async (event) => { const picked = event.target.files?.[0] || null; setFile(picked ? await compressImageFile(picked) : null); }} required className="mt-1 block w-full rounded-xl border border-dashed border-slate-400 p-3 text-sm"/></label>
       <button disabled={busy || !file} className="rounded-xl bg-amber-400 px-4 py-3 font-black text-slate-950 disabled:opacity-50 sm:col-span-2">{busy ? "Reading document…" : "Read and propose fields"}</button>
     </form>}
     {source && <div className="mb-4 rounded-xl border border-slate-300 p-3 dark:border-slate-600">{source.mimeType?.startsWith("image/") ? <img src={source.url} alt="Uploaded source for field review" className="max-h-80 w-full object-contain"/> : <a href={source.url} target="_blank" rel="noreferrer" className="font-black text-sky-600 underline">Open the uploaded source PDF</a>}<p className="mt-2 text-xs text-slate-500">Compare the source with every proposed field before confirming.</p></div>}
