@@ -104,6 +104,7 @@ function HealthWorkoutForm({ workspaceId, profiles, onSaved }) {
       reps: row.reps.trim() || null,
       weight: row.weight.trim() || null,
     }));
+    const { data: { user } } = await supabase.auth.getUser();
     const { error } = await supabase.from("health_workouts").insert({
       workspace_id: workspaceId, profile_id: profileId,
       performed_at: new Date(performedAt).toISOString(),
@@ -112,6 +113,7 @@ function HealthWorkoutForm({ workspaceId, profiles, onSaved }) {
       perceived_exertion: perceivedExertion ? Number(perceivedExertion) : null,
       notes: notes.trim() || null,
       details,
+      recorded_by: user.id,
     });
     setBusy(false);
     if (error) { setMessage(error.message); return; }
