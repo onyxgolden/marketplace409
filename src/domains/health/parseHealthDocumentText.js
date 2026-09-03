@@ -16,7 +16,7 @@ function text(value) { return String(value || "").replace(/\r/g, "\n").trim(); }
 export function parseHealthDocumentText({ documentType, extractedText }) {
   const source = text(extractedText);
   if (!source) return Object.freeze({ proposalType: "unclassified", parserVersion: "health-doc-v1", confidence: "none", fields: {} });
-  if (documentType === "medication_label") return parseMedicationLabel(source);
+  if (documentType === "medication_label" || documentType === "prescription") return parseMedicationLabel(source);
   if (documentType === "lab_report") return parseLabReport(source);
   return Object.freeze({ proposalType: "unclassified", parserVersion: "health-doc-v1", confidence: "none", fields: { sourceExcerpt: source.slice(0, 500) } });
 }

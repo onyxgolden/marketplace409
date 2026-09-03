@@ -7,6 +7,11 @@ describe("parseHealthDocumentText", () => {
     expect(proposal).toMatchObject({ proposalType: "regimen_item", confidence: "review_required", fields: { name: "DEMOZINE", dose: "12 mg", instructions: "TAKE 1 TABLET BY MOUTH DAILY", refillsRemaining: 2 } });
   });
 
+  it("parses prescription labels the same way as medication labels, not as unclassified", () => {
+    const proposal = parseHealthDocumentText({ documentType: "prescription", extractedText: "SAMPLE PATIENT\nDEMOZINE 12MG TABLETS\nTAKE 1 TABLET BY MOUTH DAILY\n2+ REFILLS" });
+    expect(proposal).toMatchObject({ proposalType: "regimen_item", confidence: "review_required", fields: { name: "DEMOZINE", dose: "12 mg", instructions: "TAKE 1 TABLET BY MOUTH DAILY", refillsRemaining: 2 } });
+  });
+
   it("extracts only recognized lab candidates for human confirmation", () => {
     const proposal = parseHealthDocumentText({ documentType: "lab_report", extractedText: "Hemoglobin A1c 7.7 %\nCholesterol, Total 222 mg/dL\nLDL-C Calculated 133 mg/dL" });
     expect(proposal.confidence).toBe("review_required");
