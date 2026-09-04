@@ -8,8 +8,10 @@ import HealthDashboard from "./HealthDashboard";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const { insertMock, getUserMock } = vi.hoisted(() => ({
+const { insertMock, updateMock, deleteMock, getUserMock } = vi.hoisted(() => ({
   insertMock: vi.fn(() => Promise.resolve({ error: null })),
+  updateMock: vi.fn(() => Promise.resolve({ error: null })),
+  deleteMock: vi.fn(() => Promise.resolve({ error: null })),
   getUserMock: vi.fn(() => Promise.resolve({ data: { user: { id: "user-1", email: "jasonmorgan99@gmail.com" } } })),
 }));
 
@@ -30,10 +32,14 @@ vi.mock("@/lib/supabase/client", () => ({
               { id: "lab-3", profile_id: "profile-2", marker_name: "Hemoglobin A1c", collected_on: "2026-08-10", value_numeric: 5.4, unit: "%", flag: "normal", reference_low: null, reference_high: null },
             ] : table === "health_workouts" ? [
               { id: "workout-1", profile_id: "profile-1", workout_type: "Strength & Cardio", performed_at: "2026-09-03T00:00:00.000Z", duration_minutes: 30, perceived_exertion: null, notes: null, details: [] },
+            ] : table === "health_regimen_items" ? [
+              { id: "regimen-1", profile_id: "profile-1", category: "prescription", name: "Testosterone Cypionate", dose: "200 mg/mL", route: "Subcutaneous", frequency: "Twice weekly", status: "active" },
             ] : [],
           error: null,
         }),
         insert: (payload) => insertMock(table, payload),
+        update: (payload) => ({ eq: (column, value) => updateMock(table, payload, value) }),
+        delete: () => ({ eq: (column, value) => deleteMock(table, value) }),
       };
       return node;
     },
@@ -81,6 +87,8 @@ describe("HealthDashboard", () => {
     if (mounted) unmount(mounted);
     mounted = null;
     insertMock.mockClear();
+    updateMock.mockClear();
+    deleteMock.mockClear();
     getUserMock.mockClear();
   });
 
@@ -170,5 +178,49 @@ describe("HealthDashboard", () => {
 
     expect(mounted.container.textContent).toContain("Hemoglobin A1c");
     expect(mounted.container.textContent).not.toContain("LDL cholesterol");
+  });
+
+  it("edits a regimen item in place", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Regimen");
+
+    const editButton = [...mounted.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "Edit Testosterone Cypionate");
+    await act(async () => { editButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    setInputValue(mounted.container.querySelector('[aria-label="Dose"]'), "250 mg/mL");
+    const saveButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Save");
+    await act(async () => { saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(updateMock).toHaveBeenCalledWith("health_regimen_items", expect.objectContaining({ dose: "250 mg/mL" }), "regimen-1");
+  });
+
+  it("deletes a workout only after a second confirming click", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Workouts");
+
+    const deleteButton = [...mounted.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label")?.startsWith("Delete workout"));
+    await act(async () => { deleteButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    expect(deleteMock).not.toHaveBeenCalled();
+
+    const confirmButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Confirm?");
+    await act(async () => { confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    expect(deleteMock).toHaveBeenCalledWith("health_workouts", "workout-1");
+  });
+
+  it("edits a lab result's value and collection date in place", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    const editButton = [...mounted.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "Edit LDL cholesterol result from 2026-08-10");
+    await act(async () => { editButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    setInputValue(mounted.container.querySelector('[aria-label="Collection date"]'), "2026-05-08");
+    const saveButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Save");
+    await act(async () => { saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(updateMock).toHaveBeenCalledWith("health_lab_results", expect.objectContaining({ collected_on: "2026-05-08" }), "lab-2");
   });
 });
