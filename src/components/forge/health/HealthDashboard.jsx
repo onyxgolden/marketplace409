@@ -26,9 +26,9 @@ function Card({ title, children }) {
   return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900"><h2 className="text-lg font-black">{title}</h2><div className="mt-4">{children}</div></section>;
 }
 
-function HealthDocumentImporter({ workspaceId, profiles, defaultCategory, onConfirmed }) {
+function HealthDocumentImporter({ workspaceId, profiles, defaultCategory, defaultProfileId, onConfirmed }) {
   const supabase = useMemo(() => createClient(), []);
-  const [profileId, setProfileId] = useState(profiles[0]?.id || "");
+  const [profileId, setProfileId] = useState(defaultProfileId || profiles[0]?.id || "");
   const [category, setCategory] = useState(defaultCategory);
   const [title, setTitle] = useState("");
   const [documentDate, setDocumentDate] = useState("");
@@ -101,9 +101,9 @@ function HealthDocumentImporter({ workspaceId, profiles, defaultCategory, onConf
 
 function emptyExerciseRow() { return { exercise: "", sets: "", reps: "", weight: "" }; }
 
-function HealthWorkoutForm({ workspaceId, profiles, onSaved }) {
+function HealthWorkoutForm({ workspaceId, profiles, defaultProfileId, onSaved }) {
   const supabase = useMemo(() => createClient(), []);
-  const [profileId, setProfileId] = useState(profiles[0]?.id || "");
+  const [profileId, setProfileId] = useState(defaultProfileId || profiles[0]?.id || "");
   const [performedAt, setPerformedAt] = useState(() => new Date().toISOString().slice(0, 10));
   const [workoutType, setWorkoutType] = useState("");
   const [durationMinutes, setDurationMinutes] = useState("");
@@ -179,6 +179,24 @@ export default function HealthDashboard({ initialMembership }) {
   const [dependentName, setDependentName] = useState("");
   const [dependentRelationship, setDependentRelationship] = useState("");
   const [data, setData] = useState({ profiles: [], conditions: [], careTeam: [], labs: [], regimen: [], measurements: [], workouts: [], timeline: [] });
+  const [viewProfileId, setViewProfileId] = useState(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState(null);
+
+  useEffect(() => { supabase.auth.getUser().then(({ data: authData }) => setCurrentUserEmail(authData?.user?.email ?? null)); }, [supabase]);
+
+  // Every list below (Overview counts, Labs charts, Regimen, Workouts) is scoped to exactly one
+  // profile at a time -- household members share this workspace but not every medication, lab
+  // result or workout, so nothing here is ever shown mixed across people. Defaults to the signed-in
+  // member's own profile once profiles load, falling back to the first profile if no email match.
+  useEffect(() => {
+    if (viewProfileId || !data.profiles.length) return;
+    const own = currentUserEmail && data.profiles.find((profile) => profile.display_name === currentUserEmail);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- deliberate one-time default once profiles/email are known, guarded above so it never loops
+    setViewProfileId((own || data.profiles[0]).id);
+    // viewProfileId is intentionally omitted -- including it would refire this default the instant
+    // it's set, fighting a manual selection from the "Viewing" switcher.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.profiles, currentUserEmail]);
 
   async function load(id = workspaceId) {
     if (!id) return;
@@ -218,26 +236,31 @@ export default function HealthDashboard({ initialMembership }) {
 
   if (!workspaceId) return <main className="mx-auto max-w-3xl p-6"><Card title="Private FORGE Health"><p className="text-slate-600 dark:text-slate-300">Create one shared health workspace for you and your active co-owner. Only the two explicitly added accounts will have access.</p><button onClick={initialize} disabled={loading} className="mt-5 rounded-xl bg-amber-400 px-5 py-3 font-black text-slate-950 disabled:opacity-50">{loading ? "Creating…" : "Create our private health workspace"}</button>{error && <p role="alert" className="mt-4 text-sm font-bold text-red-600">{error}</p>}</Card></main>;
 
-  const activeRegimen = data.regimen.filter((item) => item.status === "active");
-  const latestLabs = data.labs.slice(0, 8);
+  const viewLabs = data.labs.filter((lab) => lab.profile_id === viewProfileId);
+  const viewRegimen = data.regimen.filter((item) => item.profile_id === viewProfileId);
+  const viewWorkouts = data.workouts.filter((workout) => workout.profile_id === viewProfileId);
+  const activeRegimen = viewRegimen.filter((item) => item.status === "active");
+  const latestLabs = viewLabs.slice(0, 8);
+  const viewingProfile = data.profiles.find((profile) => profile.id === viewProfileId);
   return <main className="min-h-screen bg-slate-100 p-4 text-slate-950 dark:bg-slate-950 dark:text-white sm:p-6">
     <div className="mx-auto max-w-7xl">
       <p className="text-xs font-black uppercase tracking-[.24em] text-amber-600 dark:text-amber-400">FORGE Application</p>
       <h1 className="text-3xl font-black">Health</h1>
       <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Shared private health history, regimen, laboratory trends, peptides, and training.</p>
       <div className="mt-5 flex flex-wrap gap-2">{tabs.map((tab) => <button key={tab} onClick={() => setActiveTab(tab)} className={`rounded-xl px-4 py-2 text-sm font-black ${activeTab === tab ? "bg-amber-400 text-slate-950" : "bg-slate-200 dark:bg-slate-800"}`}>{tab}</button>)}</div>
+      {data.profiles.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2"><span className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Viewing:</span>{data.profiles.map((profile) => <button key={profile.id} onClick={() => setViewProfileId(profile.id)} className={`rounded-full px-3 py-1 text-xs font-black ${viewProfileId === profile.id ? "bg-amber-400 text-slate-950" : "bg-slate-200 dark:bg-slate-800"}`}>{profile.display_name}</button>)}</div>}
       {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 font-bold text-red-700 dark:bg-red-950 dark:text-red-200">{error}</p>}
       {loading ? <p className="mt-8 font-bold">Loading private health records…</p> : <div className="mt-6 grid gap-5 lg:grid-cols-2">
         {activeTab === "Overview" && <>
           <Card title="Household profiles"><div className="space-y-3">{data.profiles.map((profile) => <div key={profile.id} className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800"><p className="font-black">{profile.display_name}</p><p className="text-xs text-slate-500 dark:text-slate-400">{profile.profile_type === "managed_dependent" ? `Managed ${profile.relationship || "dependent"}` : "Private household member"} · {data.conditions.filter((condition) => condition.profile_id === profile.id && condition.status === "active").length} active conditions · {activeRegimen.filter((item) => item.profile_id === profile.id).length} active regimen items</p></div>)}</div><form onSubmit={addDependent} className="mt-4 grid gap-2 sm:grid-cols-2"><input aria-label="Dependent full name" required value={dependentName} onChange={(event) => setDependentName(event.target.value)} placeholder="Dependent full name" className="rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/><input aria-label="Relationship" required value={dependentRelationship} onChange={(event) => setDependentRelationship(event.target.value)} placeholder="Relationship, such as mother" className="rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/><button className="rounded-xl bg-slate-950 px-4 py-2 font-black text-white dark:bg-amber-400 dark:text-slate-950 sm:col-span-2">Add managed dependent</button></form></Card>
-          <Card title="Current regimen"><p className="text-3xl font-black text-emerald-600">{activeRegimen.length}</p><p className="text-sm text-slate-500">active prescriptions, supplements, and peptides</p></Card>
-          <Card title="Latest laboratory results">{latestLabs.length ? <div className="space-y-2">{latestLabs.map((lab) => <div key={lab.id} className="flex justify-between gap-4 border-b border-slate-200 py-2 dark:border-slate-700"><span className="font-bold">{lab.marker_name}</span><span className={lab.flag === "high" || lab.flag === "critical" ? "font-black text-red-600" : "font-black"}>{lab.value_numeric ?? lab.value_text} {lab.unit}</span></div>)}</div> : <p className="text-sm text-slate-500">No structured lab results yet.</p>}</Card>
-          <Card title="Activity"><div className="grid grid-cols-3 gap-3 text-center"><div><p className="text-2xl font-black">{data.measurements.length}</p><p className="text-xs">measurements</p></div><div><p className="text-2xl font-black">{data.workouts.length}</p><p className="text-xs">workouts</p></div><div><p className="text-2xl font-black">{data.timeline.length}</p><p className="text-xs">timeline events</p></div></div></Card>
+          <Card title="Current regimen"><p className="text-3xl font-black text-emerald-600">{activeRegimen.length}</p><p className="text-sm text-slate-500">active prescriptions, supplements, and peptides for {viewingProfile?.display_name || "the selected person"}</p></Card>
+          <Card title="Latest laboratory results">{latestLabs.length ? <div className="space-y-2">{latestLabs.map((lab) => <div key={lab.id} className="flex justify-between gap-4 border-b border-slate-200 py-2 dark:border-slate-700"><span className="font-bold">{lab.marker_name}</span><span className={lab.flag === "high" || lab.flag === "critical" ? "font-black text-red-600" : "font-black"}>{lab.value_numeric ?? lab.value_text} {lab.unit}</span></div>)}</div> : <p className="text-sm text-slate-500">No structured lab results yet for {viewingProfile?.display_name || "the selected person"}.</p>}</Card>
+          <Card title="Activity"><div className="grid grid-cols-3 gap-3 text-center"><div><p className="text-2xl font-black">{data.measurements.filter((m) => m.profile_id === viewProfileId).length}</p><p className="text-xs">measurements</p></div><div><p className="text-2xl font-black">{viewWorkouts.length}</p><p className="text-xs">workouts</p></div><div><p className="text-2xl font-black">{data.timeline.filter((t) => t.profile_id === viewProfileId).length}</p><p className="text-xs">timeline events</p></div></div></Card>
         </>}
-        {activeTab === "Labs" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultCategory="lab_report" onConfirmed={() => load(workspaceId)}/><Card title="Laboratory history">{data.labs.length ? <div className="space-y-3">{Object.entries(groupLabsByMarker(data.labs)).map(([markerName, points]) => <HealthLabTrendChart key={markerName} markerName={markerName} points={points}/>)}</div> : <p className="text-sm text-slate-500">Structured results and trend charts will appear here. The database preserves values, units, ranges, flags, dates, panels and source documents independently.</p>}</Card></>}
-        {activeTab === "Regimen" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultCategory="medication_label" onConfirmed={() => load(workspaceId)}/><Card title="Prescriptions and supplements"><div className="space-y-3">{data.regimen.filter((x) => x.category !== "peptide").map((item) => <div key={item.id} className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800"><div className="flex justify-between"><p className="font-black">{item.name}</p><span className="text-xs font-black uppercase text-emerald-600">{item.status}</span></div><p className="text-sm">{[item.dose,item.route,item.frequency].filter(Boolean).join(" · ")}</p></div>)}</div></Card></>}
+        {activeTab === "Labs" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="lab_report" onConfirmed={() => load(workspaceId)}/><Card title={`Laboratory history — ${viewingProfile?.display_name || ""}`}>{viewLabs.length ? <div className="space-y-3">{Object.entries(groupLabsByMarker(viewLabs)).map(([markerName, points]) => <HealthLabTrendChart key={markerName} markerName={markerName} points={points}/>)}</div> : <p className="text-sm text-slate-500">Structured results and trend charts will appear here. The database preserves values, units, ranges, flags, dates, panels and source documents independently.</p>}</Card></>}
+        {activeTab === "Regimen" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="medication_label" onConfirmed={() => load(workspaceId)}/><Card title={`Prescriptions and supplements — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewRegimen.filter((x) => x.category !== "peptide").map((item) => <div key={item.id} className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800"><div className="flex justify-between"><p className="font-black">{item.name}</p><span className="text-xs font-black uppercase text-emerald-600">{item.status}</span></div><p className="text-sm">{[item.dose,item.route,item.frequency].filter(Boolean).join(" · ")}</p></div>)}{!viewRegimen.filter((x) => x.category !== "peptide").length && <p className="text-sm text-slate-500">No prescriptions or supplements logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
         {activeTab === "Peptides" && <Card title="Peptides"><p className="text-sm text-slate-500">Track the prescribed or supervised product, concentration, dose, route, cycle, individual injections, injection site, missed doses and reactions.</p></Card>}
-        {activeTab === "Workouts" && <><HealthWorkoutForm workspaceId={workspaceId} profiles={data.profiles} onSaved={() => load(workspaceId)}/><Card title="Workout history"><div className="space-y-3">{data.workouts.map((workout) => <div key={workout.id} className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800"><div className="flex justify-between"><p className="font-black">{workout.workout_type}</p><span className="text-xs text-slate-500 dark:text-slate-400">{workoutDateLabel(workout.performed_at)}</span></div><p className="text-sm">{[workout.duration_minutes ? `${workout.duration_minutes} min` : null, workout.perceived_exertion ? `RPE ${workout.perceived_exertion}` : null].filter(Boolean).join(" · ")}</p>{(workout.details || []).length > 0 && <ul className="mt-2 space-y-1 text-sm">{workout.details.map((exercise, index) => <li key={index}>{[exercise.exercise, exercise.sets && exercise.reps ? `${exercise.sets}×${exercise.reps}` : exercise.reps, exercise.weight ? `@ ${exercise.weight}` : null].filter(Boolean).join(" — ")}</li>)}</ul>}{workout.notes && <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{workout.notes}</p>}</div>)}{!data.workouts.length && <p className="text-sm text-slate-500">No workouts logged yet.</p>}</div></Card></>}
+        {activeTab === "Workouts" && <><HealthWorkoutForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} onSaved={() => load(workspaceId)}/><Card title={`Workout history — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewWorkouts.map((workout) => <div key={workout.id} className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800"><div className="flex justify-between"><p className="font-black">{workout.workout_type}</p><span className="text-xs text-slate-500 dark:text-slate-400">{workoutDateLabel(workout.performed_at)}</span></div><p className="text-sm">{[workout.duration_minutes ? `${workout.duration_minutes} min` : null, workout.perceived_exertion ? `RPE ${workout.perceived_exertion}` : null].filter(Boolean).join(" · ")}</p>{(workout.details || []).length > 0 && <ul className="mt-2 space-y-1 text-sm">{workout.details.map((exercise, index) => <li key={index}>{[exercise.exercise, exercise.sets && exercise.reps ? `${exercise.sets}×${exercise.reps}` : exercise.reps, exercise.weight ? `@ ${exercise.weight}` : null].filter(Boolean).join(" — ")}</li>)}</ul>}{workout.notes && <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{workout.notes}</p>}</div>)}{!viewWorkouts.length && <p className="text-sm text-slate-500">No workouts logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
         {activeTab === "Timeline" && <Card title="Clinical timeline"><p className="text-sm text-slate-500">Physician visits, recommendations, insurance decisions and regimen changes are kept in date order without rewriting the original event.</p></Card>}
       </div>}
       <p className="mt-8 text-xs text-slate-500">FORGE Health organizes records and trends. It does not diagnose conditions or change treatment without clinician review.</p>
