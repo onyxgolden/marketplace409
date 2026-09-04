@@ -34,6 +34,9 @@ vi.mock("@/lib/supabase/client", () => ({
               { id: "workout-1", profile_id: "profile-1", workout_type: "Strength & Cardio", performed_at: "2026-09-03T00:00:00.000Z", duration_minutes: 30, perceived_exertion: null, notes: null, details: [] },
             ] : table === "health_regimen_items" ? [
               { id: "regimen-1", profile_id: "profile-1", category: "prescription", name: "Testosterone Cypionate", dose: "200 mg/mL", route: "Subcutaneous", frequency: "Twice weekly", status: "active" },
+            ] : table === "health_measurements" ? [
+              { id: "measurement-2", profile_id: "profile-1", measurement_type: "steps", measured_at: "2026-08-15T00:00:00.000Z", value_numeric: 9100, secondary_value_numeric: null, unit: "steps", context: null, notes: null },
+              { id: "measurement-1", profile_id: "profile-1", measurement_type: "steps", measured_at: "2026-08-01T00:00:00.000Z", value_numeric: 6200, secondary_value_numeric: null, unit: "steps", context: null, notes: null },
             ] : [],
           error: null,
         }),
@@ -100,7 +103,7 @@ describe("HealthDashboard", () => {
 
   it("renders the complete private health navigation", () => {
     const markup = renderToStaticMarkup(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
-    for (const label of ["Overview", "Labs", "Regimen", "Peptides", "Workouts", "Timeline"]) expect(markup).toContain(label);
+    for (const label of ["Overview", "Labs", "Regimen", "Peptides", "Workouts", "Vitals", "Timeline"]) expect(markup).toContain(label);
   });
 
   it("renders a real workout logging form on the Workouts tab, not a placeholder", async () => {
@@ -222,5 +225,61 @@ describe("HealthDashboard", () => {
     await act(async () => { saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
 
     expect(updateMock).toHaveBeenCalledWith("health_lab_results", expect.objectContaining({ collected_on: "2026-05-08" }), "lab-2");
+  });
+
+  it("logs a vital and attributes it to the signed-in user (recorded_by)", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Vitals");
+
+    setInputValue(mounted.container.querySelector('[aria-label="Value"]'), "72");
+
+    const saveButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Save vital");
+    await act(async () => { saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(insertMock).toHaveBeenCalledWith("health_measurements", expect.objectContaining({
+      recorded_by: "user-1",
+      workspace_id: "health-1",
+      profile_id: "profile-1",
+      measurement_type: "steps",
+      value_numeric: 72,
+      unit: "steps",
+    }));
+  });
+
+  it("shows a second numeric field for blood pressure and clears it when switching types away", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Vitals");
+
+    const select = [...mounted.container.querySelectorAll("select")].find((node) => [...node.options].some((option) => option.textContent === "Blood pressure"));
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+    await act(async () => { setter.call(select, "blood_pressure"); select.dispatchEvent(new Event("change", { bubbles: true })); await flush(); });
+
+    expect(mounted.container.textContent).toContain("Diastolic");
+  });
+
+  it("renders a real vitals trend chart on the Vitals tab once a type has a second entry", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Vitals");
+
+    expect(mounted.container.textContent).toContain("Vitals trends");
+    expect(mounted.container.querySelector("svg[aria-label*='Steps over time']")).toBeTruthy();
+    expect(mounted.container.textContent).toContain("9100 steps");
+  });
+
+  it("deletes a vital only after a second confirming click", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Vitals");
+
+    const deleteButton = [...mounted.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label")?.startsWith("Delete Steps"));
+    await act(async () => { deleteButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    expect(deleteMock).not.toHaveBeenCalled();
+
+    const confirmButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Confirm?");
+    await act(async () => { confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    expect(deleteMock).toHaveBeenCalledWith("health_measurements", "measurement-2");
   });
 });
