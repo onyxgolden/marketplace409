@@ -9,7 +9,7 @@ import {
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
   addBlackoutWindow, addBlock, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
   blockToChip, calendarById, calendarForLane, chipsByCategory, clampIndex, colorForCategory,
-  computeWeeks, criticalPath, dataDateOffset, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
+  computeWeeks, dataDateOffset, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
   deleteLane, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock,
   moveBlocksBy, nonWorkingDayRuns, pixelToIndex, recordHistory, redoHistory, removeBlackoutWindow,
   removeBlock, removeCalendar, removeDependency, renameBlock, renameLane, resetBoard, resizeBlock, resizeBlockFromStart,
@@ -188,11 +188,26 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
     return resolveColumn(offset.realIdx) * board.weekWidth + offset.dayOffset * dayWidth;
   }, [board.startDate, board.endDate, board.weekWidth, columnForWeekIdx]);
 
-  // Simplified stand-in for real CPM (no calendars/constraints yet) -- longest chain of
-  // dependency-linked blocks by summed duration, just to eyeball the dependency graph.
-  const criticalPathInfo = useMemo(() => (showCriticalPath ? criticalPath(board) : null), [board, showCriticalPath]);
-  const criticalBlockIds = useMemo(() => new Set(criticalPathInfo?.blockIds || []), [criticalPathInfo]);
-  const criticalDependencyIds = useMemo(() => new Set(criticalPathInfo?.dependencyIds || []), [criticalPathInfo]);
+  // board.cpm comes from the server's real CPM engine (calendars, lag, relationship types,
+  // constraints -- see src/domains/scheduling/schedulingCpmEngine.js), keyed by taskCode rather
+  // than block id since taskCode is never namespaced. A dependency is drawn critical when both
+  // ends are -- real schedules often have several parallel critical paths, not just one, so this
+  // highlights the whole critical sub-network rather than a single arbitrary longest chain.
+  const criticalTaskCodes = useMemo(() => new Set(showCriticalPath ? board.cpm?.criticalTaskCodes || [] : []), [board.cpm, showCriticalPath]);
+  const criticalBlockIds = useMemo(
+    () => new Set(board.blocks.filter((block) => criticalTaskCodes.has(block.taskCode)).map((block) => block.id)),
+    [board.blocks, criticalTaskCodes],
+  );
+  const criticalDependencyIds = useMemo(() => {
+    const blocksById = new Map(board.blocks.map((block) => [block.id, block]));
+    return new Set(board.dependencies
+      .filter((dependency) => {
+        const predecessor = blocksById.get(dependency.predecessorId);
+        const successor = blocksById.get(dependency.successorId);
+        return predecessor && successor && criticalTaskCodes.has(predecessor.taskCode) && criticalTaskCodes.has(successor.taskCode);
+      })
+      .map((dependency) => dependency.id));
+  }, [board.blocks, board.dependencies, criticalTaskCodes]);
 
   function pixelToRealWeekIdx(px) {
     const compressed = clampIndex(pixelToIndex(px, board.weekWidth), 0, displayIndices.length - 1);
@@ -551,7 +566,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
               <input type="checkbox" checked={hideEmptyWeeks} onChange={(e) => setHideEmptyWeeks(e.target.checked)} />
               Hide empty weeks
             </label>
-            <label className="flex items-center gap-1 text-xs text-slate-300" title="Longest dependency-linked chain by duration -- a stand-in for real CPM, not tied to calendars/constraints yet">
+            <label className="flex items-center gap-1 text-xs text-slate-300" title="Real CPM: calendars, lag, relationship types and constraints all factored in. Highlights every block on a critical path, not just one.">
               <input type="checkbox" checked={showCriticalPath} onChange={(e) => setShowCriticalPath(e.target.checked)} />
               Critical path
             </label>

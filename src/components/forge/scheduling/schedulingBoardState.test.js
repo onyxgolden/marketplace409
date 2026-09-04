@@ -3,7 +3,7 @@ import {
   BASE_BLOCK_FONT_SIZE_PX, CALENDAR_PRESETS, HISTORY_LIMIT, MIN_BLOCK_FONT_SIZE_PX, PROJECT_TEMPLATES,
   addBlock, addBlackoutWindow, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
   blockAnchorPoint, blockToChip, calendarById, calendarForLane, chipsByCategory, computeWeeks,
-  criticalPath, dataDateOffset, deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints,
+  dataDateOffset, deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints,
   deserializeBoardState, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, hydrateBoardState,
   linkBlocksInOrder, moveBlock, moveBlocksBy, nonWorkingDayRuns, occupiedWeekIndices, projectSummaryFromBoard,
   projectTemplateById, recordHistory, redoHistory, removeBlackoutWindow, removeBlock, removeCalendar,
@@ -904,67 +904,5 @@ describe("undo/redo history", () => {
       current = result.board;
     }
     expect(history.future.length).toBeLessThanOrEqual(HISTORY_LIMIT);
-  });
-});
-
-describe("criticalPath", () => {
-  it("is empty for a board with no blocks", () => {
-    expect(criticalPath(defaultBoardState())).toEqual({ blockIds: [], dependencyIds: [] });
-  });
-
-  it("is empty when blocks exist but nothing is linked -- a lone block isn't a path", () => {
-    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 20 }, 0, 0);
-    state = addBlock(state, TASK_CHIP, 0, 1);
-    expect(criticalPath(state)).toEqual({ blockIds: [], dependencyIds: [] });
-  });
-
-  it("follows a simple chain end to end", () => {
-    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, category: "gov" }, 0, 1); // A
-    state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 8, 2); // B
-    state = addDependency(state, "b1", "b2");
-    const result = criticalPath(state);
-    expect(result.blockIds).toEqual(["b1", "b2"]);
-    expect(result.dependencyIds).toHaveLength(1);
-  });
-
-  it("includes a zero-duration milestone as a path member without it adding length", () => {
-    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 3 }, 0, 0); // b1, task
-    state = addBlock(state, CHIP, 3, 0); // b2, milestone
-    state = addBlock(state, { ...TASK_CHIP, durationWeeks: 3 }, 3, 0); // b3, task
-    state = addDependency(state, "b1", "b2");
-    state = addDependency(state, "b2", "b3");
-    expect(criticalPath(state).blockIds).toEqual(["b1", "b2", "b3"]);
-  });
-
-  it("picks the branch with the larger total duration, not just any path to the end", () => {
-    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, durationWeeks: 2, category: "gov" }, 0, 1); // A
-    state = addBlock(state, { ...TASK_CHIP, durationWeeks: 5, category: "eng" }, 2, 2); // B (long branch)
-    state = addBlock(state, { ...TASK_CHIP, durationWeeks: 1, category: "proc" }, 2, 3); // C (short branch)
-    state = addBlock(state, { ...TASK_CHIP, durationWeeks: 2, category: "field" }, 7, 4); // D (joins back up)
-    const [a, b, c, d] = state.blocks.map((block) => block.id);
-    state = addDependency(state, a, b);
-    state = addDependency(state, a, c);
-    state = addDependency(state, b, d);
-    state = addDependency(state, c, d);
-    expect(criticalPath(state).blockIds).toEqual([a, b, d]);
-  });
-
-  it("never hangs on a cycle, and still returns a usable result", () => {
-    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, category: "gov" }, 0, 1);
-    state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 8, 2);
-    state = addDependency(state, "b1", "b2");
-    state = addDependency(state, "b2", "b1"); // cycle -- addDependency doesn't reject this today
-    const result = criticalPath(state); // must return promptly, not hang
-    expect(Array.isArray(result.blockIds)).toBe(true);
-  });
-
-  it("ignores a dependency pointing at a block that no longer exists", () => {
-    let state = addBlock(defaultBoardState(), { ...TASK_CHIP, category: "gov" }, 0, 1);
-    state = addBlock(state, { ...TASK_CHIP, category: "eng" }, 8, 2);
-    state = addDependency(state, "b1", "b2");
-    // Simulate a stale dependency row (shouldn't happen via the app's own cascade-delete,
-    // but the function must not crash if one exists).
-    state = { ...state, blocks: state.blocks.filter((b) => b.id !== "b2") };
-    expect(() => criticalPath(state)).not.toThrow();
   });
 });

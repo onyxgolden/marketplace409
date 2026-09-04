@@ -8,10 +8,11 @@ function listQuery(rows) {
   const query = { select: vi.fn().mockReturnThis(), order };
   return { client: { from: vi.fn(() => query) }, query };
 }
-function insertQuery(row) {
+function insertQuery(row, { rpcError = null } = {}) {
   const single = vi.fn(async () => ({ data: row, error: null }));
   const query = { insert: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), single };
-  return { client: { from: vi.fn(() => query) }, query };
+  const rpc = vi.fn(async () => ({ error: rpcError }));
+  return { client: { from: vi.fn(() => query), rpc }, query, rpc };
 }
 function postRequest(body) {
   return new Request("https://test/api/forge/scheduling", {
@@ -67,5 +68,19 @@ describe("POST /api/forge/scheduling", () => {
     const savedBoard = db.query.insert.mock.calls[0][0].board;
     expect(savedBoard.templateId).toBe("home_remodel");
     expect(savedBoard.lanes.map((l) => l.name)).toContain("Demolition");
+  });
+
+  it("syncs the new project's relational rows immediately -- GET reads from schedule_projects, so a newly-created project must be usable on its very first load", async () => {
+    const db = insertQuery({ id: "schedule_project_new" });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    await POST(postRequest(undefined));
+    expect(db.rpc).toHaveBeenCalledWith("sync_schedule_project_from_board", { p_owner_id: "user_1", p_project_id: "schedule_project_new" });
+  });
+
+  it("fails the request (unlike the PUT route's best-effort sync) when the relational sync errors, since the project wouldn't be usable otherwise", async () => {
+    const db = insertQuery({ id: "schedule_project_new" }, { rpcError: { message: "sync failed" } });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    const response = await POST(postRequest(undefined));
+    expect(response.status).toBe(500);
   });
 });
