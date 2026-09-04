@@ -38,6 +38,10 @@ vi.mock("@/lib/supabase/client", () => ({
             ] : table === "health_measurements" ? [
               { id: "measurement-2", profile_id: "profile-1", measurement_type: "steps", measured_at: "2026-08-15T00:00:00.000Z", value_numeric: 9100, secondary_value_numeric: null, unit: "steps", context: null, notes: null },
               { id: "measurement-1", profile_id: "profile-1", measurement_type: "steps", measured_at: "2026-08-01T00:00:00.000Z", value_numeric: 6200, secondary_value_numeric: null, unit: "steps", context: null, notes: null },
+            ] : table === "health_programs" ? [
+              { id: "program-1", name: "Jeff Nippard's Legs/Push/Pull Hypertrophy — Block 1", source: "Jeff Nippard", notes: null },
+            ] : table === "health_program_days" ? [
+              { id: "day-1", program_id: "program-1", day_number: 1, title: "Legs #1", exercises: [{ name: "Back Squat", sets: "4", reps: "5", intensity: null, notes: null }] },
             ] : [],
           error: null,
         }),
@@ -104,7 +108,7 @@ describe("HealthDashboard", () => {
 
   it("renders the complete private health navigation", () => {
     const markup = renderToStaticMarkup(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
-    for (const label of ["Overview", "Labs", "Regimen", "Peptides", "Workouts", "Vitals", "Timeline"]) expect(markup).toContain(label);
+    for (const label of ["Overview", "Labs", "Regimen", "Peptides", "Workouts", "Programs", "Vitals", "Timeline"]) expect(markup).toContain(label);
   });
 
   it("renders a real workout logging form on the Workouts tab, not a placeholder", async () => {
@@ -318,5 +322,51 @@ describe("HealthDashboard", () => {
     await goToTab(mounted.container, "Peptides");
 
     expect(mounted.container.textContent).toContain("KLOW");
+  });
+
+  it("selects the first program by default and shows its days and exercises", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Programs");
+
+    expect(mounted.container.textContent).toContain("Jeff Nippard's Legs/Push/Pull Hypertrophy");
+    expect(mounted.container.textContent).toContain("Day 1 — Legs #1");
+    expect(mounted.container.textContent).toContain("Back Squat");
+  });
+
+  it("adds a program day with created_by and updated_by set, not a nonexistent recorded_by", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Programs");
+
+    setInputValue(mounted.container.querySelector('[aria-label="Exercise 1"]'), "Deadlift");
+    setInputValue(mounted.container.querySelector('[aria-label="Sets 1"]'), "4");
+    setInputValue(mounted.container.querySelector('[aria-label="Reps 1"]'), "4");
+
+    const titleInputs = [...mounted.container.querySelectorAll("input")].filter((input) => input.placeholder === "Legs #1");
+    setInputValue(titleInputs[0], "Legs #2");
+
+    const saveButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Save day");
+    await act(async () => { saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(insertMock).toHaveBeenCalledWith("health_program_days", expect.objectContaining({
+      program_id: "program-1", title: "Legs #2", day_number: 2,
+      exercises: [expect.objectContaining({ name: "Deadlift", sets: "4", reps: "4" })],
+      created_by: "user-1", updated_by: "user-1",
+    }));
+  });
+
+  it("deletes a program only after a second confirming click", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Programs");
+
+    const deleteButton = [...mounted.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label")?.startsWith("Delete Jeff Nippard's"));
+    await act(async () => { deleteButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    expect(deleteMock).not.toHaveBeenCalled();
+
+    const confirmButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Confirm?");
+    await act(async () => { confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    expect(deleteMock).toHaveBeenCalledWith("health_programs", "program-1");
   });
 });
