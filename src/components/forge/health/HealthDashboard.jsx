@@ -258,6 +258,70 @@ function HealthMeasurementForm({ workspaceId, profiles, defaultProfileId, onSave
   </Card>;
 }
 
+const REGIMEN_CATEGORIES = [
+  { value: "prescription", label: "Prescription" },
+  { value: "supplement", label: "Supplement" },
+  { value: "peptide", label: "Peptide" },
+  { value: "other", label: "Other" },
+];
+function emptyRegimenRow() { return { name: "", dose: "", frequency: "", status: "active" }; }
+
+// The document importer above is the only other way to add a regimen item, and it requires a
+// photo -- there was never a manual entry path, so a typed list (a text message, an email) had no
+// way in except photographing it and running it through OCR, adding parsing risk for data that was
+// already typed correctly. This adds several items in one save without a photo.
+function HealthRegimenBulkForm({ workspaceId, profiles, defaultProfileId, defaultCategory, onSaved }) {
+  const supabase = useMemo(() => createClient(), []);
+  const [profileId, setProfileId] = useState(defaultProfileId || profiles[0]?.id || "");
+  const [category, setCategory] = useState(defaultCategory || "prescription");
+  const [rows, setRows] = useState([emptyRegimenRow()]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  function updateRow(index, key, value) { setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row)); }
+  function addRow() { setRows((current) => [...current, emptyRegimenRow()]); }
+  function removeRow(index) { setRows((current) => current.length > 1 ? current.filter((_, rowIndex) => rowIndex !== index) : current); }
+
+  async function save(event) {
+    event.preventDefault(); setBusy(true); setMessage("");
+    const filled = rows.filter((row) => row.name.trim());
+    if (!filled.length) { setBusy(false); setMessage("Enter at least one name."); return; }
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from("health_regimen_items").insert(filled.map((row) => ({
+      workspace_id: workspaceId, profile_id: profileId, category,
+      name: row.name.trim(), dose: row.dose.trim() || null, frequency: row.frequency.trim() || null,
+      status: row.status, recorded_by: user.id,
+    })));
+    setBusy(false);
+    if (error) { setMessage(error.message); return; }
+    setRows([emptyRegimenRow()]);
+    setMessage(`${filled.length} item${filled.length > 1 ? "s" : ""} saved.`);
+    await onSaved();
+  }
+
+  return <Card title="Add items manually">
+    <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">Type in prescriptions, supplements or peptides directly -- no photo needed. Add several rows, then save them together.</p>
+    <form onSubmit={save} className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="text-sm font-bold">Person<select value={profileId} onChange={(event) => setProfileId(event.target.value)} required className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600">{profiles.map((profile) => <option className="text-slate-950" key={profile.id} value={profile.id}>{profile.display_name}</option>)}</select></label>
+        <label className="text-sm font-bold">Category<select value={category} onChange={(event) => setCategory(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600">{REGIMEN_CATEGORIES.map((option) => <option className="text-slate-950" key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+      </div>
+      <div className="space-y-2">
+        {rows.map((row, index) => <div key={index} className="grid grid-cols-12 gap-2 rounded-xl bg-slate-100 p-3 dark:bg-slate-800">
+          <input aria-label={`Name ${index + 1}`} value={row.name} onChange={(event) => updateRow(index, "name", event.target.value)} placeholder="Name" className="col-span-4 rounded-lg border bg-transparent px-2 py-1"/>
+          <input aria-label={`Dose ${index + 1}`} value={row.dose} onChange={(event) => updateRow(index, "dose", event.target.value)} placeholder="Dose" className="col-span-3 rounded-lg border bg-transparent px-2 py-1"/>
+          <input aria-label={`Frequency ${index + 1}`} value={row.frequency} onChange={(event) => updateRow(index, "frequency", event.target.value)} placeholder="Frequency" className="col-span-3 rounded-lg border bg-transparent px-2 py-1"/>
+          <select aria-label={`Status ${index + 1}`} value={row.status} onChange={(event) => updateRow(index, "status", event.target.value)} className="col-span-1 rounded-lg border bg-transparent px-1 py-1 text-xs"><option value="active">Active</option><option value="planned">Planned</option><option value="paused">Paused</option><option value="stopped">Stopped</option></select>
+          <button type="button" onClick={() => removeRow(index)} aria-label={`Remove item ${index + 1}`} className="col-span-1 rounded-lg bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-200">×</button>
+        </div>)}
+        <button type="button" onClick={addRow} className="rounded-xl bg-slate-200 px-3 py-1.5 text-sm font-black dark:bg-slate-700">+ Add another</button>
+      </div>
+      <button disabled={busy} className="rounded-xl bg-amber-400 px-4 py-3 font-black text-slate-950 disabled:opacity-50">{busy ? "Saving…" : "Save items"}</button>
+    </form>
+    {message && <p role="status" className="mt-4 rounded-xl bg-slate-100 p-3 text-sm font-bold dark:bg-slate-800">{message}</p>}
+  </Card>;
+}
+
 function DeleteButton({ label, onDelete }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -555,8 +619,19 @@ export default function HealthDashboard({ initialMembership }) {
             <Card title={`Laboratory history — ${viewingProfile?.display_name || ""}`}>{viewLabs.length ? <div className="space-y-4">{Object.entries(groupedViewLabs).map(([markerName, points]) => <div key={markerName}><HealthLabTrendChart markerName={markerName} points={points}/><div className="mt-1 space-y-1">{points.map((point) => <HealthLabResultRow key={point.id} point={point} onChanged={() => load(workspaceId)}/>)}</div></div>)}</div> : <p className="text-sm text-slate-500">Structured results and trend charts will appear here. The database preserves values, units, ranges, flags, dates, panels and source documents independently.</p>}</Card>
           </>;
         })()}
-        {activeTab === "Regimen" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="medication_label" onConfirmed={() => load(workspaceId)}/><Card title={`Prescriptions and supplements — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewRegimen.filter((x) => x.category !== "peptide").map((item) => <HealthRegimenItemCard key={item.id} item={item} onChanged={() => load(workspaceId)}/>)}{!viewRegimen.filter((x) => x.category !== "peptide").length && <p className="text-sm text-slate-500">No prescriptions or supplements logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
-        {activeTab === "Peptides" && <Card title="Peptides"><p className="text-sm text-slate-500">Track the prescribed or supervised product, concentration, dose, route, cycle, individual injections, injection site, missed doses and reactions.</p></Card>}
+        {activeTab === "Regimen" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="medication_label" onConfirmed={() => load(workspaceId)}/><HealthRegimenBulkForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="prescription" onSaved={() => load(workspaceId)}/><Card title={`Prescriptions and supplements — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewRegimen.filter((x) => x.category !== "peptide").map((item) => <HealthRegimenItemCard key={item.id} item={item} onChanged={() => load(workspaceId)}/>)}{!viewRegimen.filter((x) => x.category !== "peptide").length && <p className="text-sm text-slate-500">No prescriptions or supplements logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
+        {activeTab === "Peptides" && (() => {
+          const viewPeptides = viewRegimen.filter((item) => item.category === "peptide");
+          return <>
+            <HealthRegimenBulkForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="peptide" onSaved={() => load(workspaceId)}/>
+            <Card title={`Peptides — ${viewingProfile?.display_name || ""}`}>
+              <div className="space-y-3">
+                {viewPeptides.map((item) => <HealthRegimenItemCard key={item.id} item={item} onChanged={() => load(workspaceId)}/>)}
+                {!viewPeptides.length && <p className="text-sm text-slate-500">Track the prescribed or supervised product, concentration, dose, route, cycle, individual injections, injection site, missed doses and reactions.</p>}
+              </div>
+            </Card>
+          </>;
+        })()}
         {activeTab === "Workouts" && <><HealthWorkoutForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} onSaved={() => load(workspaceId)}/><Card title={`Workout history — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewWorkouts.map((workout) => <HealthWorkoutCard key={workout.id} workout={workout} onChanged={() => load(workspaceId)}/>)}{!viewWorkouts.length && <p className="text-sm text-slate-500">No workouts logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
         {activeTab === "Vitals" && (() => {
           const groupedVitals = groupMeasurementsByType(viewMeasurements);

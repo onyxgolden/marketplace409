@@ -34,6 +34,7 @@ vi.mock("@/lib/supabase/client", () => ({
               { id: "workout-1", profile_id: "profile-1", workout_type: "Strength & Cardio", performed_at: "2026-09-03T00:00:00.000Z", duration_minutes: 30, perceived_exertion: null, notes: null, details: [] },
             ] : table === "health_regimen_items" ? [
               { id: "regimen-1", profile_id: "profile-1", category: "prescription", name: "Testosterone Cypionate", dose: "200 mg/mL", route: "Subcutaneous", frequency: "Twice weekly", status: "active" },
+              { id: "regimen-2", profile_id: "profile-1", category: "peptide", name: "KLOW", dose: "15 units", route: null, frequency: "M-F", status: "active" },
             ] : table === "health_measurements" ? [
               { id: "measurement-2", profile_id: "profile-1", measurement_type: "steps", measured_at: "2026-08-15T00:00:00.000Z", value_numeric: 9100, secondary_value_numeric: null, unit: "steps", context: null, notes: null },
               { id: "measurement-1", profile_id: "profile-1", measurement_type: "steps", measured_at: "2026-08-01T00:00:00.000Z", value_numeric: 6200, secondary_value_numeric: null, unit: "steps", context: null, notes: null },
@@ -281,5 +282,37 @@ describe("HealthDashboard", () => {
     const confirmButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Confirm?");
     await act(async () => { confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
     expect(deleteMock).toHaveBeenCalledWith("health_measurements", "measurement-2");
+  });
+
+  it("saves several regimen items from one form submission without a photo", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Regimen");
+
+    setInputValue(mounted.container.querySelector('[aria-label="Name 1"]'), "Sulfasalazine EC");
+    setInputValue(mounted.container.querySelector('[aria-label="Dose 1"]'), "500mg");
+    setInputValue(mounted.container.querySelector('[aria-label="Frequency 1"]'), "3 a day");
+
+    const addRowButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "+ Add another");
+    await act(async () => { addRowButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    setInputValue(mounted.container.querySelector('[aria-label="Name 2"]'), "Hydroxychloroquine");
+    setInputValue(mounted.container.querySelector('[aria-label="Dose 2"]'), "200mg");
+    setInputValue(mounted.container.querySelector('[aria-label="Frequency 2"]'), "1 a day");
+
+    const saveButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Save items");
+    await act(async () => { saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(insertMock).toHaveBeenCalledWith("health_regimen_items", [
+      expect.objectContaining({ name: "Sulfasalazine EC", dose: "500mg", frequency: "3 a day", category: "prescription", recorded_by: "user-1" }),
+      expect.objectContaining({ name: "Hydroxychloroquine", dose: "200mg", frequency: "1 a day", category: "prescription", recorded_by: "user-1" }),
+    ]);
+  });
+
+  it("lists existing peptide regimen items on the Peptides tab instead of hiding them", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Peptides");
+
+    expect(mounted.container.textContent).toContain("KLOW");
   });
 });
