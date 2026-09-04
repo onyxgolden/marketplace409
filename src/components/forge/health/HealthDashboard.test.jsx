@@ -41,7 +41,10 @@ vi.mock("@/lib/supabase/client", () => ({
             ] : table === "health_programs" ? [
               { id: "program-1", name: "Jeff Nippard's Legs/Push/Pull Hypertrophy — Block 1", source: "Jeff Nippard", notes: null },
             ] : table === "health_program_days" ? [
-              { id: "day-1", program_id: "program-1", day_number: 1, title: "Legs #1", exercises: [{ name: "Back Squat", sets: "4", reps: "5", intensity: null, notes: null }] },
+              { id: "day-1", program_id: "program-1", day_number: 1, title: "Legs #1", exercises: [
+                { name: "Back Squat", sets: "4", reps: "5", intensity: null, notes: null },
+                { name: "Deadlift", sets: "2", reps: "8", intensity: null, notes: null },
+              ] },
             ] : [],
           error: null,
         }),
@@ -354,6 +357,28 @@ describe("HealthDashboard", () => {
       exercises: [expect.objectContaining({ name: "Deadlift", sets: "4", reps: "4" })],
       created_by: "user-1", updated_by: "user-1",
     }));
+  });
+
+  it("builds a workout draft from a checked subset of a program day and hands it to the Workouts tab", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Programs");
+
+    const useButton = [...mounted.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "Use Day 1");
+    await act(async () => { useButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    // Uncheck Deadlift -- only Back Squat should carry over to the workout draft.
+    const deadliftCheckbox = mounted.container.querySelector('[aria-label="Include Deadlift"]');
+    await act(async () => { deadliftCheckbox.click(); await flush(); });
+
+    const startButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Start workout from this day");
+    await act(async () => { startButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    // The click above switches the active tab itself -- no goToTab call needed.
+    expect(mounted.container.textContent).toContain("Log a workout");
+    expect(mounted.container.querySelector('[aria-label="Exercise 1"]').value).toBe("Back Squat");
+    expect(mounted.container.querySelector('[aria-label="Sets 1"]').value).toBe("4");
+    expect(mounted.container.querySelector('[aria-label="Exercise 2"]')).toBeFalsy();
   });
 
   it("deletes a program only after a second confirming click", async () => {

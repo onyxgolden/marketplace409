@@ -139,17 +139,24 @@ function HealthDocumentImporter({ workspaceId, profiles, defaultCategory, defaul
 
 function emptyExerciseRow() { return { exercise: "", sets: "", reps: "", weight: "" }; }
 
-function HealthWorkoutForm({ workspaceId, profiles, defaultProfileId, onSaved }) {
+function HealthWorkoutForm({ workspaceId, profiles, defaultProfileId, onSaved, initialDraft, onDraftConsumed }) {
   const supabase = useMemo(() => createClient(), []);
   const [profileId, setProfileId] = useState(defaultProfileId || profiles[0]?.id || "");
   const [performedAt, setPerformedAt] = useState(() => new Date().toISOString().slice(0, 10));
-  const [workoutType, setWorkoutType] = useState("");
+  const [workoutType, setWorkoutType] = useState(initialDraft?.workoutType || "");
   const [durationMinutes, setDurationMinutes] = useState("");
   const [perceivedExertion, setPerceivedExertion] = useState("");
   const [notes, setNotes] = useState("");
-  const [exercises, setExercises] = useState([emptyExerciseRow()]);
+  const [exercises, setExercises] = useState(initialDraft?.exercises?.length ? initialDraft.exercises : [emptyExerciseRow()]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+
+  // Consumes a draft pushed from "Start workout from this day" on the Programs tab exactly once on
+  // mount -- this component only exists while the Workouts tab is active (its parent unmounts it on
+  // every other tab), so a fresh mount is exactly the "the user just arrived here from a checklist"
+  // signal; clearing the draft in the parent stops it from re-seeding on a later, unrelated visit.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberate mount-only consume
+  useEffect(() => { if (initialDraft) onDraftConsumed?.(); }, []);
 
   function updateExercise(index, key, value) {
     setExercises((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row));
@@ -606,9 +613,66 @@ function HealthMeasurementCard({ measurement, onChanged }) {
   </div>;
 }
 
-function HealthProgramDayCard({ day, onChanged }) {
+function emptyChecklistExtra() { return { exercise: "", sets: "", reps: "", weight: "" }; }
+
+// A per-day, in-session checklist -- check off what you're actually doing today (defaults to
+// everything in the day), override sets/reps/weight without touching the saved program, and add
+// exercises the program doesn't have. "Start workout" hands the checked+extra rows to the Workouts
+// tab's log form so the session gets recorded; the checklist itself never writes to the database --
+// it's scratch state that resets when the day card is collapsed.
+function HealthProgramDayChecklist({ day, onStartWorkout }) {
+  const [checked, setChecked] = useState(() => new Set(day.exercises.map((_, index) => index)));
+  const [overrides, setOverrides] = useState(() => day.exercises.map((exercise) => ({ sets: exercise.sets || "", reps: exercise.reps || "", weight: "" })));
+  const [extras, setExtras] = useState([]);
+
+  function toggleChecked(index) {
+    setChecked((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; });
+  }
+  function updateOverride(index, key, value) { setOverrides((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row)); }
+  function addExtra() { setExtras((current) => [...current, emptyChecklistExtra()]); }
+  function updateExtra(index, key, value) { setExtras((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row)); }
+  function removeExtra(index) { setExtras((current) => current.filter((_, rowIndex) => rowIndex !== index)); }
+
+  function startWorkout() {
+    const fromDay = day.exercises
+      .map((exercise, index) => ({ exercise: exercise.name, sets: overrides[index].sets, reps: overrides[index].reps, weight: overrides[index].weight }))
+      .filter((_, index) => checked.has(index));
+    const fromExtras = extras.filter((row) => row.exercise.trim()).map((row) => ({ exercise: row.exercise.trim(), sets: row.sets, reps: row.reps, weight: row.weight }));
+    const exercises = [...fromDay, ...fromExtras];
+    if (exercises.length) onStartWorkout({ workoutType: day.title, exercises });
+  }
+
+  return <div className="mt-3 space-y-2 rounded-xl border border-dashed border-slate-300 p-3 dark:border-slate-600">
+    <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Today&apos;s checklist</p>
+    <div className="space-y-1">
+      {day.exercises.map((exercise, index) => <div key={index} className="grid grid-cols-12 items-center gap-1">
+        <label className="col-span-4 flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={checked.has(index)} onChange={() => toggleChecked(index)} aria-label={`Include ${exercise.name}`}/>
+          <span className={checked.has(index) ? "font-bold" : "text-slate-400 line-through"}>{exercise.name}</span>
+        </label>
+        <input aria-label={`Checklist sets ${index + 1}`} value={overrides[index].sets} onChange={(event) => updateOverride(index, "sets", event.target.value)} placeholder="Sets" className="col-span-2 rounded border bg-transparent px-1 py-0.5 text-sm"/>
+        <input aria-label={`Checklist reps ${index + 1}`} value={overrides[index].reps} onChange={(event) => updateOverride(index, "reps", event.target.value)} placeholder="Reps" className="col-span-2 rounded border bg-transparent px-1 py-0.5 text-sm"/>
+        <input aria-label={`Checklist weight ${index + 1}`} value={overrides[index].weight} onChange={(event) => updateOverride(index, "weight", event.target.value)} placeholder="Weight" className="col-span-4 rounded border bg-transparent px-1 py-0.5 text-sm"/>
+      </div>)}
+      {extras.map((row, index) => <div key={index} className="grid grid-cols-12 items-center gap-1">
+        <input aria-label={`Extra exercise ${index + 1}`} value={row.exercise} onChange={(event) => updateExtra(index, "exercise", event.target.value)} placeholder="Additional exercise" className="col-span-4 rounded border bg-transparent px-1 py-0.5 text-sm"/>
+        <input aria-label={`Extra sets ${index + 1}`} value={row.sets} onChange={(event) => updateExtra(index, "sets", event.target.value)} placeholder="Sets" className="col-span-2 rounded border bg-transparent px-1 py-0.5 text-sm"/>
+        <input aria-label={`Extra reps ${index + 1}`} value={row.reps} onChange={(event) => updateExtra(index, "reps", event.target.value)} placeholder="Reps" className="col-span-2 rounded border bg-transparent px-1 py-0.5 text-sm"/>
+        <input aria-label={`Extra weight ${index + 1}`} value={row.weight} onChange={(event) => updateExtra(index, "weight", event.target.value)} placeholder="Weight" className="col-span-3 rounded border bg-transparent px-1 py-0.5 text-sm"/>
+        <button type="button" onClick={() => removeExtra(index)} aria-label={`Remove additional exercise ${index + 1}`} className="col-span-1 rounded bg-red-100 text-xs font-black text-red-700 dark:bg-red-950 dark:text-red-200">×</button>
+      </div>)}
+    </div>
+    <div className="flex flex-wrap gap-2">
+      <button type="button" onClick={addExtra} className="rounded-lg bg-slate-200 px-3 py-1 text-xs font-black dark:bg-slate-700">+ Add additional exercise</button>
+      <button type="button" onClick={startWorkout} className="rounded-lg bg-amber-400 px-3 py-1 text-xs font-black text-slate-950">Start workout from this day</button>
+    </div>
+  </div>;
+}
+
+function HealthProgramDayCard({ day, onChanged, onStartWorkout }) {
   const supabase = useMemo(() => createClient(), []);
   const [editing, setEditing] = useState(false);
+  const [showChecklist, setShowChecklist] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
     dayNumber: day.day_number, title: day.title,
@@ -653,7 +717,11 @@ function HealthProgramDayCard({ day, onChanged }) {
   return <div className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800">
     <div className="flex items-start justify-between gap-2">
       <p className="font-black">Day {day.day_number} — {day.title}</p>
-      <div className="flex shrink-0 gap-1"><button type="button" onClick={() => setEditing(true)} aria-label={`Edit Day ${day.day_number}`} className="rounded-lg bg-slate-200 px-2 py-1 text-xs font-black dark:bg-slate-700">Edit</button><DeleteButton label={`Delete Day ${day.day_number}`} onDelete={remove}/></div>
+      <div className="flex shrink-0 gap-1">
+        {(day.exercises || []).length > 0 && <button type="button" onClick={() => setShowChecklist((current) => !current)} aria-label={`Use Day ${day.day_number}`} className="rounded-lg bg-sky-100 px-2 py-1 text-xs font-black text-sky-700 dark:bg-sky-950 dark:text-sky-200">{showChecklist ? "Hide checklist" : "Use this day"}</button>}
+        <button type="button" onClick={() => setEditing(true)} aria-label={`Edit Day ${day.day_number}`} className="rounded-lg bg-slate-200 px-2 py-1 text-xs font-black dark:bg-slate-700">Edit</button>
+        <DeleteButton label={`Delete Day ${day.day_number}`} onDelete={remove}/>
+      </div>
     </div>
     {(day.exercises || []).length > 0 && <div className="mt-2 overflow-x-auto">
       <table className="w-full text-left text-sm">
@@ -661,6 +729,7 @@ function HealthProgramDayCard({ day, onChanged }) {
         <tbody>{day.exercises.map((exercise, index) => <tr key={index} className="border-t border-slate-200 dark:border-slate-700"><td className="py-1 pr-2 font-bold">{exercise.name}</td><td className="py-1 pr-2">{exercise.sets}</td><td className="py-1 pr-2">{exercise.reps}</td><td className="py-1 pr-2">{exercise.intensity}</td></tr>)}</tbody>
       </table>
     </div>}
+    {showChecklist && <HealthProgramDayChecklist day={day} onStartWorkout={onStartWorkout}/>}
   </div>;
 }
 
@@ -676,6 +745,7 @@ export default function HealthDashboard({ initialMembership }) {
   const [viewProfileId, setViewProfileId] = useState(null);
   const [currentUserEmail, setCurrentUserEmail] = useState(null);
   const [selectedProgramId, setSelectedProgramId] = useState(null);
+  const [workoutDraft, setWorkoutDraft] = useState(null);
 
   // Programs are shared workspace-wide reference material (not scoped to one profile, unlike
   // Labs/Regimen/Workouts) -- either household member can follow the same program. Defaults to the
@@ -791,7 +861,7 @@ export default function HealthDashboard({ initialMembership }) {
             </Card>
           </>;
         })()}
-        {activeTab === "Workouts" && <><HealthWorkoutForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} onSaved={() => load(workspaceId)}/><Card title={`Workout history — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewWorkouts.map((workout) => <HealthWorkoutCard key={workout.id} workout={workout} onChanged={() => load(workspaceId)}/>)}{!viewWorkouts.length && <p className="text-sm text-slate-500">No workouts logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
+        {activeTab === "Workouts" && <><HealthWorkoutForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} initialDraft={workoutDraft} onDraftConsumed={() => setWorkoutDraft(null)} onSaved={() => load(workspaceId)}/><Card title={`Workout history — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewWorkouts.map((workout) => <HealthWorkoutCard key={workout.id} workout={workout} onChanged={() => load(workspaceId)}/>)}{!viewWorkouts.length && <p className="text-sm text-slate-500">No workouts logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
         {activeTab === "Programs" && (() => {
           const programDaysForSelected = data.programDays.filter((day) => day.program_id === selectedProgramId).sort((a, b) => a.day_number - b.day_number);
           const selectedProgram = data.programs.find((program) => program.id === selectedProgramId);
@@ -810,7 +880,7 @@ export default function HealthDashboard({ initialMembership }) {
               <Card title={`${selectedProgram.name}${selectedProgram.source ? ` — ${selectedProgram.source}` : ""}`}>
                 {selectedProgram.notes && <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">{selectedProgram.notes}</p>}
                 <div className="space-y-3">
-                  {programDaysForSelected.map((day) => <HealthProgramDayCard key={day.id} day={day} onChanged={() => load(workspaceId)}/>)}
+                  {programDaysForSelected.map((day) => <HealthProgramDayCard key={day.id} day={day} onChanged={() => load(workspaceId)} onStartWorkout={(draft) => { setWorkoutDraft(draft); setActiveTab("Workouts"); }}/>)}
                   {!programDaysForSelected.length && <p className="text-sm text-slate-500">No days added yet.</p>}
                 </div>
               </Card>
