@@ -286,10 +286,11 @@ function HealthRegimenBulkForm({ workspaceId, profiles, defaultProfileId, defaul
     event.preventDefault(); setBusy(true); setMessage("");
     const filled = rows.filter((row) => row.name.trim());
     if (!filled.length) { setBusy(false); setMessage("Enter at least one name."); return; }
+    const { data: { user } } = await supabase.auth.getUser();
     const { error } = await supabase.from("health_regimen_items").insert(filled.map((row) => ({
       workspace_id: workspaceId, profile_id: profileId, category,
       name: row.name.trim(), dose: row.dose.trim() || null, frequency: row.frequency.trim() || null,
-      status: row.status,
+      status: row.status, created_by: user.id, updated_by: user.id,
     })));
     setBusy(false);
     if (error) { setMessage(error.message); return; }
