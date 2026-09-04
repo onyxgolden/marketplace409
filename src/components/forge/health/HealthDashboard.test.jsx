@@ -24,6 +24,8 @@ vi.mock("@/lib/supabase/client", () => ({
             : table === "health_lab_results" ? [
               { id: "lab-2", marker_name: "LDL cholesterol", collected_on: "2026-08-10", value_numeric: 310, unit: "mg/dL", flag: "high", reference_low: null, reference_high: null },
               { id: "lab-1", marker_name: "LDL cholesterol", collected_on: "2026-05-01", value_numeric: 140, unit: "mg/dL", flag: "high", reference_low: null, reference_high: null },
+            ] : table === "health_workouts" ? [
+              { id: "workout-1", workout_type: "Strength & Cardio", performed_at: "2026-09-03T00:00:00.000Z", duration_minutes: 30, perceived_exertion: null, notes: null, details: [] },
             ] : [],
           error: null,
         }),
@@ -128,5 +130,18 @@ describe("HealthDashboard", () => {
     expect(mounted.container.textContent).toContain("LDL cholesterol");
     expect(mounted.container.querySelector("svg[aria-label*='LDL cholesterol over time']")).toBeTruthy();
     expect(mounted.container.textContent).not.toContain("Structured results and trend charts will appear here.");
+  });
+
+  // Regression guard: the workout form saves its plain date input as UTC midnight, so the history
+  // list must format it with timeZone: "UTC" too -- formatting with the viewer's local timezone
+  // instead rolls a UTC-midnight timestamp back a day for anyone west of UTC (every US timezone),
+  // mislabeling "2026-09-03" as "9/2/2026". This is independent of the test runner's own timezone.
+  it("labels a logged workout's date correctly regardless of the viewer's local timezone", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Workouts");
+
+    expect(mounted.container.textContent).toContain("9/3/2026");
+    expect(mounted.container.textContent).not.toContain("9/2/2026");
   });
 });
