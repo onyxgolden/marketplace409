@@ -329,6 +329,32 @@ function HealthRegimenBulkForm({ workspaceId, profiles, defaultProfileId, defaul
   </Card>;
 }
 
+// A one-field edit, not a full program editor (name/source stay fixed once created) -- notes are
+// the one field that routinely goes stale, e.g. "day 2 pending" once day 2 is actually added.
+function HealthProgramNotes({ program, onChanged }) {
+  const supabase = useMemo(() => createClient(), []);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [notes, setNotes] = useState(program.notes || "");
+
+  async function save() {
+    setBusy(true);
+    const { error } = await supabase.from("health_programs").update({ notes: notes.trim() || null }).eq("id", program.id);
+    setBusy(false);
+    if (!error) { setEditing(false); await onChanged(); }
+  }
+
+  if (editing) return <div className="mb-3 flex items-start gap-2">
+    <textarea aria-label="Program notes" value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} className="w-full rounded-lg border bg-transparent px-2 py-1 text-sm"/>
+    <div className="flex shrink-0 flex-col gap-1"><button type="button" onClick={save} disabled={busy} className="rounded-lg bg-emerald-500 px-2 py-1 text-xs font-black text-slate-950 disabled:opacity-50">{busy ? "…" : "Save"}</button><button type="button" onClick={() => { setNotes(program.notes || ""); setEditing(false); }} className="rounded-lg bg-slate-200 px-2 py-1 text-xs font-black dark:bg-slate-700">Cancel</button></div>
+  </div>;
+
+  return <div className="mb-3 flex items-start gap-2">
+    {program.notes ? <p className="text-sm text-slate-500 dark:text-slate-400">{program.notes}</p> : <p className="text-sm text-slate-400 dark:text-slate-500">No notes.</p>}
+    <button type="button" onClick={() => setEditing(true)} aria-label="Edit program notes" className="shrink-0 rounded-lg bg-slate-200 px-2 py-1 text-xs font-black dark:bg-slate-700">Edit notes</button>
+  </div>;
+}
+
 function HealthProgramForm({ workspaceId, onSaved }) {
   const supabase = useMemo(() => createClient(), []);
   const [name, setName] = useState("");
@@ -363,7 +389,16 @@ function HealthProgramForm({ workspaceId, onSaved }) {
   </Card>;
 }
 
-function emptyProgramExerciseRow() { return { name: "", sets: "", reps: "", intensity: "", notes: "" }; }
+function emptyProgramExerciseRow() { return { name: "", sets: "", reps: "", intensity: "", max: "", notes: "" }; }
+
+// 70% of a tracked max is a common training-percentage reference point -- computed, never stored,
+// so it always reflects the current Max value rather than going stale. Blank (not 0) when Max isn't
+// a usable number, so the column reads as "no max on file" rather than a misleading zero.
+function seventyPercentOfMax(maxValue) {
+  const numeric = Number(maxValue);
+  if (maxValue == null || maxValue === "" || Number.isNaN(numeric)) return null;
+  return Math.round(numeric * 0.7 * 10) / 10;
+}
 
 function HealthProgramDayForm({ workspaceId, programId, nextDayNumber, onSaved }) {
   const supabase = useMemo(() => createClient(), []);
@@ -381,7 +416,7 @@ function HealthProgramDayForm({ workspaceId, programId, nextDayNumber, onSaved }
     event.preventDefault(); setBusy(true); setMessage("");
     const exercises = rows.filter((row) => row.name.trim()).map((row) => ({
       name: row.name.trim(), sets: row.sets.trim() || null, reps: row.reps.trim() || null,
-      intensity: row.intensity.trim() || null, notes: row.notes.trim() || null,
+      intensity: row.intensity.trim() || null, max: row.max.trim() || null, notes: row.notes.trim() || null,
     }));
     if (!title.trim() || !exercises.length) { setBusy(false); setMessage("Enter a day title and at least one exercise."); return; }
     const { data: { user } } = await supabase.auth.getUser();
@@ -403,11 +438,12 @@ function HealthProgramDayForm({ workspaceId, programId, nextDayNumber, onSaved }
         <label className="text-sm font-bold sm:col-span-2">Title<input value={title} onChange={(event) => setTitle(event.target.value)} required placeholder="Legs #1" className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
       </div>
       <div className="space-y-2">
-        {rows.map((row, index) => <div key={index} className="grid grid-cols-12 gap-2 rounded-xl bg-slate-100 p-3 dark:bg-slate-800">
+        {rows.map((row, index) => <div key={index} className="grid grid-cols-14 gap-2 rounded-xl bg-slate-100 p-3 dark:bg-slate-800">
           <input aria-label={`Exercise ${index + 1}`} value={row.name} onChange={(event) => updateRow(index, "name", event.target.value)} placeholder="Exercise" className="col-span-4 rounded-lg border bg-transparent px-2 py-1"/>
           <input aria-label={`Sets ${index + 1}`} value={row.sets} onChange={(event) => updateRow(index, "sets", event.target.value)} placeholder="Sets" className="col-span-1 rounded-lg border bg-transparent px-2 py-1"/>
           <input aria-label={`Reps ${index + 1}`} value={row.reps} onChange={(event) => updateRow(index, "reps", event.target.value)} placeholder="Reps" className="col-span-2 rounded-lg border bg-transparent px-2 py-1"/>
           <input aria-label={`Intensity ${index + 1}`} value={row.intensity} onChange={(event) => updateRow(index, "intensity", event.target.value)} placeholder="RPE / %1RM" className="col-span-2 rounded-lg border bg-transparent px-2 py-1"/>
+          <input aria-label={`Max ${index + 1}`} value={row.max} onChange={(event) => updateRow(index, "max", event.target.value)} placeholder="Max" className="col-span-2 rounded-lg border bg-transparent px-2 py-1"/>
           <input aria-label={`Exercise notes ${index + 1}`} value={row.notes} onChange={(event) => updateRow(index, "notes", event.target.value)} placeholder="Notes" className="col-span-2 rounded-lg border bg-transparent px-2 py-1"/>
           <button type="button" onClick={() => removeRow(index)} aria-label={`Remove exercise ${index + 1}`} className="col-span-1 rounded-lg bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-200">×</button>
         </div>)}
@@ -622,7 +658,7 @@ function emptyChecklistExtra() { return { exercise: "", sets: "", reps: "", weig
 // it's scratch state that resets when the day card is collapsed.
 function HealthProgramDayChecklist({ day, onStartWorkout }) {
   const [checked, setChecked] = useState(() => new Set(day.exercises.map((_, index) => index)));
-  const [overrides, setOverrides] = useState(() => day.exercises.map((exercise) => ({ sets: exercise.sets || "", reps: exercise.reps || "", weight: "" })));
+  const [overrides, setOverrides] = useState(() => day.exercises.map((exercise) => ({ sets: exercise.sets || "", reps: exercise.reps || "", weight: seventyPercentOfMax(exercise.max) != null ? String(seventyPercentOfMax(exercise.max)) : "" })));
   const [extras, setExtras] = useState([]);
 
   function toggleChecked(index) {
@@ -676,16 +712,16 @@ function HealthProgramDayCard({ day, onChanged, onStartWorkout }) {
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
     dayNumber: day.day_number, title: day.title,
-    exercises: (day.exercises?.length ? day.exercises : [{}]).map((row) => ({ name: row.name || "", sets: row.sets || "", reps: row.reps || "", intensity: row.intensity || "", notes: row.notes || "" })),
+    exercises: (day.exercises?.length ? day.exercises : [{}]).map((row) => ({ name: row.name || "", sets: row.sets || "", reps: row.reps || "", intensity: row.intensity || "", max: row.max || "", notes: row.notes || "" })),
   });
 
   function updateExercise(index, key, value) { setForm((current) => ({ ...current, exercises: current.exercises.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row) })); }
-  function addExercise() { setForm((current) => ({ ...current, exercises: [...current.exercises, { name: "", sets: "", reps: "", intensity: "", notes: "" }] })); }
+  function addExercise() { setForm((current) => ({ ...current, exercises: [...current.exercises, { name: "", sets: "", reps: "", intensity: "", max: "", notes: "" }] })); }
   function removeExercise(index) { setForm((current) => ({ ...current, exercises: current.exercises.length > 1 ? current.exercises.filter((_, rowIndex) => rowIndex !== index) : current.exercises })); }
 
   async function save() {
     setBusy(true);
-    const exercises = form.exercises.filter((row) => row.name.trim()).map((row) => ({ name: row.name.trim(), sets: row.sets.trim() || null, reps: row.reps.trim() || null, intensity: row.intensity.trim() || null, notes: row.notes.trim() || null }));
+    const exercises = form.exercises.filter((row) => row.name.trim()).map((row) => ({ name: row.name.trim(), sets: row.sets.trim() || null, reps: row.reps.trim() || null, intensity: row.intensity.trim() || null, max: row.max.trim() || null, notes: row.notes.trim() || null }));
     const { data: { user } } = await supabase.auth.getUser();
     const { error } = await supabase.from("health_program_days").update({
       day_number: Number(form.dayNumber), title: form.title.trim(), exercises, updated_by: user.id,
@@ -701,11 +737,12 @@ function HealthProgramDayCard({ day, onChanged, onStartWorkout }) {
       <input aria-label="Day title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Title" className="col-span-3 rounded-lg border bg-transparent px-2 py-1"/>
     </div>
     <div className="space-y-1">
-      {form.exercises.map((row, index) => <div key={index} className="grid grid-cols-12 gap-1">
+      {form.exercises.map((row, index) => <div key={index} className="grid grid-cols-14 gap-1">
         <input aria-label={`Exercise ${index + 1}`} value={row.name} onChange={(event) => updateExercise(index, "name", event.target.value)} placeholder="Exercise" className="col-span-4 rounded border bg-transparent px-1 py-0.5 text-sm"/>
         <input aria-label={`Sets ${index + 1}`} value={row.sets} onChange={(event) => updateExercise(index, "sets", event.target.value)} placeholder="Sets" className="col-span-1 rounded border bg-transparent px-1 py-0.5 text-sm"/>
         <input aria-label={`Reps ${index + 1}`} value={row.reps} onChange={(event) => updateExercise(index, "reps", event.target.value)} placeholder="Reps" className="col-span-2 rounded border bg-transparent px-1 py-0.5 text-sm"/>
         <input aria-label={`Intensity ${index + 1}`} value={row.intensity} onChange={(event) => updateExercise(index, "intensity", event.target.value)} placeholder="RPE / %1RM" className="col-span-2 rounded border bg-transparent px-1 py-0.5 text-sm"/>
+        <input aria-label={`Max ${index + 1}`} value={row.max} onChange={(event) => updateExercise(index, "max", event.target.value)} placeholder="Max" className="col-span-2 rounded border bg-transparent px-1 py-0.5 text-sm"/>
         <input aria-label={`Exercise notes ${index + 1}`} value={row.notes} onChange={(event) => updateExercise(index, "notes", event.target.value)} placeholder="Notes" className="col-span-2 rounded border bg-transparent px-1 py-0.5 text-sm"/>
         <button type="button" onClick={() => removeExercise(index)} aria-label={`Remove exercise ${index + 1}`} className="col-span-1 rounded bg-red-100 text-xs font-black text-red-700 dark:bg-red-950 dark:text-red-200">×</button>
       </div>)}
@@ -725,8 +762,8 @@ function HealthProgramDayCard({ day, onChanged, onStartWorkout }) {
     </div>
     {(day.exercises || []).length > 0 && <div className="mt-2 overflow-x-auto">
       <table className="w-full text-left text-sm">
-        <thead><tr className="text-xs text-slate-500 dark:text-slate-400"><th className="pr-2 font-bold">Exercise</th><th className="pr-2 font-bold">Sets</th><th className="pr-2 font-bold">Reps</th><th className="pr-2 font-bold">Intensity</th></tr></thead>
-        <tbody>{day.exercises.map((exercise, index) => <tr key={index} className="border-t border-slate-200 dark:border-slate-700"><td className="py-1 pr-2 font-bold">{exercise.name}</td><td className="py-1 pr-2">{exercise.sets}</td><td className="py-1 pr-2">{exercise.reps}</td><td className="py-1 pr-2">{exercise.intensity}</td></tr>)}</tbody>
+        <thead><tr className="text-xs text-slate-500 dark:text-slate-400"><th className="pr-2 font-bold">Exercise</th><th className="pr-2 font-bold">Sets</th><th className="pr-2 font-bold">Reps</th><th className="pr-2 font-bold">Intensity</th><th className="pr-2 font-bold">Max</th><th className="pr-2 font-bold">70% of max</th></tr></thead>
+        <tbody>{day.exercises.map((exercise, index) => <tr key={index} className="border-t border-slate-200 dark:border-slate-700"><td className="py-1 pr-2 font-bold">{exercise.name}</td><td className="py-1 pr-2">{exercise.sets}</td><td className="py-1 pr-2">{exercise.reps}</td><td className="py-1 pr-2">{exercise.intensity}</td><td className="py-1 pr-2">{exercise.max}</td><td className="py-1 pr-2 text-slate-500 dark:text-slate-400">{seventyPercentOfMax(exercise.max) ?? "—"}</td></tr>)}</tbody>
       </table>
     </div>}
     {showChecklist && <HealthProgramDayChecklist day={day} onStartWorkout={onStartWorkout}/>}
@@ -878,7 +915,7 @@ export default function HealthDashboard({ initialMembership }) {
             <HealthProgramForm workspaceId={workspaceId} onSaved={async (id) => { await load(workspaceId); setSelectedProgramId(id); }}/>
             {selectedProgram && <>
               <Card title={`${selectedProgram.name}${selectedProgram.source ? ` — ${selectedProgram.source}` : ""}`}>
-                {selectedProgram.notes && <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">{selectedProgram.notes}</p>}
+                <HealthProgramNotes program={selectedProgram} onChanged={() => load(workspaceId)}/>
                 <div className="space-y-3">
                   {programDaysForSelected.map((day) => <HealthProgramDayCard key={day.id} day={day} onChanged={() => load(workspaceId)} onStartWorkout={(draft) => { setWorkoutDraft(draft); setActiveTab("Workouts"); }}/>)}
                   {!programDaysForSelected.length && <p className="text-sm text-slate-500">No days added yet.</p>}
