@@ -861,57 +861,6 @@ export function dependencyArrowPoints(state, dependency, weekWidth, resolveColum
   return Object.freeze({ x1: from.x, y1: from.y, x2: to.x, y2: to.y, d });
 }
 
-// A simplified stand-in for real CPM critical-path analysis (which needs calendars and
-// constraints, not built yet): the chain of dependency-linked blocks whose durations sum
-// to the largest total. No lag, no calendars -- just longest-path-by-duration through the
-// dependency graph, for visually sanity-checking the graph while building it out.
-//
-// Cycle-safe by construction: `visiting` cuts a path off (treats it as length 0 from that
-// point) the moment it would revisit a block still on the current call stack, rather than
-// recursing forever. addDependency doesn't reject cycles today, so this has to tolerate one
-// existing without hanging.
-export function criticalPath(state) {
-  const successorsOf = new Map();
-  for (const dependency of state.dependencies) {
-    if (!successorsOf.has(dependency.predecessorId)) successorsOf.set(dependency.predecessorId, []);
-    successorsOf.get(dependency.predecessorId).push(dependency.successorId);
-  }
-  const durationOf = new Map(state.blocks.map((block) => [block.id, block.milestone ? 0 : block.duration]));
-  const memo = new Map();
-  const visiting = new Set();
-
-  function longestFrom(blockId) {
-    if (memo.has(blockId)) return memo.get(blockId);
-    if (visiting.has(blockId)) return { length: 0, path: [] };
-    visiting.add(blockId);
-    let best = { length: durationOf.get(blockId) || 0, path: [blockId] };
-    for (const successorId of successorsOf.get(blockId) || []) {
-      if (!durationOf.has(successorId)) continue; // dependency pointing at a block that no longer exists
-      const sub = longestFrom(successorId);
-      const candidateLength = (durationOf.get(blockId) || 0) + sub.length;
-      if (candidateLength > best.length) best = { length: candidateLength, path: [blockId, ...sub.path] };
-    }
-    visiting.delete(blockId);
-    memo.set(blockId, best);
-    return best;
-  }
-
-  let overallBest = null;
-  for (const block of state.blocks) {
-    const result = longestFrom(block.id);
-    // A lone block isn't a "path" worth calling critical -- require an actual chain.
-    if (result.path.length < 2) continue;
-    if (!overallBest || result.length > overallBest.length) overallBest = result;
-  }
-  const blockIds = overallBest ? overallBest.path : [];
-  const dependencyIds = [];
-  for (let i = 0; i < blockIds.length - 1; i += 1) {
-    const dependency = state.dependencies.find((d) => d.predecessorId === blockIds[i] && d.successorId === blockIds[i + 1]);
-    if (dependency) dependencyIds.push(dependency.id);
-  }
-  return Object.freeze({ blockIds: Object.freeze(blockIds), dependencyIds: Object.freeze(dependencyIds) });
-}
-
 // Converts a placed block back into chip shape so copy/paste can reuse addBlock() --
 // including its text style, so a copied block keeps its formatting.
 export function blockToChip(block) {

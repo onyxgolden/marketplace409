@@ -47,6 +47,16 @@ export async function POST(request) {
     const { data, error } = await authenticated.supabaseClient.from("forge_scheduling_projects")
       .insert(record).select("id").single();
     if (error) throw error;
+
+    // GET /api/forge/scheduling/[projectId] reads from schedule_projects, not this jsonb row --
+    // without this, the very first load of a newly-created project would 404 (no relational row
+    // exists yet). Not best-effort here, unlike the PUT route's sync call: a failure means the
+    // project the caller just asked to create isn't actually usable yet, so it should surface.
+    const { error: syncError } = await authenticated.supabaseClient.rpc("sync_schedule_project_from_board", {
+      p_owner_id: authenticated.user.id, p_project_id: data.id,
+    });
+    if (syncError) throw syncError;
+
     return NextResponse.json({ success: true, id: data.id });
   } catch (error) {
     console.error("Scheduling project create error", error);
