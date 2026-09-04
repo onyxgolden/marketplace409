@@ -6,8 +6,29 @@ import { createClient } from "@/lib/supabase/client";
 import { compressImageFile } from "@/components/forge/rental/compressImageFile";
 import HealthLabTrendChart from "./HealthLabTrendChart";
 import HealthLabCombinedTrendChart from "./HealthLabCombinedTrendChart";
+import HealthVitalsTrendChart from "./HealthVitalsTrendChart";
 
-const tabs = ["Overview", "Labs", "Regimen", "Peptides", "Workouts", "Timeline"];
+const tabs = ["Overview", "Labs", "Regimen", "Peptides", "Workouts", "Vitals", "Timeline"];
+
+// Maps to health_measurements.measurement_type. Blood pressure is the only type that uses
+// secondary_value_numeric (diastolic alongside the systolic value_numeric) -- every other type is
+// a single value. Chosen to match what a Samsung Health / smartwatch export typically reports, so
+// a future CSV import can land in these same rows without a schema change.
+const MEASUREMENT_TYPES = [
+  { value: "steps", label: "Steps", unit: "steps" },
+  { value: "blood_pressure", label: "Blood pressure", unit: "mmHg", primaryLabel: "Systolic", secondaryLabel: "Diastolic" },
+  { value: "heart_rate", label: "Heart rate", unit: "bpm" },
+  { value: "blood_oxygen", label: "Blood oxygen (SpO2)", unit: "%" },
+  { value: "sleep_hours", label: "Sleep", unit: "hours" },
+  { value: "weight", label: "Weight", unit: "lb" },
+];
+const MEASUREMENT_TYPE_BY_VALUE = Object.fromEntries(MEASUREMENT_TYPES.map((type) => [type.value, type]));
+
+function groupMeasurementsByType(measurements) {
+  const groups = {};
+  for (const measurement of measurements) (groups[measurement.measurement_type] ??= []).push(measurement);
+  return groups;
+}
 
 // timeZone: "UTC" is required -- the workout form saves its plain date input as UTC midnight
 // (new Date("2026-09-03").toISOString()), and formatting that in the viewer's local timezone
@@ -187,6 +208,56 @@ function HealthWorkoutForm({ workspaceId, profiles, defaultProfileId, onSaved })
   </Card>;
 }
 
+function HealthMeasurementForm({ workspaceId, profiles, defaultProfileId, onSaved }) {
+  const supabase = useMemo(() => createClient(), []);
+  const [profileId, setProfileId] = useState(defaultProfileId || profiles[0]?.id || "");
+  const [measurementType, setMeasurementType] = useState("steps");
+  const [measuredAt, setMeasuredAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [value, setValue] = useState("");
+  const [secondaryValue, setSecondaryValue] = useState("");
+  const [context, setContext] = useState("");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const type = MEASUREMENT_TYPE_BY_VALUE[measurementType];
+
+  async function save(event) {
+    event.preventDefault(); setBusy(true); setMessage("");
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from("health_measurements").insert({
+      workspace_id: workspaceId, profile_id: profileId,
+      measured_at: new Date(measuredAt).toISOString(),
+      measurement_type: measurementType,
+      value_numeric: Number(value),
+      secondary_value_numeric: type.secondaryLabel && secondaryValue !== "" ? Number(secondaryValue) : null,
+      unit: type.unit,
+      context: context.trim() || null,
+      notes: notes.trim() || null,
+      recorded_by: user.id,
+    });
+    setBusy(false);
+    if (error) { setMessage(error.message); return; }
+    setValue(""); setSecondaryValue(""); setContext(""); setNotes("");
+    setMessage(`${type.label} saved.`);
+    await onSaved();
+  }
+
+  return <Card title="Log a vital">
+    <form onSubmit={save} className="grid gap-3 sm:grid-cols-2">
+      <label className="text-sm font-bold">Person<select value={profileId} onChange={(event) => setProfileId(event.target.value)} required className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600">{profiles.map((profile) => <option className="text-slate-950" key={profile.id} value={profile.id}>{profile.display_name}</option>)}</select></label>
+      <label className="text-sm font-bold">Type<select value={measurementType} onChange={(event) => { setMeasurementType(event.target.value); setSecondaryValue(""); }} className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600">{MEASUREMENT_TYPES.map((option) => <option className="text-slate-950" key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+      <label className="text-sm font-bold">Date<input type="date" value={measuredAt} onChange={(event) => setMeasuredAt(event.target.value)} required className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
+      <label className="text-sm font-bold">{type.primaryLabel || "Value"} ({type.unit})<input aria-label={type.primaryLabel || "Value"} type="number" step="any" value={value} onChange={(event) => setValue(event.target.value)} required className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
+      {type.secondaryLabel && <label className="text-sm font-bold">{type.secondaryLabel} ({type.unit})<input aria-label={type.secondaryLabel} type="number" step="any" value={secondaryValue} onChange={(event) => setSecondaryValue(event.target.value)} required className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>}
+      <label className="text-sm font-bold">Context<input value={context} onChange={(event) => setContext(event.target.value)} placeholder="e.g. resting, after exercise" className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
+      <label className="text-sm font-bold">Notes<input value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/></label>
+      <button disabled={busy} className="rounded-xl bg-amber-400 px-4 py-3 font-black text-slate-950 disabled:opacity-50 sm:col-span-2">{busy ? "Saving…" : "Save vital"}</button>
+    </form>
+    {message && <p role="status" className="mt-4 rounded-xl bg-slate-100 p-3 text-sm font-bold dark:bg-slate-800">{message}</p>}
+  </Card>;
+}
+
 function DeleteButton({ label, onDelete }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -333,6 +404,54 @@ function HealthWorkoutCard({ workout, onChanged }) {
   </div>;
 }
 
+function HealthMeasurementCard({ measurement, onChanged }) {
+  const supabase = useMemo(() => createClient(), []);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const type = MEASUREMENT_TYPE_BY_VALUE[measurement.measurement_type];
+  const [form, setForm] = useState({
+    measuredAt: measurement.measured_at.slice(0, 10), value: measurement.value_numeric ?? "",
+    secondaryValue: measurement.secondary_value_numeric ?? "", context: measurement.context || "", notes: measurement.notes || "",
+  });
+
+  async function save() {
+    setBusy(true);
+    const { error } = await supabase.from("health_measurements").update({
+      measured_at: new Date(form.measuredAt).toISOString(),
+      value_numeric: form.value === "" ? null : Number(form.value),
+      secondary_value_numeric: type?.secondaryLabel && form.secondaryValue !== "" ? Number(form.secondaryValue) : null,
+      context: form.context.trim() || null,
+      notes: form.notes.trim() || null,
+    }).eq("id", measurement.id);
+    setBusy(false);
+    if (!error) { setEditing(false); await onChanged(); }
+  }
+  async function remove() { const { error } = await supabase.from("health_measurements").delete().eq("id", measurement.id); if (!error) await onChanged(); }
+
+  if (editing) return <div className="space-y-2 rounded-xl bg-slate-100 p-4 dark:bg-slate-800">
+    <div className="grid grid-cols-2 gap-2">
+      <input aria-label="Date" type="date" value={form.measuredAt} onChange={(event) => setForm({ ...form, measuredAt: event.target.value })} className="rounded-lg border bg-transparent px-2 py-1"/>
+      <input aria-label={type?.primaryLabel || "Value"} type="number" step="any" value={form.value} onChange={(event) => setForm({ ...form, value: event.target.value })} placeholder={type?.primaryLabel || "Value"} className="rounded-lg border bg-transparent px-2 py-1"/>
+      {type?.secondaryLabel && <input aria-label={type.secondaryLabel} type="number" step="any" value={form.secondaryValue} onChange={(event) => setForm({ ...form, secondaryValue: event.target.value })} placeholder={type.secondaryLabel} className="rounded-lg border bg-transparent px-2 py-1"/>}
+      <input aria-label="Context" value={form.context} onChange={(event) => setForm({ ...form, context: event.target.value })} placeholder="Context" className="rounded-lg border bg-transparent px-2 py-1"/>
+    </div>
+    <input aria-label="Notes" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="Notes" className="w-full rounded-lg border bg-transparent px-2 py-1"/>
+    <div className="flex gap-2"><button type="button" onClick={save} disabled={busy} className="rounded-lg bg-emerald-500 px-3 py-1 text-xs font-black text-slate-950 disabled:opacity-50">{busy ? "Saving…" : "Save"}</button><button type="button" onClick={() => setEditing(false)} className="rounded-lg bg-slate-200 px-3 py-1 text-xs font-black dark:bg-slate-700">Cancel</button></div>
+  </div>;
+
+  return <div className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800">
+    <div className="flex items-start justify-between gap-2">
+      <div>
+        <div className="flex items-baseline gap-2"><p className="font-black">{type?.label || measurement.measurement_type}</p><span className="text-xs text-slate-500 dark:text-slate-400">{workoutDateLabel(measurement.measured_at)}</span></div>
+        <p className="text-sm font-bold">{measurement.value_numeric}{measurement.secondary_value_numeric != null ? `/${measurement.secondary_value_numeric}` : ""} {measurement.unit}</p>
+        {measurement.context && <p className="text-xs text-slate-500 dark:text-slate-400">{measurement.context}</p>}
+        {measurement.notes && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{measurement.notes}</p>}
+      </div>
+      <div className="flex shrink-0 gap-1"><button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${type?.label || measurement.measurement_type} from ${workoutDateLabel(measurement.measured_at)}`} className="rounded-lg bg-slate-200 px-2 py-1 text-xs font-black dark:bg-slate-700">Edit</button><DeleteButton label={`Delete ${type?.label || measurement.measurement_type} from ${workoutDateLabel(measurement.measured_at)}`} onDelete={remove}/></div>
+    </div>
+  </div>;
+}
+
 export default function HealthDashboard({ initialMembership }) {
   const supabase = useMemo(() => createClient(), []);
   const [workspaceId, setWorkspaceId] = useState(initialMembership?.workspace_id ?? null);
@@ -402,6 +521,7 @@ export default function HealthDashboard({ initialMembership }) {
   const viewLabs = data.labs.filter((lab) => lab.profile_id === viewProfileId);
   const viewRegimen = data.regimen.filter((item) => item.profile_id === viewProfileId);
   const viewWorkouts = data.workouts.filter((workout) => workout.profile_id === viewProfileId);
+  const viewMeasurements = data.measurements.filter((measurement) => measurement.profile_id === viewProfileId);
   const activeRegimen = viewRegimen.filter((item) => item.status === "active");
   const latestLabs = viewLabs.slice(0, 8);
   const viewingProfile = data.profiles.find((profile) => profile.id === viewProfileId);
@@ -438,6 +558,22 @@ export default function HealthDashboard({ initialMembership }) {
         {activeTab === "Regimen" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="medication_label" onConfirmed={() => load(workspaceId)}/><Card title={`Prescriptions and supplements — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewRegimen.filter((x) => x.category !== "peptide").map((item) => <HealthRegimenItemCard key={item.id} item={item} onChanged={() => load(workspaceId)}/>)}{!viewRegimen.filter((x) => x.category !== "peptide").length && <p className="text-sm text-slate-500">No prescriptions or supplements logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
         {activeTab === "Peptides" && <Card title="Peptides"><p className="text-sm text-slate-500">Track the prescribed or supervised product, concentration, dose, route, cycle, individual injections, injection site, missed doses and reactions.</p></Card>}
         {activeTab === "Workouts" && <><HealthWorkoutForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} onSaved={() => load(workspaceId)}/><Card title={`Workout history — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewWorkouts.map((workout) => <HealthWorkoutCard key={workout.id} workout={workout} onChanged={() => load(workspaceId)}/>)}{!viewWorkouts.length && <p className="text-sm text-slate-500">No workouts logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
+        {activeTab === "Vitals" && (() => {
+          const groupedVitals = groupMeasurementsByType(viewMeasurements);
+          const typesPresent = MEASUREMENT_TYPES.filter((type) => groupedVitals[type.value]?.length);
+          return <>
+            <HealthMeasurementForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} onSaved={() => load(workspaceId)}/>
+            {typesPresent.length > 0 && <Card title={`Vitals trends — ${viewingProfile?.display_name || ""}`}>
+              <div className="space-y-4">{typesPresent.map((type) => <HealthVitalsTrendChart key={type.value} title={type.label} unit={type.unit} points={groupedVitals[type.value]} primaryLabel={type.primaryLabel} secondaryLabel={type.secondaryLabel}/>)}</div>
+            </Card>}
+            <Card title={`Vitals history — ${viewingProfile?.display_name || ""}`}>
+              <div className="space-y-3">
+                {viewMeasurements.map((measurement) => <HealthMeasurementCard key={measurement.id} measurement={measurement} onChanged={() => load(workspaceId)}/>)}
+                {!viewMeasurements.length && <p className="text-sm text-slate-500">No vitals logged yet for {viewingProfile?.display_name || "the selected person"}. Log steps, blood pressure, heart rate, blood oxygen, sleep or weight above -- these same rows are where a Samsung Health export will land once that import exists.</p>}
+              </div>
+            </Card>
+          </>;
+        })()}
         {activeTab === "Timeline" && <Card title="Clinical timeline"><p className="text-sm text-slate-500">Physician visits, recommendations, insurance decisions and regimen changes are kept in date order without rewriting the original event.</p></Card>}
       </div>}
       <p className="mt-8 text-xs text-slate-500">FORGE Health organizes records and trends. It does not diagnose conditions or change treatment without clinician review.</p>
