@@ -303,9 +303,14 @@ describe("HealthDashboard", () => {
     await act(async () => { saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
 
     expect(insertMock).toHaveBeenCalledWith("health_regimen_items", [
-      expect.objectContaining({ name: "Sulfasalazine EC", dose: "500mg", frequency: "3 a day", category: "prescription", recorded_by: "user-1" }),
-      expect.objectContaining({ name: "Hydroxychloroquine", dose: "200mg", frequency: "1 a day", category: "prescription", recorded_by: "user-1" }),
+      expect.objectContaining({ name: "Sulfasalazine EC", dose: "500mg", frequency: "3 a day", category: "prescription" }),
+      expect.objectContaining({ name: "Hydroxychloroquine", dose: "200mg", frequency: "1 a day", category: "prescription" }),
     ]);
+    // Regression guard: unlike health_workouts and health_measurements, health_regimen_items has
+    // no recorded_by column -- an insert that includes it fails in production with "Could not find
+    // the 'recorded_by' column of 'health_regimen_items' in the schema cache" even though every
+    // other health table's write form does attribute the row this way.
+    for (const call of insertMock.mock.calls) if (call[0] === "health_regimen_items") for (const row of call[1]) expect(row).not.toHaveProperty("recorded_by");
   });
 
   it("lists existing peptide regimen items on the Peptides tab instead of hiding them", async () => {
