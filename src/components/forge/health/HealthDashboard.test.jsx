@@ -20,7 +20,11 @@ vi.mock("@/lib/supabase/client", () => ({
         select: () => node,
         eq: () => node,
         order: () => Promise.resolve({
-          data: table === "health_profiles" ? [{ id: "profile-1", display_name: "jasonmorgan99@gmail.com", profile_type: "self" }] : [],
+          data: table === "health_profiles" ? [{ id: "profile-1", display_name: "jasonmorgan99@gmail.com", profile_type: "self" }]
+            : table === "health_lab_results" ? [
+              { id: "lab-2", marker_name: "LDL cholesterol", collected_on: "2026-08-10", value_numeric: 310, unit: "mg/dL", flag: "high", reference_low: null, reference_high: null },
+              { id: "lab-1", marker_name: "LDL cholesterol", collected_on: "2026-05-01", value_numeric: 140, unit: "mg/dL", flag: "high", reference_low: null, reference_high: null },
+            ] : [],
           error: null,
         }),
         insert: (payload) => insertMock(table, payload),
@@ -56,10 +60,10 @@ function setInputValue(input, value) {
   setter.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
-async function goToWorkoutsTab(container) {
-  const workoutsTab = [...container.querySelectorAll("button")].find((button) => button.textContent === "Workouts");
+async function goToTab(container, label) {
+  const tab = [...container.querySelectorAll("button")].find((button) => button.textContent === label);
   await act(async () => {
-    workoutsTab.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    tab.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await flush();
   });
 }
@@ -88,7 +92,7 @@ describe("HealthDashboard", () => {
   it("renders a real workout logging form on the Workouts tab, not a placeholder", async () => {
     mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
     await flush();
-    await goToWorkoutsTab(mounted.container);
+    await goToTab(mounted.container, "Workouts");
 
     expect(mounted.container.textContent).toContain("Log a workout");
     expect(mounted.container.textContent).toContain("Add exercise");
@@ -98,7 +102,7 @@ describe("HealthDashboard", () => {
   it("attributes a saved workout to the signed-in user (recorded_by)", async () => {
     mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
     await flush();
-    await goToWorkoutsTab(mounted.container);
+    await goToTab(mounted.container, "Workouts");
 
     setInputValue(mounted.container.querySelector('[aria-label="Exercise 1"]'), "Treadmill");
 
@@ -114,5 +118,15 @@ describe("HealthDashboard", () => {
       profile_id: "profile-1",
       details: [expect.objectContaining({ exercise: "Treadmill" })],
     }));
+  });
+
+  it("renders a real trend chart on the Labs tab once lab history exists, not the empty-state placeholder", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    expect(mounted.container.textContent).toContain("LDL cholesterol");
+    expect(mounted.container.querySelector("svg[aria-label*='LDL cholesterol over time']")).toBeTruthy();
+    expect(mounted.container.textContent).not.toContain("Structured results and trend charts will appear here.");
   });
 });
