@@ -39,11 +39,11 @@ vi.mock("@/lib/supabase/client", () => ({
               { id: "measurement-2", profile_id: "profile-1", measurement_type: "steps", measured_at: "2026-08-15T00:00:00.000Z", value_numeric: 9100, secondary_value_numeric: null, unit: "steps", context: null, notes: null },
               { id: "measurement-1", profile_id: "profile-1", measurement_type: "steps", measured_at: "2026-08-01T00:00:00.000Z", value_numeric: 6200, secondary_value_numeric: null, unit: "steps", context: null, notes: null },
             ] : table === "health_programs" ? [
-              { id: "program-1", name: "Jeff Nippard's Legs/Push/Pull Hypertrophy — Block 1", source: "Jeff Nippard", notes: null },
+              { id: "program-1", name: "Jeff Nippard's Legs/Push/Pull Hypertrophy — Block 1", source: "Jeff Nippard", notes: "Day 2 pending" },
             ] : table === "health_program_days" ? [
               { id: "day-1", program_id: "program-1", day_number: 1, title: "Legs #1", exercises: [
-                { name: "Back Squat", sets: "4", reps: "5", intensity: null, notes: null },
-                { name: "Deadlift", sets: "2", reps: "8", intensity: null, notes: null },
+                { name: "Back Squat", sets: "4", reps: "5", intensity: null, max: "225", notes: null },
+                { name: "Deadlift", sets: "2", reps: "8", intensity: null, max: null, notes: null },
               ] },
             ] : [],
           error: null,
@@ -379,6 +379,40 @@ describe("HealthDashboard", () => {
     expect(mounted.container.querySelector('[aria-label="Exercise 1"]').value).toBe("Back Squat");
     expect(mounted.container.querySelector('[aria-label="Sets 1"]').value).toBe("4");
     expect(mounted.container.querySelector('[aria-label="Exercise 2"]')).toBeFalsy();
+  });
+
+  it("shows a program day's Max column and auto-computes 70% of max, blank when no max is on file", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Programs");
+
+    const table = [...mounted.container.querySelectorAll("table")].find((node) => node.textContent.includes("Back Squat"));
+    const rows = [...table.querySelectorAll("tbody tr")];
+    const backSquatCells = [...rows[0].querySelectorAll("td")].map((td) => td.textContent);
+    const deadliftCells = [...rows[1].querySelectorAll("td")].map((td) => td.textContent);
+
+    expect(backSquatCells).toEqual(["Back Squat", "4", "5", "", "225", "157.5"]);
+    expect(deadliftCells).toEqual(["Deadlift", "2", "8", "", "", "—"]);
+  });
+
+  it("edits a program's notes without exposing a full name/source editor", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Programs");
+
+    expect(mounted.container.textContent).toContain("Day 2 pending");
+
+    const editButton = [...mounted.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "Edit program notes");
+    await act(async () => { editButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    const textarea = mounted.container.querySelector('[aria-label="Program notes"]');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+    await act(async () => { setter.call(textarea, "All 6 days entered."); textarea.dispatchEvent(new Event("input", { bubbles: true })); await flush(); });
+
+    const saveButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Save");
+    await act(async () => { saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(updateMock).toHaveBeenCalledWith("health_programs", { notes: "All 6 days entered." }, "program-1");
   });
 
   it("deletes a program only after a second confirming click", async () => {
