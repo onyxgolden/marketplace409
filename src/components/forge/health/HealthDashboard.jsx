@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { compressImageFile } from "@/components/forge/rental/compressImageFile";
 import HealthLabTrendChart from "./HealthLabTrendChart";
+import HealthLabCombinedTrendChart from "./HealthLabCombinedTrendChart";
 
 const tabs = ["Overview", "Labs", "Regimen", "Peptides", "Workouts", "Timeline"];
 
@@ -20,6 +21,22 @@ function groupLabsByMarker(labs) {
   const groups = {};
   for (const lab of labs) (groups[lab.marker_name] ??= []).push(lab);
   return groups;
+}
+
+// Splits grouped lab markers into two magnitude tiers so each combined chart's shared axis stays
+// meaningful -- plotting Hemoglobin A1c (~5-8) next to Total cholesterol (~200-400) on one axis
+// flattens A1c into a straight line, the same "different scales, one axis" problem a dual-axis
+// chart has, just without the second scale to hide behind. Bucketed by each marker's own most
+// recent value, not a hardcoded marker-name list, so a new marker sorts itself sensibly.
+const NARROW_RANGE_CEILING = 15;
+function splitLabTiers(groupedLabs) {
+  const narrow = {};
+  const wide = {};
+  for (const [markerName, points] of Object.entries(groupedLabs)) {
+    const latestValue = Number([...points].sort((a, b) => a.collected_on.localeCompare(b.collected_on)).at(-1).value_numeric);
+    (latestValue < NARROW_RANGE_CEILING ? narrow : wide)[markerName] = points;
+  }
+  return { narrow, wide };
 }
 
 function Card({ title, children }) {
@@ -403,7 +420,21 @@ export default function HealthDashboard({ initialMembership }) {
           <Card title="Latest laboratory results">{latestLabs.length ? <div className="space-y-2">{latestLabs.map((lab) => <div key={lab.id} className="flex justify-between gap-4 border-b border-slate-200 py-2 dark:border-slate-700"><span className="font-bold">{lab.marker_name}</span><span className={lab.flag === "high" || lab.flag === "critical" ? "font-black text-red-600" : "font-black"}>{lab.value_numeric ?? lab.value_text} {lab.unit}</span></div>)}</div> : <p className="text-sm text-slate-500">No structured lab results yet for {viewingProfile?.display_name || "the selected person"}.</p>}</Card>
           <Card title="Activity"><div className="grid grid-cols-3 gap-3 text-center"><div><p className="text-2xl font-black">{data.measurements.filter((m) => m.profile_id === viewProfileId).length}</p><p className="text-xs">measurements</p></div><div><p className="text-2xl font-black">{viewWorkouts.length}</p><p className="text-xs">workouts</p></div><div><p className="text-2xl font-black">{data.timeline.filter((t) => t.profile_id === viewProfileId).length}</p><p className="text-xs">timeline events</p></div></div></Card>
         </>}
-        {activeTab === "Labs" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="lab_report" onConfirmed={() => load(workspaceId)}/><Card title={`Laboratory history — ${viewingProfile?.display_name || ""}`}>{viewLabs.length ? <div className="space-y-4">{Object.entries(groupLabsByMarker(viewLabs)).map(([markerName, points]) => <div key={markerName}><HealthLabTrendChart markerName={markerName} points={points}/><div className="mt-1 space-y-1">{points.map((point) => <HealthLabResultRow key={point.id} point={point} onChanged={() => load(workspaceId)}/>)}</div></div>)}</div> : <p className="text-sm text-slate-500">Structured results and trend charts will appear here. The database preserves values, units, ranges, flags, dates, panels and source documents independently.</p>}</Card></>}
+        {activeTab === "Labs" && (() => {
+          const groupedViewLabs = groupLabsByMarker(viewLabs);
+          const { narrow: narrowTier, wide: wideTier } = splitLabTiers(groupedViewLabs);
+          const hasCombinableTrend = Object.values(groupedViewLabs).some((points) => points.length >= 2);
+          return <>
+            <HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="lab_report" onConfirmed={() => load(workspaceId)}/>
+            {viewLabs.length > 0 && <Card title={`Combined trends — ${viewingProfile?.display_name || ""}`}>
+              {hasCombinableTrend ? <div className="space-y-4">
+                <HealthLabCombinedTrendChart title="Narrow-range markers" groupedLabs={narrowTier}/>
+                <HealthLabCombinedTrendChart title="Wide-range markers" groupedLabs={wideTier}/>
+              </div> : <p className="text-sm text-slate-500">Once a marker has a second draw on file, its trend joins a combined chart here.</p>}
+            </Card>}
+            <Card title={`Laboratory history — ${viewingProfile?.display_name || ""}`}>{viewLabs.length ? <div className="space-y-4">{Object.entries(groupedViewLabs).map(([markerName, points]) => <div key={markerName}><HealthLabTrendChart markerName={markerName} points={points}/><div className="mt-1 space-y-1">{points.map((point) => <HealthLabResultRow key={point.id} point={point} onChanged={() => load(workspaceId)}/>)}</div></div>)}</div> : <p className="text-sm text-slate-500">Structured results and trend charts will appear here. The database preserves values, units, ranges, flags, dates, panels and source documents independently.</p>}</Card>
+          </>;
+        })()}
         {activeTab === "Regimen" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="medication_label" onConfirmed={() => load(workspaceId)}/><Card title={`Prescriptions and supplements — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewRegimen.filter((x) => x.category !== "peptide").map((item) => <HealthRegimenItemCard key={item.id} item={item} onChanged={() => load(workspaceId)}/>)}{!viewRegimen.filter((x) => x.category !== "peptide").length && <p className="text-sm text-slate-500">No prescriptions or supplements logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
         {activeTab === "Peptides" && <Card title="Peptides"><p className="text-sm text-slate-500">Track the prescribed or supervised product, concentration, dose, route, cycle, individual injections, injection site, missed doses and reactions.</p></Card>}
         {activeTab === "Workouts" && <><HealthWorkoutForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} onSaved={() => load(workspaceId)}/><Card title={`Workout history — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewWorkouts.map((workout) => <HealthWorkoutCard key={workout.id} workout={workout} onChanged={() => load(workspaceId)}/>)}{!viewWorkouts.length && <p className="text-sm text-slate-500">No workouts logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
