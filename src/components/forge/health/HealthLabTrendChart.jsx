@@ -67,9 +67,15 @@ export default function HealthLabTrendChart({ markerName, points }) {
         <span className={`font-black tabular-nums ${valueToneClass(latest.flag)}`}>{latest.value_numeric ?? latest.value_text} {unit}</span>
       </div>
       <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} className="mt-2 w-full" role="img" aria-label={chartLabel}>
-        {referenceLow != null && referenceHigh != null && (
-          <rect x={PADDING.left} y={yFor(referenceHigh)} width={innerWidth} height={Math.max(0, yFor(referenceLow) - yFor(referenceHigh))} className="fill-emerald-500/10" />
-        )}
+        {(referenceLow != null || referenceHigh != null) && (() => {
+          // A one-sided range (only a ceiling like "<200", or only a floor like ">39") is shaded
+          // out to the chart's own edge on the open side -- "below this line" or "above this line"
+          // is still a real target even without the other bound, and most of the actual reference
+          // ranges on a lab report are one-sided, not a low-high pair.
+          const bandTop = referenceHigh != null ? yFor(referenceHigh) : PADDING.top;
+          const bandBottom = referenceLow != null ? yFor(referenceLow) : PADDING.top + innerHeight;
+          return <rect x={PADDING.left} y={bandTop} width={innerWidth} height={Math.max(0, bandBottom - bandTop)} className="fill-emerald-500/10" />;
+        })()}
         <polyline points={linePoints} fill="none" strokeWidth="2" className="stroke-amber-500" />
         {sorted.map((point, index) => (
           <circle key={point.id ?? index} cx={xFor(index)} cy={yFor(Number(point.value_numeric))} r="3.5" className={FLAG_DOT_CLASS[point.flag] || FLAG_DOT_CLASS.unknown} />

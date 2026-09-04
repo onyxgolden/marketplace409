@@ -20,9 +20,24 @@ describe("HealthLabTrendChart", () => {
     ]}/>);
     expect(markup).toContain("<svg");
     expect(markup).toContain("<polyline");
+    expect(markup).toContain("<rect");
     expect(markup).toContain("Target: ≤100 mg/dL");
     expect(markup).toContain("May 1");
     expect(markup).toContain("Aug 10");
+  });
+
+  // Regression guard: a real lab report's reference ranges are usually one-sided ("Desirable <200",
+  // "Desirable >39") rather than a low-high pair -- the band must still render on the open side of
+  // the chart, not only when both bounds happen to be present. The first version of this component
+  // required both bounds and silently drew nothing for either one-sided case; the label still said
+  // "Target: ..." so this went unnoticed until checked against a real screenshot.
+  it("renders a target band for a floor-only reference range (e.g. HDL > 39), not only when both bounds are set", () => {
+    const markup = renderToStaticMarkup(<HealthLabTrendChart markerName="HDL cholesterol" points={[
+      { collected_on: "2026-05-01", value_numeric: 59, unit: "mg/dL", flag: "normal", reference_low: 39, reference_high: null },
+      { collected_on: "2026-08-10", value_numeric: 58, unit: "mg/dL", flag: "normal", reference_low: 39, reference_high: null },
+    ]}/>);
+    expect(markup).toContain("<rect");
+    expect(markup).toContain("Target: ≥39 mg/dL");
   });
 
   it("never shows a target band when no reference range was entered at review time", () => {
