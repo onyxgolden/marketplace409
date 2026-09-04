@@ -10,7 +10,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const { insertMock, getUserMock } = vi.hoisted(() => ({
   insertMock: vi.fn(() => Promise.resolve({ error: null })),
-  getUserMock: vi.fn(() => Promise.resolve({ data: { user: { id: "user-1" } } })),
+  getUserMock: vi.fn(() => Promise.resolve({ data: { user: { id: "user-1", email: "jasonmorgan99@gmail.com" } } })),
 }));
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -20,12 +20,16 @@ vi.mock("@/lib/supabase/client", () => ({
         select: () => node,
         eq: () => node,
         order: () => Promise.resolve({
-          data: table === "health_profiles" ? [{ id: "profile-1", display_name: "jasonmorgan99@gmail.com", profile_type: "self" }]
+          data: table === "health_profiles" ? [
+              { id: "profile-1", display_name: "jasonmorgan99@gmail.com", profile_type: "self" },
+              { id: "profile-2", display_name: "spouse@example.com", profile_type: "self" },
+            ]
             : table === "health_lab_results" ? [
-              { id: "lab-2", marker_name: "LDL cholesterol", collected_on: "2026-08-10", value_numeric: 310, unit: "mg/dL", flag: "high", reference_low: null, reference_high: null },
-              { id: "lab-1", marker_name: "LDL cholesterol", collected_on: "2026-05-01", value_numeric: 140, unit: "mg/dL", flag: "high", reference_low: null, reference_high: null },
+              { id: "lab-2", profile_id: "profile-1", marker_name: "LDL cholesterol", collected_on: "2026-08-10", value_numeric: 310, unit: "mg/dL", flag: "high", reference_low: null, reference_high: null },
+              { id: "lab-1", profile_id: "profile-1", marker_name: "LDL cholesterol", collected_on: "2026-05-01", value_numeric: 140, unit: "mg/dL", flag: "high", reference_low: null, reference_high: null },
+              { id: "lab-3", profile_id: "profile-2", marker_name: "Hemoglobin A1c", collected_on: "2026-08-10", value_numeric: 5.4, unit: "%", flag: "normal", reference_low: null, reference_high: null },
             ] : table === "health_workouts" ? [
-              { id: "workout-1", workout_type: "Strength & Cardio", performed_at: "2026-09-03T00:00:00.000Z", duration_minutes: 30, perceived_exertion: null, notes: null, details: [] },
+              { id: "workout-1", profile_id: "profile-1", workout_type: "Strength & Cardio", performed_at: "2026-09-03T00:00:00.000Z", duration_minutes: 30, perceived_exertion: null, notes: null, details: [] },
             ] : [],
           error: null,
         }),
@@ -143,5 +147,28 @@ describe("HealthDashboard", () => {
 
     expect(mounted.container.textContent).toContain("9/3/2026");
     expect(mounted.container.textContent).not.toContain("9/2/2026");
+  });
+
+  // Regression guard for Jason's report: household members share one workspace but not every
+  // medication, lab result or workout -- lists must never show one person's records while another
+  // person's profile is selected, and switching the "Viewing" selector must actually change what's
+  // shown.
+  it("scopes the Labs tab to exactly the selected profile and switches when you pick someone else", async () => {
+    mounted = mount(<HealthDashboard initialMembership={{ workspace_id: "health-1", role: "owner" }} />);
+    await flush();
+    await goToTab(mounted.container, "Labs");
+
+    // Defaults to the signed-in user's own profile (jasonmorgan99@gmail.com / profile-1).
+    expect(mounted.container.textContent).toContain("LDL cholesterol");
+    expect(mounted.container.textContent).not.toContain("Hemoglobin A1c");
+
+    const spouseButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "spouse@example.com");
+    await act(async () => {
+      spouseButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      await flush();
+    });
+
+    expect(mounted.container.textContent).toContain("Hemoglobin A1c");
+    expect(mounted.container.textContent).not.toContain("LDL cholesterol");
   });
 });
