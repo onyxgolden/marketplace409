@@ -86,3 +86,38 @@ export async function computeAndPersistCpm(supabaseClient, project, relational) 
 
   return { byTaskCode, criticalTaskCodes, conflicts: result.conflicts, cpmBlocks: result.blocks };
 }
+
+// SCHED-06: resources are an owner-global dictionary (schedule_resources has no
+// schedule_project_id -- see the SCHED-05 migration), so they're fetched by owner (RLS-scoped, no
+// explicit filter needed) rather than by project. Assignments/expenses ARE project-scoped, but only
+// indirectly (via block_id, not a direct schedule_project_id column), so they're fetched by the
+// project's own block ids, which `relational` (loadProjectRelational's return value) already has.
+export async function loadResourceCostData(supabaseClient, relational) {
+  const blockIds = relational.blocks.map((block) => block.id);
+  const [resourcesResult, costAccountsResult, assignmentsResult, expensesResult] = await Promise.all([
+    supabaseClient.from("schedule_resources").select("*").order("name"),
+    supabaseClient.from("schedule_cost_accounts").select("*").order("code"),
+    blockIds.length ? supabaseClient.from("schedule_resource_assignments").select("*").in("block_id", blockIds) : { data: [], error: null },
+    blockIds.length ? supabaseClient.from("schedule_expenses").select("*").in("block_id", blockIds) : { data: [], error: null },
+  ]);
+  const failed = [resourcesResult, costAccountsResult, assignmentsResult, expensesResult].find((result) => result.error);
+  if (failed) throw failed.error;
+
+  return {
+    resources: resourcesResult.data || [],
+    costAccounts: costAccountsResult.data || [],
+    assignments: assignmentsResult.data || [],
+    expenses: expensesResult.data || [],
+  };
+}
+
+// schedule_resource_assignments/schedule_expenses reference a block by its relational id, not by
+// (schedule_project_id, task_code) the way every route so far addresses a block -- this resolves
+// one to the other. Returns null (not a thrown error) for "doesn't exist or isn't this owner's",
+// matching this API's established not-found-vs-error split; callers turn a null into a 404.
+export async function resolveOwnedBlock(supabaseClient, ownerId, projectId, taskCode) {
+  const { data, error } = await supabaseClient.from("schedule_blocks").select("id")
+    .eq("schedule_project_id", projectId).eq("task_code", taskCode).eq("owner_id", ownerId).maybeSingle();
+  if (error) throw error;
+  return data;
+}
