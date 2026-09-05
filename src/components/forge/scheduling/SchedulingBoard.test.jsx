@@ -149,16 +149,18 @@ describe("SchedulingBoard", () => {
     expect(markup).not.toContain("data-scheduling-baselines");
   });
 
-  it("offers Resources and Costs under Menu, for the default (owner) board", () => {
+  it("offers Resources, Costs, and EVM & DCMA under Menu, for the default (owner) board", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).toContain(">Resources<");
     expect(markup).toContain(">Costs<");
+    expect(markup).toContain("EVM &amp; DCMA");
   });
 
-  it("does not render the resources or costs modal until one is opened", () => {
+  it("does not render the resources, costs, or EVM/DCMA modal until one is opened", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).not.toContain("data-scheduling-resources");
     expect(markup).not.toContain("data-scheduling-costs");
+    expect(markup).not.toContain("data-scheduling-evm-dcma");
   });
 
   it("does not render the right-click context menu until a multi-selected block is right-clicked", () => {
