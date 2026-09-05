@@ -130,9 +130,19 @@ export function levelResources({
     let candidateStart = dependencyDates?.earlyStart ?? block.early_start;
     let candidateFinish = dependencyDates?.earlyFinish ?? block.early_finish;
 
+    // A hard constraint (must_start_on/must_finish_on) pins this block's date by user decree --
+    // computeForwardDatesForBlock already returns that fixed date as candidateStart regardless of
+    // resource contention, but WITHOUT this guard the advance loop below would still try to slide
+    // it later on a conflict, silently overriding what "must" means. Found and fixed while
+    // implementing SCHED-10's apply action, which writes leveled dates back as start_on
+    // constraints -- applying a moved date onto an already-must-pinned block would have been a
+    // real, user-visible correctness bug, not a cosmetic one.
+    const isHardPinned = block.constraint_type === "must_start_on" || block.constraint_type === "must_finish_on";
+
     let conflicts = findConflicts(spreadForCandidate(block, candidateStart, candidateFinish, calendar, holidaySet, assignmentsByBlockId), ledger, resourcesById);
     let guard = 0;
     while (conflicts.length > 0 && guard <= MAX_CALENDAR_WALK_DAYS) {
+      if (isHardPinned) break; // never move a hard-constrained block -- report the conflict, don't override the constraint.
       if (!allowExtension && block.late_start != null && candidateStart >= block.late_start) break; // out of float -- stop here, report unresolved.
       candidateStart = stepWorkingDays(calendar, holidaySet, candidateStart, 1);
       candidateFinish = block.block_type === "milestone" ? candidateStart : stepWorkingDays(calendar, holidaySet, candidateStart, block.duration_days - 1);

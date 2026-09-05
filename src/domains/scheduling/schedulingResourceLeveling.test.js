@@ -137,6 +137,42 @@ describe("schedulingResourceLeveling — cascading delay through dependencies", 
   });
 });
 
+describe("schedulingResourceLeveling — hard constraints are never moved", () => {
+  it("reports a conflict rather than sliding a must_start_on block past its pinned date", () => {
+    // Both blocks have zero float, so the priority tie-break falls to task_code -- "Q" sorts
+    // before "Z", so Q is placed first and Z (the hard-pinned one) is the one that discovers the
+    // conflict, exactly the case this fix targets.
+    const blocks = [
+      block("Q"),
+      block("Z", { constraint_type: "must_start_on", constraint_date: "2026-01-05" }),
+    ];
+    const assignments = [assignment("Q", "R1", 16), assignment("Z", "R1", 16)];
+    const result = levelResources({ project: project(), blocks, dependencies: [], assignments, resourcesById: new Map([["R1", resource("R1", 8)]]), calendarsById: CALENDARS_BY_ID, lanesById: LANES_BY_ID });
+
+    const p = result.leveledBlocks.find((b) => b.task_code === "Z");
+    expect(p).toMatchObject({ leveled_start: "2026-01-05", leveled_finish: "2026-01-06", delay_days: 0 });
+    expect(result.unresolvedConflicts).toHaveLength(1);
+    expect(result.unresolvedConflicts[0].task_code).toBe("Z");
+    expect(result.unresolvedConflicts[0].conflicts).toHaveLength(2); // both of Z's 2 days overlap Q's full window.
+  });
+
+  it("still resolves when allowExtension is true, since a hard-pinned block was never eligible to move regardless of that flag", () => {
+    // Both blocks have zero float, so the priority tie-break falls to task_code -- "Q" sorts
+    // before "Z", so Q is placed first and Z (the hard-pinned one) is the one that discovers the
+    // conflict, exactly the case this fix targets.
+    const blocks = [
+      block("Q"),
+      block("Z", { constraint_type: "must_start_on", constraint_date: "2026-01-05" }),
+    ];
+    const assignments = [assignment("Q", "R1", 16), assignment("Z", "R1", 16)];
+    const result = levelResources({ project: project(), blocks, dependencies: [], assignments, resourcesById: new Map([["R1", resource("R1", 8)]]), calendarsById: CALENDARS_BY_ID, lanesById: LANES_BY_ID, allowExtension: true });
+
+    const p = result.leveledBlocks.find((b) => b.task_code === "Z");
+    expect(p.leveled_start).toBe("2026-01-05"); // still pinned -- allowExtension governs FLOAT, not hard constraints.
+    expect(result.unresolvedConflicts).toHaveLength(1);
+  });
+});
+
 describe("schedulingResourceLeveling — cyclic blocks", () => {
   it("excludes a cyclic pair entirely from the leveled output, matching the CPM engine's own cycle handling", () => {
     const blocks = [block("A"), block("B")];

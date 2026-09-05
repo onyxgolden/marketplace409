@@ -149,11 +149,12 @@ describe("SchedulingBoard", () => {
     expect(markup).not.toContain("data-scheduling-baselines");
   });
 
-  it("offers Resources, Costs, and EVM & DCMA under Menu, for the default (owner) board", () => {
+  it("offers Resources, Costs, EVM & DCMA, and Level Resources under Menu, for the default (owner) board", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).toContain(">Resources<");
     expect(markup).toContain(">Costs<");
     expect(markup).toContain("EVM &amp; DCMA");
+    expect(markup).toContain(">Level Resources<");
   });
 
   it("does not render the cycle-conflict banner on a fresh board with no cycle diagnosed yet", () => {
@@ -161,11 +162,12 @@ describe("SchedulingBoard", () => {
     expect(markup).not.toContain("data-scheduling-cycle-banner");
   });
 
-  it("does not render the resources, costs, or EVM/DCMA modal until one is opened", () => {
+  it("does not render the resources, costs, EVM/DCMA, or leveling modal until one is opened", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).not.toContain("data-scheduling-resources");
     expect(markup).not.toContain("data-scheduling-costs");
     expect(markup).not.toContain("data-scheduling-evm-dcma");
+    expect(markup).not.toContain("data-scheduling-leveling");
   });
 
   it("does not render the right-click context menu until a multi-selected block is right-clicked", () => {
