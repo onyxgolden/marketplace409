@@ -4,6 +4,8 @@ import Link from "next/link";
 import SchedulingHelpModal from "./SchedulingHelpModal";
 import SchedulingCalendarsModal from "./SchedulingCalendarsModal";
 import SchedulingBaselinesModal from "./SchedulingBaselinesModal";
+import SchedulingResourcesModal from "./SchedulingResourcesModal";
+import SchedulingCostsModal from "./SchedulingCostsModal";
 import { usePersistedBoard } from "./usePersistedBoard";
 import {
   LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
@@ -51,6 +53,13 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   const [showHelp, setShowHelp] = useState(false);
   const [showCalendars, setShowCalendars] = useState(false);
   const [showBaselines, setShowBaselines] = useState(false);
+  const [showResources, setShowResources] = useState(false);
+  const [showCosts, setShowCosts] = useState(false);
+  // The owner-global resource dictionary (SCHED-06) -- fetched once for the drawer's per-block
+  // assignment picker. Owner-only: a non-owner viewing the shared example project can't see or
+  // create assignments on it regardless (schedule_resource_assignments has no public-select
+  // policy -- see the SCHED-05 migration), so there's nothing useful to fetch for them here.
+  const [resources, setResources] = useState([]);
   const [showCriticalPath, setShowCriticalPath] = useState(false);
   // Local overrides for progress fields (percent complete, actual start/finish) edited this
   // session, layered over board.cpm.byTaskCode's server-computed values -- these fields live only
@@ -107,6 +116,15 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
       setProgressOverrides((current) => ({ ...current, [taskCode]: previous }));
     }
   }
+  async function loadResources() {
+    if (!isOwner) return;
+    const response = await fetch("/api/forge/scheduling/resources");
+    const result = await response.json().catch(() => ({}));
+    setResources(result.resources || []);
+  }
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+  useEffect(() => { loadResources(); }, [isOwner]);
+
   function handleUndo() {
     setHistory((h) => {
       const result = undoHistory(h, board);
@@ -623,6 +641,12 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
             )}
             <button type="button" onClick={() => setShowCalendars(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Calendars</button>
             <button type="button" onClick={() => setShowBaselines(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Baselines</button>
+            {isOwner && (
+              <>
+                <button type="button" onClick={() => setShowResources(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Resources</button>
+                <button type="button" onClick={() => setShowCosts(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Costs</button>
+              </>
+            )}
           </div>
         </details>
         <button type="button" onClick={() => setShowHelp(true)} title="Help & keyboard shortcuts"
@@ -816,7 +840,8 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
           onChangeDuration={(duration) => commitBoard((current) => resizeBlock(current, selectedBlock.id, duration))}
           onSelectBlock={(id) => setSelectedBlockIds([id])}
           progress={{ ...board.cpm?.byTaskCode?.[selectedBlock.taskCode], ...progressOverrides[selectedBlock.taskCode] }}
-          onUpdateProgress={(patch) => updateBlockProgress(selectedBlock.taskCode, patch)} />
+          onUpdateProgress={(patch) => updateBlockProgress(selectedBlock.taskCode, patch)}
+          projectId={projectId} isOwner={isOwner} resources={resources} />
       )}
       {showHelp && <SchedulingHelpModal onClose={() => setShowHelp(false)} />}
       {showCalendars && (
@@ -829,6 +854,12 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
       )}
       {showBaselines && (
         <SchedulingBaselinesModal projectId={projectId} isOwner={isOwner} blocks={board.blocks} onClose={() => setShowBaselines(false)} />
+      )}
+      {showResources && (
+        <SchedulingResourcesModal isOwner={isOwner} onClose={() => setShowResources(false)} onChanged={loadResources} />
+      )}
+      {showCosts && (
+        <SchedulingCostsModal projectId={projectId} blocks={board.blocks} onClose={() => setShowCosts(false)} />
       )}
       {contextMenu && (
         <div className="fixed inset-0 z-[90]" onClick={() => setContextMenu(null)}
@@ -950,7 +981,7 @@ function SelectionOrderBadge({ order }) {
   );
 }
 
-function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDependency, onChangeDuration, onSelectBlock, progress, onUpdateProgress }) {
+function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDependency, onChangeDuration, onSelectBlock, progress, onUpdateProgress, projectId, isOwner, resources }) {
   const [direction, setDirection] = useState("predecessor");
   const [targetId, setTargetId] = useState("");
   const [relationshipType, setRelationshipType] = useState("FS");
@@ -1037,6 +1068,7 @@ function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDepe
           </span>
         )}
       </div>
+      {isOwner && <BlockResourcesPanel projectId={projectId} taskCode={block.taskCode} resources={resources} />}
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         <DependencyList title="Predecessors" dependencies={predecessors} blockById={blockById} idField="predecessorId" onRemove={onRemoveDependency} onGoTo={onSelectBlock} />
         <DependencyList title="Successors" dependencies={successors} blockById={blockById} idField="successorId" onRemove={onRemoveDependency} onGoTo={onSelectBlock} />
@@ -1093,6 +1125,108 @@ function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDepe
           <input type="number" value={lagDays} onChange={(e) => setLagDays(e.target.value)} className="w-16 rounded border border-slate-300 px-2 py-1.5 text-xs" />
         </Field>
         <button type="button" onClick={handleAdd} disabled={!targetId} className="rounded bg-slate-950 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">Add link</button>
+      </div>
+    </div>
+  );
+}
+
+// SCHED-06: per-block resource assignments and expenses, fetched/edited directly against the
+// relational tables (schedule_resource_assignments/schedule_expenses) -- no board-jsonb round-trip
+// at all, same reasoning as the progress row above (this data never existed on board.blocks to
+// begin with). Only rendered when isOwner (see DependencyDrawer) -- a non-owner can't see or write
+// this project's cost data regardless (no public-select policy on either table), so there's nothing
+// for this panel to usefully show them.
+function BlockResourcesPanel({ projectId, taskCode, resources }) {
+  const [assignments, setAssignments] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [assignDraft, setAssignDraft] = useState({ resourceId: "", budgetedUnits: "" });
+  const [expenseDraft, setExpenseDraft] = useState({ name: "", budgetedCost: "" });
+
+  async function loadBlockCosts() {
+    const [assignmentsResponse, expensesResponse] = await Promise.all([
+      fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/assignments`),
+      fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/expenses`),
+    ]);
+    const assignmentsResult = await assignmentsResponse.json().catch(() => ({}));
+    const expensesResult = await expensesResponse.json().catch(() => ({}));
+    setAssignments(assignmentsResult.assignments || []);
+    setExpenses(expensesResult.expenses || []);
+  }
+
+  // Refetches whenever a different block is selected -- taskCode is the one stable identifier a
+  // relational assignment/expense row keys off of (via its parent block), matching how the progress
+  // row's own effects key off block.id/taskCode above.
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+  useEffect(() => { loadBlockCosts(); }, [projectId, taskCode]);
+
+  async function handleAddAssignment() {
+    if (!assignDraft.resourceId) return;
+    const response = await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/assignments`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resourceId: assignDraft.resourceId, budgetedUnits: assignDraft.budgetedUnits || 0 }),
+    });
+    if (response.ok) { setAssignDraft({ resourceId: "", budgetedUnits: "" }); await loadBlockCosts(); }
+  }
+  async function handleRemoveAssignment(assignmentId) {
+    await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/assignments/${assignmentId}`, { method: "DELETE" });
+    await loadBlockCosts();
+  }
+  async function handleAddExpense() {
+    const name = expenseDraft.name.trim();
+    if (!name) return;
+    const response = await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/expenses`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, budgetedCost: expenseDraft.budgetedCost || 0 }),
+    });
+    if (response.ok) { setExpenseDraft({ name: "", budgetedCost: "" }); await loadBlockCosts(); }
+  }
+  async function handleRemoveExpense(expenseId) {
+    await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/expenses/${expenseId}`, { method: "DELETE" });
+    await loadBlockCosts();
+  }
+
+  const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
+
+  return (
+    <div className="mt-3 rounded-lg bg-slate-50 p-2.5" data-scheduling-resources-panel>
+      <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">Resources &amp; costs</p>
+      <ul className="mt-1.5 space-y-1 text-xs">
+        {assignments.map((assignment) => {
+          const resource = resourceById.get(assignment.resource_id);
+          const rate = assignment.rate_override ?? resource?.std_rate ?? 0;
+          return (
+            <li key={assignment.id} className="flex items-center justify-between gap-2">
+              <span className="font-bold">{resource?.name || assignment.resource_id} — {assignment.budgeted_units} units @ ${rate}</span>
+              <button type="button" onClick={() => handleRemoveAssignment(assignment.id)} className="text-red-600 hover:text-red-800">Remove</button>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        <select value={assignDraft.resourceId} onChange={(e) => setAssignDraft((d) => ({ ...d, resourceId: e.target.value }))} className="rounded border border-slate-300 px-2 py-1 text-xs">
+          <option value="">Assign a resource…</option>
+          {resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+        </select>
+        <input type="number" min={0} placeholder="Budgeted units" value={assignDraft.budgetedUnits} onChange={(e) => setAssignDraft((d) => ({ ...d, budgetedUnits: e.target.value }))}
+          className="w-28 rounded border border-slate-300 px-2 py-1 text-xs" />
+        <button type="button" onClick={handleAddAssignment} disabled={!assignDraft.resourceId} className="rounded bg-slate-950 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">Assign</button>
+      </div>
+
+      <p className="mt-3 text-[10px] font-black uppercase tracking-wide text-slate-500">Expenses</p>
+      <ul className="mt-1.5 space-y-1 text-xs">
+        {expenses.map((expense) => (
+          <li key={expense.id} className="flex items-center justify-between gap-2">
+            <span className="font-bold">{expense.name} — ${expense.budgeted_cost}</span>
+            <button type="button" onClick={() => handleRemoveExpense(expense.id)} className="text-red-600 hover:text-red-800">Remove</button>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        <input placeholder="Expense name" value={expenseDraft.name} onChange={(e) => setExpenseDraft((d) => ({ ...d, name: e.target.value }))}
+          className="rounded border border-slate-300 px-2 py-1 text-xs" />
+        <input type="number" min={0} placeholder="Budgeted cost" value={expenseDraft.budgetedCost} onChange={(e) => setExpenseDraft((d) => ({ ...d, budgetedCost: e.target.value }))}
+          className="w-28 rounded border border-slate-300 px-2 py-1 text-xs" />
+        <button type="button" onClick={handleAddExpense} disabled={!expenseDraft.name.trim()} className="rounded bg-slate-950 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">Add expense</button>
       </div>
     </div>
   );
