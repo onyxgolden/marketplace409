@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import SchedulingHelpModal from "./SchedulingHelpModal";
 import SchedulingCalendarsModal from "./SchedulingCalendarsModal";
+import SchedulingBaselinesModal from "./SchedulingBaselinesModal";
 import { usePersistedBoard } from "./usePersistedBoard";
 import {
   LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
@@ -49,7 +50,13 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   const [history, setHistory] = useState(emptyHistory);
   const [showHelp, setShowHelp] = useState(false);
   const [showCalendars, setShowCalendars] = useState(false);
+  const [showBaselines, setShowBaselines] = useState(false);
   const [showCriticalPath, setShowCriticalPath] = useState(false);
+  // Local overrides for progress fields (percent complete, actual start/finish) edited this
+  // session, layered over board.cpm.byTaskCode's server-computed values -- these fields live only
+  // on schedule_blocks (see scheduleProjectAssembly.js), never on the board jsonb, so there's no
+  // commitBoard/undo-history path for them; this is a small, deliberately separate write path.
+  const [progressOverrides, setProgressOverrides] = useState({});
   const [contextMenu, setContextMenu] = useState(null); // { x, y } in viewport coords, or null when hidden
   // Drag-to-measure a day span on the header row -- view-only, not undoable, cleared on
   // the next measurement or an empty-canvas click. Real (uncompressed) week indices, so
@@ -85,6 +92,20 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
       if (next !== current) setHistory((h) => recordHistory(h, current));
       return next;
     });
+  }
+  // Optimistic: applied to progressOverrides immediately, PATCHed in the background. On failure
+  // the override is rolled back and a console error logged -- matching this API's established
+  // best-effort-with-logging philosophy for everything that isn't the board save itself.
+  async function updateBlockProgress(taskCode, patch) {
+    const previous = progressOverrides[taskCode];
+    setProgressOverrides((current) => ({ ...current, [taskCode]: { ...current[taskCode], ...patch } }));
+    const response = await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}`, {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch),
+    });
+    if (!response.ok) {
+      console.error("Unable to update progress for", taskCode);
+      setProgressOverrides((current) => ({ ...current, [taskCode]: previous }));
+    }
   }
   function handleUndo() {
     setHistory((h) => {
@@ -601,6 +622,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
               <Link href={`/forge/scheduling/${projectId}/wbs`} className="block rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">WBS</Link>
             )}
             <button type="button" onClick={() => setShowCalendars(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Calendars</button>
+            <button type="button" onClick={() => setShowBaselines(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Baselines</button>
           </div>
         </details>
         <button type="button" onClick={() => setShowHelp(true)} title="Help & keyboard shortcuts"
@@ -792,7 +814,9 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
             commitBoard((current) => addDependency(current, predecessorId, successorId, relationshipType, lagDays))}
           onRemoveDependency={(dependencyId) => commitBoard((current) => removeDependency(current, dependencyId))}
           onChangeDuration={(duration) => commitBoard((current) => resizeBlock(current, selectedBlock.id, duration))}
-          onSelectBlock={(id) => setSelectedBlockIds([id])} />
+          onSelectBlock={(id) => setSelectedBlockIds([id])}
+          progress={{ ...board.cpm?.byTaskCode?.[selectedBlock.taskCode], ...progressOverrides[selectedBlock.taskCode] }}
+          onUpdateProgress={(patch) => updateBlockProgress(selectedBlock.taskCode, patch)} />
       )}
       {showHelp && <SchedulingHelpModal onClose={() => setShowHelp(false)} />}
       {showCalendars && (
@@ -802,6 +826,9 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
           onSetDefaultCalendar={(calendarId) => commitBoard((current) => setDefaultCalendar(current, calendarId))}
           onAddBlackout={(input) => commitBoard((current) => addBlackoutWindow(current, input))}
           onRemoveBlackout={(blackoutId) => commitBoard((current) => removeBlackoutWindow(current, blackoutId))} />
+      )}
+      {showBaselines && (
+        <SchedulingBaselinesModal projectId={projectId} isOwner={isOwner} blocks={board.blocks} onClose={() => setShowBaselines(false)} />
       )}
       {contextMenu && (
         <div className="fixed inset-0 z-[90]" onClick={() => setContextMenu(null)}
@@ -923,14 +950,25 @@ function SelectionOrderBadge({ order }) {
   );
 }
 
-function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDependency, onChangeDuration, onSelectBlock }) {
+function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDependency, onChangeDuration, onSelectBlock, progress, onUpdateProgress }) {
   const [direction, setDirection] = useState("predecessor");
   const [targetId, setTargetId] = useState("");
   const [relationshipType, setRelationshipType] = useState("FS");
   const [lagDays, setLagDays] = useState(0);
   const [durationDraft, setDurationDraft] = useState(String(block.duration));
+  const [percentDraft, setPercentDraft] = useState(String(progress?.percentComplete ?? 0));
 
   useEffect(() => setDurationDraft(String(block.duration)), [block.id, block.duration]);
+  // Syncs the draft input when a different block is selected or its saved percent complete
+  // changes elsewhere (e.g. another tab) -- matches the existing durationDraft sync effect above.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => setPercentDraft(String(progress?.percentComplete ?? 0)), [block.id, progress?.percentComplete]);
+
+  function commitPercent() {
+    const parsed = Math.max(0, Math.min(100, Math.round(Number(percentDraft)) || 0));
+    if (parsed !== (progress?.percentComplete ?? 0)) onUpdateProgress({ percentComplete: parsed });
+    setPercentDraft(String(parsed));
+  }
 
   const { predecessors, successors } = dependenciesForBlock(board, block.id);
   const suggestions = suggestPredecessors(board, block.id);
@@ -972,6 +1010,32 @@ function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDepe
           )}
         </div>
         <button type="button" onClick={onClose} className="text-xs font-bold text-slate-400 hover:text-slate-700">Close ✕</button>
+      </div>
+      <div className="mt-2 flex flex-wrap items-end gap-3 rounded-lg bg-slate-50 p-2.5" data-scheduling-progress>
+        <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+          % complete
+          <input type="number" min={0} max={100} value={percentDraft} onChange={(e) => setPercentDraft(e.target.value)}
+            onBlur={commitPercent}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitPercent(); e.currentTarget.blur(); } }}
+            className="w-16 rounded border border-slate-300 px-2 py-1 text-xs" data-scheduling-percent-input />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+          Actual start
+          <input type="date" value={progress?.actualStart || ""} onChange={(e) => onUpdateProgress({ actualStart: e.target.value })}
+            className="rounded border border-slate-300 px-2 py-1 text-xs" data-scheduling-actual-start-input />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+          Actual finish
+          <input type="date" value={progress?.actualFinish || ""} onChange={(e) => onUpdateProgress({ actualFinish: e.target.value })}
+            className="rounded border border-slate-300 px-2 py-1 text-xs" data-scheduling-actual-finish-input />
+        </label>
+        {progress?.earlyStart && (
+          <span className="text-[10px] text-slate-400">
+            CPM: {progress.earlyStart} &rarr; {progress.earlyFinish}
+            {progress.totalFloatDays != null && ` · ${progress.totalFloatDays}d float`}
+            {progress.isCritical && " · critical"}
+          </span>
+        )}
       </div>
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         <DependencyList title="Predecessors" dependencies={predecessors} blockById={blockById} idField="predecessorId" onRemove={onRemoveDependency} onGoTo={onSelectBlock} />
