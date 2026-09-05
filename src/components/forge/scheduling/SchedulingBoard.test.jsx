@@ -156,6 +156,11 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain("EVM &amp; DCMA");
   });
 
+  it("does not render the cycle-conflict banner on a fresh board with no cycle diagnosed yet", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).not.toContain("data-scheduling-cycle-banner");
+  });
+
   it("does not render the resources, costs, or EVM/DCMA modal until one is opened", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).not.toContain("data-scheduling-resources");

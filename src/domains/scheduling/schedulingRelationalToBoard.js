@@ -15,7 +15,11 @@
 
 import { daysBetweenISO } from "./schedulingRelationalMapping";
 
-function stripNamespace(projectId, namespacedId) {
+// Exported (SCHED-11) so a route can de-namespace an id computed OUTSIDE this file's own mapping
+// (e.g. schedulingCycleDiagnosis.js's suggested dependency id) before embedding it in `board`,
+// where every other id has already been through this same stripping. No behavior change to this
+// file's own callers.
+export function stripNamespace(projectId, namespacedId) {
   return namespacedId == null ? namespacedId : namespacedId.slice(projectId.length + 1);
 }
 
