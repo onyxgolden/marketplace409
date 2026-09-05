@@ -2,6 +2,30 @@
 
 ## Last Updated
 
+2026-09-05T~22:00Z — Claude Code (Sonnet 5). **This entry is a targeted correction, not a full
+resync** — the Scheduling P6-parity narrative below (section E) stops at SCHED-02 and is now stale;
+SCHED-03 through SCHED-11 have since shipped and merged (all Gantt-blocks-only, CPM/baselines/
+resources+costs/EVM+DCMA/resource-leveling/cycle-diagnosis, in that order) — see `git log --oneline
+--all --grep="SCHED-"` on `main` and PRs #109-#116 for the authoritative current state; not
+re-narrated here to avoid this doc drifting further from git truth on a topic git already answers
+completely.
+
+**Naming clarification, recorded here so it isn't re-litigated by a future session**: "Forge Brain"
+IS the existing, shipped, developer-facing **Engineering Brain** feature
+(`src/domains/engineering-brain/`, `/forge/developer/engineering-brain`,
+`src/app/api/forge/engineering-brain/query`) — not a separate or imaginary system. A session
+scoping SCHED-11 (scheduling cycle diagnosis) initially treated "Forge Brain" as nonexistent,
+confusing it with Engineering Brain's differently-scoped current purpose (codebase Q&A for
+developers). Jason corrected this. Full detail recorded in `docs/architecture/FORGE_STATUS.md`'s
+2026-09-05 entry (same clarification, kept in both places per Jason's explicit request) — summary:
+Engineering Brain is Forge Brain's *current* implementation; Forge Brain's *planned* evolution is a
+permission-controlled, cross-application assistant for developers **and end users** across every
+FORGE application (not yet built, no ticket exists for it yet). Domain capabilities the future
+end-user layer will invoke (e.g. SCHED-11's `schedulingCycleDiagnosis.js`) must stay deterministic,
+independently tested services — never duplicated as logic embedded in an AI prompt — and Forge Brain
+must never modify user data or application behavior without explicit user authorization, now or
+after that layer ships. Do not propose building a second, competing "Forge Brain."
+
 2026-08-26T~17:15Z — Claude Code (Sonnet 5) — branch `agent-handoff-update-6`, pushed to
 `chore/agent-handoff`. **New track this update: a Primavera P6 (v17-23) feature-parity build-out
 for the Scheduling tool**, entirely separate from the Simplifi/Financial FORGE work in sections A-D
