@@ -138,6 +138,17 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain('id="scheduling-dependency-arrow-critical"');
   });
 
+  it("offers Baselines under Menu, alongside Calendars", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain(">Baselines<");
+    expect(markup).toContain(">Calendars<");
+  });
+
+  it("does not render the baselines modal until it's opened", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).not.toContain("data-scheduling-baselines");
+  });
+
   it("does not render the right-click context menu until a multi-selected block is right-clicked", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).not.toContain("data-scheduling-context-menu");
