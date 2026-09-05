@@ -7,6 +7,7 @@ import SchedulingBaselinesModal from "./SchedulingBaselinesModal";
 import SchedulingResourcesModal from "./SchedulingResourcesModal";
 import SchedulingCostsModal from "./SchedulingCostsModal";
 import SchedulingEvmDcmaModal from "./SchedulingEvmDcmaModal";
+import SchedulingLevelingModal from "./SchedulingLevelingModal";
 import { usePersistedBoard } from "./usePersistedBoard";
 import {
   LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
@@ -57,6 +58,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   const [showResources, setShowResources] = useState(false);
   const [showCosts, setShowCosts] = useState(false);
   const [showEvmDcma, setShowEvmDcma] = useState(false);
+  const [showLeveling, setShowLeveling] = useState(false);
   // The owner-global resource dictionary (SCHED-06) -- fetched once for the drawer's per-block
   // assignment picker. Owner-only: a non-owner viewing the shared example project can't see or
   // create assignments on it regardless (schedule_resource_assignments has no public-select
@@ -648,6 +650,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
                 <button type="button" onClick={() => setShowResources(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Resources</button>
                 <button type="button" onClick={() => setShowCosts(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Costs</button>
                 <button type="button" onClick={() => setShowEvmDcma(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">EVM &amp; DCMA</button>
+                <button type="button" onClick={() => setShowLeveling(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Level Resources</button>
               </>
             )}
           </div>
@@ -871,6 +874,9 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
       )}
       {showEvmDcma && (
         <SchedulingEvmDcmaModal projectId={projectId} onClose={() => setShowEvmDcma(false)} />
+      )}
+      {showLeveling && (
+        <SchedulingLevelingModal projectId={projectId} blocks={board.blocks} onClose={() => setShowLeveling(false)} />
       )}
       {contextMenu && (
         <div className="fixed inset-0 z-[90]" onClick={() => setContextMenu(null)}
