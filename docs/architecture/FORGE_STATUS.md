@@ -6,6 +6,38 @@
 
 ---
 
+## 2026-09-05 Naming Clarification — Forge Brain Is Engineering Brain
+
+**Why this note exists:** while scoping SCHED-11 (scheduling cycle diagnosis, in the Scheduling
+P6-parity build-out), an agent session initially treated "Forge Brain" as a system that doesn't
+exist, confusing it with the differently-scoped, already-shipped Engineering Brain feature. The
+owner corrected this. Recorded here so a future session doesn't repeat the confusion, and doesn't
+propose building a second, competing brain.
+
+**Current implementation:** the developer-facing **Engineering Brain**
+(`src/domains/engineering-brain/`, `/forge/developer/engineering-brain`,
+`src/app/api/forge/engineering-brain/query`) **is** the current, shipped implementation of what the
+owner calls **Forge Brain**. It answers questions about this app's own codebase (source files, SQL
+tables, migrations, governance state, reviewed decisions) for developers working on marketplace409.
+There is no separate "Forge Brain" system anywhere in this repository — do not treat the name as
+aspirational-only, and do not scope a second implementation under a different name.
+
+**Planned evolution (not yet built):** the same underlying intelligence layer, expanded into a
+permission-controlled, cross-application assistant serving both developers **and end users** across
+every FORGE application (Scheduling, Health, Financial, Rental, etc.) — not just codebase Q&A. No
+ticket for this expansion exists yet; it is a direction, not a scheduled slice.
+
+**A durable engineering constraint that follows from this** (applies now, not only once the
+end-user layer ships): domain capabilities that Forge Brain's end-user layer will eventually want to
+invoke — for example, the scheduling cycle diagnosis built in SCHED-11
+(`src/domains/scheduling/schedulingCycleDiagnosis.js`) — must be implemented as **deterministic,
+independently tested services**. Do not duplicate that kind of calculation inside an AI prompt; when
+the end-user layer ships, Forge Brain calls these services rather than reimplementing their logic.
+Forge Brain must never modify user data or application behavior without explicit user authorization,
+current scope or future.
+
+---
+
 ## 2026-09-01 Active Assignment — RV Multi-User Operations
 
 **Owner authorization:** Claude may inspect, implement, test, push a branch, and open a PR while the owner is away.
