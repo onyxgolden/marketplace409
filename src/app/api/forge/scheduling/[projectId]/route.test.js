@@ -79,6 +79,27 @@ describe("GET /api/forge/scheduling/[projectId]", () => {
     expect(Array.isArray(body.board.cpm.conflicts)).toBe(true);
   });
 
+  it("traces a circular dependency and returns a de-namespaced suggested-fix dependency id, matching board.dependencies' own id shape", async () => {
+    const blockA = { ...BLOCK_ROW, id: "p1_b1", task_code: "A1010" };
+    const blockB = { ...BLOCK_ROW, id: "p1_b2", task_code: "A1020" };
+    const dependencies = [
+      { id: "p1_dep1", predecessor_id: "p1_b1", successor_id: "p1_b2", relationship_type: "FS", lag_days: 0 },
+      { id: "p1_dep2", predecessor_id: "p1_b2", successor_id: "p1_b1", relationship_type: "SS", lag_days: 0 },
+    ];
+    const db = mockDb({ lanes: [{ id: "p1_lane_1", schedule_project_id: "p1", name: "Engineering", color: null, calendar_id: null, sort_order: 0 }], blocks: [blockA, blockB], dependencies });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    const response = await GET(new Request("https://test"), { params });
+    const body = await response.json();
+
+    expect(body.board.cpm.cycleDiagnoses).toHaveLength(1);
+    const cycle = body.board.cpm.cycleDiagnoses[0];
+    expect(cycle.taskCodes).toEqual(["A1010", "A1020", "A1010"]);
+    // Suggests the SS link (non-FS is more suspect than FS -- see schedulingCycleDiagnosis.js), and
+    // its id is de-namespaced ("dep2", not "p1_dep2") to match every other id in `board`.
+    expect(cycle.suggestion.dependency.id).toBe("dep2");
+    expect(body.board.dependencies.some((dependency) => dependency.id === "dep2")).toBe(true);
+  });
+
   it("persists the computed early/late/float/critical dates back onto schedule_blocks", async () => {
     const db = mockDb({ lanes: [{ id: "p1_lane_1", schedule_project_id: "p1", name: "Engineering", color: null, calendar_id: null, sort_order: 0 }] });
     createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
@@ -105,7 +126,7 @@ describe("GET /api/forge/scheduling/[projectId]", () => {
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.board.cpm).toEqual({ byTaskCode: {}, criticalTaskCodes: [], conflicts: [] });
+    expect(body.board.cpm).toEqual({ byTaskCode: {}, criticalTaskCodes: [], conflicts: [], cycleDiagnoses: [] });
   });
 });
 

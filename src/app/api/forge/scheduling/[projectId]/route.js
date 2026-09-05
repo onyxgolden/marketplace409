@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { hydrateBoardState } from "@/components/forge/scheduling/schedulingBoardState";
-import { relationalTablesToBoard } from "@/domains/scheduling/schedulingRelationalToBoard";
+import { relationalTablesToBoard, stripNamespace } from "@/domains/scheduling/schedulingRelationalToBoard";
 import { loadProjectRelational, computeAndPersistCpm } from "../scheduleProjectAssembly";
 
 async function authenticatedContext() {
@@ -18,11 +18,20 @@ export async function GET(request, { params }) {
     if (!relational.project) return NextResponse.json({ error: "Project not found." }, { status: 404 });
 
     const board = hydrateBoardState(relationalTablesToBoard(relational));
-    const { byTaskCode, criticalTaskCodes, conflicts } = await computeAndPersistCpm(authenticated.supabaseClient, relational.project, relational);
+    const { byTaskCode, criticalTaskCodes, conflicts, cycleDiagnoses } = await computeAndPersistCpm(authenticated.supabaseClient, relational.project, relational);
+
+    // Every id in `board` has already been de-namespaced by relationalTablesToBoard -- the
+    // suggested dependency's id needs the same treatment before the client's removeDependency
+    // board action (which matches against board.dependencies' already-stripped ids) can use it.
+    const boardCycleDiagnoses = cycleDiagnoses.map((cycle) => (
+      cycle.suggestion
+        ? { ...cycle, suggestion: { ...cycle.suggestion, dependency: { ...cycle.suggestion.dependency, id: stripNamespace(projectId, cycle.suggestion.dependency.id) } } }
+        : cycle
+    ));
 
     return NextResponse.json({
       success: true,
-      board: { ...board, cpm: { byTaskCode, criticalTaskCodes, conflicts } },
+      board: { ...board, cpm: { byTaskCode, criticalTaskCodes, conflicts, cycleDiagnoses: boardCycleDiagnoses } },
       isOwner: relational.project.owner_id === authenticated.user.id,
     });
   } catch (error) {

@@ -3,6 +3,7 @@
 // src/domains/scheduling module: those are all pure (no I/O), and this does real Supabase reads/
 // writes, so it lives alongside the routes that use it instead.
 import { runCpmEngine } from "@/domains/scheduling/schedulingCpmEngine";
+import { diagnoseCycles } from "@/domains/scheduling/schedulingCycleDiagnosis";
 
 // Every relational table directly scoped by schedule_project_id -- schedule_dependencies and
 // schedule_hammock_anchors have no such column (see the relational schema migration) and are
@@ -52,7 +53,7 @@ export async function loadProjectRelational(supabaseClient, projectId) {
 // the raw runCpmEngine output (full rows, not just the summary), which captureBaseline needs as-is.
 export async function computeAndPersistCpm(supabaseClient, project, relational) {
   const ganttBlocks = relational.blocks.filter((block) => block.lane_id != null && block.block_type !== "hammock");
-  if (ganttBlocks.length === 0) return { byTaskCode: {}, criticalTaskCodes: [], conflicts: [], cpmBlocks: [] };
+  if (ganttBlocks.length === 0) return { byTaskCode: {}, criticalTaskCodes: [], conflicts: [], cycleDiagnoses: [], cpmBlocks: [] };
 
   const blockIds = new Set(relational.blocks.map((block) => block.id));
   const dependencies = relational.dependencies.filter((dependency) => blockIds.has(dependency.predecessor_id) && blockIds.has(dependency.successor_id));
@@ -84,7 +85,12 @@ export async function computeAndPersistCpm(supabaseClient, project, relational) 
     if (error) console.error("CPM persist error for block", block.id, error);
   }));
 
-  return { byTaskCode, criticalTaskCodes, conflicts: result.conflicts, cpmBlocks: result.blocks };
+  // SCHED-11: only trace/rank cycles when the CPM engine actually reported one -- diagnoseCycles
+  // does a real graph walk, not worth running on every request when the common case has no cycle.
+  const hasCycleConflict = result.conflicts.some((conflict) => conflict.type === "cycle");
+  const cycleDiagnoses = hasCycleConflict ? diagnoseCycles({ blocks: ganttBlocks, dependencies }) : [];
+
+  return { byTaskCode, criticalTaskCodes, conflicts: result.conflicts, cycleDiagnoses, cpmBlocks: result.blocks };
 }
 
 // SCHED-06: resources are an owner-global dictionary (schedule_resources has no

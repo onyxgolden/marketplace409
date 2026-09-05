@@ -657,6 +657,11 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
         <button type="button" onClick={handleReset} className="rounded border border-red-800 bg-red-950 px-3 py-1.5 text-sm font-bold">Reset board</button>
       </div>
 
+      {board.cpm?.cycleDiagnoses?.length > 0 && (
+        <CycleConflictBanner cycleDiagnoses={board.cpm.cycleDiagnoses} isOwner={isOwner}
+          onRemoveDependency={(dependencyId) => commitBoard((current) => removeDependency(current, dependencyId))} />
+      )}
+
       <div className="flex flex-1 overflow-hidden">
         <div className="w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-slate-50 p-3">
           <div className="mb-2 flex items-center justify-between px-1">
@@ -885,6 +890,35 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
 
 function Field({ label, children }) {
   return <div className="flex flex-col gap-0.5"><label className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</label>{children}</div>;
+}
+
+// SCHED-11: schedulingCycleDiagnosis.js already traced the loop and ranked which link to remove --
+// this just renders that verdict. Visible to every viewer (a non-owner can already see dependencies/
+// critical path), but the actual "remove this link" action is owner-gated, same as every other write
+// in this board.
+function CycleConflictBanner({ cycleDiagnoses, isOwner, onRemoveDependency }) {
+  return (
+    <div className="border-b border-red-200 bg-red-50 px-4 py-2.5" data-scheduling-cycle-banner>
+      {cycleDiagnoses.map((cycle, index) => (
+        <div key={cycle.edges.map((edge) => edge.id).join(",")} className={index > 0 ? "mt-2" : ""}>
+          <p className="text-xs font-black text-red-800">
+            Circular dependency: {cycle.taskCodes.join(" → ")} — these activities are excluded from schedule calculation until it&apos;s broken.
+          </p>
+          {cycle.suggestion && (
+            <p className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-red-700">
+              <span>Suggested fix: remove {cycle.suggestion.dependency.predecessor_task_code} → {cycle.suggestion.dependency.successor_task_code} ({cycle.suggestion.reason})</span>
+              {isOwner && (
+                <button type="button" onClick={() => onRemoveDependency(cycle.suggestion.dependency.id)}
+                  className="rounded-full border border-red-300 bg-white px-2.5 py-0.5 text-xs font-bold text-red-800 hover:bg-red-100">
+                  Remove this link
+                </button>
+              )}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // Sits to the right of Zoom in the topbar. Dropdowns (not a full swatch grid or a size
