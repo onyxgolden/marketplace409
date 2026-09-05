@@ -222,7 +222,11 @@ function constraintForwardBound(block, calendar, holidaySet) {
   }
 }
 
-function computeForwardDatesForBlock(block, validDependencies, resultsById, calendar, holidaySet, project, useDependencyOnly) {
+// Exported (SCHED-09) so schedulingResourceLeveling.js can compute one block's dependency-driven
+// earliest start/finish against a partial, incrementally-built resultsById (its own leveled dates
+// so far), without duplicating this relationship/lag/constraint logic. No behavior change --
+// forwardPass below still uses it exactly as before.
+export function computeForwardDatesForBlock(block, validDependencies, resultsById, calendar, holidaySet, project, useDependencyOnly) {
   const predecessors = predecessorDependenciesFor(block.id, validDependencies);
   const candidates = [];
   for (const dependency of predecessors) {
