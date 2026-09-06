@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BASE_BLOCK_FONT_SIZE_PX, CALENDAR_PRESETS, HISTORY_LIMIT, MIN_BLOCK_FONT_SIZE_PX, PROJECT_TEMPLATES,
-  addBlock, addBlackoutWindow, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
+  addBlock, addBlackoutWindow, addCalendar, addCustomChip, addDependency, addLane, applyImportedActivities, blackoutDayRuns,
   blockAnchorPoint, blockToChip, calendarById, calendarForLane, chipsByCategory, computeWeeks,
   dataDateOffset, deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints,
   deserializeBoardState, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, hydrateBoardState,
@@ -410,6 +410,38 @@ describe("addDependency / removeDependency / dependenciesForBlock", () => {
     expect(predecessors[0].predecessorId).toBe("b1");
     expect(successors).toHaveLength(1);
     expect(successors[0].successorId).toBe("b3");
+  });
+});
+
+describe("applyImportedActivities", () => {
+  it("patches an existing block's fields by taskCode, leaving untouched blocks alone", () => {
+    const state = applyImportedActivities(twoBlockState(), [
+      { taskCode: "A1010", taskName: "Renamed", durationWeeks: 3, startIdx: 5 },
+    ]);
+    const b1 = state.blocks.find((block) => block.taskCode === "A1010");
+    const b2 = state.blocks.find((block) => block.taskCode === "A1020");
+    expect(b1).toMatchObject({ label: "Renamed", duration: 3, startIdx: 5 });
+    expect(b2).toMatchObject({ label: "Detailed Design" }); // untouched
+  });
+
+  it("replaces a block's predecessor set with exactly what the patch lists", () => {
+    let state = twoBlockState();
+    state = addDependency(state, "b1", "b2", "FS", 0);
+    state = applyImportedActivities(state, [{ taskCode: "A1020", predecessors: [{ taskCode: "A1010", relationshipType: "SS", lagDays: 2 }] }]);
+    expect(state.dependencies).toHaveLength(1);
+    expect(state.dependencies[0]).toMatchObject({ predecessorId: "b1", successorId: "b2", relationshipType: "SS", lagDays: 2 });
+  });
+
+  it("clears a block's predecessors when the patch lists none", () => {
+    let state = twoBlockState();
+    state = addDependency(state, "b1", "b2", "FS", 0);
+    state = applyImportedActivities(state, [{ taskCode: "A1020", predecessors: [] }]);
+    expect(state.dependencies).toHaveLength(0);
+  });
+
+  it("is a no-op for a taskCode with no matching patch", () => {
+    const state = twoBlockState();
+    expect(applyImportedActivities(state, [{ taskCode: "A9999", taskName: "Ghost" }])).toEqual(state);
   });
 });
 

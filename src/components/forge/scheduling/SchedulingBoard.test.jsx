@@ -27,10 +27,12 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain("+ Add lane");
   });
 
-  it("offers Export XER and Export Project XML for the default (owner) board", () => {
+  it("offers Export XER, Export Project XML, Export Excel, and Import Excel for the default (owner) board", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).toContain("Export XER");
     expect(markup).toContain("Export Project XML");
+    expect(markup).toContain("Export Excel");
+    expect(markup).toContain("Import Excel");
   });
 
   it("shows the empty-board hint before anything is placed", () => {
