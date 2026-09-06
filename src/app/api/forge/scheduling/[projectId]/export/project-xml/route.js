@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
-import { exportProjectToXer } from "@/domains/scheduling/schedulingXerExport";
+import { exportProjectToProjectXml } from "@/domains/scheduling/schedulingProjectXmlExport";
 import { loadProjectRelational, loadResourceCostData, computeAndPersistCpm, loadExportData } from "../../../scheduleProjectAssembly";
 
 async function authenticatedContext() {
@@ -11,17 +11,10 @@ function sanitizeFilename(name) {
   return (name || "schedule").replace(/[^a-zA-Z0-9 _-]/g, "").trim() || "schedule";
 }
 
-// Owner-only -- an export bundles resource/cost data into the same file (matching every other
-// resource-touching route since SCHED-05's no-public-select decision), so there's no meaningful
-// "read-only export for a non-owner viewer" version to offer.
-//
-// Exports only Gantt task/milestone blocks (cpmBlocks) -- the same set every other CPM-derived
-// feature in this build-out (baselines, EVM, leveling) operates on. Hammocks are NOT exported: a
-// pre-existing gap in computeAndPersistCpm (it filters hammocks out of the CPM run entirely and
-// never persists early_start/early_finish for them -- see that function's own ganttBlocks filter),
-// not something this ticket introduces or is scoped to fix. schedulingXerExport.js's TT_LOE mapping
-// is written and tested for whenever that gap closes; it's simply never reached from this route
-// today.
+// Mirrors [projectId]/export/xer/route.js exactly -- same owner-only gating, same
+// Gantt-blocks-only scope (hammocks not exported, same pre-existing computeAndPersistCpm gap),
+// same shared loadExportData prep (calendar gap-fill, holidays, referential-integrity filtering).
+// The two routes differ only in which exporter they call and the file's Content-Type/extension.
 export async function GET(request, { params }) {
   try {
     const authenticated = await authenticatedContext();
@@ -36,21 +29,20 @@ export async function GET(request, { params }) {
     const { resources, assignments } = await loadResourceCostData(authenticated.supabaseClient, relational);
     const { calendars, holidays, dependencies, assignments: exportAssignments } = await loadExportData(authenticated.supabaseClient, relational, cpmBlocks, assignments);
 
-    const xer = exportProjectToXer({
+    const projectXml = exportProjectToProjectXml({
       project: relational.project, calendars, holidays,
-      wbsNodes: relational.wbsNodes, lanes: relational.lanes, blocks: cpmBlocks, dependencies,
-      resources, assignments: exportAssignments, exportedBy: authenticated.user.email || authenticated.user.id,
+      blocks: cpmBlocks, dependencies, resources, assignments: exportAssignments,
     });
 
-    return new NextResponse(xer, {
+    return new NextResponse(projectXml, {
       status: 200,
       headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${sanitizeFilename(relational.project.name)}.xer"`,
+        "Content-Type": "application/xml; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${sanitizeFilename(relational.project.name)}.xml"`,
       },
     });
   } catch (error) {
-    console.error("Scheduling XER export error", error);
-    return NextResponse.json({ error: "Unable to export this project to XER." }, { status: 500 });
+    console.error("Scheduling Project XML export error", error);
+    return NextResponse.json({ error: "Unable to export this project to Project XML." }, { status: 500 });
   }
 }

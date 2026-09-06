@@ -114,4 +114,15 @@ describe("schedulingProjectXmlExport — exportProjectToProjectXml", () => {
     expect(calendarSection).toContain("<DayType>2</DayType><DayWorking>1</DayWorking><WorkingTimes>"); // Monday.
     expect(calendarSection).toContain("<DayType>7</DayType><DayWorking>0</DayWorking>"); // Saturday.
   });
+
+  it("encodes a holiday as a single-day, DayWorking=0 Exception", () => {
+    const holidays = [{ calendar_id: "cal_1", holiday_date: "2026-07-04" }];
+    const xml = exportProjectToProjectXml({ project: baseProject(), calendars: [baseCalendar()], holidays, blocks: [baseBlock("A")] });
+    expect(xml).toContain("<Exceptions><Exception><TimePeriod><FromDate>2026-07-04T00:00:00</FromDate><ToDate>2026-07-04T00:00:00</ToDate></TimePeriod><DayWorking>0</DayWorking></Exception></Exceptions>");
+  });
+
+  it("omits Exceptions entirely for a calendar with no holidays", () => {
+    const xml = exportProjectToProjectXml({ project: baseProject(), calendars: [baseCalendar()], holidays: [], blocks: [baseBlock("A")] });
+    expect(xml).not.toContain("<Exceptions>");
+  });
 });
