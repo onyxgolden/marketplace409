@@ -632,28 +632,30 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
           <button type="button" onClick={handleRedo} disabled={history.future.length === 0} title="Redo (Ctrl+Shift+Z)"
             className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold disabled:opacity-40">Redo</button>
         </div>
-        <button type="button" onClick={handleExport} className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">Export JSON</button>
-        <label className="cursor-pointer rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">
-          Import JSON<input type="file" accept="application/json" className="hidden" onChange={handleImport} />
-        </label>
-        {isOwner && (
-          // A plain navigation, not a fetch+blob dance -- the route's Content-Disposition header
-          // triggers the browser's own download handling, same as Export JSON needs none of this
-          // server-round-trip machinery at all (it's pure client-side board serialization).
-          <>
-            <button type="button" onClick={() => { window.location.href = `/api/forge/scheduling/${projectId}/export/xer`; }}
-              className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold" data-scheduling-export-xer>Export XER</button>
-            <button type="button" onClick={() => { window.location.href = `/api/forge/scheduling/${projectId}/export/project-xml`; }}
-              className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold" data-scheduling-export-project-xml>Export Project XML</button>
-          </>
-        )}
         <details className="relative" data-scheduling-menu>
           <summary className="cursor-pointer list-none rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">Menu</summary>
-          <div className="absolute left-0 z-50 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 text-slate-950 shadow-xl">
+          <div className="absolute left-0 z-50 mt-2 w-52 rounded-xl border border-slate-200 bg-white p-2 text-slate-950 shadow-xl">
             <Link href="/forge/scheduling" className="block rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">All Projects</Link>
             {wbsEnabled && (
               <Link href={`/forge/scheduling/${projectId}/wbs`} className="block rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">WBS</Link>
             )}
+            <div className="my-1 border-t border-slate-200" />
+            <button type="button" onClick={handleExport} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Export JSON</button>
+            <label className="block cursor-pointer rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">
+              Import JSON<input type="file" accept="application/json" className="hidden" onChange={handleImport} />
+            </label>
+            {isOwner && (
+              // A plain navigation, not a fetch+blob dance -- the route's Content-Disposition header
+              // triggers the browser's own download handling, same as Export JSON needs none of this
+              // server-round-trip machinery at all (it's pure client-side board serialization).
+              <>
+                <button type="button" onClick={() => { window.location.href = `/api/forge/scheduling/${projectId}/export/xer`; }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100" data-scheduling-export-xer>Export XER</button>
+                <button type="button" onClick={() => { window.location.href = `/api/forge/scheduling/${projectId}/export/project-xml`; }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100" data-scheduling-export-project-xml>Export Project XML</button>
+              </>
+            )}
+            <div className="my-1 border-t border-slate-200" />
             <button type="button" onClick={() => setShowCalendars(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Calendars</button>
             <button type="button" onClick={() => setShowBaselines(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Baselines</button>
             {isOwner && (
@@ -664,11 +666,12 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
                 <button type="button" onClick={() => setShowLeveling(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Level Resources</button>
               </>
             )}
+            <div className="my-1 border-t border-slate-200" />
+            <button type="button" onClick={handleReset} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold text-red-700 hover:bg-red-50">Reset board</button>
           </div>
         </details>
         <button type="button" onClick={() => setShowHelp(true)} title="Help & keyboard shortcuts"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-700 text-sm font-black hover:bg-slate-800">?</button>
-        <button type="button" onClick={handleReset} className="rounded border border-red-800 bg-red-950 px-3 py-1.5 text-sm font-bold">Reset board</button>
       </div>
 
       {board.cpm?.cycleDiagnoses?.length > 0 && (
