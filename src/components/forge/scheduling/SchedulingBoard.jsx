@@ -12,7 +12,7 @@ import { usePersistedBoard } from "./usePersistedBoard";
 import {
   LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
-  addBlackoutWindow, addBlock, addCalendar, addCustomChip, addDependency, addLane, blackoutDayRuns,
+  addBlackoutWindow, addBlock, addCalendar, addCustomChip, addDependency, addLane, applyImportedActivities, blackoutDayRuns,
   blockToChip, calendarById, calendarForLane, chipsByCategory, clampIndex, colorForCategory,
   computeWeeks, dataDateOffset, dependenciesForBlock, dependencyArrowPoints, deserializeBoardState,
   deleteLane, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, laneIndexOf, linkBlocksInOrder, moveBlock,
@@ -569,6 +569,32 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
     reader.readAsText(file);
     event.target.value = "";
   }
+  // Structural fields (label, category, milestone, duration, lane, predecessors) apply to the
+  // in-memory board via commitBoard, same as any other undoable edit -- the normal autosave then
+  // persists them. Progress fields (percentComplete/actualStart/actualFinish) never lived in the
+  // board-jsonb shape (see scheduleProjectAssembly.js), so those go through the same per-activity
+  // PATCH updateBlockProgress already uses for manual drawer edits.
+  async function handleImportExcel(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const response = await fetch(`/api/forge/scheduling/${projectId}/import/excel`, { method: "POST", body: file });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      window.alert(result.errors?.length ? `${result.error}\n\n${result.errors.join("\n")}` : (result.error || "Unable to import this Excel file."));
+      return;
+    }
+    const patches = result.patches || [];
+    commitBoard((current) => applyImportedActivities(current, patches));
+    await Promise.all(patches.map((patch) => {
+      const progressPatch = {};
+      if ("percentComplete" in patch) progressPatch.percentComplete = patch.percentComplete;
+      if ("actualStart" in patch) progressPatch.actualStart = patch.actualStart;
+      if ("actualFinish" in patch) progressPatch.actualFinish = patch.actualFinish;
+      return Object.keys(progressPatch).length ? updateBlockProgress(patch.taskCode, progressPatch) : null;
+    }));
+    window.alert(`Updated ${patches.length} ${patches.length === 1 ? "activity" : "activities"} from the imported file.`);
+  }
   function handleReset() {
     if (window.confirm("Reset the board? This clears all placed blocks, lanes, and custom chips.")) {
       commitBoard(resetBoard(board));
@@ -653,6 +679,11 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
                   className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100" data-scheduling-export-xer>Export XER</button>
                 <button type="button" onClick={() => { window.location.href = `/api/forge/scheduling/${projectId}/export/project-xml`; }}
                   className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100" data-scheduling-export-project-xml>Export Project XML</button>
+                <button type="button" onClick={() => { window.location.href = `/api/forge/scheduling/${projectId}/export/excel`; }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100" data-scheduling-export-excel>Export Excel</button>
+                <label className="block cursor-pointer rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100" data-scheduling-import-excel>
+                  Import Excel<input type="file" accept=".xlsx" className="hidden" onChange={handleImportExcel} />
+                </label>
               </>
             )}
             <div className="my-1 border-t border-slate-200" />

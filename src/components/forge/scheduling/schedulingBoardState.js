@@ -767,6 +767,48 @@ export function removeDependency(state, dependencyId) {
   return Object.freeze({ ...state, dependencies: Object.freeze(state.dependencies.filter((dependency) => dependency.id !== dependencyId)) });
 }
 
+// SCHED-18: merges validated Excel import patches (schedulingExcelImport.js's
+// validateAndPlanImport) into the board -- update-only, matched by taskCode, so every patch's
+// taskCode is already guaranteed to exist. A patch's `predecessors`, when present, fully replaces
+// that activity's existing predecessor set (the Predecessors cell is the sole authority for what's
+// linked once it's been edited), reusing addDependency so a link to an unknown/self id is silently
+// skipped the same way any other addDependency call already handles that.
+export function applyImportedActivities(state, patches) {
+  let next = Object.freeze({
+    ...state,
+    blocks: Object.freeze(state.blocks.map((block) => {
+      const patch = patches.find((candidate) => candidate.taskCode === block.taskCode);
+      if (!patch) return block;
+      return Object.freeze({
+        ...block,
+        label: patch.taskName ?? block.label,
+        category: patch.category ?? block.category,
+        milestone: patch.milestone ?? block.milestone,
+        duration: patch.durationWeeks ?? block.duration,
+        startIdx: patch.startIdx ?? block.startIdx,
+        laneId: patch.laneId ?? block.laneId,
+      });
+    })),
+  });
+
+  const blockIdByTaskCode = new Map(next.blocks.map((block) => [block.taskCode, block.id]));
+  for (const patch of patches) {
+    if (!patch.predecessors) continue;
+    const successorId = blockIdByTaskCode.get(patch.taskCode);
+    if (!successorId) continue;
+    next = Object.freeze({
+      ...next,
+      dependencies: Object.freeze(next.dependencies.filter((dependency) => dependency.successorId !== successorId)),
+    });
+    for (const predecessor of patch.predecessors) {
+      const predecessorId = blockIdByTaskCode.get(predecessor.taskCode);
+      if (!predecessorId) continue;
+      next = addDependency(next, predecessorId, successorId, predecessor.relationshipType, predecessor.lagDays);
+    }
+  }
+  return next;
+}
+
 // Chains consecutive pairs in `blockIds` as dependencies, in exactly the order given --
 // e.g. [b1, b2, b3] links b1->b2 and b2->b3, not a fan-out from b1. Backs the "Link in
 // order" multi-select action: Ctrl-click builds this ordered list, then this connects it.
