@@ -27,6 +27,11 @@ describe("SchedulingBoard", () => {
     expect(markup).toContain("+ Add lane");
   });
 
+  it("offers Export XER for the default (owner) board", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain("Export XER");
+  });
+
   it("shows the empty-board hint before anything is placed", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).toContain("Drag a block from the left panel onto the grid to place it.");

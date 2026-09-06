@@ -636,6 +636,13 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
         <label className="cursor-pointer rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">
           Import JSON<input type="file" accept="application/json" className="hidden" onChange={handleImport} />
         </label>
+        {isOwner && (
+          // A plain navigation, not a fetch+blob dance -- the route's Content-Disposition header
+          // triggers the browser's own download handling, same as Export JSON needs none of this
+          // server-round-trip machinery at all (it's pure client-side board serialization).
+          <button type="button" onClick={() => { window.location.href = `/api/forge/scheduling/${projectId}/export/xer`; }}
+            className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold" data-scheduling-export-xer>Export XER</button>
+        )}
         <details className="relative" data-scheduling-menu>
           <summary className="cursor-pointer list-none rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">Menu</summary>
           <div className="absolute left-0 z-50 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-2 text-slate-950 shadow-xl">
