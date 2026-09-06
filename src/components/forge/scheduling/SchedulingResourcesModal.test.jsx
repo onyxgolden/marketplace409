@@ -80,6 +80,36 @@ describe("SchedulingResourcesModal", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
+  it("loads a template's starter resource set, skipping names that already exist", async () => {
+    const onChanged = vi.fn();
+    global.fetch.mockReturnValueOnce(jsonResponse({ success: true, resources: [] }));
+    mounted = mount(<SchedulingResourcesModal isOwner onClose={() => {}} onChanged={onChanged} templateId="capital" />);
+    await flush();
+
+    // Every remaining call is either a create POST (resolved ok/409 in order) or the final refetch.
+    global.fetch.mockImplementation((url, init) => {
+      if (init?.method === "POST") {
+        return jsonResponse({ error: "A resource with that name already exists." }, false).then((r) => ({ ...r, status: 409 }));
+      }
+      return jsonResponse({ success: true, resources: [{ id: "resource_1", name: "Pipefitter Crew", resource_type: "labor", max_units_per_day: 8, std_rate: 65, is_active: true }] });
+    });
+
+    const loadButton = mounted.container.querySelector("[data-scheduling-load-starter-resources-button]");
+    await act(async () => { loadButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(mounted.container.textContent).toMatch(/already existed/);
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("defaults the starter-set picker to the project's own template", async () => {
+    global.fetch.mockReturnValue(jsonResponse({ success: true, resources: [] }));
+    mounted = mount(<SchedulingResourcesModal isOwner onClose={() => {}} templateId="home_remodel" />);
+    await flush();
+
+    const select = mounted.container.querySelector("[data-scheduling-load-starter-resources] select");
+    expect(select.value).toBe("home_remodel");
+  });
+
   it("shows a clear error when deleting a resource still in use", async () => {
     global.fetch
       .mockReturnValueOnce(jsonResponse({ success: true, resources: [{ id: "resource_1", name: "Framing Crew", resource_type: "labor", max_units_per_day: 8, std_rate: 50, is_active: true }] }))

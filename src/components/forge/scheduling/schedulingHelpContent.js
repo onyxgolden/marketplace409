@@ -93,6 +93,7 @@ export const HELP_SECTIONS = Object.freeze([
     title: "Resources & costs",
     items: [
       { label: "Menu -> Resources", description: "A dictionary of labor, nonlabor, and material resources shared across all of your scheduling projects -- name, type, max units/day, and standard rate." },
+      { label: "Load starter resources (Resources)", description: "One click adds a template-appropriate starter set (crews, equipment, materials) to your resource dictionary -- pick any template's set, not just this project's own. Names you already have are skipped, so it's safe to run more than once." },
       { label: "Resources & costs (drawer)", description: "Assign a resource to the selected activity with budgeted units, or add a non-resource expense (a permit, a rental, etc.)." },
       { label: "Menu -> Costs", description: "Read-only budgeted/actual/remaining cost, project-wide and per activity, plus warnings for any resource booked over its daily capacity." },
     ],

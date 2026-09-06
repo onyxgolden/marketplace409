@@ -882,7 +882,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
         <SchedulingBaselinesModal projectId={projectId} isOwner={isOwner} blocks={board.blocks} onClose={() => setShowBaselines(false)} />
       )}
       {showResources && (
-        <SchedulingResourcesModal isOwner={isOwner} onClose={() => setShowResources(false)} onChanged={loadResources} />
+        <SchedulingResourcesModal isOwner={isOwner} onClose={() => setShowResources(false)} onChanged={loadResources} templateId={board.templateId} />
       )}
       {showCosts && (
         <SchedulingCostsModal projectId={projectId} blocks={board.blocks} onClose={() => setShowCosts(false)} />

@@ -1,7 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
+import { PROJECT_TEMPLATES } from "./schedulingBoardState";
+import { starterResourceSetForTemplate } from "./schedulingStarterResources";
 
 const RESOURCE_TYPES = ["labor", "nonlabor", "material"];
+const UNIQUE_VIOLATION_STATUS = 409;
 
 function emptyDraft() {
   return { name: "", resourceType: "labor", unitOfMeasure: "", maxUnitsPerDay: "8", stdRate: "0" };
@@ -12,12 +15,14 @@ function emptyDraft() {
 // of this owner's projects, same mental model as a P6 enterprise resource pool. onChanged fires
 // after any create/update/delete so the board's own resources list (used by the per-block
 // assignment picker in the drawer) can refetch.
-export default function SchedulingResourcesModal({ isOwner, onClose, onChanged }) {
+export default function SchedulingResourcesModal({ isOwner, onClose, onChanged, templateId }) {
   const [resources, setResources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState(emptyDraft());
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
+  const [starterTemplateId, setStarterTemplateId] = useState(templateId || PROJECT_TEMPLATES[0].id);
+  const [loadingStarter, setLoadingStarter] = useState(false);
 
   async function loadResources() {
     setLoading(true);
@@ -43,6 +48,30 @@ export default function SchedulingResourcesModal({ isOwner, onClose, onChanged }
     if (!response.ok) { setMessage(result.error || "Unable to create this resource."); return; }
     setDraft(emptyDraft());
     setMessage("Resource added.");
+    await loadResources();
+    onChanged?.();
+  }
+
+  // Loads a template's starter resource set one at a time (small lists, and sequential keeps the
+  // 409-is-a-duplicate handling simple) via the same create endpoint handleCreate uses -- no bulk
+  // route needed since schedule_resources already enforces unique(owner_id, name) and returns a
+  // clean 409 for it, which this treats as "already have it" rather than a failure.
+  async function handleLoadStarterResources() {
+    setLoadingStarter(true); setMessage("");
+    let added = 0; let skipped = 0;
+    for (const starter of starterResourceSetForTemplate(starterTemplateId)) {
+      const response = await fetch("/api/forge/scheduling/resources", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: starter.name, resourceType: starter.resourceType,
+          unitOfMeasure: starter.unitOfMeasure, maxUnitsPerDay: starter.maxUnitsPerDay, stdRate: starter.stdRate,
+        }),
+      });
+      if (response.ok) added += 1;
+      else if (response.status === UNIQUE_VIOLATION_STATUS) skipped += 1;
+    }
+    setLoadingStarter(false);
+    setMessage(skipped > 0 ? `Added ${added} resources (${skipped} already existed).` : `Added ${added} resources.`);
     await loadResources();
     onChanged?.();
   }
@@ -76,7 +105,23 @@ export default function SchedulingResourcesModal({ isOwner, onClose, onChanged }
         </div>
 
         {isOwner && (
-          <div className="mt-5 rounded-lg bg-slate-50 p-3">
+          <div className="mt-5 rounded-lg border border-dashed border-slate-300 p-3" data-scheduling-load-starter-resources>
+            <p className="text-xs font-bold text-slate-600">Load starter resources</p>
+            <p className="mt-1 text-xs text-slate-500">Adds a template-appropriate starter set to your resource dictionary -- names already in your list are skipped, so it&apos;s safe to run more than once.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <select value={starterTemplateId} onChange={(e) => setStarterTemplateId(e.target.value)} className="rounded border border-slate-300 px-2 py-1 text-sm">
+                {PROJECT_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+              </select>
+              <button type="button" onClick={handleLoadStarterResources} disabled={loadingStarter}
+                className="rounded bg-slate-950 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" data-scheduling-load-starter-resources-button>
+                {loadingStarter ? "Loading…" : "Load starter set"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isOwner && (
+          <div className="mt-3 rounded-lg bg-slate-50 p-3">
             <p className="text-xs font-bold text-slate-600">Add a resource</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <input value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="e.g. Framing Crew"
