@@ -627,10 +627,10 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
             className="rounded-full bg-amber-900/60 px-2.5 py-1 text-[11px] font-bold text-amber-200">Read-only example</span>
         )}
         <div className="flex items-center gap-1">
-          <button type="button" onClick={handleUndo} disabled={history.past.length === 0} title="Undo (Ctrl+Z)"
-            className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold disabled:opacity-40">Undo</button>
-          <button type="button" onClick={handleRedo} disabled={history.future.length === 0} title="Redo (Ctrl+Shift+Z)"
-            className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold disabled:opacity-40">Redo</button>
+          <button type="button" onClick={handleUndo} disabled={history.past.length === 0} title="Undo (Ctrl+Z)" aria-label="Undo"
+            className="flex h-8 w-8 items-center justify-center rounded border border-slate-700 text-base font-bold disabled:opacity-40">↺</button>
+          <button type="button" onClick={handleRedo} disabled={history.future.length === 0} title="Redo (Ctrl+Shift+Z)" aria-label="Redo"
+            className="flex h-8 w-8 items-center justify-center rounded border border-slate-700 text-base font-bold disabled:opacity-40">↻</button>
         </div>
         <details className="relative" data-scheduling-menu>
           <summary className="cursor-pointer list-none rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">Menu</summary>
@@ -670,6 +670,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
             <button type="button" onClick={handleReset} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold text-red-700 hover:bg-red-50">Reset board</button>
           </div>
         </details>
+        <div className="flex-1" />
         <button type="button" onClick={() => setShowHelp(true)} title="Help & keyboard shortcuts"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-700 text-sm font-black hover:bg-slate-800">?</button>
       </div>
