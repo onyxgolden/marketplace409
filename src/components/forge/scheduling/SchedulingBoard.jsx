@@ -640,8 +640,12 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
           // A plain navigation, not a fetch+blob dance -- the route's Content-Disposition header
           // triggers the browser's own download handling, same as Export JSON needs none of this
           // server-round-trip machinery at all (it's pure client-side board serialization).
-          <button type="button" onClick={() => { window.location.href = `/api/forge/scheduling/${projectId}/export/xer`; }}
-            className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold" data-scheduling-export-xer>Export XER</button>
+          <>
+            <button type="button" onClick={() => { window.location.href = `/api/forge/scheduling/${projectId}/export/xer`; }}
+              className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold" data-scheduling-export-xer>Export XER</button>
+            <button type="button" onClick={() => { window.location.href = `/api/forge/scheduling/${projectId}/export/project-xml`; }}
+              className="rounded border border-slate-700 px-3 py-1.5 text-sm font-bold" data-scheduling-export-project-xml>Export Project XML</button>
+          </>
         )}
         <details className="relative" data-scheduling-menu>
           <summary className="cursor-pointer list-none rounded border border-slate-700 px-3 py-1.5 text-sm font-bold">Menu</summary>

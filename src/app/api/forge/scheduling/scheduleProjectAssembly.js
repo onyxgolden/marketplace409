@@ -117,6 +117,40 @@ export async function loadResourceCostData(supabaseClient, relational) {
   };
 }
 
+// SCHED-13/15: shared prep for any full-schedule export (XER, Project XML, ...). Every exporter
+// needs the same three things beyond loadProjectRelational's own data: every calendar actually
+// referenced -- including a reusable/global one (schedule_project_id IS NULL) outside this
+// project's own scoped rows, which loadProjectRelational's fetch misses entirely -- that
+// calendar's holidays, and dependencies/assignments filtered down to the blocks actually being
+// exported (cpmBlocks), so neither an exporter's predecessor-link table nor its assignment table
+// can reference a block id that isn't in the file's own task table.
+export async function loadExportData(supabaseClient, relational, cpmBlocks, assignments) {
+  const referencedCalendarIds = new Set([
+    relational.project.default_calendar_id,
+    ...relational.lanes.map((lane) => lane.calendar_id),
+    ...cpmBlocks.map((block) => block.calendar_id),
+  ].filter(Boolean));
+  const missingCalendarIds = [...referencedCalendarIds].filter((id) => !relational.calendars.some((calendar) => calendar.id === id));
+  let calendars = relational.calendars;
+  if (missingCalendarIds.length > 0) {
+    const { data: extraCalendars, error: extraCalendarsError } = await supabaseClient.from("schedule_calendars").select("*").in("id", missingCalendarIds);
+    if (extraCalendarsError) throw extraCalendarsError;
+    calendars = [...calendars, ...(extraCalendars || [])];
+  }
+
+  const calendarIds = calendars.map((calendar) => calendar.id);
+  const { data: holidays, error: holidaysError } = calendarIds.length
+    ? await supabaseClient.from("schedule_calendar_holidays").select("*").in("calendar_id", calendarIds)
+    : { data: [], error: null };
+  if (holidaysError) throw holidaysError;
+
+  const cpmBlockIds = new Set(cpmBlocks.map((block) => block.id));
+  const dependencies = relational.dependencies.filter((dependency) => cpmBlockIds.has(dependency.predecessor_id) && cpmBlockIds.has(dependency.successor_id));
+  const exportAssignments = assignments.filter((assignment) => cpmBlockIds.has(assignment.block_id));
+
+  return { calendars, holidays: holidays || [], dependencies, assignments: exportAssignments };
+}
+
 // schedule_resource_assignments/schedule_expenses reference a block by its relational id, not by
 // (schedule_project_id, task_code) the way every route so far addresses a block -- this resolves
 // one to the other. Returns null (not a thrown error) for "doesn't exist or isn't this owner's",

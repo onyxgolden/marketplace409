@@ -67,7 +67,11 @@ function createIdAllocator() {
 // WeekDay.DayType: 1=Sunday..7=Saturday, matching this schema's own working_days convention
 // (0=Sun..6=Sat) shifted by one -- the same numbering XER's clndr_data happened to use too
 // (SCHED-12), though that's coincidence, not reuse (the two formats are otherwise unrelated).
-function buildCalendarXml(calendar, xid) {
+// Exceptions (holidays): one per holiday date, DayWorking=0 across a single-day TimePeriod. This
+// specific FromDate/ToDate-both-same-day formatting was NOT independently verified against a real
+// Project-generated sample the way the rest of this schema was (see the module header) -- flagged
+// with the same honesty bar as AccrueAt, the module's other unverified-but-reasonable mapping.
+function buildCalendarXml(calendar, xid, holidayDatesISO = []) {
   const workingSet = new Set(calendar.working_days);
   const weekDays = [];
   for (let dayType = 1; dayType <= 7; dayType += 1) {
@@ -78,8 +82,12 @@ function buildCalendarXml(calendar, xid) {
       + `</WeekDay>`,
     );
   }
+  const exceptions = holidayDatesISO.map((dateISO) => (
+    `<Exception><TimePeriod>${tag("FromDate", isoDateTime(dateISO))}${tag("ToDate", isoDateTime(dateISO))}</TimePeriod>${tag("DayWorking", 0)}</Exception>`
+  ));
   return `<Calendar>${tag("UID", xid(calendar.id))}${tag("Name", calendar.name)}${tag("IsBaseCalendar", 1)}`
     + `<WeekDays>${weekDays.join("")}</WeekDays>`
+    + (exceptions.length > 0 ? `<Exceptions>${exceptions.join("")}</Exceptions>` : "")
     + `</Calendar>`;
 }
 
@@ -141,7 +149,7 @@ function buildAssignmentXml(assignment, resourcesById, xid) {
 }
 
 export function exportProjectToProjectXml({
-  project, calendars = [], blocks = [], dependencies = [], resources = [], assignments = [], exportedAtISO,
+  project, calendars = [], holidays = [], blocks = [], dependencies = [], resources = [], assignments = [], exportedAtISO,
 }) {
   const xid = createIdAllocator();
 
@@ -149,6 +157,12 @@ export function exportProjectToProjectXml({
   const defaultCalendarId = project.default_calendar_id && calendars.some((calendar) => calendar.id === project.default_calendar_id)
     ? project.default_calendar_id
     : effectiveCalendars[0].id;
+
+  const holidaysByCalendarId = new Map();
+  for (const holiday of holidays) {
+    if (!holidaysByCalendarId.has(holiday.calendar_id)) holidaysByCalendarId.set(holiday.calendar_id, []);
+    holidaysByCalendarId.get(holiday.calendar_id).push(holiday.holiday_date);
+  }
 
   // PredecessorLink nests inside Task (unlike XER's separate TASKPRED table) -- group dependencies
   // by successor once, up front, rather than filtering the whole array per task.
@@ -161,7 +175,7 @@ export function exportProjectToProjectXml({
 
   const resourcesById = new Map(resources.map((resource) => [resource.id, resource]));
 
-  const calendarsXml = effectiveCalendars.map((calendar) => buildCalendarXml(calendar, xid)).join("");
+  const calendarsXml = effectiveCalendars.map((calendar) => buildCalendarXml(calendar, xid, holidaysByCalendarId.get(calendar.id) ?? [])).join("");
   const tasksXml = blocksWithPredecessors.map((block) => buildTaskXml(block, xid, defaultCalendarId)).join("");
   const resourcesXml = resources.map((resource) => buildResourceXml(resource, xid, defaultCalendarId)).join("");
   const assignmentsXml = assignments.map((assignment) => buildAssignmentXml(assignment, resourcesById, xid)).join("");
