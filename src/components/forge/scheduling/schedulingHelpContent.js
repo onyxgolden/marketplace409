@@ -43,6 +43,8 @@ export const HELP_SECTIONS = Object.freeze([
       { label: "Click a Predecessor/Successor row", description: "Jumps the drawer to that linked block, so you can walk a chain and add or remove links along the way." },
       { label: "✕ on a Predecessor/Successor row", description: "Removes that relationship." },
       { label: "Suggested predecessors / successors", description: "One-click chips for blocks that finish right where the selected block starts, or start right where it finishes -- never added automatically, only suggested." },
+      { label: "CPM info (drawer)", description: "Shows the selected block's calendar-computed early/late start and finish, total float, and whether it's on the critical path." },
+      { label: "% complete / Actual start / finish (drawer)", description: "Track real progress separately from the schedule's computed dates -- feeds baseline variance, EVM, and DCMA's missed-task and baseline-execution checks." },
     ],
   },
   {
@@ -64,7 +66,7 @@ export const HELP_SECTIONS = Object.freeze([
       { label: "Hide empty weeks", description: "Collapses out any week with nothing scheduled in it, in any lane." },
       { label: "Hide / Show (palette)", description: "Collapses the \"Starter objects\" panel to free up space." },
       { label: "Text (Size / Color / B)", description: "Applies to whatever block(s) are currently selected." },
-      { label: "Critical path", description: "Highlights the longest dependency-linked chain by duration in red. A simplified stand-in for real CPM until calendars and constraints exist -- not tied to actual float or scheduling logic yet." },
+      { label: "Critical path", description: "Highlights every activity with zero total float in red -- the real critical path, computed from calendars, relationship types (FS/SS/FF/SF) with lag, and constraints, not just longest-chain-by-duration." },
       { label: "Data date line", description: "A solid blue vertical line marking today's date on the grid, same idea as P6's data date. Only shows when today falls within the project's own start/end dates." },
     ],
   },
@@ -73,9 +75,46 @@ export const HELP_SECTIONS = Object.freeze([
     items: [
       { label: "Apply dates", description: "Changes the project's overall start/end date range." },
       { label: "Export / Import JSON", description: "Save the current project to a file, or load one back in." },
+      { label: "Export XER", description: "Downloads the project as a Primavera P6 .xer file -- activities, dependencies, calendars, and (if any) resources and costs." },
+      { label: "Export Project XML", description: "Downloads the project in Microsoft Project's XML interchange format -- opens directly in Project via File > Open." },
       { label: "Reset board", description: "Clears placed blocks, dependencies, and custom chips, and reverts lanes to this project's own template -- undoable if you didn't mean to. Keeps the project's name, dates, and calendar setup as they were." },
       { label: "Menu -> All Projects", description: "Back to the list of saved projects. A template (Standard, Capital/Industrial, Home Remodel, New Home Construction, or Commercial) is picked there when starting a new one -- it sets the starting lanes, category labels, and starter chip palette." },
       { label: "Menu -> Calendars", description: "Build custom work calendars (which days of the week are worked) and set the project's default. Also where TA blackout windows are added -- date ranges no lane works, grayed out across the whole board regardless of calendar." },
+    ],
+  },
+  {
+    title: "Baselines",
+    items: [
+      { label: "Menu -> Baselines", description: "Capture a named snapshot of the current CPM-computed schedule." },
+      { label: "Select a captured baseline", description: "Shows per-task and project-level variance against it -- start/finish/duration slip, plus anything added or removed since the baseline was captured." },
+    ],
+  },
+  {
+    title: "Resources & costs",
+    items: [
+      { label: "Menu -> Resources", description: "A dictionary of labor, nonlabor, and material resources shared across all of your scheduling projects -- name, type, max units/day, and standard rate." },
+      { label: "Resources & costs (drawer)", description: "Assign a resource to the selected activity with budgeted units, or add a non-resource expense (a permit, a rental, etc.)." },
+      { label: "Menu -> Costs", description: "Read-only budgeted/actual/remaining cost, project-wide and per activity, plus warnings for any resource booked over its daily capacity." },
+    ],
+  },
+  {
+    title: "EVM & DCMA",
+    items: [
+      { label: "Menu -> EVM & DCMA", description: "Earned value figures (PV/EV/AC, CPI/SPI, three EAC estimates) and the DCMA 14-point schedule health assessment, measured against a baseline and an as-of date you choose." },
+    ],
+  },
+  {
+    title: "Resource leveling",
+    items: [
+      { label: "Menu -> Level Resources", description: "Previews delaying non-critical, over-allocated activities within their own float to resolve resource conflicts -- least-float activities move last. \"Apply this leveling\" pins the moved dates as start-on constraints; nothing changes until you click it." },
+      { label: "Allow extending the finish date", description: "If float alone can't resolve every conflict, lets leveling push activities (and the project finish) further out instead of leaving the conflict unresolved." },
+    ],
+  },
+  {
+    title: "Circular dependencies",
+    items: [
+      { label: "Red banner above the board", description: "Appears when a dependency loop makes part of the schedule uncomputable -- traces the actual loop (e.g. A -> B -> C -> A) and suggests which one link is most likely the mistake." },
+      { label: "Remove this link", description: "One click applies the suggested fix; you can also resolve it manually via the dependency drawer." },
     ],
   },
 ]);
