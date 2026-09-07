@@ -314,9 +314,15 @@ export function fitBlockFontSizePx(label, widthPx, heightPx = ROW_HEIGHT_PX - 10
 }
 
 export function todayISO(offsetDays = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().slice(0, 10);
+  // Read the browser's LOCAL calendar date once (that's what "today" means to the person
+  // using it), then do all further arithmetic as a fixed millisecond offset off a UTC
+  // midnight anchor. The previous version mutated a local-time Date with setDate() -- a
+  // local-calendar operation -- and then read it back with toISOString(), which is always
+  // UTC. Those two are only the same day when the local offset happens to be zero; in any
+  // other timezone the printed date silently drifts by a day.
+  const now = new Date();
+  const utcMidnightToday = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return new Date(utcMidnightToday + offsetDays * MS_PER_DAY).toISOString().slice(0, 10);
 }
 
 export function colorForCategory(category) {
@@ -398,9 +404,24 @@ export function projectSummaryFromBoard(board) {
   });
 }
 
+// One calendar day in milliseconds -- used everywhere below to advance an already-UTC-
+// anchored Date by a fixed number of days without ever going through a local-time
+// getDate()/setDate() pair (see the MS_PER_DAY-related comments on parseISODate and
+// blackoutDayRuns for why that combination is unsafe).
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// Parses an ISO "YYYY-MM-DD" board date as UTC midnight, not local midnight. The board
+// stores plain calendar dates with no time/zone component (a project's startDate is just
+// "2026-01-01"), so the only meaning-preserving anchor is a fixed point in time that maps
+// back to that same Y-M-D no matter what timezone the code happens to run in. The previous
+// `new Date(y, m - 1, d)` constructed LOCAL midnight instead, which toISOString() (always
+// UTC) then rendered as the day before whenever the local offset was positive (e.g.
+// TZ=Asia/Tokyo, UTC+9): local midnight Jan 1 is 15:00 UTC on Dec 31, so every date in the
+// grid silently rolled back a day for anyone in an ahead-of-UTC timezone -- confirmed live
+// via TZ=Asia/Tokyo reproducing exactly that "2026-01-01 becomes 2025-12-31" shift.
 export function parseISODate(value) {
   const [y, m, d] = value.split("-").map(Number);
-  return new Date(y, m - 1, d);
+  return new Date(Date.UTC(y, m - 1, d));
 }
 
 // Returns an array of ISO date strings, one per week column, matching the prototype's
@@ -412,8 +433,12 @@ export function computeWeeks(startDate, endDate) {
   let guard = 0;
   while (cursor <= end && guard < 400) {
     weeks.push(cursor.toISOString().slice(0, 10));
-    cursor = new Date(cursor);
-    cursor.setDate(cursor.getDate() + 7);
+    // Advance by a fixed 7-day millisecond offset rather than cursor.setDate(cursor.getDate()
+    // + 7): setDate/getDate read and write the LOCAL calendar day of a Date that
+    // parseISODate anchored at UTC midnight, which is a different calendar day from the
+    // local one whenever the local offset is nonzero -- the same class of bug as above, just
+    // reintroduced one step later if this used local-time accessors instead.
+    cursor = new Date(cursor.getTime() + 7 * MS_PER_DAY);
     guard += 1;
   }
   return weeks.length ? weeks : [startDate];
@@ -705,8 +730,11 @@ export function blackoutDayRuns(state, weekStartIso) {
   const runs = [];
   let runStart = null;
   for (let d = 0; d <= 6; d += 1) {
-    const date = new Date(weekStart);
-    date.setDate(date.getDate() + d);
+    // weekStart is UTC-anchored (parseISODate); advance it by a fixed millisecond offset,
+    // not setDate(getDate() + d), for the same reason computeWeeks does -- local-time
+    // accessors on a UTC-anchored Date silently step the wrong calendar day whenever the
+    // local offset is nonzero.
+    const date = new Date(weekStart.getTime() + d * MS_PER_DAY);
     const blacked = windows.some(([start, end]) => date >= start && date <= end);
     if (blacked && runStart === null) runStart = d;
     if (!blacked && runStart !== null) { runs.push([runStart, d - 1]); runStart = null; }

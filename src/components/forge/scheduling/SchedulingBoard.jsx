@@ -44,7 +44,7 @@ function formatWeek(iso) {
 }
 
 export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
-  const { board, setBoard, isOwner, loadError, saveStatus } = usePersistedBoard(projectId);
+  const { board, setBoard, isOwner, loadError, saveStatus, conflict, conflictMessage, reload } = usePersistedBoard(projectId);
   const [clipboardStatus, setClipboardStatus] = useState("");
   const [importExcelStatus, setImportExcelStatus] = useState(null); // { type: "success" | "error", message } | null
   // Ordered, not a Set: Ctrl/Cmd+click appends to build up a chain, and "Link in order"
@@ -730,6 +730,10 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-700 text-sm font-black hover:bg-slate-800">?</button>
       </div>
 
+      {conflict && (
+        <SaveConflictBanner message={conflictMessage} onReload={reload} />
+      )}
+
       {importExcelStatus && (
         <ImportExcelStatusBanner status={importExcelStatus} onDismiss={() => setImportExcelStatus(null)} />
       )}
@@ -982,6 +986,24 @@ function Field({ label, children }) {
 // Success auto-dismisses after 5s (see handleImportExcel); an error stays until the user
 // dismisses it or tries another import -- a validation failure can be a long list (one entry per
 // bad row/cell), which needs to stay readable, not flash by like a toast.
+// SCHED-20: shown once usePersistedBoard flags a 409 (someone else -- another tab, another
+// user -- saved this project after the copy the browser currently has). No dismiss button:
+// autosave is already stopped at this point (see usePersistedBoard), so silently dismissing
+// this without reloading would leave the user editing a board that can never save again.
+function SaveConflictBanner({ message, onReload }) {
+  return (
+    <div className="border-b border-red-200 bg-red-50 px-4 py-2.5" data-scheduling-conflict-banner>
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-xs font-black text-red-800">{message}</p>
+        <button type="button" onClick={onReload}
+          className="shrink-0 rounded border border-red-300 bg-white px-3 py-1 text-xs font-bold text-red-800 hover:bg-red-100">
+          Reload
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ImportExcelStatusBanner({ status, onDismiss }) {
   const isError = status.type === "error";
   return (

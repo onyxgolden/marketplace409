@@ -79,6 +79,16 @@ describe("schedulingRelationalToBoard", () => {
     expect(result.nextTaskNumber).toBe(board.nextTaskNumber);
   });
 
+  it("SCHED-20: surfaces the project row's board_revision as board.boardRevision, defaulting to 0 for a project saved before this shipped", () => {
+    const board = minimalBoard();
+    const context = { ownerId: OWNER_ID, projectId: PROJECT_ID, projectName: board.projectName, isPublic: false };
+    const relational = boardToRelationalTables(board, context);
+    const project = withResyncFields(relational.project, board);
+
+    expect(relationalTablesToBoard({ ...relational, project: { ...project, board_revision: 12 } }).boardRevision).toBe(12);
+    expect(relationalTablesToBoard({ ...relational, project }).boardRevision).toBe(0);
+  });
+
   it("round-trips a Gantt block, de-namespacing its id and lane_id back to the board-internal form", () => {
     const board = minimalBoard({
       lanes: [{ id: "lane_eng", name: "Engineering" }],

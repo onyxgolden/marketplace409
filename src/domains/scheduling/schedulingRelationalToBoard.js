@@ -132,5 +132,8 @@ export function relationalTablesToBoard({ project, calendars = [], wbsNodes = []
     nextTaskNumber: project.next_task_number ?? 1010,
     createdAt: project.created_at,
     updatedAt: project.updated_at,
+    // SCHED-20: the optimistic-concurrency token the client must echo back as
+    // expectedRevision on its next PUT -- see save_schedule_project_board.
+    boardRevision: project.board_revision ?? 0,
   });
 }
