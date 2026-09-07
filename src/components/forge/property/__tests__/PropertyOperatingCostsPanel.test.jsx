@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import PropertyOperatingCostsPanel, {
   applyOperatingDocumentProposal,
@@ -9,6 +13,8 @@ import PropertyOperatingCostsPanel, {
   displayObligationValue,
   summarizeObligations,
 } from "../PropertyOperatingCostsPanel.jsx";
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("PropertyOperatingCostsPanel", () => {
   it("renders a compact operating-cost workflow landing", () => {
@@ -237,5 +243,143 @@ describe("PropertyOperatingCostsPanel", () => {
       providerReference: "policy-reference",
       notes: "$3.95 payment variance retained.",
     });
+  });
+});
+
+function jsonResponse(body, ok = true) {
+  return Promise.resolve({ ok, json: () => Promise.resolve(body) });
+}
+function mount(ui) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => root.render(ui));
+  return { container, root };
+}
+function unmount({ container, root }) {
+  act(() => root.unmount());
+  container.remove();
+}
+async function flush() {
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+}
+function setInputValue(input, value) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+  setter.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+function setSelectValue(select, value) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+  setter.call(select, value);
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+function fieldControl(container, labelText) {
+  const label = [...container.querySelectorAll("label")].find((el) => el.textContent.trim().includes(labelText));
+  return label?.querySelector("select, input");
+}
+function findButtonByText(container, text) {
+  return [...container.querySelectorAll("button")].find((button) => button.textContent.trim() === text);
+}
+
+// Interactive coverage for the "Add or update insurance policy" workflow -- every other test in
+// this file uses renderToStaticMarkup, which never runs effects and never advances past the
+// landing screen, so no test here ever exercised VerifiedPolicyForm's manual-entry submit path.
+// This is the same audit technique that caught real production crashes in Scheduling and
+// PropertyConditionAssessmentPanel: reintroducing a wiring break should fail this test with the
+// same error a real user would have hit.
+describe("PropertyOperatingCostsPanel -- the insurance-policy workflow", () => {
+  let createPolicyCall;
+
+  beforeEach(() => {
+    createPolicyCall = null;
+    global.fetch = vi.fn((url, init) => {
+      if (url === "/api/property-operating-obligations" && (!init || init.method === undefined)) {
+        return jsonResponse({
+          success: true,
+          obligations: [{
+            id: "obligation_1", propertyId: "prop_1", obligationType: "fire_insurance",
+            subjectLabel: "123 Main St annual insurance", recognitionStatus: "accrual_ready", reconciledFinancialEventId: "event_1",
+          }],
+        });
+      }
+      if (url === "/api/property-operating-obligations" && init?.method === "POST") {
+        const body = JSON.parse(init.body);
+        if (body.operation === "create-verified-policy") {
+          createPolicyCall = body;
+          return jsonResponse({
+            success: true,
+            policy: {
+              id: "obligation_2", propertyId: body.propertyId, obligationType: body.obligationType,
+              subjectLabel: body.subjectLabel, recognitionStatus: "accrual_ready", reconciledFinancialEventId: null,
+            },
+          });
+        }
+      }
+      return jsonResponse({ success: true });
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("creates a manually-entered verified policy and returns to the landing screen with the count updated", async () => {
+    const mounted = mount(<PropertyOperatingCostsPanel />);
+    await flush();
+    expect(mounted.container.textContent).toContain("What do you want to do?");
+
+    act(() => { findButtonByText(mounted.container, "Add or update insurance policy").click(); });
+    await flush();
+    expect(mounted.container.textContent).toContain("Choose property");
+
+    act(() => { setSelectValue(fieldControl(mounted.container, "Choose property"), "prop_1"); });
+    await flush();
+    act(() => { setInputValue(fieldControl(mounted.container, "Annual policy premium"), "1200") });
+    act(() => { setInputValue(fieldControl(mounted.container, "Coverage starts"), "2026-01-01"); });
+    act(() => { setInputValue(fieldControl(mounted.container, "Coverage ends"), "2027-01-01"); });
+    act(() => { setInputValue(fieldControl(mounted.container, "Provider or tax authority"), "Farm Bureau"); });
+    await flush();
+
+    act(() => { findButtonByText(mounted.container, "Approve verified policy").click(); });
+    await flush();
+
+    expect(createPolicyCall).toMatchObject({
+      operation: "create-verified-policy", propertyId: "prop_1", obligationType: "fire_insurance",
+      annualAmountCents: 120000, servicePeriodStart: "2026-01-01", servicePeriodEnd: "2027-01-01", providerName: "Farm Bureau",
+    });
+
+    // mergeCreatedPolicy resets workflow to null in the same tick it sets a success message --
+    // back on the landing screen, where that message block isn't rendered (a real, separate UX
+    // gap noted alongside this test, not something this test should paper over by asserting text
+    // that a user never actually sees).
+    expect(mounted.container.textContent).toContain("What do you want to do?");
+    expect(mounted.container.textContent).not.toContain("Choose property");
+
+    const obligationsTile = [...mounted.container.querySelectorAll("div")].find((el) => el.textContent.trim() === "Obligations");
+    expect(obligationsTile.nextElementSibling.textContent.trim()).toBe("2"); // 1 loaded + 1 just created
+
+    unmount(mounted);
+  });
+
+  it("surfaces buildVerifiedPolicyPayload's own validation error instead of crashing, without posting", async () => {
+    const mounted = mount(<PropertyOperatingCostsPanel />);
+    await flush();
+    act(() => { findButtonByText(mounted.container, "Add or update insurance policy").click(); });
+    await flush();
+
+    // Deliberately leave the (natively `required`) premium field blank and submit the <form>
+    // directly rather than clicking the submit button -- a real button click runs the browser's
+    // own constraint validation first and would never even fire the submit event, which would
+    // only prove HTML5 blocks empty required fields, not that this component's own handleSubmit
+    // correctly catches buildVerifiedPolicyPayload's thrown error and renders it instead of
+    // throwing an uncaught exception (the actual wiring concern this test exists to cover --
+    // buildVerifiedPolicyPayload's own validation logic already has direct unit tests above).
+    act(() => { setSelectValue(fieldControl(mounted.container, "Choose property"), "prop_1"); });
+    await flush();
+
+    const form = mounted.container.querySelector("form");
+    act(() => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await flush();
+
+    expect(mounted.container.textContent).toContain("Enter the verified annual policy premium.");
+    expect(createPolicyCall).toBeNull();
+    unmount(mounted);
   });
 });
