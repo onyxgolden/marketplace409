@@ -6,6 +6,28 @@
 
 ---
 
+## 2026-09-07 Correction — FORGE Health Is Merged
+
+**Why this note exists:** the "2026-09-02 Turnover Checkpoint" section below said Health was
+"published to this feature branch; not merged, migrated, or deployed" — that was accurate when
+written, but is now stale, and left as-is would directly contradict the actual repository state.
+Found and corrected while reconciling the separate `chore/agent-handoff` coordination branch (see
+PR #134 there), not as part of any Health-specific work this session.
+
+**What actually happened:** PR #91 ("private FORGE Health tracker, dashboard favorites, and
+workspace navigation") merged to `main` on 2026-09-02T23:30:31Z — the same day this checkpoint was
+written — and Health work continued through at least PR #108 (2026-09-04). Verified directly via
+`gh pr list --state merged --search health`, not assumed.
+
+**What this correction does not establish:** whether every Health migration has actually been
+applied against the Production Supabase database. Git has no way to answer that — `supabase
+migration list` run against Production is the only way to confirm it, and no session has recorded
+doing so recently enough to cite a result here. Treat Health's Production migration/deployment
+status as **unverified, not unmerged** — a follow-up verification task, not a re-litigation of
+whether the feature shipped to `main`.
+
+---
+
 ## 2026-09-05 Naming Clarification — Forge Brain Is Engineering Brain
 
 **Why this note exists:** while scoping SCHED-11 (scheduling cycle diagnosis, in the Scheduling
@@ -58,8 +80,14 @@ Do not duplicate completed layers or merge stale branches wholesale.
 
 ## 2026-09-02 Turnover Checkpoint — Private FORGE Health
 
-**Active branch/worktree:** `feat/forge-health-private` in `marketplace409-health`
-**Deployment state:** Published to this feature branch; not merged, migrated, or deployed.
+**Active branch/worktree (at the time this checkpoint was written):** `feat/forge-health-private`
+in `marketplace409-health`
+**Deployment state:** ~~Published to this feature branch; not merged, migrated, or deployed.~~
+**Corrected 2026-09-07 (see the section above): merged to `main` via PR #91 on 2026-09-02, the same
+day this checkpoint was written, with Health work continuing through PR #108. Production
+migration/deployment status is unverified, not unmerged** — the rest of this checkpoint's content
+(scope, validation notes, privacy boundaries) is historical context for what shipped, still
+accurate as a record of that work, not a statement of current deployment state.
 
 ### Owner-approved scope and completed foundation
 
