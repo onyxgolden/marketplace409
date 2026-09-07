@@ -85,6 +85,29 @@ export function countWorkingDaysBetween(calendar, holidaySet, fromISO, toISO) {
   return count;
 }
 
+// Blackout windows blackout every calendar in a project at once for a one-off date range (see
+// schedule_blackout_windows in 20260827000000_create_scheduling_relational_schema.sql) -- unlike
+// schedule_calendar_holidays, they aren't scoped to one calendar. Expanding each window into a flat
+// date Set once, up front, lets runCpmEngine fold it into every calendar's holiday set (see below)
+// instead of threading a separate blackoutWindows argument through every calendar-primitive call
+// site. A window whose range exceeds MAX_CALENDAR_WALK_DAYS stops expanding at the cap rather than
+// looping unboundedly -- the same defensive posture as the calendar-walk guards above, for the same
+// kind of degenerate/bad-data input.
+export function expandBlackoutWindowsToDateSet(blackoutWindows) {
+  const dates = new Set();
+  for (const window of blackoutWindows) {
+    let current = window.start_date;
+    let guard = 0;
+    while (current <= window.end_date) {
+      dates.add(current);
+      guard += 1;
+      if (guard > MAX_CALENDAR_WALK_DAYS) break;
+      current = addDaysISO(current, 1);
+    }
+  }
+  return dates;
+}
+
 // block.calendar_id -> lane.calendar_id -> project.default_calendar_id -> a synthetic 7-day
 // calendar. A block with no resolvable calendar anywhere becomes maximally permissive rather than
 // unschedulable -- this is a legitimate state for calendar-less test/seed data, not an error.
@@ -519,13 +542,24 @@ export function detectConflicts({ blocks, cyclicBlockIds, danglingDependencies, 
 
 // --- Orchestrator ------------------------------------------------------------------------------
 
-export function runCpmEngine({ project, blocks = [], dependencies = [], calendars = [], holidays = [], hammockAnchors = [], lanes = [] }) {
+export function runCpmEngine({ project, blocks = [], dependencies = [], calendars = [], holidays = [], hammockAnchors = [], lanes = [], blackoutWindows = [] }) {
   const calendarsById = new Map(calendars.map((calendar) => [calendar.id, calendar]));
   const lanesById = new Map(lanes.map((lane) => [lane.id, lane]));
   const holidaysByCalendarId = new Map();
   for (const holiday of holidays) {
     if (!holidaysByCalendarId.has(holiday.calendar_id)) holidaysByCalendarId.set(holiday.calendar_id, new Set());
     holidaysByCalendarId.get(holiday.calendar_id).add(holiday.holiday_date);
+  }
+
+  // Fold project-wide blackout dates into every calendar's holiday set (including the null-keyed
+  // fallback bucket used by resolveCalendarForBlock's synthetic 7-day calendar) up front, once.
+  const blackoutDateSet = expandBlackoutWindowsToDateSet(blackoutWindows);
+  if (blackoutDateSet.size > 0) {
+    for (const calendarId of [...calendarsById.keys(), null]) {
+      const merged = new Set(holidaysByCalendarId.get(calendarId) || []);
+      for (const date of blackoutDateSet) merged.add(date);
+      holidaysByCalendarId.set(calendarId, merged);
+    }
   }
 
   const { order, cyclicBlockIds, validDependencies, danglingDependencies, hammockDependencies } = topologicalOrder(blocks, dependencies);

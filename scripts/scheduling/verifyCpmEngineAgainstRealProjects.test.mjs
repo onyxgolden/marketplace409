@@ -106,6 +106,41 @@ describe("verifyCpmEngineAgainstRealProjects", () => {
     expect(report.outOfBoundsBlockIds).toEqual(["A"]);
   });
 
+  it("fetches and scopes schedule_blackout_windows per project", async () => {
+    // Both projects are configured identically (same block duration, same Mon-Fri calendar, same
+    // start/end_date) except proj_1 has a one-day blackout window landing on what would otherwise
+    // be A's early_finish. That pushes A's early_finish one working day past proj_1's end_date
+    // (an anomaly), while proj_2's otherwise-identical block X stays within bounds -- the only way
+    // the reports can differ is if the window was actually fetched and scoped to proj_1 alone.
+    const tables = {
+      schedule_projects: [
+        { id: "proj_1", owner_id: "owner_1", name: "Project One", start_date: "2026-01-05", end_date: "2026-01-08", default_calendar_id: "cal_1" },
+        { id: "proj_2", owner_id: "owner_1", name: "Project Two", start_date: "2026-01-05", end_date: "2026-01-08", default_calendar_id: "cal_2" },
+      ],
+      schedule_blocks: [block("A", "proj_1", { duration_days: 4 }), block("X", "proj_2", { duration_days: 4 })],
+      schedule_dependencies: [],
+      schedule_calendars: [
+        { id: "cal_1", owner_id: "owner_1", schedule_project_id: "proj_1", working_days: [1, 2, 3, 4, 5] },
+        { id: "cal_2", owner_id: "owner_1", schedule_project_id: "proj_2", working_days: [1, 2, 3, 4, 5] },
+      ],
+      schedule_calendar_holidays: [],
+      schedule_blackout_windows: [
+        { id: "bw_1", owner_id: "owner_1", schedule_project_id: "proj_1", start_date: "2026-01-08", end_date: "2026-01-08" },
+      ],
+      schedule_hammock_anchors: [],
+      schedule_lanes: [
+        { id: "proj_1_lane", owner_id: "owner_1", schedule_project_id: "proj_1", calendar_id: null },
+        { id: "proj_2_lane", owner_id: "owner_1", schedule_project_id: "proj_2", calendar_id: null },
+      ],
+    };
+
+    const reports = await verifyCpmEngineAgainstRealProjects({ supabaseClient: stubSupabaseClient(tables) });
+    const byId = Object.fromEntries(reports.map((report) => [report.projectId, report]));
+
+    expect(byId.proj_1.outOfBoundsBlockIds).toEqual(["A"]);
+    expect(byId.proj_2.outOfBoundsBlockIds).toEqual([]);
+  });
+
   it("throws when a table fetch returns an error", async () => {
     const supabaseClient = {
       from(table) {

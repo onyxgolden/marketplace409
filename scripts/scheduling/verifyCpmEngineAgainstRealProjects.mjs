@@ -1,6 +1,7 @@
 // Read-only sanity check of schedulingCpmEngine.js against real Production data. Fetches every
-// schedule_projects row and its related rows (blocks/dependencies/calendars/holidays/hammock
-// anchors/lanes), runs runCpmEngine in-process, and reports per-project counts and any anomalies.
+// schedule_projects row and its related rows (blocks/dependencies/calendars/holidays/blackout
+// windows/hammock anchors/lanes), runs runCpmEngine in-process, and reports per-project counts and
+// any anomalies.
 // Never calls .update()/.insert()/.delete() -- this is a verification tool for the CPM engine
 // module before any write-back or UI cutover exists, not a migration or backfill script.
 
@@ -49,12 +50,13 @@ function summarizeProject(project, result) {
 }
 
 export async function verifyCpmEngineAgainstRealProjects({ supabaseClient }) {
-  const [projects, blocks, dependencies, calendars, holidays, hammockAnchors, lanes] = await Promise.all([
+  const [projects, blocks, dependencies, calendars, holidays, blackoutWindows, hammockAnchors, lanes] = await Promise.all([
     fetchAll(supabaseClient, "schedule_projects"),
     fetchAll(supabaseClient, "schedule_blocks"),
     fetchAll(supabaseClient, "schedule_dependencies"),
     fetchAll(supabaseClient, "schedule_calendars"),
     fetchAll(supabaseClient, "schedule_calendar_holidays"),
+    fetchAll(supabaseClient, "schedule_blackout_windows"),
     fetchAll(supabaseClient, "schedule_hammock_anchors"),
     fetchAll(supabaseClient, "schedule_lanes"),
   ]);
@@ -69,6 +71,7 @@ export async function verifyCpmEngineAgainstRealProjects({ supabaseClient }) {
       const projectCalendars = calendars.filter((row) => row.owner_id === project.owner_id && row.schedule_project_id === project.id);
       const calendarIds = new Set(projectCalendars.map((row) => row.id));
       const projectHolidays = holidays.filter((row) => row.owner_id === project.owner_id && calendarIds.has(row.calendar_id));
+      const projectBlackoutWindows = blackoutWindows.filter((row) => row.owner_id === project.owner_id && row.schedule_project_id === project.id);
       const projectHammockAnchors = hammockAnchors.filter((row) => row.owner_id === project.owner_id && blockIds.has(row.hammock_block_id));
       const projectLanes = lanes.filter((row) => row.owner_id === project.owner_id && row.schedule_project_id === project.id);
 
@@ -78,6 +81,7 @@ export async function verifyCpmEngineAgainstRealProjects({ supabaseClient }) {
         dependencies: projectDependencies,
         calendars: projectCalendars,
         holidays: projectHolidays,
+        blackoutWindows: projectBlackoutWindows,
         hammockAnchors: projectHammockAnchors,
         lanes: projectLanes,
       });
