@@ -98,4 +98,35 @@ describe("GET /api/forge/scheduling/[projectId]/cost-rollup", () => {
     const response = await GET(new Request("https://test"), { params });
     expect(response.status).toBe(404);
   });
+
+  it("returns byCostAccount, grouped by cost code, on an unfiltered request", async () => {
+    const costAccounts = [{ owner_id: "user_1", id: "acct_po", code: "PO-4521", name: "Steel supplier" }];
+    const assignments = [{ owner_id: "user_1", id: "assignment_1", block_id: "block_1", resource_id: "resource_1", budgeted_units: 40, actual_units: 0, rate_override: null, cost_account_id: "acct_po" }];
+    const expenses = [{ owner_id: "user_1", id: "expense_1", block_id: "block_1", budgeted_cost: 100, actual_cost: 0, cost_account_id: null }];
+    const db = mockDb({ costAccounts, assignments, expenses });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+
+    const response = await GET(new Request("https://test"), { params });
+    const body = await response.json();
+    expect(body.byCostAccount).toEqual(expect.arrayContaining([
+      { cost_account_id: "acct_po", code: "PO-4521", name: "Steel supplier", budgeted_cost: 2000, actual_cost: 0, remaining_cost: 2000 },
+      { cost_account_id: null, code: null, name: "Uncoded", budgeted_cost: 100, actual_cost: 0, remaining_cost: 100 },
+    ]));
+  });
+
+  it("narrows byBlock/project to just one cost code's assignments/expenses when ?costAccountId= is given, and omits byCostAccount", async () => {
+    const otherBlock = { ...BLOCK_ROW, id: "block_2", task_code: "A1020" };
+    const assignments = [
+      { owner_id: "user_1", id: "assignment_1", block_id: "block_1", resource_id: "resource_1", budgeted_units: 40, actual_units: 0, rate_override: null, cost_account_id: "acct_po" },
+      { owner_id: "user_1", id: "assignment_2", block_id: "block_2", resource_id: "resource_1", budgeted_units: 10, actual_units: 0, rate_override: null, cost_account_id: "acct_wo" },
+    ];
+    const db = mockDb({ blocks: [BLOCK_ROW, otherBlock], assignments });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+
+    const response = await GET(new Request("https://test?costAccountId=acct_po"), { params });
+    const body = await response.json();
+    expect(body.byBlock).toEqual([{ block_id: "block_1", task_code: "A1010", budgeted_cost: 2000, actual_cost: 0, remaining_cost: 2000 }]);
+    expect(body.project).toEqual({ budgeted_cost: 2000, actual_cost: 0, remaining_cost: 2000 });
+    expect(body.byCostAccount).toBeUndefined();
+  });
 });

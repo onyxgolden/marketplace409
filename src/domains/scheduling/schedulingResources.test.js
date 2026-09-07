@@ -3,6 +3,7 @@ import {
   computeAssignmentCost,
   computeResourceLoading,
   detectOverallocations,
+  rollupCostByAccount,
   rollupProjectCost,
   spreadUnitsAcrossWorkingDays,
 } from "./schedulingResources";
@@ -161,5 +162,51 @@ describe("schedulingResources — rollupProjectCost", () => {
     const rollup = rollupProjectCost({ assignments: [{ block_id: "block_1", resource_id: "missing", budgeted_units: 10, actual_units: 0 }], resourcesById: new Map(), expenses: [] });
     expect(rollup.byBlock).toEqual([]);
     expect(rollup.project).toEqual({ budgeted_cost: 0, actual_cost: 0, remaining_cost: 0 });
+  });
+});
+
+describe("schedulingResources — rollupCostByAccount", () => {
+  it("groups assignment and expense cost by cost_account_id", () => {
+    const byCostAccount = rollupCostByAccount({
+      assignments: [
+        { block_id: "block_1", resource_id: "res_1", budgeted_units: 40, actual_units: 20, rate_override: null, cost_account_id: "acct_po" },
+        { block_id: "block_2", resource_id: "res_1", budgeted_units: 10, actual_units: 10, rate_override: null, cost_account_id: "acct_wo" },
+      ],
+      resourcesById: new Map([["res_1", resource({ std_rate: 50 })]]),
+      expenses: [{ block_id: "block_1", budgeted_cost: 500, actual_cost: 100, cost_account_id: "acct_po" }],
+    });
+
+    expect(byCostAccount).toEqual(
+      expect.arrayContaining([
+        { cost_account_id: "acct_po", budgeted_cost: 2500, actual_cost: 1100, remaining_cost: 1400 },
+        { cost_account_id: "acct_wo", budgeted_cost: 500, actual_cost: 500, remaining_cost: 0 },
+      ]),
+    );
+  });
+
+  it("rolls an untagged assignment/expense into a null-keyed uncoded bucket, not dropped", () => {
+    const byCostAccount = rollupCostByAccount({
+      assignments: [{ block_id: "block_1", resource_id: "res_1", budgeted_units: 10, actual_units: 0, rate_override: null }],
+      resourcesById: new Map([["res_1", resource({ std_rate: 10 })]]),
+      expenses: [{ block_id: "block_1", budgeted_cost: 50, actual_cost: 0, cost_account_id: null }],
+    });
+    expect(byCostAccount).toEqual([{ cost_account_id: null, budgeted_cost: 150, actual_cost: 0, remaining_cost: 150 }]);
+  });
+
+  it("always reconciles to rollupProjectCost's project total", () => {
+    const assignments = [
+      { block_id: "block_1", resource_id: "res_1", budgeted_units: 40, actual_units: 20, rate_override: null, cost_account_id: "acct_po" },
+      { block_id: "block_2", resource_id: "res_1", budgeted_units: 10, actual_units: 10, rate_override: null },
+    ];
+    const expenses = [{ block_id: "block_1", budgeted_cost: 500, actual_cost: 100, cost_account_id: "acct_wo" }];
+    const resourcesById = new Map([["res_1", resource({ std_rate: 50 })]]);
+
+    const byCostAccount = rollupCostByAccount({ assignments, resourcesById, expenses });
+    const { project } = rollupProjectCost({ assignments, resourcesById, expenses });
+
+    const totals = byCostAccount.reduce((acc, row) => ({
+      budgeted_cost: acc.budgeted_cost + row.budgeted_cost, actual_cost: acc.actual_cost + row.actual_cost,
+    }), { budgeted_cost: 0, actual_cost: 0 });
+    expect(totals).toEqual({ budgeted_cost: project.budgeted_cost, actual_cost: project.actual_cost });
   });
 });
