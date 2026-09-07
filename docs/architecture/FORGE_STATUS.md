@@ -43,10 +43,11 @@ actual old destructive migration — 12/14 failed against it, for exactly the in
 restored. The timezone fix was sabotage-verified the same way across `America/Los_Angeles`, `UTC`,
 and `Asia/Tokyo`. New route/hook/domain tests cover the conflict path, revision tracking, and
 `boardRevision` round-tripping. 634/634 Scheduling tests pass; scoped lint, `git diff --check`, and
-the production build all pass. **Not yet run:** the live-database validation script
-(`supabase/validation/schedule_atomic_save_and_preserve_relational_data_validation.sql`) — this
-sandbox has no `supabase/config.toml`, so `supabase start` isn't available here. Run it against a
-live/staging Postgres before this migration reaches production.
+the production build all pass. **At merge time**, the live-database validation script
+(`supabase/validation/schedule_atomic_save_and_preserve_relational_data_validation.sql`) had not
+been run — this sandbox has no `supabase/config.toml`, so `supabase start` isn't available here.
+**It was run against production shortly after merge — see below for what that run found and how it
+was resolved; do not read the sentence above as still describing current status.**
 
 **PR:** [#137](https://github.com/onyxgolden/marketplace409/pull/137) — merged to `main` 2026-09-07,
 after green CI and owner approval.
