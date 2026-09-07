@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   countWorkingDaysBetween,
+  expandBlackoutWindowsToDateSet,
   isWorkingDay,
   rollToWorkingDay,
   runCpmEngine,
@@ -124,6 +125,49 @@ describe("schedulingCpmEngine — scenario 4: holiday spanning a normally-workin
     const withRow = withHoliday.blocks.find((row) => row.id === "A");
     expect(withoutRow.early_finish).toBe("2026-01-08");
     expect(withRow.early_finish).toBe("2026-01-09");
+  });
+});
+
+describe("schedulingCpmEngine — expandBlackoutWindowsToDateSet", () => {
+  it("expands a multi-day window into every date in the inclusive range", () => {
+    const dates = expandBlackoutWindowsToDateSet([{ start_date: "2026-01-08", end_date: "2026-01-10" }]);
+    expect([...dates].sort()).toEqual(["2026-01-08", "2026-01-09", "2026-01-10"]);
+  });
+
+  it("unions dates from multiple windows", () => {
+    const dates = expandBlackoutWindowsToDateSet([
+      { start_date: "2026-01-08", end_date: "2026-01-08" },
+      { start_date: "2026-02-01", end_date: "2026-02-02" },
+    ]);
+    expect([...dates].sort()).toEqual(["2026-01-08", "2026-02-01", "2026-02-02"]);
+  });
+});
+
+describe("schedulingCpmEngine — scenario 4b: blackout window spanning a normally-working weekday", () => {
+  it("pushes early_finish one working day later than the no-blackout case, same as a holiday would", () => {
+    const blocks = [block("A", { duration_days: 4 })];
+    const withoutBlackout = runCpmEngine({ project: project(), blocks, dependencies: [], calendars: CALENDARS, lanes: LANES, blackoutWindows: [] });
+    const withBlackout = runCpmEngine({
+      project: project(), blocks, dependencies: [], calendars: CALENDARS, lanes: LANES,
+      blackoutWindows: [{ start_date: "2026-01-08", end_date: "2026-01-08", label: "Test blackout" }],
+    });
+    const withoutRow = withoutBlackout.blocks.find((row) => row.id === "A");
+    const withRow = withBlackout.blocks.find((row) => row.id === "A");
+    expect(withoutRow.early_finish).toBe("2026-01-08");
+    expect(withRow.early_finish).toBe("2026-01-09");
+  });
+
+  it("blacks out a block using the synthetic 7-day fallback calendar (no calendar_id anywhere)", () => {
+    const blocks = [block("A", { duration_days: 2, calendar_id: null })];
+    const noCalProject = { id: "proj_1", start_date: "2026-01-05", end_date: "2026-02-28", default_calendar_id: null };
+    const noCalLanes = [{ id: "lane_1", calendar_id: null }];
+    const withoutBlackout = runCpmEngine({ project: noCalProject, blocks, dependencies: [], calendars: [], lanes: noCalLanes, blackoutWindows: [] });
+    const withBlackout = runCpmEngine({
+      project: noCalProject, blocks, dependencies: [], calendars: [], lanes: noCalLanes,
+      blackoutWindows: [{ start_date: "2026-01-06", end_date: "2026-01-06", label: "Test blackout" }],
+    });
+    expect(withoutBlackout.blocks[0].early_finish).toBe("2026-01-06");
+    expect(withBlackout.blocks[0].early_finish).toBe("2026-01-07");
   });
 });
 
