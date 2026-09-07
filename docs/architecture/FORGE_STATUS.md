@@ -6,6 +6,59 @@
 
 ---
 
+## 2026-09-07 Defect Fix — Scheduling Autosave Destroyed Relational Data (SCHED-20)
+
+**Defect:** every scheduling autosave deleted and rebuilt *all* of a project's relational
+activities (`schedule_blocks` and everything cascading from it), unconditionally, on every single
+save — not just when an activity was genuinely removed. Concretely, on every autosave:
+`percent_complete` was hardcoded to 0 in the reinsert (progress wiped); `actual_start`/
+`actual_finish`/`constraint_type`/`constraint_date`/`calendar_id` weren't in the reinsert's column
+list at all (reverted to null); every `schedule_resource_assignments` and `schedule_expenses` row
+was destroyed by the `ON DELETE CASCADE` the instant its block was deleted-then-reinserted; every
+`schedule_calendar_holidays` row was deleted whenever its calendar was touched and never came back.
+The save was also non-atomic (a relational-sync failure was logged and ignored, so the API reported
+success even when the relational mirror silently fell out of sync with the jsonb board) and had no
+protection against two concurrent saves clobbering each other. A related timezone bug in
+`parseISODate`/`computeWeeks` (local-time construction read back via always-UTC `toISOString()`)
+silently rolled every board date back a day in any positive-UTC-offset timezone.
+
+**Root cause:** `sync_schedule_project_from_board`
+(`20260904230000_add_schedule_project_resync_function.sql`) was written as a one-time backfill/
+resync function, then wired into the PUT route to run on every save without changing its
+delete-everything-then-reinsert internals to match that new, much more frequent calling pattern.
+
+**Repair:** `20260907010000_add_schedule_atomic_save_and_preserve_relational_data.sql` rewrites the
+sync function to upsert-by-stable-id (pruning only rows genuinely absent from the submitted board,
+with every relational-only column explicitly excluded from the Gantt-block `UPDATE SET`), adds a
+new `save_schedule_project_board` function that runs the board-JSON write and the relational sync
+in one transaction with optimistic-concurrency locking (`board_revision`, a 409 on a stale save),
+and fixes the timezone bug by anchoring all board-date arithmetic at UTC midnight instead of local
+time. The PUT route (`src/app/api/forge/scheduling/[projectId]/route.js`) now calls
+`save_schedule_project_board` and translates a conflict to 409 with the message *"This schedule
+changed elsewhere; reload before saving."* `usePersistedBoard` tracks the revision, stops
+autosaving after a conflict, and exposes `reload()`; `SchedulingBoard.jsx` shows a conflict banner.
+
+**Verification evidence:** the migration test (14 assertions) was sabotage-verified against the
+actual old destructive migration — 12/14 failed against it, for exactly the intended reasons — then
+restored. The timezone fix was sabotage-verified the same way across `America/Los_Angeles`, `UTC`,
+and `Asia/Tokyo`. New route/hook/domain tests cover the conflict path, revision tracking, and
+`boardRevision` round-tripping. 634/634 Scheduling tests pass; scoped lint, `git diff --check`, and
+the production build all pass. **Not yet run:** the live-database validation script
+(`supabase/validation/schedule_atomic_save_and_preserve_relational_data_validation.sql`) — this
+sandbox has no `supabase/config.toml`, so `supabase start` isn't available here. Run it against a
+live/staging Postgres before this migration reaches production.
+
+**PR:** [#137](https://github.com/onyxgolden/marketplace409/pull/137) — **not yet merged**, per its
+own explicit requirement: hold for green CI and a manual review of the migration for destructive
+behavior before merging.
+
+**Production migration command:** none beyond the normal migration-deploy step for
+`20260907010000_add_schedule_atomic_save_and_preserve_relational_data.sql` (additive only — one new
+column with a default, two function replacements; no backfill or destructive statement) — run only
+after the validation script above has been executed against staging.
+
+---
+
 ## 2026-09-07 Correction — FORGE Health Is Merged
 
 **Why this note exists:** the "2026-09-02 Turnover Checkpoint" section below said Health was
