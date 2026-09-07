@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import SchedulingBoard from "./SchedulingBoard";
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("SchedulingBoard", () => {
   it("renders the default lanes and category palette", () => {
@@ -248,5 +254,73 @@ describe("SchedulingBoard", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).toContain("Project Governance");
     expect(markup).toContain("Project Engineering");
+  });
+});
+
+function jsonResponse(body) {
+  return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+}
+function mount(ui) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => root.render(ui));
+  return { container, root };
+}
+function unmount({ container, root }) {
+  act(() => root.unmount());
+  container.remove();
+}
+async function flush() {
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+}
+
+// Regression test for a real production incident: DependencyDrawer (the block-detail drawer
+// opened by clicking any placed block) rendered <BlockResourcesPanel costAccounts={costAccounts} />
+// without costAccounts ever being in DependencyDrawer's own props/scope, throwing
+// "ReferenceError: costAccounts is not defined" on every single block click. renderToStaticMarkup
+// never selects a block (nothing above ever exercises this), so this slipped past every existing
+// test in this file -- this describe block renders interactively instead, places a real block via
+// the same drag-and-drop drop handler the palette uses, and clicks it exactly like a user would.
+// If costAccounts (or any other prop DependencyDrawer/BlockResourcesPanel expects) ever goes back
+// out of scope, the thrown error propagates out of `act()` and fails this test immediately.
+describe("SchedulingBoard — opening a block's drawer", () => {
+  beforeEach(() => {
+    global.fetch = vi.fn((url, init) => {
+      if (url === "/api/forge/scheduling/resources") return jsonResponse({ success: true, resources: [] });
+      if (url === "/api/forge/scheduling/cost-accounts") return jsonResponse({ success: true, costAccounts: [] });
+      if (init?.method === "PUT") return jsonResponse({ success: true }); // autosave, if its debounce fires
+      return new Promise(() => {}); // the project GET (projectId is undefined here) -- never resolves, so
+      // usePersistedBoard just keeps its initial local defaultBoardState() instead of racing a fabricated one in.
+    });
+  });
+
+  function placeAndSelectFirstBlock(container) {
+    const canvas = container.querySelector("[data-scheduling-canvas]");
+    const chip = { label: "Regression Test Block", category: "gov", durationWeeks: 2, milestone: false };
+    const dropEvent = new MouseEvent("drop", { bubbles: true, cancelable: true, clientX: 100, clientY: 20 });
+    Object.defineProperty(dropEvent, "dataTransfer", { value: { getData: () => JSON.stringify(chip) } });
+    act(() => { canvas.dispatchEvent(dropEvent); });
+
+    const block = container.querySelector("[data-block-id]");
+    const mousedown = new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: 100, clientY: 20 });
+    act(() => { block.dispatchEvent(mousedown); });
+    // No mousemove dispatched -- startMoveBlock's onUp treats that as "clicked, didn't drag" (its
+    // dx/dy stay at their zero default) and selects the block, exactly like a real unmoved click.
+    const mouseup = new MouseEvent("mouseup", { bubbles: true, cancelable: true, clientX: 100, clientY: 20 });
+    act(() => { document.dispatchEvent(mouseup); });
+  }
+
+  it("opens the drawer without throwing, and renders the cost-code picker inside it", async () => {
+    const mounted = mount(<SchedulingBoard />);
+    await flush();
+
+    placeAndSelectFirstBlock(mounted.container);
+    await flush();
+
+    expect(mounted.container.querySelector("[data-scheduling-drawer]")).toBeTruthy();
+    expect(mounted.container.querySelector("[data-scheduling-resources-panel]")).toBeTruthy();
+    expect(mounted.container.querySelector("[data-scheduling-assignment-cost-account]")).toBeTruthy();
+    unmount(mounted);
   });
 });
