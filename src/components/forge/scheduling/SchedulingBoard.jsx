@@ -45,6 +45,7 @@ function formatWeek(iso) {
 export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   const { board, setBoard, isOwner, loadError, saveStatus } = usePersistedBoard(projectId);
   const [clipboardStatus, setClipboardStatus] = useState("");
+  const [importExcelStatus, setImportExcelStatus] = useState(null); // { type: "success" | "error", message } | null
   // Ordered, not a Set: Ctrl/Cmd+click appends to build up a chain, and "Link in order"
   // connects consecutive pairs in exactly this order (see handleLinkSelectedInOrder).
   const [selectedBlockIds, setSelectedBlockIds] = useState([]);
@@ -574,14 +575,21 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   // persists them. Progress fields (percentComplete/actualStart/actualFinish) never lived in the
   // board-jsonb shape (see scheduleProjectAssembly.js), so those go through the same per-activity
   // PATCH updateBlockProgress already uses for manual drawer edits.
+  //
+  // Status renders as a dismissible banner (see importExcelStatus), not window.alert -- a blocking
+  // dialog is out of step with the rest of this app (every other action here uses an inline status
+  // message) and a validation failure can legitimately be a long list, which a banner's own scroll
+  // handles far better than a single alert() string ever could.
   async function handleImportExcel(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    setImportExcelStatus(null);
     const response = await fetch(`/api/forge/scheduling/${projectId}/import/excel`, { method: "POST", body: file });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
-      window.alert(result.errors?.length ? `${result.error}\n\n${result.errors.join("\n")}` : (result.error || "Unable to import this Excel file."));
+      const message = result.errors?.length ? `${result.error} ${result.errors.join(" ")}` : (result.error || "Unable to import this Excel file.");
+      setImportExcelStatus({ type: "error", message, errors: result.errors || [] });
       return;
     }
     const patches = result.patches || [];
@@ -593,7 +601,9 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
       if ("actualFinish" in patch) progressPatch.actualFinish = patch.actualFinish;
       return Object.keys(progressPatch).length ? updateBlockProgress(patch.taskCode, progressPatch) : null;
     }));
-    window.alert(`Updated ${patches.length} ${patches.length === 1 ? "activity" : "activities"} from the imported file.`);
+    const message = `Updated ${patches.length} ${patches.length === 1 ? "activity" : "activities"} from the imported file.`;
+    setImportExcelStatus({ type: "success", message });
+    setTimeout(() => setImportExcelStatus((current) => (current?.message === message ? null : current)), 5000);
   }
   function handleReset() {
     if (window.confirm("Reset the board? This clears all placed blocks, lanes, and custom chips.")) {
@@ -705,6 +715,10 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
         <button type="button" onClick={() => setShowHelp(true)} title="Help & keyboard shortcuts"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-700 text-sm font-black hover:bg-slate-800">?</button>
       </div>
+
+      {importExcelStatus && (
+        <ImportExcelStatusBanner status={importExcelStatus} onDismiss={() => setImportExcelStatus(null)} />
+      )}
 
       {board.cpm?.cycleDiagnoses?.length > 0 && (
         <CycleConflictBanner cycleDiagnoses={board.cpm.cycleDiagnoses} isOwner={isOwner}
@@ -948,6 +962,31 @@ function Field({ label, children }) {
 // this just renders that verdict. Visible to every viewer (a non-owner can already see dependencies/
 // critical path), but the actual "remove this link" action is owner-gated, same as every other write
 // in this board.
+// Success auto-dismisses after 5s (see handleImportExcel); an error stays until the user
+// dismisses it or tries another import -- a validation failure can be a long list (one entry per
+// bad row/cell), which needs to stay readable, not flash by like a toast.
+function ImportExcelStatusBanner({ status, onDismiss }) {
+  const isError = status.type === "error";
+  return (
+    <div className={`border-b px-4 py-2.5 ${isError ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`} data-scheduling-import-excel-status>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className={`text-xs font-black ${isError ? "text-red-800" : "text-emerald-800"}`}>{isError ? status.errors[0] ?? status.message : status.message}</p>
+          {isError && status.errors.length > 1 && (
+            <ul className="mt-1 list-inside list-disc space-y-0.5 text-xs text-red-700">
+              {status.errors.slice(1).map((error) => <li key={error}>{error}</li>)}
+            </ul>
+          )}
+        </div>
+        <button type="button" onClick={onDismiss}
+          className={`shrink-0 text-xs font-bold ${isError ? "text-red-700 hover:text-red-900" : "text-emerald-700 hover:text-emerald-900"}`}>
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CycleConflictBanner({ cycleDiagnoses, isOwner, onRemoveDependency }) {
   return (
     <div className="border-b border-red-200 bg-red-50 px-4 py-2.5" data-scheduling-cycle-banner>

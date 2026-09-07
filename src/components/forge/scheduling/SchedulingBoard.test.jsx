@@ -170,6 +170,11 @@ describe("SchedulingBoard", () => {
     expect(markup).not.toContain("data-scheduling-cycle-banner");
   });
 
+  it("does not render the Import Excel status banner until an import runs", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).not.toContain("data-scheduling-import-excel-status");
+  });
+
   it("does not render the resources, costs, EVM/DCMA, or leveling modal until one is opened", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).not.toContain("data-scheduling-resources");
