@@ -6,7 +6,17 @@
 
 ---
 
-## 2026-09-07 Defect Fix — Scheduling Autosave Destroyed Relational Data (SCHED-20)
+## 2026-09-07 Defect Fix — Scheduling Autosave Destroyed Relational Data (SCHED-20) — COMPLETE
+
+**Status: complete and verified live.** Both migrations are applied to production and match the
+repository's migration history exactly (confirmed via `supabase migration list --linked`, Local and
+Remote timestamps identical for both `20260907010000` and `20260907020000`); the live validation
+script passes end-to-end against production; the regression test guarding the follow-up bug is
+green (`scheduling-fix-save-schedule-project-board-ambiguous-board-revision.migration.test.js`,
+part of 18/18 passing migration tests for this defect). PR #137 (the original fix) and PR #138 (the
+follow-up hotfix) are both merged to `main`. Scheduling saves are confirmed operational in
+production. No further action is required for SCHED-20 itself; SCHED-21 (calendar/day-precision) and
+SCHED-22 (status-period workflow) remain separate, not-yet-started follow-on tickets.
 
 **Defect:** every scheduling autosave deleted and rebuilt *all* of a project's relational
 activities (`schedule_blocks` and everything cascading from it), unconditionally, on every single
