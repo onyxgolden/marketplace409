@@ -256,6 +256,14 @@ export default function PropertyConditionAssessmentPanel() {
     [itemKey],
   );
 
+  const definitions = useMemo(
+    () =>
+      attributeDefinitions(
+        selectedDefinition,
+      ),
+    [selectedDefinition],
+  );
+
   const [
     status,
     setStatus,
@@ -375,6 +383,213 @@ export default function PropertyConditionAssessmentPanel() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadAssessments() {
+      if (!propertyId) {
+        setAssessments([]);
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `/api/property-condition-assessments?propertyId=${encodeURIComponent(
+            propertyId,
+          )}`,
+        );
+
+        const payload =
+          await response.json();
+
+        if (!active) {
+          return;
+        }
+
+        if (
+          !response.ok ||
+          !payload.success
+        ) {
+          setAssessments([]);
+          return;
+        }
+
+        setAssessments(
+          payload.assessments || [],
+        );
+      } catch {
+        if (active) {
+          setAssessments([]);
+        }
+      }
+    }
+
+    loadAssessments();
+
+    return () => {
+      active = false;
+    };
+  }, [propertyId]);
+
+  // Attributes/notes/cost/year all describe the currently selected item -- once the item (or
+  // its section) changes, none of them still apply to whatever gets selected next.
+  function resetItemFields() {
+    setAttributes({});
+    setNotes("");
+    setReplacementCostDollars("");
+    setReplacementYear("");
+  }
+
+  function changeSection(nextSection) {
+    setSection(nextSection);
+    setItemKey("");
+    resetItemFields();
+  }
+
+  function changeItem(nextItemKey) {
+    setItemKey(nextItemKey);
+    resetItemFields();
+  }
+
+  function updateAttribute(definition, rawValue) {
+    const key = attributeKey(definition);
+    const normalized = normalizeAttributeValue(
+      definition,
+      rawValue,
+    );
+
+    setAttributes((current) => {
+      if (normalized === undefined) {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      }
+
+      return { ...current, [key]: normalized };
+    });
+  }
+
+  // Dollars -> cents the same way PropertyConditionAssessmentApplication's own dollarsToCents
+  // does server-side -- buildConditionObservation's estimatedReplacementCostCents param expects
+  // an already-in-cents integer (or "" for "not recorded"), per its own tests.
+  function addObservation() {
+    if (!itemKey) {
+      setMessage(
+        "Choose a checklist item before adding an observation.",
+      );
+      return;
+    }
+
+    let observation;
+
+    try {
+      observation = buildConditionObservation({
+        section,
+        itemKey,
+        status,
+        attributes,
+        notes,
+        estimatedReplacementCostCents:
+          replacementCostDollars === ""
+            ? ""
+            : Math.round(
+                Number(replacementCostDollars) * 100,
+              ),
+        plannedReplacementYear: replacementYear,
+      });
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to add this observation.",
+      );
+      return;
+    }
+
+    // One observation per checklist item -- re-adding the same item replaces its prior entry
+    // rather than duplicating it (observations.map keys off itemKey, which must stay unique).
+    setObservations((current) => [
+      ...current.filter(
+        (existing) => existing.itemKey !== observation.itemKey,
+      ),
+      observation,
+    ]);
+    setMessage("");
+    setItemKey("");
+    resetItemFields();
+  }
+
+  function removeObservation(targetItemKey) {
+    setObservations((current) =>
+      current.filter(
+        (observation) => observation.itemKey !== targetItemKey,
+      ),
+    );
+  }
+
+  async function saveAssessment() {
+    if (!propertyId) {
+      setMessage("Choose a property before saving.");
+      return;
+    }
+
+    if (observations.length === 0) {
+      setMessage(
+        "Add at least one observation before saving.",
+      );
+      return;
+    }
+
+    setSaving(true);
+    setMessage("");
+
+    try {
+      const response = await fetch(
+        "/api/property-condition-assessments",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            operation: "record-owner-assessment",
+            assessment: {
+              propertyId,
+              effectiveAt,
+              summary,
+              items: observations,
+            },
+          }),
+        },
+      );
+
+      const payload = await response.json();
+
+      if (!response.ok || !payload.success) {
+        throw new Error(
+          payload?.error ||
+            "Unable to save this assessment.",
+        );
+      }
+
+      setAssessments((current) => [
+        payload.assessment,
+        ...current,
+      ]);
+      setObservations([]);
+      setSummary("");
+      setMessage("Assessment saved.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to save this assessment.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <section
