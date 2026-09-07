@@ -1,11 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   BASE_BLOCK_FONT_SIZE_PX, CALENDAR_PRESETS, HISTORY_LIMIT, MIN_BLOCK_FONT_SIZE_PX, PROJECT_TEMPLATES,
   addBlock, addBlackoutWindow, addCalendar, addCustomChip, addDependency, addLane, applyImportedActivities, blackoutDayRuns,
   blockAnchorPoint, blockToChip, calendarById, calendarForLane, chipsByCategory, computeWeeks,
   dataDateOffset, deleteLane, defaultBoardState, dependenciesForBlock, dependencyArrowPoints,
   deserializeBoardState, emptyHistory, fitBlockFontSizePx, fitWeekWidthPx, generateProjectId, hydrateBoardState,
-  linkBlocksInOrder, moveBlock, moveBlocksBy, nonWorkingDayRuns, occupiedWeekIndices, projectSummaryFromBoard,
+  linkBlocksInOrder, moveBlock, moveBlocksBy, nonWorkingDayRuns, occupiedWeekIndices, parseISODate, projectSummaryFromBoard,
   projectTemplateById, recordHistory, redoHistory, removeBlackoutWindow, removeBlock, removeCalendar,
   removeDependency, renameBlock, renameLane, resetBoard, resizeBlock, resizeBlockFromStart, serializeBoardState,
   setBlockTextStyle, setDefaultCalendar, setLaneCalendar, setProjectDates, suggestPredecessors, suggestSuccessors,
@@ -21,6 +21,63 @@ describe("computeWeeks", () => {
   });
   it("returns at least the start date when the range is shorter than a week", () => {
     expect(computeWeeks("2026-01-01", "2026-01-01")).toEqual(["2026-01-01"]);
+  });
+});
+
+// SCHED-20: parseISODate/computeWeeks used to construct board dates in the machine's LOCAL
+// timezone (`new Date(y, m - 1, d)`) and then read them back with toISOString(), which is
+// always UTC. In any timezone with a positive offset from UTC (e.g. Asia/Tokyo, +9), local
+// midnight on a given day converts to the previous UTC day, so every board date -- start
+// date, end date, every week column -- silently rolled back by one, confirmed live via
+// TZ=Asia/Tokyo before this fix. These tests pin process.env.TZ to representative zones on
+// both sides of UTC (plus UTC itself) and assert the parsed/derived dates are identical
+// across all three, which is only possible if the date math never touches local time at all.
+describe("SCHED-20: date parsing is timezone-independent", () => {
+  const originalTz = process.env.TZ;
+
+  afterEach(() => {
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  const ZONES = ["America/Los_Angeles", "UTC", "Asia/Tokyo"];
+
+  it("parseISODate resolves to the exact same calendar day in every timezone", () => {
+    for (const tz of ZONES) {
+      process.env.TZ = tz;
+      expect(parseISODate("2026-01-01").toISOString().slice(0, 10)).toBe("2026-01-01");
+      expect(parseISODate("2026-12-31").toISOString().slice(0, 10)).toBe("2026-12-31");
+    }
+  });
+
+  it("computeWeeks produces the identical week sequence in every timezone", () => {
+    const expected = ["2026-01-01", "2026-01-08", "2026-01-15", "2026-01-22"];
+    for (const tz of ZONES) {
+      process.env.TZ = tz;
+      expect(computeWeeks("2026-01-01", "2026-01-22")).toEqual(expected);
+    }
+  });
+
+  it("computeWeeks never drifts across a year boundary in a positive-UTC-offset zone (the exact case that reproduced the original bug)", () => {
+    process.env.TZ = "Asia/Tokyo";
+    expect(computeWeeks("2025-12-25", "2026-01-08")).toEqual(["2025-12-25", "2026-01-01", "2026-01-08"]);
+  });
+
+  it("blackoutDayRuns finds the identical blacked-out day range in every timezone", () => {
+    const state = { blackoutWindows: [{ id: "b1", startDate: "2026-01-01", endDate: "2026-01-02" }] };
+    for (const tz of ZONES) {
+      process.env.TZ = tz;
+      expect(blackoutDayRuns(state, "2025-12-29")).toEqual([[3, 4]]);
+    }
+  });
+
+  it("todayISO's offset arithmetic lands on the same calendar day in every timezone", () => {
+    for (const tz of ZONES) {
+      process.env.TZ = tz;
+      const today = todayISO(0);
+      const tenDaysLater = todayISO(10);
+      expect(new Date(tenDaysLater).getTime() - new Date(today).getTime()).toBe(10 * 24 * 60 * 60 * 1000);
+    }
   });
 });
 

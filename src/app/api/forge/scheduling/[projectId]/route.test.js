@@ -33,7 +33,8 @@ function tableNode(resolution) {
 
 function mockDb({
   project = PROJECT_ROW, calendars = [], wbsNodes = [], blackoutWindows = [], lanes = [], blocks = [BLOCK_ROW],
-  dependencies = [], rpcError = null, deleteRow = { id: "p1" },
+  dependencies = [], deleteRow = { id: "p1" },
+  rpcData = [{ board_revision: 3, updated_at: "2026-02-01T00:00:00.000Z" }], rpcError = null,
 } = {}) {
   const nodes = {
     schedule_projects: tableNode({ data: project, error: null }),
@@ -45,7 +46,7 @@ function mockDb({
     schedule_dependencies: tableNode({ data: dependencies, error: null }),
     forge_scheduling_projects: tableNode({ data: deleteRow, error: null }),
   };
-  const rpc = vi.fn(async () => ({ error: rpcError }));
+  const rpc = vi.fn(async () => (rpcError ? { data: null, error: rpcError } : { data: rpcData, error: null }));
   return { client: { from: vi.fn((table) => nodes[table] || tableNode({ data: null, error: null })), rpc }, nodes, rpc };
 }
 
@@ -128,32 +129,65 @@ describe("GET /api/forge/scheduling/[projectId]", () => {
     const body = await response.json();
     expect(body.board.cpm).toEqual({ byTaskCode: {}, criticalTaskCodes: [], conflicts: [], cycleDiagnoses: [] });
   });
+
+  it("surfaces board_revision as board.boardRevision, the token the client must echo back on its next save", async () => {
+    const db = mockDb({ project: { ...PROJECT_ROW, board_revision: 7 } });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    const body = await (await GET(new Request("https://test"), { params })).json();
+    expect(body.board.boardRevision).toBe(7);
+  });
 });
 
 describe("PUT /api/forge/scheduling/[projectId]", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("saves a project the caller owns and syncs its relational mirror", async () => {
+  it("saves through the atomic save_schedule_project_board RPC instead of a separate update+best-effort-sync pair", async () => {
     const db = mockDb();
     createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
     const response = await PUT(request(BOARD), { params });
     expect(response.status).toBe(200);
-    expect(db.nodes.forge_scheduling_projects.update).toHaveBeenCalledWith(expect.objectContaining({ project_name: "Mine" }));
-    expect(db.rpc).toHaveBeenCalledWith("sync_schedule_project_from_board", { p_owner_id: "user_1", p_project_id: "p1" });
+    expect(db.rpc).toHaveBeenCalledWith("save_schedule_project_board", {
+      p_owner_id: "user_1", p_project_id: "p1",
+      p_board: expect.objectContaining({ projectName: "Mine" }),
+      p_expected_revision: 0,
+    });
+    const body = await response.json();
+    expect(body.boardRevision).toBe(3);
+    expect(body.updatedAt).toBe("2026-02-01T00:00:00.000Z");
+    // The old route's separate forge_scheduling_projects.update() call is gone entirely --
+    // the RPC does that write itself, inside the same transaction as the relational sync.
+    expect(db.nodes.forge_scheduling_projects.update).not.toHaveBeenCalled();
   });
 
-  it("still succeeds even when the relational sync fails -- it's a best-effort mirror, not the save itself", async () => {
-    const db = mockDb({ rpcError: { message: "sync failed" } });
+  it("sends the client's last-known boardRevision as p_expected_revision, not always 0", async () => {
+    const db = mockDb();
     createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
-    const response = await PUT(request(BOARD), { params });
-    expect(response.status).toBe(200);
+    await PUT(request({ ...BOARD, boardRevision: 5 }), { params });
+    expect(db.rpc).toHaveBeenCalledWith("save_schedule_project_board", expect.objectContaining({ p_expected_revision: 5 }));
+  });
+
+  it("returns 409 with a reload-before-saving message when the RPC reports a stale revision, instead of silently overwriting someone else's save", async () => {
+    const db = mockDb({ rpcError: { message: "SCHEDULE_SAVE_CONFLICT" } });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    const response = await PUT(request({ ...BOARD, boardRevision: 5 }), { params });
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.code).toBe("SCHEDULE_SAVE_CONFLICT");
+    expect(body.error.toLowerCase()).toContain("reload");
   });
 
   it("404s instead of silently succeeding when the caller doesn't own the row (e.g. the shared example)", async () => {
-    const db = mockDb({ deleteRow: null });
+    const db = mockDb({ rpcError: { message: "SCHEDULE_SAVE_NOT_FOUND" } });
     createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
     const response = await PUT(request(BOARD), { params });
     expect(response.status).toBe(404);
+  });
+
+  it("500s (rather than reporting a false success) on any other RPC error, since a relational-sync failure must now roll back the whole save", async () => {
+    const db = mockDb({ rpcError: { message: "constraint violation" } });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    const response = await PUT(request(BOARD), { params });
+    expect(response.status).toBe(500);
   });
 });
 
