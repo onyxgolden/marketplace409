@@ -5,6 +5,7 @@ import SchedulingHelpModal from "./SchedulingHelpModal";
 import SchedulingCalendarsModal from "./SchedulingCalendarsModal";
 import SchedulingBaselinesModal from "./SchedulingBaselinesModal";
 import SchedulingResourcesModal from "./SchedulingResourcesModal";
+import SchedulingCostAccountsModal from "./SchedulingCostAccountsModal";
 import SchedulingCostsModal from "./SchedulingCostsModal";
 import SchedulingEvmDcmaModal from "./SchedulingEvmDcmaModal";
 import SchedulingLevelingModal from "./SchedulingLevelingModal";
@@ -57,6 +58,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   const [showCalendars, setShowCalendars] = useState(false);
   const [showBaselines, setShowBaselines] = useState(false);
   const [showResources, setShowResources] = useState(false);
+  const [showCostAccounts, setShowCostAccounts] = useState(false);
   const [showCosts, setShowCosts] = useState(false);
   const [showEvmDcma, setShowEvmDcma] = useState(false);
   const [showLeveling, setShowLeveling] = useState(false);
@@ -65,6 +67,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   // create assignments on it regardless (schedule_resource_assignments has no public-select
   // policy -- see the SCHED-05 migration), so there's nothing useful to fetch for them here.
   const [resources, setResources] = useState([]);
+  const [costAccounts, setCostAccounts] = useState([]);
   const [showCriticalPath, setShowCriticalPath] = useState(false);
   // Local overrides for progress fields (percent complete, actual start/finish) edited this
   // session, layered over board.cpm.byTaskCode's server-computed values -- these fields live only
@@ -129,6 +132,16 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   }
   // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
   useEffect(() => { loadResources(); }, [isOwner]);
+
+  // SCHED-19: same owner-only, fetch-once-for-the-drawer-picker shape as resources above.
+  async function loadCostAccounts() {
+    if (!isOwner) return;
+    const response = await fetch("/api/forge/scheduling/cost-accounts");
+    const result = await response.json().catch(() => ({}));
+    setCostAccounts(result.costAccounts || []);
+  }
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+  useEffect(() => { loadCostAccounts(); }, [isOwner]);
 
   function handleUndo() {
     setHistory((h) => {
@@ -702,6 +715,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
             {isOwner && (
               <>
                 <button type="button" onClick={() => setShowResources(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Resources</button>
+                <button type="button" onClick={() => setShowCostAccounts(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Cost Codes</button>
                 <button type="button" onClick={() => setShowCosts(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Costs</button>
                 <button type="button" onClick={() => setShowEvmDcma(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">EVM &amp; DCMA</button>
                 <button type="button" onClick={() => setShowLeveling(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Level Resources</button>
@@ -928,6 +942,9 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
       )}
       {showResources && (
         <SchedulingResourcesModal isOwner={isOwner} onClose={() => setShowResources(false)} onChanged={loadResources} templateId={board.templateId} />
+      )}
+      {showCostAccounts && (
+        <SchedulingCostAccountsModal isOwner={isOwner} onClose={() => setShowCostAccounts(false)} onChanged={loadCostAccounts} />
       )}
       {showCosts && (
         <SchedulingCostsModal projectId={projectId} blocks={board.blocks} onClose={() => setShowCosts(false)} />
@@ -1199,7 +1216,7 @@ function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDepe
           </span>
         )}
       </div>
-      {isOwner && <BlockResourcesPanel projectId={projectId} taskCode={block.taskCode} resources={resources} />}
+      {isOwner && <BlockResourcesPanel projectId={projectId} taskCode={block.taskCode} resources={resources} costAccounts={costAccounts} />}
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         <DependencyList title="Predecessors" dependencies={predecessors} blockById={blockById} idField="predecessorId" onRemove={onRemoveDependency} onGoTo={onSelectBlock} />
         <DependencyList title="Successors" dependencies={successors} blockById={blockById} idField="successorId" onRemove={onRemoveDependency} onGoTo={onSelectBlock} />
@@ -1267,11 +1284,11 @@ function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDepe
 // begin with). Only rendered when isOwner (see DependencyDrawer) -- a non-owner can't see or write
 // this project's cost data regardless (no public-select policy on either table), so there's nothing
 // for this panel to usefully show them.
-function BlockResourcesPanel({ projectId, taskCode, resources }) {
+function BlockResourcesPanel({ projectId, taskCode, resources, costAccounts }) {
   const [assignments, setAssignments] = useState([]);
   const [expenses, setExpenses] = useState([]);
-  const [assignDraft, setAssignDraft] = useState({ resourceId: "", budgetedUnits: "" });
-  const [expenseDraft, setExpenseDraft] = useState({ name: "", budgetedCost: "" });
+  const [assignDraft, setAssignDraft] = useState({ resourceId: "", budgetedUnits: "", costAccountId: "" });
+  const [expenseDraft, setExpenseDraft] = useState({ name: "", budgetedCost: "", costAccountId: "" });
 
   async function loadBlockCosts() {
     const [assignmentsResponse, expensesResponse] = await Promise.all([
@@ -1294,9 +1311,9 @@ function BlockResourcesPanel({ projectId, taskCode, resources }) {
     if (!assignDraft.resourceId) return;
     const response = await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/assignments`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ resourceId: assignDraft.resourceId, budgetedUnits: assignDraft.budgetedUnits || 0 }),
+      body: JSON.stringify({ resourceId: assignDraft.resourceId, budgetedUnits: assignDraft.budgetedUnits || 0, costAccountId: assignDraft.costAccountId || null }),
     });
-    if (response.ok) { setAssignDraft({ resourceId: "", budgetedUnits: "" }); await loadBlockCosts(); }
+    if (response.ok) { setAssignDraft({ resourceId: "", budgetedUnits: "", costAccountId: "" }); await loadBlockCosts(); }
   }
   async function handleRemoveAssignment(assignmentId) {
     await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/assignments/${assignmentId}`, { method: "DELETE" });
@@ -1307,9 +1324,9 @@ function BlockResourcesPanel({ projectId, taskCode, resources }) {
     if (!name) return;
     const response = await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/expenses`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, budgetedCost: expenseDraft.budgetedCost || 0 }),
+      body: JSON.stringify({ name, budgetedCost: expenseDraft.budgetedCost || 0, costAccountId: expenseDraft.costAccountId || null }),
     });
-    if (response.ok) { setExpenseDraft({ name: "", budgetedCost: "" }); await loadBlockCosts(); }
+    if (response.ok) { setExpenseDraft({ name: "", budgetedCost: "", costAccountId: "" }); await loadBlockCosts(); }
   }
   async function handleRemoveExpense(expenseId) {
     await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/expenses/${expenseId}`, { method: "DELETE" });
@@ -1317,6 +1334,7 @@ function BlockResourcesPanel({ projectId, taskCode, resources }) {
   }
 
   const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
+  const costAccountById = new Map(costAccounts.map((costAccount) => [costAccount.id, costAccount]));
 
   return (
     <div className="mt-3 rounded-lg bg-slate-50 p-2.5" data-scheduling-resources-panel>
@@ -1325,9 +1343,13 @@ function BlockResourcesPanel({ projectId, taskCode, resources }) {
         {assignments.map((assignment) => {
           const resource = resourceById.get(assignment.resource_id);
           const rate = assignment.rate_override ?? resource?.std_rate ?? 0;
+          const costAccount = assignment.cost_account_id ? costAccountById.get(assignment.cost_account_id) : null;
           return (
             <li key={assignment.id} className="flex items-center justify-between gap-2">
-              <span className="font-bold">{resource?.name || assignment.resource_id} — {assignment.budgeted_units} units @ ${rate}</span>
+              <span className="font-bold">
+                {resource?.name || assignment.resource_id} — {assignment.budgeted_units} units @ ${rate}
+                {costAccount && <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">{costAccount.code}</span>}
+              </span>
               <button type="button" onClick={() => handleRemoveAssignment(assignment.id)} className="text-red-600 hover:text-red-800">Remove</button>
             </li>
           );
@@ -1340,23 +1362,37 @@ function BlockResourcesPanel({ projectId, taskCode, resources }) {
         </select>
         <input type="number" min={0} placeholder="Budgeted units" value={assignDraft.budgetedUnits} onChange={(e) => setAssignDraft((d) => ({ ...d, budgetedUnits: e.target.value }))}
           className="w-28 rounded border border-slate-300 px-2 py-1 text-xs" />
+        <select value={assignDraft.costAccountId} onChange={(e) => setAssignDraft((d) => ({ ...d, costAccountId: e.target.value }))} className="rounded border border-slate-300 px-2 py-1 text-xs" data-scheduling-assignment-cost-account>
+          <option value="">Cost code (optional)…</option>
+          {costAccounts.map((costAccount) => <option key={costAccount.id} value={costAccount.id}>{costAccount.code}</option>)}
+        </select>
         <button type="button" onClick={handleAddAssignment} disabled={!assignDraft.resourceId} className="rounded bg-slate-950 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">Assign</button>
       </div>
 
       <p className="mt-3 text-[10px] font-black uppercase tracking-wide text-slate-500">Expenses</p>
       <ul className="mt-1.5 space-y-1 text-xs">
-        {expenses.map((expense) => (
-          <li key={expense.id} className="flex items-center justify-between gap-2">
-            <span className="font-bold">{expense.name} — ${expense.budgeted_cost}</span>
-            <button type="button" onClick={() => handleRemoveExpense(expense.id)} className="text-red-600 hover:text-red-800">Remove</button>
-          </li>
-        ))}
+        {expenses.map((expense) => {
+          const costAccount = expense.cost_account_id ? costAccountById.get(expense.cost_account_id) : null;
+          return (
+            <li key={expense.id} className="flex items-center justify-between gap-2">
+              <span className="font-bold">
+                {expense.name} — ${expense.budgeted_cost}
+                {costAccount && <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">{costAccount.code}</span>}
+              </span>
+              <button type="button" onClick={() => handleRemoveExpense(expense.id)} className="text-red-600 hover:text-red-800">Remove</button>
+            </li>
+          );
+        })}
       </ul>
       <div className="mt-1.5 flex flex-wrap items-center gap-2">
         <input placeholder="Expense name" value={expenseDraft.name} onChange={(e) => setExpenseDraft((d) => ({ ...d, name: e.target.value }))}
           className="rounded border border-slate-300 px-2 py-1 text-xs" />
         <input type="number" min={0} placeholder="Budgeted cost" value={expenseDraft.budgetedCost} onChange={(e) => setExpenseDraft((d) => ({ ...d, budgetedCost: e.target.value }))}
           className="w-28 rounded border border-slate-300 px-2 py-1 text-xs" />
+        <select value={expenseDraft.costAccountId} onChange={(e) => setExpenseDraft((d) => ({ ...d, costAccountId: e.target.value }))} className="rounded border border-slate-300 px-2 py-1 text-xs" data-scheduling-expense-cost-account>
+          <option value="">Cost code (optional)…</option>
+          {costAccounts.map((costAccount) => <option key={costAccount.id} value={costAccount.id}>{costAccount.code}</option>)}
+        </select>
         <button type="button" onClick={handleAddExpense} disabled={!expenseDraft.name.trim()} className="rounded bg-slate-950 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">Add expense</button>
       </div>
     </div>

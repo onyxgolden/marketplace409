@@ -157,12 +157,18 @@ describe("SchedulingBoard", () => {
     expect(markup).not.toContain("data-scheduling-baselines");
   });
 
-  it("offers Resources, Costs, EVM & DCMA, and Level Resources under Menu, for the default (owner) board", () => {
+  it("offers Resources, Cost Codes, Costs, EVM & DCMA, and Level Resources under Menu, for the default (owner) board", () => {
     const markup = renderToStaticMarkup(<SchedulingBoard />);
     expect(markup).toContain(">Resources<");
+    expect(markup).toContain(">Cost Codes<");
     expect(markup).toContain(">Costs<");
     expect(markup).toContain("EVM &amp; DCMA");
     expect(markup).toContain(">Level Resources<");
+  });
+
+  it("does not render the cost codes modal until it's opened", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).not.toContain("data-scheduling-cost-accounts");
   });
 
   it("does not render the cycle-conflict banner on a fresh board with no cycle diagnosed yet", () => {

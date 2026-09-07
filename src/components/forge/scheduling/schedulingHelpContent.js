@@ -95,8 +95,10 @@ export const HELP_SECTIONS = Object.freeze([
     items: [
       { label: "Menu -> Resources", description: "A dictionary of labor, nonlabor, and material resources shared across all of your scheduling projects -- name, type, max units/day, and standard rate." },
       { label: "Load starter resources (Resources)", description: "One click adds a template-appropriate starter set (crews, equipment, materials) to your resource dictionary -- pick any template's set, not just this project's own. Names you already have are skipped, so it's safe to run more than once." },
-      { label: "Resources & costs (drawer)", description: "Assign a resource to the selected activity with budgeted units, or add a non-resource expense (a permit, a rental, etc.)." },
+      { label: "Menu -> Cost Codes", description: "A dictionary of PO#s, WO#s, or any other cost code -- shared across all of your scheduling projects, same as Resources." },
+      { label: "Resources & costs (drawer)", description: "Assign a resource to the selected activity with budgeted units, or add a non-resource expense (a permit, a rental, etc.) -- either can optionally be tagged with a cost code." },
       { label: "Menu -> Costs", description: "Read-only budgeted/actual/remaining cost, project-wide and per activity, plus warnings for any resource booked over its daily capacity." },
+      { label: "Cost by code (Costs)", description: "Budgeted/actual/remaining totaled per cost code, including an Uncoded bucket for anything not tagged. Click a code to filter the totals and the activity table down to just that PO#/WO#." },
     ],
   },
   {

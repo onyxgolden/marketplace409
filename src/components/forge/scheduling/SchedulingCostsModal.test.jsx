@@ -76,4 +76,42 @@ describe("SchedulingCostsModal", () => {
     await flush();
     expect(mounted.container.textContent).toContain("Unable to load cost data");
   });
+
+  it("shows Cost by code, and clicking a code refetches the rollup filtered to it", async () => {
+    global.fetch
+      .mockReturnValueOnce(jsonResponse({
+        success: true, overallocations: [], project: { budgeted_cost: 2500, actual_cost: 0, remaining_cost: 2500 },
+        byBlock: [{ block_id: "b1", task_code: "A1010", budgeted_cost: 2500, actual_cost: 0, remaining_cost: 2500 }],
+        byCostAccount: [
+          { cost_account_id: "acct_po", code: "PO-4521", name: "Steel supplier", budgeted_cost: 2000, actual_cost: 0, remaining_cost: 2000 },
+          { cost_account_id: null, code: null, name: "Uncoded", budgeted_cost: 500, actual_cost: 0, remaining_cost: 500 },
+        ],
+      }))
+      .mockReturnValueOnce(jsonResponse({
+        success: true, overallocations: [], project: { budgeted_cost: 2000, actual_cost: 0, remaining_cost: 2000 },
+        byBlock: [{ block_id: "b1", task_code: "A1010", budgeted_cost: 2000, actual_cost: 0, remaining_cost: 2000 }],
+      }))
+      .mockReturnValueOnce(jsonResponse({
+        success: true, overallocations: [], project: { budgeted_cost: 2500, actual_cost: 0, remaining_cost: 2500 },
+        byBlock: [{ block_id: "b1", task_code: "A1010", budgeted_cost: 2500, actual_cost: 0, remaining_cost: 2500 }],
+        byCostAccount: [{ cost_account_id: "acct_po", code: "PO-4521", name: "Steel supplier", budgeted_cost: 2000, actual_cost: 0, remaining_cost: 2000 }],
+      }));
+    mounted = mount(<SchedulingCostsModal projectId="p1" blocks={BLOCKS} onClose={() => {}} />);
+    await flush();
+
+    expect(mounted.container.textContent).toContain("Cost by code");
+    expect(mounted.container.textContent).toContain("PO-4521");
+    expect(mounted.container.textContent).toContain("Uncoded");
+
+    const codeButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent.includes("PO-4521"));
+    await act(async () => { codeButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(global.fetch).toHaveBeenLastCalledWith("/api/forge/scheduling/p1/cost-rollup?costAccountId=acct_po");
+    expect(mounted.container.textContent).toContain("Filtered to cost code PO-4521");
+    expect(mounted.container.textContent).toContain("$2,000.00");
+
+    const clearButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Clear filter");
+    await act(async () => { clearButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+    expect(mounted.container.textContent).not.toContain("Filtered to cost code");
+  });
 });
