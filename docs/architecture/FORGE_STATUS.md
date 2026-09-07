@@ -43,19 +43,49 @@ actual old destructive migration — 12/14 failed against it, for exactly the in
 restored. The timezone fix was sabotage-verified the same way across `America/Los_Angeles`, `UTC`,
 and `Asia/Tokyo`. New route/hook/domain tests cover the conflict path, revision tracking, and
 `boardRevision` round-tripping. 634/634 Scheduling tests pass; scoped lint, `git diff --check`, and
-the production build all pass. **Not yet run:** the live-database validation script
-(`supabase/validation/schedule_atomic_save_and_preserve_relational_data_validation.sql`) — this
-sandbox has no `supabase/config.toml`, so `supabase start` isn't available here. Run it against a
-live/staging Postgres before this migration reaches production.
+the production build all pass. **At merge time**, the live-database validation script
+(`supabase/validation/schedule_atomic_save_and_preserve_relational_data_validation.sql`) had not
+been run — this sandbox has no `supabase/config.toml`, so `supabase start` isn't available here.
+**It was run against production shortly after merge — see below for what that run found and how it
+was resolved; do not read the sentence above as still describing current status.**
 
-**PR:** [#137](https://github.com/onyxgolden/marketplace409/pull/137) — **not yet merged**, per its
-own explicit requirement: hold for green CI and a manual review of the migration for destructive
-behavior before merging.
+**PR:** [#137](https://github.com/onyxgolden/marketplace409/pull/137) — merged to `main` 2026-09-07,
+after green CI and owner approval.
 
-**Production migration command:** none beyond the normal migration-deploy step for
-`20260907010000_add_schedule_atomic_save_and_preserve_relational_data.sql` (additive only — one new
-column with a default, two function replacements; no backfill or destructive statement) — run only
-after the validation script above has been executed against staging.
+**Post-merge finding — a second live-only bug, and the exact reason this repository's migration-
+apply and validation steps must never be skipped:** merging the PR only shipped the app code;
+applying the migration to the production database is a separate step, and it had not happened yet.
+The deployed route code called `save_schedule_project_board` on every save, which did not exist in
+the database — **every scheduling save was failing** until the migration below was applied.
+
+Once applied, running `supabase/validation/schedule_atomic_save_and_preserve_relational_data_validation.sql`
+against production (the only Supabase project that exists here — there is no separate staging
+project, and preview branches require a plan upgrade this project doesn't have; run with owner
+approval, wrapped in a transaction that ends in `rollback` so no data was left behind) immediately
+caught a second, genuinely live-only bug: `save_schedule_project_board`'s
+`returns table(board_revision bigint, ...)` clause implicitly declares `board_revision` as a
+PL/pgSQL variable for the whole function body, and one internal expression referenced it
+unqualified — Postgres correctly refused to guess between the variable and the
+`schedule_projects.board_revision` column, raising "ambiguous column reference" (42702) on every
+single invocation. This is exactly the class of defect a static, text-based migration test cannot
+catch (it's a runtime name-resolution ambiguity, not a textual pattern) and exactly why the live
+validation script — not just the static test — is required before/immediately after a migration
+like this reaches production.
+
+Fixed in `20260907020000_fix_save_schedule_project_board_ambiguous_board_revision.sql` (qualifies
+the one reference; re-verified no other unqualified use of either OUT-parameter name exists in the
+function), applied to production with owner approval, and re-verified: the validation script now
+passes end-to-end (`SCHED20_ATOMIC_SAVE_VALIDATION_PASS`), confirmed clean rollback (zero residual
+rows), and a new migration test (`scheduling-fix-save-schedule-project-board-ambiguous-board-
+revision.migration.test.js`) guards the exact broken pattern going forward.
+
+**Production migration commands (both already applied, in order):**
+1. `supabase db push --linked` — `20260907010000_add_schedule_atomic_save_and_preserve_relational_data.sql`
+2. `supabase db push --linked` — `20260907020000_fix_save_schedule_project_board_ambiguous_board_revision.sql`
+
+**Verified live in production:** `save_schedule_project_board` and `sync_schedule_project_from_board`
+both exist, `schedule_projects.board_revision` exists, and the full validation script passes.
+Scheduling saves are confirmed working.
 
 ---
 
