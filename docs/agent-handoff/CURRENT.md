@@ -2,6 +2,54 @@
 
 ## Last Updated
 
+2026-09-07T~00:00Z — Claude Code (Sonnet 5). **Reconciliation entry, ported onto a fresh branch off
+`origin/main` rather than editing `chore/agent-handoff` directly** — this branch's own local
+worktree (`.claude/worktrees/agent-handoff`) had an unrelated stale, uncommitted, never-finished
+edit sitting in its index (a partial rewrite dated ~2026-08-23, older than this branch's own
+already-merged history), so this update was authored from a clean worktree checked out fresh from
+this branch's current remote tip instead of building on top of that leftover state. That local
+worktree's uncommitted changes were left untouched, not committed or discarded — whoever owns that
+session should decide what to do with it.
+
+**Targeted correction, not a full resync** — the note directly below (2026-09-05, Forge Brain
+clarification) was already accurate about section E stopping at SCHED-11; it is now further stale.
+**SCHED-12 through SCHED-19 have since shipped and merged to `main`**: Primavera P6 `.xer` export
+(SCHED-12/13), Microsoft Project XML export (SCHED-14/15), Excel task-list import/export
+(SCHED-18, new `exceljs` dependency), and cost codes (PO#/WO#) with a filterable cost rollup
+(SCHED-19) — plus three toolbar/UX cleanup PRs and one production hotfix (PR #130, a
+`ReferenceError` crash on every Gantt-block click, shipped same-day as SCHED-19 and caught live in
+production, not by any pre-existing test). See `git log --oneline --all --grep="SCHED-"` on `main`
+and PRs #119-#133 for the authoritative current state; not re-narrated in full here for the same
+reason the 2026-09-05 entry gave — this doc drifting from git truth on a topic git already answers
+completely is exactly what made itself necessary again.
+
+**A repo-wide `no-undef` ESLint rule was added (PR #132) after that hotfix**, scoped to `.js`/`.jsx`
+(TypeScript files rely on `tsc` for this instead) — the audit that motivated it also found and fixed
+one unrelated pre-existing bug of the same class in the Property domain
+(`PropertyConditionAssessmentPanel.jsx`, PR #133): its "record" workflow referenced six handler
+functions and a variable that were never actually defined in scope, crashing on the first
+interaction. Not a Scheduling issue; flagged here only because the same audit technique (temporarily
+forcing `no-undef` on, verifying it actually reproduces the exact original error before trusting a
+fix) is worth reusing whenever a future session suspects a similar "referenced but never wired"
+bug elsewhere in the app.
+
+**FORGE Health correction** (this doc has never described Health; recorded here because it was
+found stale on the *other* turnover doc, `docs/architecture/FORGE_STATUS.md`, while investigating
+this reconciliation): that file's "2026-09-02 Turnover Checkpoint" section says Health is "not
+merged, migrated, or deployed" as of 2026-09-02. That is no longer true — PR #91 merged Health to
+`main` that same day (2026-09-02T23:30:31Z) and Health work continued through at least PR #108.
+**What git cannot confirm**: whether every Health migration has actually been applied to the
+Production Supabase database — `supabase migration list` against Production is the only way to
+verify that, and no session has run it recently enough to cite a result here. Corrected directly in
+`FORGE_STATUS.md` in a separate, small documentation PR rather than folded into a Scheduling-focused
+handoff update.
+
+**RV multi-user operations remains the primary unclaimed product assignment** — the spec/assignment
+(`docs(handoff): assign RV multi-user operations dashboard slice`, PR #87, and its
+FORGE_STATUS.md/FORGE_SESSION.md/FORGE_ENGINEERING_CONTROL_CENTER.md queue entries) is merged, but
+no subsequent dashboard/access implementation appears anywhere in mainline history since. Still real,
+still queued, still nobody's picked it up.
+
 2026-09-05T~22:00Z — Claude Code (Sonnet 5). **This entry is a targeted correction, not a full
 resync** — the Scheduling P6-parity narrative below (section E) stops at SCHED-02 and is now stale;
 SCHED-03 through SCHED-11 have since shipped and merged (all Gantt-blocks-only, CPM/baselines/
