@@ -926,7 +926,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
           onSelectBlock={(id) => setSelectedBlockIds([id])}
           progress={{ ...board.cpm?.byTaskCode?.[selectedBlock.taskCode], ...progressOverrides[selectedBlock.taskCode] }}
           onUpdateProgress={(patch) => updateBlockProgress(selectedBlock.taskCode, patch)}
-          projectId={projectId} isOwner={isOwner} resources={resources} />
+          projectId={projectId} isOwner={isOwner} resources={resources} costAccounts={costAccounts} />
       )}
       {showHelp && <SchedulingHelpModal onClose={() => setShowHelp(false)} />}
       {showCalendars && (
@@ -1129,7 +1129,7 @@ function SelectionOrderBadge({ order }) {
   );
 }
 
-function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDependency, onChangeDuration, onSelectBlock, progress, onUpdateProgress, projectId, isOwner, resources }) {
+function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDependency, onChangeDuration, onSelectBlock, progress, onUpdateProgress, projectId, isOwner, resources, costAccounts }) {
   const [direction, setDirection] = useState("predecessor");
   const [targetId, setTargetId] = useState("");
   const [relationshipType, setRelationshipType] = useState("FS");
