@@ -147,6 +147,97 @@ describe("POST /api/stripe/financial-connections/complete", () => {
     consoleError.mockRestore();
   });
 
+  // Real fixture shape, captured from a live Stripe test-mode "Test (Non-OAuth)" institution
+  // session: it returns 10 named scenario accounts, of which exactly 2 ("Failure" and "Account
+  // closes after linking") are inactive by design. Confirmed live that subscribing all 10
+  // unconditionally makes Stripe reject the inactive ones ("Data cannot be refreshed on inactive
+  // accounts."), which previously failed the ENTIRE completion via Promise.all -- even though the
+  // other 8 accounts, and all 10 accounts' durable financial_accounts rows, were already fine.
+  const TEST_NON_OAUTH_ACCOUNTS = [
+    { accountId: "fca_test_failure", displayName: "Failure", institutionName: "Test Institution", last4: "0000", category: "cash", subcategory: "checking", status: "inactive" },
+    { accountId: "fca_test_closes_after_linking", displayName: "Account closes after linking", institutionName: "Test Institution", last4: "0001", category: "cash", subcategory: "checking", status: "inactive" },
+    { accountId: "fca_test_success", displayName: "Success", institutionName: "Test Institution", last4: "0002", category: "cash", subcategory: "checking", status: "active" },
+    { accountId: "fca_test_very_high_balance", displayName: "Very High Balance", institutionName: "Test Institution", last4: "0003", category: "cash", subcategory: "checking", status: "active" },
+    { accountId: "fca_test_insufficient_funds", displayName: "Insufficient Funds", institutionName: "Test Institution", last4: "0004", category: "cash", subcategory: "checking", status: "active" },
+    { accountId: "fca_test_success_later_disputed", displayName: "Success (Later Disputed)", institutionName: "Test Institution", last4: "0005", category: "cash", subcategory: "checking", status: "active" },
+    { accountId: "fca_test_payment_processes_indefinitely", displayName: "Payment Processes Indefinitely", institutionName: "Test Institution", last4: "0006", category: "cash", subcategory: "checking", status: "active" },
+    { accountId: "fca_test_high_balance", displayName: "High Balance", institutionName: "Test Institution", last4: "0007", category: "cash", subcategory: "checking", status: "active" },
+    { accountId: "fca_test_debit_not_authorized", displayName: "Debit Not Authorized", institutionName: "Test Institution", last4: "0008", category: "cash", subcategory: "checking", status: "active" },
+    { accountId: "fca_test_weekly_volume_exceeded", displayName: "Weekly Payment Volume Exceeded", institutionName: "Test Institution", last4: "0009", category: "cash", subcategory: "checking", status: "active" },
+  ];
+
+  it("subscribes only the 8 active accounts from a real 10-account Test (Non-OAuth) session, never the 2 inactive ones, and still succeeds overall", async () => {
+    const currentOwnerId = vi.fn().mockResolvedValue("owner-123");
+    mocks.getConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuite());
+    mocks.createAuthenticatedConnectionApplication.mockResolvedValue({ currentOwnerId, getConnectionPlatformSuite: mocks.getConnectionPlatformSuite });
+    mocks.completeFinancialConnectionsSession.mockResolvedValue({ sessionId: "fcsess_10acct", accounts: TEST_NON_OAUTH_ACCOUNTS });
+    mocks.mapStripeFinancialConnectionsSessionToConnection.mockReturnValue({ connection: { id: "connection_10acct" }, credentialReference: { id: "credential_10acct" }, institutionReference: { id: "institution_10acct" } });
+    mocks.provision.mockReturnValue({ readyForPersistence: true });
+    mocks.persist.mockResolvedValue({ connection: { id: "connection_10acct" }, credentialReference: { id: "credential_10acct" }, institutionReference: { id: "institution_10acct" }, provisionedAt: "t1", persistedAt: "t2", readyForImport: true });
+    // active mirrors the account mapper's real behavior (active: account.status === "active").
+    const canonicalAccounts = TEST_NON_OAUTH_ACCOUNTS.map((account) => ({
+      id: `financial_account_stripe_financial_connections_${account.accountId}`,
+      providerAccountId: account.accountId,
+      active: account.status === "active",
+    }));
+    mocks.accountMapperMapMany.mockReturnValue(canonicalAccounts);
+    mocks.importCanonicalAccounts.mockResolvedValue({ importedFinancialAccountCount: 10 });
+    mocks.subscribeFinancialConnectionsAccounts.mockResolvedValue(undefined);
+    mocks.executeImport.mockResolvedValue({ success: true });
+
+    const response = await POST(request({ sessionId: "fcsess_10acct" }));
+
+    expect(response.status).toBe(200);
+    // All 10 accounts (active AND inactive) are durably persisted -- inactive ones are represented
+    // as not-active, not omitted and not silently treated as healthy.
+    expect(mocks.importCanonicalAccounts).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.arrayContaining(canonicalAccounts),
+      expect.any(String),
+    );
+    const persistedInactive = canonicalAccounts.filter((account) => !account.active);
+    expect(persistedInactive).toHaveLength(2);
+    expect(persistedInactive.map((account) => account.providerAccountId)).toEqual(["fca_test_failure", "fca_test_closes_after_linking"]);
+
+    // Subscribe is called with exactly the 8 active account ids -- never the 2 inactive ones.
+    const subscribedIds = mocks.subscribeFinancialConnectionsAccounts.mock.calls[0][0].accountIds as string[];
+    expect(subscribedIds).toHaveLength(8);
+    expect(subscribedIds).not.toContain("fca_test_failure");
+    expect(subscribedIds).not.toContain("fca_test_closes_after_linking");
+    expect(subscribedIds).toEqual(
+      TEST_NON_OAUTH_ACCOUNTS.filter((account) => account.status === "active").map((account) => account.accountId),
+    );
+
+    const body = (await response.json()) as { success: boolean; importedAccountCount: number };
+    expect(body.success).toBe(true);
+    expect(body.importedAccountCount).toBe(10);
+  });
+
+  it("does not fail completion when subscribeFinancialConnectionsAccounts is called with only active ids -- proves the fix actually prevents the Promise.all rejection that previously took down the whole route", async () => {
+    const currentOwnerId = vi.fn().mockResolvedValue("owner-123");
+    mocks.getConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuite());
+    mocks.createAuthenticatedConnectionApplication.mockResolvedValue({ currentOwnerId, getConnectionPlatformSuite: mocks.getConnectionPlatformSuite });
+    mocks.completeFinancialConnectionsSession.mockResolvedValue({ sessionId: "fcsess_10acct_b", accounts: TEST_NON_OAUTH_ACCOUNTS });
+    mocks.mapStripeFinancialConnectionsSessionToConnection.mockReturnValue({ connection: { id: "connection_10acct_b" }, credentialReference: {}, institutionReference: {} });
+    mocks.provision.mockReturnValue({ readyForPersistence: true });
+    mocks.persist.mockResolvedValue({ connection: { id: "connection_10acct_b" }, credentialReference: {}, institutionReference: {}, provisionedAt: "t1", persistedAt: "t2", readyForImport: true });
+    mocks.accountMapperMapMany.mockReturnValue(TEST_NON_OAUTH_ACCOUNTS.map((account) => ({ id: `financial_account_${account.accountId}`, providerAccountId: account.accountId })));
+    mocks.importCanonicalAccounts.mockResolvedValue({ importedFinancialAccountCount: 10 });
+    // Simulates the real adapter: it would reject if asked to subscribe an inactive account.
+    // Because route.ts now filters to active-only ids first, this mock is never even given the
+    // chance to see an inactive id -- if it were, this assertion below would fail.
+    mocks.subscribeFinancialConnectionsAccounts.mockImplementation(async ({ accountIds }: { accountIds: string[] }) => {
+      if (accountIds.includes("fca_test_failure") || accountIds.includes("fca_test_closes_after_linking")) {
+        throw new Error("Data cannot be refreshed on inactive accounts.");
+      }
+    });
+    mocks.executeImport.mockResolvedValue({ success: true });
+
+    const response = await POST(request({ sessionId: "fcsess_10acct_b" }));
+
+    expect(response.status).toBe(200);
+  });
+
   it("returns a user-safe error and does not persist anything when the session doesn't belong to the expected owner", async () => {
     const currentOwnerId = vi.fn().mockResolvedValue("owner-123");
     mocks.getConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuite());

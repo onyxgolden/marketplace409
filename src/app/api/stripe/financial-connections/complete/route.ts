@@ -119,8 +119,25 @@ export async function POST(request: Request) {
     // mapStripeFinancialConnectionsSessionToConnection/the account mapper both derive stable,
     // deterministic ids from sessionId/accountId, so a retried completion for the same session
     // upserts the same rows rather than duplicating them.
+    //
+    // Subscribes ONLY accounts whose Stripe status is "active" -- Stripe rejects a subscribe call
+    // for any other status ("Data cannot be refreshed on inactive accounts."), and a session can
+    // legitimately return a mix (Stripe's own "Test (Non-OAuth)" institution, for example, returns
+    // 10 named scenario accounts, two of which -- "Failure" and "Account closes after linking" --
+    // are inactive by design). An inactive account is still durably persisted above (with
+    // active: false, via the account mapper -- see stripe-financial-connections-account.mapper.ts)
+    // so it shows up as needs-attention rather than importable, but it must never be attempted for
+    // subscribe, and it must never be allowed to fail the OTHER accounts' subscription: filtering
+    // here means Promise.all only ever contains active-account subscribe calls, so a single
+    // inactive account can no longer take down the whole completion the way it did before this
+    // fix (confirmed live: a 10-account test session with 2 inactive accounts returned 500 and
+    // subscribed nothing, even though 8 of the 10 accounts were genuinely subscribable).
+    const activeAccountIds = completed.accounts
+      .filter((account) => account.status === "active")
+      .map((account) => account.accountId);
+
     await connectionPlatformSuite.stripeFinancialConnectionsProvider.subscribeFinancialConnectionsAccounts({
-      accountIds: canonicalAccounts.map((account) => account.providerAccountId),
+      accountIds: activeAccountIds,
     });
 
     // Best-effort initial import so the dashboard has real data (balances/transactions)

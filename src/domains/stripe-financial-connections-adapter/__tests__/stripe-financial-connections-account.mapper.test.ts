@@ -60,6 +60,14 @@ describe("StripeFinancialConnectionsAccountMapper", () => {
     expect(account.active).toBe(false);
   });
 
+  it("marks a Stripe status: 'inactive' account (e.g. Test (Non-OAuth)'s 'Failure'/'Account closes after linking' scenario accounts) as active: false -- needs-attention, not silently healthy/importable", () => {
+    const account = mapper.map(
+      stripeAccount({ displayName: "Failure", status: "inactive" }),
+      "connection_1", "stripe_financial_connections", "institution_1",
+    );
+    expect(account.active).toBe(false);
+  });
+
   it("never carries an ownership field -- the approved application scope excludes account-ownership data", () => {
     const account = mapper.map(stripeAccount(), "connection_1", "stripe_financial_connections", "institution_1");
     expect(account).not.toHaveProperty("ownership");
