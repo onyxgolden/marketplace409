@@ -207,6 +207,16 @@ export async function POST(request) {
 
     const connectionPlatformSuite = await createConnectionPlatformSuite({
       supabaseClient: supabase,
+      // The resolved canonical workspace owner id (never the acting user -- there is no "acting
+      // user" at all on this service-role webhook path, only the owner resolveOwningConnection
+      // already looked up above) -- forwarded to FinancialEventImportService by
+      // createConnectionPlatformSuite.js. Without this, every webhook-triggered import failed at
+      // the financial_events persistence step with "Financial event owner_id is required" --
+      // confirmed live by redelivering a real, previously-failed Stripe test-mode webhook event
+      // via `stripe events resend` after the OTHER two call sites were already fixed. This route
+      // is a third, separate call site of the same composition function; the fix there alone
+      // does not help a caller that never passes ownerId in the first place.
+      ownerId: owning.ownerId,
       connectionRepositoryStorage: ConnectionRepositoryStorage.SUPABASE,
       credentialReferenceRepositoryStorage: CredentialReferenceRepositoryStorage.SUPABASE,
       institutionReferenceRepositoryStorage: InstitutionReferenceRepositoryStorage.SUPABASE,
