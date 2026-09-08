@@ -1,3 +1,9 @@
+// providerTransaction here is a canonical Transaction (see
+// src/domains/connection/connection-import-payload.types.ts) -- its own account reference field
+// is providerAccountId, not accountId. Checking .accountId (a raw-provider-shaped field that
+// doesn't exist on the canonical object) silently matched nothing, for every transaction, for
+// every provider, always -- found and fixed alongside the double-mapping bug this same canonical
+// payload change was made to guard against.
 function transactionBelongsToAccount(
   providerTransaction,
   providerAccountId,
@@ -5,7 +11,7 @@ function transactionBelongsToAccount(
   return (
     providerTransaction !== null &&
     typeof providerTransaction === "object" &&
-    providerTransaction.accountId ===
+    providerTransaction.providerAccountId ===
       providerAccountId
   );
 }
@@ -121,15 +127,20 @@ export class ConnectionImportExecutionCoordinator {
     const payload =
       accountImportResult.payload;
 
+    // payload (from provider.importDataPayload()) is already canonical -- see
+    // src/domains/connection/connection-import-payload.types.ts for the authoritative contract.
+    // importCanonicalAccounts/importCanonicalBalances/importCanonicalTransactionsForAccount
+    // persist it as-is; they do NOT map it again the way importAccounts/importBalances/
+    // importTransactionsForAccount do for a caller that still has raw provider data.
     const financialAccountImportResult =
-      await this.financialAccountImportService.importAccounts(
+      await this.financialAccountImportService.importCanonicalAccounts(
         accountImportResult,
         payload.accounts,
         payload.occurredAt,
       );
 
     const accountBalanceImportResult =
-      await this.accountBalanceImportService.importBalances(
+      await this.accountBalanceImportService.importCanonicalBalances(
         financialAccountImportResult,
         payload.balances,
         payload.occurredAt,
@@ -152,7 +163,7 @@ export class ConnectionImportExecutionCoordinator {
 
       const transactionImportResult =
         await this.transactionImportService
-          .importTransactionsForAccount(
+          .importCanonicalTransactionsForAccount(
             financialAccountImportResult,
             financialAccount,
             providerTransactions,

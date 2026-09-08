@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import { ForgeConnectionDashboardApplication } from "@/application/connection";
 import ForgeDashboardCard from "@/components/forge/ForgeDashboardCard";
-import PlaidConnectButton from "@/components/forge/PlaidConnectButton";
+// Stripe Financial Connections is now the live "Connect bank" path. PlaidConnectButton (and the
+// whole Plaid adapter) is kept, unmodified, behind the provider boundary -- Plaid may become a
+// future secondary provider -- it's simply not rendered here.
+import StripeFinancialConnectionsButton from "@/components/forge/StripeFinancialConnectionsButton";
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import ConnectionExecutionResultCard from "@/components/forge/ConnectionExecutionResultCard";
@@ -125,7 +128,7 @@ export default function ConnectionPage() {
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
-          <PlaidConnectButton />
+          <StripeFinancialConnectionsButton />
 
           <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <div className={forgeTheme.labelSmall}>
@@ -135,7 +138,7 @@ export default function ConnectionPage() {
               From secure connection to financial insight
             </h2>
             <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
-              After you authorize an institution through Plaid, FORGE prepares
+              After you authorize an institution through Stripe, FORGE prepares
               the connection for financial import and review.
             </p>
 

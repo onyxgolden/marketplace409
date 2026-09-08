@@ -57,12 +57,15 @@ connectionExecutionHistoryRepositoryStorage: "memory",
 
 
 expect(suite.plaidProvider.provider).toBe("plaid");
+expect(suite.stripeFinancialConnectionsProvider.provider).toBe("stripe_financial_connections");
 expect(suite.providers).toEqual([
   suite.plaidProvider,
+  suite.stripeFinancialConnectionsProvider,
 ]);
-expect(suite.providerRegistry.totalProviders).toBe(1);
+expect(suite.providerRegistry.totalProviders).toBe(2);
 expect(suite.providerRegistry.providerNames).toEqual([
   "plaid",
+  "stripe_financial_connections",
 ]);
 
 expect(suite.connectionRepository).toBeInstanceOf(

@@ -61,13 +61,16 @@ describe(
             {
               transactionId:
                 "provider_transaction_1",
-              accountId:
+              // Canonical Transaction's own account-reference field -- see
+              // src/domains/connection/connection-import-payload.types.ts. transactionBelongsToAccount
+              // matches against this, not a raw-provider-shaped .accountId.
+              providerAccountId:
                 "provider_account_1",
             },
             {
               transactionId:
                 "provider_transaction_2",
-              accountId:
+              providerAccountId:
                 "provider_account_2",
             },
           ],
@@ -141,21 +144,21 @@ describe(
         };
 
         const financialAccountImportService = {
-          importAccounts: vi.fn(
+          importCanonicalAccounts: vi.fn(
             async () =>
               financialAccountImportResult,
           ),
         };
 
         const accountBalanceImportService = {
-          importBalances: vi.fn(
+          importCanonicalBalances: vi.fn(
             async () =>
               accountBalanceImportResult,
           ),
         };
 
         const transactionImportService = {
-          importTransactionsForAccount:
+          importCanonicalTransactionsForAccount:
             vi.fn(
               async (
                 input,
@@ -260,7 +263,7 @@ describe(
 
         expect(
           financialAccountImportService
-            .importAccounts,
+            .importCanonicalAccounts,
         ).toHaveBeenCalledWith(
           accountImportResult,
           payload.accounts,
@@ -269,7 +272,7 @@ describe(
 
         expect(
           accountBalanceImportService
-            .importBalances,
+            .importCanonicalBalances,
         ).toHaveBeenCalledWith(
           financialAccountImportResult,
           payload.balances,
@@ -278,12 +281,12 @@ describe(
 
         expect(
           transactionImportService
-            .importTransactionsForAccount,
+            .importCanonicalTransactionsForAccount,
         ).toHaveBeenCalledTimes(2);
 
         expect(
           transactionImportService
-            .importTransactionsForAccount,
+            .importCanonicalTransactionsForAccount,
         ).toHaveBeenNthCalledWith(
           1,
           financialAccountImportResult,
@@ -294,7 +297,7 @@ describe(
 
         expect(
           transactionImportService
-            .importTransactionsForAccount,
+            .importCanonicalTransactionsForAccount,
         ).toHaveBeenNthCalledWith(
           2,
           financialAccountImportResult,

@@ -79,6 +79,10 @@ createPlaidAdapter,
 } from "../../domains/plaid-adapter";
 
 import {
+createStripeFinancialConnectionsAdapter,
+} from "../../domains/stripe-financial-connections-adapter";
+
+import {
 ConnectionQueryService,
 ConnectionSummaryQueryService,
 ConnectionReadModelAdapter,
@@ -125,8 +129,20 @@ const plaidProvider =
     plaidClient: deps.plaidClient,
   });
 
+// stripeClient is intentionally NOT resolved here (would construct a Stripe SDK client, or throw
+// if STRIPE_MODE/STRIPE_SECRET_KEY aren't configured, on every single call to this composition
+// function -- including every existing Plaid-focused test). createStripeFinancialConnectionsAdapter
+// resolves its Stripe client lazily, exactly the way createPlaidAdapter already resolves its own
+// Plaid client lazily, so this stays exactly as safe to construct unconfigured as it was before.
+const stripeFinancialConnectionsProvider =
+  deps.stripeFinancialConnectionsProvider ||
+  createStripeFinancialConnectionsAdapter({
+    credentialVaultService,
+    stripeClient: deps.stripeClient,
+  });
+
 const providers =
-deps.providers || [plaidProvider];
+deps.providers || [plaidProvider, stripeFinancialConnectionsProvider];
 
 const providerRegistry =
 deps.providerRegistry ||
@@ -406,6 +422,7 @@ connectionExecutionHistoryIntelligenceBuilder,
 return Object.freeze({
 providers,
 plaidProvider,
+stripeFinancialConnectionsProvider,
 providerRegistry,
 connectionRepository,
 credentialReferenceRepository,

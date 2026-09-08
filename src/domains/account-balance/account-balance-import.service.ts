@@ -116,4 +116,35 @@ export class AccountBalanceImportService<
       importedAt,
     );
   }
+
+  // See src/domains/connection/connection-import-payload.types.ts for the authoritative contract:
+  // provider.importDataPayload() already returns canonical AccountBalance objects (each already
+  // carrying the correct financialAccountId, resolved by the adapter itself at mapping time) --
+  // this must never be re-mapped through this.mapper, which expects a raw provider-specific
+  // balance shape. Still skips (and counts) any balance whose financialAccountId doesn't match an
+  // account that was actually persisted this run, the same defensive behavior importBalances
+  // already has, just without re-deriving financialAccountId from a raw provider accountId.
+  async importCanonicalBalances(
+    input: FinancialAccountImportResult,
+    balances: readonly AccountBalance[],
+    accountBalancesImportedAt?: string,
+  ) {
+    const importedAt = accountBalancesImportedAt ?? new Date().toISOString();
+    const knownFinancialAccountIds = new Set(input.financialAccounts.map((financialAccount) => financialAccount.id));
+
+    const acceptedBalances: AccountBalance[] = [];
+    let skippedAccountBalanceCount = 0;
+
+    for (const balance of balances) {
+      if (!knownFinancialAccountIds.has(balance.financialAccountId)) {
+        skippedAccountBalanceCount += 1;
+        continue;
+      }
+      acceptedBalances.push(balance);
+    }
+
+    const persistedAccountBalances = await this.repository.saveMany(acceptedBalances, { ownerId: input.connection.userId });
+
+    return toAccountBalanceImportResult(input, persistedAccountBalances, skippedAccountBalanceCount, importedAt);
+  }
 }
