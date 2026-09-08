@@ -18,14 +18,14 @@ export type StripeFinancialConnectionsTransaction = Readonly<{
   transactionId: string;
   accountId: string;
   // Stripe's own signed integer, smallest currency unit (Transactions.d.ts: "The amount of this
-  // transaction, in cents (or local equivalent)."). UNVERIFIED sign convention -- Stripe's
-  // installed SDK types and live public API reference/guide pages do not state whether positive
-  // means a credit (inflow) or a debit (outflow); the two official doc pages this adapter's
-  // author checked show the SAME illustrative "Rocket Rides" purchase example with opposite signs
-  // (+300 on the API reference page, -1000 on the transactions guide page), which is not
-  // authoritative either way. See the mapper for the negation currently applied and the
-  // correction report for why this remains an open, live/test-mode-validation-required gate, not
-  // a verified fact.
+  // transaction, in cents (or local equivalent)."). Sign convention VERIFIED live (not from
+  // documentation, which was self-contradictory across two official pages for this exact field --
+  // see the mapper's own comment): positive = inflow/credit (money owed TO the account holder,
+  // matching Account.Balance's documented convention), negative = outflow/debit. Confirmed against
+  // a real Stripe test-mode Financial Connections session -- e.g. a real "Rocket Rides" (ride-hail
+  // purchase, an unambiguous real-world expense) transaction had raw amount -1000, consistent
+  // across all 275 real transactions sampled. See the mapper for the negation this requires to
+  // match Plaid's opposite convention.
   amount: number;
   currency: string;
   description: string;

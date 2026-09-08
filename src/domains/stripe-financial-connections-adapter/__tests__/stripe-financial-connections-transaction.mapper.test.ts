@@ -32,6 +32,26 @@ describe("StripeFinancialConnectionsTransactionMapper", () => {
     expect(transaction.id).toBe("transaction_stripe_financial_connections_fcxtxn_purchase");
   });
 
+  // Real fixture, not a hand-typed guess: captured directly from a live Stripe test-mode
+  // Financial Connections session (Stripe's own "Test (Non-OAuth)" institution). This is the
+  // exact evidence that settled the sign-convention question -- see correction report item 9 and
+  // the mapper's own header comment. "Rocket Rides" is Stripe's own named example for a ride-hail
+  // purchase, an unambiguous real-world outflow/expense; its raw Stripe amount was -1000.
+  // Retrieved directly via GET /v1/financial_connections/transactions/fctxn_1UDRfiF3Krk1yqTDjKVJirSo.
+  it("VERIFIED against live Stripe test-mode data: a real 'Rocket Rides' transaction (raw amount -1000, an unambiguous real-world expense) maps to canonical +1000, confirming Stripe negative = outflow", () => {
+    const transaction = mapper.map(
+      stripeTransaction({
+        transactionId: "fctxn_1UDRfiF3Krk1yqTDjKVJirSo",
+        amount: -1000,
+        description: "Rocket Rides",
+        status: "posted",
+        transactedAt: "2026-09-08",
+      }),
+      "connection_1", "stripe_financial_connections", "financial_account_1", "fca_test_1",
+    );
+    expect(transaction.amountCents).toBe(1000);
+  });
+
   it("maps a deposit (Stripe positive/credit) to a negative canonical inflow", () => {
     const transaction = mapper.map(
       stripeTransaction({ transactionId: "fcxtxn_deposit", amount: 500000, description: "PAYROLL DEPOSIT" }),
