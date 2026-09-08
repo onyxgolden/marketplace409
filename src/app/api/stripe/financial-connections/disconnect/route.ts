@@ -4,6 +4,7 @@ import {
 
 import {
   parseVaultedState,
+  retrieveFinancialConnectionsAccount,
   unsubscribeFinancialConnectionsAccount,
   disconnectFinancialConnectionsAccount,
 } from "@/domains/stripe-financial-connections-adapter";
@@ -17,6 +18,56 @@ import {
 } from "@/infrastructure/billing/StripeBillingProvider";
 
 import type Stripe from "stripe";
+
+// Stripe exposes NO structured error code for "this account is already disconnected" -- confirmed
+// by direct inspection of the real API response for both unsubscribe and disconnect on an
+// already-disconnected test account: {"error":{"message":"This account has been
+// disconnected.","param":"account","type":"invalid_request_error"}}. The installed SDK's
+// StripeError DOES support a `code` field for exactly this kind of programmatically-handleable
+// case (see node_modules/stripe/cjs/Error.d.ts) -- Stripe simply does not populate one here.
+// `type` alone ("invalid_request_error") is far too generic to rely on; it's shared by many
+// unrelated validation errors on the same endpoints. Message-text matching is therefore the only
+// available signal for this specific case -- isolated to this one narrow helper, and never used
+// as a general error-handling pattern elsewhere in this route.
+function isAlreadyDisconnectedStripeError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const stripeError = error as { type?: unknown; message?: unknown };
+  return (
+    stripeError.type === "invalid_request_error"
+    && typeof stripeError.message === "string"
+    && /has been disconnected/i.test(stripeError.message)
+  );
+}
+
+// Idempotent per-account convergence to "disconnected" on Stripe's side. Retrieves the account's
+// CURRENT status first and skips accounts already disconnected -- this alone makes a straight
+// repeat of an already-completed disconnect a no-op instead of an error (confirmed live: calling
+// unsubscribe/disconnect unconditionally on an already-disconnected account fails the whole
+// request with a 500, even though the requested end state was already true). Still handles the
+// race where an account's status changes to disconnected AFTER this retrieve but BEFORE the
+// unsubscribe/disconnect calls below actually run (e.g. a concurrent disconnect request, or a
+// disconnected webhook arriving mid-request) by treating that specific error as successful
+// convergence rather than failure. Any OTHER Stripe error (a genuine failure unrelated to
+// already-being-disconnected) is rethrown as-is -- this function only ever swallows the one
+// narrow, confirmed-safe case, never any error indiscriminately.
+async function disconnectAccountIdempotently(stripeClient: Stripe, accountId: string): Promise<void> {
+  const currentState = await retrieveFinancialConnectionsAccount(stripeClient, { accountId });
+  if (currentState.status === "disconnected") {
+    return;
+  }
+
+  try {
+    await unsubscribeFinancialConnectionsAccount(stripeClient, { accountId });
+  } catch (error) {
+    if (!isAlreadyDisconnectedStripeError(error)) throw error;
+  }
+
+  try {
+    await disconnectFinancialConnectionsAccount(stripeClient, { accountId });
+  } catch (error) {
+    if (!isAlreadyDisconnectedStripeError(error)) throw error;
+  }
+}
 
 // No existing "remove a connection" flow exists in FORGE for any provider today (confirmed by
 // inspection -- Plaid has none either); this is a new, minimal capability, scoped to Stripe
@@ -78,11 +129,12 @@ export async function POST(request: Request) {
 
     if (secret) {
       const vaultedState = parseVaultedState(secret);
+      // If ANY account hits an unrelated (non-"already disconnected") Stripe error, this rejects
+      // and the whole request fails below -- the local connection status is never updated to
+      // "disconnected" in that case (see the catch block), so a genuine failure never gets
+      // silently reported as a successful disconnect.
       await Promise.all(
-        vaultedState.accountIds.map(async (accountId) => {
-          await unsubscribeFinancialConnectionsAccount(stripeClient, { accountId });
-          await disconnectFinancialConnectionsAccount(stripeClient, { accountId });
-        }),
+        vaultedState.accountIds.map((accountId) => disconnectAccountIdempotently(stripeClient, accountId)),
       );
     }
 
