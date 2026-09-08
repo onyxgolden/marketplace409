@@ -92,13 +92,18 @@ async function seed(harness: ReturnType<typeof buildHarness>, { connection, cred
 // would fail immediately (PlaidFinancialAccountMapper reading Stripe's canonical object's
 // nonexistent .accountId/.isoCurrencyCode fields) -- proving this is a real regression guard, not
 // a tautology.
-function buildCoordinator(harness: ReturnType<typeof buildHarness>, provider: any) {
+// ownerId here mirrors createConnectionPlatformSuite.js's own deps.ownerId -> FinancialEventImportService
+// wiring (see correction: forwards the already-resolved effective workspace owner id -- fixed after
+// a live test-mode run proved it was never forwarded there, so every real transaction import failed
+// at the financial_events persistence step with "Financial event owner_id is required"). Passed
+// explicitly here rather than defaulting, so a regression that drops it again fails loudly.
+function buildCoordinator(harness: ReturnType<typeof buildHarness>, provider: any, { ownerId }: { ownerId: string }) {
   const registry = createConnectionProviderRegistry([provider]);
   const accountImportService = new AccountImportService(registry);
   const financialAccountImportService = new FinancialAccountImportService(harness.financialAccountRepository, new PlaidFinancialAccountMapper());
   const accountBalanceImportService = new AccountBalanceImportService(harness.accountBalanceRepository, new PlaidAccountBalanceMapper());
   const transactionImportService = new TransactionImportService(harness.transactionRepository, new PlaidTransactionMapper());
-  const financialEventImportService = new FinancialEventImportService({ repository: harness.financialEventRepository });
+  const financialEventImportService = new FinancialEventImportService({ repository: harness.financialEventRepository, ownerId });
 
   return new ConnectionImportExecutionCoordinator({
     connectionRepository: harness.connectionRepository,
@@ -139,7 +144,7 @@ describe("provider.importDataPayload() -> ConnectionImportExecutionCoordinator c
     const credentialVaultService = fakeCredentialVaultService({ [`${ownerId}:vault://plaid/items/item_1/access-token`]: "access-token-1" });
     const provider = createPlaidAdapter({ credentialVaultService, plaidClient });
 
-    const coordinator = buildCoordinator(harness, provider);
+    const coordinator = buildCoordinator(harness, provider, { ownerId });
     const result = await coordinator.executeImport({ connectionId: connection.id, ownerId });
 
     expect(result.success).toBe(true);
@@ -161,6 +166,15 @@ describe("provider.importDataPayload() -> ConnectionImportExecutionCoordinator c
     expect(persistedTransactions[0]).toMatchObject({
       providerTransactionId: "plaid_txn_1", amountCents: 12550, date: "2026-01-15", pending: false, description: "Home Depot",
     });
+
+    // The canonical transaction must produce a financial_events row attributed to the resolved
+    // workspace owner id -- never null, and never some other id (e.g. an acting co-owner's own
+    // user id, as opposed to the workspace they're acting within).
+    const persistedEvents = harness.financialEventRepository.findByOwnerId(ownerId);
+    expect(persistedEvents).toHaveLength(1);
+    expect(persistedEvents[0].owner_id).toBe(ownerId);
+    expect(persistedEvents[0].owner_id).not.toBeNull();
+    expect(persistedEvents[0].source_record_id).toBe("transaction_plaid_plaid_txn_1");
   });
 
   it("Stripe Financial Connections: persists accounts/balances/transactions with every canonical field intact, exactly once", async () => {
@@ -208,7 +222,7 @@ describe("provider.importDataPayload() -> ConnectionImportExecutionCoordinator c
     const credentialVaultService = fakeCredentialVaultService({ [`${ownerId}:vault://stripe_financial_connections/sessions/fcsess_1/state`]: vaultedState });
     const provider = createStripeFinancialConnectionsAdapter({ credentialVaultService, stripeClient });
 
-    const coordinator = buildCoordinator(harness, provider);
+    const coordinator = buildCoordinator(harness, provider, { ownerId });
     const result = await coordinator.executeImport({ connectionId: connection.id, ownerId });
 
     expect(result.success).toBe(true);
@@ -232,5 +246,18 @@ describe("provider.importDataPayload() -> ConnectionImportExecutionCoordinator c
       amountCents: 1250, // Stripe -1250 (debit) negated to canonical +1250 (outflow) -- survived the pipeline unflipped a second time
       date: "2026-01-09", pending: false, description: "AMAZON.COM PURCHASE",
     });
+
+    // Same guarantee as the Plaid case above -- a canonical Stripe transaction must produce a
+    // financial_events row attributed to the resolved workspace owner id, never null and never a
+    // different id. This is the exact live failure this test guards against: before
+    // createConnectionPlatformSuite.js forwarded deps.ownerId into FinancialEventImportService,
+    // SupabaseFinancialEventRepository.toRow rejected every real Stripe transaction import with
+    // "Financial event owner_id is required" -- account_balances persisted fine, financial_events
+    // did not, at all.
+    const persistedEvents = harness.financialEventRepository.findByOwnerId(ownerId);
+    expect(persistedEvents).toHaveLength(1);
+    expect(persistedEvents[0].owner_id).toBe(ownerId);
+    expect(persistedEvents[0].owner_id).not.toBeNull();
+    expect(persistedEvents[0].source_record_id).toBe("transaction_stripe_financial_connections_fcxtxn_1");
   });
 });

@@ -339,6 +339,16 @@ const financialEventImportService =
 deps.financialEventImportService ||
 new FinancialEventImportService({
 repository: financialEventRepository,
+// Every existing caller (createAuthenticatedConnectionApplication.js, the Stripe Financial
+// Connections webhook route) already resolves the effective canonical workspace owner id
+// BEFORE calling createConnectionPlatformSuite and passes it as deps.ownerId -- it was simply
+// never forwarded here. Without it, FinancialEventImportService silently defaulted to
+// ownerId: null, and SupabaseFinancialEventRepository.toRow throws "Financial event owner_id
+// is required" for every real transaction import (confirmed live against a real Stripe test
+// session: account_balances persisted correctly, financial_events did not, at all). This must
+// be the resolved workspace owner_id (never the acting co-owner's own user id) -- the same
+// value every other repository in this suite already scopes writes by.
+ownerId: deps.ownerId ?? null,
 });
 
 const connectionImportExecutionCoordinator =
