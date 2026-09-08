@@ -2,7 +2,7 @@
 // both need "the project's current relational data" and "a fresh CPM run over it." Not a
 // src/domains/scheduling module: those are all pure (no I/O), and this does real Supabase reads/
 // writes, so it lives alongside the routes that use it instead.
-import { runCpmEngine } from "@/domains/scheduling/schedulingCpmEngine";
+import { buildCpmEngineInput, runCpmEngine } from "@/domains/scheduling/schedulingCpmEngine";
 import { diagnoseCycles } from "@/domains/scheduling/schedulingCycleDiagnosis";
 
 // Every relational table directly scoped by schedule_project_id -- schedule_dependencies and
@@ -34,12 +34,26 @@ export async function loadProjectRelational(supabaseClient, projectId) {
   if (failedScoped) throw failedScoped.error;
   const relational = { project, ...Object.fromEntries(PROJECT_SCOPED_TABLES.map(([key], index) => [key, results[index].data || []])) };
 
+  // Holidays and hammock anchors have no schedule_project_id column of their own (see the
+  // relational schema migration), so -- like dependencies below -- they're fetched by scoping
+  // through tables that do: holidays via this project's own calendar ids, hammock anchors via this
+  // project's own block ids (which also covers hammock blocks themselves, already in
+  // relational.blocks). SCHED-21A: these two were simply never fetched here before, which is why
+  // computeAndPersistCpm had to hardcode holidays/hammockAnchors to [] -- not a separate bug in
+  // computeAndPersistCpm itself, just missing data one layer down.
+  const calendarIds = relational.calendars.map((calendar) => calendar.id);
   const blockIds = relational.blocks.map((block) => block.id);
-  const { data: dependencies, error: dependenciesError } = blockIds.length
-    ? await supabaseClient.from("schedule_dependencies").select("*").in("predecessor_id", blockIds)
-    : { data: [], error: null };
-  if (dependenciesError) throw dependenciesError;
-  relational.dependencies = dependencies || [];
+  const [holidaysResult, hammockAnchorsResult, dependenciesResult] = await Promise.all([
+    calendarIds.length ? supabaseClient.from("schedule_calendar_holidays").select("*").in("calendar_id", calendarIds) : { data: [], error: null },
+    blockIds.length ? supabaseClient.from("schedule_hammock_anchors").select("*").in("hammock_block_id", blockIds) : { data: [], error: null },
+    blockIds.length ? supabaseClient.from("schedule_dependencies").select("*").in("predecessor_id", blockIds) : { data: [], error: null },
+  ]);
+  if (holidaysResult.error) throw holidaysResult.error;
+  if (hammockAnchorsResult.error) throw hammockAnchorsResult.error;
+  if (dependenciesResult.error) throw dependenciesResult.error;
+  relational.holidays = holidaysResult.data || [];
+  relational.hammockAnchors = hammockAnchorsResult.data || [];
+  relational.dependencies = dependenciesResult.data || [];
 
   return relational;
 }
@@ -52,16 +66,19 @@ export async function loadProjectRelational(supabaseClient, projectId) {
 // has fresh early/late/float data -- failures here are logged, never fail the caller. `cpmBlocks` is
 // the raw runCpmEngine output (full rows, not just the summary), which captureBaseline needs as-is.
 export async function computeAndPersistCpm(supabaseClient, project, relational) {
-  const ganttBlocks = relational.blocks.filter((block) => block.lane_id != null && block.block_type !== "hammock");
-  if (ganttBlocks.length === 0) return { byTaskCode: {}, criticalTaskCodes: [], conflicts: [], cycleDiagnoses: [], cpmBlocks: [] };
-
-  const blockIds = new Set(relational.blocks.map((block) => block.id));
-  const dependencies = relational.dependencies.filter((dependency) => blockIds.has(dependency.predecessor_id) && blockIds.has(dependency.successor_id));
-
-  const result = runCpmEngine({
+  // SCHED-21A: assembled via the same buildCpmEngineInput verifyCpmEngineAgainstRealProjects.mjs
+  // uses, so this can't independently drift from it again the way it did with blackout windows in
+  // PR #140. This also stopped pre-filtering dependencies down to both-ends-present before calling
+  // the engine (buildCpmEngineInput's own doc comment explains why that used to silently suppress
+  // the engine's own dangling-dependency conflict reporting).
+  const input = buildCpmEngineInput({
     project: { start_date: project.start_date, end_date: project.end_date, default_calendar_id: project.default_calendar_id },
-    blocks: ganttBlocks, dependencies, calendars: relational.calendars, holidays: [], hammockAnchors: [], lanes: relational.lanes,
+    blocks: relational.blocks, dependencies: relational.dependencies, calendars: relational.calendars,
+    holidays: relational.holidays, blackoutWindows: relational.blackoutWindows, hammockAnchors: relational.hammockAnchors, lanes: relational.lanes,
   });
+  if (input.blocks.length === 0) return { byTaskCode: {}, criticalTaskCodes: [], conflicts: [], cycleDiagnoses: [], cpmBlocks: [] };
+
+  const result = runCpmEngine(input);
 
   const byTaskCode = {};
   const criticalTaskCodes = [];
@@ -88,7 +105,7 @@ export async function computeAndPersistCpm(supabaseClient, project, relational) 
   // SCHED-11: only trace/rank cycles when the CPM engine actually reported one -- diagnoseCycles
   // does a real graph walk, not worth running on every request when the common case has no cycle.
   const hasCycleConflict = result.conflicts.some((conflict) => conflict.type === "cycle");
-  const cycleDiagnoses = hasCycleConflict ? diagnoseCycles({ blocks: ganttBlocks, dependencies }) : [];
+  const cycleDiagnoses = hasCycleConflict ? diagnoseCycles({ blocks: input.blocks, dependencies: input.dependencies }) : [];
 
   return { byTaskCode, criticalTaskCodes, conflicts: result.conflicts, cycleDiagnoses, cpmBlocks: result.blocks };
 }
@@ -124,6 +141,10 @@ export async function loadResourceCostData(supabaseClient, relational) {
 // calendar's holidays, and dependencies/assignments filtered down to the blocks actually being
 // exported (cpmBlocks), so neither an exporter's predecessor-link table nor its assignment table
 // can reference a block id that isn't in the file's own task table.
+//
+// SCHED-21A: holidays for the project's own calendars are already on relational.holidays (loadProjectRelational
+// fetches them now) -- only the extra, out-of-project calendars this function pulls in need their own fetch,
+// instead of re-querying holidays for every calendar from scratch on every export.
 export async function loadExportData(supabaseClient, relational, cpmBlocks, assignments) {
   const referencedCalendarIds = new Set([
     relational.project.default_calendar_id,
@@ -132,17 +153,17 @@ export async function loadExportData(supabaseClient, relational, cpmBlocks, assi
   ].filter(Boolean));
   const missingCalendarIds = [...referencedCalendarIds].filter((id) => !relational.calendars.some((calendar) => calendar.id === id));
   let calendars = relational.calendars;
+  let holidays = relational.holidays;
   if (missingCalendarIds.length > 0) {
-    const { data: extraCalendars, error: extraCalendarsError } = await supabaseClient.from("schedule_calendars").select("*").in("id", missingCalendarIds);
-    if (extraCalendarsError) throw extraCalendarsError;
-    calendars = [...calendars, ...(extraCalendars || [])];
+    const [extraCalendarsResult, extraHolidaysResult] = await Promise.all([
+      supabaseClient.from("schedule_calendars").select("*").in("id", missingCalendarIds),
+      supabaseClient.from("schedule_calendar_holidays").select("*").in("calendar_id", missingCalendarIds),
+    ]);
+    if (extraCalendarsResult.error) throw extraCalendarsResult.error;
+    if (extraHolidaysResult.error) throw extraHolidaysResult.error;
+    calendars = [...calendars, ...(extraCalendarsResult.data || [])];
+    holidays = [...holidays, ...(extraHolidaysResult.data || [])];
   }
-
-  const calendarIds = calendars.map((calendar) => calendar.id);
-  const { data: holidays, error: holidaysError } = calendarIds.length
-    ? await supabaseClient.from("schedule_calendar_holidays").select("*").in("calendar_id", calendarIds)
-    : { data: [], error: null };
-  if (holidaysError) throw holidaysError;
 
   const cpmBlockIds = new Set(cpmBlocks.map((block) => block.id));
   const dependencies = relational.dependencies.filter((dependency) => cpmBlockIds.has(dependency.predecessor_id) && cpmBlockIds.has(dependency.successor_id));

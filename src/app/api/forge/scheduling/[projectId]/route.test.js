@@ -33,7 +33,7 @@ function tableNode(resolution) {
 
 function mockDb({
   project = PROJECT_ROW, calendars = [], wbsNodes = [], blackoutWindows = [], lanes = [], blocks = [BLOCK_ROW],
-  dependencies = [], deleteRow = { id: "p1" },
+  dependencies = [], holidays = [], hammockAnchors = [], deleteRow = { id: "p1" },
   rpcData = [{ board_revision: 3, updated_at: "2026-02-01T00:00:00.000Z" }], rpcError = null,
 } = {}) {
   const nodes = {
@@ -44,6 +44,8 @@ function mockDb({
     schedule_lanes: tableNode({ data: lanes, error: null }),
     schedule_blocks: tableNode({ data: blocks, error: null }),
     schedule_dependencies: tableNode({ data: dependencies, error: null }),
+    schedule_calendar_holidays: tableNode({ data: holidays, error: null }),
+    schedule_hammock_anchors: tableNode({ data: hammockAnchors, error: null }),
     forge_scheduling_projects: tableNode({ data: deleteRow, error: null }),
   };
   const rpc = vi.fn(async () => (rpcError ? { data: null, error: rpcError } : { data: rpcData, error: null }));
@@ -78,6 +80,26 @@ describe("GET /api/forge/scheduling/[projectId]", () => {
     const body = await response.json();
     expect(body.board.cpm.byTaskCode.A1010).toMatchObject({ earlyStart: "2026-01-01", isCritical: expect.any(Boolean) });
     expect(Array.isArray(body.board.cpm.conflicts)).toBe(true);
+  });
+
+  it("SCHED-21A: a real calendar holiday shifts the live CPM output, proving computeAndPersistCpm no longer hardcodes holidays to []", async () => {
+    const calendar = { id: "p1_cal_1", schedule_project_id: "p1", working_days: [1, 2, 3, 4, 5] };
+    const lane = { id: "p1_lane_1", schedule_project_id: "p1", name: "Engineering", color: null, calendar_id: "p1_cal_1", sort_order: 0 };
+    const holiday = { id: "p1_h1", calendar_id: "p1_cal_1", holiday_date: "2026-01-01" }; // PROJECT_ROW.start_date itself, a Thursday
+    const db = mockDb({ calendars: [calendar], lanes: [lane], holidays: [holiday] });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    const response = await GET(new Request("https://test"), { params });
+    const body = await response.json();
+    expect(body.board.cpm.byTaskCode.A1010.earlyStart).toBe("2026-01-02"); // rolled past the holiday, not "2026-01-01"
+  });
+
+  it("SCHED-21A: a real blackout window shifts the live CPM output, proving PR #140's blackoutWindows support reaches the live page, not just the verify script", async () => {
+    const blackoutWindows = [{ id: "p1_bw1", schedule_project_id: "p1", label: "Test", start_date: "2026-01-01", end_date: "2026-01-01" }];
+    const db = mockDb({ lanes: [{ id: "p1_lane_1", schedule_project_id: "p1", name: "Engineering", color: null, calendar_id: null, sort_order: 0 }], blackoutWindows });
+    createAuthenticatedForgeApplication.mockResolvedValue({ user: { id: "user_1" }, supabaseClient: db.client });
+    const response = await GET(new Request("https://test"), { params });
+    const body = await response.json();
+    expect(body.board.cpm.byTaskCode.A1010.earlyStart).toBe("2026-01-02"); // rolled past the blackout day, not "2026-01-01"
   });
 
   it("traces a circular dependency and returns a de-namespaced suggested-fix dependency id, matching board.dependencies' own id shape", async () => {

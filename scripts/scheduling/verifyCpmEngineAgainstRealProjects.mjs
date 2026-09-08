@@ -8,7 +8,7 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
-import { runCpmEngine } from "../../src/domains/scheduling/schedulingCpmEngine.js";
+import { buildCpmEngineInput, runCpmEngine } from "../../src/domains/scheduling/schedulingCpmEngine.js";
 
 async function fetchAll(supabaseClient, table) {
   const { data, error } = await supabaseClient.from(table).select("*");
@@ -75,7 +75,12 @@ export async function verifyCpmEngineAgainstRealProjects({ supabaseClient }) {
       const projectHammockAnchors = hammockAnchors.filter((row) => row.owner_id === project.owner_id && blockIds.has(row.hammock_block_id));
       const projectLanes = lanes.filter((row) => row.owner_id === project.owner_id && row.schedule_project_id === project.id);
 
-      const result = runCpmEngine({
+      // SCHED-21A: assembled via the same buildCpmEngineInput computeAndPersistCpm uses (the live
+      // production path), so this offline audit can't independently drift from it again the way it
+      // did with blackout windows in PR #140 -- that PR wired blackoutWindows into this script's
+      // own hand-built runCpmEngine call without touching the live path's, and nothing forced the
+      // two to agree.
+      const result = runCpmEngine(buildCpmEngineInput({
         project,
         blocks: projectBlocks,
         dependencies: projectDependencies,
@@ -84,7 +89,7 @@ export async function verifyCpmEngineAgainstRealProjects({ supabaseClient }) {
         blackoutWindows: projectBlackoutWindows,
         hammockAnchors: projectHammockAnchors,
         lanes: projectLanes,
-      });
+      }));
 
       return summarizeProject(project, result);
     }),

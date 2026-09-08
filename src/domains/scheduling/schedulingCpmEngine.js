@@ -540,6 +540,39 @@ export function detectConflicts({ blocks, cyclicBlockIds, danglingDependencies, 
   return Object.freeze(conflicts.map((conflict) => Object.freeze(conflict)));
 }
 
+// --- Shared engine-input assembly (SCHED-21A) ---------------------------------------------------
+//
+// Every caller that runs this engine over a project's relational rows -- the live
+// computeAndPersistCpm path (src/app/api/forge/scheduling/scheduleProjectAssembly.js) and the
+// offline verifyCpmEngineAgainstRealProjects.mjs audit script -- must build the exact same
+// runCpmEngine argument shape from the same raw rows. Before this, each built its own call by
+// hand and quietly drifted: PR #140 wired blackoutWindows into the verify script's call only, not
+// computeAndPersistCpm's, because nothing forced the two to agree. Routing both through this one
+// function makes that class of drift structurally harder, not just fixed once.
+
+// A relational block belongs in a CPM run when it's a real Gantt block (lane_id set) or a hammock
+// (block_type "hammock") -- topologicalOrder above already excludes hammocks from the dependency
+// graph itself via block_type, and resolveHammocks needs them present in `blocks` to compute their
+// own dates from their anchors. WBS "activities" (wbs_node_id set, no start_date) are the one
+// relational block kind genuinely outside the CPM graph -- see schedulingRelationalToBoard.js's
+// identical split for board-mapping purposes. Extracted so computeAndPersistCpm and the verify
+// script can't independently pick different rules for "what counts as a schedulable block."
+export function selectGanttBlocks(blocks) {
+  return blocks.filter((block) => block.lane_id != null && block.block_type !== "hammock");
+}
+
+// Deliberately does NOT pre-filter `dependencies` down to only those where both ends are in
+// `blocks` -- topologicalOrder (above) already does exactly that itself, correctly, splitting
+// validDependencies from danglingDependencies so detectConflicts can report a
+// "dependency_out_of_scope" conflict for the latter. Pre-filtering here (as computeAndPersistCpm
+// used to, inline) would silently discard the very dependencies that conflict exists to catch,
+// so runCpmEngine never saw them and the live path could never report a dangling dependency.
+export function buildCpmEngineInput({ project, blocks = [], dependencies = [], calendars = [], holidays = [], blackoutWindows = [], hammockAnchors = [], lanes = [] }) {
+  return Object.freeze({
+    project, blocks: selectGanttBlocks(blocks), dependencies, calendars, holidays, blackoutWindows, hammockAnchors, lanes,
+  });
+}
+
 // --- Orchestrator ------------------------------------------------------------------------------
 
 export function runCpmEngine({ project, blocks = [], dependencies = [], calendars = [], holidays = [], hammockAnchors = [], lanes = [], blackoutWindows = [] }) {
