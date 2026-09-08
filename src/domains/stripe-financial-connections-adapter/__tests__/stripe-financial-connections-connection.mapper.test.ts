@@ -4,13 +4,27 @@ import {
   parseVaultedState,
   serializeVaultedState,
 } from "../stripe-financial-connections-connection.mapper";
+import type { StripeFinancialConnectionsCompletedAccount } from "../stripe-financial-connections-connection.mapper";
+
+function completedAccount(overrides: Partial<StripeFinancialConnectionsCompletedAccount> = {}): StripeFinancialConnectionsCompletedAccount {
+  return {
+    accountId: "fca_1",
+    displayName: null,
+    institutionName: null,
+    last4: null,
+    category: "cash",
+    subcategory: "checking",
+    status: "active",
+    ...overrides,
+  };
+}
 
 describe("mapStripeFinancialConnectionsSessionToConnection", () => {
   it("maps a completed session into connection/credentialReference/institutionReference, all namespaced by session id", () => {
     const result = mapStripeFinancialConnectionsSessionToConnection({
       userId: "owner_1",
       sessionId: "fcsess_1",
-      accounts: [{ accountId: "fca_1", displayName: "Checking", institutionName: "Chase" }],
+      accounts: [completedAccount({ displayName: "Checking", institutionName: "Chase" })],
       now: "2026-01-01T00:00:00.000Z",
     });
 
@@ -35,7 +49,7 @@ describe("mapStripeFinancialConnectionsSessionToConnection", () => {
     const result = mapStripeFinancialConnectionsSessionToConnection({
       userId: "owner_1",
       sessionId: "fcsess_1",
-      accounts: [{ accountId: "fca_1", displayName: null, institutionName: null }, { accountId: "fca_2", displayName: null, institutionName: null }],
+      accounts: [completedAccount({ accountId: "fca_1" }), completedAccount({ accountId: "fca_2" })],
     });
 
     const parsed = parseVaultedState(result.credentialSecret);
@@ -46,7 +60,7 @@ describe("mapStripeFinancialConnectionsSessionToConnection", () => {
 
   it("falls back to a generic institution name when no account reports one", () => {
     const result = mapStripeFinancialConnectionsSessionToConnection({
-      userId: "owner_1", sessionId: "fcsess_1", accounts: [{ accountId: "fca_1", displayName: null, institutionName: null }],
+      userId: "owner_1", sessionId: "fcsess_1", accounts: [completedAccount()],
     });
     expect(result.institutionReference.name).toBe("Stripe Financial Connections institution");
   });

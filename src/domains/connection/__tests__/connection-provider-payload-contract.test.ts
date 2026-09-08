@@ -188,15 +188,16 @@ describe("provider.importDataPayload() -> ConnectionImportExecutionCoordinator c
         accounts: {
           subscribe: vi.fn(), unsubscribe: vi.fn(), disconnect: vi.fn(),
           retrieve: vi.fn().mockResolvedValue({
-            id: "fca_1", status: "active",
-            balance: { as_of: 1768000000, cash: { available: { usd: 154302 } } },
+            id: "fca_1", status: "active", category: "cash", subcategory: "checking",
+            display_name: null, institution_name: "Chase", last4: null,
+            balance: { as_of: 1768000000, type: "cash", current: { usd: 154302 }, cash: { available: { usd: 154302 } } },
             balance_refresh: { status: "succeeded", next_refresh_available_at: null },
           }),
           refresh: vi.fn(),
         },
         transactions: {
           list: vi.fn().mockResolvedValue({
-            data: [{ id: "fcxtxn_1", amount: -1250, currency: "usd", description: "AMAZON.COM PURCHASE", status: "posted", transacted_at: 1768000000, status_transitions: { posted_at: 1768000000 } }],
+            data: [{ id: "fcxtxn_1", account: "fca_1", amount: -1250, currency: "usd", description: "AMAZON.COM PURCHASE", status: "posted", transacted_at: 1768000000, status_transitions: { posted_at: 1768000000 }, transaction_refresh: "fctxnref_1" }],
             has_more: false,
           }),
         },

@@ -12,6 +12,8 @@ import type {
   StripeFinancialConnectionsAccount,
 } from "./stripe-financial-connections-account.types";
 
+import type Stripe from "stripe";
+
 export class StripeFinancialConnectionsAccountMapper
   implements FinancialAccountMapper<StripeFinancialConnectionsAccount> {
   map(
@@ -52,12 +54,13 @@ export class StripeFinancialConnectionsAccountMapper
   }
 }
 
-// Stripe's own account.category: "cash" | "credit" | "investment" | "other". No "loan" category
-// exists on Stripe's side (a mortgage/line_of_credit shows up as category "credit", subcategory
-// "mortgage"/"line_of_credit") -- mapped to canonical "loan" only via subcategory, category alone
-// only distinguishes cash/credit/investment/other.
+// Stripe's own account.category (Accounts.d.ts: Account.Category = 'cash' | 'credit' |
+// 'investment' | 'other' | OtherString). No "loan" category exists on Stripe's side (a
+// mortgage/line_of_credit shows up as category "credit", subcategory "mortgage"/"line_of_credit")
+// -- mapped to canonical "loan" only via subcategory, category alone only distinguishes
+// cash/credit/investment/other.
 function toFinancialAccountType(
-  category: string,
+  category: Stripe.FinancialConnections.Account.Category,
 ): FinancialAccountType {
   if (category === "cash") return "depository";
   if (category === "credit") return "credit";

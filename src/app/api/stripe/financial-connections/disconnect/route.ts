@@ -16,6 +16,8 @@ import {
   createStripeBillingProvider,
 } from "@/infrastructure/billing/StripeBillingProvider";
 
+import type Stripe from "stripe";
+
 // No existing "remove a connection" flow exists in FORGE for any provider today (confirmed by
 // inspection -- Plaid has none either); this is a new, minimal capability, scoped to Stripe
 // Financial Connections only. Preserves all prior financial history: never deletes the
@@ -69,7 +71,10 @@ export async function POST(request: Request) {
       credentialReference.vaultReference,
     );
 
-    const stripeClient = createStripeBillingProvider().stripe;
+    // See stripe-financial-connections.provider.ts's resolveStripeClient for why this cast goes
+    // through the real `Stripe` type rather than relying on StripeBillingProvider.js's untyped
+    // (effectively `any`) export -- correction report item 1.
+    const stripeClient = createStripeBillingProvider().stripe as Stripe;
 
     if (secret) {
       const vaultedState = parseVaultedState(secret);

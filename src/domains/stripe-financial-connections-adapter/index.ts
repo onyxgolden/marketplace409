@@ -52,7 +52,6 @@ export type {
   StripeFinancialConnectionsCompletedAccount,
   StripeFinancialConnectionsConnectionMappingInput,
   StripeFinancialConnectionsConnectionMappingResult,
-  StripeTransactionRefreshCursor,
   StripeFinancialConnectionsVaultedState,
 } from "./stripe-financial-connections-connection.mapper";
 
@@ -61,4 +60,5 @@ export {
   mapStripeFinancialConnectionsSessionToConnection,
   parseVaultedState,
   serializeVaultedState,
+  withUpdatedTransactionRefreshCursor,
 } from "./stripe-financial-connections-connection.mapper";

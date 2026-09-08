@@ -16,6 +16,13 @@ export class StripeFinancialConnectionsBalanceMapper {
   // where Plaid returns decimal dollars. Applying Plaid's `Math.round(amount * 100)` here would
   // silently inflate every Stripe balance 100x.
   //
+  // currentBalanceCents is taken directly from balance.currentCents (itself
+  // Balance.current[currency], see stripe-financial-connections-balance.types.ts) -- never
+  // defaulted to 0. A cash account's availableBalanceCents comes from Balance.cash.available
+  // (already resolved by the client); a credit account's is null, since credit accounts have no
+  // cash.available field at all and Balance.credit.used is a different figure (how much of the
+  // line is drawn) that this mapper does not substitute in its place.
+  //
   // Callers must only invoke this once refreshStatus === "succeeded" has already been checked --
   // see stripe-financial-connections.provider.ts's importDataPayload and the webhook route's
   // refreshed_balance handler, both of which skip calling this mapper entirely for a
@@ -41,8 +48,8 @@ export class StripeFinancialConnectionsBalanceMapper {
       connectionId,
       provider,
       providerAccountId: balance.accountId,
-      currencyCode: (balance.currency ?? "usd").toUpperCase(),
-      currentBalanceCents: balance.currentCents ?? 0,
+      currencyCode: balance.currency.toUpperCase(),
+      currentBalanceCents: balance.currentCents,
       availableBalanceCents: balance.availableCents,
       asOf: balance.asOf,
       createdAt: balance.asOf,

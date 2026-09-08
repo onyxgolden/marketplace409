@@ -4,18 +4,9 @@ import type {
   InstitutionReference,
 } from "../connection";
 
-export const STRIPE_FINANCIAL_CONNECTIONS_PROVIDER = "stripe_financial_connections";
+import type Stripe from "stripe";
 
-// Per-account cursor for SCHED-style incremental transaction sync: the transacted_at watermark
-// (Unix seconds) of the newest transaction successfully imported for this account, plus the
-// Stripe transaction_refresh.id that produced it -- advanced only after a full paginated import
-// for that refresh succeeds (see the provider's importDataPayload and the webhook route's
-// refreshed_transactions handler, both of which persist this same shape via the SAME
-// credentialVaultService.storeCredential upsert, never a partial/interrupted write).
-export type StripeTransactionRefreshCursor = Readonly<{
-  lastProcessedTransactionRefreshId: string | null;
-  lastProcessedTransactedAt: number | null;
-}>;
+export const STRIPE_FINANCIAL_CONNECTIONS_PROVIDER = "stripe_financial_connections";
 
 // The vaulted "credential" for a Stripe Financial Connections connection: not a bearer secret the
 // way Plaid's access_token is (Stripe FC accounts are read using FORGE's own platform secret key
@@ -23,15 +14,52 @@ export type StripeTransactionRefreshCursor = Readonly<{
 // anyway, for defense-in-depth and to reuse the exact same storage/RLS/retrieval mechanism Plaid
 // already uses rather than inventing a second, less-protected path for "the durable per-connection
 // state a provider needs to keep syncing."
+//
+// transactionRefreshCursors maps accountId -> the last SUCCESSFULLY persisted Stripe
+// transaction_refresh.id for that account (Account.transaction_refresh.id -- the SAME id Stripe
+// reports back on the financial_connections.account.refreshed_transactions webhook event's
+// data.object). Owned exclusively by the webhook route (see its refreshed_transactions handler),
+// which advances it ONLY after every page of that refresh has been fetched AND every canonical
+// persistence operation for it has succeeded; a failed import leaves the previous value untouched,
+// and it is never advanced to a wall-clock time. The provider's own importDataPayload (the
+// manual/coordinator-invoked sync path) deliberately does NOT read or write this cursor at all --
+// see its comment for why. An earlier draft of this adapter also stored a `lastProcessedTransactedAt`
+// watermark and used it as a fallback filter; that was exactly the unsafe mechanism this design
+// replaces (see the client's own header comment on listAllFinancialConnectionsTransactions and
+// correction report item 3).
 export type StripeFinancialConnectionsVaultedState = Readonly<{
   accountIds: readonly string[];
-  transactionRefreshCursors: Readonly<Record<string, StripeTransactionRefreshCursor>>;
+  transactionRefreshCursors: Readonly<Record<string, string>>;
 }>;
 
+// Immutable update helper shared by the webhook route so cursor advancement is always a full
+// state replace-and-store through credentialVaultService, never a partial in-place mutation.
+export function withUpdatedTransactionRefreshCursor(
+  state: StripeFinancialConnectionsVaultedState,
+  accountId: string,
+  transactionRefreshId: string,
+): StripeFinancialConnectionsVaultedState {
+  return {
+    ...state,
+    transactionRefreshCursors: {
+      ...state.transactionRefreshCursors,
+      [accountId]: transactionRefreshId,
+    },
+  };
+}
+
+// Carries every field the completion route needs to durably persist a real canonical
+// FinancialAccount for this account BEFORE subscribing to it -- see correction report item 5. All
+// of these are already present on session.accounts (StripeFinancialConnectionsSessionAccount in
+// client.ts), so building this requires no extra Stripe API call.
 export type StripeFinancialConnectionsCompletedAccount = Readonly<{
   accountId: string;
   displayName: string | null;
   institutionName: string | null;
+  last4: string | null;
+  category: Stripe.FinancialConnections.Account.Category;
+  subcategory: Stripe.FinancialConnections.Account.Subcategory;
+  status: Stripe.FinancialConnections.Account.Status;
 }>;
 
 export type StripeFinancialConnectionsConnectionMappingInput = Readonly<{

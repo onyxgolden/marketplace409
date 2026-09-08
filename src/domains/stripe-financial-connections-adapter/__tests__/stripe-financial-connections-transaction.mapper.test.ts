@@ -14,6 +14,7 @@ function stripeTransaction(overrides: Partial<StripeFinancialConnectionsTransact
     status: "posted",
     transactedAt: "2026-01-15",
     statusTransitionedAt: "2026-01-15T00:00:00.000Z",
+    transactionRefreshId: "fctxnref_1",
     ...overrides,
   };
 }
@@ -75,6 +76,29 @@ describe("StripeFinancialConnectionsTransactionMapper", () => {
     // Same canonical id as it would have had while posted -- a later void re-import overwrites
     // the same financial_events row (upsert by source_record_id), it does not duplicate it.
     expect(voided.id).toBe("transaction_stripe_financial_connections_fcxtxn_void");
+  });
+
+  it("represents a posted transaction later voided by a SUBSEQUENT refresh as the same row, now zeroed, carrying the newer transaction_refresh id", () => {
+    const posted = mapper.map(
+      stripeTransaction({ transactionId: "fcxtxn_updated", amount: -3000, status: "posted", transactionRefreshId: "fctxnref_1" }),
+      "connection_1", "stripe_financial_connections", "financial_account_1", "fca_test_1",
+    );
+    const voidedByLaterRefresh = mapper.map(
+      stripeTransaction({ transactionId: "fcxtxn_updated", amount: -3000, status: "void", statusTransitionedAt: "2026-01-20T00:00:00.000Z", transactionRefreshId: "fctxnref_2" }),
+      "connection_1", "stripe_financial_connections", "financial_account_1", "fca_test_1",
+    );
+    expect(posted.id).toBe(voidedByLaterRefresh.id);
+    expect(posted.amountCents).toBe(3000);
+    expect(voidedByLaterRefresh.amountCents).toBe(0);
+    expect(voidedByLaterRefresh.raw).toMatchObject({ stripeStatus: "void", transactionRefreshId: "fctxnref_2" });
+  });
+
+  it("carries the raw transactionRefreshId through for audit, separate from the cursor-advancement mechanism (which uses the account-level refresh id, not this per-transaction one)", () => {
+    const transaction = mapper.map(
+      stripeTransaction({ transactionRefreshId: "fctxnref_abc" }),
+      "connection_1", "stripe_financial_connections", "financial_account_1", "fca_test_1",
+    );
+    expect(transaction.raw).toMatchObject({ transactionRefreshId: "fctxnref_abc" });
   });
 
   it("mapMany maps every transaction in order, independently", () => {

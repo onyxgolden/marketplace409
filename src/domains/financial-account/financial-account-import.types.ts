@@ -6,7 +6,29 @@ import type {
   FinancialAccount,
 } from "./financial-account.types";
 
-export type FinancialAccountImportInput = AccountImportResult;
+// Narrowed to exactly the fields toFinancialAccountImportResult (below) and
+// FinancialAccountImportService actually read -- NOT a `payload`-carrying full AccountImportResult
+// (that field, and importedAccountCount/skippedAccountCount, are never read here). Any real
+// AccountImportResult (the ConnectionImportExecutionCoordinator's normal input) already satisfies
+// this narrower shape structurally, so every existing caller is unaffected. This narrowing exists
+// so a caller that has a durable connection/credentialReference/institutionReference but has NOT
+// run a full provider import yet (no ConnectionProviderImportPayload to speak of) -- e.g. the
+// Stripe Financial Connections session-completion route persisting the account list it already
+// has from the verified session, before subscribing -- can call importCanonicalAccounts honestly,
+// without fabricating an unused `payload`/count fields just to satisfy a wider declared type. See
+// correction report item 5.
+export type FinancialAccountImportInput = Readonly<{
+  connection: AccountImportResult["connection"];
+  credentialReference: AccountImportResult["credentialReference"];
+  institutionReference: AccountImportResult["institutionReference"];
+  provider: string;
+  connectionId: string;
+  success: boolean;
+  failedAccountCount: number;
+  provisionedAt: string;
+  persistedAt: string;
+  importedAt: string;
+}>;
 
 export type FinancialAccountImportResult = Readonly<{
   connection: AccountImportResult["connection"];

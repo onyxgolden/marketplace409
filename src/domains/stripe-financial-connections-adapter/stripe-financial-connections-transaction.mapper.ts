@@ -11,29 +11,30 @@ import type {
   StripeFinancialConnectionsTransaction,
 } from "./stripe-financial-connections-transaction.types";
 
-// --- Stripe-to-canonical sign mapping (documented here, not just asserted in a comment
-// elsewhere -- see stripe-financial-connections-transaction.mapper.test.ts for fixture-backed
-// proof of every case below) ---
+// --- Stripe-to-canonical sign mapping -- STATUS: UNVERIFIED, a live/test-mode-validation gate,
+// not a confirmed fact. Documented here precisely so the open question is visible at the exact
+// point it matters, not buried in a report. ---
 //
 // Canonical Transaction.amountCents' sign meaning is established by PlaidTransactionMapper, which
 // passes Plaid's own amount through UNFLIPPED: Plaid's documented convention is positive = money
 // leaving the account (an outflow/expense), negative = money entering it (an inflow/deposit).
 // Because nothing else has ever normalized this field, that IS the canonical convention today.
 //
-// Stripe Financial Connections' Transaction.amount uses the OPPOSITE, documented convention:
-// positive = a credit (inflow/deposit), negative = a debit (outflow/expense). This mapper negates
-// Stripe's amount so amountCents keeps the SAME provider-independent meaning Plaid already
-// established -- positive canonical amountCents always means "money left the account," regardless
-// of which provider produced the row.
+// Stripe's installed SDK types (Transactions.d.ts) document Transaction.amount only as "in cents
+// (or local equivalent)" -- no sign meaning stated. Checked two official Stripe doc pages for
+// corroborating evidence: the API reference page's example shows `"amount": 300` for a "Rocket
+// Rides" ride-hail purchase (an outflow, shown positive); the separate transactions guide page's
+// example shows the SAME "Rocket Rides" purchase as `"amount": -1000` (shown negative). Two
+// official pages disagree on the sign for the identical illustrative example -- proof these are
+// generic placeholder JSON, not a documented rule, and neither can be trusted as evidence.
 //
-//   Stripe amount   Real-world event         Canonical amountCents
-//   +5000            $50.00 deposit           -5000  (inflow)
-//   -1250             $12.50 card purchase     +1250  (outflow)
-//
-// This rests on Stripe's documented Financial Connections Transactions sign convention as
-// understood at the time this adapter was written -- worth a final check against Stripe's live
-// docs before the first real production session (already gated separately; not initiated by this
-// change).
+// This mapper currently negates Stripe's amount (assuming positive=credit/inflow, the opposite of
+// Plaid), on the theory that Stripe's own convention elsewhere in its API tends to run this way --
+// but this is this adapter author's best guess, not a verified fact. Do not treat this as settled.
+// Before the first real production session, this needs actual validation: a Stripe test-mode
+// Financial Connections session with a known real-world inflow (e.g. a payroll deposit) and a
+// known real-world outflow (e.g. a card purchase), comparing their raw `amount` signs against
+// what actually happened. See the correction report for this exact open item.
 function toCanonicalAmountCents(stripeAmount: number): number {
   return -stripeAmount;
 }
@@ -49,15 +50,21 @@ export class StripeFinancialConnectionsTransactionMapper
   ): Transaction {
     const now = new Date().toISOString();
 
-    // A void transaction is force-zeroed rather than removed: financial_events upserts by
-    // (owner_id, source_system, source_record_id) -- see SupabaseFinancialEventRepository -- so
-    // re-importing the SAME Stripe transaction id after it posts, or after it's voided, updates
-    // the existing ledger row in place rather than creating a duplicate. Zeroing a void
-    // transaction's amount means it stops contributing to any total (as if it never happened)
-    // while the row itself, and its audit trail (raw.stripeStatus === "void"), still exists --
-    // this is "the transaction was attempted, then voided," not "this transaction never existed,"
-    // and it is never contradictory: the row always reflects Stripe's current truth for that one
-    // transaction id, the same way a pending transaction later posting already overwrites itself.
+    // financial_events is a MUTABLE PROJECTION, not an immutable ledger: saveMany upserts by
+    // (owner_id, source_system, source_record_id) -- see SupabaseFinancialEventRepository.js --
+    // so re-importing the SAME Stripe transaction id after it posts, or after it's voided,
+    // overwrites the existing row's fields in place. That is the actual, pre-existing invariant
+    // this whole pipeline already has for every provider (Plaid included), not something this
+    // adapter introduces -- see correction report item 8 for the full trace and why changing that
+    // invariant (e.g. to a true append-only ledger with explicit reversal rows) is a larger,
+    // cross-provider decision this PR does not make unilaterally.
+    //
+    // A void transaction is force-zeroed here (amountCents: 0) rather than left at its
+    // pending/posted amount, so the overwritten row stops contributing to any total (as if it
+    // never happened) while remaining present and auditable via raw.stripeStatus === "void". This
+    // is "the transaction was attempted, then voided," represented as the row's current (mutable)
+    // truth -- consistent with, not contradictory to, how a pending transaction already
+    // overwrites itself on posting.
     const isVoid = transaction.status === "void";
     const amountCents = isVoid ? 0 : toCanonicalAmountCents(transaction.amount);
 
@@ -78,6 +85,7 @@ export class StripeFinancialConnectionsTransactionMapper
       raw: {
         stripeStatus: transaction.status,
         statusTransitionedAt: transaction.statusTransitionedAt,
+        transactionRefreshId: transaction.transactionRefreshId,
       },
       createdAt: now,
     });

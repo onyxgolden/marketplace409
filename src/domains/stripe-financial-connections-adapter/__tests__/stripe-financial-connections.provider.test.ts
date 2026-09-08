@@ -71,7 +71,7 @@ describe("createFinancialConnectionsSession", () => {
 });
 
 describe("completeFinancialConnectionsSession", () => {
-  it("subscribes every returned account to transactions and returns account summaries", async () => {
+  it("returns every field needed to persist a real account durably -- and does NOT subscribe (that is now a separate, later step; see correction report item 5)", async () => {
     const stripeClient = fakeStripeClient();
     stripeClient.financialConnections.sessions.retrieve.mockResolvedValue({
       id: "fcsess_1",
@@ -83,8 +83,11 @@ describe("completeFinancialConnectionsSession", () => {
 
     const result = await adapter.completeFinancialConnectionsSession({ ownerId: "owner_1", sessionId: "fcsess_1" });
 
-    expect(result.accounts).toEqual([{ accountId: "fca_1", displayName: "Checking", institutionName: "Chase" }]);
-    expect(stripeClient.financialConnections.accounts.subscribe).toHaveBeenCalledWith("fca_1", { features: ["transactions"] });
+    expect(result.accounts).toEqual([{
+      accountId: "fca_1", displayName: "Checking", institutionName: "Chase",
+      last4: "1111", category: "cash", subcategory: "checking", status: "active",
+    }]);
+    expect(stripeClient.financialConnections.accounts.subscribe).not.toHaveBeenCalled();
   });
 
   it("rejects a session that does not belong to the expected owner's platform Customer -- the core anti-spoofing check", async () => {
@@ -113,7 +116,20 @@ describe("completeFinancialConnectionsSession", () => {
 
     await adapter.completeFinancialConnectionsSession({ ownerId: "owner_1", sessionId: "fcsess_1" });
 
-    expect(stripeClient.financialConnections.sessions.retrieve).toHaveBeenCalledWith("fcsess_1", { expand: ["accounts"] });
+    // No `expand` param -- Session.accounts is a plain, always-populated field (see client.ts).
+    expect(stripeClient.financialConnections.sessions.retrieve).toHaveBeenCalledWith("fcsess_1");
+  });
+});
+
+describe("subscribeFinancialConnectionsAccounts", () => {
+  it("subscribes every given account id to transaction refreshes -- called by the route only after those accounts are durably persisted", async () => {
+    const stripeClient = fakeStripeClient();
+    const adapter = createStripeFinancialConnectionsAdapter({ credentialVaultService: fakeVault(), stripeClient });
+
+    await adapter.subscribeFinancialConnectionsAccounts({ accountIds: ["fca_1", "fca_2"] });
+
+    expect(stripeClient.financialConnections.accounts.subscribe).toHaveBeenCalledWith("fca_1", { features: ["transactions"] });
+    expect(stripeClient.financialConnections.accounts.subscribe).toHaveBeenCalledWith("fca_2", { features: ["transactions"] });
   });
 });
 
@@ -151,11 +167,11 @@ describe("importDataPayload -- manual sync path", () => {
     const stripeClient = fakeStripeClient();
     stripeClient.financialConnections.accounts.retrieve.mockResolvedValue({
       id: "fca_active", status: "active",
-      balance: { as_of: 1768000000, cash: { available: { usd: 100000 } } },
+      balance: { as_of: 1768000000, type: "cash", current: { usd: 100000 }, cash: { available: { usd: 100000 } } },
       balance_refresh: { status: "succeeded", next_refresh_available_at: null },
     });
     stripeClient.financialConnections.transactions.list.mockResolvedValue({
-      data: [{ id: "fcxtxn_1", amount: -500, currency: "usd", description: "Coffee", status: "posted", transacted_at: 1768000000, status_transitions: { posted_at: 1768000000 } }],
+      data: [{ id: "fcxtxn_1", account: "fca_active", amount: -500, currency: "usd", description: "Coffee", status: "posted", transacted_at: 1768000000, status_transitions: { posted_at: 1768000000 }, transaction_refresh: "fctxnref_1" }],
       has_more: false,
     });
     const vaultedSecret = JSON.stringify({ accountIds: ["fca_active"], transactionRefreshCursors: {} });

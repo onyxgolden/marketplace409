@@ -16,6 +16,14 @@
 -- No owner_id: webhook processing runs under a service-role client (no user session exists during
 -- a webhook call, the same reason payment_webhook_events has no owner_id either) -- service-role-
 -- only access, RLS force-enabled with zero policies, matching that same precedent.
+--
+-- attempt_count: incremented only by the atomic claim (`status in ('received','failed') ->
+-- 'processing'`) the webhook route performs before doing any real work -- this is what makes
+-- concurrent redeliveries of the same event id safe: only one concurrent request's UPDATE can
+-- ever match that WHERE clause and see a nonzero affected-row count, so only one ever proceeds to
+-- import. received_at deliberately has no corresponding "on retry" write path anywhere in the
+-- route -- it is set once, by the initial insert-or-ignore, and never touched again, so it always
+-- reflects the FIRST delivery of an event id, not the most recent retry.
 create table if not exists connection_webhook_events (
     id text primary key,
     provider text not null,
@@ -23,6 +31,7 @@ create table if not exists connection_webhook_events (
     event_type text not null,
     object_id text,
     status text not null check (status in ('received', 'processing', 'processed', 'ignored', 'failed')),
+    attempt_count integer not null default 0,
     received_at timestamptz not null default now(),
     processed_at timestamptz,
     failure_message text,

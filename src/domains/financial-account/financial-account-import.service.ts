@@ -1,14 +1,14 @@
 import type {
-  AccountImportResult,
-} from "../connection";
-
-import type {
   FinancialAccountMapper,
 } from "./financial-account-mapper.types";
 
 import type {
   FinancialAccountRepository,
 } from "./financial-account.repository";
+
+import type {
+  FinancialAccountImportInput,
+} from "./financial-account-import.types";
 
 import {
   toFinancialAccountImportResult,
@@ -27,7 +27,7 @@ export class FinancialAccountImportService<TProviderAccount = unknown> {
   }
 
   async importAccounts(
-    input: AccountImportResult,
+    input: FinancialAccountImportInput,
     providerAccounts: readonly TProviderAccount[],
     financialAccountsImportedAt?: string,
   ) {
@@ -51,7 +51,7 @@ export class FinancialAccountImportService<TProviderAccount = unknown> {
   // Stripe Financial Connections webhook route) must use instead. importAccounts itself is left
   // unchanged, not removed, for any caller that genuinely still has raw provider data to map.
   async importCanonicalAccounts(
-    input: AccountImportResult,
+    input: FinancialAccountImportInput,
     financialAccounts: readonly any[],
     financialAccountsImportedAt?: string,
   ) {
@@ -59,7 +59,7 @@ export class FinancialAccountImportService<TProviderAccount = unknown> {
   }
 
   private async persistFinancialAccounts(
-    input: AccountImportResult,
+    input: FinancialAccountImportInput,
     financialAccounts: readonly any[],
     financialAccountsImportedAt?: string,
   ) {

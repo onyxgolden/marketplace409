@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 
 const mocks = vi.hoisted(() => ({
   constructWebhookEvent: vi.fn(),
@@ -35,35 +36,79 @@ vi.mock("@/infrastructure/composition", () => ({
 vi.mock("@/domains/stripe-financial-connections-adapter", () => ({
   parseVaultedState: (secret) => JSON.parse(secret),
   serializeVaultedState: (state) => JSON.stringify(state),
+  withUpdatedTransactionRefreshCursor: (state, accountId, transactionRefreshId) => ({
+    ...state,
+    transactionRefreshCursors: { ...state.transactionRefreshCursors, [accountId]: transactionRefreshId },
+  }),
 }));
 
-// Table-scoped fake: .from(table) returns a fresh chainable node per call, remembering every
-// select/update/upsert issued against it so assertions can inspect exactly what was written,
-// without needing a full Postgres-shaped mock.
-function fakeSupabase({ financialAccountRow = null, existingWebhookEvent = null } = {}) {
-  const calls = { updates: [], upserts: [] };
-  function node(table) {
-    return {
-      select: () => node(table),
-      eq: () => node(table),
-      maybeSingle: async () => {
-        if (table === "connection_webhook_events") return { data: existingWebhookEvent, error: null };
-        if (table === "financial_accounts") return { data: financialAccountRow, error: null };
-        return { data: null, error: null };
-      },
-      upsert: (row) => {
-        calls.upserts.push(row);
-        return { then: (resolve) => resolve({ error: null }) };
-      },
-      update: (fields) => ({
-        eq: () => {
-          calls.updates.push({ table, fields });
-          return { then: (resolve) => resolve({ error: null }) };
-        },
-      }),
-    };
+// A faithful-enough in-memory reimplementation of the Supabase JS query-builder chain this route
+// actually issues against connection_webhook_events (insert-or-ignore upsert, select+single,
+// update+eq+in+select for the atomic claim, plain update+eq for markEvent) and financial_accounts
+// (select+eq+eq+maybeSingle). Each builder() call returns a fresh, itself-thenable node so the
+// route's own chaining (`.eq().in().select()`, awaited without a trailing `.select()`, etc.) all
+// resolve exactly as the real client would -- this is what lets the atomic-claim and
+// payload-hash-mismatch tests below actually exercise the real logic instead of a stubbed shortcut.
+function fakeSupabase({ financialAccountRow = null, existingWebhookEventRow = null } = {}) {
+  const webhookEvents = new Map();
+  if (existingWebhookEventRow) {
+    webhookEvents.set(existingWebhookEventRow.id, { attempt_count: 0, ...existingWebhookEventRow });
   }
-  return { from: (table) => node(table), _calls: calls };
+  const calls = { updates: [], upserts: [] };
+
+  function execute(table, state, mode) {
+    if (table === "connection_webhook_events") {
+      if (state.op === "upsert") {
+        calls.upserts.push(state.row);
+        const id = state.row.id;
+        if (!webhookEvents.has(id)) {
+          webhookEvents.set(id, { attempt_count: 0, ...state.row });
+        } // ignoreDuplicates: an existing row is left completely untouched.
+        return { error: null };
+      }
+      if (state.op === "update") {
+        const id = state.eq?.id;
+        const row = webhookEvents.get(id);
+        if (!row) return { data: [], error: null };
+        if (state.in?.status && !state.in.status.includes(row.status)) {
+          return { data: [], error: null };
+        }
+        Object.assign(row, state.fields);
+        calls.updates.push({ table, fields: state.fields });
+        return { data: [{ attempt_count: row.attempt_count }], error: null };
+      }
+      const id = state.eq?.id;
+      const row = webhookEvents.get(id) ?? null;
+      if (mode === "single" && !row) return { data: null, error: { message: "no rows" } };
+      return { data: row, error: null };
+    }
+    if (table === "financial_accounts") {
+      return { data: financialAccountRow, error: null };
+    }
+    return { data: null, error: null };
+  }
+
+  function builder(table, state) {
+    const node = {
+      select: () => builder(table, state),
+      eq: (col, val) => builder(table, { ...state, eq: { ...state.eq, [col]: val } }),
+      in: (col, values) => builder(table, { ...state, in: { ...state.in, [col]: values } }),
+      maybeSingle: async () => execute(table, state, "maybeSingle"),
+      single: async () => execute(table, state, "single"),
+      upsert: (row) => builder(table, { ...state, op: "upsert", row }),
+      update: (fields) => builder(table, { ...state, op: "update", fields }),
+      then: (resolve, reject) => {
+        try {
+          resolve(execute(table, state, "await"));
+        } catch (error) {
+          reject(error);
+        }
+      },
+    };
+    return node;
+  }
+
+  return { from: (table) => builder(table, {}), _calls: calls, _webhookEvents: webhookEvents };
 }
 
 async function importRoute() {
@@ -74,6 +119,10 @@ function webhookRequest(body = "{}") {
   return new Request("http://localhost/api/stripe/financial-connections/webhook", {
     method: "POST", body, headers: { "stripe-signature": "sig_test" },
   });
+}
+
+function hashOf(body) {
+  return createHash("sha256").update(body).digest("hex");
 }
 
 const STRIPE_ACCOUNT = { id: "fca_1", status: "active" };
@@ -106,21 +155,58 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
   });
 
   it("acknowledges a redelivered event already marked processed as a duplicate, without reprocessing", async () => {
+    const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({ id: "evt_1", type: "financial_connections.account.refreshed_balance", data: { object: STRIPE_ACCOUNT } });
-    const supabase = fakeSupabase({ existingWebhookEvent: { status: "processed" } });
-    // Stub the module's own client factory via a fresh mock -- see the module-level mock below.
+    const supabase = fakeSupabase({
+      existingWebhookEventRow: { id: "connection_webhook_stripe_financial_connections_evt_1", status: "processed", payload_hash: hashOf(body) },
+    });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     const { POST } = await importRoute();
 
-    const response = await POST(webhookRequest());
-    const body = await response.json();
+    const response = await POST(webhookRequest(body));
+    const responseBody = await response.json();
 
-    expect(body).toEqual({ received: true, duplicate: true });
+    expect(responseBody).toEqual({ received: true, duplicate: true });
+    expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
+  });
+
+  it("rejects (400, does not process either version) a redelivered event id whose payload hash differs from the one originally recorded", async () => {
+    mocks.constructWebhookEvent.mockReturnValue({ id: "evt_1b", type: "financial_connections.account.refreshed_balance", data: { object: STRIPE_ACCOUNT } });
+    const supabase = fakeSupabase({
+      existingWebhookEventRow: { id: "connection_webhook_stripe_financial_connections_evt_1b", status: "received", payload_hash: "a-completely-different-hash" },
+    });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest("{}"));
+
+    expect(response.status).toBe(400);
+    expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("claims atomically -- a concurrent second delivery that loses the race gets a retryable 409, never double-imports", async () => {
+    const body = "{}";
+    mocks.constructWebhookEvent.mockReturnValue({
+      id: "evt_1c", type: "financial_connections.account.refreshed_transactions",
+      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_1", status: "succeeded" } } },
+    });
+    // Simulates a delivery that's already mid-flight (another request already won the claim).
+    const supabase = fakeSupabase({
+      existingWebhookEventRow: { id: "connection_webhook_stripe_financial_connections_evt_1c", status: "processing", payload_hash: hashOf(body) },
+    });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest(body));
+
+    expect(response.status).toBe(409);
     expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
   });
 
   it("marks an unsupported event type ignored without looking up any connection", async () => {
-    mocks.constructWebhookEvent.mockReturnValue({ id: "evt_2", type: "financial_connections.account.created", data: { object: STRIPE_ACCOUNT } });
+    mocks.constructWebhookEvent.mockReturnValue({ id: "evt_2", type: "financial_connections.account.refreshed_ownership", data: { object: STRIPE_ACCOUNT } });
     const supabase = fakeSupabase({});
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     const { POST } = await importRoute();
@@ -161,7 +247,7 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
   });
 
-  it("ignores an event for a Stripe account with no matching FORGE connection", async () => {
+  it("ignores (permanently, not retried) an event for a Stripe account with no matching FORGE connection", async () => {
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_5", type: "financial_connections.account.refreshed_balance",
       data: { object: { ...STRIPE_ACCOUNT, balance_refresh: { status: "succeeded" } } },
@@ -172,12 +258,44 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
 
     const response = await POST(webhookRequest());
 
+    expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ received: true, ignored: true });
     expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
   });
 
-  it("flips the connection to needs_attention on account.disconnected, preserving all prior financial history (no delete)", async () => {
-    mocks.constructWebhookEvent.mockReturnValue({ id: "evt_6", type: "financial_connections.account.disconnected", data: { object: STRIPE_ACCOUNT } });
+  it("account.created is idempotent: acknowledges an already-known account without importing or subscribing anything", async () => {
+    mocks.constructWebhookEvent.mockReturnValue({ id: "evt_created", type: "financial_connections.account.created", data: { object: STRIPE_ACCOUNT } });
+    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    mocks.createConnectionPlatformSuite.mockResolvedValue({
+      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
+      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
+      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
+      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
+    });
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest());
+
+    await expect(response.json()).resolves.toEqual({ received: true });
+    expect(mocks.executeImport).not.toHaveBeenCalled();
+    expect(mocks.saveConnection).not.toHaveBeenCalled();
+  });
+
+  it("account.created for an account FORGE does not know is ignored, never speculatively imported (no owner-identifying data on the event)", async () => {
+    mocks.constructWebhookEvent.mockReturnValue({ id: "evt_created_2", type: "financial_connections.account.created", data: { object: STRIPE_ACCOUNT } });
+    const supabase = fakeSupabase({ financialAccountRow: null });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest());
+
+    await expect(response.json()).resolves.toEqual({ received: true, ignored: true });
+    expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
+  });
+
+  it("flips the connection to needs_attention on account.deactivated, preserving all prior financial history (no delete)", async () => {
+    mocks.constructWebhookEvent.mockReturnValue({ id: "evt_deactivated", type: "financial_connections.account.deactivated", data: { object: STRIPE_ACCOUNT } });
     const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected" });
@@ -193,6 +311,26 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
 
     await expect(response.json()).resolves.toEqual({ received: true });
     expect(mocks.saveConnection).toHaveBeenCalledWith(expect.objectContaining({ status: "needs_attention" }), { ownerId: "owner-123" });
+    expect(mocks.executeImport).not.toHaveBeenCalled();
+  });
+
+  it("flips the connection to disconnected (distinct from needs_attention) on account.disconnected, preserving all prior financial history (no delete)", async () => {
+    mocks.constructWebhookEvent.mockReturnValue({ id: "evt_6", type: "financial_connections.account.disconnected", data: { object: STRIPE_ACCOUNT } });
+    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected" });
+    mocks.createConnectionPlatformSuite.mockResolvedValue({
+      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
+      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
+      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
+      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
+    });
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest());
+
+    await expect(response.json()).resolves.toEqual({ received: true });
+    expect(mocks.saveConnection).toHaveBeenCalledWith(expect.objectContaining({ status: "disconnected" }), { ownerId: "owner-123" });
     expect(mocks.executeImport).not.toHaveBeenCalled();
   });
 
@@ -245,7 +383,37 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     }));
   });
 
-  it("does not advance the cursor when the import reports failure -- a retry must refetch from the same watermark", async () => {
+  it("refreshed_transactions arriving before any prior import has ever succeeded still resolves ownership (via the durable financial_accounts row from /complete) and imports successfully -- correction report item 5", async () => {
+    mocks.constructWebhookEvent.mockReturnValue({
+      id: "evt_first_ever", type: "financial_connections.account.refreshed_transactions",
+      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_first", status: "succeeded" } } },
+    });
+    // The account is durably known (financial_accounts row exists, from /complete's REQUIRED
+    // account-persistence step) even though NO import has ever succeeded for it yet (no
+    // credentialReferenceId resolvable here is irrelevant to this assertion -- the key fact is
+    // resolveOwningConnection succeeds purely from financial_accounts, independent of import history).
+    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
+    mocks.getByIdCredentialReference.mockResolvedValue({ id: "credential_1", vaultReference: "vault://stripe_financial_connections/sessions/fcsess_1/state" });
+    mocks.retrieveCredential.mockResolvedValue(JSON.stringify({ accountIds: ["fca_1"], transactionRefreshCursors: {} }));
+    mocks.executeImport.mockResolvedValue({ success: true });
+    mocks.createConnectionPlatformSuite.mockResolvedValue({
+      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
+      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
+      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
+      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
+    });
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ received: true });
+    expect(mocks.executeImport).toHaveBeenCalledWith({ connectionId: "connection_1", ownerId: "owner-123" });
+  });
+
+  it("does not advance the cursor when the import reports failure, and responds with a retryable status -- a retry must refetch from the same watermark", async () => {
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_9", type: "financial_connections.account.refreshed_transactions",
       data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_2", status: "succeeded" } } },
@@ -262,8 +430,9 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     });
     const { POST } = await importRoute();
 
-    await POST(webhookRequest());
+    const response = await POST(webhookRequest());
 
+    expect(response.status).toBe(500);
     expect(mocks.storeCredential).not.toHaveBeenCalled();
   });
 });

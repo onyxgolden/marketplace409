@@ -17,6 +17,8 @@ import type {
   StripeFinancialConnectionsClient,
 } from "./stripe-financial-connections.client";
 
+import type Stripe from "stripe";
+
 import {
   createFinancialConnectionsSession,
   createStripeCustomerForOwner,
@@ -81,7 +83,13 @@ export function createStripeFinancialConnectionsAdapter({
   const resolveStripeClient = async (): Promise<StripeFinancialConnectionsClient> => {
     if (stripeClient) return stripeClient;
     const { createStripeBillingProvider } = await import("@/infrastructure/billing/StripeBillingProvider");
-    return createStripeBillingProvider().stripe as unknown as StripeFinancialConnectionsClient;
+    // StripeBillingProvider.js is plain untyped JS (no checkJs), so `.stripe` is inferred `any` --
+    // an `any` would satisfy StripeFinancialConnectionsClient with zero real type-checking,
+    // silently defeating the whole point of typing that interface against the real SDK (item 1).
+    // Casting through the real `Stripe` type FIRST forces this assignment to actually be checked
+    // structurally: if a future stripe SDK upgrade changes a method signature this interface
+    // relies on, this line (not a runtime surprise inside the adapter) is where it breaks.
+    return createStripeBillingProvider().stripe as Stripe;
   };
 
   const requireCredentialVaultService = () => {
@@ -139,6 +147,13 @@ export function createStripeFinancialConnectionsAdapter({
       return { sessionId: session.id, clientSecret: session.clientSecret };
     },
 
+    // Verification + retrieval ONLY -- does NOT subscribe. Per correction report item 5, FORGE
+    // must durably persist the connection-to-Stripe-account association before subscribing to
+    // anything, so the caller (the /complete route) persists financial_accounts rows from this
+    // method's returned account list FIRST, and only then calls
+    // subscribeFinancialConnectionsAccounts below. An earlier version of this adapter subscribed
+    // as this method's own side effect, before the route had persisted anything durable -- the
+    // exact race this split closes.
     async completeFinancialConnectionsSession(request) {
       // Server-side retrieval only -- the browser is never trusted to report which accounts were
       // authorized. accountHolderCustomerId is checked against the SAME vaulted customer id this
@@ -154,18 +169,30 @@ export function createStripeFinancialConnectionsAdapter({
 
       const usAccounts = session.accounts; // filters.countries already restricted this session to US at creation
 
-      await Promise.all(
-        usAccounts.map((account) => subscribeFinancialConnectionsAccount(client, { accountId: account.accountId })),
-      );
-
       return {
         sessionId: session.id,
         accounts: usAccounts.map((account) => ({
           accountId: account.accountId,
           displayName: account.displayName,
           institutionName: account.institutionName,
+          last4: account.last4,
+          category: account.category,
+          subcategory: account.subcategory,
+          status: account.status,
         })),
       };
+    },
+
+    // Called by the /complete route ONLY after it has durably persisted a financial_accounts row
+    // for every one of these account ids -- see completeFinancialConnectionsSession's comment and
+    // correction report item 5. Subscribing enables Stripe's daily automatic transaction refresh,
+    // which is the moment refreshed_transactions/refreshed_balance webhooks can first arrive; by
+    // then, the webhook route's account -> connection/owner lookup can always succeed.
+    async subscribeFinancialConnectionsAccounts(request) {
+      const client = await resolveStripeClient();
+      await Promise.all(
+        request.accountIds.map((accountId) => subscribeFinancialConnectionsAccount(client, { accountId })),
+      );
     },
 
     // --- Generic ConnectionProvider interface ---
@@ -277,11 +304,11 @@ export function createStripeFinancialConnectionsAdapter({
 
       const stripeAccounts = activeAccountStates.map((state) => ({
         accountId: state.accountId,
-        displayName: null,
-        institutionName: null,
-        last4: null,
-        category: "cash",
-        subcategory: null,
+        displayName: state.displayName,
+        institutionName: state.institutionName,
+        last4: state.last4,
+        category: state.category,
+        subcategory: state.subcategory,
         status: state.status,
         currency: state.balance?.currency ?? null,
       }));
@@ -311,6 +338,7 @@ export function createStripeFinancialConnectionsAdapter({
               availableCents: state.balance!.availableCents,
               currency: state.balance!.currency,
               asOf: state.balance!.asOf,
+              type: state.balance!.type,
               refreshStatus: "succeeded",
             },
             financialAccountId,
@@ -319,21 +347,21 @@ export function createStripeFinancialConnectionsAdapter({
           );
         });
 
+      // Deliberately always-full, no cursor read or write: this generic payload-only method's
+      // caller (ConnectionImportExecutionCoordinator) persists the returned transactions
+      // afterward, outside this method's control, so it cannot itself guarantee "advance the
+      // cursor only after persistence succeeds" -- the one invariant item 3 requires. Ongoing
+      // incremental sync via transaction_refresh.after therefore lives ONLY in the webhook route,
+      // which owns fetch -> map -> persist -> advance-cursor end to end itself. Idempotent
+      // upsert-by-transaction-id downstream (financial_events) makes this manual path's full
+      // refetch safe to repeat as often as a user clicks "Execute."
       const transactionsByAccount = await Promise.all(
         activeAccountStates.map(async (state) => {
           const financialAccountId = financialAccountIdByProviderAccountId.get(state.accountId);
           if (financialAccountId === undefined) {
             throw new Error(`Stripe Financial Connections transaction sync references unknown account: ${state.accountId}`);
           }
-          // Optimization only, never relied on for correctness: if a prior run's cursor is
-          // vaulted for this account, only ask Stripe for transactions at or after that
-          // watermark. Idempotent upsert-by-transaction-id downstream makes this safe even if the
-          // cursor is stale or absent (transactedAtGte simply omitted, full refetch).
-          const cursor = vaultedState.transactionRefreshCursors[state.accountId];
-          const rawTransactions = await listAllFinancialConnectionsTransactions(client, {
-            accountId: state.accountId,
-            ...(cursor?.lastProcessedTransactedAt ? { transactedAtGte: cursor.lastProcessedTransactedAt } : {}),
-          });
+          const rawTransactions = await listAllFinancialConnectionsTransactions(client, { accountId: state.accountId });
           return transactionMapper.mapMany(rawTransactions, connection.id, STRIPE_FINANCIAL_CONNECTIONS_PROVIDER, financialAccountId, state.accountId);
         }),
       );

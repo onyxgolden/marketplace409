@@ -4,10 +4,13 @@ const mocks = vi.hoisted(() => ({
   createAuthenticatedConnectionApplication: vi.fn(),
   getConnectionPlatformSuite: vi.fn(),
   completeFinancialConnectionsSession: vi.fn(),
+  subscribeFinancialConnectionsAccounts: vi.fn(),
   mapStripeFinancialConnectionsSessionToConnection: vi.fn(),
   provision: vi.fn(),
   persist: vi.fn(),
+  importCanonicalAccounts: vi.fn(),
   executeImport: vi.fn(),
+  accountMapperMapMany: vi.fn(),
 }));
 
 vi.mock("next/server", () => ({
@@ -24,6 +27,10 @@ vi.mock("@/lib/supabase/createAuthenticatedConnectionApplication", () => ({
 
 vi.mock("@/domains/stripe-financial-connections-adapter", () => ({
   mapStripeFinancialConnectionsSessionToConnection: mocks.mapStripeFinancialConnectionsSessionToConnection,
+  STRIPE_FINANCIAL_CONNECTIONS_PROVIDER: "stripe_financial_connections",
+  StripeFinancialConnectionsAccountMapper: function StripeFinancialConnectionsAccountMapper(this: { mapMany: typeof mocks.accountMapperMapMany }) {
+    this.mapMany = mocks.accountMapperMapMany;
+  },
 }));
 
 import { POST } from "./route";
@@ -34,9 +41,13 @@ function request(body: unknown) {
 
 function connectionPlatformSuite() {
   return {
-    stripeFinancialConnectionsProvider: { completeFinancialConnectionsSession: mocks.completeFinancialConnectionsSession },
+    stripeFinancialConnectionsProvider: {
+      completeFinancialConnectionsSession: mocks.completeFinancialConnectionsSession,
+      subscribeFinancialConnectionsAccounts: mocks.subscribeFinancialConnectionsAccounts,
+    },
     provisioningService: { provision: mocks.provision },
     persistenceService: { persist: mocks.persist },
+    financialAccountImportService: { importCanonicalAccounts: mocks.importCanonicalAccounts },
     connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
   };
 }
@@ -63,12 +74,16 @@ describe("POST /api/stripe/financial-connections/complete", () => {
     mocks.getConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuite());
     mocks.createAuthenticatedConnectionApplication.mockResolvedValue({ currentOwnerId, getConnectionPlatformSuite: mocks.getConnectionPlatformSuite });
 
-    const completed = { sessionId: "fcsess_1", accounts: [{ accountId: "fca_1", displayName: "Checking", institutionName: "Chase" }] };
+    const completed = { sessionId: "fcsess_1", accounts: [{ accountId: "fca_1", displayName: "Checking", institutionName: "Chase", last4: "1111", category: "cash", subcategory: "checking", status: "active" }] };
     mocks.completeFinancialConnectionsSession.mockResolvedValue(completed);
     const mappedConnection = { connection: { id: "connection_1" }, credentialReference: { id: "credential_1" }, institutionReference: { id: "institution_1" } };
     mocks.mapStripeFinancialConnectionsSessionToConnection.mockReturnValue(mappedConnection);
     mocks.provision.mockReturnValue({ ...mappedConnection, readyForPersistence: true });
     mocks.persist.mockResolvedValue({ ...mappedConnection, provisionedAt: "t1", persistedAt: "t2", readyForImport: true });
+    const canonicalAccounts = [{ id: "financial_account_stripe_financial_connections_fca_1", providerAccountId: "fca_1" }];
+    mocks.accountMapperMapMany.mockReturnValue(canonicalAccounts);
+    mocks.importCanonicalAccounts.mockResolvedValue({ importedFinancialAccountCount: 1 });
+    mocks.subscribeFinancialConnectionsAccounts.mockResolvedValue(undefined);
     mocks.executeImport.mockResolvedValue({ success: true });
 
     const response = await POST(request({ sessionId: "fcsess_1", ownerId: "attacker-controlled-owner", accountId: "attacker-controlled-account" }));
@@ -77,6 +92,12 @@ describe("POST /api/stripe/financial-connections/complete", () => {
     expect(mocks.completeFinancialConnectionsSession).toHaveBeenCalledWith({ ownerId: "owner-123", sessionId: "fcsess_1" });
     expect(mocks.mapStripeFinancialConnectionsSessionToConnection).toHaveBeenCalledWith({ userId: "owner-123", sessionId: "fcsess_1", accounts: completed.accounts });
     expect(mocks.persist).toHaveBeenCalledWith(expect.anything(), { ownerId: "owner-123" });
+
+    // The durable account-persistence step must happen BEFORE subscribing (correction report item 5).
+    const importOrder = mocks.importCanonicalAccounts.mock.invocationCallOrder[0];
+    const subscribeOrder = mocks.subscribeFinancialConnectionsAccounts.mock.invocationCallOrder[0];
+    expect(importOrder).toBeLessThan(subscribeOrder);
+    expect(mocks.subscribeFinancialConnectionsAccounts).toHaveBeenCalledWith({ accountIds: ["fca_1"] });
     expect(mocks.executeImport).toHaveBeenCalledWith({ connectionId: "connection_1", ownerId: "owner-123" });
 
     const body = (await response.json()) as { initialImport: { attempted: boolean; success: boolean } };
@@ -91,6 +112,9 @@ describe("POST /api/stripe/financial-connections/complete", () => {
     mocks.mapStripeFinancialConnectionsSessionToConnection.mockReturnValue({ connection: { id: "connection_1" }, credentialReference: {}, institutionReference: {} });
     mocks.provision.mockReturnValue({ readyForPersistence: true });
     mocks.persist.mockResolvedValue({ connection: { id: "connection_1" }, credentialReference: {}, institutionReference: {}, provisionedAt: "t1", persistedAt: "t2", readyForImport: true });
+    mocks.accountMapperMapMany.mockReturnValue([]);
+    mocks.importCanonicalAccounts.mockResolvedValue({ importedFinancialAccountCount: 0 });
+    mocks.subscribeFinancialConnectionsAccounts.mockResolvedValue(undefined);
     mocks.executeImport.mockRejectedValue(new Error("import boom"));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -100,6 +124,26 @@ describe("POST /api/stripe/financial-connections/complete", () => {
     const body = (await response.json()) as { success: boolean; initialImport: { attempted: boolean; success: boolean } };
     expect(body.success).toBe(true);
     expect(body.initialImport).toEqual({ attempted: true, success: false });
+    consoleError.mockRestore();
+  });
+
+  it("never subscribes an account, and fails the whole completion, if the durable account-persistence step itself fails -- the exact ordering correction report item 5 requires", async () => {
+    const currentOwnerId = vi.fn().mockResolvedValue("owner-123");
+    mocks.getConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuite());
+    mocks.createAuthenticatedConnectionApplication.mockResolvedValue({ currentOwnerId, getConnectionPlatformSuite: mocks.getConnectionPlatformSuite });
+    mocks.completeFinancialConnectionsSession.mockResolvedValue({ sessionId: "fcsess_1", accounts: [{ accountId: "fca_1", displayName: null, institutionName: null, last4: null, category: "cash", subcategory: "checking", status: "active" }] });
+    mocks.mapStripeFinancialConnectionsSessionToConnection.mockReturnValue({ connection: { id: "connection_1" }, credentialReference: {}, institutionReference: {} });
+    mocks.provision.mockReturnValue({ readyForPersistence: true });
+    mocks.persist.mockResolvedValue({ connection: { id: "connection_1" }, credentialReference: {}, institutionReference: {}, provisionedAt: "t1", persistedAt: "t2", readyForImport: true });
+    mocks.accountMapperMapMany.mockReturnValue([{ id: "financial_account_1", providerAccountId: "fca_1" }]);
+    mocks.importCanonicalAccounts.mockRejectedValue(new Error("db write failed"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await POST(request({ sessionId: "fcsess_1" }));
+
+    expect(response.status).toBe(500);
+    expect(mocks.subscribeFinancialConnectionsAccounts).not.toHaveBeenCalled();
+    expect(mocks.executeImport).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });
 
