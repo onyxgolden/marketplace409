@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCpmEngineInput,
   countWorkingDaysBetween,
   expandBlackoutWindowsToDateSet,
   isWorkingDay,
   rollToWorkingDay,
   runCpmEngine,
+  selectGanttBlocks,
   stepWorkingDays,
   topologicalOrder,
 } from "./schedulingCpmEngine";
@@ -300,6 +302,40 @@ describe("schedulingCpmEngine — scenario 10: dependency_out_of_scope guard", (
     const result = runCpmEngine({ project: project({ end_date: "2026-01-06" }), blocks, dependencies: deps, calendars: CALENDARS, lanes: LANES });
     const row = result.blocks.find((item) => item.id === "A");
     expect(row.early_start).toBe("2026-01-05"); // computed normally, unaffected by the dangling edge
+    const outOfScope = result.conflicts.filter((conflict) => conflict.type === "dependency_out_of_scope");
+    expect(outOfScope).toHaveLength(1);
+    expect(outOfScope[0].dependencyId).toBe("d1");
+  });
+});
+
+describe("schedulingCpmEngine — selectGanttBlocks (SCHED-21A)", () => {
+  it("keeps a real Gantt block, drops a hammock and a WBS activity -- unchanged from computeAndPersistCpm's prior inline filter", () => {
+    const gantt = block("A");
+    const hammock = block("H", { block_type: "hammock", lane_id: "lane_1" });
+    const wbsActivity = block("W", { lane_id: null, wbs_node_id: "wbs_1", start_date: null });
+    expect(selectGanttBlocks([gantt, hammock, wbsActivity])).toEqual([gantt]);
+  });
+});
+
+describe("schedulingCpmEngine — buildCpmEngineInput (SCHED-21A)", () => {
+  it("applies selectGanttBlocks and passes every other field through unfiltered, defaulting missing arrays to []", () => {
+    const gantt = block("A");
+    const wbsActivity = block("W", { lane_id: null, wbs_node_id: "wbs_1", start_date: null });
+    const input = buildCpmEngineInput({ project: project(), blocks: [gantt, wbsActivity] });
+    expect(input.blocks).toEqual([gantt]);
+    expect(input.dependencies).toEqual([]);
+    expect(input.calendars).toEqual([]);
+    expect(input.holidays).toEqual([]);
+    expect(input.blackoutWindows).toEqual([]);
+    expect(input.hammockAnchors).toEqual([]);
+    expect(input.lanes).toEqual([]);
+  });
+
+  it("does not pre-filter dependencies -- a dangling one still reaches runCpmEngine and is reported, matching the direct-call behavior above", () => {
+    const blocks = [block("A", { duration_days: 2 })];
+    const dependencies = [dependency("d1", "A", "ghost")];
+    const input = buildCpmEngineInput({ project: project({ end_date: "2026-01-06" }), blocks, dependencies, calendars: CALENDARS, lanes: LANES });
+    const result = runCpmEngine(input);
     const outOfScope = result.conflicts.filter((conflict) => conflict.type === "dependency_out_of_scope");
     expect(outOfScope).toHaveLength(1);
     expect(outOfScope[0].dependencyId).toBe("d1");
