@@ -44,6 +44,16 @@ function configuredWebhookSecret(env = process.env) {
 // speculative import for an account whose owner cannot be determined from the event alone -- FORGE
 // does not request the 'ownership' permission, so there is no owner-identifying data on this event
 // to safely act on for an account it does not already know about).
+// A row stuck in 'processing' longer than this is treated as abandoned by whatever request
+// claimed it (confirmed live: a dev-server restart mid-request left a real row permanently
+// 'processing', since the normal claim's WHERE clause deliberately excludes 'processing' -- by
+// design, to prevent a second concurrent request from also claiming a row that's genuinely still
+// being worked on). 5 minutes is far longer than any real import in this route should ever take
+// (the slowest observed live run was ~2s), so a row still 'processing' past this age is far more
+// likely a crashed/killed attempt than a live one -- long enough to never preempt a real
+// in-flight request, short enough that a genuinely stuck event doesn't sit dead for hours.
+const STALE_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
+
 const SUPPORTED_EVENT_TYPES = new Set([
   "financial_connections.account.created",
   "financial_connections.account.deactivated",
@@ -133,7 +143,7 @@ export async function POST(request) {
 
     const { data: row, error: rowError } = await supabase
       .from("connection_webhook_events")
-      .select("status, payload_hash, attempt_count")
+      .select("status, payload_hash, attempt_count, claimed_at")
       .eq("id", eventRowId)
       .single();
     if (rowError) throw rowError;
@@ -163,19 +173,56 @@ export async function POST(request) {
     // to here can only have ONE of them flip the row to 'processing' -- the loser's affected-row
     // count is 0, and it backs off with a retryable response instead of also importing. This is
     // what makes double-processing impossible even under concurrent redelivery, not just unlikely.
+    const now = new Date();
     const { data: claimedRows, error: claimError } = await supabase
       .from("connection_webhook_events")
-      .update({ status: "processing", attempt_count: (row.attempt_count ?? 0) + 1 })
+      .update({ status: "processing", attempt_count: (row.attempt_count ?? 0) + 1, claimed_at: now.toISOString() })
       .eq("id", eventRowId)
       .in("status", ["received", "failed"])
       .select("attempt_count");
     if (claimError) throw claimError;
-    if (!claimedRows || claimedRows.length === 0) {
-      // Lost the race (or another attempt is already mid-flight): ask Stripe to retry later,
-      // rather than silently dropping the event or double-processing it ourselves.
+
+    const claimedAtMs = row.claimed_at ? new Date(row.claimed_at).getTime() : null;
+    // A NULL claimed_at means this row transitioned to 'processing' before this column existed
+    // (an already-stuck row from before this recovery mechanism was deployed) -- treated as
+    // stale, never as "fresh", since there is no evidence it's being actively worked on right
+    // now. A plain SQL `claimed_at < threshold` comparison never matches NULL either, so the
+    // reclaim query below must check for it explicitly, not just rely on the `<` comparison.
+    const isStaleOrUnknown = claimedAtMs === null || now.getTime() - claimedAtMs > STALE_PROCESSING_TIMEOUT_MS;
+
+    if (claimedRows && claimedRows.length > 0) {
+      claimed = true;
+    } else if (row.status === "processing" && isStaleOrUnknown) {
+      // The normal claim refused this row because it's still 'processing' -- but it has been
+      // 'processing' for longer than any real request in this route ever takes (or has no
+      // claimed_at at all, see above), so the attempt that claimed it is presumed crashed/killed
+      // before it could ever mark the row 'failed' or 'processed'. Reclaim it with a SEPARATE,
+      // equally atomic UPDATE whose own WHERE clause re-checks claimed_at: if another concurrent
+      // request's stale-reclaim UPDATE already won (advancing claimed_at to "now"), THIS UPDATE's
+      // condition no longer matches by the time Postgres evaluates it, so it correctly claims 0
+      // rows -- exactly the same row-level-locking guarantee the normal claim above relies on,
+      // just against a different WHERE clause. Never touches received_at, and still increments
+      // attempt_count.
+      const staleBeforeIso = new Date(now.getTime() - STALE_PROCESSING_TIMEOUT_MS).toISOString();
+      const { data: reclaimedRows, error: reclaimError } = await supabase
+        .from("connection_webhook_events")
+        .update({ status: "processing", attempt_count: (row.attempt_count ?? 0) + 1, claimed_at: now.toISOString() })
+        .eq("id", eventRowId)
+        .eq("status", "processing")
+        .or(`claimed_at.is.null,claimed_at.lt.${staleBeforeIso}`)
+        .select("attempt_count");
+      if (reclaimError) throw reclaimError;
+      if (reclaimedRows && reclaimedRows.length > 0) {
+        claimed = true;
+      }
+    }
+
+    if (!claimed) {
+      // Lost the race (a concurrent attempt is genuinely still fresh, or another request already
+      // won the stale-reclaim): ask Stripe to retry later, rather than silently dropping the
+      // event or double-processing it ourselves.
       return NextResponse.json({ received: true, retry: true }, { status: 409 });
     }
-    claimed = true;
 
     // refreshed_balance / refreshed_transactions: check the refresh's own status BEFORE doing any
     // further work -- a webhook fires on every attempt, not just success, and refreshes are

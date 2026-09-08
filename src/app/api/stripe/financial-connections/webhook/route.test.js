@@ -73,6 +73,25 @@ function fakeSupabase({ financialAccountRow = null, existingWebhookEventRow = nu
         if (state.in?.status && !state.in.status.includes(row.status)) {
           return { data: [], error: null };
         }
+        // A plain .eq("status", ...) alongside .eq("id", ...) -- used by the stale-reclaim
+        // UPDATE -- is a SEPARATE column from the id filter above; state.eq merges all .eq()
+        // calls into one object keyed by column, so check it distinctly from `id`.
+        if (state.eq?.status !== undefined && row.status !== state.eq.status) {
+          return { data: [], error: null };
+        }
+        // A minimal parser for the ONE .or() shape the stale-reclaim query actually issues:
+        // "claimed_at.is.null,claimed_at.lt.<iso>" -- true if ANY comma-separated condition
+        // matches, exactly like PostgREST's own `.or()` semantics.
+        if (state.or) {
+          const matchesAny = state.or.split(",").some((condition) => {
+            const [col, op, ...valueParts] = condition.split(".");
+            const value = valueParts.join(".");
+            if (op === "is" && value === "null") return row[col] === null || row[col] === undefined;
+            if (op === "lt") return row[col] != null && row[col] < value;
+            return false;
+          });
+          if (!matchesAny) return { data: [], error: null };
+        }
         Object.assign(row, state.fields);
         calls.updates.push({ table, fields: state.fields });
         return { data: [{ attempt_count: row.attempt_count }], error: null };
@@ -93,6 +112,7 @@ function fakeSupabase({ financialAccountRow = null, existingWebhookEventRow = nu
       select: () => builder(table, state),
       eq: (col, val) => builder(table, { ...state, eq: { ...state.eq, [col]: val } }),
       in: (col, values) => builder(table, { ...state, in: { ...state.in, [col]: values } }),
+      or: (filterString) => builder(table, { ...state, or: filterString }),
       maybeSingle: async () => execute(table, state, "maybeSingle"),
       single: async () => execute(table, state, "single"),
       upsert: (row) => builder(table, { ...state, op: "upsert", row }),
@@ -186,15 +206,19 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     consoleError.mockRestore();
   });
 
-  it("claims atomically -- a concurrent second delivery that loses the race gets a retryable 409, never double-imports", async () => {
+  it("claims atomically -- a concurrent second delivery that loses the race gets a retryable 409, never double-imports (fresh processing claim, well within the staleness timeout)", async () => {
     const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_1c", type: "financial_connections.account.refreshed_transactions",
       data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_1", status: "succeeded" } } },
     });
-    // Simulates a delivery that's already mid-flight (another request already won the claim).
+    // Simulates a delivery that's already mid-flight (another request already won the claim
+    // seconds ago -- well within the staleness timeout, so this must NOT be treated as abandoned).
     const supabase = fakeSupabase({
-      existingWebhookEventRow: { id: "connection_webhook_stripe_financial_connections_evt_1c", status: "processing", payload_hash: hashOf(body) },
+      existingWebhookEventRow: {
+        id: "connection_webhook_stripe_financial_connections_evt_1c", status: "processing", payload_hash: hashOf(body),
+        claimed_at: new Date(Date.now() - 5_000).toISOString(),
+      },
     });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     const { POST } = await importRoute();
@@ -203,6 +227,145 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
 
     expect(response.status).toBe(409);
     expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
+  });
+
+  // Mirrors the route's own STALE_PROCESSING_TIMEOUT_MS (5 minutes) -- not imported directly since
+  // the route doesn't export it, but the value itself is exactly what makes a claimed_at "stale"
+  // for these tests.
+  const STALE_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
+
+  it("reclaims a STALE 'processing' row (claimed_at older than the timeout -- confirmed live: a dev-server restart mid-request left a real row exactly like this) atomically: increments attempt_count, preserves received_at, and proceeds to import", async () => {
+    const body = "{}";
+    mocks.constructWebhookEvent.mockReturnValue({
+      id: "evt_stale", type: "financial_connections.account.refreshed_transactions",
+      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_stale", status: "succeeded" } } },
+    });
+    const originalReceivedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1 hour ago
+    const staleClaimedAt = new Date(Date.now() - STALE_PROCESSING_TIMEOUT_MS - 60_000).toISOString(); // stale by 1 extra minute
+    const supabase = fakeSupabase({
+      financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" },
+      existingWebhookEventRow: {
+        id: "connection_webhook_stripe_financial_connections_evt_stale", status: "processing", payload_hash: hashOf(body),
+        attempt_count: 1, received_at: originalReceivedAt, claimed_at: staleClaimedAt,
+      },
+    });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
+    mocks.executeImport.mockResolvedValue({ success: true });
+    mocks.createConnectionPlatformSuite.mockResolvedValue({
+      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
+      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
+      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
+      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
+    });
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest(body));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ received: true });
+    expect(mocks.executeImport).toHaveBeenCalledTimes(1);
+    const row = supabase._webhookEvents.get("connection_webhook_stripe_financial_connections_evt_stale");
+    expect(row.status).toBe("processed");
+    expect(row.attempt_count).toBe(2); // incremented, exactly like a normal claim
+    expect(row.received_at).toBe(originalReceivedAt); // never touched, even by the stale-reclaim
+  });
+
+  it("reclaims a 'processing' row with a NULL claimed_at (a row that entered processing BEFORE this column/recovery mechanism existed) -- treated as stale/unknown, not as fresh, so it is never stuck forever. Confirmed live: exactly this shape was found in the real database from an earlier crashed request.", async () => {
+    const body = "{}";
+    mocks.constructWebhookEvent.mockReturnValue({
+      id: "evt_null_claimed_at", type: "financial_connections.account.refreshed_transactions",
+      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_null", status: "succeeded" } } },
+    });
+    const originalReceivedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const supabase = fakeSupabase({
+      financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" },
+      existingWebhookEventRow: {
+        id: "connection_webhook_stripe_financial_connections_evt_null_claimed_at", status: "processing", payload_hash: hashOf(body),
+        attempt_count: 1, received_at: originalReceivedAt, claimed_at: null,
+      },
+    });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
+    mocks.executeImport.mockResolvedValue({ success: true });
+    mocks.createConnectionPlatformSuite.mockResolvedValue({
+      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
+      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
+      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
+      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
+    });
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest(body));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ received: true });
+    const row = supabase._webhookEvents.get("connection_webhook_stripe_financial_connections_evt_null_claimed_at");
+    expect(row.status).toBe("processed");
+    expect(row.attempt_count).toBe(2);
+    expect(row.received_at).toBe(originalReceivedAt);
+  });
+
+  it("refuses to reclaim a 'processing' row that is NOT yet stale (claimed_at within the timeout) -- must not preempt a request that is genuinely still in flight", async () => {
+    const body = "{}";
+    mocks.constructWebhookEvent.mockReturnValue({
+      id: "evt_not_stale_yet", type: "financial_connections.account.refreshed_transactions",
+      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_not_stale", status: "succeeded" } } },
+    });
+    const almostStaleClaimedAt = new Date(Date.now() - STALE_PROCESSING_TIMEOUT_MS + 30_000).toISOString(); // 30s short of stale
+    const supabase = fakeSupabase({
+      existingWebhookEventRow: {
+        id: "connection_webhook_stripe_financial_connections_evt_not_stale_yet", status: "processing", payload_hash: hashOf(body),
+        attempt_count: 1, claimed_at: almostStaleClaimedAt,
+      },
+    });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest(body));
+
+    expect(response.status).toBe(409);
+    expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
+    const row = supabase._webhookEvents.get("connection_webhook_stripe_financial_connections_evt_not_stale_yet");
+    expect(row.attempt_count).toBe(1); // never incremented -- this request never claimed anything
+    expect(row.status).toBe("processing"); // left exactly as it was
+  });
+
+  it("two concurrent stale-reclaim attempts for the SAME stuck row: only one succeeds, the other still gets a retryable 409 -- no double-processing even during recovery", async () => {
+    const body = "{}";
+    mocks.constructWebhookEvent.mockReturnValue({
+      id: "evt_concurrent_stale", type: "financial_connections.account.refreshed_transactions",
+      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_concurrent", status: "succeeded" } } },
+    });
+    const staleClaimedAt = new Date(Date.now() - STALE_PROCESSING_TIMEOUT_MS - 60_000).toISOString();
+    const supabase = fakeSupabase({
+      financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" },
+      existingWebhookEventRow: {
+        id: "connection_webhook_stripe_financial_connections_evt_concurrent_stale", status: "processing", payload_hash: hashOf(body),
+        attempt_count: 1, claimed_at: staleClaimedAt,
+      },
+    });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
+    mocks.executeImport.mockResolvedValue({ success: true });
+    mocks.createConnectionPlatformSuite.mockResolvedValue({
+      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
+      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
+      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
+      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
+    });
+    const { POST: POST_1 } = await importRoute();
+    // Same in-memory store, same event -- simulates two concurrent redeliveries both attempting
+    // the stale reclaim. The fake store's synchronous execute() serializes these exactly the way
+    // Postgres row-level locking would for two real concurrent UPDATEs.
+    const [firstResponse, secondResponse] = await Promise.all([
+      POST_1(webhookRequest(body)),
+      POST_1(webhookRequest(body)),
+    ]);
+
+    const statuses = [firstResponse.status, secondResponse.status].sort();
+    expect(statuses).toEqual([200, 409]);
+    expect(mocks.executeImport).toHaveBeenCalledTimes(1); // only the winner ever imported
   });
 
   it("marks an unsupported event type ignored without looking up any connection", async () => {
