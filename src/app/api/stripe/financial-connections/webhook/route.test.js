@@ -50,6 +50,10 @@ vi.mock("@/domains/stripe-financial-connections-adapter", () => ({
 // resolve exactly as the real client would -- this is what lets the atomic-claim and
 // payload-hash-mismatch tests below actually exercise the real logic instead of a stubbed shortcut.
 function fakeSupabase({ financialAccountRow = null, existingWebhookEventRow = null } = {}) {
+  // Mutable, not the original destructured const -- lets a test simulate ownership becoming
+  // resolvable partway through (e.g. /complete finishing between two webhook deliveries) via
+  // setFinancialAccountRow(...), without reconstructing the harness and losing webhookEvents state.
+  let currentFinancialAccountRow = financialAccountRow;
   const webhookEvents = new Map();
   if (existingWebhookEventRow) {
     webhookEvents.set(existingWebhookEventRow.id, { attempt_count: 0, ...existingWebhookEventRow });
@@ -102,7 +106,7 @@ function fakeSupabase({ financialAccountRow = null, existingWebhookEventRow = nu
       return { data: row, error: null };
     }
     if (table === "financial_accounts") {
-      return { data: financialAccountRow, error: null };
+      return { data: currentFinancialAccountRow, error: null };
     }
     return { data: null, error: null };
   }
@@ -128,7 +132,12 @@ function fakeSupabase({ financialAccountRow = null, existingWebhookEventRow = nu
     return node;
   }
 
-  return { from: (table) => builder(table, {}), _calls: calls, _webhookEvents: webhookEvents };
+  return {
+    from: (table) => builder(table, {}),
+    _calls: calls,
+    _webhookEvents: webhookEvents,
+    setFinancialAccountRow: (row) => { currentFinancialAccountRow = row; },
+  };
 }
 
 async function importRoute() {
@@ -410,7 +419,8 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
   });
 
-  it("ignores (permanently, not retried) an event for a Stripe account with no matching FORGE connection", async () => {
+  it("marks unresolved ownership RETRYABLE (status 'failed', 409), not permanently ignored -- confirmed live: an event that legitimately can't resolve ownership yet (because /complete may still be persisting) must not be stuck forever the way 'ignored' used to leave it", async () => {
+    const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_5", type: "financial_connections.account.refreshed_balance",
       data: { object: { ...STRIPE_ACCOUNT, balance_refresh: { status: "succeeded" } } },
@@ -419,11 +429,96 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     const { POST } = await importRoute();
 
-    const response = await POST(webhookRequest());
+    const response = await POST(webhookRequest(body));
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ received: true, ignored: true });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ received: true, retry: true });
     expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
+    const row = supabase._webhookEvents.get("connection_webhook_stripe_financial_connections_evt_5");
+    expect(row.status).toBe("failed");
+    expect(row.failure_message).toMatch(/not yet resolvable/i);
+  });
+
+  it("an event that arrives before /complete finishes persisting later succeeds once ownership resolves -- attempt_count increments, received_at is preserved, no reclaim-window special-casing needed since 'failed' is already normally reclaimable", async () => {
+    const body = "{}";
+    mocks.constructWebhookEvent.mockReturnValue({
+      id: "evt_race_then_resolves", type: "financial_connections.account.refreshed_transactions",
+      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_race", status: "succeeded" } } },
+    });
+    // First delivery: ownership genuinely not resolvable yet (no financial_accounts row).
+    const supabase = fakeSupabase({ financialAccountRow: null });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    const { POST } = await importRoute();
+
+    const firstResponse = await POST(webhookRequest(body));
+    expect(firstResponse.status).toBe(409);
+    const rowId = "connection_webhook_stripe_financial_connections_evt_race_then_resolves";
+    const afterFirst = supabase._webhookEvents.get(rowId);
+    expect(afterFirst.status).toBe("failed");
+    expect(afterFirst.attempt_count).toBe(1);
+    const originalReceivedAt = afterFirst.received_at;
+
+    // /complete has now finished persisting -- the SAME account is durably known. A redelivery
+    // of the SAME event (e.g. Stripe's own retry) must now succeed.
+    supabase.setFinancialAccountRow({ owner_id: "owner-123", connection_id: "connection_1" });
+    mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
+    mocks.executeImport.mockResolvedValue({ success: true });
+    mocks.createConnectionPlatformSuite.mockResolvedValue({
+      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
+      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
+      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
+      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
+    });
+
+    const secondResponse = await POST(webhookRequest(body));
+
+    expect(secondResponse.status).toBe(200);
+    const afterSecond = supabase._webhookEvents.get(rowId);
+    expect(afterSecond.status).toBe("processed");
+    expect(afterSecond.attempt_count).toBe(2);
+    expect(afterSecond.received_at).toBe(originalReceivedAt);
+    expect(mocks.executeImport).toHaveBeenCalledTimes(1);
+  });
+
+  it("a genuinely terminal ignored event (unsupported type) stays deduplicated forever, unlike the retryable ownership case -- proves the fix did not make every ignored event retryable", async () => {
+    mocks.constructWebhookEvent.mockReturnValue({ id: "evt_terminal", type: "financial_connections.account.refreshed_ownership", data: { object: STRIPE_ACCOUNT } });
+    const supabase = fakeSupabase({});
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    const { POST } = await importRoute();
+
+    const firstResponse = await POST(webhookRequest());
+    expect(firstResponse.status).toBe(200);
+    await expect(firstResponse.json()).resolves.toEqual({ received: true, ignored: true });
+
+    const secondResponse = await POST(webhookRequest());
+    expect(secondResponse.status).toBe(200);
+    await expect(secondResponse.json()).resolves.toEqual({ received: true, ignored: true });
+    expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
+  });
+
+  it("two concurrent redeliveries of an ownership-not-yet-resolved event: only one claims and marks it failed, the other gets a retryable 409 -- no double-processing during the race either", async () => {
+    const body = "{}";
+    mocks.constructWebhookEvent.mockReturnValue({
+      id: "evt_concurrent_unresolved", type: "financial_connections.account.refreshed_transactions",
+      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_concurrent_unresolved", status: "succeeded" } } },
+    });
+    const supabase = fakeSupabase({ financialAccountRow: null });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    const { POST } = await importRoute();
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      POST(webhookRequest(body)),
+      POST(webhookRequest(body)),
+    ]);
+
+    const statuses = [firstResponse.status, secondResponse.status].sort();
+    // One request wins the claim and marks the row 'failed' (retryable); the other, having lost
+    // the claim, gets the generic claim-lost 409 -- both are non-2xx/retryable, and only one
+    // actually ran resolveOwningConnection's logic and wrote failure_message.
+    expect(statuses).toEqual([409, 409]);
+    const row = supabase._webhookEvents.get("connection_webhook_stripe_financial_connections_evt_concurrent_unresolved");
+    expect(row.attempt_count).toBe(1); // only the winner incremented it
+    expect(row.status).toBe("failed");
   });
 
   it("account.created is idempotent: acknowledges an already-known account without importing or subscribing anything", async () => {
@@ -445,7 +540,7 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     expect(mocks.saveConnection).not.toHaveBeenCalled();
   });
 
-  it("account.created for an account FORGE does not know is ignored, never speculatively imported (no owner-identifying data on the event)", async () => {
+  it("account.created for an account FORGE does not (yet) know is retryable, never speculatively imported (no owner-identifying data on the event) -- same reasoning as any other unresolved-ownership case: this account may simply not have finished persisting via /complete yet", async () => {
     mocks.constructWebhookEvent.mockReturnValue({ id: "evt_created_2", type: "financial_connections.account.created", data: { object: STRIPE_ACCOUNT } });
     const supabase = fakeSupabase({ financialAccountRow: null });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
@@ -453,7 +548,8 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
 
     const response = await POST(webhookRequest());
 
-    await expect(response.json()).resolves.toEqual({ received: true, ignored: true });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ received: true, retry: true });
     expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
   });
 

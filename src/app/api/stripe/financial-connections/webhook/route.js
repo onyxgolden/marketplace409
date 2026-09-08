@@ -243,13 +243,32 @@ export async function POST(request) {
 
     const owning = await resolveOwningConnection(supabase, account.id);
     if (!owning) {
-      // No FORGE connection knows this Stripe account. For a real, currently-subscribed account
-      // this should not happen (see correction report item 5 -- ownership is now durably
-      // persisted before subscribing), so this is either a foreign/stale account or a webhook
-      // misconfiguration, not a race to retry around. Ignored, not failed: retrying will not
-      // change the outcome.
-      await markEvent(supabase, eventRowId, { status: "ignored", processed_at: new Date().toISOString(), failure_message: "No FORGE connection found for this Stripe account." });
-      return NextResponse.json({ received: true, ignored: true });
+      // Cannot yet resolve which FORGE connection owns this Stripe account. Confirmed live: even
+      // with durable persistence happening before subscribe (correction report item 5), Stripe's
+      // test-mode simulator fired real created/deactivated events essentially instantly upon
+      // account selection -- before the browser's modal flow even finished, let alone before
+      // /complete's synchronous persistence step ran. That narrow window is real in production
+      // too, just smaller. There is no way to tell "this will resolve once /complete finishes"
+      // apart from "this account is genuinely foreign/unknown" from this event alone -- both look
+      // identical (no matching financial_accounts row) right now.
+      //
+      // So this is marked RETRYABLE ('failed', not the previous 'ignored'), exactly like a
+      // genuine processing failure: the SAME atomic claim mechanism above already allows
+      // reclaiming a 'failed' row on a later delivery, with attempt_count incrementing and
+      // received_at untouched, same as any other retry. A truly foreign/unknown account (never
+      // subscribed by FORGE at all) never resolves no matter how many times it's retried, and
+      // simply stops being redelivered once Stripe's own bounded retry window (attempts spread
+      // over up to a few days) elapses -- there is no need for this route to invent its own
+      // separate "give up after N attempts" policy on top of that; Stripe's own retry-and-give-up
+      // behavior is already the correct backstop. This is deliberately NOT applied to the other
+      // 'ignored' cases above (unsupported event type, a refresh that didn't succeed, an inactive
+      // account) -- those are genuinely terminal: retrying the exact same already-completed
+      // refresh attempt, or an event type this route will never act on, cannot change the outcome.
+      await markEvent(supabase, eventRowId, {
+        status: "failed", processed_at: new Date().toISOString(),
+        failure_message: "Ownership not yet resolvable for this Stripe account -- retryable (/complete may still be persisting).",
+      });
+      return NextResponse.json({ received: true, retry: true }, { status: 409 });
     }
 
     const connectionPlatformSuite = await createConnectionPlatformSuite({
