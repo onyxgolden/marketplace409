@@ -116,7 +116,16 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
       organization_id: event.organization_id ?? null,
       property_id: event.property_id ?? null,
       financial_account_id: event.financial_account_id ?? null,
-      business_scope: event.business_scope ?? null,
+      // Deliberately OMITTED (not sent as an explicit null) when absent -- financial_events.
+      // business_scope is `not null default 'business'` at the database level
+      // (20260824030000_add_financial_events_business_scope.sql). An explicit null in the insert
+      // payload overrides that default and is rejected by the not-null constraint; omitting the
+      // key entirely lets Postgres apply its own default, which is exactly what every caller that
+      // has never set business_scope (e.g. the canonical connection-import pipeline -- Plaid and
+      // Stripe Financial Connections transactions never populate it) needs. Never duplicate the
+      // 'business' default here in application code -- the database is the single source of
+      // truth for it.
+      ...(event.business_scope ? { business_scope: event.business_scope } : {}),
       event_date: event.event_date,
       description: event.description,
       amount: event.amount,
