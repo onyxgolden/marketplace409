@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { createFinancialConnectionsWebhookClient } from "@/lib/supabase/createFinancialConnectionsWebhookClient";
 import { createConnectionPlatformSuite, ConnectionRepositoryStorage, CredentialReferenceRepositoryStorage, InstitutionReferenceRepositoryStorage, FinancialAccountRepositoryStorage } from "@/infrastructure/composition";
-import { parseVaultedState, serializeVaultedState, withUpdatedTransactionRefreshCursor } from "@/domains/stripe-financial-connections-adapter";
+import { parseVaultedState, createStripeFinancialConnectionsRefreshCoordinator } from "@/domains/stripe-financial-connections-adapter";
+import { SupabaseFinancialAccountRefreshRepository } from "@/domains/financial-account-refresh";
 
 export const runtime = "nodejs";
 
@@ -72,12 +73,12 @@ const SUPPORTED_EVENT_TYPES = new Set([
 async function resolveOwningConnection(supabase, stripeAccountId) {
   const { data, error } = await supabase
     .from("financial_accounts")
-    .select("owner_id, connection_id")
+    .select("id, owner_id, connection_id")
     .eq("provider", "stripe_financial_connections")
     .eq("provider_account_id", stripeAccountId)
     .maybeSingle();
   if (error) throw error;
-  return data ? { ownerId: data.owner_id, connectionId: data.connection_id } : null;
+  return data ? { financialAccountId: data.id, ownerId: data.owner_id, connectionId: data.connection_id } : null;
 }
 
 async function markEvent(supabase, eventRowId, fields) {
@@ -94,18 +95,21 @@ async function setConnectionStatus(connectionPlatformSuite, owning, status) {
   );
 }
 
-// Advances the per-account transaction-refresh cursor ONLY after coordinator.executeImport()
-// above has already returned success -- never before, never on a throw. Stores ONLY the Stripe
-// transaction_refresh.id string (see withUpdatedTransactionRefreshCursor) -- never a wall-clock
-// watermark; a failed import leaves the previous cursor value untouched, so the next attempt
-// (webhook retry or manual sync) safely re-fetches from the same point.
-async function advanceTransactionRefreshCursor(credentialVaultService, { ownerId, vaultReference, accountId, refreshId }) {
-  if (!refreshId) return;
+// One-time, read-only bootstrap of the durable refresh watermark from the legacy vaulted
+// transaction cursor (see correction report/session history: the vaulted cursor was write-only
+// and never actually read to filter anything -- this is its final use, preserving whatever it
+// already recorded rather than resetting or discarding it). bootstrapWatermarkFromLegacyCursor
+// itself is an insert-or-ignore: a watermark that already exists (this new pipeline has already
+// run for this account) is never overwritten by a stale legacy value.
+async function bootstrapTransactionWatermarkFromLegacyVault(refreshRepository, credentialVaultService, { ownerId, financialAccountId, vaultReference, accountId }) {
   const secret = await credentialVaultService.retrieveCredential(ownerId, vaultReference);
   if (!secret) return;
   const vaultedState = parseVaultedState(secret);
-  const nextState = withUpdatedTransactionRefreshCursor(vaultedState, accountId, refreshId);
-  await credentialVaultService.storeCredential({ ownerId, vaultReference, secret: serializeVaultedState(nextState) });
+  const legacyRefreshId = vaultedState.transactionRefreshCursors[accountId];
+  if (!legacyRefreshId) return;
+  await refreshRepository.bootstrapWatermarkFromLegacyCursor({
+    financialAccountId, feature: "transactions", ownerId, legacyRefreshId,
+  });
 }
 
 export async function POST(request) {
@@ -224,17 +228,16 @@ export async function POST(request) {
       return NextResponse.json({ received: true, retry: true }, { status: 409 });
     }
 
-    // refreshed_balance / refreshed_transactions: check the refresh's own status BEFORE doing any
-    // further work -- a webhook fires on every attempt, not just success, and refreshes are
-    // asynchronous. A failed/pending refresh, or an inactive account, is acknowledged and
-    // ignored, never treated as fresh data or refreshed/imported.
+    // refreshed_balance / refreshed_transactions: a fast-path guard only -- an inactive account is
+    // acknowledged and ignored without ever calling the refresh coordinator. Deliberately does
+    // NOT also check the webhook payload's OWN embedded refresh status here: trusting that
+    // embedded snapshot as a proxy for "is THIS refresh currently authoritative" is exactly the
+    // bug class this route's refresh coordinator exists to fix (an out-of-order redelivery's own
+    // embedded status can describe a refresh that is no longer current by the time it's
+    // processed) -- the coordinator's own live, read-only retrieveFinancialConnectionsAccount
+    // call is the only thing ever trusted for that judgement now.
     const account = event.data.object;
     if (event.type === "financial_connections.account.refreshed_balance" || event.type === "financial_connections.account.refreshed_transactions") {
-      const refreshField = event.type === "financial_connections.account.refreshed_balance" ? account.balance_refresh : account.transaction_refresh;
-      if (refreshField?.status !== "succeeded") {
-        await markEvent(supabase, eventRowId, { status: "ignored", processed_at: new Date().toISOString() });
-        return NextResponse.json({ received: true, ignored: true });
-      }
       if (account.status !== "active") {
         await markEvent(supabase, eventRowId, { status: "ignored", processed_at: new Date().toISOString(), failure_message: "Account is not active." });
         return NextResponse.json({ received: true, ignored: true });
@@ -328,43 +331,81 @@ export async function POST(request) {
     }
 
     // --- refreshed_balance / refreshed_transactions: the ongoing-sync path ---
+    //
+    // Deliberately NOT ConnectionImportExecutionCoordinator.executeImport() (the manual "Execute"
+    // sync path, left completely untouched) -- that method is always-full (every account, both
+    // features, no cursor) and shares one persistence pass across balance and transactions,
+    // which is exactly what let an out-of-order webhook retry regress state undetected. This
+    // route now owns a per-account, per-feature, durable-state-machine-backed refresh instead;
+    // see stripe-financial-connections-refresh-coordinator.ts for the full claim/persist/commit
+    // sequence and why ordering is decided ONLY by a live, read-only retrieve against Stripe,
+    // never by comparing local timestamps or the webhook payload's own embedded refresh status.
+    const feature = event.type === "financial_connections.account.refreshed_balance" ? "balance" : "transactions";
 
-    const refreshField = event.type === "financial_connections.account.refreshed_balance" ? account.balance_refresh : account.transaction_refresh;
+    const connection = await connectionPlatformSuite.connectionRepository.getById(owning.connectionId, { ownerId: owning.ownerId });
+    if (!connection?.credentialReferenceId) {
+      throw new Error("Connection or credential reference not found for refresh processing.");
+    }
+    const credentialReference = await connectionPlatformSuite.credentialReferenceRepository.getById(connection.credentialReferenceId, { ownerId: owning.ownerId });
+    if (!credentialReference) {
+      throw new Error("Credential reference not found for refresh processing.");
+    }
+    const institutionReferences = await connectionPlatformSuite.institutionReferenceRepository.getAll({ ownerId: owning.ownerId });
+    const institutionReference = institutionReferences.find((candidate) => candidate.connectionId === owning.connectionId) ?? null;
+    if (!institutionReference) {
+      throw new Error("Institution reference not found for refresh processing.");
+    }
 
-    // Converges on the SAME canonical persistence boundary the manual "Execute" sync uses --
-    // ConnectionImportExecutionCoordinator, not a separate direct-repository-write path.
-    const importResult = await connectionPlatformSuite.connectionImportExecutionCoordinator.executeImport({
-      connectionId: owning.connectionId,
-      ownerId: owning.ownerId,
+    const refreshRepository = new SupabaseFinancialAccountRefreshRepository({ supabaseClient: supabase });
+
+    if (feature === "transactions") {
+      // Final read of the legacy vaulted cursor -- see its own function comment. A no-op once
+      // this account+feature has a real watermark row from this pipeline actually running.
+      await bootstrapTransactionWatermarkFromLegacyVault(refreshRepository, connectionPlatformSuite.credentialVaultService, {
+        ownerId: owning.ownerId,
+        financialAccountId: owning.financialAccountId,
+        vaultReference: credentialReference.vaultReference,
+        accountId: account.id,
+      });
+    }
+
+    const stripeBillingProviderClient = stripeBillingProvider.stripe;
+    const refreshCoordinator = createStripeFinancialConnectionsRefreshCoordinator({
+      stripeClient: stripeBillingProviderClient,
+      refreshRepository,
+      accountBalanceRepository: connectionPlatformSuite.accountBalanceRepository,
+      financialEventImportService: connectionPlatformSuite.financialEventImportService,
     });
 
-    if (event.type === "financial_connections.account.refreshed_transactions" && importResult.success) {
-      const connection = await connectionPlatformSuite.connectionRepository.getById(owning.connectionId, { ownerId: owning.ownerId });
-      if (connection?.credentialReferenceId) {
-        const credentialReference = await connectionPlatformSuite.credentialReferenceRepository.getById(connection.credentialReferenceId, { ownerId: owning.ownerId });
-        if (credentialReference) {
-          await advanceTransactionRefreshCursor(connectionPlatformSuite.credentialVaultService, {
-            ownerId: owning.ownerId,
-            vaultReference: credentialReference.vaultReference,
-            accountId: account.id,
-            refreshId: refreshField.id ?? null,
-          });
-        }
-      }
-    }
+    const refreshOutcome = await refreshCoordinator.processRefresh({
+      ownerId: owning.ownerId,
+      connectionId: owning.connectionId,
+      financialAccountId: owning.financialAccountId,
+      providerAccountId: account.id,
+      feature,
+      triggeringEventId: event.id,
+      connection,
+      credentialReference,
+      institutionReference,
+    });
 
-    if (!importResult.success) {
-      // A genuinely failed import is retryable -- left in a state ('failed') the atomic claim
-      // above will accept again on the next delivery, and reported with a non-2xx so Stripe
-      // actually retries it, instead of the event silently vanishing behind a 200.
+    if (refreshOutcome.outcome === "slot_busy") {
+      // A different refresh for this exact account+feature is already actively importing --
+      // this event's own work item stays 'queued', retryable on the next delivery once that
+      // slot frees up. Never falsely marked processed just because it arrived mid-import.
       await markEvent(supabase, eventRowId, {
-        status: "failed", processed_at: new Date().toISOString(), failure_message: "Import reported failed records.",
+        status: "failed", processed_at: new Date().toISOString(),
+        failure_message: "Another refresh for this account/feature is currently importing -- retryable.",
       });
-      return NextResponse.json({ received: true, retry: true }, { status: 500 });
+      return NextResponse.json({ received: true, retry: true }, { status: 409 });
     }
 
+    // committed / already_committed / superseded / not_current are all correctly-handled
+    // terminal outcomes for THIS webhook event -- none of them are an error, and a superseded
+    // event is explicitly recorded as such on its own work item row (never reported as if it had
+    // been imported), so the webhook event itself is simply 'processed' in every case.
     await markEvent(supabase, eventRowId, { status: "processed", processed_at: new Date().toISOString() });
-    return NextResponse.json({ received: true });
+    return NextResponse.json({ received: true, refreshOutcome: refreshOutcome.outcome });
   } catch (error) {
     console.error("Stripe Financial Connections webhook rejected", { name: error?.name || "Error", eventRowId, claimed });
     if (eventRowId && claimed) {
