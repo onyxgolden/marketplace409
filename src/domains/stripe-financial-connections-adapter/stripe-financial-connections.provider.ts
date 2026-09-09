@@ -379,20 +379,70 @@ export function createStripeFinancialConnectionsAdapter({
     async reportHealth(connection: Connection): Promise<ConnectionHealth> {
       const now = new Date().toISOString();
       const isStripeFcConnection = connection.provider === STRIPE_FINANCIAL_CONNECTIONS_PROVIDER;
-      const isHealthy = isStripeFcConnection && connection.status === "connected";
 
+      if (!isStripeFcConnection) {
+        return {
+          connectionId: connection.id,
+          state: "critical",
+          severity: "critical",
+          label: "Invalid provider",
+          allowsImport: false,
+          requiresUserAction: true,
+          issueCount: 1,
+          warningCount: 0,
+          checkedAt: now,
+        };
+      }
+
+      if (connection.status === "connected") {
+        return {
+          connectionId: connection.id,
+          state: "healthy",
+          severity: "healthy",
+          label: "Stripe Financial Connections ready",
+          allowsImport: true,
+          requiresUserAction: false,
+          issueCount: 0,
+          warningCount: 0,
+          checkedAt: now,
+        };
+      }
+
+      // "disconnected" is set in exactly two places: this provider's own /disconnect route (a
+      // deliberate, user-initiated retirement -- see the production incident this fixes: an
+      // orphaned empty connection was left as "critical, repair this connection" purely because it
+      // was not literally "connected", even though it required no action from anyone) and the
+      // webhook route's financial_connections.account.disconnected handler (the holder or Stripe
+      // fully revoked access). Neither case is "broken" the way "needs_attention" (deactivated,
+      // temporarily unrefreshable, relink offered) or any other non-connected status is -- both
+      // mean "this connection is done, its financial history stays exactly as imported, and no
+      // action is expected." Treated as historical, not as an issue: allowsImport/
+      // requiresUserAction both false, issueCount/warningCount both 0, so it never inflates the
+      // platform's health score, the "Needs Attention" tile, or the priority-action queue.
+      if (connection.status === "disconnected") {
+        return {
+          connectionId: connection.id,
+          state: "retired",
+          severity: "neutral",
+          label: "Stripe Financial Connections disconnected (historical)",
+          allowsImport: false,
+          requiresUserAction: false,
+          issueCount: 0,
+          warningCount: 0,
+          checkedAt: now,
+        };
+      }
+
+      // Every other status ("needs_attention", "error", "pending", "not_connected", "syncing")
+      // genuinely requires user action -- unchanged from before this fix.
       return {
         connectionId: connection.id,
-        state: isHealthy ? "healthy" : isStripeFcConnection ? "critical" : "critical",
-        severity: isHealthy ? "healthy" : "critical",
-        label: !isStripeFcConnection
-          ? "Invalid provider"
-          : isHealthy
-            ? "Stripe Financial Connections ready"
-            : "Stripe Financial Connections requires attention",
-        allowsImport: isHealthy,
-        requiresUserAction: !isHealthy,
-        issueCount: isHealthy ? 0 : 1,
+        state: "critical",
+        severity: "critical",
+        label: "Stripe Financial Connections requires attention",
+        allowsImport: false,
+        requiresUserAction: true,
+        issueCount: 1,
         warningCount: 0,
         checkedAt: now,
       };

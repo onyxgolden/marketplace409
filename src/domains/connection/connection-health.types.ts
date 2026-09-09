@@ -7,6 +7,10 @@ export const CONNECTION_HEALTH_STATES = [
   "needs_attention",
   "critical",
   "not_ready",
+  // Deliberately disconnected/retired -- historical, not broken. Distinct from "critical"/
+  // "needs_attention" (which both mean "requires user action") and from "not_ready" (which means
+  // "not yet set up"): a retired connection needs no action at all, it is simply no longer active.
+  "retired",
 ] as const;
 
 export type ConnectionHealthState =

@@ -208,3 +208,97 @@ describe("importDataPayload -- manual sync path", () => {
     expect(payload.balances).toHaveLength(0); // but no misleading balance row
   });
 });
+
+describe("reportHealth", () => {
+  function connection(overrides: Partial<{ status: string; provider: string }> = {}) {
+    return {
+      id: "connection_1",
+      userId: "owner_1",
+      name: "Capital One",
+      type: "bank" as const,
+      status: "connected",
+      provider: "stripe_financial_connections",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  it("reports a connected account as healthy and ready for import", async () => {
+    const adapter = createStripeFinancialConnectionsAdapter({ credentialVaultService: fakeVault(), stripeClient: fakeStripeClient() });
+
+    const health = await adapter.reportHealth(connection({ status: "connected" }) as never);
+
+    expect(health).toMatchObject({ state: "healthy", severity: "healthy", allowsImport: true, requiresUserAction: false, issueCount: 0 });
+  });
+
+  // The production incident this fixes: a deliberate, user-initiated disconnect (via the
+  // /disconnect route, or via correction report item 7's manual local retirement) was
+  // indistinguishable from a genuine failure -- every non-"connected" status, including
+  // "disconnected", reported as "critical", forcing the whole platform state to "critical" and
+  // surfacing a "Repair connection" action for a connection that needed no repair at all.
+  it("reports an intentionally disconnected (retired) connection as historical, not needs_attention or critical", async () => {
+    const adapter = createStripeFinancialConnectionsAdapter({ credentialVaultService: fakeVault(), stripeClient: fakeStripeClient() });
+
+    const health = await adapter.reportHealth(connection({ status: "disconnected" }) as never);
+
+    expect(health.state).toBe("retired");
+    expect(health.severity).toBe("neutral");
+    expect(health.allowsImport).toBe(false);
+    expect(health.requiresUserAction).toBe(false);
+    expect(health.issueCount).toBe(0);
+    expect(health.warningCount).toBe(0);
+  });
+
+  it("still reports a deactivated (genuinely broken/auth-required) connection as requiring user action", async () => {
+    const adapter = createStripeFinancialConnectionsAdapter({ credentialVaultService: fakeVault(), stripeClient: fakeStripeClient() });
+
+    const health = await adapter.reportHealth(connection({ status: "needs_attention" }) as never);
+
+    expect(health.state).toBe("critical");
+    expect(health.requiresUserAction).toBe(true);
+    expect(health.allowsImport).toBe(false);
+    expect(health.issueCount).toBe(1);
+  });
+
+  it("still reports a generic error status as requiring user action -- provider failure, unaffected by the retired carve-out", async () => {
+    const adapter = createStripeFinancialConnectionsAdapter({ credentialVaultService: fakeVault(), stripeClient: fakeStripeClient() });
+
+    const health = await adapter.reportHealth(connection({ status: "error" }) as never);
+
+    expect(health.state).toBe("critical");
+    expect(health.requiresUserAction).toBe(true);
+  });
+
+  it("still reports a not_connected (authentication required / never completed) status as requiring user action", async () => {
+    const adapter = createStripeFinancialConnectionsAdapter({ credentialVaultService: fakeVault(), stripeClient: fakeStripeClient() });
+
+    const health = await adapter.reportHealth(connection({ status: "not_connected" }) as never);
+
+    expect(health.state).toBe("critical");
+    expect(health.requiresUserAction).toBe(true);
+  });
+
+  it("reports critical for a mismatched provider, regardless of status", async () => {
+    const adapter = createStripeFinancialConnectionsAdapter({ credentialVaultService: fakeVault(), stripeClient: fakeStripeClient() });
+
+    const health = await adapter.reportHealth(connection({ status: "connected", provider: "plaid" }) as never);
+
+    expect(health.state).toBe("critical");
+    expect(health.label).toBe("Invalid provider");
+  });
+
+  it("mixed active and historical connections resolve independently -- one retired connection never affects another connection's health", async () => {
+    const adapter = createStripeFinancialConnectionsAdapter({ credentialVaultService: fakeVault(), stripeClient: fakeStripeClient() });
+
+    const [active, retired] = await Promise.all([
+      adapter.reportHealth(connection({ status: "connected" }) as never),
+      adapter.reportHealth({ ...connection({ status: "disconnected" }), id: "connection_2" } as never),
+    ]);
+
+    expect(active.state).toBe("healthy");
+    expect(retired.state).toBe("retired");
+    expect(active.connectionId).toBe("connection_1");
+    expect(retired.connectionId).toBe("connection_2");
+  });
+});

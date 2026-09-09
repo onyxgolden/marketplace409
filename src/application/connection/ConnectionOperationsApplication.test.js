@@ -48,12 +48,14 @@ function createConnectionSummary({
   requiresUserAction = false,
   issueCount = 0,
   warningCount = 0,
+  state = requiresUserAction ? "critical" : "healthy",
 }) {
   return Object.freeze({
     connection: Object.freeze({
       id,
     }),
     health: Object.freeze({
+      state,
       severity,
       allowsImport,
       requiresUserAction,
@@ -259,6 +261,7 @@ describe(
           degradedConnections: 2,
           readyForImportConnections: 1,
           requiringAttentionConnections: 1,
+          retiredConnections: 0,
         });
 
         expect(result.health).toEqual({
@@ -320,6 +323,69 @@ describe(
     );
 
     it(
+      "a mix of active and retired/historical connections resolves to a healthy platform state -- the exact production scenario this fixes (5 active/healthy, 1 intentionally retired)",
+      async () => {
+        const activeConnections = Array.from({ length: 5 }, (_, index) =>
+          createConnectionSummary({ id: `active-connection-${index + 1}` }));
+        const retiredConnection = createConnectionSummary({
+          id: "retired-connection",
+          severity: "neutral",
+          allowsImport: false,
+          requiresUserAction: false,
+          state: "retired",
+        });
+
+        const dashboard = createDashboard({
+          summary: {
+            totalConnections: 5,
+            healthyConnections: 5,
+            retiredConnections: 1,
+          },
+          connections: [
+            ...activeConnections,
+            retiredConnection,
+          ],
+        });
+
+        const { application } = createApplication(dashboard);
+        const result = await application.buildConnectionOperations();
+
+        expect(result.summary).toEqual({
+          totalConnections: 5,
+          healthyConnections: 5,
+          syncingConnections: 0,
+          degradedConnections: 0,
+          readyForImportConnections: 5,
+          requiringAttentionConnections: 0,
+          retiredConnections: 1,
+        });
+
+        expect(result.health).toEqual({
+          overall: "healthy",
+          score: 100,
+          issueCount: 0,
+          warningCount: 0,
+        });
+
+        // The retired connection generates no recommendation at all -- not even a downgraded
+        // "review" one -- so it never clutters the priority-action queue.
+        expect(
+          result.recommendations.some((recommendation) => recommendation.connectionId === "retired-connection"),
+        ).toBe(false);
+        expect(result.recommendations).toHaveLength(5);
+
+        // Nor does it count as needing attention or as degraded.
+        expect(result.intelligence.attentionConnectionIds).not.toContain("retired-connection");
+        expect(result.intelligence.degradedConnectionIds).not.toContain("retired-connection");
+
+        // But it is still visible in the full dashboard connection list -- historical, not deleted.
+        expect(
+          result.dashboard.dashboard.connections.some((entry) => entry.connection.id === "retired-connection"),
+        ).toBe(true);
+      },
+    );
+
+    it(
       "recommends connecting an institution when none exist",
       async () => {
         const dashboard =
@@ -340,6 +406,7 @@ describe(
           degradedConnections: 0,
           readyForImportConnections: 0,
           requiringAttentionConnections: 0,
+          retiredConnections: 0,
         });
 
         expect(result.health).toEqual({

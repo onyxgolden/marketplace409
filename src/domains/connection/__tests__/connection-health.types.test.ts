@@ -18,7 +18,27 @@ describe("ConnectionHealth", () => {
       "needs_attention",
       "critical",
       "not_ready",
+      "retired",
     ]);
+  });
+
+  it("represents a deliberately retired/historical connection as needing no action, distinct from needs_attention/critical", () => {
+    const health: ConnectionHealth = {
+      connectionId: "connection_004",
+      state: "retired",
+      severity: "neutral",
+      label: "Disconnected (historical)",
+      allowsImport: false,
+      requiresUserAction: false,
+      issueCount: 0,
+      warningCount: 0,
+      checkedAt: "2026-06-30T23:55:00.000Z",
+    };
+
+    expect(health.state).toBe("retired");
+    expect(health.requiresUserAction).toBe(false);
+    expect(health.allowsImport).toBe(false);
+    expect(health.issueCount).toBe(0);
   });
 
   it("represents current connection health without provider adapter details", () => {
