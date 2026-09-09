@@ -185,14 +185,14 @@ export default function ConnectionPage() {
           </section>
         ) : null}
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <ForgeDashboardCard
             label="Connections"
             value={
               summary?.totalConnections ??
               connections.length
             }
-            detail="Authenticated provider connections"
+            detail="Active authenticated provider connections"
           />
           <ForgeDashboardCard
             label="Healthy"
@@ -217,6 +217,14 @@ export default function ConnectionPage() {
               0
             }
             detail="Connections requiring user action"
+          />
+          <ForgeDashboardCard
+            label="Retired / Disconnected"
+            value={
+              summary?.retiredConnections ??
+              0
+            }
+            detail="Historical connections, no longer active"
           />
         </section>
 

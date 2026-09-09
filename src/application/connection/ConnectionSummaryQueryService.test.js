@@ -249,6 +249,7 @@ describe("ConnectionSummaryQueryService", () => {
       needsAttentionConnections: 0,
       criticalConnections: 0,
       notReadyConnections: 0,
+      retiredConnections: 0,
       lastUpdatedAt: null,
     });
 

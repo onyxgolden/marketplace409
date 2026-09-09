@@ -92,7 +92,24 @@ describe("ConnectionCollection", () => {
     expect(collection.needsAttentionConnections).toBe(1);
     expect(collection.criticalConnections).toBe(1);
     expect(collection.notReadyConnections).toBe(1);
+    expect(collection.retiredConnections).toBe(0);
     expect(collection.lastUpdatedAt).toBe("2026-01-06T00:00:00.000Z");
+  });
+
+  it("excludes retired/historical connections from totalConnections, counting them separately -- a mix of active and historical connections", () => {
+    const collection = createConnectionCollection([
+      makeConnectionSummary("connection-1", "healthy", "2026-01-01T00:00:00.000Z"),
+      makeConnectionSummary("connection-2", "healthy", "2026-01-02T00:00:00.000Z"),
+      makeConnectionSummary("connection-3", "retired", "2026-01-03T00:00:00.000Z"),
+    ]);
+
+    expect(collection.totalConnections).toBe(2);
+    expect(collection.healthyConnections).toBe(2);
+    expect(collection.retiredConnections).toBe(1);
+    expect(collection.needsAttentionConnections).toBe(0);
+    expect(collection.criticalConnections).toBe(0);
+    // The retired connection is still present in the full history array.
+    expect(collection.connections).toHaveLength(3);
   });
 
   it("handles an empty collection", () => {
@@ -107,6 +124,7 @@ describe("ConnectionCollection", () => {
       needsAttentionConnections: 0,
       criticalConnections: 0,
       notReadyConnections: 0,
+      retiredConnections: 0,
       lastUpdatedAt: null,
     });
   });

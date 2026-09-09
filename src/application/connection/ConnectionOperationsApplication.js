@@ -118,6 +118,8 @@ export class ConnectionOperationsApplication {
       degradedConnections,
       readyForImportConnections,
       requiringAttentionConnections,
+      retiredConnections:
+        sourceSummary.retiredConnections || 0,
     });
   }
 
@@ -219,6 +221,13 @@ export class ConnectionOperationsApplication {
           const health =
             connectionSummary.health || {};
 
+          // Retired/historical connections need no action and are not import candidates --
+          // they are deliberately excluded from the priority-action queue entirely, not
+          // downgraded to a lower-priority "review" recommendation.
+          if (health.state === "retired") {
+            return [];
+          }
+
           if (
             health.requiresUserAction === true
           ) {
@@ -300,7 +309,9 @@ export class ConnectionOperationsApplication {
         connectionIdsFor(
           (connectionSummary) =>
             connectionSummary.health
-              ?.severity !== "healthy",
+              ?.severity !== "healthy" &&
+            connectionSummary.health
+              ?.state !== "retired",
         ),
       lastUpdatedAt:
         projection.metadata?.lastUpdatedAt ||
