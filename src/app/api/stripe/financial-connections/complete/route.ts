@@ -56,6 +56,25 @@ export async function POST(request: Request) {
       await connectionPlatformSuite.stripeFinancialConnectionsProvider
         .completeFinancialConnectionsSession({ ownerId, sessionId });
 
+    // A session can complete on Stripe's side (collectFinancialConnectionsAccounts resolves with
+    // no `result.error`) while still carrying zero accounts -- confirmed in production: the user
+    // finished the hosted flow, Stripe.js reported no error, yet the session's own account list
+    // was empty when retrieved here. Previously this fell through to persist a full "connected"
+    // connection/institution/credential-reference/vault row anyway, with a generic fallback
+    // institution name and nothing underneath it -- a permanent, misleadingly-healthy empty shell.
+    // Must be checked BEFORE any persistence call below; nothing has been created yet at this
+    // point, so returning here leaves no partial rows of any kind.
+    if (completed.accounts.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "No account was authorized. Please try connecting again and select at least one account.",
+          accountCount: 0,
+        },
+        { status: 422 },
+      );
+    }
+
     const mappedConnection =
       mapStripeFinancialConnectionsSessionToConnection({
         userId: ownerId,
