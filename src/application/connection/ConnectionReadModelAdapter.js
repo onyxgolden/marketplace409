@@ -35,6 +35,8 @@ export class ConnectionReadModelAdapter {
           connectionCollection.criticalConnections,
         notReadyConnections:
           connectionCollection.notReadyConnections,
+        retiredConnections:
+          connectionCollection.retiredConnections,
       }),
 
       connections: Object.freeze([

@@ -24,6 +24,7 @@ function createCollection() {
     needsAttentionConnections: 0,
     criticalConnections: 0,
     notReadyConnections: 0,
+    retiredConnections: 0,
     lastUpdatedAt: "2026-07-23T01:00:00.000Z",
   });
 }
@@ -74,6 +75,33 @@ describe("ConnectionReadModelAdapter", () => {
     expect(Object.isFrozen(dashboard)).toBe(
       true,
     );
+  });
+
+  // Regression: buildDashboard's summary object is built field-by-field from the collection --
+  // retiredConnections was added to ConnectionCollection and to every downstream consumer
+  // (ConnectionOperationsApplication, the connections page) but was never added to this explicit
+  // whitelist, so the correctly-computed count was silently dropped here and defaulted to 0
+  // everywhere downstream. Confirmed live in production: the per-connection health state was
+  // correctly "retired", but the dashboard's "Retired / Disconnected" tile still showed 0.
+  it("carries retiredConnections through into the dashboard summary", () => {
+    const adapter =
+      new ConnectionReadModelAdapter();
+
+    const collection = {
+      ...createCollection(),
+      totalConnections: 5,
+      retiredConnections: 1,
+    };
+
+    const dashboard =
+      adapter.buildDashboard(collection);
+
+    expect(
+      dashboard.summary.retiredConnections,
+    ).toBe(1);
+    expect(
+      dashboard.summary.totalConnections,
+    ).toBe(5);
   });
 
   it("builds reports", () => {
