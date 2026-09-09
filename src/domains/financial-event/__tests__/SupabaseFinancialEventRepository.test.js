@@ -86,7 +86,6 @@ describe("SupabaseFinancialEventRepository", () => {
         organization_id: null,
         property_id: "170-john",
         financial_account_id: null,
-        business_scope: null,
         event_date: "2026-07-01",
         description: "Rental Income",
         amount: 1500,
@@ -138,6 +137,91 @@ describe("SupabaseFinancialEventRepository", () => {
     await repository.saveMany([buildEvent({ id: "" })]);
 
     expect(query.upsert.mock.calls[0][0][0]).not.toHaveProperty("id");
+  });
+
+  // financial_events.business_scope is `not null default 'business'` at the database level
+  // (20260824030000_add_financial_events_business_scope.sql). Sending an explicit `null` for it
+  // (the prior behavior) overrides that default and is rejected by the not-null constraint --
+  // confirmed live against a real Stripe Financial Connections test-mode import, whose canonical
+  // transactions never populate business_scope at all. The fix omits the key entirely when absent
+  // so Postgres applies its own default; application code never duplicates that default itself.
+  test("omits business_scope from the insert payload when absent, so PostgreSQL applies its NOT NULL default of 'business' -- never sends an explicit null", async () => {
+    query.select.mockResolvedValue({
+      data: [buildRow()],
+      error: null,
+    });
+
+    const repository = new SupabaseFinancialEventRepository();
+
+    await repository.saveMany([buildEvent({ business_scope: undefined })]);
+
+    const insertedRow = query.upsert.mock.calls[0][0][0];
+    expect(insertedRow).not.toHaveProperty("business_scope");
+  });
+
+  test("preserves an explicitly supplied valid business_scope value ('personal') rather than defaulting or dropping it", async () => {
+    query.select.mockResolvedValue({
+      data: [buildRow({ business_scope: "personal" })],
+      error: null,
+    });
+
+    const repository = new SupabaseFinancialEventRepository();
+
+    await repository.saveMany([buildEvent({ business_scope: "personal" })]);
+
+    const insertedRow = query.upsert.mock.calls[0][0][0];
+    expect(insertedRow.business_scope).toBe("personal");
+  });
+
+  test("preserves an explicitly supplied valid business_scope value ('business') rather than omitting it", async () => {
+    query.select.mockResolvedValue({
+      data: [buildRow({ business_scope: "business" })],
+      error: null,
+    });
+
+    const repository = new SupabaseFinancialEventRepository();
+
+    await repository.saveMany([buildEvent({ business_scope: "business" })]);
+
+    const insertedRow = query.upsert.mock.calls[0][0][0];
+    expect(insertedRow.business_scope).toBe("business");
+  });
+
+  test("changes nothing else about the inserted row shape when business_scope is omitted -- every other canonical field is still sent exactly as before", async () => {
+    query.select.mockResolvedValue({
+      data: [buildRow()],
+      error: null,
+    });
+
+    const repository = new SupabaseFinancialEventRepository();
+
+    await repository.saveMany([buildEvent()]);
+
+    const insertedRow = query.upsert.mock.calls[0][0][0];
+    expect(insertedRow).toEqual({
+      owner_id: "owner-1",
+      organization_id: null,
+      property_id: "170-john",
+      financial_account_id: null,
+      event_date: "2026-07-01",
+      description: "Rental Income",
+      amount: 1500,
+      transaction_kind: "income",
+      normalized_category: "rental_income",
+      tax_deductible: false,
+      affects_noi: true,
+      capitalized: false,
+      source_system: "rentec",
+      source_record_id: "rentec-1",
+      metadata: { propertyName: "170 John" },
+      status: "active",
+      is_deleted: false,
+      deleted_at: null,
+      created_by: null,
+      updated_by: null,
+      created_at: "2026-07-14T00:00:00.000Z",
+      updated_at: "2026-07-14T00:00:00.000Z",
+    });
   });
 
   test("preserves explicit event ids", async () => {

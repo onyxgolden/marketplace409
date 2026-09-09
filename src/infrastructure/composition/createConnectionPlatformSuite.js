@@ -79,6 +79,10 @@ createPlaidAdapter,
 } from "../../domains/plaid-adapter";
 
 import {
+createStripeFinancialConnectionsAdapter,
+} from "../../domains/stripe-financial-connections-adapter";
+
+import {
 ConnectionQueryService,
 ConnectionSummaryQueryService,
 ConnectionReadModelAdapter,
@@ -125,8 +129,20 @@ const plaidProvider =
     plaidClient: deps.plaidClient,
   });
 
+// stripeClient is intentionally NOT resolved here (would construct a Stripe SDK client, or throw
+// if STRIPE_MODE/STRIPE_SECRET_KEY aren't configured, on every single call to this composition
+// function -- including every existing Plaid-focused test). createStripeFinancialConnectionsAdapter
+// resolves its Stripe client lazily, exactly the way createPlaidAdapter already resolves its own
+// Plaid client lazily, so this stays exactly as safe to construct unconfigured as it was before.
+const stripeFinancialConnectionsProvider =
+  deps.stripeFinancialConnectionsProvider ||
+  createStripeFinancialConnectionsAdapter({
+    credentialVaultService,
+    stripeClient: deps.stripeClient,
+  });
+
 const providers =
-deps.providers || [plaidProvider];
+deps.providers || [plaidProvider, stripeFinancialConnectionsProvider];
 
 const providerRegistry =
 deps.providerRegistry ||
@@ -323,6 +339,16 @@ const financialEventImportService =
 deps.financialEventImportService ||
 new FinancialEventImportService({
 repository: financialEventRepository,
+// Every existing caller (createAuthenticatedConnectionApplication.js, the Stripe Financial
+// Connections webhook route) already resolves the effective canonical workspace owner id
+// BEFORE calling createConnectionPlatformSuite and passes it as deps.ownerId -- it was simply
+// never forwarded here. Without it, FinancialEventImportService silently defaulted to
+// ownerId: null, and SupabaseFinancialEventRepository.toRow throws "Financial event owner_id
+// is required" for every real transaction import (confirmed live against a real Stripe test
+// session: account_balances persisted correctly, financial_events did not, at all). This must
+// be the resolved workspace owner_id (never the acting co-owner's own user id) -- the same
+// value every other repository in this suite already scopes writes by.
+ownerId: deps.ownerId ?? null,
 });
 
 const connectionImportExecutionCoordinator =
@@ -406,6 +432,7 @@ connectionExecutionHistoryIntelligenceBuilder,
 return Object.freeze({
 providers,
 plaidProvider,
+stripeFinancialConnectionsProvider,
 providerRegistry,
 connectionRepository,
 credentialReferenceRepository,

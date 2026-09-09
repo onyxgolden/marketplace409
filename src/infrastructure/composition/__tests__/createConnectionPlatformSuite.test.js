@@ -33,6 +33,10 @@ TransactionImportService,
 } from "../../../domains/transaction";
 
 import {
+FinancialEventImportService,
+} from "../../../domains/financial-event";
+
+import {
 PlaidAccountBalanceMapper,
 PlaidFinancialAccountMapper,
 PlaidTransactionMapper,
@@ -57,12 +61,15 @@ connectionExecutionHistoryRepositoryStorage: "memory",
 
 
 expect(suite.plaidProvider.provider).toBe("plaid");
+expect(suite.stripeFinancialConnectionsProvider.provider).toBe("stripe_financial_connections");
 expect(suite.providers).toEqual([
   suite.plaidProvider,
+  suite.stripeFinancialConnectionsProvider,
 ]);
-expect(suite.providerRegistry.totalProviders).toBe(1);
+expect(suite.providerRegistry.totalProviders).toBe(2);
 expect(suite.providerRegistry.providerNames).toEqual([
   "plaid",
+  "stripe_financial_connections",
 ]);
 
 expect(suite.connectionRepository).toBeInstanceOf(
@@ -646,6 +653,32 @@ expect(
 });
 
 
+
+it("forwards the already-resolved effective workspace owner id into financialEventImportService -- never leaves it null, never substitutes a different (e.g. acting co-owner) id", () => {
+const workspaceOwnerId = "owner_workspace_1";
+
+const suite = createConnectionPlatformSuite({
+  ownerId: workspaceOwnerId,
+});
+
+expect(suite.financialEventImportService).toBeInstanceOf(
+  FinancialEventImportService,
+);
+expect(suite.financialEventImportService.ownerId).toBe(
+  workspaceOwnerId,
+);
+// A DIFFERENT id (standing in for "the acting co-owner's own user id, as opposed to the
+// workspace owner they're acting within") must never end up here by accident.
+expect(suite.financialEventImportService.ownerId).not.toBe(
+  "acting_co_owner_1",
+);
+});
+
+it("defaults financialEventImportService's owner id to null (not some other value) when the suite is built with no ownerId at all -- matches FinancialEventImportService's own explicit default", () => {
+const suite = createConnectionPlatformSuite({});
+
+expect(suite.financialEventImportService.ownerId).toBeNull();
+});
 
 it("composes connection operations with the connection read model application", () => {
 const connectionReadModelApplication = {

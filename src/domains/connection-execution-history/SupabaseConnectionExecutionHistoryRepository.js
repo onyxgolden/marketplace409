@@ -165,6 +165,8 @@ export class SupabaseConnectionExecutionHistoryRepository {
         executionHistory.errorDetails,
       created_at:
         executionHistory.createdAt,
+      actor_user_id:
+        executionHistory.actorUserId ?? null,
     };
   }
 }
