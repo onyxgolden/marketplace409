@@ -137,6 +137,29 @@ export async function createFinancialApplicationSuite(deps = {}) {
       dashboardService,
     });
 
+  // Reads financial_account_groups/financial_account_group_members under has_workspace_access
+  // RLS -- deps.supabaseClient here is always the caller's own authenticated (cookie-bound)
+  // client (see createAuthenticatedFinancialApplication.js), never a service-role one, exactly
+  // like financialAccountRepository/accountBalanceRepository above already require. Dynamically
+  // imported, not a static top-level import: SupabaseFinancialAccountGroupRepository.js pulls in
+  // @/lib/supabase's module-scope BROWSER client construction, which throws in any test/server
+  // environment without NEXT_PUBLIC_SUPABASE_URL configured -- the exact reason every OTHER
+  // Supabase-backed repository in this same file is also behind a dynamic import (see
+  // createFinancialAccountRepository.js's own createLazyFinancialAccountRepository). No
+  // in-memory fallback exists for this brand-new, RLS/RPC-only feature: with no real
+  // supabaseClient, financialAccountGroupRepository is simply null, and both
+  // FinancialPositionQueryService/FinancialWorkspaceQueryService already treat that as "no
+  // groups exist" -- correct behavior, not a workaround.
+  let financialAccountGroupRepository = deps.financialAccountGroupRepository || null;
+  if (!financialAccountGroupRepository && deps.supabaseClient) {
+    const { SupabaseFinancialAccountGroupRepository } = await import(
+      "../../domains/financial-account-group/SupabaseFinancialAccountGroupRepository.js"
+    );
+    financialAccountGroupRepository = new SupabaseFinancialAccountGroupRepository({
+      supabaseClient: deps.supabaseClient,
+    });
+  }
+
   const financialWorkspaceQueryService =
     deps.financialWorkspaceQueryService ||
     new FinancialWorkspaceQueryService({
@@ -144,6 +167,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
       aggregationService:
         deps.aggregationService ||
         financialEventAggregationService,
+      financialAccountGroupRepository,
     });
 
   const readModelAdapter =
@@ -193,6 +217,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     new FinancialPositionQueryService({
       financialAccountRepository,
       accountBalanceRepository,
+      financialAccountGroupRepository,
       netWorthService:
         deps.positionNetWorthService || NetWorthService,
     });
@@ -356,6 +381,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     decisionOutcomeReadModelAdapter,
     financialAccountRepository,
     accountBalanceRepository,
+    financialAccountGroupRepository,
     financialIntelligenceApplication,
     financialDecisionApplication,
     financialDecisionOutcomeApplication,
