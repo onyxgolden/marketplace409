@@ -108,12 +108,12 @@ describe("POST /api/stripe/financial-connections/complete", () => {
     const currentOwnerId = vi.fn().mockResolvedValue("owner-123");
     mocks.getConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuite());
     mocks.createAuthenticatedConnectionApplication.mockResolvedValue({ currentOwnerId, getConnectionPlatformSuite: mocks.getConnectionPlatformSuite });
-    mocks.completeFinancialConnectionsSession.mockResolvedValue({ sessionId: "fcsess_1", accounts: [] });
+    mocks.completeFinancialConnectionsSession.mockResolvedValue({ sessionId: "fcsess_1", accounts: [{ accountId: "fca_1", displayName: null, institutionName: null, last4: null, category: "cash", subcategory: "checking", status: "active" }] });
     mocks.mapStripeFinancialConnectionsSessionToConnection.mockReturnValue({ connection: { id: "connection_1" }, credentialReference: {}, institutionReference: {} });
     mocks.provision.mockReturnValue({ readyForPersistence: true });
     mocks.persist.mockResolvedValue({ connection: { id: "connection_1" }, credentialReference: {}, institutionReference: {}, provisionedAt: "t1", persistedAt: "t2", readyForImport: true });
-    mocks.accountMapperMapMany.mockReturnValue([]);
-    mocks.importCanonicalAccounts.mockResolvedValue({ importedFinancialAccountCount: 0 });
+    mocks.accountMapperMapMany.mockReturnValue([{ id: "financial_account_1", providerAccountId: "fca_1" }]);
+    mocks.importCanonicalAccounts.mockResolvedValue({ importedFinancialAccountCount: 1 });
     mocks.subscribeFinancialConnectionsAccounts.mockResolvedValue(undefined);
     mocks.executeImport.mockRejectedValue(new Error("import boom"));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -236,6 +236,104 @@ describe("POST /api/stripe/financial-connections/complete", () => {
     const response = await POST(request({ sessionId: "fcsess_10acct_b" }));
 
     expect(response.status).toBe(200);
+  });
+
+  it("returns a clear non-500 response and persists nothing when the session completes with zero accounts", async () => {
+    const currentOwnerId = vi.fn().mockResolvedValue("owner-123");
+    mocks.getConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuite());
+    mocks.createAuthenticatedConnectionApplication.mockResolvedValue({ currentOwnerId, getConnectionPlatformSuite: mocks.getConnectionPlatformSuite });
+    mocks.completeFinancialConnectionsSession.mockResolvedValue({ sessionId: "fcsess_empty", accounts: [] });
+
+    const response = await POST(request({ sessionId: "fcsess_empty" }));
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { success: boolean; error: string; accountCount: number };
+    expect(body.success).toBe(false);
+    expect(body.error).toMatch(/no account was authorized/i);
+    expect(body.accountCount).toBe(0);
+
+    // No partial rows of any kind: nothing after the zero-account check is ever reached.
+    expect(mocks.mapStripeFinancialConnectionsSessionToConnection).not.toHaveBeenCalled();
+    expect(mocks.provision).not.toHaveBeenCalled();
+    expect(mocks.persist).not.toHaveBeenCalled();
+    expect(mocks.accountMapperMapMany).not.toHaveBeenCalled();
+    expect(mocks.importCanonicalAccounts).not.toHaveBeenCalled();
+    expect(mocks.subscribeFinancialConnectionsAccounts).not.toHaveBeenCalled();
+    expect(mocks.executeImport).not.toHaveBeenCalled();
+  });
+
+  it("retrying the same zero-account session again produces the same clear response and still persists nothing", async () => {
+    const currentOwnerId = vi.fn().mockResolvedValue("owner-123");
+    mocks.getConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuite());
+    mocks.createAuthenticatedConnectionApplication.mockResolvedValue({ currentOwnerId, getConnectionPlatformSuite: mocks.getConnectionPlatformSuite });
+    mocks.completeFinancialConnectionsSession.mockResolvedValue({ sessionId: "fcsess_empty_retry", accounts: [] });
+
+    const first = await POST(request({ sessionId: "fcsess_empty_retry" }));
+    const second = await POST(request({ sessionId: "fcsess_empty_retry" }));
+
+    expect(first.status).toBe(422);
+    expect(second.status).toBe(422);
+    expect(mocks.persist).not.toHaveBeenCalled();
+    expect(mocks.completeFinancialConnectionsSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("persists and completes normally for exactly one account (the common single-account case)", async () => {
+    const currentOwnerId = vi.fn().mockResolvedValue("owner-123");
+    mocks.getConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuite());
+    mocks.createAuthenticatedConnectionApplication.mockResolvedValue({ currentOwnerId, getConnectionPlatformSuite: mocks.getConnectionPlatformSuite });
+    const completed = { sessionId: "fcsess_one", accounts: [{ accountId: "fca_capital_one", displayName: "360 Checking", institutionName: "Capital One", last4: "7553", category: "cash", subcategory: "checking", status: "active" }] };
+    mocks.completeFinancialConnectionsSession.mockResolvedValue(completed);
+    mocks.mapStripeFinancialConnectionsSessionToConnection.mockReturnValue({ connection: { id: "connection_one" }, credentialReference: { id: "credential_one" }, institutionReference: { id: "institution_one" } });
+    mocks.provision.mockReturnValue({ readyForPersistence: true });
+    mocks.persist.mockResolvedValue({ connection: { id: "connection_one" }, credentialReference: { id: "credential_one" }, institutionReference: { id: "institution_one" }, provisionedAt: "t1", persistedAt: "t2", readyForImport: true });
+    mocks.accountMapperMapMany.mockReturnValue([{ id: "financial_account_capital_one", providerAccountId: "fca_capital_one", active: true }]);
+    mocks.importCanonicalAccounts.mockResolvedValue({ importedFinancialAccountCount: 1 });
+    mocks.subscribeFinancialConnectionsAccounts.mockResolvedValue(undefined);
+    mocks.executeImport.mockResolvedValue({ success: true });
+
+    const response = await POST(request({ sessionId: "fcsess_one" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.persist).toHaveBeenCalledTimes(1);
+    const body = (await response.json()) as { success: boolean; accountCount: number };
+    expect(body.success).toBe(true);
+    expect(body.accountCount).toBe(1);
+  });
+
+  it("persists and completes normally for multiple accounts, preserving durable-persistence-before-subscribe ordering", async () => {
+    const currentOwnerId = vi.fn().mockResolvedValue("owner-123");
+    mocks.getConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuite());
+    mocks.createAuthenticatedConnectionApplication.mockResolvedValue({ currentOwnerId, getConnectionPlatformSuite: mocks.getConnectionPlatformSuite });
+    const completed = {
+      sessionId: "fcsess_multi",
+      accounts: [
+        { accountId: "fca_checking", displayName: "Checking", institutionName: "Chase", last4: "1111", category: "cash", subcategory: "checking", status: "active" },
+        { accountId: "fca_savings", displayName: "Savings", institutionName: "Chase", last4: "2222", category: "cash", subcategory: "savings", status: "active" },
+      ],
+    };
+    mocks.completeFinancialConnectionsSession.mockResolvedValue(completed);
+    mocks.mapStripeFinancialConnectionsSessionToConnection.mockReturnValue({ connection: { id: "connection_multi" }, credentialReference: { id: "credential_multi" }, institutionReference: { id: "institution_multi" } });
+    mocks.provision.mockReturnValue({ readyForPersistence: true });
+    mocks.persist.mockResolvedValue({ connection: { id: "connection_multi" }, credentialReference: { id: "credential_multi" }, institutionReference: { id: "institution_multi" }, provisionedAt: "t1", persistedAt: "t2", readyForImport: true });
+    const canonicalAccounts = [
+      { id: "financial_account_checking", providerAccountId: "fca_checking", active: true },
+      { id: "financial_account_savings", providerAccountId: "fca_savings", active: true },
+    ];
+    mocks.accountMapperMapMany.mockReturnValue(canonicalAccounts);
+    mocks.importCanonicalAccounts.mockResolvedValue({ importedFinancialAccountCount: 2 });
+    mocks.subscribeFinancialConnectionsAccounts.mockResolvedValue(undefined);
+    mocks.executeImport.mockResolvedValue({ success: true });
+
+    const response = await POST(request({ sessionId: "fcsess_multi" }));
+
+    expect(response.status).toBe(200);
+    const importOrder = mocks.importCanonicalAccounts.mock.invocationCallOrder[0];
+    const subscribeOrder = mocks.subscribeFinancialConnectionsAccounts.mock.invocationCallOrder[0];
+    expect(importOrder).toBeLessThan(subscribeOrder);
+    expect(mocks.subscribeFinancialConnectionsAccounts).toHaveBeenCalledWith({ accountIds: ["fca_checking", "fca_savings"] });
+    const body = (await response.json()) as { accountCount: number; importedAccountCount: number };
+    expect(body.accountCount).toBe(2);
+    expect(body.importedAccountCount).toBe(2);
   });
 
   it("returns a user-safe error and does not persist anything when the session doesn't belong to the expected owner", async () => {
