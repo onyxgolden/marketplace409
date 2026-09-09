@@ -8,9 +8,10 @@ const mocks = vi.hoisted(() => ({
   getByIdConnection: vi.fn(),
   saveConnection: vi.fn(),
   getByIdCredentialReference: vi.fn(),
+  getAllInstitutionReferences: vi.fn(),
   retrieveCredential: vi.fn(),
-  storeCredential: vi.fn(),
-  executeImport: vi.fn(),
+  createStripeFinancialConnectionsRefreshCoordinator: vi.fn(),
+  processRefresh: vi.fn(),
 }));
 
 vi.mock("next/server", () => ({
@@ -35,11 +36,15 @@ vi.mock("@/infrastructure/composition", () => ({
 
 vi.mock("@/domains/stripe-financial-connections-adapter", () => ({
   parseVaultedState: (secret) => JSON.parse(secret),
-  serializeVaultedState: (state) => JSON.stringify(state),
-  withUpdatedTransactionRefreshCursor: (state, accountId, transactionRefreshId) => ({
-    ...state,
-    transactionRefreshCursors: { ...state.transactionRefreshCursors, [accountId]: transactionRefreshId },
-  }),
+  createStripeFinancialConnectionsRefreshCoordinator: mocks.createStripeFinancialConnectionsRefreshCoordinator,
+}));
+
+// SupabaseFinancialAccountRefreshRepository itself is never exercised here -- the coordinator it
+// would be passed to is fully mocked (mocks.processRefresh) at the route-test level. Its own
+// claim/commit atomicity is proven against a real database in
+// SupabaseFinancialAccountRefreshRepository.integration.test.js instead.
+vi.mock("@/domains/financial-account-refresh", () => ({
+  SupabaseFinancialAccountRefreshRepository: function SupabaseFinancialAccountRefreshRepository() {},
 }));
 
 // A faithful-enough in-memory reimplementation of the Supabase JS query-builder chain this route
@@ -156,12 +161,32 @@ function hashOf(body) {
 
 const STRIPE_ACCOUNT = { id: "fca_1", status: "active" };
 
+// Every test that reaches past ownership resolution into the refreshed_balance/refreshed_
+// transactions path needs this same shape -- centralizing it here keeps each test focused on
+// what it's actually asserting instead of re-listing every repository the route now touches.
+function connectionPlatformSuiteStub(overrides = {}) {
+  return {
+    connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
+    credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
+    institutionReferenceRepository: { getAll: mocks.getAllInstitutionReferences },
+    credentialVaultService: { retrieveCredential: mocks.retrieveCredential },
+    accountBalanceRepository: {},
+    financialEventImportService: {},
+    ...overrides,
+  };
+}
+
 describe("POST /api/stripe/financial-connections/webhook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
     process.env.STRIPE_FINANCIAL_CONNECTIONS_WEBHOOK_SECRET = "whsec_test";
-    mocks.createStripeBillingProvider.mockReturnValue({ constructWebhookEvent: mocks.constructWebhookEvent });
+    mocks.createStripeBillingProvider.mockReturnValue({ constructWebhookEvent: mocks.constructWebhookEvent, stripe: {} });
+    mocks.getAllInstitutionReferences.mockResolvedValue([{ id: "institution_1", connectionId: "connection_1" }]);
+    mocks.getByIdCredentialReference.mockResolvedValue({ id: "credential_1", vaultReference: "vault://stripe_financial_connections/sessions/fcsess_1/state" });
+    mocks.retrieveCredential.mockResolvedValue(null);
+    mocks.createStripeFinancialConnectionsRefreshCoordinator.mockReturnValue({ processRefresh: mocks.processRefresh });
+    mocks.processRefresh.mockResolvedValue({ outcome: "committed", importedCount: 1 });
   });
 
   it("rejects a request with no stripe-signature header", async () => {
@@ -219,7 +244,7 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_1c", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_1", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
     // Simulates a delivery that's already mid-flight (another request already won the claim
     // seconds ago -- well within the staleness timeout, so this must NOT be treated as abandoned).
@@ -247,12 +272,12 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_stale", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_stale", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
     const originalReceivedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1 hour ago
     const staleClaimedAt = new Date(Date.now() - STALE_PROCESSING_TIMEOUT_MS - 60_000).toISOString(); // stale by 1 extra minute
     const supabase = fakeSupabase({
-      financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" },
+      financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" },
       existingWebhookEventRow: {
         id: "connection_webhook_stripe_financial_connections_evt_stale", status: "processing", payload_hash: hashOf(body),
         attempt_count: 1, received_at: originalReceivedAt, claimed_at: staleClaimedAt,
@@ -260,20 +285,14 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
-    mocks.executeImport.mockResolvedValue({ success: true });
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST } = await importRoute();
 
     const response = await POST(webhookRequest(body));
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ received: true });
-    expect(mocks.executeImport).toHaveBeenCalledTimes(1);
+    await expect(response.json()).resolves.toEqual({ received: true, refreshOutcome: "committed" });
+    expect(mocks.processRefresh).toHaveBeenCalledTimes(1);
     const row = supabase._webhookEvents.get("connection_webhook_stripe_financial_connections_evt_stale");
     expect(row.status).toBe("processed");
     expect(row.attempt_count).toBe(2); // incremented, exactly like a normal claim
@@ -284,11 +303,11 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_null_claimed_at", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_null", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
     const originalReceivedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const supabase = fakeSupabase({
-      financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" },
+      financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" },
       existingWebhookEventRow: {
         id: "connection_webhook_stripe_financial_connections_evt_null_claimed_at", status: "processing", payload_hash: hashOf(body),
         attempt_count: 1, received_at: originalReceivedAt, claimed_at: null,
@@ -296,19 +315,13 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
-    mocks.executeImport.mockResolvedValue({ success: true });
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST } = await importRoute();
 
     const response = await POST(webhookRequest(body));
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ received: true });
+    await expect(response.json()).resolves.toEqual({ received: true, refreshOutcome: "committed" });
     const row = supabase._webhookEvents.get("connection_webhook_stripe_financial_connections_evt_null_claimed_at");
     expect(row.status).toBe("processed");
     expect(row.attempt_count).toBe(2);
@@ -319,7 +332,7 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_not_stale_yet", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_not_stale", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
     const almostStaleClaimedAt = new Date(Date.now() - STALE_PROCESSING_TIMEOUT_MS + 30_000).toISOString(); // 30s short of stale
     const supabase = fakeSupabase({
@@ -344,11 +357,11 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_concurrent_stale", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_concurrent", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
     const staleClaimedAt = new Date(Date.now() - STALE_PROCESSING_TIMEOUT_MS - 60_000).toISOString();
     const supabase = fakeSupabase({
-      financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" },
+      financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" },
       existingWebhookEventRow: {
         id: "connection_webhook_stripe_financial_connections_evt_concurrent_stale", status: "processing", payload_hash: hashOf(body),
         attempt_count: 1, claimed_at: staleClaimedAt,
@@ -356,13 +369,7 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
-    mocks.executeImport.mockResolvedValue({ success: true });
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST: POST_1 } = await importRoute();
     // Same in-memory store, same event -- simulates two concurrent redeliveries both attempting
     // the stale reclaim. The fake store's synchronous execute() serializes these exactly the way
@@ -374,7 +381,7 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
 
     const statuses = [firstResponse.status, secondResponse.status].sort();
     expect(statuses).toEqual([200, 409]);
-    expect(mocks.executeImport).toHaveBeenCalledTimes(1); // only the winner ever imported
+    expect(mocks.processRefresh).toHaveBeenCalledTimes(1); // only the winner ever imported
   });
 
   it("marks an unsupported event type ignored without looking up any connection", async () => {
@@ -389,27 +396,12 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
   });
 
-  it("ignores a refreshed_transactions event whose transaction_refresh has not succeeded -- an asynchronous refresh is not fresh data yet", async () => {
-    mocks.constructWebhookEvent.mockReturnValue({
-      id: "evt_3", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { ...STRIPE_ACCOUNT, transaction_refresh: { id: "fcxrefresh_1", status: "pending" } } },
-    });
-    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
-    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
-    const { POST } = await importRoute();
-
-    const response = await POST(webhookRequest());
-
-    await expect(response.json()).resolves.toEqual({ received: true, ignored: true });
-    expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
-  });
-
-  it("does not refresh/import an inactive account", async () => {
+  it("does not refresh/import an inactive account -- never even calls the refresh coordinator", async () => {
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_4", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "inactive", transaction_refresh: { id: "fcxrefresh_1", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "inactive" } },
     });
-    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     const { POST } = await importRoute();
 
@@ -417,13 +409,14 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
 
     await expect(response.json()).resolves.toEqual({ received: true, ignored: true });
     expect(mocks.createConnectionPlatformSuite).not.toHaveBeenCalled();
+    expect(mocks.processRefresh).not.toHaveBeenCalled();
   });
 
   it("marks unresolved ownership RETRYABLE (status 'failed', 409), not permanently ignored -- confirmed live: an event that legitimately can't resolve ownership yet (because /complete may still be persisting) must not be stuck forever the way 'ignored' used to leave it", async () => {
     const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_5", type: "financial_connections.account.refreshed_balance",
-      data: { object: { ...STRIPE_ACCOUNT, balance_refresh: { status: "succeeded" } } },
+      data: { object: STRIPE_ACCOUNT },
     });
     const supabase = fakeSupabase({ financialAccountRow: null });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
@@ -443,7 +436,7 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_race_then_resolves", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_race", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
     // First delivery: ownership genuinely not resolvable yet (no financial_accounts row).
     const supabase = fakeSupabase({ financialAccountRow: null });
@@ -460,15 +453,9 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
 
     // /complete has now finished persisting -- the SAME account is durably known. A redelivery
     // of the SAME event (e.g. Stripe's own retry) must now succeed.
-    supabase.setFinancialAccountRow({ owner_id: "owner-123", connection_id: "connection_1" });
+    supabase.setFinancialAccountRow({ id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" });
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
-    mocks.executeImport.mockResolvedValue({ success: true });
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
 
     const secondResponse = await POST(webhookRequest(body));
 
@@ -477,7 +464,7 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     expect(afterSecond.status).toBe("processed");
     expect(afterSecond.attempt_count).toBe(2);
     expect(afterSecond.received_at).toBe(originalReceivedAt);
-    expect(mocks.executeImport).toHaveBeenCalledTimes(1);
+    expect(mocks.processRefresh).toHaveBeenCalledTimes(1);
   });
 
   it("a genuinely terminal ignored event (unsupported type) stays deduplicated forever, unlike the retryable ownership case -- proves the fix did not make every ignored event retryable", async () => {
@@ -500,7 +487,7 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_concurrent_unresolved", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_concurrent_unresolved", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
     const supabase = fakeSupabase({ financialAccountRow: null });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
@@ -523,20 +510,15 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
 
   it("account.created is idempotent: acknowledges an already-known account without importing or subscribing anything", async () => {
     mocks.constructWebhookEvent.mockReturnValue({ id: "evt_created", type: "financial_connections.account.created", data: { object: STRIPE_ACCOUNT } });
-    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST } = await importRoute();
 
     const response = await POST(webhookRequest());
 
     await expect(response.json()).resolves.toEqual({ received: true });
-    expect(mocks.executeImport).not.toHaveBeenCalled();
+    expect(mocks.processRefresh).not.toHaveBeenCalled();
     expect(mocks.saveConnection).not.toHaveBeenCalled();
   });
 
@@ -555,55 +537,40 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
 
   it("flips the connection to needs_attention on account.deactivated, preserving all prior financial history (no delete)", async () => {
     mocks.constructWebhookEvent.mockReturnValue({ id: "evt_deactivated", type: "financial_connections.account.deactivated", data: { object: STRIPE_ACCOUNT } });
-    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected" });
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST } = await importRoute();
 
     const response = await POST(webhookRequest());
 
     await expect(response.json()).resolves.toEqual({ received: true });
     expect(mocks.saveConnection).toHaveBeenCalledWith(expect.objectContaining({ status: "needs_attention" }), { ownerId: "owner-123" });
-    expect(mocks.executeImport).not.toHaveBeenCalled();
+    expect(mocks.processRefresh).not.toHaveBeenCalled();
   });
 
   it("flips the connection to disconnected (distinct from needs_attention) on account.disconnected, preserving all prior financial history (no delete)", async () => {
     mocks.constructWebhookEvent.mockReturnValue({ id: "evt_6", type: "financial_connections.account.disconnected", data: { object: STRIPE_ACCOUNT } });
-    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected" });
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST } = await importRoute();
 
     const response = await POST(webhookRequest());
 
     await expect(response.json()).resolves.toEqual({ received: true });
     expect(mocks.saveConnection).toHaveBeenCalledWith(expect.objectContaining({ status: "disconnected" }), { ownerId: "owner-123" });
-    expect(mocks.executeImport).not.toHaveBeenCalled();
+    expect(mocks.processRefresh).not.toHaveBeenCalled();
   });
 
   it("flips the connection back to connected on account.reactivated", async () => {
     mocks.constructWebhookEvent.mockReturnValue({ id: "evt_7", type: "financial_connections.account.reactivated", data: { object: STRIPE_ACCOUNT } });
-    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "needs_attention" });
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST } = await importRoute();
 
     const response = await POST(webhookRequest());
@@ -612,60 +579,43 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     expect(mocks.saveConnection).toHaveBeenCalledWith(expect.objectContaining({ status: "connected" }), { ownerId: "owner-123" });
   });
 
-  it("on a succeeded refreshed_transactions event: converges on the same coordinator.executeImport used by manual sync, then advances the cursor only after success", async () => {
+  it("on a succeeded refreshed_transactions event: resolves the account+credential+institution context and calls the refresh coordinator with it, then marks the webhook event processed", async () => {
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_8", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_1", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
-    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
-    mocks.getByIdCredentialReference.mockResolvedValue({ id: "credential_1", vaultReference: "vault://stripe_financial_connections/sessions/fcsess_1/state" });
     mocks.retrieveCredential.mockResolvedValue(JSON.stringify({ accountIds: ["fca_1"], transactionRefreshCursors: {} }));
-    mocks.executeImport.mockResolvedValue({ success: true });
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST } = await importRoute();
 
     const response = await POST(webhookRequest());
 
-    await expect(response.json()).resolves.toEqual({ received: true });
-    expect(mocks.executeImport).toHaveBeenCalledWith({ connectionId: "connection_1", ownerId: "owner-123" });
-    expect(mocks.storeCredential).toHaveBeenCalledWith(expect.objectContaining({
+    await expect(response.json()).resolves.toEqual({ received: true, refreshOutcome: "committed" });
+    expect(mocks.processRefresh).toHaveBeenCalledWith(expect.objectContaining({
       ownerId: "owner-123",
-      vaultReference: "vault://stripe_financial_connections/sessions/fcsess_1/state",
-      secret: expect.stringContaining("fcxrefresh_1"),
+      connectionId: "connection_1",
+      financialAccountId: "financial_account_1",
+      providerAccountId: "fca_1",
+      feature: "transactions",
+      triggeringEventId: "evt_8",
     }));
   });
 
   it("passes the resolved canonical workspace owner id into createConnectionPlatformSuite -- never a different value -- so webhook-triggered imports persist financial_events attributed to the correct owner", async () => {
     // financial_accounts.owner_id ("owner-123") is the ONLY source of truth for ownership on this
     // service-role webhook path -- there is no "acting user" here at all (no session exists during
-    // a webhook call). This is exactly the live bug found by redelivering a real, previously-failed
-    // Stripe test-mode webhook event via `stripe events resend`: createConnectionPlatformSuite was
-    // never given ownerId at all here, so every webhook-triggered import failed at the
-    // financial_events persistence step with "Financial event owner_id is required", even after
-    // the SAME fix had already been applied to the other two call sites.
+    // a webhook call).
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_owner_check", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_owner_check", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
-    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
-    mocks.getByIdCredentialReference.mockResolvedValue({ id: "credential_1", vaultReference: "vault://stripe_financial_connections/sessions/fcsess_1/state" });
-    mocks.retrieveCredential.mockResolvedValue(JSON.stringify({ accountIds: ["fca_1"], transactionRefreshCursors: {} }));
-    mocks.executeImport.mockResolvedValue({ success: true });
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST } = await importRoute();
 
     await POST(webhookRequest());
@@ -685,19 +635,14 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     const body = "{}";
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_retry_check", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_retry_check", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
-    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
-    // First delivery: the import throws (simulating the real live failure this fix addresses).
-    mocks.executeImport.mockRejectedValueOnce(new Error("Financial event owner_id is required"));
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    // First delivery: the coordinator throws (simulating a genuine import failure).
+    mocks.processRefresh.mockRejectedValueOnce(new Error("Financial event owner_id is required"));
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST } = await importRoute();
 
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -712,8 +657,8 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     const originalReceivedAt = afterFirst.received_at;
 
     // Second delivery of the SAME event id (a real redelivery, e.g. via `stripe events resend`
-    // after the underlying bug is fixed): this time the import succeeds.
-    mocks.executeImport.mockResolvedValueOnce({ success: true });
+    // after the underlying issue is fixed): this time the coordinator succeeds.
+    mocks.processRefresh.mockResolvedValueOnce({ outcome: "committed", importedCount: 1 });
     const secondResponse = await POST(webhookRequest(body));
 
     expect(secondResponse.status).toBe(200);
@@ -723,61 +668,105 @@ describe("POST /api/stripe/financial-connections/webhook", () => {
     // received_at is set once, by the very first insert, and never touched again -- not by the
     // failure, not by the retry's own claim, not by the eventual success.
     expect(afterSecond.received_at).toBe(originalReceivedAt);
-    // Exactly one executeImport call per delivery -- no duplicate/extra import calls from either
+    // Exactly one processRefresh call per delivery -- no duplicate/extra import calls from either
     // attempt, so no duplicate financial_events are ever produced for the same refresh.
-    expect(mocks.executeImport).toHaveBeenCalledTimes(2);
+    expect(mocks.processRefresh).toHaveBeenCalledTimes(2);
   });
 
-  it("refreshed_transactions arriving before any prior import has ever succeeded still resolves ownership (via the durable financial_accounts row from /complete) and imports successfully -- correction report item 5", async () => {
+  it("refreshed_transactions arriving before any prior import has ever succeeded still resolves ownership (via the durable financial_accounts row from /complete) and calls the coordinator -- correction report item 5", async () => {
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_first_ever", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_first", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
-    // The account is durably known (financial_accounts row exists, from /complete's REQUIRED
-    // account-persistence step) even though NO import has ever succeeded for it yet (no
-    // credentialReferenceId resolvable here is irrelevant to this assertion -- the key fact is
-    // resolveOwningConnection succeeds purely from financial_accounts, independent of import history).
-    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
-    mocks.getByIdCredentialReference.mockResolvedValue({ id: "credential_1", vaultReference: "vault://stripe_financial_connections/sessions/fcsess_1/state" });
-    mocks.retrieveCredential.mockResolvedValue(JSON.stringify({ accountIds: ["fca_1"], transactionRefreshCursors: {} }));
-    mocks.executeImport.mockResolvedValue({ success: true });
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
-    });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST } = await importRoute();
 
     const response = await POST(webhookRequest());
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ received: true });
-    expect(mocks.executeImport).toHaveBeenCalledWith({ connectionId: "connection_1", ownerId: "owner-123" });
+    await expect(response.json()).resolves.toEqual({ received: true, refreshOutcome: "committed" });
+    expect(mocks.processRefresh).toHaveBeenCalledWith(expect.objectContaining({ connectionId: "connection_1", ownerId: "owner-123" }));
   });
 
-  it("does not advance the cursor when the import reports failure, and responds with a retryable status -- a retry must refetch from the same watermark", async () => {
+  it("responds with a retryable status when the refresh coordinator throws, and never marks the event processed", async () => {
     mocks.constructWebhookEvent.mockReturnValue({
       id: "evt_9", type: "financial_connections.account.refreshed_transactions",
-      data: { object: { id: "fca_1", status: "active", transaction_refresh: { id: "fcxrefresh_2", status: "succeeded" } } },
+      data: { object: { id: "fca_1", status: "active" } },
     });
-    const supabase = fakeSupabase({ financialAccountRow: { owner_id: "owner-123", connection_id: "connection_1" } });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
     vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
     mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
-    mocks.executeImport.mockResolvedValue({ success: false });
-    mocks.createConnectionPlatformSuite.mockResolvedValue({
-      connectionRepository: { getById: mocks.getByIdConnection, save: mocks.saveConnection },
-      credentialReferenceRepository: { getById: mocks.getByIdCredentialReference },
-      credentialVaultService: { retrieveCredential: mocks.retrieveCredential, storeCredential: mocks.storeCredential },
-      connectionImportExecutionCoordinator: { executeImport: mocks.executeImport },
+    mocks.processRefresh.mockRejectedValue(new Error("Import reported failed records."));
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest());
+    consoleError.mockRestore();
+
+    expect(response.status).toBe(500);
+    const row = supabase._webhookEvents.get("connection_webhook_stripe_financial_connections_evt_9");
+    expect(row.status).toBe("failed");
+  });
+
+  it("responds 409/retryable, marks the webhook event failed (not processed), when the coordinator reports slot_busy -- a newer refresh arriving while another import is running must stay retryable, never falsely marked processed", async () => {
+    mocks.constructWebhookEvent.mockReturnValue({
+      id: "evt_slot_busy", type: "financial_connections.account.refreshed_balance",
+      data: { object: { id: "fca_1", status: "active" } },
     });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
+    mocks.processRefresh.mockResolvedValue({ outcome: "slot_busy" });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
     const { POST } = await importRoute();
 
     const response = await POST(webhookRequest());
 
-    expect(response.status).toBe(500);
-    expect(mocks.storeCredential).not.toHaveBeenCalled();
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ received: true, retry: true });
+    const row = supabase._webhookEvents.get("connection_webhook_stripe_financial_connections_evt_slot_busy");
+    expect(row.status).toBe("failed");
+  });
+
+  it("marks the webhook event processed (never as if imported) when the coordinator reports superseded -- the work item itself records the authoritative newer refresh, not this route", async () => {
+    mocks.constructWebhookEvent.mockReturnValue({
+      id: "evt_superseded", type: "financial_connections.account.refreshed_transactions",
+      data: { object: { id: "fca_1", status: "active" } },
+    });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
+    mocks.processRefresh.mockResolvedValue({ outcome: "superseded", supersededByRefreshId: "fcxrefresh_newer" });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ received: true, refreshOutcome: "superseded" });
+    const row = supabase._webhookEvents.get("connection_webhook_stripe_financial_connections_evt_superseded");
+    expect(row.status).toBe("processed");
+  });
+
+  it("marks the webhook event processed when the coordinator reports already_committed (a plain redelivery of already-imported data)", async () => {
+    mocks.constructWebhookEvent.mockReturnValue({
+      id: "evt_already_committed", type: "financial_connections.account.refreshed_balance",
+      data: { object: { id: "fca_1", status: "active" } },
+    });
+    const supabase = fakeSupabase({ financialAccountRow: { id: "financial_account_1", owner_id: "owner-123", connection_id: "connection_1" } });
+    vi.doMock("@/lib/supabase/createFinancialConnectionsWebhookClient", () => ({ createFinancialConnectionsWebhookClient: () => supabase }));
+    mocks.getByIdConnection.mockResolvedValue({ id: "connection_1", status: "connected", credentialReferenceId: "credential_1" });
+    mocks.processRefresh.mockResolvedValue({ outcome: "already_committed" });
+    mocks.createConnectionPlatformSuite.mockResolvedValue(connectionPlatformSuiteStub());
+    const { POST } = await importRoute();
+
+    const response = await POST(webhookRequest());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ received: true, refreshOutcome: "already_committed" });
   });
 });

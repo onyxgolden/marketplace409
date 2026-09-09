@@ -204,6 +204,31 @@ describe("retrieveFinancialConnectionsAccount", () => {
     expect(result.transactionRefreshStatus).toBe("succeeded");
   });
 
+  // last_attempted_at is Stripe's own authoritative refresh-ordering signal (see the refresh
+  // work state machine) -- surfaced verbatim, raw epoch seconds, never converted or rounded.
+  it("surfaces balance_refresh and transaction_refresh last_attempted_at verbatim, for the refresh-work state machine's currency check", async () => {
+    const client = fakeClient();
+    (client.financialConnections.accounts.retrieve as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "fca_7", status: "active",
+      balance: { as_of: 1768000000, type: "cash", current: { usd: 100 }, cash: { available: { usd: 100 } } },
+      balance_refresh: { status: "succeeded", last_attempted_at: 1768111111, next_refresh_available_at: null },
+      transaction_refresh: { id: "fctxnref_xyz", status: "succeeded", last_attempted_at: 1768222222, next_refresh_available_at: null },
+    });
+    const result = await retrieveFinancialConnectionsAccount(client, { accountId: "fca_7" });
+    expect(result.balanceRefreshLastAttemptedAt).toBe(1768111111);
+    expect(result.transactionRefreshLastAttemptedAt).toBe(1768222222);
+  });
+
+  it("reports null last_attempted_at fields when Stripe has never returned either refresh", async () => {
+    const client = fakeClient();
+    (client.financialConnections.accounts.retrieve as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "fca_8", status: "active", balance: null, balance_refresh: null, transaction_refresh: null,
+    });
+    const result = await retrieveFinancialConnectionsAccount(client, { accountId: "fca_8" });
+    expect(result.balanceRefreshLastAttemptedAt).toBeNull();
+    expect(result.transactionRefreshLastAttemptedAt).toBeNull();
+  });
+
   it("surfaces displayName/institutionName/last4/category/subcategory directly from the Account object -- these are plain always-present fields, not something the caller should fabricate", async () => {
     const client = fakeClient();
     (client.financialConnections.accounts.retrieve as ReturnType<typeof vi.fn>).mockResolvedValue({

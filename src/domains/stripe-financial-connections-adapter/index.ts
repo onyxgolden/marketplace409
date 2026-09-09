@@ -62,3 +62,16 @@ export {
   serializeVaultedState,
   withUpdatedTransactionRefreshCursor,
 } from "./stripe-financial-connections-connection.mapper";
+
+export type {
+  StripeFinancialConnectionsRefreshFeature,
+  FinancialAccountRefreshRepositoryLike,
+  AccountBalanceRepositoryLike,
+  FinancialEventImportServiceLike,
+  ProcessFinancialConnectionsRefreshInput,
+  ProcessFinancialConnectionsRefreshOutcome,
+} from "./stripe-financial-connections-refresh-coordinator";
+
+export {
+  createStripeFinancialConnectionsRefreshCoordinator,
+} from "./stripe-financial-connections-refresh-coordinator";

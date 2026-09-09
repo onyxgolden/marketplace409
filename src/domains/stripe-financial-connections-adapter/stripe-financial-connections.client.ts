@@ -176,9 +176,15 @@ export type StripeFinancialConnectionsAccountState = {
     type: Stripe.FinancialConnections.Account.Balance.Type;
   } | null;
   balanceRefreshStatus: Stripe.FinancialConnections.Account.BalanceRefresh.Status | null;
+  // Stripe's own BalanceRefresh.id -- Accounts.d.ts documents no `id` field on BalanceRefresh
+  // (unlike TransactionRefresh, which has one), so the refresh-work state machine's identity key
+  // for the balance feature is synthesized from last_attempted_at itself (see the refresh
+  // coordinator) -- there is no other stable Stripe-issued identifier to use.
+  balanceRefreshLastAttemptedAt: number | null;
   nextBalanceRefreshAvailableAt: string | null;
   transactionRefreshStatus: Stripe.FinancialConnections.Account.TransactionRefresh.Status | null;
   transactionRefreshId: string | null;
+  transactionRefreshLastAttemptedAt: number | null;
 };
 
 // Balance.current[currency] is the authoritative "current balance" figure for BOTH cash and
@@ -251,11 +257,13 @@ export async function retrieveFinancialConnectionsAccount(
     status: account.status,
     balance,
     balanceRefreshStatus: account.balance_refresh?.status ?? null,
+    balanceRefreshLastAttemptedAt: account.balance_refresh?.last_attempted_at ?? null,
     nextBalanceRefreshAvailableAt: account.balance_refresh?.next_refresh_available_at
       ? new Date(account.balance_refresh.next_refresh_available_at * 1000).toISOString()
       : null,
     transactionRefreshStatus: account.transaction_refresh?.status ?? null,
     transactionRefreshId: account.transaction_refresh?.id ?? null,
+    transactionRefreshLastAttemptedAt: account.transaction_refresh?.last_attempted_at ?? null,
   };
 }
 
