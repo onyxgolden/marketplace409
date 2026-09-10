@@ -172,9 +172,10 @@ describe("GET /api/private-financing/cron/payment-due-reminders", () => {
     expect(retryCallId).toBe(firstCallId); // identical key on retry -- what lets the provider itself dedupe a concurrent race
   });
 
-  it("has not been registered in vercel.json's crons yet (deliberately -- activation is a separate authorization)", async () => {
+  it("is registered in vercel.json's crons, once with a valid daily schedule", async () => {
     const { default: vercelJson } = await import("../../../../../../vercel.json", { with: { type: "json" } });
-    const paths = vercelJson.crons.map((entry) => entry.path);
-    expect(paths).not.toContain("/api/private-financing/cron/payment-due-reminders");
+    const matches = vercelJson.crons.filter((entry) => entry.path === "/api/private-financing/cron/payment-due-reminders");
+    expect(matches).toHaveLength(1);
+    expect(matches[0].schedule).toMatch(/^\d{1,2} \d{1,2} \* \* \*$/);
   });
 });
