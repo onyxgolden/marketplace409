@@ -8,6 +8,32 @@ export const LIABILITY_ACCOUNT_TYPES = Object.freeze(
   new Set(["credit", "loan"]),
 );
 
+// A "static" representation (manual entry or a bulk CSV import) never counts as more
+// authoritative than a live, connected provider -- Stripe and Plaid are deliberately given EQUAL
+// standing here (neither name is ever checked); only whether a provider is a live connection at
+// all, then freshness, ever decides between two group members. See
+// resolveGroupBalanceAuthority below and its own header comment for the full rule.
+const STATIC_PROVIDER_PATTERN = /(^manual$|_csv$)/;
+
+// A live provider is only trusted as a balance-authority candidate at all while its underlying
+// connection is actually usable RIGHT NOW -- "connected" (severity "healthy" in
+// connection-status.types.ts) or "syncing" (mid-refresh, not broken). Every other persisted
+// connections.status value (not_connected, pending, needs_attention, disconnected, error) means
+// the connection is unusable or requires user action, and disqualifies that member from ever
+// winning balance authority, REGARDLESS of how fresh its last-known balance's as_of timestamp
+// is -- a Stripe/Plaid account that synced 10 minutes before disconnecting must not out-rank a
+// stale-but-still-actually-connected manual/live fallback for the next 7 days just because its
+// last balance row looks recent. This is a DB-only, already-persisted signal (connections.status,
+// updated by webhooks/sync -- see connections table) -- resolving it never calls Stripe or Plaid.
+const LIVE_CONNECTION_ELIGIBLE_STATUSES = new Set(["connected", "syncing"]);
+
+// Named per the explicitly approved staleness policy: a warning at 48 hours (the balance stays
+// authoritative, but the read model flags it so the UI stops presenting it as unambiguously
+// fresh), a hard disqualification at 7 days (the group's balance authority falls back to the
+// next-best live member, or to the freshest static member if none remain).
+const BALANCE_STALENESS_WARNING_HOURS = 48;
+const MAX_BALANCE_STALENESS_DAYS = 7;
+
 function freezeItems(items) {
   return Object.freeze(
     items.map((item) => Object.freeze({ ...item })),
@@ -27,13 +53,136 @@ function buildBalanceByAccountId(accountBalances) {
   );
 }
 
-function projectAssets(financialAccounts, balanceByAccountId) {
+function isStaticProvider(provider) {
+  return STATIC_PROVIDER_PATTERN.test(provider || "");
+}
+
+function buildConnectionStatusByConnectionId(connections) {
+  return new Map(connections.map((connection) => [connection.id, connection.status]));
+}
+
+// null connectionStatusByConnectionId means no connectionRepository was ever wired in (fully
+// backward compatible -- see the constructor) -- health gating is then a pure no-op, exactly as
+// this whole feature behaved before this check existed. Once wired in, an account whose
+// connection_id doesn't resolve to any known connection is treated as ineligible, never as
+// "assume healthy" -- financial_accounts.connection_id always references a real connections row
+// in practice, so an unresolvable id is a data-integrity signal, not a reason to trust it live.
+function isHealthyLiveConnection(account, connectionStatusByConnectionId) {
+  if (!connectionStatusByConnectionId) return true;
+  return LIVE_CONNECTION_ELIGIBLE_STATUSES.has(connectionStatusByConnectionId.get(account.connectionId));
+}
+
+function hoursSince(isoTimestamp, now) {
+  return (now.getTime() - new Date(isoTimestamp).getTime()) / (1000 * 60 * 60);
+}
+
+function pickFreshest(candidates) {
+  if (candidates.length === 0) return null;
+  return candidates.slice().sort((a, b) => {
+    const diff = new Date(b.balance.asOf).getTime() - new Date(a.balance.asOf).getTime();
+    return diff !== 0 ? diff : a.account.id.localeCompare(b.account.id);
+  })[0];
+}
+
+// Resolves, for ONE group, which active member's balance is currently authoritative -- purely
+// from health/freshness, never a hardcoded provider name (satisfies "Stripe and Plaid have
+// equal provider authority; freshness and health determine precedence between two connected
+// providers"). Live (connected) members always outrank static (manual/CSV) ones -- this is the
+// "a live connection is never defeated by a stale timestamp on a static representation" rule --
+// but a live member whose underlying connection is not itself healthy/syncing right now
+// (isHealthyLiveConnection) is disqualified from "live" entirely, before freshness is even
+// considered: a disconnected/needs_attention/error connection never wins on account of a
+// recent-looking balance snapshot from before it broke. Among the REMAINING (healthy) live
+// members, freshest as_of wins; one whose as_of exceeds MAX_BALANCE_STALENESS_DAYS is further
+// disqualified and falls back to the next-best healthy live member, or to the freshest static
+// member if none remain eligible (the "disconnected/degraded provider fallback" case). A selected
+// live member whose as_of exceeds BALANCE_STALENESS_WARNING_HOURS but not the 7-day hard limit is
+// still selected, but flagged degraded, exactly as required: a 48-hour-old balance is never
+// presented as unambiguously fresh just because nothing has disqualified it yet.
+function resolveGroupBalanceAuthority(memberFinancialAccountIds, financialAccountsById, balanceByAccountId, now, connectionStatusByConnectionId) {
+  const candidates = memberFinancialAccountIds
+    .map((id) => ({ account: financialAccountsById.get(id), balance: balanceByAccountId.get(id) }))
+    .filter((candidate) => candidate.account && candidate.balance);
+
+  if (candidates.length === 0) return null;
+
+  const live = candidates.filter(
+    (candidate) =>
+      !isStaticProvider(candidate.account.provider) &&
+      isHealthyLiveConnection(candidate.account, connectionStatusByConnectionId),
+  );
+  const eligibleLive = live.filter((candidate) => hoursSince(candidate.balance.asOf, now) <= MAX_BALANCE_STALENESS_DAYS * 24);
+  const staticCandidates = candidates.filter((candidate) => isStaticProvider(candidate.account.provider));
+
+  const winner = pickFreshest(eligibleLive) || pickFreshest(staticCandidates);
+  if (!winner) return null;
+
+  const winnerIsStatic = isStaticProvider(winner.account.provider);
+  const ageHours = hoursSince(winner.balance.asOf, now);
+
+  return {
+    winnerAccountId: winner.account.id,
+    // A static winner is ALWAYS labeled "last known / manual" and degraded, whether it won
+    // because it's the group's only member or because every live member was disqualified --
+    // never rendered identically to a live, current balance.
+    degraded: winnerIsStatic || ageHours > BALANCE_STALENESS_WARNING_HOURS,
+    sourceLabel: winnerIsStatic ? "last known / manual" : ageHours > BALANCE_STALENESS_WARNING_HOURS ? "stale" : "current",
+    supersededAccountIds: candidates
+      .filter((candidate) => candidate.account.id !== winner.account.id)
+      .map((candidate) => candidate.account.id),
+  };
+}
+
+// Builds financialAccountId -> resolution for every account that belongs to an active group.
+// Ungrouped accounts (the overwhelming majority today) never appear in this map at all, and are
+// projected exactly as before -- this is purely additive behavior for grouped accounts.
+function buildAuthorityByAccountId(groupsWithMembers, financialAccountsById, balanceByAccountId, now, connectionStatusByConnectionId) {
+  const authorityByAccountId = new Map();
+
+  for (const { activeMemberFinancialAccountIds } of groupsWithMembers) {
+    const resolution = resolveGroupBalanceAuthority(
+      activeMemberFinancialAccountIds,
+      financialAccountsById,
+      balanceByAccountId,
+      now,
+      connectionStatusByConnectionId,
+    );
+    if (!resolution) continue;
+
+    for (const accountId of activeMemberFinancialAccountIds) {
+      authorityByAccountId.set(accountId, {
+        isWinner: accountId === resolution.winnerAccountId,
+        degraded: resolution.degraded,
+        sourceLabel: resolution.sourceLabel,
+      });
+    }
+  }
+
+  return authorityByAccountId;
+}
+
+function projectAssets(financialAccounts, balanceByAccountId, authorityByAccountId, supersededBalances) {
   return financialAccounts
     .filter((account) => account.active !== false && ASSET_ACCOUNT_TYPES.has(account.type))
     .flatMap((account) => {
       const balance = balanceByAccountId.get(account.id);
 
       if (!balance) {
+        return [];
+      }
+
+      const authority = authorityByAccountId.get(account.id);
+      // A grouped account that lost the authority resolution is excluded from the aggregate
+      // entirely -- its balance is recorded in supersededBalances instead, with full provenance,
+      // never silently dropped.
+      if (authority && !authority.isWinner) {
+        supersededBalances.push({
+          id: account.id,
+          name: account.name,
+          provider: account.provider,
+          current_value: centsToDollars(balance.currentBalanceCents),
+          as_of: balance.asOf,
+        });
         return [];
       }
 
@@ -45,6 +194,9 @@ function projectAssets(financialAccounts, balanceByAccountId) {
         current_value: centsToDollars(
           balance.currentBalanceCents,
         ),
+        // Only present at all for a grouped account -- an ungrouped account's shape is byte-for-
+        // byte identical to before this feature existed.
+        ...(authority ? { degraded: authority.degraded, source_label: authority.sourceLabel } : {}),
       }];
     });
 }
@@ -52,6 +204,8 @@ function projectAssets(financialAccounts, balanceByAccountId) {
 function projectLiabilities(
   financialAccounts,
   balanceByAccountId,
+  authorityByAccountId,
+  supersededBalances,
 ) {
   return financialAccounts
     .filter((account) =>
@@ -64,6 +218,18 @@ function projectLiabilities(
         return [];
       }
 
+      const authority = authorityByAccountId.get(account.id);
+      if (authority && !authority.isWinner) {
+        supersededBalances.push({
+          id: account.id,
+          name: account.name,
+          provider: account.provider,
+          current_balance: centsToDollars(balance.currentBalanceCents),
+          as_of: balance.asOf,
+        });
+        return [];
+      }
+
       return [{
         id: account.id,
         name: account.name,
@@ -71,6 +237,7 @@ function projectLiabilities(
         current_balance: centsToDollars(
           balance.currentBalanceCents,
         ),
+        ...(authority ? { degraded: authority.degraded, source_label: authority.sourceLabel } : {}),
       }];
     });
 }
@@ -97,7 +264,17 @@ export class FinancialPositionQueryService {
   constructor({
     financialAccountRepository,
     accountBalanceRepository,
+    // Optional, deliberately -- every existing caller/test that never had a reason to know about
+    // groups keeps working completely unchanged; grouping only ever narrows/relabels the result
+    // for accounts that have been explicitly, manually grouped, never for anything else.
+    financialAccountGroupRepository = null,
+    // Optional, deliberately, same as financialAccountGroupRepository above -- absent entirely,
+    // connection-health gating is a pure no-op and every existing caller/test is byte-for-byte
+    // unaffected. Wired in production via createFinancialApplicationSuite so real balance-
+    // authority resolution actually checks connection health, not just balance freshness.
+    connectionRepository = null,
     netWorthService = NetWorthService,
+    now = () => new Date(),
   } = {}) {
     if (
       !financialAccountRepository ||
@@ -132,7 +309,11 @@ export class FinancialPositionQueryService {
       financialAccountRepository;
     this.accountBalanceRepository =
       accountBalanceRepository;
+    this.financialAccountGroupRepository =
+      financialAccountGroupRepository;
+    this.connectionRepository = connectionRepository;
     this.netWorthService = netWorthService;
+    this.now = now;
 
     Object.freeze(this);
   }
@@ -144,7 +325,7 @@ export class FinancialPositionQueryService {
       );
     }
 
-    const [financialAccounts, accountBalances] =
+    const [financialAccounts, accountBalances, groupsWithMembers, connections] =
       await Promise.all([
         this.financialAccountRepository.findByOwnerId(
           ownerId,
@@ -152,6 +333,12 @@ export class FinancialPositionQueryService {
         this.accountBalanceRepository.findLatestByOwnerId(
           ownerId,
         ),
+        this.financialAccountGroupRepository
+          ? this.financialAccountGroupRepository.findActiveGroupsForOwner(ownerId)
+          : Promise.resolve([]),
+        this.connectionRepository
+          ? this.connectionRepository.getAll({ ownerId })
+          : Promise.resolve(null),
       ]);
 
     const immutableAccountBalances =
@@ -162,10 +349,30 @@ export class FinancialPositionQueryService {
         immutableAccountBalances,
       );
 
+    const financialAccountsById = new Map(
+      financialAccounts.map((account) => [account.id, account]),
+    );
+
+    const connectionStatusByConnectionId = connections
+      ? buildConnectionStatusByConnectionId(connections)
+      : null;
+
+    const authorityByAccountId = buildAuthorityByAccountId(
+      groupsWithMembers,
+      financialAccountsById,
+      balanceByAccountId,
+      this.now(),
+      connectionStatusByConnectionId,
+    );
+
+    const supersededBalances = [];
+
     const immutableAssets = freezeItems(
       projectAssets(
         financialAccounts,
         balanceByAccountId,
+        authorityByAccountId,
+        supersededBalances,
       ),
     );
 
@@ -173,6 +380,8 @@ export class FinancialPositionQueryService {
       projectLiabilities(
         financialAccounts,
         balanceByAccountId,
+        authorityByAccountId,
+        supersededBalances,
       ),
     );
 
@@ -189,6 +398,7 @@ export class FinancialPositionQueryService {
       assets: immutableAssets,
       liabilities: immutableLiabilities,
       accountBalances: immutableAccountBalances,
+      supersededBalances: freezeItems(supersededBalances),
       netWorth,
       metrics: null,
       insights: Object.freeze([]),

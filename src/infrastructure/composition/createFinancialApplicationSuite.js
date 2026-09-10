@@ -137,6 +137,47 @@ export async function createFinancialApplicationSuite(deps = {}) {
       dashboardService,
     });
 
+  // Reads financial_account_groups/financial_account_group_members under has_workspace_access
+  // RLS -- deps.supabaseClient here is always the caller's own authenticated (cookie-bound)
+  // client (see createAuthenticatedFinancialApplication.js), never a service-role one, exactly
+  // like financialAccountRepository/accountBalanceRepository above already require. Dynamically
+  // imported, not a static top-level import: SupabaseFinancialAccountGroupRepository.js pulls in
+  // @/lib/supabase's module-scope BROWSER client construction, which throws in any test/server
+  // environment without NEXT_PUBLIC_SUPABASE_URL configured -- the exact reason every OTHER
+  // Supabase-backed repository in this same file is also behind a dynamic import (see
+  // createFinancialAccountRepository.js's own createLazyFinancialAccountRepository). No
+  // in-memory fallback exists for this brand-new, RLS/RPC-only feature: with no real
+  // supabaseClient, financialAccountGroupRepository is simply null, and both
+  // FinancialPositionQueryService/FinancialWorkspaceQueryService already treat that as "no
+  // groups exist" -- correct behavior, not a workaround.
+  let financialAccountGroupRepository = deps.financialAccountGroupRepository || null;
+  if (!financialAccountGroupRepository && deps.supabaseClient) {
+    const { SupabaseFinancialAccountGroupRepository } = await import(
+      "../../domains/financial-account-group/SupabaseFinancialAccountGroupRepository.js"
+    );
+    financialAccountGroupRepository = new SupabaseFinancialAccountGroupRepository({
+      supabaseClient: deps.supabaseClient,
+    });
+  }
+
+  // Backs FinancialPositionQueryService's connection-health gating on balance authority (a
+  // disconnected/needs_attention/error connection must never win balance authority just because
+  // its last-known balance snapshot looks recent -- see LIVE_CONNECTION_ELIGIBLE_STATUSES there).
+  // Reads the connections table under has_workspace_access RLS, DB-only, no Stripe/Plaid call.
+  // Same dynamic-import rationale as financialAccountGroupRepository above (consistency, even
+  // though SupabaseConnectionRepository.js itself has no eager top-level Supabase import). No
+  // real supabaseClient -> connectionRepository stays null -> FinancialPositionQueryService
+  // already treats that as "skip health gating," matching its pre-existing behavior exactly.
+  let connectionRepository = deps.connectionRepository || null;
+  if (!connectionRepository && deps.supabaseClient) {
+    const { SupabaseConnectionRepository } = await import(
+      "../../domains/connection/SupabaseConnectionRepository.js"
+    );
+    connectionRepository = new SupabaseConnectionRepository({
+      supabaseClient: deps.supabaseClient,
+    });
+  }
+
   const financialWorkspaceQueryService =
     deps.financialWorkspaceQueryService ||
     new FinancialWorkspaceQueryService({
@@ -144,6 +185,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
       aggregationService:
         deps.aggregationService ||
         financialEventAggregationService,
+      financialAccountGroupRepository,
     });
 
   const readModelAdapter =
@@ -193,6 +235,8 @@ export async function createFinancialApplicationSuite(deps = {}) {
     new FinancialPositionQueryService({
       financialAccountRepository,
       accountBalanceRepository,
+      financialAccountGroupRepository,
+      connectionRepository,
       netWorthService:
         deps.positionNetWorthService || NetWorthService,
     });
@@ -356,6 +400,8 @@ export async function createFinancialApplicationSuite(deps = {}) {
     decisionOutcomeReadModelAdapter,
     financialAccountRepository,
     accountBalanceRepository,
+    financialAccountGroupRepository,
+    connectionRepository,
     financialIntelligenceApplication,
     financialDecisionApplication,
     financialDecisionOutcomeApplication,
