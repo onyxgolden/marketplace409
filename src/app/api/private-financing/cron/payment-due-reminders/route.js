@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
 import { planReminderRun } from "@/domains/private-financing/reminderRunPlanner";
+import { buildDeliveryRowId, buildProviderIdempotencyKey } from "@/domains/private-financing/paymentDueReminders";
 
 export const runtime = "nodejs";
 
@@ -71,21 +72,30 @@ async function loadAccountsForReminderRun(db) {
   return loaded;
 }
 
-async function recordDeliveryOutcome(db, entry, outcome) {
-  const { data: existing, error: lookupError } = await db
+// Looks up whatever row already exists for this exact logical delivery (there is at most one --
+// the table's own unique constraint on (owner,account,borrower,due_date,reminder_type) guarantees
+// that a retry always finds and updates the SAME row an original attempt created, never a second,
+// divergent one -- this is the "durable logical deduplication" half of the delivery guarantee; see
+// the GET handler's own comment for the other half). Returns null when nothing has ever been
+// attempted for this key yet.
+async function lookupExistingDelivery(db, entry) {
+  const { data, error } = await db
     .from("private_financing_payment_reminder_deliveries")
-    .select("id, attempt_count")
+    .select("id, status, attempt_count")
     .eq("owner_id", entry.ownerId)
     .eq("account_id", entry.accountId)
     .eq("borrower_id", entry.borrowerId)
     .eq("due_date", entry.dueDate)
     .eq("reminder_type", entry.reminderType)
     .maybeSingle();
-  if (lookupError) throw lookupError;
+  if (error) throw error;
+  return data;
+}
 
+async function recordDeliveryOutcome(db, entry, existing, outcome) {
   const row = {
     owner_id: entry.ownerId,
-    id: existing?.id || `pfrd_${entry.ownerId}_${entry.accountId}_${entry.borrowerId}_${entry.dueDate}_${entry.reminderType}`,
+    id: existing?.id || buildDeliveryRowId({ ownerId: entry.ownerId, accountId: entry.accountId, borrowerId: entry.borrowerId, dueDate: entry.dueDate, reminderType: entry.reminderType }),
     account_id: entry.accountId,
     borrower_id: entry.borrowerId,
     due_date: entry.dueDate,
@@ -93,6 +103,11 @@ async function recordDeliveryOutcome(db, entry, outcome) {
     status: outcome.status,
     provider_message_id: outcome.providerMessageId ?? null,
     failure_reason: outcome.failureReason ?? null,
+    // attempt_count/first_attempted_at/last_attempted_at all carry forward across retries: attempt_count
+    // increments from whatever this exact row already recorded (never reset by a retry), and
+    // first_attempted_at is deliberately absent from this payload so the upsert's conflict branch
+    // leaves the column's original value untouched -- only a genuine first INSERT ever sets it (via
+    // the column's own `default now()`).
     attempt_count: (existing?.attempt_count || 0) + 1,
     last_attempted_at: new Date().toISOString(),
   };
@@ -111,6 +126,16 @@ async function recordDeliveryOutcome(db, entry, outcome) {
 // ?dryRun=true calculates the full plan (including which emails WOULD be sent) without calling the
 // email provider or writing any delivery row -- safe to run against production data for
 // verification once the migration is applied.
+//
+// Concurrency guarantee -- stated precisely, not oversold: this is NOT database-level exactly-once
+// external delivery. It is durable logical deduplication (the table's unique constraint means a
+// retry, or two overlapping runs, can only ever converge on the SAME row for a given logical
+// delivery -- never two divergent ones -- and the freshness re-check immediately below closes most
+// of the window by re-confirming "not already sent" right before the provider call, using data no
+// older than this exact moment) plus provider idempotency (buildProviderIdempotencyKey below is
+// byte-identical across every attempt of the same logical delivery, so even in the narrow residual
+// window where two invocations' re-checks both still see "not sent yet," the email provider itself
+// -- not this application -- collapses both calls into a single actual delivery).
 export async function GET(request) {
   if (!process.env.CRON_SECRET || request.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`)
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
@@ -136,16 +161,27 @@ export async function GET(request) {
       const emailProvider = createResendRentalEmailProvider();
       for (const entry of plan) {
         if (entry.action !== "send") continue;
+
+        // Freshness re-check: the plan above was built from data fetched at the top of this run, so
+        // re-confirm right now, immediately before the provider call, that no other invocation has
+        // already recorded this exact delivery as sent in the meantime. See the guarantee comment
+        // above the GET handler for what this does and does not protect against.
+        const existing = await lookupExistingDelivery(db, entry);
+        if (existing?.status === "sent") {
+          alreadySent += 1;
+          continue;
+        }
+
         try {
           const result = await emailProvider.send({
-            id: `private-financing-reminder-${entry.accountId}-${entry.borrowerId}-${entry.dueDate}-${entry.reminderType}`,
+            id: buildProviderIdempotencyKey({ accountId: entry.accountId, borrowerId: entry.borrowerId, dueDate: entry.dueDate, reminderType: entry.reminderType }),
             senderName: "FORGE Private Financing",
             senderEmail: process.env.RENTAL_EMAIL_SENDER || "rentals@mail.409marketplace.online",
             recipient: entry.email,
             subject: entry.emailSubject,
             bodyText: entry.emailBody,
           });
-          await recordDeliveryOutcome(db, entry, { status: "sent", providerMessageId: result.messageId });
+          await recordDeliveryOutcome(db, entry, existing, { status: "sent", providerMessageId: result.messageId });
           sent += 1;
         } catch (deliveryError) {
           console.error("Private financing payment-due reminder delivery failed", {
@@ -153,7 +189,7 @@ export async function GET(request) {
             reminderType: entry.reminderType,
             code: deliveryError?.name || "unknown",
           });
-          await recordDeliveryOutcome(db, entry, { status: "failed", failureReason: deliveryError?.message?.slice(0, 500) || "unknown" });
+          await recordDeliveryOutcome(db, entry, existing, { status: "failed", failureReason: deliveryError?.message?.slice(0, 500) || "unknown" });
           failed += 1;
         }
       }

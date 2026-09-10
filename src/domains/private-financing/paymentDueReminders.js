@@ -1,15 +1,25 @@
 // Payment-due reminder eligibility and content, built entirely on top of the SAME authoritative
 // replay/due-state engine the borrower portal uses (replayEvents.js, dueState.js,
 // financingTermsContracts.js) -- this module computes no balance, interest, allocation, or due-date
-// value of its own. Its only job is: given an account's real events/components/terms, decide whether
-// today is exactly 7 calendar days before, or exactly on, that account's next authoritative due date,
-// and if so, render the reminder email's content. Every failure mode fails closed (no reminder is
-// "eligible") rather than ever guessing a due date or balance.
+// value of its own. Its two jobs: (1) computeReminderCandidate decides whether TODAY is exactly the
+// original 7-days-out or on-the-due-date trigger for an account, and (2) evaluateInstallmentStillOwed
+// re-checks a SPECIFIC, already-known due date against CURRENT ledger/account state -- used by
+// reminderRunPlanner.js to decide whether a previously-FAILED delivery is still safe to retry today,
+// never by trusting the state as of the original attempt. Every failure mode fails closed (no
+// reminder is "eligible"/"owed") rather than ever guessing a due date or balance.
 //
 // Deliberately does NOT reuse buildBorrowerPortalModelSafely's defensive summarizeBorrowerEvents()
 // fallback (route.js): a reminder is an unsolicited outbound message, not a best-effort portal
 // display, so it only ever fires off the PRIMARY full-replay path. If replayEvents/computeDueState
 // can't run cleanly, no reminder is eligible for that account today -- full stop, log for review.
+//
+// Retry window (enforced by reminderRunPlanner.js, not here): a failed "seven_days_before" delivery
+// may be retried on any subsequent daily run through the day BEFORE the due date (never on or after
+// it). A failed "due_date" delivery may only be retried later THE SAME calendar day -- never the next
+// day or after, which would otherwise silently turn into an unauthorized overdue reminder. Retrying
+// never resends anything already recorded as "sent", and every retry re-evaluates eligibility against
+// live data via evaluateInstallmentStillOwed below (satisfied installments, closed/paid-off accounts,
+// and revoked memberships all suppress a retry, exactly like an original attempt).
 
 import { mapEventRowsForReplay } from "./persistedRowMapping.js";
 import { replayEvents } from "./replayEvents.js";
@@ -134,6 +144,74 @@ export function computeReminderCandidate({ accountStatus, eventRows, componentRo
     // have already succeeded -- there is no "fallback, less-trustworthy" number in this codepath.
     principalRemainingCents: snapshot.totalPrincipalRemainingCents,
   };
+}
+
+// Re-evaluates, AS OF asOfDate (today), whether a SPECIFIC, already-known (dueDate, and implicitly
+// its installment) is still genuinely owed -- the retry counterpart to computeReminderCandidate's own
+// discovery logic above. Used exclusively by reminderRunPlanner.js when reconsidering a previously
+// FAILED delivery: it must never resend based on the account/ledger state as of the original attempt,
+// only on what's true right now (a payment may have landed, the account may have closed/paid off, or
+// replay may have started failing since then). Same fail-closed discriminated-result discipline as
+// computeReminderCandidate -- an ordinary "not owed" outcome is a normal return value, never a thrown
+// exception a caller could mistake for "still eligible."
+//
+//   { owed: true, scheduledPaymentAmountCents, principalRemainingCents }
+//   { owed: false, reason: "account_not_active" | "balance_paid_in_full" | "installment_already_satisfied" }
+//   { owed: false, reason: "replay_unavailable" | "due_state_unsupported", unavailable: true, detail }
+export function evaluateInstallmentStillOwed({ accountStatus, eventRows, componentRows, termsRows, asOfDate, dueDate }) {
+  if (accountStatus !== "active") {
+    return { owed: false, reason: "account_not_active" };
+  }
+
+  let snapshot;
+  let accountTerms;
+  try {
+    const mapped = mapEventRowsForReplay(eventRows, componentRows, termsRows);
+    snapshot = replayEvents({ ...mapped, asOfDate });
+    accountTerms = resolveAccountTermsAsOf(mapped.accountTermsVersions, asOfDate);
+  } catch (error) {
+    return { owed: false, reason: "replay_unavailable", unavailable: true, detail: error.message };
+  }
+
+  if (snapshot.totalPrincipalRemainingCents <= 0) {
+    return { owed: false, reason: "balance_paid_in_full" };
+  }
+
+  let dueStateAtDue;
+  try {
+    dueStateAtDue = computeDueState({ snapshot, accountTerms, asOfDate: dueDate });
+  } catch (error) {
+    if (error instanceof UnsupportedDueStateError) {
+      return { owed: false, reason: "due_state_unsupported", unavailable: true, detail: error.message };
+    }
+    throw error;
+  }
+  if (dueStateAtDue.currentAmountDueCents === 0) {
+    return { owed: false, reason: "installment_already_satisfied" };
+  }
+
+  return {
+    owed: true,
+    scheduledPaymentAmountCents: accountTerms.regularScheduledPaymentAmountCents,
+    principalRemainingCents: snapshot.totalPrincipalRemainingCents,
+  };
+}
+
+// The single source of truth for "the stable key identifying this exact logical reminder delivery" --
+// used both for the durable DB row's primary key (so an original attempt and every later retry of it
+// upsert the SAME row, never a new one) and, separately below, for the outbound email provider's own
+// idempotency key. Deliberately two distinct formats/namespaces (DB id vs. provider-facing id) even
+// though both are derived from the same four fields, so a provider-side collision can never be
+// mistaken for a database-side one or vice versa. Pure and deterministic: calling either function
+// twice with identical inputs -- whether that's the original attempt and a retry, or two genuinely
+// concurrent invocations -- always yields byte-identical output, which is what lets the DB's own
+// unique constraint and the provider's own idempotency handling both do their job.
+export function buildDeliveryRowId({ ownerId, accountId, borrowerId, dueDate, reminderType }) {
+  return `pfrd_${ownerId}_${accountId}_${borrowerId}_${dueDate}_${reminderType}`;
+}
+
+export function buildProviderIdempotencyKey({ accountId, borrowerId, dueDate, reminderType }) {
+  return `private-financing-reminder-${accountId}-${borrowerId}-${dueDate}-${reminderType}`;
 }
 
 const LATE_FEE_WORDS = /late fee|late charge|past due|overdue|collection|delinquent/i;

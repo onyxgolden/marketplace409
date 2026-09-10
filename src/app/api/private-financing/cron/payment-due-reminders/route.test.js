@@ -128,6 +128,50 @@ describe("GET /api/private-financing/cron/payment-due-reminders", () => {
     expect(row.status).toBe("failed");
   });
 
+  it("on a retry, preserves the existing delivery row's id and increments its attempt_count rather than starting a new logical delivery", async () => {
+    seedDueTodayFixture();
+    ROWS.private_financing_payment_reminder_deliveries = [{ id: "pfrd_owner_1_acct_1_b1_existing", status: "failed", attempt_count: 1 }];
+    mocks.send.mockResolvedValue({ messageId: "msg_retry" });
+    const response = await GET(request("https://x.test/api/private-financing/cron/payment-due-reminders", { authorization: "Bearer test-secret" }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.sent).toBe(1);
+    expect(mocks.upsert).toHaveBeenCalledTimes(1);
+    const [, row] = mocks.upsert.mock.calls[0];
+    expect(row.id).toBe("pfrd_owner_1_acct_1_b1_existing"); // reused, not a freshly generated id
+    expect(row.attempt_count).toBe(2); // incremented from the existing row's 1, not reset
+    expect(row.status).toBe("sent");
+    expect("first_attempted_at" in row).toBe(false); // never touched on a retry -- only a genuine first insert sets it
+  });
+
+  it("dry run never sends or writes even when a same-day retry candidate exists (a prior failed delivery for today's exact reminder)", async () => {
+    seedDueTodayFixture();
+    ROWS.private_financing_payment_reminder_deliveries = [{ id: "pfrd_owner_1_acct_1_b1_existing", status: "failed", attempt_count: 1 }];
+    const response = await GET(request("https://x.test/api/private-financing/cron/payment-due-reminders?dryRun=true", { authorization: "Bearer test-secret" }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.dryRun).toBe(true);
+    expect(body.wouldSend).toBe(1);
+    expect(body.sent).toBe(0);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("uses the same provider idempotency key format for the outbound send regardless of whether this is an original attempt or a retry", async () => {
+    seedDueTodayFixture();
+    ROWS.private_financing_payment_reminder_deliveries = [];
+    mocks.send.mockResolvedValue({ messageId: "msg_1" });
+    await GET(request("https://x.test/api/private-financing/cron/payment-due-reminders", { authorization: "Bearer test-secret" }));
+    const firstCallId = mocks.send.mock.calls[0][0].id;
+    mocks.send.mockReset();
+    mocks.upsert.mockReset();
+    mocks.send.mockResolvedValue({ messageId: "msg_2" });
+    ROWS.private_financing_payment_reminder_deliveries = [{ id: "pfrd_owner_1_acct_1_b1_existing", status: "failed", attempt_count: 1 }];
+    await GET(request("https://x.test/api/private-financing/cron/payment-due-reminders", { authorization: "Bearer test-secret" }));
+    const retryCallId = mocks.send.mock.calls[0][0].id;
+    expect(retryCallId).toBe(firstCallId); // identical key on retry -- what lets the provider itself dedupe a concurrent race
+  });
+
   it("has not been registered in vercel.json's crons yet (deliberately -- activation is a separate authorization)", async () => {
     const { default: vercelJson } = await import("../../../../../../vercel.json", { with: { type: "json" } });
     const paths = vercelJson.crons.map((entry) => entry.path);

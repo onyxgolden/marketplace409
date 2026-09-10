@@ -62,6 +62,30 @@ function accountFixture({ ownerId = "owner_1", accountId = "acct_1", status = "a
   };
 }
 
+// A single zero-interest-rate payment event (interest is trivially 0 at rate_bps: 0, same discipline
+// as paymentDueReminders.test.js's payFullInstallment) that fully satisfies one scheduled installment
+// -- used only by the retry-suppression tests below, which need a payment to land BETWEEN an original
+// failed attempt and a later retry.
+function fullPaymentRow({ ownerId, accountId, effectiveDate, remainingBefore, amountCents }) {
+  return {
+    id: `evt_pay_${effectiveDate}`,
+    owner_id: ownerId,
+    account_id: accountId,
+    event_type: "payment_posted",
+    event_origin: "interactive_user",
+    created_by: "11111111-1111-1111-1111-111111111111",
+    idempotency_key: null,
+    effective_date: effectiveDate,
+    ledger_sequence: 2,
+    recorded_at: `${effectiveDate}T00:00:00.000Z`,
+    amount_cents: amountCents,
+    interest_paid_by_component_cents: { c1: 0 },
+    principal_paid_by_component_cents: { c1: amountCents },
+    unallocated_cents: 0,
+    principal_remaining_by_component_cents: { c1: remainingBefore - amountCents },
+  };
+}
+
 describe("planReminderRun", () => {
   it("sends to every active borrower on an eligible account", () => {
     const account = accountFixture({
@@ -162,5 +186,103 @@ describe("planReminderRun", () => {
     const results = planReminderRun({ asOfDate: ASOF, accounts: [account], siteUrl: "https://example.test" });
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ action: "skip", reason: "no_active_borrowers" });
+  });
+});
+
+describe("planReminderRun -- bounded retry of a prior FAILED delivery", () => {
+  it("retries a failed seven-day reminder on a later day, still before the due date", () => {
+    // Original trigger would have been 2026-03-01 (7 days before 2026-03-08); it failed. Today is
+    // 2026-03-03 -- neither the original trigger day nor the due date itself -- so only the retry
+    // pass, not the fresh-trigger pass, can produce this send.
+    const account = accountFixture({
+      firstPaymentDueDate: "2026-03-08",
+      borrowers: [{ borrowerId: "b1", email: "alex@example.test", fullName: "Alex", membershipStatus: "active" }],
+      existingDeliveries: [{ borrowerId: "b1", dueDate: "2026-03-08", reminderType: "seven_days_before", status: "failed" }],
+    });
+    const results = planReminderRun({ asOfDate: "2026-03-03", accounts: [account], siteUrl: "https://example.test" });
+    const sends = results.filter((r) => r.action === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0]).toMatchObject({ borrowerId: "b1", dueDate: "2026-03-08", reminderType: "seven_days_before" });
+  });
+
+  it("does not retry a failed seven-day reminder once the due date itself has arrived", () => {
+    const account = accountFixture({
+      firstPaymentDueDate: "2026-03-08",
+      borrowers: [{ borrowerId: "b1", email: "alex@example.test", fullName: "Alex", membershipStatus: "active" }],
+      existingDeliveries: [{ borrowerId: "b1", dueDate: "2026-03-08", reminderType: "seven_days_before", status: "failed" }],
+    });
+    const results = planReminderRun({ asOfDate: "2026-03-08", accounts: [account], siteUrl: "https://example.test" });
+    // The due-date reminder itself is free to fire today (a separate, still-fresh trigger) -- what
+    // must NOT happen is the stale seven-day failure being retried.
+    expect(results.some((r) => r.reminderType === "seven_days_before")).toBe(false);
+    const sends = results.filter((r) => r.action === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].reminderType).toBe("due_date");
+  });
+
+  it("does not retry a failed due-date reminder the day after the due date (never an unauthorized overdue email)", () => {
+    const account = accountFixture({
+      firstPaymentDueDate: "2026-03-01",
+      borrowers: [{ borrowerId: "b1", email: "alex@example.test", fullName: "Alex", membershipStatus: "active" }],
+      existingDeliveries: [{ borrowerId: "b1", dueDate: "2026-03-01", reminderType: "due_date", status: "failed" }],
+    });
+    const results = planReminderRun({ asOfDate: "2026-03-02", accounts: [account], siteUrl: "https://example.test" });
+    expect(results.some((r) => r.action === "send")).toBe(false);
+    expect(results.some((r) => r.reminderType === "due_date")).toBe(false);
+  });
+
+  it("suppresses a seven-day retry once a payment posted between the failed attempt and the retry satisfies the installment", () => {
+    const account = accountFixture({
+      ownerId: "owner_1",
+      accountId: "acct_1",
+      firstPaymentDueDate: "2026-03-08",
+      borrowers: [{ borrowerId: "b1", email: "alex@example.test", fullName: "Alex", membershipStatus: "active" }],
+      existingDeliveries: [{ borrowerId: "b1", dueDate: "2026-03-08", reminderType: "seven_days_before", status: "failed" }],
+    });
+    account.eventRows.push(fullPaymentRow({ ownerId: "owner_1", accountId: "acct_1", effectiveDate: "2026-03-02", remainingBefore: 1_000_000, amountCents: 100_000 }));
+    const results = planReminderRun({ asOfDate: "2026-03-03", accounts: [account], siteUrl: "https://example.test" });
+    expect(results.some((r) => r.action === "send")).toBe(false);
+  });
+
+  it("suppresses a seven-day retry once the account has closed since the failed attempt", () => {
+    const account = accountFixture({
+      firstPaymentDueDate: "2026-03-08",
+      status: "closed",
+      borrowers: [{ borrowerId: "b1", email: "alex@example.test", fullName: "Alex", membershipStatus: "active" }],
+      existingDeliveries: [{ borrowerId: "b1", dueDate: "2026-03-08", reminderType: "seven_days_before", status: "failed" }],
+    });
+    const results = planReminderRun({ asOfDate: "2026-03-03", accounts: [account], siteUrl: "https://example.test" });
+    expect(results.some((r) => r.action === "send")).toBe(false);
+  });
+
+  it("only retries the specific borrower whose delivery failed, not every active borrower on the account", () => {
+    const account = accountFixture({
+      firstPaymentDueDate: "2026-03-08",
+      borrowers: [
+        { borrowerId: "b1", email: "alex@example.test", fullName: "Alex", membershipStatus: "active" },
+        { borrowerId: "b2", email: "jordan@example.test", fullName: "Jordan", membershipStatus: "active" },
+      ],
+      // b2's original attempt succeeded; only b1's failed and is eligible for retry.
+      existingDeliveries: [
+        { borrowerId: "b1", dueDate: "2026-03-08", reminderType: "seven_days_before", status: "failed" },
+        { borrowerId: "b2", dueDate: "2026-03-08", reminderType: "seven_days_before", status: "sent" },
+      ],
+    });
+    const results = planReminderRun({ asOfDate: "2026-03-03", accounts: [account], siteUrl: "https://example.test" });
+    const sends = results.filter((r) => r.action === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].borrowerId).toBe("b1");
+  });
+
+  it("never produces two plan entries for the same (account, borrower, due date, reminder type) when the fresh trigger and a same-day retry coincide", () => {
+    const account = accountFixture({
+      firstPaymentDueDate: "2026-03-01", // matches ASOF -- today is the due date
+      borrowers: [{ borrowerId: "b1", email: "alex@example.test", fullName: "Alex", membershipStatus: "active" }],
+      existingDeliveries: [{ borrowerId: "b1", dueDate: "2026-03-01", reminderType: "due_date", status: "failed" }],
+    });
+    const results = planReminderRun({ asOfDate: ASOF, accounts: [account], siteUrl: "https://example.test" });
+    const matching = results.filter((r) => r.borrowerId === "b1" && r.dueDate === "2026-03-01" && r.reminderType === "due_date");
+    expect(matching).toHaveLength(1);
+    expect(matching[0].action).toBe("send");
   });
 });

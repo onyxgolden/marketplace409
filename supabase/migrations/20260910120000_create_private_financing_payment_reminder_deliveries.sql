@@ -10,6 +10,13 @@
 -- reminder_type is intentionally NOT 'overdue' or any past-due variant -- this cron never sends
 -- overdue notices (see paymentDueReminders.js), so the table's own check constraint enforces that
 -- boundary at the schema level, not just in application code.
+--
+-- This table's unique constraint is durable LOGICAL deduplication (at most one row can ever exist
+-- per logical delivery, across any number of retries or overlapping cron invocations) -- it is not,
+-- by itself, a guarantee against ever calling the email provider twice for the same delivery under
+-- concurrent failure/retry timing. The route layer's stable provider idempotency key is the other
+-- half of that guarantee; see the GET handler's own comment in route.js for the full, honest
+-- statement of what is and is not guaranteed.
 create table if not exists private_financing_payment_reminder_deliveries (
     owner_id text not null,
     id text primary key,
@@ -21,8 +28,13 @@ create table if not exists private_financing_payment_reminder_deliveries (
     provider_message_id text,
     failure_reason text,
     -- Incremented on each retry attempt for the same (account, borrower, due_date, reminder_type)
-    -- row -- e.g. a provider failure today, then a successful send on tomorrow's cron run before
-    -- the due date has changed. Never reset; first_attempted_at/last_attempted_at bound the range.
+    -- row. Retries are BOUNDED, not simply "automatic every day forever" -- a failed
+    -- "seven_days_before" row may retry on any subsequent daily run through the day BEFORE
+    -- due_date; a failed "due_date" row may only retry later THAT SAME calendar day, never the
+    -- next day or after (which would otherwise silently become an unauthorized overdue reminder --
+    -- see the application-layer retry-window checks in reminderRunPlanner.js, which are the
+    -- authority on this rule; this comment only summarizes it). Never reset; first_attempted_at/
+    -- last_attempted_at bound the range.
     attempt_count integer not null default 1 check (attempt_count > 0),
     first_attempted_at timestamptz not null default now(),
     last_attempted_at timestamptz not null default now(),

@@ -4,10 +4,13 @@ import { allocatePayment } from "../paymentAllocation.js";
 import { roundToNearestCent } from "../currencyMath.js";
 import {
   computeReminderCandidate,
+  evaluateInstallmentStillOwed,
   buildReminderEmail,
   addDaysISODate,
   formatCentsAsUsd,
   buildPortalUrl,
+  buildDeliveryRowId,
+  buildProviderIdempotencyKey,
   REMINDER_TYPE,
 } from "../paymentDueReminders.js";
 
@@ -328,6 +331,67 @@ describe("computeReminderCandidate", () => {
     const result = computeReminderCandidate({ accountStatus: "active", eventRows: [opened, payoff], componentRows: componentVersions, termsRows: accountTermsVersions, asOfDate: "2026-03-01" });
     expect(result.eligible).toBe(false);
     expect(result.reason).toBe("balance_paid_in_full");
+  });
+});
+
+describe("evaluateInstallmentStillOwed", () => {
+  it("is owed when the installment for the given due date has not been paid", () => {
+    const { opened, componentVersions, accountTermsVersions } = singleComponentAccount({ firstPaymentDueDate: "2026-03-01" });
+    const result = evaluateInstallmentStillOwed({ accountStatus: "active", eventRows: [opened], componentRows: componentVersions, termsRows: accountTermsVersions, asOfDate: "2026-02-26", dueDate: "2026-03-01" });
+    expect(result.owed).toBe(true);
+    expect(result.scheduledPaymentAmountCents).toBe(100_000);
+    expect(result.principalRemainingCents).toBe(1_000_000);
+  });
+
+  it("is not owed once a payment posted between the original attempt and the retry satisfies that installment", () => {
+    const { opened, componentVersions, accountTermsVersions } = singleComponentAccount({ firstPaymentDueDate: "2026-03-01" });
+    const payment = payFullInstallment({ id: "evt_pay1", effectiveDate: "2026-02-27", remainingBefore: 1_000_000, amountCents: 100_000 });
+    const result = evaluateInstallmentStillOwed({ accountStatus: "active", eventRows: [opened, payment], componentRows: componentVersions, termsRows: accountTermsVersions, asOfDate: "2026-02-28", dueDate: "2026-03-01" });
+    expect(result.owed).toBe(false);
+    expect(result.reason).toBe("installment_already_satisfied");
+  });
+
+  it.each(["paid_off", "written_off", "cancelled"])("is not owed for a %s account, regardless of the ledger", (status) => {
+    const { opened, componentVersions, accountTermsVersions } = singleComponentAccount({ firstPaymentDueDate: "2026-03-01" });
+    const result = evaluateInstallmentStillOwed({ accountStatus: status, eventRows: [opened], componentRows: componentVersions, termsRows: accountTermsVersions, asOfDate: "2026-02-28", dueDate: "2026-03-01" });
+    expect(result.owed).toBe(false);
+    expect(result.reason).toBe("account_not_active");
+  });
+
+  it("is not owed once the account's true balance has been paid off in full, even before the due date arrives", () => {
+    const { opened, componentVersions, accountTermsVersions } = singleComponentAccount({ originalPrincipalCents: 100_000, regularPaymentCents: 100_000, firstPaymentDueDate: "2026-02-01" });
+    const payoff = payFullInstallment({ id: "evt_payoff", effectiveDate: "2026-01-20", remainingBefore: 100_000, amountCents: 100_000 });
+    const result = evaluateInstallmentStillOwed({ accountStatus: "active", eventRows: [opened, payoff], componentRows: componentVersions, termsRows: accountTermsVersions, asOfDate: "2026-01-25", dueDate: "2026-02-01" });
+    expect(result.owed).toBe(false);
+    expect(result.reason).toBe("balance_paid_in_full");
+  });
+
+  it("fails closed (unavailable) rather than guessing when replay data is malformed at retry time", () => {
+    const { opened, componentVersions, accountTermsVersions } = singleComponentAccount({ firstPaymentDueDate: "2026-03-01" });
+    const malformed = { ...payFullInstallment({ id: "evt_bad", effectiveDate: "2026-02-27", remainingBefore: 1_000_000, amountCents: 100_000 }), principal_remaining_by_component_cents: "not-an-object" };
+    const result = evaluateInstallmentStillOwed({ accountStatus: "active", eventRows: [opened, malformed], componentRows: componentVersions, termsRows: accountTermsVersions, asOfDate: "2026-02-28", dueDate: "2026-03-01" });
+    expect(result.owed).toBe(false);
+    expect(result.unavailable).toBe(true);
+    expect(result.reason).toBe("replay_unavailable");
+  });
+});
+
+describe("buildDeliveryRowId / buildProviderIdempotencyKey", () => {
+  it("are pure and deterministic -- identical inputs always produce identical keys, across an original attempt, a retry, or two genuinely concurrent invocations", () => {
+    const args = { ownerId: "owner_1", accountId: "acct_1", borrowerId: "b1", dueDate: "2026-03-01", reminderType: REMINDER_TYPE.SEVEN_DAYS_BEFORE };
+    expect(buildDeliveryRowId(args)).toBe(buildDeliveryRowId({ ...args }));
+    expect(buildProviderIdempotencyKey(args)).toBe(buildProviderIdempotencyKey({ ...args }));
+  });
+
+  it("produces different keys for different logical deliveries", () => {
+    const base = { ownerId: "owner_1", accountId: "acct_1", borrowerId: "b1", dueDate: "2026-03-01", reminderType: REMINDER_TYPE.SEVEN_DAYS_BEFORE };
+    expect(buildDeliveryRowId(base)).not.toBe(buildDeliveryRowId({ ...base, reminderType: REMINDER_TYPE.DUE_DATE }));
+    expect(buildProviderIdempotencyKey(base)).not.toBe(buildProviderIdempotencyKey({ ...base, dueDate: "2026-03-08" }));
+  });
+
+  it("keeps the DB row id and the provider-facing idempotency key in visibly distinct namespaces", () => {
+    const args = { ownerId: "owner_1", accountId: "acct_1", borrowerId: "b1", dueDate: "2026-03-01", reminderType: REMINDER_TYPE.DUE_DATE };
+    expect(buildDeliveryRowId(args)).not.toBe(buildProviderIdempotencyKey(args));
   });
 });
 
