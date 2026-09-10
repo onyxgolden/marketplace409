@@ -10,27 +10,102 @@ function todayISODate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function summarizeBorrowerEvents(events) {
-  const payments = events.filter((event) => event.event_type === "payment_posted");
-  let interestBearing = 0;
-  let zeroInterest = 0;
-  for (const event of events) {
-    if (event.principal_remaining_interest_bearing_cents != null) interestBearing = Number(event.principal_remaining_interest_bearing_cents);
-    if (event.principal_remaining_zero_interest_cents != null) zeroInterest = Number(event.principal_remaining_zero_interest_cents);
-    if (event.corrected_component_principal_remaining_cents_after != null) {
-      if (event.component_type === "interest_bearing") interestBearing = Number(event.corrected_component_principal_remaining_cents_after);
-      if (event.component_type === "zero_interest") zeroInterest = Number(event.corrected_component_principal_remaining_cents_after);
-    }
-    if (event.corrected_component_principal_remaining_cents_after == null) {
-      if (event.interest_bearing_delta_cents != null) interestBearing += Number(event.interest_bearing_delta_cents);
-      if (event.zero_interest_delta_cents != null) zeroInterest += Number(event.zero_interest_delta_cents);
-    }
+// Thrown by summarizeBorrowerEvents when the event data isn't safe to summarize without full
+// replay -- callers must fail closed (surface "unavailable"), never treat a caught instance of
+// this as "the balance is zero."
+export class BorrowerSummaryUnavailableError extends Error {
+  constructor(reason) {
+    super(reason);
+    this.name = "BorrowerSummaryUnavailableError";
   }
+}
+
+function sumCentsMap(map, fieldName) {
+  if (map == null) return 0;
+  if (typeof map !== "object" || Array.isArray(map)) {
+    throw new BorrowerSummaryUnavailableError(`${fieldName} is not a valid component-keyed cents map.`);
+  }
+  let sum = 0;
+  for (const [key, value] of Object.entries(map)) {
+    if (typeof value !== "number" || !Number.isInteger(value)) {
+      throw new BorrowerSummaryUnavailableError(`${fieldName}.${key} is not a valid integer cents amount.`);
+    }
+    sum += value;
+  }
+  return sum;
+}
+
+// A best-effort, replay-free summary used ONLY when buildBorrowerProjectionModel's authoritative
+// full replay (replayEvents.js) itself failed to run -- e.g. malformed/incomplete component or
+// event data reached this route. It is deliberately NOT a second implementation of the financial
+// rules in replayEvents.js/paymentAllocation.js; it only re-reads the per-event snapshots the same
+// write-path allocation logic already persisted (principal_remaining_by_component_cents on
+// payment_posted/payment_reversal/payoff_concession, corrected_component_principal_remaining_cents_after
+// on principal_correction), replacing per-component state on whichever event most recently wrote it,
+// in ledger order. Any event type this walk does not know how to interpret safely this way --
+// compensating_correction chief among them, since it only carries a delta relative to state this
+// walk cannot reconstruct without replay -- throws BorrowerSummaryUnavailableError rather than
+// silently omitting it and returning a wrong number.
+export function summarizeBorrowerEvents(events) {
+  const sorted = [...events].sort((a, b) => Number(a.ledger_sequence ?? 0) - Number(b.ledger_sequence ?? 0));
+
+  const remainingByComponent = {};
+  let sawSnapshot = false;
+
+  for (const event of sorted) {
+    if (event.event_type === "account_opened" || event.event_type === "interest_correction" || event.event_type === "account_closed") {
+      continue; // none of these carry or change a principal-remaining snapshot
+    }
+    if (event.event_type === "payment_posted" || event.event_type === "payment_reversal" || event.event_type === "payoff_concession") {
+      const map = event.principal_remaining_by_component_cents;
+      if (map == null || typeof map !== "object" || Array.isArray(map)) {
+        throw new BorrowerSummaryUnavailableError(
+          `${event.event_type} "${event.id}" is missing a valid principal_remaining_by_component_cents snapshot.`,
+        );
+      }
+      for (const [componentKey, value] of Object.entries(map)) {
+        if (typeof value !== "number" || !Number.isInteger(value)) {
+          throw new BorrowerSummaryUnavailableError(`${event.event_type} "${event.id}"'s remaining balance for component "${componentKey}" is not a valid integer.`);
+        }
+        remainingByComponent[componentKey] = value;
+      }
+      sawSnapshot = true;
+      continue;
+    }
+    if (event.event_type === "principal_correction") {
+      const componentId = event.component_id;
+      const after = event.corrected_component_principal_remaining_cents_after;
+      if (!componentId || typeof after !== "number" || !Number.isInteger(after)) {
+        throw new BorrowerSummaryUnavailableError(`principal_correction "${event.id}" is missing a valid corrected remaining-principal value.`);
+      }
+      remainingByComponent[componentId] = after;
+      sawSnapshot = true;
+      continue;
+    }
+    // compensating_correction and any other/future event type: this defensive walk cannot safely
+    // interpret it without reimplementing replay math -- fail closed.
+    throw new BorrowerSummaryUnavailableError(
+      `Cannot safely summarize this account's balance without full replay: event "${event.id}" is a "${event.event_type}", which this fallback does not support.`,
+    );
+  }
+
+  if (!sawSnapshot) {
+    throw new BorrowerSummaryUnavailableError("No event carries a principal-remaining snapshot; cannot safely summarize this account's balance.");
+  }
+
+  const principalRemainingCents = Object.values(remainingByComponent).reduce((sum, value) => sum + value, 0);
+
+  const payments = sorted.filter((event) => event.event_type === "payment_posted");
+  const reversals = sorted.filter((event) => event.event_type === "payment_reversal");
+  const interestPaidCents =
+    payments.reduce((sum, event) => sum + sumCentsMap(event.interest_paid_by_component_cents, `payment_posted "${event.id}".interest_paid_by_component_cents`), 0) -
+    reversals.reduce((sum, event) => sum + sumCentsMap(event.interest_paid_by_component_cents, `payment_reversal "${event.id}".interest_paid_by_component_cents`), 0);
+
   return {
     paymentCount: payments.length,
     totalPaidCents: payments.reduce((sum, event) => sum + Number(event.amount_cents || 0), 0),
-    interestPaidCents: payments.reduce((sum, event) => sum + Number(event.interest_paid_cents || 0), 0),
-    principalRemainingCents: interestBearing + zeroInterest,
+    interestPaidCents,
+    principalRemainingCents,
   };
 }
 
@@ -100,21 +175,39 @@ export function buildBorrowerProjectionModel({ eventRows, componentRows, termsRo
 
 export function buildBorrowerPortalModelSafely({ eventRows, componentRows, termsRows, asOfDate = todayISODate() }) {
   try {
-    return { ...buildBorrowerProjectionModel({ eventRows, componentRows, termsRows, asOfDate }), progressAvailable: true };
+    return { ...buildBorrowerProjectionModel({ eventRows, componentRows, termsRows, asOfDate }), progressAvailable: true, summaryAvailable: true };
   } catch (error) {
     console.error("Private financing borrower projection unavailable", {
       code: error?.code || error?.name || "unknown",
     });
-    const summary = summarizeBorrowerEvents(eventRows);
     const currentTerms = [...termsRows]
       .filter((terms) => !terms.effective_date || terms.effective_date <= asOfDate)
       .sort((left, right) => Number(right.version_number || 0) - Number(left.version_number || 0))[0];
-    return {
-      summary: { ...summary, asOfDate },
-      regularScheduledPaymentCents: Number(currentTerms?.regular_scheduled_payment_amount_cents || 0),
-      projection: null,
-      progressAvailable: false,
-    };
+    const regularScheduledPaymentCents = Number(currentTerms?.regular_scheduled_payment_amount_cents || 0);
+    try {
+      const summary = summarizeBorrowerEvents(eventRows);
+      return {
+        summary: { ...summary, asOfDate },
+        regularScheduledPaymentCents,
+        projection: null,
+        progressAvailable: false,
+        summaryAvailable: true,
+      };
+    } catch (summaryError) {
+      // Neither full replay nor the defensive snapshot walk could produce a trustworthy number --
+      // fail closed. The caller must not display $0.00 (or any figure) as this account's balance.
+      console.error("Private financing borrower summary unavailable", {
+        code: summaryError?.name || "unknown",
+      });
+      return {
+        summary: null,
+        regularScheduledPaymentCents,
+        projection: null,
+        progressAvailable: false,
+        summaryAvailable: false,
+        summaryUnavailableReason: summaryError.message,
+      };
+    }
   }
 }
 
@@ -177,6 +270,8 @@ export async function GET(request) {
       regularScheduledPaymentCents: model.regularScheduledPaymentCents,
       projection: model.projection,
       progressAvailable: model.progressAvailable,
+      summaryAvailable: model.summaryAvailable !== false,
+      summaryUnavailableReason: model.summaryUnavailableReason ?? null,
       onlinePaymentsEnabled: settingsResult.data?.enabled === true,
     });
   }

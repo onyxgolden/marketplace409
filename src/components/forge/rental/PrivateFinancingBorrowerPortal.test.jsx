@@ -135,4 +135,34 @@ describe("PrivateFinancingBorrowerPortal", () => {
     expect(mounted.container.textContent).toContain("The optional payoff chart is temporarily unavailable.");
     expect(mounted.container.querySelector('[data-testid="progress"]')).toBeNull();
   });
+
+  it("fails closed visibly -- no $0.00, no crash, and payment is hidden -- when summaryAvailable is false", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(200, {
+      success: true,
+      email: "borrower@example.com",
+      invitedEmail: null,
+      mismatched: false,
+      accounts: [{
+        account: { id: "acct_1", status: "active", origination_principal_cents: 1000000 },
+        role: "primary_borrower",
+        summary: null,
+        events: [],
+        regularScheduledPaymentCents: 50000,
+        projection: null,
+        progressAvailable: false,
+        summaryAvailable: false,
+        summaryUnavailableReason: "No event carries a principal-remaining snapshot.",
+        onlinePaymentsEnabled: true,
+      }],
+    })));
+
+    mounted = mount(<PrivateFinancingBorrowerPortal />);
+    await flush();
+
+    expect(mounted.container.textContent).toContain("Your current balance cannot be safely displayed right now.");
+    expect(mounted.container.textContent).not.toContain("$0.00");
+    expect(mounted.container.querySelector('[data-testid="progress"]')).toBeNull();
+    // Online payments are enabled for this account, but must stay hidden while the balance is untrusted.
+    expect([...mounted.container.querySelectorAll("button")].some((b) => b.textContent === "Make a payment")).toBe(false);
+  });
 });
