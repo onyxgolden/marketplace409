@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   revokeMember: vi.fn(),
   revokeGroup: vi.fn(),
   setBalanceAuthority: vi.fn(),
+  setTransactionAuthority: vi.fn(),
   advanceCoverageStatus: vi.fn(),
   setTransactionCutover: vi.fn(),
 }));
@@ -52,6 +53,7 @@ function repositoryStub() {
     revokeMember: mocks.revokeMember,
     revokeGroup: mocks.revokeGroup,
     setBalanceAuthority: mocks.setBalanceAuthority,
+    setTransactionAuthority: mocks.setTransactionAuthority,
     advanceCoverageStatus: mocks.advanceCoverageStatus,
     setTransactionCutover: mocks.setTransactionCutover,
   };
@@ -141,6 +143,14 @@ describe("POST /api/financial/account-groups", () => {
     const response = await POST(request({ action: "set_balance_authority", groupId: "group-1", financialAccountId: "acct-plaid" }));
     expect(response.status).toBe(200);
     expect(mocks.setBalanceAuthority).toHaveBeenCalledWith({ groupId: "group-1", financialAccountId: "acct-plaid" });
+  });
+
+  it("set_transaction_authority passes through -- independent from set_balance_authority", async () => {
+    mocks.setTransactionAuthority.mockResolvedValue({ id: "group-1", transactionAuthorityAccountId: "acct-manual" });
+    const response = await POST(request({ action: "set_transaction_authority", groupId: "group-1", financialAccountId: "acct-manual" }));
+    expect(response.status).toBe(200);
+    expect(mocks.setTransactionAuthority).toHaveBeenCalledWith({ groupId: "group-1", financialAccountId: "acct-manual" });
+    expect(mocks.setBalanceAuthority).not.toHaveBeenCalled();
   });
 
   it("advance_coverage_status passes through, including an optional note", async () => {

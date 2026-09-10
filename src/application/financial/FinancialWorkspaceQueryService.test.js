@@ -277,7 +277,7 @@ describe("FinancialWorkspaceQueryService -- transaction cutover", () => {
       financialAccountGroupRepository: {
         findActiveGroupsForOwner: vi.fn().mockResolvedValue([
           {
-            group: { transactionCoverageStatus: "reconciled", transactionCutoverAt: "2026-09-01", balanceAuthorityAccountId: "acct-stripe" },
+            group: { transactionCoverageStatus: "reconciled", transactionCutoverAt: "2026-09-01", balanceAuthorityAccountId: "acct-stripe", transactionAuthorityAccountId: "acct-stripe" },
             activeMemberFinancialAccountIds: ["acct-stripe", "acct-manual"],
           },
         ]),
@@ -302,7 +302,7 @@ describe("FinancialWorkspaceQueryService -- transaction cutover", () => {
       aggregationService,
       financialAccountGroupRepository: {
         findActiveGroupsForOwner: vi.fn().mockResolvedValue([
-          { group: { transactionCoverageStatus: "reconciled", transactionCutoverAt: "2026-09-01", balanceAuthorityAccountId: "acct-stripe" }, activeMemberFinancialAccountIds: ["acct-stripe", "acct-manual"] },
+          { group: { transactionCoverageStatus: "reconciled", transactionCutoverAt: "2026-09-01", balanceAuthorityAccountId: "acct-stripe", transactionAuthorityAccountId: "acct-stripe" }, activeMemberFinancialAccountIds: ["acct-stripe", "acct-manual"] },
         ]),
       },
     });
@@ -317,11 +317,75 @@ describe("FinancialWorkspaceQueryService -- transaction cutover", () => {
       aggregationService,
       financialAccountGroupRepository: {
         findActiveGroupsForOwner: vi.fn().mockResolvedValue([
-          { group: { transactionCoverageStatus: "reconciled", transactionCutoverAt: "2026-09-06", balanceAuthorityAccountId: "acct-stripe" }, activeMemberFinancialAccountIds: ["acct-stripe", "acct-manual"] },
+          { group: { transactionCoverageStatus: "reconciled", transactionCutoverAt: "2026-09-06", balanceAuthorityAccountId: "acct-stripe", transactionAuthorityAccountId: "acct-stripe" }, activeMemberFinancialAccountIds: ["acct-stripe", "acct-manual"] },
         ]),
       },
     });
     await laterCutoverService.buildWorkspace("owner-1");
     expect(aggregationService.aggregate.mock.calls[0][0].map((e) => e.id).sort()).toEqual(["csv-mid", "stripe-1"]);
+  });
+
+  test("reconciled with a cutover date but NO transaction authority identified: filters nothing -- transaction authority is never inferred from balanceAuthorityAccountId", async () => {
+    const events = [csvEvent("csv-mid", "2026-09-05"), stripeEvent("stripe-1", "2026-09-09")];
+    const aggregationService = { aggregate: vi.fn().mockReturnValue(buildWorkspace()) };
+    const service = new FinancialWorkspaceQueryService({
+      financialEventRepository: { findByOwnerId: vi.fn().mockResolvedValue(events) },
+      aggregationService,
+      financialAccountGroupRepository: {
+        findActiveGroupsForOwner: vi.fn().mockResolvedValue([
+          {
+            // reconciled + a cutover date present, but transactionAuthorityAccountId was never
+            // set -- must NOT fall back to treating balanceAuthorityAccountId as the canonical
+            // side. The real RPC (set_financial_account_group_transaction_cutover) refuses to
+            // ever produce this combination, but the read model must not rely on that alone.
+            group: { transactionCoverageStatus: "reconciled", transactionCutoverAt: "2026-09-01", balanceAuthorityAccountId: "acct-stripe", transactionAuthorityAccountId: null },
+            activeMemberFinancialAccountIds: ["acct-stripe", "acct-manual"],
+          },
+        ]),
+      },
+    });
+
+    await service.buildWorkspace("owner-1");
+
+    expect(aggregationService.aggregate).toHaveBeenCalledWith(events, { scope: null });
+  });
+
+  test("three members (manual + Stripe + Plaid): transaction authority is independent of balance authority -- Plaid can be balance authority while Stripe is transaction authority", async () => {
+    const events = [
+      csvEvent("manual-before", "2026-08-31", "acct-manual"),
+      csvEvent("manual-after", "2026-09-05", "acct-manual"),
+      stripeEvent("stripe-after", "2026-09-05", "acct-stripe"),
+      { id: "plaid-after", financial_account_id: "acct-plaid", event_date: "2026-09-05", source_system: "plaid" },
+    ];
+    const aggregationService = { aggregate: vi.fn().mockReturnValue(buildWorkspace()) };
+    const service = new FinancialWorkspaceQueryService({
+      financialEventRepository: { findByOwnerId: vi.fn().mockResolvedValue(events) },
+      aggregationService,
+      financialAccountGroupRepository: {
+        findActiveGroupsForOwner: vi.fn().mockResolvedValue([
+          {
+            // balanceAuthorityAccountId is Plaid (freshest live balance right now);
+            // transactionAuthorityAccountId is Stripe (the member a human actually verified
+            // complete transaction coverage for) -- deliberately NOT the same account.
+            group: {
+              transactionCoverageStatus: "reconciled",
+              transactionCutoverAt: "2026-09-01",
+              balanceAuthorityAccountId: "acct-plaid",
+              transactionAuthorityAccountId: "acct-stripe",
+            },
+            activeMemberFinancialAccountIds: ["acct-manual", "acct-stripe", "acct-plaid"],
+          },
+        ]),
+      },
+    });
+
+    await service.buildWorkspace("owner-1");
+
+    const passedEvents = aggregationService.aggregate.mock.calls[0][0];
+    // Stripe (transaction authority) is retained regardless of date. Manual and Plaid are both
+    // non-canonical here -- despite Plaid being BALANCE authority, its transaction history is
+    // still cut off at the cutover date exactly like manual's, because transaction authority,
+    // not balance authority, decides this.
+    expect(passedEvents.map((e) => e.id).sort()).toEqual(["manual-before", "stripe-after"].sort());
   });
 });

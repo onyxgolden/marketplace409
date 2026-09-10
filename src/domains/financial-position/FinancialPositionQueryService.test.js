@@ -469,6 +469,110 @@ describe("FinancialPositionQueryService -- account-group balance authority", () 
     expect(position.assets.map((a) => a.id)).toEqual(["acct-plaid"]);
   });
 
+  function connectionRepositoryWithStatuses(statusByConnectionId) {
+    return {
+      getAll: vi.fn().mockResolvedValue(
+        Object.entries(statusByConnectionId).map(([id, status]) => ({ id, status })),
+      ),
+    };
+  }
+
+  test("a recently updated but disconnected Stripe account loses to the manual fallback, regardless of balance age", async () => {
+    const accounts = [
+      { id: "acct-stripe", name: "360 Checking", provider: "stripe_financial_connections", connectionId: "conn-stripe", type: "depository", subtype: "checking", active: true },
+      { id: "acct-manual", name: "Capital One Checking", provider: "manual", type: "depository", subtype: "checking", active: true },
+    ];
+    const balances = [
+      // Stripe's balance looks perfectly fresh -- synced moments before the connection was cut off.
+      { id: "b-stripe", financialAccountId: "acct-stripe", currentBalanceCents: 469062, availableBalanceCents: null, asOf: "2026-09-09T11:55:00.000Z" },
+      { id: "b-manual", financialAccountId: "acct-manual", currentBalanceCents: 394233, availableBalanceCents: null, asOf: "2026-08-25T00:00:00.000Z" },
+    ];
+    const service = new FinancialPositionQueryService({
+      financialAccountRepository: { findByOwnerId: vi.fn().mockResolvedValue(accounts) },
+      accountBalanceRepository: { findLatestByOwnerId: vi.fn().mockResolvedValue(balances) },
+      financialAccountGroupRepository: groupRepository(["acct-stripe", "acct-manual"]),
+      connectionRepository: connectionRepositoryWithStatuses({ "conn-stripe": "disconnected" }),
+      now: () => FIXED_NOW,
+    });
+
+    const position = await service.buildPosition("owner-1");
+
+    expect(position.assets.map((a) => a.id)).toEqual(["acct-manual"]);
+    expect(position.assets[0].degraded).toBe(true);
+    expect(position.assets[0].source_label).toBe("last known / manual");
+    expect(position.supersededBalances.map((b) => b.id)).toEqual(["acct-stripe"]);
+  });
+
+  test("a needs-attention Plaid account cannot win, even against a fresher balance than the manual fallback", async () => {
+    const accounts = [
+      { id: "acct-plaid", name: "Checking", provider: "plaid", connectionId: "conn-plaid", type: "depository", subtype: "checking", active: true },
+      { id: "acct-manual", name: "Capital One Checking", provider: "manual", type: "depository", subtype: "checking", active: true },
+    ];
+    const balances = [
+      { id: "b-plaid", financialAccountId: "acct-plaid", currentBalanceCents: 500000, availableBalanceCents: null, asOf: "2026-09-09T00:00:00.000Z" },
+      { id: "b-manual", financialAccountId: "acct-manual", currentBalanceCents: 394233, availableBalanceCents: null, asOf: "2026-08-25T00:00:00.000Z" },
+    ];
+    const service = new FinancialPositionQueryService({
+      financialAccountRepository: { findByOwnerId: vi.fn().mockResolvedValue(accounts) },
+      accountBalanceRepository: { findLatestByOwnerId: vi.fn().mockResolvedValue(balances) },
+      financialAccountGroupRepository: groupRepository(["acct-plaid", "acct-manual"]),
+      connectionRepository: connectionRepositoryWithStatuses({ "conn-plaid": "needs_attention" }),
+      now: () => FIXED_NOW,
+    });
+
+    const position = await service.buildPosition("owner-1");
+
+    expect(position.assets.map((a) => a.id)).toEqual(["acct-manual"]);
+    expect(position.supersededBalances.map((b) => b.id)).toEqual(["acct-plaid"]);
+  });
+
+  test("connected/syncing connections remain fully eligible -- health gating only ever disqualifies, never re-qualifies a stale balance", async () => {
+    const accounts = [
+      { id: "acct-stripe", name: "360 Checking", provider: "stripe_financial_connections", connectionId: "conn-stripe", type: "depository", subtype: "checking", active: true },
+      { id: "acct-manual", name: "Capital One Checking", provider: "manual", type: "depository", subtype: "checking", active: true },
+    ];
+    const balances = [
+      { id: "b-stripe", financialAccountId: "acct-stripe", currentBalanceCents: 469062, availableBalanceCents: null, asOf: "2026-09-09T02:20:26.000Z" },
+      { id: "b-manual", financialAccountId: "acct-manual", currentBalanceCents: 394233, availableBalanceCents: null, asOf: "2026-08-25T00:00:00.000Z" },
+    ];
+    const service = new FinancialPositionQueryService({
+      financialAccountRepository: { findByOwnerId: vi.fn().mockResolvedValue(accounts) },
+      accountBalanceRepository: { findLatestByOwnerId: vi.fn().mockResolvedValue(balances) },
+      financialAccountGroupRepository: groupRepository(["acct-stripe", "acct-manual"]),
+      connectionRepository: connectionRepositoryWithStatuses({ "conn-stripe": "syncing" }),
+      now: () => FIXED_NOW,
+    });
+
+    const position = await service.buildPosition("owner-1");
+
+    expect(position.assets.map((a) => a.id)).toEqual(["acct-stripe"]);
+  });
+
+  test("three members (manual + Stripe + Plaid): connection health disqualifies Plaid even though it would otherwise be freshest -- Stripe wins instead", async () => {
+    const accounts = [
+      { id: "acct-manual", name: "Capital One Checking", provider: "manual", type: "depository", subtype: "checking", active: true },
+      { id: "acct-stripe", name: "360 Checking", provider: "stripe_financial_connections", connectionId: "conn-stripe", type: "depository", subtype: "checking", active: true },
+      { id: "acct-plaid", name: "Checking", provider: "plaid", connectionId: "conn-plaid", type: "depository", subtype: "checking", active: true },
+    ];
+    const balances = [
+      { id: "b-manual", financialAccountId: "acct-manual", currentBalanceCents: 394233, availableBalanceCents: null, asOf: "2026-08-25T00:00:00.000Z" },
+      { id: "b-stripe", financialAccountId: "acct-stripe", currentBalanceCents: 469062, availableBalanceCents: null, asOf: "2026-09-08T00:00:00.000Z" },
+      { id: "b-plaid", financialAccountId: "acct-plaid", currentBalanceCents: 500000, availableBalanceCents: null, asOf: "2026-09-09T00:00:00.000Z" }, // freshest of all three
+    ];
+    const service = new FinancialPositionQueryService({
+      financialAccountRepository: { findByOwnerId: vi.fn().mockResolvedValue(accounts) },
+      accountBalanceRepository: { findLatestByOwnerId: vi.fn().mockResolvedValue(balances) },
+      financialAccountGroupRepository: groupRepository(["acct-manual", "acct-stripe", "acct-plaid"]),
+      connectionRepository: connectionRepositoryWithStatuses({ "conn-stripe": "connected", "conn-plaid": "error" }),
+      now: () => FIXED_NOW,
+    });
+
+    const position = await service.buildPosition("owner-1");
+
+    expect(position.assets.map((a) => a.id)).toEqual(["acct-stripe"]);
+    expect(position.supersededBalances.map((b) => b.id).sort()).toEqual(["acct-manual", "acct-plaid"]);
+  });
+
   test("multiple legitimate accounts at one institution never collapse into one group -- a checking+savings group and a separate credit card stay fully independent", async () => {
     const accounts = [
       { id: "acct-checking-stripe", name: "360 Checking", provider: "stripe_financial_connections", type: "depository", subtype: "checking", active: true },

@@ -160,6 +160,24 @@ export async function createFinancialApplicationSuite(deps = {}) {
     });
   }
 
+  // Backs FinancialPositionQueryService's connection-health gating on balance authority (a
+  // disconnected/needs_attention/error connection must never win balance authority just because
+  // its last-known balance snapshot looks recent -- see LIVE_CONNECTION_ELIGIBLE_STATUSES there).
+  // Reads the connections table under has_workspace_access RLS, DB-only, no Stripe/Plaid call.
+  // Same dynamic-import rationale as financialAccountGroupRepository above (consistency, even
+  // though SupabaseConnectionRepository.js itself has no eager top-level Supabase import). No
+  // real supabaseClient -> connectionRepository stays null -> FinancialPositionQueryService
+  // already treats that as "skip health gating," matching its pre-existing behavior exactly.
+  let connectionRepository = deps.connectionRepository || null;
+  if (!connectionRepository && deps.supabaseClient) {
+    const { SupabaseConnectionRepository } = await import(
+      "../../domains/connection/SupabaseConnectionRepository.js"
+    );
+    connectionRepository = new SupabaseConnectionRepository({
+      supabaseClient: deps.supabaseClient,
+    });
+  }
+
   const financialWorkspaceQueryService =
     deps.financialWorkspaceQueryService ||
     new FinancialWorkspaceQueryService({
@@ -218,6 +236,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
       financialAccountRepository,
       accountBalanceRepository,
       financialAccountGroupRepository,
+      connectionRepository,
       netWorthService:
         deps.positionNetWorthService || NetWorthService,
     });
@@ -382,6 +401,7 @@ export async function createFinancialApplicationSuite(deps = {}) {
     financialAccountRepository,
     accountBalanceRepository,
     financialAccountGroupRepository,
+    connectionRepository,
     financialIntelligenceApplication,
     financialDecisionApplication,
     financialDecisionOutcomeApplication,

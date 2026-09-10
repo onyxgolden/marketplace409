@@ -16,6 +16,12 @@ export type FinancialAccountGroup = Readonly<{
   ownerId: string;
   relationship: "same_real_account";
   balanceAuthorityAccountId: string | null;
+  // Independent from balanceAuthorityAccountId -- a group can have Plaid as balance authority and
+  // Stripe as transaction authority at the same time. Never defaulted from
+  // balanceAuthorityAccountId; stays null until an explicit
+  // set_financial_account_group_transaction_authority call, and required before
+  // transactionCutoverAt can ever be set. See the migration for the full rationale.
+  transactionAuthorityAccountId: string | null;
   transactionCoverageStatus: FinancialAccountGroupCoverageStatus;
   transactionCoverageVerifiedByUserId: string | null;
   transactionCoverageVerifiedAt: string | null;

@@ -15,6 +15,7 @@ const ACTIONS = new Set([
   "revoke_member",
   "revoke_group",
   "set_balance_authority",
+  "set_transaction_authority",
   "advance_coverage_status",
   "set_transaction_cutover",
 ]);
@@ -75,6 +76,12 @@ export async function POST(request) {
         break;
       case "set_balance_authority":
         data = await repository.setBalanceAuthority({
+          groupId: String(body.groupId || ""),
+          financialAccountId: String(body.financialAccountId || ""),
+        });
+        break;
+      case "set_transaction_authority":
+        data = await repository.setTransactionAuthority({
           groupId: String(body.groupId || ""),
           financialAccountId: String(body.financialAccountId || ""),
         });

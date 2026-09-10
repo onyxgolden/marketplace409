@@ -3,31 +3,37 @@ import {
 } from "../../domains/financial-workspace/index.js";
 
 // Half-open interval, no overlap, no gap, applied ONLY for a group whose
-// transaction_coverage_status is 'reconciled' and whose transaction_cutover_at has been
-// explicitly set (both require a human confirmation -- see
-// advance_financial_account_group_coverage_status/set_financial_account_group_transaction_
-// cutover). transaction_cutover_at is a plain SQL date, and financial_events.event_date is
-// stored the same way -- both write paths (Stripe's transactedAt truncation and the Simplifi CSV
-// parser) were confirmed to already be UTC-anchored, independent of server timezone, so this
-// string comparison needs no timezone conversion of its own.
+// transaction_coverage_status is 'reconciled', whose transaction_authority_account_id has been
+// explicitly identified, AND whose transaction_cutover_at has been explicitly set (all three
+// require a human confirmation -- see advance_financial_account_group_coverage_status/
+// set_financial_account_group_transaction_authority/set_financial_account_group_transaction_
+// cutover, in that order -- the cutover RPC itself refuses to run until transaction authority is
+// set). transaction_cutover_at is a plain SQL date, and financial_events.event_date is stored the
+// same way -- both write paths (Stripe's transactedAt truncation and the Simplifi CSV parser)
+// were confirmed to already be UTC-anchored, independent of server timezone, so this string
+// comparison needs no timezone conversion of its own.
 //
-// The canonical/live side of a group is treated as balanceAuthorityAccountId -- for the group
-// shapes this table actually supports today (one live connection reconciled against one static
-// manual/CSV representation), the account that's authoritative for the CURRENT balance is the
-// same one whose ongoing transaction history takes over at cutover. A future group with more
-// than one live member reconciling transactions independently of its balance authority would
-// need its own explicit field; not needed by anything this PR builds toward.
+// The canonical/live side of a group is transactionAuthorityAccountId -- a SEPARATE pointer from
+// balanceAuthorityAccountId, never assumed equal to it. A 3-member group can easily have Plaid as
+// balance authority (freshest live balance right now) while Stripe is transaction authority
+// (the member whose transaction history a human has actually verified complete) -- using
+// balanceAuthorityAccountId here would silently take over transaction history for whichever
+// account happens to be winning the balance race today, which is not something anyone confirmed.
 function buildCutoverRuleByAccountId(groupsWithMembers) {
   const cutoverByAccountId = new Map();
 
   for (const { group, activeMemberFinancialAccountIds } of groupsWithMembers) {
-    if (group.transactionCoverageStatus !== "reconciled" || !group.transactionCutoverAt) {
+    if (
+      group.transactionCoverageStatus !== "reconciled" ||
+      !group.transactionAuthorityAccountId ||
+      !group.transactionCutoverAt
+    ) {
       continue;
     }
 
     for (const financialAccountId of activeMemberFinancialAccountIds) {
       cutoverByAccountId.set(financialAccountId, {
-        isCanonical: financialAccountId === group.balanceAuthorityAccountId,
+        isCanonical: financialAccountId === group.transactionAuthorityAccountId,
         cutoverAt: group.transactionCutoverAt,
       });
     }

@@ -30,11 +30,24 @@ create table if not exists financial_account_groups (
     -- an ACTIVE member of this same group.
     balance_authority_account_id text references financial_accounts(id) on delete restrict,
 
-    -- Transaction authority is DELIBERATELY separate from balance authority -- balance can
-    -- switch to a live connection immediately; transaction history only switches once this
-    -- state machine reaches 'reconciled' via an explicit human confirmation. Never inferred from
-    -- webhook processing order or a non-null cursor -- see
-    -- advance_financial_account_group_coverage_status's forward-only transition guard.
+    -- Transaction authority is a SEPARATE pointer from balance authority -- balance can move to
+    -- a live connection immediately, but which member's transaction history is authoritative
+    -- going forward is a distinct decision, made only by an explicit human call to
+    -- set_financial_account_group_transaction_authority once provider coverage has actually been
+    -- verified (see transaction_coverage_status below). Never defaults to and never derived from
+    -- balance_authority_account_id -- a 3-member group can easily have Plaid as balance
+    -- authority and Stripe as transaction authority. Left null until that explicit call;
+    -- set_financial_account_group_transaction_cutover refuses to record a cutover date until
+    -- this is set (enforced there, not by a table constraint, since that RPC is this column's
+    -- only meaningful consumer). Enforced (by trigger, below) to always be an ACTIVE member of
+    -- this same group, exactly like balance_authority_account_id.
+    transaction_authority_account_id text references financial_accounts(id) on delete restrict,
+
+    -- Transaction COVERAGE is the state machine that decides WHETHER provider history has been
+    -- verified complete enough to trust at all; transaction_authority_account_id (above) is WHICH
+    -- member that trust applies to once coverage says so. Never inferred from webhook processing
+    -- order or a non-null cursor -- see advance_financial_account_group_coverage_status's
+    -- forward-only transition guard.
     transaction_coverage_status text not null default 'not_started'
         check (transaction_coverage_status in
             ('not_started', 'importing', 'pending_reconciliation', 'reconciled', 'stale_retry_detected')),
@@ -114,15 +127,13 @@ create trigger trg_enforce_financial_account_group_member_owner
 before insert or update on financial_account_group_members
 for each row execute function enforce_financial_account_group_member_owner();
 
--- balance_authority_account_id must always be an active member of THIS group -- never an
--- arbitrary account id, never a revoked membership.
+-- balance_authority_account_id and transaction_authority_account_id must EACH always be an
+-- active member of THIS group -- never an arbitrary account id, never a revoked membership.
+-- Checked independently: a group can (and often will) have different accounts for each.
 create or replace function enforce_financial_account_group_authority_is_active()
 returns trigger as $$
 begin
-  if new.balance_authority_account_id is null then
-    return new;
-  end if;
-  if not exists (
+  if new.balance_authority_account_id is not null and not exists (
     select 1 from financial_account_group_members
     where group_id = new.id
       and financial_account_id = new.balance_authority_account_id
@@ -130,6 +141,16 @@ begin
   ) then
     raise exception 'balance_authority_account_id must be an active member of this group.';
   end if;
+
+  if new.transaction_authority_account_id is not null and not exists (
+    select 1 from financial_account_group_members
+    where group_id = new.id
+      and financial_account_id = new.transaction_authority_account_id
+      and revoked_at is null
+  ) then
+    raise exception 'transaction_authority_account_id must be an active member of this group.';
+  end if;
+
   return new;
 end;
 $$ language plpgsql;
@@ -186,6 +207,51 @@ drop trigger if exists trg_enforce_financial_account_group_member_immutability o
 create trigger trg_enforce_financial_account_group_member_immutability
 before update on financial_account_group_members
 for each row execute function enforce_financial_account_group_member_immutability();
+
+-- Never leave balance_authority_account_id/transaction_authority_account_id pointing at a
+-- revoked member. revoke_financial_account_group_member (a standalone "unlink just this
+-- representation" action) is rejected outright while the target is either authority pointer for
+-- its own (still-active) group -- the caller must reassign authority first, via
+-- set_financial_account_group_balance_authority/set_financial_account_group_transaction_authority.
+-- This is deliberately NOT checked by enforce_financial_account_group_authority_is_active, which
+-- only fires on writes to financial_account_groups itself -- a member-only revoke never touches
+-- that table's row, so without this trigger the pointer would silently go stale.
+-- A whole-group revoke (revoke_financial_account_group) is exempt: it cascades to every member
+-- in the same transaction, and by the time that cascade's own member UPDATE runs, this same
+-- group's own revoked_at is already committed -- the check below sees that and steps aside, since
+-- "the whole group, authority included, is being dissolved together" is exactly the sanctioned
+-- path, not a dangling pointer.
+create or replace function enforce_financial_account_group_member_not_authority_on_revoke()
+returns trigger as $$
+declare
+  v_group financial_account_groups;
+begin
+  if old.revoked_at is not null or new.revoked_at is null then
+    return new;
+  end if;
+
+  select * into v_group from financial_account_groups where id = new.group_id;
+
+  if v_group.revoked_at is not null then
+    return new;
+  end if;
+
+  if v_group.balance_authority_account_id = new.financial_account_id then
+    raise exception 'Cannot revoke the active balance authority member; reassign balance authority first.';
+  end if;
+
+  if v_group.transaction_authority_account_id = new.financial_account_id then
+    raise exception 'Cannot revoke the active transaction authority member; reassign transaction authority first.';
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_block_authority_member_revoke on financial_account_group_members;
+create trigger trg_block_authority_member_revoke
+before update on financial_account_group_members
+for each row execute function enforce_financial_account_group_member_not_authority_on_revoke();
 
 -- Group revocation cascades to every currently-active member IN THE SAME TRANSACTION, via
 -- trigger -- this is the mechanism, not a second independently-writable fact: a client only
@@ -427,6 +493,42 @@ begin
 end;
 $$;
 
+create or replace function set_financial_account_group_transaction_authority(
+    p_group_id text,
+    p_financial_account_id text
+) returns financial_account_groups
+security definer
+set search_path = public, pg_temp
+language plpgsql as $$
+declare
+  v_actor_id text := auth.uid()::text;
+  v_owner text;
+  v_result financial_account_groups;
+begin
+  if v_actor_id is null then
+    raise exception 'Authentication required.';
+  end if;
+
+  select owner_id into v_owner from financial_account_groups where id = p_group_id and revoked_at is null;
+  if v_owner is null then
+    raise exception 'Group not found or revoked.';
+  end if;
+  if not has_workspace_access(v_owner) then
+    raise exception 'Not authorized for this workspace.';
+  end if;
+
+  -- enforce_financial_account_group_authority_is_active rejects this update outright if
+  -- p_financial_account_id is not an active member of this group -- no duplicate check needed
+  -- here.
+  update financial_account_groups
+  set transaction_authority_account_id = p_financial_account_id
+  where id = p_group_id
+  returning * into v_result;
+
+  return v_result;
+end;
+$$;
+
 -- Forward-only state machine, matching the documented design exactly -- never a shortcut
 -- straight to 'reconciled', never backward except the explicit 'stale_retry_detected' recovery
 -- paths. Setting 'reconciled' is the ONLY transition that stamps
@@ -486,9 +588,10 @@ begin
 end;
 $$;
 
--- transaction_cutover_at may only ever be set while transaction_coverage_status = 'reconciled' --
--- re-checked here, inside the same transaction as the write, rather than relying on a separate
--- table trigger, since this RPC is this column's only write path.
+-- transaction_cutover_at may only ever be set while transaction_coverage_status = 'reconciled'
+-- AND transaction_authority_account_id has been explicitly identified -- both re-checked here,
+-- inside the same transaction as the write, rather than relying on a separate table trigger,
+-- since this RPC is this column's only write path.
 create or replace function set_financial_account_group_transaction_cutover(
     p_group_id text,
     p_cutover_date date
@@ -500,13 +603,15 @@ declare
   v_actor_id text := auth.uid()::text;
   v_owner text;
   v_status text;
+  v_transaction_authority_account_id text;
   v_result financial_account_groups;
 begin
   if v_actor_id is null then
     raise exception 'Authentication required.';
   end if;
 
-  select owner_id, transaction_coverage_status into v_owner, v_status
+  select owner_id, transaction_coverage_status, transaction_authority_account_id
+    into v_owner, v_status, v_transaction_authority_account_id
     from financial_account_groups where id = p_group_id and revoked_at is null;
   if v_owner is null then
     raise exception 'Group not found or revoked.';
@@ -516,6 +621,9 @@ begin
   end if;
   if v_status <> 'reconciled' then
     raise exception 'transaction_cutover_at may only be set once transaction_coverage_status is reconciled.';
+  end if;
+  if v_transaction_authority_account_id is null then
+    raise exception 'transaction_cutover_at may only be set once a transaction authority member has been identified via set_financial_account_group_transaction_authority.';
   end if;
 
   update financial_account_groups
@@ -532,6 +640,7 @@ revoke all on function add_financial_account_group_member(text, text) from publi
 revoke all on function revoke_financial_account_group_member(text) from public;
 revoke all on function revoke_financial_account_group(text) from public;
 revoke all on function set_financial_account_group_balance_authority(text, text) from public;
+revoke all on function set_financial_account_group_transaction_authority(text, text) from public;
 revoke all on function advance_financial_account_group_coverage_status(text, text, text) from public;
 revoke all on function set_financial_account_group_transaction_cutover(text, date) from public;
 
@@ -540,5 +649,6 @@ grant execute on function add_financial_account_group_member(text, text) to auth
 grant execute on function revoke_financial_account_group_member(text) to authenticated;
 grant execute on function revoke_financial_account_group(text) to authenticated;
 grant execute on function set_financial_account_group_balance_authority(text, text) to authenticated;
+grant execute on function set_financial_account_group_transaction_authority(text, text) to authenticated;
 grant execute on function advance_financial_account_group_coverage_status(text, text, text) to authenticated;
 grant execute on function set_financial_account_group_transaction_cutover(text, date) to authenticated;

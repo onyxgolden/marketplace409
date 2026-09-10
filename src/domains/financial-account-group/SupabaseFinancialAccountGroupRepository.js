@@ -6,6 +6,7 @@ function mapGroupRow(row) {
     ownerId: row.owner_id,
     relationship: row.relationship,
     balanceAuthorityAccountId: row.balance_authority_account_id,
+    transactionAuthorityAccountId: row.transaction_authority_account_id,
     transactionCoverageStatus: row.transaction_coverage_status,
     transactionCoverageVerifiedByUserId: row.transaction_coverage_verified_by_user_id,
     transactionCoverageVerifiedAt: row.transaction_coverage_verified_at,
@@ -117,6 +118,15 @@ export class SupabaseFinancialAccountGroupRepository {
 
   async setBalanceAuthority({ groupId, financialAccountId }) {
     const { data, error } = await this.supabase.rpc("set_financial_account_group_balance_authority", {
+      p_group_id: groupId,
+      p_financial_account_id: financialAccountId,
+    });
+    if (error) throw error;
+    return mapGroupRow(Array.isArray(data) ? data[0] : data);
+  }
+
+  async setTransactionAuthority({ groupId, financialAccountId }) {
+    const { data, error } = await this.supabase.rpc("set_financial_account_group_transaction_authority", {
       p_group_id: groupId,
       p_financial_account_id: financialAccountId,
     });
