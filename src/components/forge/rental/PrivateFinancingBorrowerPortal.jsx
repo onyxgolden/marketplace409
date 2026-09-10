@@ -68,34 +68,41 @@ export default function PrivateFinancingBorrowerPortal() {
             <p>No invitation matches this signed-in email.</p>
           )}
         </div>
-      ) : state.data.accounts.map(({ account, role, summary, events, regularScheduledPaymentCents, projection, progressAvailable = true, onlinePaymentsEnabled }) => (
+      ) : state.data.accounts.map(({ account, role, summary, events, regularScheduledPaymentCents, projection, progressAvailable = true, summaryAvailable = true, onlinePaymentsEnabled }) => (
         <section key={account.id} className="mt-6 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
           <div className="flex justify-between gap-4">
             <h2 className="text-xl font-black">Financing account</h2>
             <span className="font-bold capitalize">{account.status}</span>
           </div>
           <p className="mt-1 text-sm capitalize">{role.replaceAll("_", " ")}</p>
-          <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Fact label="Original principal" value={dollars(account.origination_principal_cents)} />
-            <Fact label="Principal remaining" value={dollars(summary.principalRemainingCents)} />
-            <Fact label="Payments recorded" value={summary.paymentCount} />
-            <Fact label="Total payments" value={dollars(summary.totalPaidCents)} />
-          </dl>
+          {summaryAvailable && summary ? (
+            <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Fact label="Original principal" value={dollars(account.origination_principal_cents)} />
+              <Fact label="Principal remaining" value={dollars(summary.principalRemainingCents)} />
+              <Fact label="Payments recorded" value={summary.paymentCount} />
+              <Fact label="Total payments" value={dollars(summary.totalPaidCents)} />
+            </dl>
+          ) : (
+            <p role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+              Your current balance cannot be safely displayed right now. This has been logged for review --
+              please contact support before making a payment based on any balance shown elsewhere.
+            </p>
+          )}
 
-          {progressAvailable ? (
+          {summaryAvailable && progressAvailable ? (
             <PrivateFinancingBorrowerProgress
               account={account}
               summary={summary}
               regularScheduledPaymentCents={regularScheduledPaymentCents}
               projection={projection}
             />
-          ) : (
+          ) : summaryAvailable ? (
             <p className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               Your current balance and payment history are available. The optional payoff chart is temporarily unavailable.
             </p>
-          )}
+          ) : null}
 
-          {onlinePaymentsEnabled ? (
+          {!summaryAvailable ? null : onlinePaymentsEnabled ? (
             paying === account.id ? (
               <PrivateFinancingBorrowerPayment accountId={account.id} regularScheduledPaymentCents={regularScheduledPaymentCents} onCancel={() => setPaying(null)} />
             ) : (
