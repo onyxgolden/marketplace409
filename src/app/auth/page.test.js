@@ -135,6 +135,16 @@ describe("AuthPage invited-borrower mode", () => {
     expect(container.textContent).toContain("You've been invited to view a private financing account as");
   });
 
+  // A locked email field can be narrower than the invited address at small mobile widths (e.g. 360px);
+  // `truncate` swaps a silent hard clip for a visible ellipsis, and `title` gives an accessible full-text
+  // fallback since a disabled input can't be scrolled or focused to reveal the rest. The banner above
+  // still carries the full address, so this only affects the redundant, secondary display of it.
+  it("truncates the locked email field with an ellipsis and exposes the full address via title, for narrow viewports", () => {
+    const email = container.querySelector('input[placeholder="Email"]');
+    expect(email.className).toContain("truncate");
+    expect(email.title).toBe("borrower@example.com");
+  });
+
   it("threads next and the invited email through emailRedirectTo on sign-up, so a confirmation-link click returns to the portal", async () => {
     const password = container.querySelector('input[placeholder="Password"]');
     act(() => enter(password, "correct horse battery staple"));

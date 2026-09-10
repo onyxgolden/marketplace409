@@ -138,11 +138,12 @@ export default function AuthPage() {
           )}
 
           <input
-            className="w-full border rounded-xl px-4 py-4 mb-4 disabled:bg-gray-100 disabled:text-gray-600"
+            className="w-full truncate border rounded-xl px-4 py-4 mb-4 disabled:bg-gray-100 disabled:text-gray-600"
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={Boolean(invitedEmail)}
+            title={invitedEmail || undefined}
           />
 
           <div className="relative mb-2">
