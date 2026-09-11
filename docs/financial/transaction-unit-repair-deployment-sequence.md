@@ -4,44 +4,74 @@
 been applied to production. See PR (branch `fix/financial-event-import-minor-unit-conversion`) for
 the code/migration/test changes this sequence governs.
 
-## Why this needs a specific order, not just "merge and apply"
-
-A migration applied while old (buggy) application code is still processing Stripe Financial
-Connections webhooks/imports could repair the current backlog of corrupted rows, and then let
-another incorrectly-scaled row land moments later from an in-flight or newly-triggered sync — the
-exact defect, reintroduced, undetected, because the repair already "ran." The corrected application
-code and the one-time data repair must be sequenced, not simultaneous.
+**Revised after review:** the repair migration's safety no longer depends on a "no webhook arrives
+during a narrow manual window" assumption. Every event the corrected import code creates carries a
+structural, immutable `metadata.amountUnitVersion` marker (see
+`src/domains/financial-event/minorUnitsToDecimalDollars.ts`'s
+`CANONICAL_TRANSACTION_AMOUNT_UNIT_VERSION`), stamped by the shared import service itself — never
+chosen or interpreted by provider-specific code. The migration's targeting predicate excludes any row
+already carrying the current version, so it is safe to apply even if a webhook delivers a new,
+already-correct event immediately before the migration runs. The deploy-before-repair order below is
+still the sensible default (no reason to apply a repair before the fix that prevents new corruption
+is live), but the operation no longer *relies* on that ordering being followed within any particular
+time window for its correctness.
 
 ## The sequence
 
 1. **Merge and deploy the corrected application code** (`financial-event-import.service.ts`'s use of
-   `minorUnitsToDecimalDollars`, plus the new/updated tests). Wait for the deployment to become fully
-   ready — do not proceed to step 2 while a deploy is still in progress.
-2. **Confirm the deployed code is actually the corrected version.** Do not assume the deploy
-   succeeded just because it reported success — verify (e.g. check the deployed commit SHA matches
-   the merge commit, or exercise a safe read-only check confirming the new code path is live) before
-   trusting that any *new* transaction-sourced `financial_events` row written from this point forward
-   will be correct.
-3. **Pause or account for any in-flight Stripe Financial Connections import.** If this repository's
-   import/refresh infrastructure supports safely pausing or waiting out an in-flight sync, do so
-   before proceeding. If it does not support a safe pause, at minimum confirm no import was actively
-   running at the moment of deployment (step 1) — a transaction imported by the *old* code moments
-   before deploy, or by the *new* code moments after, must not be ambiguous about which one wrote it.
+   `minorUnitsToDecimalDollars` and the `amountUnitVersion` stamp). Wait for the deployment to become
+   fully ready — do not proceed to step 2 while a deploy is still in progress.
+2. **Confirm the deployed code is actually the corrected version.** Do not assume the deploy succeeded
+   just because it reported success — verify (e.g. check the deployed commit SHA matches the merge
+   commit).
+3. **Capture pre-repair counts**, grouped three ways, using the read-only `supabase db query --linked`
+   mechanism used throughout this program's diagnosis:
+   ```sql
+   -- By provider and amount-unit version (NULL version = pre-versioning legacy rows).
+   select metadata->>'provider' as provider, metadata->>'amountUnitVersion' as amount_unit_version, count(*)
+   from financial_events
+   where source_system = 'transaction'
+   group by provider, amount_unit_version
+   order by provider, amount_unit_version;
+
+   -- By repair status.
+   select (metadata ? 'unitRepair') as already_repaired, count(*)
+   from financial_events
+   where source_system = 'transaction' and metadata->>'provider' in ('stripe_financial_connections', 'plaid')
+   group by already_repaired;
+
+   -- The reusable function the migration itself uses -- the authoritative "how many rows need
+   -- repair right now" count.
+   select financial_events_unit_repair_qualifying_count();
+   ```
+   (The last query requires the migration's functions to already exist, which only happens once the
+   migration is applied — run it as part of step 5's post-repair verification, or apply the migration
+   file's function-definition statements alone, ahead of the full repair, if a true pre-repair count
+   from this exact function is wanted. The first two queries work at any time, migration applied or
+   not.)
 4. **Apply the repair migration** (`20260911000000_repair_transaction_pipeline_unit_scaling.sql`)
-   *separately* from the application deploy — not bundled into the same release step. By this point,
-   every existing `source_system = 'transaction'` row with a recognized provider and no
-   `unitRepair` marker is known to be a genuinely pre-fix, corrupted row (see step 1-3); the migration
-   corrects all of them in one idempotent pass and fails closed (raises, changes nothing) if the
-   qualifying row count is unexpectedly large.
-5. **Requery for two things**, using the same read-only `supabase db query --linked` mechanism used
-   throughout this program's diagnosis:
-   - **Unrepaired pre-fix rows**: `source_system = 'transaction' AND metadata->>'provider' IN
-     ('stripe_financial_connections', 'plaid') AND metadata->'unitRepair' IS NULL` should return
-     zero rows dated before the deploy confirmed in step 2.
-   - **Incorrectly-scaled post-fix rows**: any `source_system = 'transaction'` row created *after*
-     the deploy confirmed in step 2 should already be correctly scaled (no `unitRepair` marker
-     needed, because the new code never mis-scales it in the first place) — spot-check a few real
-     post-deploy rows against their known real-world amount if any exist by the time this step runs.
+   *separately* from the application deploy — not bundled into the same release step. Its own
+   fail-closed guard (`assert_financial_events_unit_repair_within_ceiling`) aborts with no changes made
+   if the qualifying count unexpectedly exceeds 5000.
+5. **Capture post-repair counts and prove all four of these**:
+   - **Zero recognized-provider old-version rows remain**:
+     `select financial_events_unit_repair_qualifying_count();` returns `0`.
+   - **Every post-fix event carries the current unit version**: re-run the by-provider/by-version
+     grouping query from step 3 — every `stripe_financial_connections`/`plaid` row's
+     `amount_unit_version` is now `1` (either because it always was, or because the repair just set
+     it), and no row of a recognized provider has a `NULL` or lower version.
+   - **Newly-correct rows were not divided a second time**: for any row known to have been created
+     *after* the deploy confirmed in step 2 (i.e. genuinely new, never corrupted), confirm its
+     `amount` is unchanged from what it was immediately after import and that it carries no
+     `unitRepair` marker — the migration's predicate excludes these by construction (proven in
+     `20260911000000_repair_transaction_pipeline_unit_scaling.migration.test.js`'s adversarial
+     fixture), but this step confirms it against real production rows, not just the fixture.
+   - **Every repaired row changed exactly once**: `select count(*) from financial_events where
+     source_system = 'transaction' and metadata->'unitRepair' is not null` should equal the exact
+     qualifying count captured in step 3's repair-status query (no more, no fewer) — and re-running
+     `financial_events_unit_repair_qualifying_count()` a second time (step 5's first bullet) already
+     proves idempotency: a nonzero result here would mean some rows were repaired more than once,
+     which the function's own predicate structurally prevents.
 6. **Clear or allow the 5-minute Financial dashboard session cache to expire naturally**
    (`src/app/forge/financial/dashboardCache.js`, `DASHBOARD_CACHE_TTL_MS`). The cache was never the
    root cause of this regression, but a cached pre-repair view could still be shown to a user who

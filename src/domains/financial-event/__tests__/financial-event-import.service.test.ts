@@ -7,6 +7,7 @@ import { PlaidTransactionMapper } from "../../plaid-adapter/plaid-transaction.ma
 import { StripeFinancialConnectionsTransactionMapper } from "../../stripe-financial-connections-adapter/stripe-financial-connections-transaction.mapper";
 import type { PlaidTransaction } from "../../plaid-adapter/plaid-transaction.types";
 import type { StripeFinancialConnectionsTransaction } from "../../stripe-financial-connections-adapter/stripe-financial-connections-transaction.types";
+import { CANONICAL_TRANSACTION_AMOUNT_UNIT_VERSION } from "../minorUnitsToDecimalDollars";
 
 function buildTransaction(overrides: Partial<Transaction> = {}): Transaction {
   return {
@@ -122,6 +123,9 @@ describe("FinancialEventImportService", () => {
       pending: false,
       merchantName: null,
       raw: null,
+      // Structural amount-unit version, stamped by the shared import service itself -- not chosen
+      // or interpreted by provider-specific code.
+      amountUnitVersion: 1,
     });
   });
 
@@ -326,6 +330,40 @@ describe("FinancialEventImportService", () => {
       expect(event.amount).toBe(125);
       expect(event.amount).not.toBe(1.25);
       expect(event.amount).not.toBe(12_500);
+    });
+
+    it("stamps the identical structural amount-unit version on both a Stripe-sourced and a Plaid-sourced event -- provider-neutral, chosen by the shared import service only", async () => {
+      const stripeMapper = new StripeFinancialConnectionsTransactionMapper();
+      const stripeTransaction: StripeFinancialConnectionsTransaction = {
+        transactionId: "fctxn_version_check",
+        accountId: "fca_test",
+        amount: -500,
+        currency: "usd",
+        description: "Version Check Co",
+        status: "posted",
+        transactedAt: "2026-07-01T00:00:00.000Z",
+        statusTransitionedAt: "2026-07-01T00:00:05.000Z",
+        transactionRefreshId: "refresh_1",
+      };
+      const stripeEvent = await importOneTransaction(
+        stripeMapper.map(stripeTransaction, "connection-1", "stripe_financial_connections", "financial-account-1", "provider-account-1"),
+      );
+
+      const plaidMapper = new PlaidTransactionMapper();
+      const plaidTransaction: PlaidTransaction = {
+        transactionId: "plaid_version_check",
+        accountId: "plaid_account_1",
+        date: "2026-07-01",
+        name: "Version Check Co",
+        amount: 5.0,
+      };
+      const plaidEvent = await importOneTransaction(
+        plaidMapper.map(plaidTransaction, "connection-2", "plaid", "financial-account-2", "provider-account-2"),
+      );
+
+      expect(stripeEvent.metadata.amountUnitVersion).toBe(CANONICAL_TRANSACTION_AMOUNT_UNIT_VERSION);
+      expect(plaidEvent.metadata.amountUnitVersion).toBe(CANONICAL_TRANSACTION_AMOUNT_UNIT_VERSION);
+      expect(stripeEvent.metadata.amountUnitVersion).toBe(plaidEvent.metadata.amountUnitVersion);
     });
   });
 });

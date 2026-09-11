@@ -35,8 +35,32 @@ describe("minorUnitsToDecimalDollars", () => {
     expect(minorUnitsToDecimalDollars(300_000_000)).toBe(3_000_000);
   });
 
-  it("rejects a non-integer input rather than silently truncating or rounding", () => {
-    expect(() => minorUnitsToDecimalDollars(10.5)).toThrow(/integer/);
+  describe("rejects every class of invalid input explicitly, rather than silently truncating, rounding, or coercing", () => {
+    it("rejects a decimal input", () => {
+      expect(() => minorUnitsToDecimalDollars(10.5)).toThrow(/integer/);
+    });
+
+    it("rejects NaN", () => {
+      expect(() => minorUnitsToDecimalDollars(NaN)).toThrow(/NaN/);
+    });
+
+    it("rejects positive Infinity", () => {
+      expect(() => minorUnitsToDecimalDollars(Infinity)).toThrow(/Infinity/);
+    });
+
+    it("rejects negative Infinity", () => {
+      expect(() => minorUnitsToDecimalDollars(-Infinity)).toThrow(/Infinity/);
+    });
+
+    it("rejects an unsafe integer (beyond Number.MAX_SAFE_INTEGER), even though Number.isInteger would accept it", () => {
+      const unsafeInteger = Number.MAX_SAFE_INTEGER + 2; // still Number.isInteger === true, but not safe
+      expect(Number.isInteger(unsafeInteger)).toBe(true); // confirms this genuinely tests the isSafeInteger gate, not the isInteger gate
+      expect(() => minorUnitsToDecimalDollars(unsafeInteger)).toThrow(/safe integer/);
+    });
+
+    it("accepts Number.MAX_SAFE_INTEGER itself (the boundary is inclusive)", () => {
+      expect(() => minorUnitsToDecimalDollars(Number.MAX_SAFE_INTEGER)).not.toThrow();
+    });
   });
 
   it("round-trips a representative sample of cent values exactly, with no floating-point drift", () => {

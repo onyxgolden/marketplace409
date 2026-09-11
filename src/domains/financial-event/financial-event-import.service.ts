@@ -2,7 +2,7 @@ import { categoryNormalizer } from "../knowledge";
 import { PropertyResolverService } from "../property/property-resolver.service";
 import type { Transaction } from "../transaction/transaction.types";
 import { financialEventFactory } from "./financial-event.factory";
-import { minorUnitsToDecimalDollars } from "./minorUnitsToDecimalDollars";
+import { CANONICAL_TRANSACTION_AMOUNT_UNIT_VERSION, minorUnitsToDecimalDollars } from "./minorUnitsToDecimalDollars";
 import type {
   FinancialEvent,
   ResolvedFinancialEventInput,
@@ -126,6 +126,13 @@ export class FinancialEventImportService {
         pending: transaction.pending,
         merchantName: transaction.merchantName,
         raw: transaction.raw,
+        // Structural, immutable record of which Transaction-to-FinancialEvent amount contract wrote
+        // this event -- stamped here, at the shared boundary, by the import service itself, never
+        // chosen or interpreted by provider-specific mapper code. This is what lets the repair
+        // migration (and any future repair) distinguish "written by the current, correct code" from
+        // "written before this version existed" using the data itself, safely even if a webhook
+        // delivers a new, already-correct event immediately before a repair migration runs.
+        amountUnitVersion: CANONICAL_TRANSACTION_AMOUNT_UNIT_VERSION,
       },
     };
 
