@@ -3,7 +3,9 @@ import { redirect } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { createClient } from "@/lib/supabase/server";
 import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
+import { loadProgrammerAuthorization } from "@/lib/supabase/loadProgrammerAuthorization";
 import WorkspaceHubGrid from "@/components/WorkspaceHubGrid";
+import WorkspaceAccountPanel from "@/components/WorkspaceAccountPanel";
 import { WORKSPACES } from "@/lib/workspaces";
 
 export const dynamic = "force-dynamic";
@@ -43,9 +45,9 @@ async function loadWorkspaceHub() {
     dev: "Programmer tools",
   };
 
-  if (!user) return { stats, isOwnerOrCoOwner: false, favoriteWorkspaceId: null };
+  if (!user) return { user: null, stats, isOwnerOrCoOwner: false, isDeveloperAuthorized: false, favoriteWorkspaceId: null };
 
-  const [{ count: leaseCount }, { count: accountCount }, isOwnerOrCoOwner, preference] = await Promise.all([
+  const [{ count: leaseCount }, { count: accountCount }, isOwnerOrCoOwner, preference, programmerAuthorization] = await Promise.all([
     supabaseServer
       .from("rental_leases")
       .select("*", { count: "exact", head: true })
@@ -60,23 +62,44 @@ async function loadWorkspaceHub() {
       .select("favorite_workspace_id")
       .eq("user_id", user.id)
       .maybeSingle(),
+    // Same authorization check /forge/developer itself enforces (loadProgrammerAuthorization ->
+    // notFound() there) -- reused here only to decide whether the Dev tile is worth showing at all.
+    // That page-level check (and every API route under /api/forge/developer/) is the real
+    // enforcement; hiding the tile from an unauthorized visitor is a UX courtesy on top of it, never
+    // a substitute for it.
+    loadProgrammerAuthorization(),
   ]);
 
   stats.rentals = `${leaseCount ?? 0} lease${leaseCount === 1 ? "" : "s"}`;
   stats.forge = `${accountCount ?? 0} linked account${accountCount === 1 ? "" : "s"}`;
 
-  return { stats, isOwnerOrCoOwner, favoriteWorkspaceId: preference.data?.favorite_workspace_id ?? null };
+  return {
+    user,
+    stats,
+    isOwnerOrCoOwner,
+    isDeveloperAuthorized: Boolean(programmerAuthorization.ok && programmerAuthorization.authorized),
+    favoriteWorkspaceId: preference.data?.favorite_workspace_id ?? null,
+  };
 }
 
 export default async function HubPage() {
-  const { stats, isOwnerOrCoOwner, favoriteWorkspaceId } = await loadWorkspaceHub();
+  const { user, stats, isOwnerOrCoOwner, isDeveloperAuthorized, favoriteWorkspaceId } = await loadWorkspaceHub();
+
+  // Dev is filtered out of the array itself (not just skipped when rendering) so both the tile grid
+  // AND the favorite-redirect lookup below see the same, authorization-correct set -- a stale
+  // favorite of "dev" saved while someone was authorized must not blindly redirect them (or, worse,
+  // someone else signed into the same saved preference) straight into /forge/developer once they no
+  // longer are. Mirrors how the Health shortcut already guards its own redirect below.
+  const visibleWorkspaces = isDeveloperAuthorized
+    ? WORKSPACES
+    : WORKSPACES.filter((workspace) => workspace.id !== "dev");
 
   // A favorite sends a fresh visit here straight to it, instead of the picker -- the "Choose
   // workspace" link on every app's sidebar is how someone gets back to this page on purpose.
   if (favoriteWorkspaceId) {
     const favorite = favoriteWorkspaceId === HEALTH_SHORTCUT.id
       ? (isOwnerOrCoOwner ? HEALTH_SHORTCUT : null)
-      : WORKSPACES.find((workspace) => workspace.id === favoriteWorkspaceId);
+      : visibleWorkspaces.find((workspace) => workspace.id === favoriteWorkspaceId);
     if (favorite) redirect(favorite.href);
   }
 
@@ -94,8 +117,10 @@ export default async function HubPage() {
         </p>
       </div>
 
+      <WorkspaceAccountPanel initialUser={user} />
+
       <WorkspaceHubGrid
-        workspaces={WORKSPACES}
+        workspaces={visibleWorkspaces}
         stats={stats}
         healthShortcut={isOwnerOrCoOwner ? HEALTH_SHORTCUT : null}
         initialFavoriteWorkspaceId={favoriteWorkspaceId}

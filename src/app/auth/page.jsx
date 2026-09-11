@@ -3,6 +3,7 @@
 import Header from "@/components/Header";
 import { createClient } from "@/lib/supabase/client";
 import { signOutSafely } from "@/lib/auth/signOutSafely.js";
+import { useCredentialAuth } from "@/lib/auth/useCredentialAuth.js";
 import { useEffect, useState } from "react";
 
 const supabase = createClient();
@@ -29,20 +30,16 @@ function buildAuthRedirect(invitedEmail) {
 }
 
 export default function AuthPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [message, setMessage] = useState("");
   const [invitedEmail, setInvitedEmail] = useState(null);
 
-  // A single mutually-exclusive slot, not four independent booleans: while any one auth action is
-  // pending, every OTHER auth action must be disabled too, not just its own button. Four independent
-  // `signingIn`/`signingUp`/`signingOut`/`resettingPassword` flags let a user start Sign In, then --
-  // while it's still in flight -- also click Create Account, racing two Supabase auth calls against
-  // the same client/session. One `authAction` value (null when idle) makes that structurally
-  // impossible: a second action can only ever be started once this one has cleared.
-  const [authAction, setAuthAction] = useState(null);
-  const authActionPending = authAction !== null;
+  const {
+    email, setEmail,
+    password, setPassword,
+    message, setMessage,
+    authAction, setAuthAction, authActionPending,
+    signIn, signUp, resetPassword: resetPasswordViaHook,
+  } = useCredentialAuth({ supabase, emailRedirectTo: () => buildAuthRedirect(invitedEmail) });
 
   useEffect(() => {
     const invited = currentParams().get("email")?.trim() || null;
@@ -51,6 +48,10 @@ export default function AuthPage() {
       setInvitedEmail(invited);
       setEmail(invited);
     }
+    // setEmail is useCredentialAuth's own useState setter -- referentially stable for the life of
+    // this component, same as a plain local useState setter would be; the exhaustive-deps rule just
+    // can't see that through a custom hook the way it can a direct useState call in this component.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Single source of truth for leaving this page once a session exists -- covers an explicit sign-in,
@@ -63,51 +64,6 @@ export default function AuthPage() {
     });
     return () => subscription.subscription.unsubscribe();
   }, []);
-
-  // Deliberately the SAME response regardless of whether this email is new, already confirmed, or
-  // already registered-but-unconfirmed -- showing a different message per case (as an earlier
-  // version of this fix did, checking `data.user.identities.length`) is itself an account-enumeration
-  // oracle: an attacker could tell whether an email is registered just by reading which message came
-  // back. Supabase's own signUp() already avoids leaking this (no error, either way); the UI must not
-  // reintroduce the leak on top of it. This one message safely covers all three cases by telling the
-  // legitimate owner of the address what to do next without confirming which case they're in.
-  const SIGNUP_SUBMITTED_MESSAGE =
-    "Thanks! If this is a new email, check your inbox to confirm your account. If you already have " +
-    "an account with this email, you can sign in above instead, or use \"Forgot password?\" if you " +
-    "don't remember your password.";
-
-  async function signUp() {
-    if (authActionPending) return;
-    setMessage("");
-    setAuthAction("signUp");
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { emailRedirectTo: buildAuthRedirect(invitedEmail) },
-    });
-    setAuthAction(null);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage(SIGNUP_SUBMITTED_MESSAGE);
-  }
-
-  async function signIn() {
-    if (authActionPending) return;
-    setMessage("");
-    setAuthAction("signIn");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setAuthAction(null);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-    // onAuthStateChange handles the redirect to `next` once the session lands.
-  }
 
   async function signOut() {
     if (authActionPending) return;
@@ -124,26 +80,8 @@ export default function AuthPage() {
     // component is being torn down.
   }
 
-  async function resetPassword() {
-    if (authActionPending) return;
-    if (!email.trim()) {
-      setMessage("Enter your email address first, then select Forgot password?");
-      return;
-    }
-
-    setMessage("");
-    setAuthAction("resetPassword");
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: `${window.location.origin}/auth/reset-password`,
-    });
-    setAuthAction(null);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage("Check your email for a secure password-reset link.");
+  function resetPassword() {
+    return resetPasswordViaHook({ redirectTo: `${window.location.origin}/auth/reset-password` });
   }
 
   return (
