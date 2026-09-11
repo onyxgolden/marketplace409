@@ -3,6 +3,11 @@ import { toTransactionImportResult, type Transaction } from "../../transaction";
 import { InMemoryFinancialEventRepository } from "../InMemoryFinancialEventRepository";
 import { FinancialWorkspaceQueryService } from "../../../application/financial/FinancialWorkspaceQueryService.js";
 import { FinancialEventImportService } from "../financial-event-import.service";
+import { PlaidTransactionMapper } from "../../plaid-adapter/plaid-transaction.mapper";
+import { StripeFinancialConnectionsTransactionMapper } from "../../stripe-financial-connections-adapter/stripe-financial-connections-transaction.mapper";
+import type { PlaidTransaction } from "../../plaid-adapter/plaid-transaction.types";
+import type { StripeFinancialConnectionsTransaction } from "../../stripe-financial-connections-adapter/stripe-financial-connections-transaction.types";
+import { CANONICAL_TRANSACTION_AMOUNT_UNIT_VERSION } from "../minorUnitsToDecimalDollars";
 
 function buildTransaction(overrides: Partial<Transaction> = {}): Transaction {
   return {
@@ -100,7 +105,8 @@ describe("FinancialEventImportService", () => {
     expect(event.owner_id).toBe("owner-1");
     expect(event.event_date).toBe("2026-07-01");
     expect(event.description).toBe("Repairs (170 John)");
-    expect(event.amount).toBe(12500);
+    // 12500 minor units (amountCents) -> $125.00 decimal dollars -- the corrected conversion.
+    expect(event.amount).toBe(125);
     expect(event.source_system).toBe("transaction");
     expect(event.source_record_id).toBe("transaction-1");
     expect(event.property_id).toBe("unknown-property");
@@ -117,6 +123,9 @@ describe("FinancialEventImportService", () => {
       pending: false,
       merchantName: null,
       raw: null,
+      // Structural amount-unit version, stamped by the shared import service itself -- not chosen
+      // or interpreted by provider-specific code.
+      amountUnitVersion: 1,
     });
   });
 
@@ -164,15 +173,15 @@ describe("FinancialEventImportService", () => {
     expect(repository.count()).toBe(1);
 
     expect(workspace.portfolio).toMatchObject({
-      expenses: 12500,
-      cashFlow: -12500,
+      expenses: 125,
+      cashFlow: -125,
       transactionCount: 1,
     });
 
     expect(workspace.transactions).toHaveLength(1);
     expect(workspace.transactions[0]).toMatchObject({
       description: "Repairs (170 John)",
-      amount: 12500,
+      amount: 125,
       transactionKind: "expense",
       category: "property_repairs",
       sourceSystem: "transaction",
@@ -184,5 +193,177 @@ describe("FinancialEventImportService", () => {
 
     expect(unrelatedOwnerWorkspace.portfolio.transactionCount).toBe(0);
     expect(unrelatedOwnerWorkspace.transactions).toEqual([]);
+  });
+
+  // Provider-contract tests: these run the REAL provider mappers (not a hand-built Transaction
+  // fixture) through the REAL import service, proving the whole Transaction-to-FinancialEvent
+  // pipeline -- not just the conversion helper in isolation -- produces the correct canonical
+  // dollar amount for both providers, with exactly one conversion applied, matching the production
+  // regression this corrects (marketplace409 issue: 209 real Stripe Financial Connections rows
+  // were persisted ~100x overstated because this exact boundary skipped the conversion).
+  describe("provider-contract: Transaction.amountCents -> FinancialEvent.amount is dollars, applied exactly once", () => {
+    async function importOneTransaction(transaction: Transaction) {
+      const repository = new InMemoryFinancialEventRepository();
+      const service = new FinancialEventImportService({ repository, ownerId: "owner-1" });
+      const result = await service.import(buildTransactionImport([transaction]));
+      return result.financialEvents[0];
+    }
+
+    it("Stripe: a real 'Rocket Rides' outflow (-1000 raw Stripe minor units) becomes exactly $10.00, expense direction", async () => {
+      const mapper = new StripeFinancialConnectionsTransactionMapper();
+      const stripeTransaction: StripeFinancialConnectionsTransaction = {
+        transactionId: "fctxn_rocket_rides",
+        accountId: "fca_test",
+        amount: -1000, // Stripe's own raw amount -- verified live, negative = outflow.
+        currency: "usd",
+        description: "Rocket Rides",
+        status: "posted",
+        transactedAt: "2026-07-01T00:00:00.000Z",
+        statusTransitionedAt: "2026-07-01T00:00:05.000Z",
+        transactionRefreshId: "refresh_1",
+      };
+      const mappedTransaction = mapper.map(
+        stripeTransaction, "connection-1", "stripe_financial_connections", "financial-account-1", "provider-account-1",
+      );
+
+      // The mapper's own contract: canonical amountCents is positive for an outflow/expense.
+      expect(mappedTransaction.amountCents).toBe(1000);
+
+      const event = await importOneTransaction(mappedTransaction);
+      expect(event.amount).toBe(10);
+      expect(event.transaction_kind).toBe("expense");
+    });
+
+    it("Plaid: an equivalent $10.00 outflow produces the SAME canonical FinancialEvent.amount as the Stripe case above", async () => {
+      const mapper = new PlaidTransactionMapper();
+      const plaidTransaction: PlaidTransaction = {
+        transactionId: "plaid_txn_1",
+        accountId: "plaid_account_1",
+        date: "2026-07-01",
+        name: "Rocket Rides",
+        amount: 10.0, // Plaid's own documented convention: positive = outflow, already in dollars.
+      };
+      const mappedTransaction = mapper.map(
+        plaidTransaction, "connection-1", "plaid", "financial-account-1", "provider-account-1",
+      );
+
+      expect(mappedTransaction.amountCents).toBe(1000);
+
+      const event = await importOneTransaction(mappedTransaction);
+      expect(event.amount).toBe(10);
+      expect(event.transaction_kind).toBe("expense");
+    });
+
+    it("Stripe: a real inflow (positive raw Stripe amount) becomes a negative canonical dollar amount (income direction)", async () => {
+      const mapper = new StripeFinancialConnectionsTransactionMapper();
+      const stripeTransaction: StripeFinancialConnectionsTransaction = {
+        transactionId: "fctxn_typographic",
+        accountId: "fca_test",
+        amount: 2500, // Positive raw Stripe amount = inflow, per the mapper's verified convention.
+        currency: "usd",
+        description: "Typographic",
+        status: "posted",
+        transactedAt: "2026-07-01T00:00:00.000Z",
+        statusTransitionedAt: "2026-07-01T00:00:05.000Z",
+        transactionRefreshId: "refresh_1",
+      };
+      const mappedTransaction = mapper.map(
+        stripeTransaction, "connection-1", "stripe_financial_connections", "financial-account-1", "provider-account-1",
+      );
+
+      expect(mappedTransaction.amountCents).toBe(-2500);
+
+      const event = await importOneTransaction(mappedTransaction);
+      // transaction_kind is derived from category/description keyword matching (categoryNormalizer),
+      // not from amount's sign -- so "direction" here is verified via the signed amount itself, the
+      // actual value this fix corrects.
+      expect(event.amount).toBe(-25);
+      expect(event.amount).toBeLessThan(0);
+    });
+
+    it("preserves exact cent precision through the full pipeline for a non-round amount ($10.01)", async () => {
+      const mapper = new StripeFinancialConnectionsTransactionMapper();
+      const stripeTransaction: StripeFinancialConnectionsTransaction = {
+        transactionId: "fctxn_precise",
+        accountId: "fca_test",
+        amount: -1001,
+        currency: "usd",
+        description: "Precise Amount Co",
+        status: "posted",
+        transactedAt: "2026-07-01T00:00:00.000Z",
+        statusTransitionedAt: "2026-07-01T00:00:05.000Z",
+        transactionRefreshId: "refresh_1",
+      };
+      const mappedTransaction = mapper.map(
+        stripeTransaction, "connection-1", "stripe_financial_connections", "financial-account-1", "provider-account-1",
+      );
+      const event = await importOneTransaction(mappedTransaction);
+      expect(event.amount).toBe(10.01);
+    });
+
+    it("preserves exact precision for a single cent", async () => {
+      const event = await importOneTransaction(
+        buildTransaction({ amountCents: 1 }),
+      );
+      expect(event.amount).toBe(0.01);
+    });
+
+    it("converts zero correctly", async () => {
+      const event = await importOneTransaction(
+        buildTransaction({ amountCents: 0 }),
+      );
+      expect(event.amount).toBe(0);
+    });
+
+    it("preserves exact precision for a large real-world amount matching the production regression's largest corrupted row ($3,000,000 stored, true value $30,000.00)", async () => {
+      const event = await importOneTransaction(
+        buildTransaction({ amountCents: 3_000_000 }), // 3,000,000 minor units = $30,000.00
+      );
+      expect(event.amount).toBe(30_000);
+    });
+
+    it("applies the conversion exactly once -- does not double-convert (the value is not additionally divided or multiplied by 100 anywhere else in the pipeline)", async () => {
+      // If any other layer (factory, repository) also divided or multiplied by 100, this would be
+      // 1.25 or 12500 instead of 125 -- this test exists specifically to catch that class of
+      // regression, distinct from the "converts correctly" tests above.
+      const event = await importOneTransaction(buildTransaction({ amountCents: 12_500 }));
+      expect(event.amount).toBe(125);
+      expect(event.amount).not.toBe(1.25);
+      expect(event.amount).not.toBe(12_500);
+    });
+
+    it("stamps the identical structural amount-unit version on both a Stripe-sourced and a Plaid-sourced event -- provider-neutral, chosen by the shared import service only", async () => {
+      const stripeMapper = new StripeFinancialConnectionsTransactionMapper();
+      const stripeTransaction: StripeFinancialConnectionsTransaction = {
+        transactionId: "fctxn_version_check",
+        accountId: "fca_test",
+        amount: -500,
+        currency: "usd",
+        description: "Version Check Co",
+        status: "posted",
+        transactedAt: "2026-07-01T00:00:00.000Z",
+        statusTransitionedAt: "2026-07-01T00:00:05.000Z",
+        transactionRefreshId: "refresh_1",
+      };
+      const stripeEvent = await importOneTransaction(
+        stripeMapper.map(stripeTransaction, "connection-1", "stripe_financial_connections", "financial-account-1", "provider-account-1"),
+      );
+
+      const plaidMapper = new PlaidTransactionMapper();
+      const plaidTransaction: PlaidTransaction = {
+        transactionId: "plaid_version_check",
+        accountId: "plaid_account_1",
+        date: "2026-07-01",
+        name: "Version Check Co",
+        amount: 5.0,
+      };
+      const plaidEvent = await importOneTransaction(
+        plaidMapper.map(plaidTransaction, "connection-2", "plaid", "financial-account-2", "provider-account-2"),
+      );
+
+      expect(stripeEvent.metadata.amountUnitVersion).toBe(CANONICAL_TRANSACTION_AMOUNT_UNIT_VERSION);
+      expect(plaidEvent.metadata.amountUnitVersion).toBe(CANONICAL_TRANSACTION_AMOUNT_UNIT_VERSION);
+      expect(stripeEvent.metadata.amountUnitVersion).toBe(plaidEvent.metadata.amountUnitVersion);
+    });
   });
 });

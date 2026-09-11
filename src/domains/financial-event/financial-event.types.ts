@@ -11,6 +11,13 @@ export type ResolvedFinancialEventInput = {
 
   description: string;
 
+  // CANONICAL UNIT CONTRACT: signed DECIMAL DOLLARS, never minor units/cents -- the DIFFERENT unit
+  // than Transaction.amountCents (transaction.types.ts) on the other side of the
+  // Transaction-to-FinancialEvent boundary. This matches the financial_events.amount column
+  // (numeric/decimal) and the convention every other writer to this table already follows
+  // (rental Stripe payments, private-financing Stripe payments, manual entries all write exact
+  // decimal dollars). See financial-event/minorUnitsToDecimalDollars.ts for the single conversion
+  // point a Transaction's amountCents must pass through before becoming this field.
   amount: number;
 
   resolvedProperty: Property;
@@ -35,6 +42,7 @@ export type FinancialEvent = Entity & {
 
   description: string;
 
+  // Signed decimal dollars -- same contract as ResolvedFinancialEventInput.amount above.
   amount: number;
 
   transaction_kind: ForgeTransactionKind;
