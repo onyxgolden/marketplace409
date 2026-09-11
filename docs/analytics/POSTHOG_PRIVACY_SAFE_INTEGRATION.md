@@ -20,19 +20,21 @@ authorization.
 1. Analytics requires all of: an explicit build-time enable flag, an explicit
    kill-switch release, an approved PostHog ingestion host, a syntactically
    valid public browser key, and stored user consent.
-2. Autocapture, automatic page views, page-leave capture, exception capture,
-   surveys, and person profiles are disabled.
-3. Session recording is hard-disabled in code. Defense-in-depth recording
-   settings mask every input and all rendered text, but a future recording
-   proposal still requires a reviewed code change.
-4. A `before_send` boundary rejects every event except the five named events
-   below and removes URLs, paths, query strings, titles, DOM content, error
-   messages, stacks, and all unapproved properties.
-5. Browser persistence is memory-only. The separate consent decision contains
+2. No PostHog SDK or DOM recorder is present. Autocapture, automatic page
+   views, page-leave capture, exception capture, surveys, feature flags, person
+   profiles, and session recording are structurally unavailable.
+3. Session recording is hard-disabled in code. No text, input, DOM, image, or
+   page content is read. A future recording proposal requires a separately
+   reviewed code and consent change.
+4. The capture boundary rejects every event except the five named events below
+   and never accepts URLs, paths, query strings, titles, DOM content, error
+   messages, stacks, amounts, or arbitrary properties.
+5. Analytics keeps only a random in-memory session pseudonym. The separate consent decision contains
    only the word `granted` and no identity or product data.
 6. Raw internal user and workspace IDs must be transformed into deterministic,
    scope-separated SHA-256 pseudonyms before attachment to an approved event.
-   PostHog `identify` and group-identification events are not used. Names, email
+   PostHog `identify` and group-identification events are not used. Every API
+   payload sets `$process_person_profile=false`. Names, email
    addresses, phone numbers, or business names are prohibited.
 
 ## Minimal taxonomy
@@ -88,6 +90,9 @@ Before production activation:
    and that emitted payloads contain only the approved taxonomy.
 5. Complete user deletion/export mapping for analytics pseudonyms.
 6. Obtain explicit owner approval for environment configuration and deployment.
+
+The transport uses PostHog's documented public single-event capture endpoint:
+https://posthog.com/docs/api/capture#single-event
 
 ## Kill procedure
 

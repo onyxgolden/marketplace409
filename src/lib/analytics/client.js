@@ -1,42 +1,47 @@
-import { buildApprovedAnalyticsEvent, sanitizePostHogEvent } from "./policy";
+import { buildApprovedAnalyticsEvent } from "./policy";
 import { pseudonymizeAnalyticsId } from "./identity";
 
-let posthogClient = null;
+let analyticsClient = null;
 let subjectContext = Object.freeze({});
 
-export async function initializeAnalytics(config) {
-  if (!config?.enabled || posthogClient) return posthogClient;
+export async function initializeAnalytics(config, fetchImpl = globalThis.fetch, cryptoImpl = globalThis.crypto) {
+  if (!config?.enabled || analyticsClient || typeof fetchImpl !== "function" || !cryptoImpl?.randomUUID) {
+    return analyticsClient;
+  }
 
-  const { default: posthog } = await import("posthog-js");
-  posthog.init(config.apiKey, {
-    api_host: config.apiHost,
-    autocapture: false,
-    capture_pageview: false,
-    capture_pageleave: false,
-    capture_exceptions: false,
-    disable_session_recording: !config.sessionRecordingEnabled,
-    session_recording: {
-      maskAllInputs: true,
-      maskTextSelector: "*",
-    },
-    disable_surveys: true,
-    person_profiles: "never",
-    persistence: "memory",
-    before_send: sanitizePostHogEvent,
+  analyticsClient = Object.freeze({
+    apiKey: config.apiKey,
+    endpoint: `${config.apiHost}/i/v0/e/`,
+    fetchImpl,
+    sessionDistinctId: `anonymous_${cryptoImpl.randomUUID().replaceAll("-", "")}`,
   });
-  posthogClient = posthog;
-  return posthogClient;
+  return analyticsClient;
 }
 
 export function captureApprovedEvent(eventName, candidateProperties = {}) {
   const approved = buildApprovedAnalyticsEvent(eventName, { ...candidateProperties, ...subjectContext });
-  if (!posthogClient || !approved) return false;
-  posthogClient.capture(approved.eventName, approved.properties);
+  if (!analyticsClient || !approved) return false;
+
+  const distinctId = approved.properties.user_scope || analyticsClient.sessionDistinctId;
+  const payload = {
+    api_key: analyticsClient.apiKey,
+    event: approved.eventName,
+    distinct_id: distinctId,
+    properties: { ...approved.properties, $process_person_profile: false },
+  };
+  analyticsClient.fetchImpl(analyticsClient.endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+    credentials: "omit",
+    referrerPolicy: "no-referrer",
+    keepalive: true,
+  }).catch(() => undefined);
   return true;
 }
 
 export async function identifyAnalyticsSubject({ userId, workspaceId } = {}) {
-  if (!posthogClient) return false;
+  if (!analyticsClient) return false;
   const [userScope, workspaceScope] = await Promise.all([
     pseudonymizeAnalyticsId("user", userId),
     pseudonymizeAnalyticsId("workspace", workspaceId),
@@ -54,6 +59,6 @@ export function resetAnalyticsSubject() {
 }
 
 export function __resetAnalyticsForTests() {
-  posthogClient = null;
+  analyticsClient = null;
   subjectContext = Object.freeze({});
 }
