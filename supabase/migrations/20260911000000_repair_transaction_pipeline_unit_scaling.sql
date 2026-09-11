@@ -36,15 +36,27 @@
 -- (no unitRepair marker, and correctly so -- it never needed one). A row already carrying unitRepair
 -- is never re-matched, so re-running this migration changes zero additional rows and zero amounts.
 --
--- FAIL-CLOSED, REFACTORED INTO A TESTABLE FUNCTION (per review): the row-count safety check is now
--- financial_events_unit_repair_qualifying_count() (parameterless, reusable for
--- pre-repair/post-repair verification per the deployment doc) and
+-- FAIL-CLOSED, REFACTORED INTO A TESTABLE FUNCTION (per review): the row-count safety check is
+-- financial_events_unit_repair_qualifying_count() (parameterless) and
 -- assert_financial_events_unit_repair_within_ceiling(p_ceiling) (parameterized, so a test can
 -- exercise "exceeds ceiling -> raises" cheaply with a tiny ceiling and a handful of fixture rows,
 -- without needing to seed thousands of rows to exercise the real production ceiling). The migration
--- itself calls the assert function with the real production ceiling (5000) -- a generous multiple of
--- the confirmed 209-row scope; a count wildly outside that neighborhood means the predicate matched
--- more than intended and must stop the migration, not proceed.
+-- calls the assert function with the real production ceiling (5000) -- a generous multiple of the
+-- confirmed 209-row scope; a count wildly outside that neighborhood means the predicate matched more
+-- than intended and must stop the migration, not proceed.
+--
+-- SCOPED TO THIS MIGRATION'S EXECUTION ONLY (revised after further review): both functions are
+-- created, used, and DROPPED within this single migration -- they are not left behind as a permanent
+-- database API surface. Nothing outside this one repair needs them; a persistent, publicly-creatable
+-- RPC surface for "count/assert financial_events repair scope" would be unnecessary attack surface
+-- and unnecessary permanent schema for a one-time correction. `CREATE OR REPLACE FUNCTION` succeeds
+-- whether or not a same-named function already exists, so a re-run of this migration recreates them
+-- fresh regardless of whether a prior run's DROP already ran -- the create-use-drop cycle is itself
+-- idempotent, not just the data repair it performs. Because DDL is transactional in Postgres, if this
+-- migration is ever run inside an explicit transaction that is rolled back (as this migration's own
+-- test suite does, deliberately, to validate it against a shared local database without persisting
+-- anything), the CREATE and DROP statements roll back along with everything else -- there is no
+-- window where a rollback could leave the functions behind.
 
 create or replace function financial_events_unit_repair_qualifying_count()
 returns integer
@@ -108,3 +120,10 @@ where source_system = 'transaction'
     or (metadata->>'amountUnitVersion')::integer < 1
   )
   and metadata->'unitRepair' is null;
+
+-- Scoped-to-this-migration cleanup: drop both helper functions now that the repair above has run.
+-- No permanent RPC surface is left behind -- anyone re-verifying scope after this migration uses the
+-- equivalent inline SELECT (see docs/financial/transaction-unit-repair-deployment-sequence.md),
+-- never a call to a function that no longer exists.
+drop function if exists assert_financial_events_unit_repair_within_ceiling(integer);
+drop function if exists financial_events_unit_repair_qualifying_count();

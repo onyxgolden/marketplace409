@@ -40,22 +40,35 @@ time window for its correctness.
    where source_system = 'transaction' and metadata->>'provider' in ('stripe_financial_connections', 'plaid')
    group by already_repaired;
 
-   -- The reusable function the migration itself uses -- the authoritative "how many rows need
-   -- repair right now" count.
-   select financial_events_unit_repair_qualifying_count();
+   -- The "how many rows need repair right now" count, as an inline read-only query. This is the exact
+   -- predicate the migration's own helper functions use internally -- those functions are created,
+   -- used, and DROPPED again within the migration itself (no permanent RPC surface is left behind for
+   -- this one-time repair), so this inline form is how the same count is captured before, during, or
+   -- after the migration runs, at any time, with no dependency on the functions' existence.
+   select count(*)
+   from financial_events
+   where source_system = 'transaction'
+     and metadata->>'provider' in ('stripe_financial_connections', 'plaid')
+     and (
+       metadata->>'amountUnitVersion' is null
+       or (metadata->>'amountUnitVersion')::integer < 1
+     )
+     and metadata->'unitRepair' is null;
    ```
-   (The last query requires the migration's functions to already exist, which only happens once the
-   migration is applied — run it as part of step 5's post-repair verification, or apply the migration
-   file's function-definition statements alone, ahead of the full repair, if a true pre-repair count
-   from this exact function is wanted. The first two queries work at any time, migration applied or
-   not.)
+   (All three queries are read-only and work at any time — before, during, or after the migration
+   applies — since none of them depend on the migration's helper functions, which exist only
+   transiently while the migration itself is executing and are gone by the time any operator query
+   runs.)
 4. **Apply the repair migration** (`20260911000000_repair_transaction_pipeline_unit_scaling.sql`)
    *separately* from the application deploy — not bundled into the same release step. Its own
    fail-closed guard (`assert_financial_events_unit_repair_within_ceiling`) aborts with no changes made
    if the qualifying count unexpectedly exceeds 5000.
 5. **Capture post-repair counts and prove all four of these**:
-   - **Zero recognized-provider old-version rows remain**:
-     `select financial_events_unit_repair_qualifying_count();` returns `0`.
+   - **Zero recognized-provider old-version rows remain**: re-run the exact inline qualifying-count
+     query from step 3 — it returns `0`. (The migration's helper functions no longer exist at this
+     point — they were dropped at the end of the migration itself — so this inline form is the only way
+     to capture this count after the migration completes; it is byte-for-byte the same predicate the
+     now-gone function used internally.)
    - **Every post-fix event carries the current unit version**: re-run the by-provider/by-version
      grouping query from step 3 — every `stripe_financial_connections`/`plaid` row's
      `amount_unit_version` is now `1` (either because it always was, or because the repair just set
@@ -69,9 +82,9 @@ time window for its correctness.
    - **Every repaired row changed exactly once**: `select count(*) from financial_events where
      source_system = 'transaction' and metadata->'unitRepair' is not null` should equal the exact
      qualifying count captured in step 3's repair-status query (no more, no fewer) — and re-running
-     `financial_events_unit_repair_qualifying_count()` a second time (step 5's first bullet) already
-     proves idempotency: a nonzero result here would mean some rows were repaired more than once,
-     which the function's own predicate structurally prevents.
+     the inline qualifying-count query a second time (step 5's first bullet) already proves
+     idempotency: a nonzero result here would mean some rows were repaired more than once, which the
+     migration's predicate structurally prevents.
 6. **Clear or allow the 5-minute Financial dashboard session cache to expire naturally**
    (`src/app/forge/financial/dashboardCache.js`, `DASHBOARD_CACHE_TTL_MS`). The cache was never the
    root cause of this regression, but a cached pre-repair view could still be shown to a user who

@@ -10,6 +10,12 @@
 // (financial_events_unit_repair_qualifying_count, assert_financial_events_unit_repair_within_ceiling)
 // are created and used inside the same BEGIN...ROLLBACK block as everything else below, and are
 // rolled back along with the data at the end of every test, same as any other statement.
+//
+// SCOPED FUNCTIONS, NOT A PERMANENT API (per review): the real migration itself creates, uses, then
+// DROPS both functions -- they are not left behind as a permanent database RPC surface. The "both
+// functions absent after migration" test below proves this directly by querying pg_proc after
+// running the complete, unmodified MIGRATION_SQL (not just the function-definitions prefix used by
+// the ceiling tests).
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -197,7 +203,7 @@ describe.runIf(await isLocalStackReachable())("financial_events transaction-pipe
     expect(() => psql(sql)).not.toThrow();
   });
 
-  it("is idempotent: running the exact same migration SQL a second time, in the same transaction, changes zero additional rows and zero amounts", async () => {
+  it("is idempotent (including the create-use-drop function lifecycle): running the exact same, complete migration SQL a second time -- which recreates then re-drops both helper functions -- changes zero additional rows and zero amounts", async () => {
     const ownerId = "owner_migration_test_5";
     const sql = `
       begin;
@@ -216,6 +222,42 @@ describe.runIf(await isLocalStackReachable())("financial_events transaction-pipe
 
         if v_mismatch_count > 0 then
           raise exception 'idempotency violated: % row(s) changed on the second run', v_mismatch_count;
+        end if;
+      end $$;
+      rollback;
+    `;
+    expect(() => psql(sql)).not.toThrow();
+  });
+
+  it("leaves NO permanent database API surface: both helper functions are absent after the complete migration finishes, and neither is executable by PUBLIC, anon, or authenticated (because neither exists)", async () => {
+    const ownerId = "owner_migration_test_6";
+    const sql = `
+      begin;
+      ${seedFixturesSql(ownerId)}
+      ${MIGRATION_SQL}
+      do $$
+      declare
+        v_remaining_count integer;
+        v_grant_count integer;
+      begin
+        select count(*) into v_remaining_count
+        from pg_proc
+        where proname in ('financial_events_unit_repair_qualifying_count', 'assert_financial_events_unit_repair_within_ceiling')
+          and pronamespace = 'public'::regnamespace;
+
+        if v_remaining_count > 0 then
+          raise exception 'expected both helper functions to be dropped after the migration completes, found % still present', v_remaining_count;
+        end if;
+
+        -- Belt-and-suspenders: information_schema.routine_privileges is empty for these names too --
+        -- the strongest possible proof that PUBLIC/anon/authenticated cannot execute something that
+        -- does not exist.
+        select count(*) into v_grant_count
+        from information_schema.routine_privileges
+        where routine_name in ('financial_events_unit_repair_qualifying_count', 'assert_financial_events_unit_repair_within_ceiling');
+
+        if v_grant_count > 0 then
+          raise exception 'expected zero routine_privileges rows for either helper function name, found %', v_grant_count;
         end if;
       end $$;
       rollback;
@@ -296,7 +338,7 @@ describe.runIf(await isLocalStackReachable())("financial_events transaction-pipe
     });
   });
 
-  it("financial_events_unit_repair_qualifying_count() is a reusable, read-only function suitable for pre-repair/post-repair verification", async () => {
+  it("financial_events_unit_repair_qualifying_count(), while it exists during migration execution, correctly counts qualifying rows -- proving the logic the equivalent inline SQL in the deployment doc must match, even though the function itself is migration-scoped and not left behind", async () => {
     const ownerId = "owner_migration_test_count_fn";
     const sql = `
       begin;
