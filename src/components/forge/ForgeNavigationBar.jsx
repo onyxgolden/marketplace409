@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { signOutSafely } from "@/lib/auth/signOutSafely.js";
 
 const ITEMS = [
   { href: "/", label: "← 409 Marketplace" },
@@ -20,19 +21,19 @@ export default function ForgeNavigationBar() {
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
 
-  // Same signOut()-then-redirect-home convention already used by src/app/auth/page.jsx and
-  // src/components/workspace-shell.jsx -- this bar previously had no sign-out affordance at all
-  // anywhere in the pages it's rendered on (RealEstateWorkspaceNavigation and one direct usage),
-  // unlike the marketing-site Header or workspace-shell's own (desktop-only) account rail.
+  // Shared signOutSafely() helper -- same cache-clear-then-redirect ordering and failure handling as
+  // src/app/auth/page.jsx, not a second reimplementation. This bar previously had no sign-out
+  // affordance at all anywhere in the pages it's rendered on (RealEstateWorkspaceNavigation and one
+  // direct usage), unlike the marketing-site Header or workspace-shell's own (desktop-only) account
+  // rail.
   async function handleSignOut() {
     setSigningOut(true);
-    const { error } = await createClient().auth.signOut();
-    if (error) {
+    const result = await signOutSafely({ supabase: createClient(), redirectTo: "/" });
+    if (!result.success) {
       setSigningOut(false);
-      alert(error.message);
-      return;
+      alert(result.error.message);
     }
-    window.location.href = "/";
+    // On success, signOutSafely() has already navigated away.
   }
 
   return (

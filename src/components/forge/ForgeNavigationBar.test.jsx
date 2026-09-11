@@ -3,9 +3,9 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { signOut, back } = vi.hoisted(() => ({
-  signOut: vi.fn(),
+const { back, signOutSafely } = vi.hoisted(() => ({
   back: vi.fn(),
+  signOutSafely: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -13,8 +13,12 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ back }),
 }));
 vi.mock("@/lib/supabase/client", () => ({
-  createClient: () => ({ auth: { signOut } }),
+  createClient: () => ({ auth: { signOut: vi.fn() } }),
 }));
+// Mocked here so this file can test "did the bar call the shared helper and handle its result"
+// in isolation -- the helper's own cache-clearing/redirect/failure behavior is tested once,
+// directly, in src/lib/auth/signOutSafely.test.js.
+vi.mock("@/lib/auth/signOutSafely.js", () => ({ signOutSafely }));
 
 import ForgeNavigationBar from "./ForgeNavigationBar";
 
@@ -28,7 +32,7 @@ describe("ForgeNavigationBar sign-out control", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    signOut.mockReset().mockResolvedValue({ error: null });
+    signOutSafely.mockReset().mockResolvedValue({ success: true, error: null });
     act(() => root.render(React.createElement(ForgeNavigationBar)));
   });
 
@@ -41,37 +45,32 @@ describe("ForgeNavigationBar sign-out control", () => {
     return [...container.querySelectorAll("button")].find((button) => button.textContent.includes("Sign Out"));
   }
 
-  it("renders a Sign Out control that calls supabase auth.signOut()", async () => {
-    const originalLocation = window.location;
-    delete window.location;
-    window.location = { ...originalLocation, href: "" };
-
+  it("renders a Sign Out control that calls the shared signOutSafely() helper", async () => {
     const signOutButton = findSignOutButton();
     expect(signOutButton).not.toBeUndefined();
 
     await act(async () => signOutButton.click());
 
-    expect(signOut).toHaveBeenCalledOnce();
-    expect(window.location.href).toBe("/");
-    window.location = originalLocation;
+    expect(signOutSafely).toHaveBeenCalledOnce();
+    expect(signOutSafely).toHaveBeenCalledWith(expect.objectContaining({ redirectTo: "/" }));
   });
 
   it("disables the Sign Out button for the duration of its own in-flight request", async () => {
     let resolveSignOut;
-    signOut.mockReturnValue(new Promise((resolve) => { resolveSignOut = resolve; }));
+    signOutSafely.mockReturnValue(new Promise((resolve) => { resolveSignOut = resolve; }));
     const signOutButton = findSignOutButton();
 
     act(() => { signOutButton.click(); });
     expect(signOutButton.disabled).toBe(true);
 
     await act(async () => {
-      resolveSignOut({ error: null });
+      resolveSignOut({ success: true, error: null });
     });
   });
 
-  it("re-enables the Sign Out button and surfaces the error if signOut fails, instead of leaving it stuck disabled", async () => {
+  it("re-enables the Sign Out button and surfaces the error if the helper reports failure, instead of leaving it stuck disabled or claiming success", async () => {
     let resolveSignOut;
-    signOut.mockReturnValue(new Promise((resolve) => { resolveSignOut = resolve; }));
+    signOutSafely.mockReturnValue(new Promise((resolve) => { resolveSignOut = resolve; }));
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     const signOutButton = findSignOutButton();
 
@@ -79,7 +78,7 @@ describe("ForgeNavigationBar sign-out control", () => {
     expect(signOutButton.disabled).toBe(true);
 
     await act(async () => {
-      resolveSignOut({ error: { message: "network error" } });
+      resolveSignOut({ success: false, error: { message: "network error" } });
     });
 
     expect(signOutButton.disabled).toBe(false);
