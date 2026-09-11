@@ -34,6 +34,9 @@ export default function AuthPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState("");
   const [resettingPassword, setResettingPassword] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
+  const [signingUp, setSigningUp] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [invitedEmail, setInvitedEmail] = useState(null);
 
   useEffect(() => {
@@ -58,14 +61,27 @@ export default function AuthPage() {
 
   async function signUp() {
     setMessage("");
-    const { error } = await supabase.auth.signUp({
+    setSigningUp(true);
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { emailRedirectTo: buildAuthRedirect(invitedEmail) },
     });
+    setSigningUp(false);
 
     if (error) {
       setMessage(error.message);
+      return;
+    }
+
+    // Supabase's anti-enumeration design: signUp() against an email that already has a CONFIRMED
+    // account returns no error and a user object -- but that user's `identities` array is empty,
+    // since no new identity was actually created and no email was sent. Checking this (rather than
+    // adding a separate "does this email exist?" lookup, which would reintroduce the exact
+    // enumeration oracle Supabase's own no-error behavior is designed to avoid) is the correct,
+    // safe way to tell a genuine signup apart from a silent no-op against an existing account.
+    if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      setMessage("An account with this email already exists. Sign in instead, or use \"Forgot password?\" if you don't remember your password.");
       return;
     }
 
@@ -74,7 +90,9 @@ export default function AuthPage() {
 
   async function signIn() {
     setMessage("");
+    setSigningIn(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setSigningIn(false);
 
     if (error) {
       setMessage(error.message);
@@ -84,7 +102,9 @@ export default function AuthPage() {
   }
 
   async function signOut() {
+    setSigningOut(true);
     const { error } = await supabase.auth.signOut();
+    setSigningOut(false);
 
     if (error) {
       alert(error.message);
@@ -190,23 +210,26 @@ export default function AuthPage() {
 
           <button
             onClick={signIn}
-            className="w-full bg-blue-900 text-white py-4 rounded-2xl text-xl font-bold mb-4"
+            disabled={signingIn}
+            className="w-full bg-blue-900 text-white py-4 rounded-2xl text-xl font-bold mb-4 disabled:opacity-60"
           >
-            Sign In
+            {signingIn ? "Signing in…" : "Sign In"}
           </button>
 
           <button
             onClick={signUp}
-            className="w-full bg-red-600 text-white py-4 rounded-2xl text-xl font-bold"
+            disabled={signingUp}
+            className="w-full bg-red-600 text-white py-4 rounded-2xl text-xl font-bold disabled:opacity-60"
           >
-            Create Account
+            {signingUp ? "Creating account…" : "Create Account"}
           </button>
 
           <button
             onClick={signOut}
-            className="w-full bg-gray-800 text-white py-4 rounded-2xl text-xl font-bold mt-4"
+            disabled={signingOut}
+            className="w-full bg-gray-800 text-white py-4 rounded-2xl text-xl font-bold mt-4 disabled:opacity-60"
           >
-            Sign Out
+            {signingOut ? "Signing out…" : "Sign Out"}
           </button>
         </div>
       </section>

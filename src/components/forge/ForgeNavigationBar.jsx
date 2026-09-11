@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 const ITEMS = [
   { href: "/", label: "← 409 Marketplace" },
@@ -16,6 +18,22 @@ const ITEMS = [
 export default function ForgeNavigationBar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [signingOut, setSigningOut] = useState(false);
+
+  // Same signOut()-then-redirect-home convention already used by src/app/auth/page.jsx and
+  // src/components/workspace-shell.jsx -- this bar previously had no sign-out affordance at all
+  // anywhere in the pages it's rendered on (RealEstateWorkspaceNavigation and one direct usage),
+  // unlike the marketing-site Header or workspace-shell's own (desktop-only) account rail.
+  async function handleSignOut() {
+    setSigningOut(true);
+    const { error } = await createClient().auth.signOut();
+    if (error) {
+      setSigningOut(false);
+      alert(error.message);
+      return;
+    }
+    window.location.href = "/";
+  }
 
   return (
     <nav className="mb-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -47,6 +65,15 @@ export default function ForgeNavigationBar() {
           className="inline-flex items-center justify-center rounded-2xl border border-amber-300 bg-amber-50 px-5 py-3 text-sm font-black uppercase tracking-wide text-amber-900 transition hover:bg-amber-100"
         >
           ◀ Back
+        </button>
+
+        <button
+          type="button"
+          onClick={handleSignOut}
+          disabled={signingOut}
+          className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-black uppercase tracking-wide text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+        >
+          {signingOut ? "Signing out…" : "⎋ Sign Out"}
         </button>
       </div>
     </nav>

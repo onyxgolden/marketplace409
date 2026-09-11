@@ -75,7 +75,7 @@ describe(
 
         const bar =
           source(
-            "../ForgeNavigationBar.js",
+            "../ForgeNavigationBar.jsx",
           );
 
         // ForgeApplicationRail renders the shared cross-workspace switcher

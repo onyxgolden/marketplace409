@@ -3,12 +3,13 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { resetPasswordForEmail, signInWithPassword, signUp, onAuthStateChange, authStateCallback } = vi.hoisted(() => {
+const { resetPasswordForEmail, signInWithPassword, signUp, signOut, onAuthStateChange, authStateCallback } = vi.hoisted(() => {
   const state = { current: null };
   return {
     resetPasswordForEmail: vi.fn(),
     signInWithPassword: vi.fn(),
     signUp: vi.fn(),
+    signOut: vi.fn(),
     onAuthStateChange: vi.fn((callback) => {
       state.current = callback;
       return { data: { subscription: { unsubscribe: vi.fn() } } };
@@ -24,7 +25,7 @@ vi.mock("@/lib/supabase/client", () => ({
       resetPasswordForEmail,
       signInWithPassword,
       signUp,
-      signOut: vi.fn(),
+      signOut,
       onAuthStateChange,
     },
   }),
@@ -49,7 +50,8 @@ describe("AuthPage password controls", () => {
     root = createRoot(container);
     resetPasswordForEmail.mockReset().mockResolvedValue({ error: null });
     signInWithPassword.mockReset().mockResolvedValue({ data: { session: {}, user: { id: "user-1" } }, error: null });
-    signUp.mockReset().mockResolvedValue({ data: {}, error: null });
+    signUp.mockReset().mockResolvedValue({ data: { user: { id: "user-1", identities: [{ id: "identity-1" }] } }, error: null });
+    signOut.mockReset().mockResolvedValue({ error: null });
     window.history.pushState({}, "", "/auth");
     act(() => root.render(React.createElement(AuthPage)));
   });
@@ -105,6 +107,97 @@ describe("AuthPage password controls", () => {
 
     expect(window.location.href).toBe("/forge/financial");
     window.location = originalLocation;
+  });
+
+  it("shows a distinct 'account already exists' message when signUp silently no-ops against an existing confirmed email, instead of the generic success message", async () => {
+    // Supabase's own anti-enumeration behavior: no error, but an empty identities array -- this is
+    // the real shape it returns for an existing, already-confirmed email.
+    signUp.mockResolvedValue({ data: { user: { id: "user-1", identities: [] } }, error: null });
+    const password = container.querySelector('input[placeholder="Password"]');
+    act(() => enter(password, "correct horse battery staple"));
+    const create = [...container.querySelectorAll("button")].find((button) => button.textContent === "Create Account");
+
+    await act(async () => create.click());
+
+    expect(container.textContent).toContain("An account with this email already exists");
+    expect(container.textContent).not.toContain("Account created. Check your email");
+  });
+
+  it("still shows the normal success message for a genuine new signup (non-empty identities) -- regression guard for the existing-email fix", async () => {
+    signUp.mockResolvedValue({ data: { user: { id: "user-1", identities: [{ id: "identity-1" }] } }, error: null });
+    const password = container.querySelector('input[placeholder="Password"]');
+    act(() => enter(password, "correct horse battery staple"));
+    const create = [...container.querySelectorAll("button")].find((button) => button.textContent === "Create Account");
+
+    await act(async () => create.click());
+
+    expect(container.textContent).toContain("Account created. Check your email");
+    expect(container.textContent).not.toContain("already exists");
+  });
+
+  it("disables Sign In for the duration of its own in-flight request, and re-enables it afterward", async () => {
+    let resolveSignIn;
+    signInWithPassword.mockReturnValue(new Promise((resolve) => { resolveSignIn = resolve; }));
+    const signInButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "Sign In");
+
+    let clickPromise;
+    act(() => { clickPromise = signInButton.click(); });
+    expect(signInButton.disabled).toBe(true);
+
+    await act(async () => {
+      resolveSignIn({ data: { session: {}, user: { id: "user-1" } }, error: null });
+      await clickPromise;
+    });
+    expect(signInButton.disabled).toBe(false);
+  });
+
+  it("disables Create Account for the duration of its own in-flight request, and re-enables it afterward", async () => {
+    let resolveSignUp;
+    signUp.mockReturnValue(new Promise((resolve) => { resolveSignUp = resolve; }));
+    const password = container.querySelector('input[placeholder="Password"]');
+    act(() => enter(password, "correct horse battery staple"));
+    const createButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "Create Account");
+
+    act(() => { createButton.click(); });
+    expect(createButton.disabled).toBe(true);
+
+    await act(async () => {
+      resolveSignUp({ data: { user: { id: "user-1", identities: [{ id: "identity-1" }] } }, error: null });
+    });
+    expect(createButton.disabled).toBe(false);
+  });
+
+  it("disables Sign Out for the duration of its own in-flight request, and re-enables it if it errors", async () => {
+    let resolveSignOut;
+    signOut.mockReturnValue(new Promise((resolve) => { resolveSignOut = resolve; }));
+    const signOutButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "Sign Out");
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    act(() => { signOutButton.click(); });
+    expect(signOutButton.disabled).toBe(true);
+
+    // Errors, rather than succeeding and navigating away -- the button must re-enable rather than
+    // stay stuck disabled forever on a failed sign-out.
+    await act(async () => {
+      resolveSignOut({ error: { message: "network error" } });
+    });
+    expect(signOutButton.disabled).toBe(false);
+    alertSpy.mockRestore();
+  });
+
+  it("does not fire a second Sign In request while the first is still in flight (double-submit protection)", async () => {
+    let resolveSignIn;
+    signInWithPassword.mockReturnValue(new Promise((resolve) => { resolveSignIn = resolve; }));
+    const signInButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "Sign In");
+
+    act(() => { signInButton.click(); });
+    act(() => { signInButton.click(); }); // second click while disabled -- browsers don't fire onClick on a disabled button, but assert the guard explicitly
+
+    expect(signInWithPassword).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSignIn({ data: { session: {}, user: { id: "user-1" } }, error: null });
+    });
   });
 });
 
