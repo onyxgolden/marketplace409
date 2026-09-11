@@ -3,7 +3,12 @@
 **Revised** 2026-09-10 incorporating ChatGPT's architecture review: TR-1 split into TR-1A/TR-1B, a
 new TR-2.5 (Brain order proposals) added, TR-0/TR-0.5's relationship to TR-4 (not TR-2) corrected,
 TR-6's live-testing language and rollback framing corrected, UX acceptance criteria added per phase.
-See the companion architecture doc's own revision note for the full list.
+**Revised again** 2026-09-11 incorporating Jason's decision to defer paid market-data spend until
+FORGE is profitable: the TR-1A and TR-1B prompts below are replaced by a single **TR-1F (Free
+Training Foundation)** prompt — folding in TR-1B's original scope plus TR-2's full paper-trading
+order-ledger scope, run on synthetic data — and a renamed, re-gated **TR-1A — Licensed Market-Data
+Foundation (deferred until profitable)** prompt that is explicitly not to be started without separate
+future budget authorization. See the companion architecture doc's §1/§13 for the full reasoning.
 
 Companion to `docs/product/FORGE_TRADING_ARCHITECTURE_AND_PHASED_PLAN.md` (deliverable #17 of that
 plan). Each prompt below is self-contained enough to hand to a fresh Claude Code session for that
@@ -29,7 +34,7 @@ honest reuse/adapt/retire classification for each (the architecture plan flagged
 unverified — this phase resolves that); a domain glossary; paper/live invariant ADRs; a threat model
 and regulatory-decision register (the shape sketched in §12 of the architecture plan, filled in
 properly); a market-data/security-master provider capability matrix answering Open Decision #1;
-acceptance criteria and test strategy for TR-1.
+acceptance criteria and test strategy for TR-1F.
 
 **Required, non-negotiable**: record Jason's live-pilot guardrail verbatim in whatever this phase
 produces as the authoritative domain glossary/paper-live-invariant ADR set:
@@ -57,7 +62,7 @@ access dates for any vendor evaluated in the capability matrix.
 
 **Stop condition**: TR-0 only needs to **record** the `src/domains/ledger/` vs.
 event-sourced-ledger authority ambiguity (Open Decision #3) — it does not need to resolve it, and it
-does not block TR-1A, TR-1B, TR-2, TR-2.5, or TR-3. TR-0.5 is the phase that actually resolves it,
+does not block TR-1F, TR-1A, TR-2.5, or TR-3. TR-0.5 is the phase that actually resolves it,
 required only before TR-4. Stop and report only if you cannot even characterize the ambiguity from
 repository evidence (i.e. you can't tell what's genuinely unclear) — don't guess at a resolution here.
 
@@ -70,7 +75,7 @@ repository evidence (i.e. you can't tell what's genuinely unclear) — don't gue
 them; whether they're live, dormant, or superseded by the event-sourced `financial_events`/
 `private_financing_events` pattern), which structure is Financial FORGE's actual authoritative
 general ledger today. This single question locks §8 of the architecture plan's TR-4 integration
-contract. **It does not block TR-1A, TR-1B, TR-2, TR-2.5, or TR-3** — those phases have no
+contract. **It does not block TR-1F, TR-1A, TR-2.5, or TR-3** — those phases have no
 dependency on this answer, since the trading domain's own event-sourced design stays independently
 correct regardless of which ledger structure this resolves to. Can run any time before TR-4 starts.
 
@@ -85,111 +90,155 @@ present the ambiguity to Jason rather than picking one to move forward with.
 
 ---
 
-## TR-1A — Security master and market data
+## TR-1F — Free Training Foundation
 
-**Scope**: Security master for a small fixed symbol set (propose ~10-20 well-known large-cap
-symbols, not a full exchange listing) — `trading_instruments` per §6 of the architecture plan; vendor
-mapping layer (FORGE instrument ID ↔ vendor's own symbol/identifier scheme); delayed/EOD market-data
-ingestion with explicit `effective_at` **and** `received_at` timestamps on every quote (§6);
-adjusted-vs-unadjusted price labeling; corrections/restatements from the vendor land as new,
-timestamped rows, never in-place edits (§6). **No UI beyond what's needed to prove ingestion
-correctness in tests — the actual quote display/chart is TR-1B's job**, keeping this slice isolated
-to the market-data risk itself.
+**Scope**: The complete free, zero-vendor foundation, replacing the original TR-1A+TR-1B+TR-2 scope
+for the first implementation phase (architecture plan §1/§13, 2026-09-11 revision). Everything below
+runs on synthetic data or official free public sources — no paid account, no vendor credential, no
+licensed quote of any kind.
 
-**Exclusions**: no watchlist, no Brain Q&A, no curriculum, no order ticket, no trading account, no
-fill engine, no brokerage connection code at all — not even a stub.
+- **Fictional security master**: `trading_instruments` (§6) rows with `data_origin='synthetic'`,
+  drawn from a reserved fictional-exchange/symbol/name namespace that cannot be mistaken for a real
+  security even without checking the flag — invent a clearly fictional exchange code and naming
+  convention as part of this phase's own design work, don't borrow anything resembling a real ticker.
+- **Versioned synthetic market scenarios** (`trading_synthetic_scenarios`, §6): deterministic,
+  documented generation rules (state the rule, don't hand-tune bars to "look right"), committed as
+  fixture files, covering at minimum: rising/falling/flat/volatile markets; spreads and slippage;
+  market/limit/stop/stop-limit order behavior; partial fills; dividends and splits; concentration and
+  diversification; drawdown and recovery; behavioral mistakes (FOMO, revenge trading — these can be
+  scenario *setups* a lesson later reacts to, not something the fixture itself judges).
+- **Security-master contract, market-data adapter interface, provenance model, and capability
+  negotiation** (§6) — implement the adapter interface generally (e.g. `getQuote`, `getBars`,
+  `getCorporateActions`) with a synthetic-fixture implementation *and* design it so a future licensed
+  adapter (TR-1A) implements the identical interface — this is the actual deliverable that makes
+  TR-1A a data-source swap later, so treat the interface design itself as load-bearing, not an
+  afterthought.
+- **Historical-style replay using synthetic data with strict look-ahead prevention** (§7) — the
+  replay engine must be physically incapable of reading a fixture bar beyond the currently-simulated
+  timestamp, not merely trusted not to.
+- **Full order-ledger scope, folded in from the original TR-2** (§5.2/§6/§7, contracts unchanged —
+  only the data source is new): paper `trading_accounts` (mode-immutable); equity/ETF order ticket
+  (market/limit/stop/stop-limit, day/GTC); the canonical order state machine including the **replace
+  relationship** (a cancel/replace creates a new order with `replaces_order_id`, never a same-order
+  `replaced → open` transition); immutable `trading_order_events`, each carrying the (synthetic)
+  adapter's raw payload (`raw_provider_payload`) alongside FORGE's normalized fields; deterministic
+  risk-policy validation at `validated`; the `v1` versioned fill simulator with bid/ask-aware pricing
+  where the scenario provides it, explicit spread/slippage fallback otherwise, workflow-specific
+  stale-quote thresholds; **fill events inside `trading_order_events` are the sole authoritative fill
+  truth** — `trading_fills`, positions, lots, and P&L are all rebuildable projections carrying
+  `source_event_id`, never a second copy of truth; the `trading_cash_events` stream as the sole
+  source of cash truth, available cash computed as a projection over it, never an
+  independently-mutated balance; confirmations and statements.
+- **Trading Coach curriculum, folded in from the original TR-1B**, modules 1-4: plain-language
+  explanations first, advanced terminology/calculations on demand (§11's content hierarchy);
+  contextual help triggered by first use/unfamiliar term/explicit "Explain this"; the three-part
+  parable structure (parable → concept mapping → stated limitation, §10) as a structural response
+  format, not a style guideline; objective concept checks graded by a deterministic, non-Brain-
+  authored answer key (§10/§16); the decision journal (thesis, evidence, time horizon, expected
+  upside, acceptable downside, exit conditions, disproof condition) before a paper trade.
+- **Real-company research via SEC EDGAR and official company-facts APIs** — citations, timestamps,
+  fair-access/rate-limit compliance, and an explicit, structural statement (not just a disclaimer
+  buried in copy) that this data does not supply a tradable price for that company inside FORGE.
+- **External links out** for a user who wants to see a real symbol's current price elsewhere — a
+  plain link, nothing more. Do not scrape, proxy, cache, reproduce, or imply ownership of whatever is
+  behind that link.
+- **The "Training Scenario — No Real Money or Market Data" indicator** (§13's TR-1F UX requirements)
+  — persistent, calm, unmistakable, not repeated per-component.
 
-**Tests**: security-master invariants (symbol identity stability across a delisting/reuse scenario);
-market-data provenance/timestamp correctness (`effective_at` vs `received_at` distinctly asserted);
-correction/restatement handling (a corrected quote produces a new row, never mutates the original);
-adjusted-vs-unadjusted price labeling correctness; RLS tests for every new table (workspace/
-acting-user pattern, not direct-owner).
+**Exclusions**: no real/licensed market-data vendor code of any kind, not even a stub beyond the
+adapter *interface* itself; no real brokerage connection; no real securities order; no real money;
+no Brain order-proposal UI or acceptance flow yet (that's TR-2.5, which depends on this phase's order
+contract already existing); no full curriculum modules 5-8 or behavioral-bias coaching yet (TR-3).
 
-**Evidence required**: which market-data vendor was actually wired (must match whatever TR-0
-resolved, §14/Open Decision #1) and confirmation its licensing terms permit the exact ingestion/
-storage used here.
+**Tests**: security-master invariants (symbol identity stability, and a positive assertion that every
+synthetic instrument's `data_origin='synthetic'` and its symbol/name/exchange cannot collide with a
+real-security naming convention); synthetic-scenario provenance/timestamp correctness
+(`effective_at` vs `received_at` distinctly asserted even though both are deterministically
+generated); full order-lifecycle state-machine coverage (every transition in §5.2's diagram,
+including disallowed ones); the cancel/replace race (original fills while `replacement_requested`);
+fill-policy determinism (same inputs, same fill, every run); look-ahead prevention with a golden
+fixture that would fail under a naive "peek at future price" implementation; idempotency under
+retried order-submission; cross-account/cross-workspace denial; paper-mode immutability; **projection-
+rebuild property test**: delete `trading_fills`/positions/cash-balance projections and rebuild them
+from `trading_order_events`/`trading_cash_events` alone, assert identical results (§15); citation-or-
+abstain behavior for Brain's SEC-research Q&A (the abstention path needs a real test, not just the
+happy path); curriculum modules 1-4's concept-check grading logic (asserting the deterministic answer
+key, not Brain-authored grading); RLS tests for every new table (workspace/acting-user pattern, never
+direct-owner); guided-vs-expert mode test asserting both routes through identical validation (§11); a
+test asserting the training indicator is present on every synthetic surface.
 
-**UX acceptance**: none beyond test-only data displays — TR-1A produces no end-user-facing UI.
-
-**Stop condition**: if no market-data vendor has been authorized/contracted yet, stop before writing
-any ingestion code — this phase cannot proceed on a placeholder vendor and be trusted later.
-
----
-
-## TR-1B — Watchlist, research, and Brain Q&A
-
-**Scope**: Watchlist (`trading_watchlist_items` per §6) over TR-1A's security master; basic quote
-display + a simple price/volume chart (no technical-indicator charting) surfacing TR-1A's data; a
-research-evidence store (`trading_research_evidence` per §6 — apply its licensing discipline: store
-references/hashes/permitted excerpts, never assume wholesale retention rights); read-only Brain Q&A
-with citations (extends the Engineering-Brain citation contract shape, but is a genuinely new
-end-user-facing route — do not touch `src/app/api/forge/engineering-brain/*`, which stays
-developer-only); contextual help (§11's information hierarchy); curriculum modules 1-4 with concept
-checks, using the resolved deterministic answer-key mechanism (§10/§16 — not a Brain-graded check).
-**No orders of any kind, paper or live.**
-
-**Exclusions**: no order ticket, no trading account, no fill engine, no brokerage connection code at
-all — not even a stub. Depends on TR-1A having already landed (do not re-implement or duplicate
-market-data ingestion here).
-
-**Tests**: citation-or-abstain behavior for Brain Q&A (the abstention path must have a real test, not
-just the happy path); the first 4 curriculum modules' concept-check grading logic (asserting the
-deterministic answer key, not Brain-authored grading); RLS tests for every new table; guided-vs-expert
-mode test asserting both routes through identical validation (§11).
-
-**Evidence required**: confirmation TR-1A's licensing terms permit the exact display used here (quote
-display, chart, any excerpt shown from research evidence).
-
-**UX acceptance**: watchlist, security detail/research view, and curriculum lesson screens match §11's
-information hierarchy (plain meaning → practical consequence → technical name → example/parable →
-evidence on demand); contextual help triggers correctly on first use/unfamiliar term/explicit
-"Explain this"; guided and expert modes present differently but validate identically.
-
-**Stop condition**: if TR-1A's data isn't actually available/trustworthy yet (vendor licensing
-unresolved, ingestion not proven), stop rather than building against placeholder data.
-
----
-
-## TR-2 — Paper account and deterministic order ledger
-
-**Scope**: Paper `trading_accounts` (mode-immutable, per §6/§12); equity/ETF order ticket (market/
-limit/stop/stop-limit, day/GTC); the canonical order state machine including the **replace
-relationship** (a cancel/replace creates a new order with `replaces_order_id`, never a same-order
-`replaced → open` transition — §5.2) and immutable `trading_order_events` (§5.2/§6), each event
-carrying the provider's raw payload (`raw_provider_payload`) alongside FORGE's normalized fields;
-deterministic risk-policy validation at `validated`; the `v1` versioned fill simulator (§7) with
-bid/ask-aware pricing where available, explicit spread/slippage fallback otherwise, and workflow-
-specific stale-quote thresholds (§7); **fill events inside `trading_order_events` are the sole
-authoritative fill truth** — `trading_fills`, positions, lots, and P&L are all rebuildable
-projections carrying `source_event_id` (§6), never a second copy of truth; the `trading_cash_events`
-stream (§6) as the sole source of cash truth (deposits, withdrawals, reserved buying power,
-unsettled proceeds, fees) with available cash computed as a projection over it, never an
-independently-mutated balance; confirmations and statements. Curriculum's order-ticket just-in-time
-teaching hooks (not full modules 5-8 yet).
-
-**Exclusions**: no live broker code, no Financial FORGE posting yet (§8 — that's TR-4), no
-replay/backtest engine yet (TR-3), no Brain order-proposal UI or acceptance flow yet (that's TR-2.5,
-which depends on this phase's order contract already existing).
-
-**Tests**: full order-lifecycle state-machine coverage (every transition in §5.2's diagram, including
-the disallowed ones — e.g. a `filled` order cannot receive a new `canceled` event); the
-cancel/replace race (original order fills while `replacement_requested`, and the new order is
-correctly treated as never-submitted/canceled per the adapter's actual response); fill-policy
-determinism (same inputs, same fill, every run); look-ahead prevention (§7) with a golden fixture
-that would fail under a naive "peek at future price" implementation; idempotency under retried
-order-submission; cross-account/cross-workspace denial; paper-mode immutability (`mode` cannot
-change, verified by attempting it and asserting rejection); **projection-rebuild property test**:
-delete `trading_fills`/positions/cash-balance projections and rebuild them from
-`trading_order_events`/`trading_cash_events` alone, assert identical results (§15).
+**Evidence required**: the documented generation rule for each synthetic scenario (reproducibility
+proof — a reviewer must be able to see *why* a scenario's bars look the way they do, not just that
+they exist); confirmation the market-data adapter interface has no synthetic-specific leakage into
+Orders/Positions/Cash/Brain/Coach code (i.e. swapping the adapter implementation alone would be
+sufficient for TR-1A later — this is the actual test of the provider-neutrality claim, not an
+assertion to take on faith).
 
 **UX acceptance**: order ticket reveals advanced settings only when selected while material
 consequences (cost, cash impact, risk flags) stay always visible; the plain-language review sentence
-appears before the technical order summary (§11); paper/live mode indicator is unmistakable in the
-account switcher and order ticket header; guided and expert modes validate identically (§11).
+appears before the technical order summary; the training-scenario indicator is unmistakable but not
+repeated on every component; watchlist, security detail/research view, and curriculum lesson screens
+match §11's information hierarchy; guided and expert modes present differently but validate
+identically; nothing anywhere implies a synthetic result predicts real trading outcomes.
 
-**Stop condition**: if the risk-policy engine's rules can't be made fully deterministic (e.g.
-require an LLM judgment call anywhere in the validation path), stop and report — this violates a
-hard architecture requirement (§9/§16), not a preference.
+**Stop condition**: if any synthetic instrument's naming could plausibly be mistaken for a real
+security (even briefly, even by an inattentive user), stop and fix the naming convention before
+proceeding — this is not a cosmetic detail, it's the load-bearing safety property of the entire
+phase. Also stop if the market-data adapter interface can't be cleanly implemented by a synthetic
+fixture without any Orders/Positions/Cash-layer code needing to know the data is synthetic — that
+would mean the provider-neutrality goal (§14) has already failed before TR-1A even exists.
+
+---
+
+## TR-1A — Licensed Market-Data Foundation (deferred until profitable; requires separate budget authorization)
+
+**Do not begin this phase without: (1) confirmation FORGE is profitable enough to justify a recurring
+market-data subscription, and (2) Jason's separate, explicit authorization of the specific budget —
+this is a distinct gate from whatever authorized TR-0 through TR-1F, not something that unlocks
+automatically once TR-1F ships.**
+
+**Scope, unchanged from the original TR-1A design, only its position and gate changed**: security
+master for a small fixed **real** symbol set (propose ~10-20 well-known large-cap symbols, not a
+full exchange listing) — `trading_instruments` rows with `data_origin='licensed'`, using the exact
+same table shape as TR-1F's synthetic rows; vendor mapping layer (FORGE instrument ID ↔ vendor's own
+symbol/identifier scheme); delayed/EOD market-data ingestion with explicit `effective_at` **and**
+`received_at` timestamps on every quote; adjusted-vs-unadjusted price labeling; corrections/
+restatements from the vendor land as new, timestamped rows, never in-place edits. Implement this
+phase's ingestion behind the **exact same market-data adapter interface TR-1F already designed** —
+if that interface needs to change to accommodate a real vendor, treat that as a signal TR-1F's
+"provider-neutral" design had a real gap, and fix the interface, don't bolt on a parallel path.
+
+**Before writing any code**: re-verify the vendor research in
+`docs/product/FORGE_TRADING_TR1A_VENDOR_DECISION_REVIEW.md` against the vendor's *current* pricing
+and licensing pages — do not assume its 2026-09-11 findings (Intrinio preferred, Massive acceptable
+fallback, no legally-usable free/trial tier) are still accurate. Prices, plans, and terms can and do
+change; a stale research pass presented as current would be exactly the kind of unverified assumption
+this whole plan exists to avoid.
+
+**Exclusions**: no watchlist/Brain-Q&A/curriculum UI changes (that already exists from TR-1F and
+should work against the newly-added real instruments without modification, if the adapter interface
+was designed correctly) — this phase is the data-source swap only, not a UI rebuild.
+
+**Tests**: security-master invariants for real instruments (symbol identity stability across a
+delisting/reuse scenario — synthetic instruments never face this, real ones do); market-data
+provenance/timestamp correctness against the real vendor's actual response shape; correction/
+restatement handling; adjusted-vs-unadjusted price labeling correctness; RLS tests for every new/
+affected table; **a regression test proving TR-1F's existing order-ledger/curriculum/Brain-Q&A
+functionality works unmodified against `data_origin='licensed'` instruments** — this is the actual
+proof that TR-1F's provider-neutral design held up.
+
+**Evidence required**: the specific vendor and plan actually authorized and paid for; confirmation
+its current (re-verified, not historical) licensing terms permit the exact ingestion/display used
+here; the exact monthly cost and who approved it.
+
+**UX acceptance**: real instruments appear alongside (or replace, per product decision at
+authorization time) synthetic ones in the existing watchlist/research UI without any UI code change
+beyond what's needed to distinguish `data_origin='licensed'` rows where the design calls for it (e.g.
+dropping the training-scenario indicator only for genuinely licensed, real-price surfaces).
+
+**Stop condition**: if no market-data vendor has been authorized/contracted **and separately budget-
+approved** yet, stop before writing any ingestion code — this phase cannot proceed on a placeholder
+vendor, an assumed budget, or stale pricing research from before this authorization.
 
 ---
 
@@ -201,7 +250,7 @@ and an expiration, always evidence-grounded per §9's citation/abstention rules.
 user-acceptance flow: a human reviews a proposal and, only through a dedicated "accept" action,
 causes a **new**, separate RPC call (requiring an authenticated human actor identity, never a
 service-role/Brain identity) to create the first `draft` event in `trading_order_events` — the
-accepted order then goes through TR-2's exact same `validated`→`approved` path as any manually-
+accepted order then goes through TR-1F's exact same `validated`→`approved` path as any manually-
 drafted order, with a `source_proposal_id` reference back to the proposal for auditability.
 Deterministic validation of a proposal before it's even shown to the user (reject outright — don't
 show — a proposal for an unsupported instrument/order type/quantity).
@@ -233,7 +282,7 @@ convention to trust.
 
 ## TR-3 — Learning, replay, and evaluation
 
-**Scope**: Historical replay/backtest engine (reusing TR-2's fill contract, run against past data);
+**Scope**: Historical replay/backtest engine (reusing TR-1F's fill contract, run against past data);
 strategy definitions and experiment versioning; benchmark comparison; the full metrics suite
 (Sharpe, Sortino, profit factor, max drawdown, volatility, win rate, alpha/beta where statistically
 valid — §4/§15); transaction-cost/slippage sensitivity analysis; trade journal and Brain-assisted
@@ -250,7 +299,7 @@ response structurally includes its "where this breaks down" clause), bias-interv
 7 example teaching interactions from the source prompt/§10, each as a real test case), delayed-
 retention check correctness, overfitting/small-sample warning triggers on a deliberately
 thin-sample backtest fixture; projection-rebuild property test extended to replay-derived
-performance metrics, same discipline as TR-2's (§15).
+performance metrics, same discipline as TR-1F's (§15).
 
 **UX acceptance**: decision journal and post-trade review clearly separate decision-quality from
 outcome-quality (§10) rather than implying a lucky win was a good decision; replay/backtest results
@@ -340,7 +389,7 @@ the resulting exposure, **cancel** the order if it's still open (not yet filled)
 separately-approved corrective transaction** (e.g. a deliberate offsetting trade) — never assume
 reversal is possible, and never describe recovery as a "rollback" anywhere in the incident runbook.
 
-**Tests**: full TR-2/TR-2.5/TR-5 test suites re-run against the **sandbox/certification** adapter
+**Tests**: full TR-1F/TR-2.5/TR-5 test suites re-run against the **sandbox/certification** adapter
 path (category 1 above — not the live path, and never as an automated live-order test); kill-switch
 effectiveness under simulated failure; duplicate-order defense under simulated double-submission;
 incident-runbook dry-run (rehearsing contain/cancel/corrective-transaction, not a "rollback" drill).
