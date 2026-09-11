@@ -2,6 +2,7 @@ import { categoryNormalizer } from "../knowledge";
 import { PropertyResolverService } from "../property/property-resolver.service";
 import type { Transaction } from "../transaction/transaction.types";
 import { financialEventFactory } from "./financial-event.factory";
+import { minorUnitsToDecimalDollars } from "./minorUnitsToDecimalDollars";
 import type {
   FinancialEvent,
   ResolvedFinancialEventInput,
@@ -97,7 +98,14 @@ export class FinancialEventImportService {
     const resolvedInput: ResolvedFinancialEventInput = {
       date: transaction.date,
       description: transaction.description,
-      amount: transaction.amountCents,
+      // The Transaction-to-FinancialEvent unit boundary: transaction.amountCents is signed integer
+      // minor units (see transaction.types.ts); ResolvedFinancialEventInput.amount is signed decimal
+      // dollars (see financial-event.types.ts). This is the ONLY place this conversion happens --
+      // neither TransactionMapper nor financial-event.factory.ts nor
+      // SupabaseFinancialEventRepository perform any further conversion, and
+      // buildFinancialForgePerformance.toCents() on the read side already correctly assumes
+      // financial_events.amount is decimal dollars, so this must run exactly once, here.
+      amount: minorUnitsToDecimalDollars(transaction.amountCents),
       resolvedProperty: (
         await this.propertyResolver.resolveTransaction({
           transaction,
