@@ -3,6 +3,7 @@ import "./globals.css";
 import ImpactSiteVerificationMeta from "./ImpactSiteVerificationMeta";
 
 import ThemeProvider from "@/components/theme/ThemeProvider";
+import PrivacySafeAnalyticsProvider from "@/components/analytics/PrivacySafeAnalyticsProvider";
 import { buildNoFlashThemeScript } from "@/lib/theme/noFlashThemeScript";
 
 const geistSans = Geist({
@@ -38,7 +39,9 @@ export default function RootLayout({ children }) {
           // src/lib/theme/noFlashThemeScript.js.
           dangerouslySetInnerHTML={{ __html: buildNoFlashThemeScript() }}
         />
-        <ThemeProvider>{children}</ThemeProvider>
+        <PrivacySafeAnalyticsProvider>
+          <ThemeProvider>{children}</ThemeProvider>
+        </PrivacySafeAnalyticsProvider>
       </body>
     </html>
   );
