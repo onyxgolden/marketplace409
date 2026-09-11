@@ -26,43 +26,15 @@
 //
 // Requires a local Supabase stack reachable at 127.0.0.1:54321/54322 (e.g. `supabase start` from
 // any worktree of this repo). Self-skips (not fails) when that stack isn't reachable.
-import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
-import Stripe from "stripe";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 import { POST } from "../../../app/api/rental/stripe-webhook/route.js";
 import { summarizeBorrowerEvents } from "../../../app/api/private-financing/portal/route.js";
-
-const LOCAL_URL = "http://127.0.0.1:54321";
-// Well-known, publicly documented Supabase CLI local-dev demo keys -- identical on every
-// `supabase start` unless explicitly overridden, never secrets.
-const LOCAL_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
-const LOCAL_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
-const DB_CONTAINER = process.env.SUPABASE_DB_CONTAINER || "supabase_db_marketplace409-reservation-validation";
-const TEST_PASSWORD = "correct-horse-battery-staple-1";
-
-// Not real Stripe credentials -- STRIPE_MODE/STRIPE_SECRET_KEY only need to satisfy
-// resolveStripeMode's shape check (a "sk_test_" prefix) since no scenario below ever calls a
-// Stripe network method; the webhook secret is a signing key this file invents and uses only to
-// sign+verify its own synthetic events via the real `stripe` SDK, entirely offline.
-const FAKE_STRIPE_SECRET_KEY = "sk_test_FAKE_KEY_FOR_LOCAL_INTEGRATION_TEST_ONLY_0000000000000000";
-const FAKE_WEBHOOK_SECRET = "whsec_fake_local_integration_test_secret_0000000000000000";
-
-function psql(sql) {
-  return execFileSync("docker", ["exec", "-i", DB_CONTAINER, "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"], {
-    input: sql, encoding: "utf8",
-  });
-}
-
-async function isLocalStackReachable() {
-  try {
-    const response = await fetch(`${LOCAL_URL}/auth/v1/health`, { signal: AbortSignal.timeout(2000) });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
+import {
+  LOCAL_URL, LOCAL_SERVICE_ROLE_KEY, TEST_PASSWORD,
+  psql, isLocalStackReachable, signInFreshClient, signedRequest, installFakeStripeEnv,
+} from "../../../test-helpers/stripeWebhookIntegrationTestHelpers.js";
 
 const reachable = await isLocalStackReachable();
 
@@ -79,24 +51,10 @@ describe.skipIf(!reachable)("Private-financing Stripe payment chain (real local 
   let borrowerClient;
   let accountId;
 
-  async function signInFreshClient(email) {
-    const client = createClient(LOCAL_URL, LOCAL_ANON_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
-    const { error } = await client.auth.signInWithPassword({ email, password: TEST_PASSWORD });
-    if (error) throw new Error(`Sign-in failed for ${email}: ${error.message}`);
-    return client;
-  }
-
   beforeAll(async () => {
     if (!reachable) return;
 
-    for (const key of ["STRIPE_CONNECT_WEBHOOK_SECRET", "STRIPE_WEBHOOK_SECRET_PLATFORM", "STRIPE_MODE", "STRIPE_SECRET_KEY", "NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]) {
-      process.env[key] = key === "STRIPE_CONNECT_WEBHOOK_SECRET" || key === "STRIPE_WEBHOOK_SECRET_PLATFORM"
-        ? FAKE_WEBHOOK_SECRET
-        : key === "STRIPE_MODE" ? "test"
-        : key === "STRIPE_SECRET_KEY" ? FAKE_STRIPE_SECRET_KEY
-        : key === "NEXT_PUBLIC_SUPABASE_URL" ? LOCAL_URL
-        : LOCAL_SERVICE_ROLE_KEY;
-    }
+    installFakeStripeEnv();
 
     const createUser = async (email) => {
       const { data, error } = await admin.auth.admin.createUser({ email, password: TEST_PASSWORD, email_confirm: true });
@@ -190,16 +148,6 @@ describe.skipIf(!reachable)("Private-financing Stripe payment chain (real local 
       values
         ('${owner.id}', '${paymentId}', '${accountId}', 'pf_borrower_${suffix}', 'stripe', 'test', '${providerPaymentId}', ${amountCents}, 'USD', 'requires_payment_method', 'pf:test:${accountId}:${paymentId}');
     `);
-  }
-
-  function signedRequest(event, secret = FAKE_WEBHOOK_SECRET) {
-    const payload = JSON.stringify(event);
-    const signature = Stripe.webhooks.generateTestHeaderString({ payload, secret });
-    return new Request("http://localhost/api/rental/stripe-webhook", {
-      method: "POST",
-      headers: { "stripe-signature": signature },
-      body: payload,
-    });
   }
 
   // `providerPaymentId` (Stripe's own pi_... id) and `forgePaymentId` (metadata.forge_payment_id,
