@@ -9,6 +9,7 @@ import {
   FinancialPeriodApplication,
 } from "@/application/financial/FinancialPeriodApplication";
 import FinancialApplicationShell from "@/components/forge/financial/FinancialApplicationShell";
+import { createClient } from "@/lib/supabase/client";
 import { isCacheableDashboardLoad, readDashboardCache, writeDashboardCache } from "./dashboardCache.js";
 import { money } from "./formatMoney.js";
 import { getCurrentMonthProfitKpi } from "./getCurrentMonthProfitKpi.js";
@@ -106,10 +107,19 @@ export default function FinancialPage() {
 
   useEffect(() => {
     async function load() {
+      // The cache is keyed to the currently authenticated user (see dashboardCache.js) -- a device
+      // shared between people, or a fresh sign-in after someone else never explicitly signed out,
+      // must never render a stale cache written under a different user's id. No user means no cache
+      // read or write at all, not an unscoped fallback.
+      const {
+        data: { user },
+      } = await createClient().auth.getUser();
+      const userId = user?.id ?? null;
+
       // The three loads below combined take 10-15s on a real dataset (see dashboardCache.js for
       // why). A cache hit means this visit is a revisit within the TTL window -- render the last
       // known-good result immediately instead of re-running all three from scratch.
-      const cached = await readDashboardCache();
+      const cached = userId ? await readDashboardCache({ userId }) : null;
       if (cached) {
         setViewModel(cached.viewModel);
         setIntelligenceModel(cached.intelligenceModel);
@@ -133,8 +143,8 @@ export default function FinancialPage() {
         obligations,
       );
 
-      if (isCacheableDashboardLoad({ viewModel: result, intelligenceModel: intelligenceResult })) {
-        writeDashboardCache({ viewModel: result, intelligenceModel: intelligenceResult, propertyOperatingObligations: obligations });
+      if (userId && isCacheableDashboardLoad({ viewModel: result, intelligenceModel: intelligenceResult })) {
+        writeDashboardCache({ viewModel: result, intelligenceModel: intelligenceResult, propertyOperatingObligations: obligations }, { userId });
       }
     }
 

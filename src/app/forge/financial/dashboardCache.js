@@ -16,13 +16,31 @@
 // a large fraction of available disk (far beyond anything this payload will reach), so the cache
 // actually holds against real data volume. Reads/writes are necessarily async now (IndexedDB has no
 // synchronous API); callers await them.
-
-const CACHE_KEY = "forge-financial-dashboard-cache-v1";
+//
+// Per-user key isolation (added after re-review): unlike sessionStorage, IndexedDB survives a tab
+// close and even a browser restart -- it is NOT automatically wiped when someone simply closes the
+// tab instead of clicking Sign Out. The cache key is scoped to the authenticated user's id
+// (buildCacheKey), so one user's cached financial data physically cannot be looked up under a
+// different user's key -- a shared device where the previous person never signed out, and someone
+// else opens /forge/financial, gets a clean miss (their own key has never been written) rather than
+// the previous person's stale figures. `userId` is required precisely so this can't be forgotten at
+// a call site; there is no "unscoped" fallback key.
+const CACHE_KEY_PREFIX = "forge-financial-dashboard-cache-v1";
 export const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
+
+// Bumped whenever the shape of the cached `payload` (viewModel/intelligenceModel/
+// propertyOperatingObligations) changes incompatibly, so a cache entry written by a previous
+// deployment is never handed to code expecting the new shape -- it reads as a clean miss instead of
+// risking a runtime error or a subtly wrong render from stale-shaped data.
+const PAYLOAD_SCHEMA_VERSION = 1;
 
 const DB_NAME = "forge-financial-dashboard-cache";
 const DB_VERSION = 1;
 const STORE_NAME = "cache";
+
+function buildCacheKey(userId) {
+  return `${CACHE_KEY_PREFIX}:${userId}`;
+}
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -34,6 +52,11 @@ function openDatabase() {
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
+    // Fires when another tab holds an open connection at an older DB_VERSION, blocking this
+    // upgrade -- without a handler the open request neither resolves nor rejects, so every
+    // read/write here would hang forever instead of falling back to a cache miss. Rejecting lets
+    // the existing try/catch in each exported function treat it the same as any other failure.
+    request.onblocked = () => reject(new Error("forge-financial-dashboard-cache: open blocked by another connection"));
   });
 }
 
@@ -71,26 +94,29 @@ function resolveStore(store) {
   return typeof indexedDB === "undefined" ? null : indexedDbStore;
 }
 
-export async function readDashboardCache({ store, now = Date.now, ttlMs = DASHBOARD_CACHE_TTL_MS } = {}) {
+export async function readDashboardCache({ userId, store, now = Date.now, ttlMs = DASHBOARD_CACHE_TTL_MS }) {
+  if (!userId) return null;
   const target = resolveStore(store);
   if (!target) return null;
   try {
-    const entry = await target.get(CACHE_KEY);
+    const entry = await target.get(buildCacheKey(userId));
     if (!entry || typeof entry.cachedAt !== "number") return null;
+    if (entry.schemaVersion !== PAYLOAD_SCHEMA_VERSION) return null;
     if (now() - entry.cachedAt > ttlMs) return null;
     return entry.payload;
   } catch {
-    // Corrupt entry, storage disabled (private browsing), or an unexpected IndexedDB error -- treat
-    // as a cache miss rather than failing the page over it.
+    // Corrupt entry, storage disabled (private browsing), a blocked/failed open, or an unexpected
+    // IndexedDB error -- treat as a cache miss rather than failing the page over it.
     return null;
   }
 }
 
-export async function writeDashboardCache(payload, { store, now = Date.now } = {}) {
+export async function writeDashboardCache(payload, { userId, store, now = Date.now }) {
+  if (!userId) return;
   const target = resolveStore(store);
   if (!target) return;
   try {
-    await target.set(CACHE_KEY, { cachedAt: now(), payload });
+    await target.set(buildCacheKey(userId), { cachedAt: now(), schemaVersion: PAYLOAD_SCHEMA_VERSION, payload });
   } catch {
     // Storage disabled, blocked, or an unexpected error -- caching is a pure optimization, never
     // worth failing the page over.
@@ -103,11 +129,12 @@ export function isCacheableDashboardLoad({ viewModel, intelligenceModel }) {
   return viewModel?.loadState === "ready" && !intelligenceModel?.auditFindings?.error;
 }
 
-export async function clearDashboardCache({ store } = {}) {
+export async function clearDashboardCache({ userId, store }) {
+  if (!userId) return;
   const target = resolveStore(store);
   if (!target) return;
   try {
-    await target.delete(CACHE_KEY);
+    await target.delete(buildCacheKey(userId));
   } catch {
     // Nothing to do if storage is unavailable.
   }

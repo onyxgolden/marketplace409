@@ -21,12 +21,19 @@
 import { clearDashboardCache } from "@/app/forge/financial/dashboardCache.js";
 
 export async function signOutSafely({ supabase, redirectTo = "/" }) {
+  // Read who is signing out BEFORE calling signOut() -- the dashboard cache is keyed per-user id,
+  // and getUser() would return no user at all once the session is already gone.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const userId = user?.id ?? null;
+
   const { error } = await supabase.auth.signOut();
   if (error) {
     return { success: false, error };
   }
 
-  clearDashboardCache();
+  if (userId) await clearDashboardCache({ userId });
   window.location.href = redirectTo;
   return { success: true, error: null };
 }

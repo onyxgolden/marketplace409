@@ -1,20 +1,33 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DASHBOARD_CACHE_TTL_MS, readDashboardCache, writeDashboardCache } from "@/app/forge/financial/dashboardCache.js";
 import { signOutSafely } from "./signOutSafely.js";
 
-function fakeSupabase(signOutResult) {
-  return { auth: { signOut: vi.fn().mockResolvedValue(signOutResult) } };
+const USER_ID = "user-aaaaaaaa-1111-1111-1111-111111111111";
+
+const { clearDashboardCache } = vi.hoisted(() => ({ clearDashboardCache: vi.fn() }));
+
+// dashboardCache.js's own read/write/clear behavior (TTL, per-user isolation, schema versioning,
+// IndexedDB fallback) is verified once, directly, in dashboardCache.test.js -- this file only needs
+// to prove signOutSafely calls the real clearDashboardCache export with the right user id, in the
+// right order relative to signOut(). jsdom has no real IndexedDB to observe end-to-end through, so
+// mocking the export (rather than injecting a fake store signOutSafely has no way to accept anyway)
+// is the accurate way to test this boundary.
+vi.mock("@/app/forge/financial/dashboardCache.js", () => ({ clearDashboardCache }));
+
+function fakeSupabase(signOutResult, { user = { id: USER_ID } } = {}) {
+  return {
+    auth: {
+      getUser: vi.fn().mockResolvedValue({ data: { user } }),
+      signOut: vi.fn().mockResolvedValue(signOutResult),
+    },
+  };
 }
 
 describe("signOutSafely", () => {
   let originalLocation;
 
   beforeEach(() => {
-    // Seed a real dashboard-cache entry the way the Financial Overview page actually would, so
-    // success/failure can be asserted against real read/write behavior, not a mocked stand-in.
-    writeDashboardCache({ reports: ["real financial data"] }, { now: () => 1000 });
-
+    clearDashboardCache.mockReset().mockResolvedValue(undefined);
     originalLocation = window.location;
     delete window.location;
     window.location = { ...originalLocation, href: "" };
@@ -22,16 +35,15 @@ describe("signOutSafely", () => {
 
   afterEach(() => {
     window.location = originalLocation;
-    window.sessionStorage.clear();
   });
 
-  it("on success: clears the dashboard cache and redirects to redirectTo, only after clearing", async () => {
+  it("on success: clears the dashboard cache for the signing-out user's id, then redirects", async () => {
     const supabase = fakeSupabase({ error: null });
 
     const result = await signOutSafely({ supabase, redirectTo: "/" });
 
     expect(result).toEqual({ success: true, error: null });
-    expect(readDashboardCache({ now: () => 1000 + DASHBOARD_CACHE_TTL_MS - 1 })).toBeNull();
+    expect(clearDashboardCache).toHaveBeenCalledWith({ userId: USER_ID });
     expect(window.location.href).toBe("/");
   });
 
@@ -53,9 +65,8 @@ describe("signOutSafely", () => {
     const result = await signOutSafely({ supabase, redirectTo: "/" });
 
     expect(result).toEqual({ success: false, error: { message: "network error" } });
-    // The cache seeded in beforeEach must still be readable -- a failed sign-out must never wipe a
-    // still-legitimately-signed-in user's cached data.
-    expect(readDashboardCache({ now: () => 1000 + DASHBOARD_CACHE_TTL_MS - 1 })).toEqual({ reports: ["real financial data"] });
+    // A failed sign-out must never wipe a still-legitimately-signed-in user's cached data.
+    expect(clearDashboardCache).not.toHaveBeenCalled();
     expect(window.location.href).toBe("");
   });
 
@@ -63,5 +74,25 @@ describe("signOutSafely", () => {
     const supabase = fakeSupabase({ error: null });
     await signOutSafely({ supabase, redirectTo: "/" });
     expect(supabase.auth.signOut).toHaveBeenCalledOnce();
+  });
+
+  it("reads the current user's id BEFORE calling signOut() -- getUser() would return no one once the session is already gone", async () => {
+    const supabase = fakeSupabase({ error: null });
+    const callOrder = [];
+    supabase.auth.getUser.mockImplementation(async () => { callOrder.push("getUser"); return { data: { user: { id: USER_ID } } }; });
+    supabase.auth.signOut.mockImplementation(async () => { callOrder.push("signOut"); return { error: null }; });
+
+    await signOutSafely({ supabase, redirectTo: "/" });
+
+    expect(callOrder).toEqual(["getUser", "signOut"]);
+  });
+
+  it("does not throw and simply skips clearing when there is no current user to read (already signed out, corrupted session)", async () => {
+    const supabase = fakeSupabase({ error: null }, { user: null });
+    const result = await signOutSafely({ supabase, redirectTo: "/" });
+
+    expect(result).toEqual({ success: true, error: null });
+    expect(clearDashboardCache).not.toHaveBeenCalled();
+    expect(window.location.href).toBe("/");
   });
 });
