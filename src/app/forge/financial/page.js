@@ -109,7 +109,7 @@ export default function FinancialPage() {
       // The three loads below combined take 10-15s on a real dataset (see dashboardCache.js for
       // why). A cache hit means this visit is a revisit within the TTL window -- render the last
       // known-good result immediately instead of re-running all three from scratch.
-      const cached = readDashboardCache();
+      const cached = await readDashboardCache();
       if (cached) {
         setViewModel(cached.viewModel);
         setIntelligenceModel(cached.intelligenceModel);

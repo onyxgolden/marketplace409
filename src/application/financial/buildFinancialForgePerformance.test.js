@@ -136,6 +136,141 @@ describe("buildFinancialForgePerformance", () => {
     expect(result.coverage).toEqual({ earliest: null, latest: null });
   });
 
+  describe("All Time year-range correctness (production regression: 7,000+ real imported transactions, first activity 2014, no activity 2005-2013)", () => {
+    // Reproduces the exact shape of the real production data this guards against: two genuine, tiny,
+    // real financial_events rows dated in 2005 (source_system='rentec', imported 2026-07-15,
+    // totaling $184.99), a true gap with zero business income/expense-kind activity from 2006-2013,
+    // then real bulk activity starting 2014 that continues into the current year -- plus, separately,
+    // an interior gap year and a dataset whose latest real activity is NOT the current year, and a
+    // fully empty dataset. None of these were ever previously exercised by a test.
+
+    function manyTransactionsInYear(year, count, { category = "utilities", kind = "expense" } = {}) {
+      return Array.from({ length: count }, (_, i) => tx({
+        id: `${year}-bulk-${i}`,
+        eventDate: `${year}-${String((i % 12) + 1).padStart(2, "0")}-01`,
+        amount: 10 + (i % 50),
+        transactionKind: kind,
+        category,
+      }));
+    }
+
+    test("a leading year contains only a couple of tiny real transactions (production's 2005) -- All Time still legitimately begins there, since it IS the earliest year with actual included activity, and no earlier invented years appear", () => {
+      const events = [
+        tx({ id: "prod-2005-a", eventDate: "2005-01-25", amount: 87.76, transactionKind: "expense", category: "tools" }),
+        tx({ id: "prod-2005-b", eventDate: "2005-11-17", amount: 97.23, transactionKind: "expense", category: "utilities" }),
+        ...manyTransactionsInYear(2014, 500),
+        ...manyTransactionsInYear(2026, 500),
+      ];
+
+      const result = buildFinancialForgePerformance(events, { scope: "business", today: "2026-09-11", period: { type: "allTime" } });
+
+      expect(result.series[0].key).toBe("2005");
+      expect(result.series.at(-1).key).toBe("2026");
+      // Every year from 2005 through 2026 is present -- 2006-2013 preserved as zero-value interior
+      // years for timeline continuity, never skipped and never treated as a reason to push the start
+      // forward to 2014.
+      expect(result.series.map((p) => p.key)).toEqual(
+        Array.from({ length: 2026 - 2005 + 1 }, (_, i) => String(2005 + i)),
+      );
+      for (let year = 2006; year <= 2013; year += 1) {
+        const point = result.series.find((p) => p.key === String(year));
+        expect(point.incomeCents).toBe(0);
+        expect(point.expensesCents).toBe(0);
+      }
+      expect(result.series.find((p) => p.key === "2005").expensesCents).toBe(18499);
+    });
+
+    test("thousands of transactions across many years -- interior zero-activity years between two active years are preserved, not collapsed or skipped", () => {
+      const events = [
+        ...manyTransactionsInYear(2014, 1200),
+        // 2015-2019 deliberately have zero activity -- a real internal gap.
+        ...manyTransactionsInYear(2020, 1500),
+        ...manyTransactionsInYear(2026, 1000),
+      ];
+
+      const result = buildFinancialForgePerformance(events, { scope: "business", today: "2026-09-11", period: { type: "allTime" } });
+
+      expect(result.series.map((p) => p.key)).toEqual(
+        ["2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"],
+      );
+      for (let year = 2015; year <= 2019; year += 1) {
+        const point = result.series.find((p) => p.key === String(year));
+        expect(point.incomeCents + point.expensesCents).toBe(0);
+      }
+      expect(result.totals.transactionCount).toBe(1200 + 1500 + 1000);
+    });
+
+    test("does not render trailing years with no activity: the latest real activity year, not today's year, is the last point", () => {
+      const events = [
+        ...manyTransactionsInYear(2018, 200),
+        ...manyTransactionsInYear(2020, 200),
+        // Nothing in 2021 through the present (today is 2026) -- these must not appear.
+      ];
+
+      const result = buildFinancialForgePerformance(events, { scope: "business", today: "2026-09-11", period: { type: "allTime" } });
+
+      expect(result.series.at(-1).key).toBe("2020");
+      expect(result.series.map((p) => p.key)).toEqual(["2018", "2019", "2020"]);
+      expect(result.series.some((p) => Number(p.key) > 2020)).toBe(false);
+    });
+
+    test("current-year activity: when the latest real activity IS in the current year, All Time still correctly ends there (the ordinary, common case)", () => {
+      const events = [...manyTransactionsInYear(2022, 100), ...manyTransactionsInYear(2026, 300)];
+
+      const result = buildFinancialForgePerformance(events, { scope: "business", today: "2026-09-11", period: { type: "allTime" } });
+
+      expect(result.series.at(-1).key).toBe("2026");
+      expect(result.series.at(-1).incomeCents + result.series.at(-1).expensesCents).toBeGreaterThan(0);
+    });
+
+    test("an entirely empty dataset produces an empty series -- a deliberate empty state, not one invented current-year label", () => {
+      const result = buildFinancialForgePerformance([], { scope: "business", today: "2026-09-11", period: { type: "allTime" } });
+
+      expect(result.series).toEqual([]);
+      expect(result.availableYears).toEqual([]);
+      expect(result.totals).toEqual({ incomeCents: 0, expensesCents: 0, netCents: 0, transactionCount: 0 });
+    });
+
+    test("an empty dataset for one scope still produces a real series for the other scope (scoping is unaffected by the empty-dataset handling)", () => {
+      const events = manyTransactionsInYear(2024, 50);
+      // manyTransactionsInYear/tx() defaults businessScope to "business" -- personal has nothing.
+      const personalResult = buildFinancialForgePerformance(events, { scope: "personal", today: "2026-09-11", period: { type: "allTime" } });
+      const businessResult = buildFinancialForgePerformance(events, { scope: "business", today: "2026-09-11", period: { type: "allTime" } });
+
+      expect(personalResult.series).toEqual([]);
+      expect(businessResult.series.map((p) => p.key)).toEqual(["2024"]);
+    });
+
+    test("other period types (6 Months, YTD, Year) are unaffected by the All Time leading/trailing trim -- they keep their intended fixed windows even against the same sparse-history dataset", () => {
+      const events = [
+        tx({ id: "prod-2005-a", eventDate: "2005-01-25", amount: 87.76, transactionKind: "expense", category: "tools" }),
+        ...manyTransactionsInYear(2026, 20),
+      ];
+
+      const sixMonths = buildFinancialForgePerformance(events, { scope: "business", today: "2026-06-20", period: { type: "sixMonths" } });
+      expect(sixMonths.series.map((p) => p.key)).toEqual(["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"]);
+
+      const ytd = buildFinancialForgePerformance(events, { scope: "business", today: "2026-03-10", period: { type: "ytd" } });
+      expect(ytd.series.map((p) => p.key)).toEqual(["2026-01", "2026-02", "2026-03"]);
+
+      const yearView = buildFinancialForgePerformance(events, { scope: "business", today: "2026-06-20", period: { type: "year", year: 2005 } });
+      expect(yearView.series).toHaveLength(12);
+      expect(yearView.series[0].key).toBe("2005-01");
+    });
+
+    test("repeated calls (simulating repeated navigation to and from the dashboard) are pure and deterministic -- the same input always produces the identical series, no accumulating or leaking state between calls", () => {
+      const events = [...manyTransactionsInYear(2014, 300), ...manyTransactionsInYear(2026, 300)];
+
+      const first = buildFinancialForgePerformance(events, { scope: "business", today: "2026-09-11", period: { type: "allTime" } });
+      const second = buildFinancialForgePerformance(events, { scope: "business", today: "2026-09-11", period: { type: "allTime" } });
+      const third = buildFinancialForgePerformance(events, { scope: "business", today: "2026-09-11", period: { type: "allTime" } });
+
+      expect(second.series).toEqual(first.series);
+      expect(third.series).toEqual(first.series);
+      expect(second.totals).toEqual(first.totals);
+    });
+  });
+
   describe("chart regression: multi-year manual history alongside corrected downloaded-account activity", () => {
     // Reproduces the shape of the actual production regression this guards against: several years
     // of ordinary manual/CSV history, PLUS a year of real downloaded Stripe Financial Connections
