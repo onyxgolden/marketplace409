@@ -1,4 +1,5 @@
 import { createAuthenticatedFinancialApplication } from "@/lib/supabase/createAuthenticatedFinancialApplication";
+import { financialDataUnavailableResponse } from "@/lib/financial/financialDataUnavailableResponse";
 
 export async function GET() {
   try {
@@ -11,6 +12,10 @@ export async function GET() {
 
     const { snapshotApplication } =
       await authenticatedApplication.getFinancialApplicationSuite();
+
+    if (!snapshotApplication) {
+      return financialDataUnavailableResponse();
+    }
 
     const { reports, dashboard } =
       await snapshotApplication.captureDashboardSnapshot();

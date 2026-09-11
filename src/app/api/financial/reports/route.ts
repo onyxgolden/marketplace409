@@ -1,4 +1,5 @@
 import { createAuthenticatedFinancialApplication } from "@/lib/supabase/createAuthenticatedFinancialApplication";
+import { financialDataUnavailableResponse } from "@/lib/financial/financialDataUnavailableResponse";
 
 export async function GET() {
   const authenticatedApplication =
@@ -10,6 +11,10 @@ export async function GET() {
 
   const { reportingApplication } =
     await authenticatedApplication.getFinancialApplicationSuite();
+
+  if (!reportingApplication) {
+    return financialDataUnavailableResponse();
+  }
 
   const { reports, dashboard } =
     reportingApplication.buildDashboardReports();

@@ -75,8 +75,6 @@ import {
   InMemoryAccountBalanceRepository,
 } from "../../domains/account-balance";
 
-import { DemoFinancialDataProvider } from "../../domains/ledger";
-
 import { FinancialOperationsService } from "../../domains/financial-operations";
 
 import { autonomousAuditAgent } from "../../domains/audit/AutonomousAuditAgent.js";
@@ -112,30 +110,52 @@ export async function createFinancialApplicationSuite(deps = {}) {
     deps.snapshotSuite ||
     (await createFinancialSnapshotApplication({
       snapshotRepository,
+      // Forward the same real financial data this suite was given, if any, so a future caller
+      // that configures a real provider gets a consistent, non-demo snapshotApplication too --
+      // not just a non-demo top-level engine/reportingApplication. See
+      // createFinancialSnapshotApplication.js for why it defaults to null, not demo data, on its
+      // own when nothing is forwarded here.
+      financialData: deps.financialData,
     }));
 
   const snapshotApplication =
     deps.snapshotApplication || snapshotSuite.snapshotApplication;
 
-  const financialData =
-    deps.financialData || new DemoFinancialDataProvider().getFinancialData();
+  // financialData is NEVER implicitly demo-backed here. An authenticated production caller
+  // (createAuthenticatedFinancialApplication.js) never passes deps.financialData, so engine and
+  // reportingApplication below resolve to null rather than silently reporting fabricated numbers
+  // as though they belonged to the authenticated user. DemoFinancialDataProvider remains available
+  // for any caller (test, Storybook/preview, fixture) that explicitly injects deps.financialData --
+  // see DemoFinancialDataProvider itself for that intended use. Do not reintroduce an implicit
+  // `deps.financialData || new DemoFinancialDataProvider()...` fallback here.
+  const financialData = deps.financialData || null;
+
+  const hasRealLedgerInputs =
+    Boolean(deps.generalLedger && deps.chartOfAccounts) || Boolean(financialData);
 
   const engine =
     deps.engine ||
-    new FinancialEngine({
-      generalLedger: deps.generalLedger || financialData.generalLedger,
-      chartOfAccounts: deps.chartOfAccounts || financialData.chartOfAccounts,
-    });
+    (hasRealLedgerInputs
+      ? new FinancialEngine({
+          generalLedger: deps.generalLedger || financialData.generalLedger,
+          chartOfAccounts: deps.chartOfAccounts || financialData.chartOfAccounts,
+        })
+      : null);
 
   const dashboardService =
     deps.dashboardService || new FinancialDashboardService();
 
+  // null, not a demo-backed instance, when no real ledger input was configured -- callers (e.g.
+  // /api/financial/reports) must treat a null reportingApplication as "financial data
+  // unavailable," never call into it and risk it being demo data, and never treat null as $0.
   const reportingApplication =
     deps.reportingApplication ||
-    new FinancialReportingApplication({
-      engine,
-      dashboardService,
-    });
+    (engine
+      ? new FinancialReportingApplication({
+          engine,
+          dashboardService,
+        })
+      : null);
 
   // Reads financial_account_groups/financial_account_group_members under has_workspace_access
   // RLS -- deps.supabaseClient here is always the caller's own authenticated (cookie-bound)

@@ -1,4 +1,5 @@
 import { createFinancialApplicationSuite } from "../createFinancialApplicationSuite.js";
+import { DemoFinancialDataProvider } from "../../../domains/ledger/index.js";
 import {
   FinancialDashboardIntelligenceApplication,
   FinancialDecisionApplication,
@@ -786,8 +787,13 @@ describe("createFinancialApplicationSuite", () => {
     );
   });
 
-  test("builds default applications with usable financial data", async () => {
+  test("builds default applications with usable financial data when a real financial data provider is explicitly configured", async () => {
+    // financialData must be explicitly injected -- see "does not implicitly select demo
+    // financial data" below. This test proves the suite produces usable output once properly
+    // configured, using an explicit DemoFinancialDataProvider() call the same way a legitimate
+    // test/demo caller would, never an implicit fallback inside the composition function itself.
     const suite = await createFinancialApplicationSuite({
+      financialData: new DemoFinancialDataProvider().getFinancialData(),
       financialEventRepository: {
         findByOwnerId: vi.fn(async () => []),
       },
@@ -809,5 +815,38 @@ describe("createFinancialApplicationSuite", () => {
     expect(snapshot.dashboard).toBeDefined();
     expect(operations.type).toBe("financial-operations");
     expect(Array.isArray(operations.actions)).toBe(true);
+  });
+
+  test("does not implicitly select demo financial data: engine, reportingApplication, and the nested snapshotApplication are all null when no real financial data is configured", async () => {
+    const suite = await createFinancialApplicationSuite({
+      financialEventRepository: { findByOwnerId: vi.fn(async () => []) },
+      financialAccountRepository: { findByOwnerId: vi.fn(async () => []) },
+      accountBalanceRepository: { findLatestByOwnerId: vi.fn(async () => []) },
+      currentOwnerId: vi.fn(async () => "owner-test"),
+    });
+
+    // This is the canary: if a future edit reintroduces
+    // `deps.financialData || new DemoFinancialDataProvider()...` (or an equivalent implicit
+    // fallback anywhere in this chain), these three assertions fail because engine/
+    // reportingApplication/snapshotApplication stop being null.
+    expect(suite.engine).toBeNull();
+    expect(suite.reportingApplication).toBeNull();
+    expect(suite.snapshotApplication).toBeNull();
+  });
+
+  test("forwards explicitly injected financialData into the nested snapshot suite, so reportingApplication and snapshotApplication agree on being real (non-demo)", async () => {
+    const financialData = new DemoFinancialDataProvider().getFinancialData();
+
+    const suite = await createFinancialApplicationSuite({
+      financialData,
+      financialEventRepository: { findByOwnerId: vi.fn(async () => []) },
+      financialAccountRepository: { findByOwnerId: vi.fn(async () => []) },
+      accountBalanceRepository: { findLatestByOwnerId: vi.fn(async () => []) },
+      currentOwnerId: vi.fn(async () => "owner-test"),
+    });
+
+    expect(suite.engine).not.toBeNull();
+    expect(suite.reportingApplication).not.toBeNull();
+    expect(suite.snapshotApplication).not.toBeNull();
   });
 });
