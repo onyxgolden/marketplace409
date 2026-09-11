@@ -328,15 +328,19 @@ session.
 **Recommendation: Financial FORGE receives summarized journal events, not raw order/fill events.**
 Reasoning: the trading domain's own event stream (§6) is the append-only source of truth for
 *trading* facts (orders, fills, positions) — replaying it must always be possible without Financial
-FORGE. Financial FORGE's ledger (whichever of `src/domains/ledger/`'s classical GL or the
-event-sourced pattern is confirmed authoritative — **resolved by TR-0.5, required before TR-4, not
-before TR-2**; §13) should receive periodic, idempotent **summarized postings** (cash movements,
-realized P&L, fees, dividends) keyed by the same idempotency discipline as everywhere else in this
-codebase — never a raw dump of every trading event, and never a second, competing "trading ledger"
-that Financial FORGE tries to reconcile line-by-line. Whichever ledger structure TR-0.5 confirms, the
-trading domain's own event-sourced design (§6) stays independently correct and replayable regardless
-— this integration contract is the only thing that changes if the answer differs from what's assumed
-here.
+FORGE. **Resolved by TR-0.5** (`docs/product/FORGE_TRADING_TR05_LEDGER_AUTHORITY.md`): Financial
+FORGE's authoritative ledger is `financial_events` (the same event-sourced pattern
+`private_financing_events` and the rental payment chain both post to, independently verified correct
+in production multiple times this session) — **not** `src/domains/ledger/`'s classical GL structures,
+which TR-0.5 found have no live production write path today (their only data-provider implementation,
+`ProductionFinancialDataProvider`, is an unimplemented stub; every real caller falls back to
+hard-coded demo data unconditionally). A future TR-4 implementation should post summarized postings
+(cash movements, realized P&L, fees, dividends) as new `financial_events` rows, keyed by the same
+idempotency discipline as everywhere else in this codebase — never a raw dump of every trading event,
+and never a write into `src/domains/ledger/`'s structures, which would create exactly the
+competing-ledger risk this contract exists to avoid. The trading domain's own event-sourced design
+(§6) already stayed independently correct and replayable throughout TR-0 through TR-3 regardless of
+this answer, as designed.
 
 - **Paper activity is never posted to Financial FORGE's net-worth totals.** A paper `trading_account`
   never generates a Financial FORGE journal entry — full stop. This is the simplest, most legible
@@ -609,6 +613,17 @@ left as open questions — Jason should not be interrupted for decisions that do
   accounts display and reconcile against the broker-reported tax lots rather than FORGE claiming to
   be a tax authority (§8).
 
+**A third item is now resolved, not open** — the `src/domains/ledger/` authority question (formerly
+item 3 here) was answered by TR-0.5 with direct repository evidence, exactly as this document
+predicted it would be answerable without Jason's input:
+
+- ~~`src/domains/ledger/` authority question~~ — **resolved**: `financial_events` is Financial
+  FORGE's authoritative ledger; `src/domains/ledger/`'s classical GL structures have no live
+  production write path today. See `docs/product/FORGE_TRADING_TR05_LEDGER_AUTHORITY.md` for the
+  full evidence chain, and §8 above for the resulting TR-4 integration contract. TR-0.5 also
+  surfaced one unrelated, real production risk (two authenticated API routes serving hard-coded
+  demo data) — flagged in that document's §5, not a Trading-program item.
+
 **Remaining genuinely open decisions:**
 
 1. **Market-data and security-master vendor/licensing** (§14) — this gates TR-1A itself. Recommendation:
@@ -620,11 +635,7 @@ left as open questions — Jason should not be interrupted for decisions that do
    TR-6's gate, since TR-5's broker-adapter design may itself have compliance implications (e.g.
    whether *read-only* account/position import triggers different regulatory treatment than pure
    market-data display).
-3. **`src/domains/ledger/` authority question** (§2, §13's TR-0.5) — this is answerable from the
-   repository itself with focused investigation, not truly a Jason-input question, but it's flagged
-   here because it blocks §8's TR-4 design and should be resolved by TR-0.5, not discovered
-   mid-build. It does **not** block TR-0, TR-1, TR-2, TR-2.5, or TR-3 (§13).
-4. **Monetization/tier gating** (noted only in passing at §4, re: Robinhood Cortex's paid tier) — out
+3. **Monetization/tier gating** (noted only in passing at §4, re: Robinhood Cortex's paid tier) — out
    of scope for this plan entirely, but flagged since it could later affect TR-1's "read-only
    foundation" framing if Jason wants a paid tier decided early.
 
