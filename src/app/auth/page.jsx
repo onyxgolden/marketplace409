@@ -2,7 +2,7 @@
 
 import Header from "@/components/Header";
 import { createClient } from "@/lib/supabase/client";
-import { clearDashboardCache } from "@/app/forge/financial/dashboardCache.js";
+import { signOutSafely } from "@/lib/auth/signOutSafely.js";
 import { useEffect, useState } from "react";
 
 const supabase = createClient();
@@ -33,8 +33,16 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState("");
-  const [resettingPassword, setResettingPassword] = useState(false);
   const [invitedEmail, setInvitedEmail] = useState(null);
+
+  // A single mutually-exclusive slot, not four independent booleans: while any one auth action is
+  // pending, every OTHER auth action must be disabled too, not just its own button. Four independent
+  // `signingIn`/`signingUp`/`signingOut`/`resettingPassword` flags let a user start Sign In, then --
+  // while it's still in flight -- also click Create Account, racing two Supabase auth calls against
+  // the same client/session. One `authAction` value (null when idle) makes that structurally
+  // impossible: a second action can only ever be started once this one has cleared.
+  const [authAction, setAuthAction] = useState(null);
+  const authActionPending = authAction !== null;
 
   useEffect(() => {
     const invited = currentParams().get("email")?.trim() || null;
@@ -56,25 +64,43 @@ export default function AuthPage() {
     return () => subscription.subscription.unsubscribe();
   }, []);
 
+  // Deliberately the SAME response regardless of whether this email is new, already confirmed, or
+  // already registered-but-unconfirmed -- showing a different message per case (as an earlier
+  // version of this fix did, checking `data.user.identities.length`) is itself an account-enumeration
+  // oracle: an attacker could tell whether an email is registered just by reading which message came
+  // back. Supabase's own signUp() already avoids leaking this (no error, either way); the UI must not
+  // reintroduce the leak on top of it. This one message safely covers all three cases by telling the
+  // legitimate owner of the address what to do next without confirming which case they're in.
+  const SIGNUP_SUBMITTED_MESSAGE =
+    "Thanks! If this is a new email, check your inbox to confirm your account. If you already have " +
+    "an account with this email, you can sign in above instead, or use \"Forgot password?\" if you " +
+    "don't remember your password.";
+
   async function signUp() {
+    if (authActionPending) return;
     setMessage("");
+    setAuthAction("signUp");
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: { emailRedirectTo: buildAuthRedirect(invitedEmail) },
     });
+    setAuthAction(null);
 
     if (error) {
       setMessage(error.message);
       return;
     }
 
-    setMessage("Account created. Check your email to confirm it — you'll be brought back here and signed in automatically.");
+    setMessage(SIGNUP_SUBMITTED_MESSAGE);
   }
 
   async function signIn() {
+    if (authActionPending) return;
     setMessage("");
+    setAuthAction("signIn");
     const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setAuthAction(null);
 
     if (error) {
       setMessage(error.message);
@@ -84,30 +110,33 @@ export default function AuthPage() {
   }
 
   async function signOut() {
-    const { error } = await supabase.auth.signOut();
+    if (authActionPending) return;
+    setAuthAction("signOut");
+    const result = await signOutSafely({ supabase, redirectTo: "/" });
 
-    if (error) {
-      alert(error.message);
-    } else {
-      // sessionStorage survives a same-tab navigation -- clear the cached Financial Overview data
-      // so it can't leak to whoever signs in next on this tab/browser.
-      clearDashboardCache();
-      window.location.href = "/";
+    if (!result.success) {
+      // Stay on this page, show the error, and restore the enabled state -- never claim the user was
+      // signed out when they weren't.
+      setAuthAction(null);
+      alert(result.error.message);
     }
+    // On success, signOutSafely() has already navigated away -- no need to clear authAction, this
+    // component is being torn down.
   }
 
   async function resetPassword() {
+    if (authActionPending) return;
     if (!email.trim()) {
       setMessage("Enter your email address first, then select Forgot password?");
       return;
     }
 
-    setResettingPassword(true);
     setMessage("");
+    setAuthAction("resetPassword");
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: `${window.location.origin}/auth/reset-password`,
     });
-    setResettingPassword(false);
+    setAuthAction(null);
 
     if (error) {
       setMessage(error.message);
@@ -167,10 +196,10 @@ export default function AuthPage() {
           <button
             type="button"
             onClick={resetPassword}
-            disabled={resettingPassword}
+            disabled={authActionPending}
             className="mb-2 text-sm font-semibold text-blue-900 underline disabled:opacity-60"
           >
-            {resettingPassword ? "Sending reset link…" : "Forgot password?"}
+            {authAction === "resetPassword" ? "Sending reset link…" : "Forgot password?"}
           </button>
 
           {invitedEmail ? (
@@ -190,23 +219,26 @@ export default function AuthPage() {
 
           <button
             onClick={signIn}
-            className="w-full bg-blue-900 text-white py-4 rounded-2xl text-xl font-bold mb-4"
+            disabled={authActionPending}
+            className="w-full bg-blue-900 text-white py-4 rounded-2xl text-xl font-bold mb-4 disabled:opacity-60"
           >
-            Sign In
+            {authAction === "signIn" ? "Signing in…" : "Sign In"}
           </button>
 
           <button
             onClick={signUp}
-            className="w-full bg-red-600 text-white py-4 rounded-2xl text-xl font-bold"
+            disabled={authActionPending}
+            className="w-full bg-red-600 text-white py-4 rounded-2xl text-xl font-bold disabled:opacity-60"
           >
-            Create Account
+            {authAction === "signUp" ? "Creating account…" : "Create Account"}
           </button>
 
           <button
             onClick={signOut}
-            className="w-full bg-gray-800 text-white py-4 rounded-2xl text-xl font-bold mt-4"
+            disabled={authActionPending}
+            className="w-full bg-gray-800 text-white py-4 rounded-2xl text-xl font-bold mt-4 disabled:opacity-60"
           >
-            Sign Out
+            {authAction === "signOut" ? "Signing out…" : "Sign Out"}
           </button>
         </div>
       </section>
