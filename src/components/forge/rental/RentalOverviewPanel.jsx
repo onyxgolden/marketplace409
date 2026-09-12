@@ -273,6 +273,8 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
     <section className="space-y-6" data-rental-overview>
       <HeroHeader summary={summary} occupancyPercent={occupancyPercent} onNavigate={onNavigate} />
 
+      <PortfolioPerformanceSection financialEvents={summary.financialEvents} />
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {kpis.map((kpi) => <ForgeMetricTile key={kpi.metricKey} onNavigate={onNavigate} {...kpi} />)}
       </div>
@@ -284,8 +286,6 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
           <ForgeNeedsAttentionQueue items={summary.needsAttention} onNavigate={onNavigate} />
         </div>
       </section>
-
-      <PortfolioPerformanceSection financialEvents={summary.financialEvents} />
     </section>
   );
 }
