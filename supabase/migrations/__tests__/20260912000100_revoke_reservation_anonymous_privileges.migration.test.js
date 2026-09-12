@@ -31,10 +31,34 @@ const RESERVATION_TABLES = [
   "reservation_guests", "reservations", "reservation_events", "reservation_inventory_imports",
 ];
 
-function psql(sql) {
+function runPsqlOnce(sql) {
   return execFileSync("docker", ["exec", "-i", DB_CONTAINER, "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"], {
     input: sql, encoding: "utf8",
   });
+}
+
+// This suite shares one local Postgres instance with every other reservation-domain integration
+// test file, and vitest runs test files as separate concurrent worker processes by default. This
+// file's own GRANT/REVOKE statements (restoring the pre-fix vulnerable baseline, then applying the
+// real migration) and reservationRpcs.integration.test.js's own inline GRANT/REVOKE statements
+// (simulating the pre-/post-hardening state for a different table set) can both be issued at
+// close enough wall-clock proximity to collide on the same system-catalog row, which Postgres
+// reports as "tuple concurrently updated" -- a genuine, narrow DDL race between two independent
+// test files' setup, not a bug in either migration or a sign either GRANT/REVOKE was wrong.
+// Retrying is correct here (unlike swallowing a real assertion failure) because a caught
+// collision means neither transaction's DDL applied only partially -- Postgres aborts the whole
+// statement on this error -- so a clean retry either succeeds outright or surfaces a real error.
+function psql(sql, attemptsRemaining = 3) {
+  try {
+    return runPsqlOnce(sql);
+  } catch (error) {
+    const message = `${error?.stderr || error?.message || ""}`;
+    if (attemptsRemaining > 1 && message.includes("tuple concurrently updated")) {
+      execFileSync("sleep", ["0.2"]);
+      return psql(sql, attemptsRemaining - 1);
+    }
+    throw error;
+  }
 }
 
 async function isLocalStackReachable() {
@@ -79,6 +103,17 @@ describe.skipIf(!reachable)("RV-A: revoke anonymous reservation privileges (real
   // `postgres`, which does not), so without this, several assertions below would fail for
   // reasons that have nothing to do with RV-A's actual authorization behavior.
   beforeAll(async () => {
+    // A small, randomized delay before this file's own first DDL statement: reservationRpcs.
+    // integration.test.js's beforeAll issues its own GRANT/REVOKE statements against four of
+    // these same seven tables, in a separate concurrent vitest worker process, at roughly the
+    // same wall-clock moment (both files' beforeAll hooks fire at worker/file startup). Without
+    // this, the two can occasionally collide on the same table's system-catalog row -- Postgres
+    // reports that as "tuple concurrently updated" in whichever side loses the race, and only
+    // this file's own psql() calls (see above) retry on it. Spreading out exactly when each
+    // file's DDL actually executes is the only mitigation available from this file alone, since
+    // the sibling file is pre-existing and out of this PR's scope to modify.
+    await new Promise((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 250)));
+
     psql(`
       grant select, insert, update, delete, references, trigger, truncate on ${RESERVATION_TABLES.join(", ")} to anon;
       grant select, insert, update, delete, references, trigger, truncate on ${RESERVATION_TABLES.join(", ")} to authenticated;
