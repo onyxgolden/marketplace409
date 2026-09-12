@@ -6,6 +6,36 @@
 
 ---
 
+## 2026-09-12 RV-A — Reservation Anonymous-Privilege Revocation — PR OPEN, NOT MERGED
+
+**Status: bounded fix implemented and opened for review; not merged, not deployed, not applied to
+production.** A production-readiness audit of the RV/cabin reservation system (specification:
+`governance/specifications/rv-multi-user-operational-dashboard-handoff.md`) found that the `anon`
+role retains raw `INSERT`/`UPDATE`/`DELETE`/`SELECT`/sequence/`EXECUTE` privileges on every
+reservation table, sequence, and mutation function/RPC in production, via this project's
+`ALTER DEFAULT PRIVILEGES` configuration -- the same class of leftover-default-privilege issue
+`20260910000200_revoke_reservation_direct_write_grants.sql` closed for `authenticated`, never
+extended to `anon`. Confirmed **not currently exploitable**: every reservation table has
+`relforcerowsecurity = true` and every RLS policy on them is scoped to `{authenticated}` only, so
+`anon` matches zero policies and Postgres denies it categorically regardless of the grant.
+
+Migration `20260912000100_revoke_reservation_anonymous_privileges.sql` revokes anon's table, sequence,
+and function/RPC privileges across all 7 reservation tables and all 5 reservation-related functions
+(`confirm_owner_reservation`, `import_reservation_inventory_bulk`, and the three actor-attribution/
+immutability trigger functions), while explicitly re-affirming `authenticated`/`service_role` access
+rather than depending on ambient default privileges that differ between local and production
+(confirmed via `pg_default_acl`: production's migrations run as `supabase_admin`, which carries an
+explicit per-role default ACL; the local Supabase CLI stack runs migrations as `postgres`, which does
+not). Proven with a 15-test real-Postgres migration test plus stable reruns of the full reservation and
+workspace-membership suites (132/132, twice in a row) against a freshly reset, locked-install schema.
+
+**This does not complete the RV/cabin system.** RV-B (reservation modify/cancel/check-in/check-out),
+RV-C (operational dashboard), RV-D (guest-facing booking), and RV-E (payments/deposits/agreements/
+access) from the same audit remain entirely unstarted. See the PR for exact before/after privilege
+evidence, commit SHA, and test output.
+
+---
+
 ## 2026-09-07 Defect Fix — Scheduling Autosave Destroyed Relational Data (SCHED-20) — COMPLETE
 
 **Status: complete and verified live.** Both migrations are applied to production and match the
