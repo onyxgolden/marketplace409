@@ -178,6 +178,17 @@ describe("dashboardCache", () => {
 
       expect(await readDashboardCache({ userId: USER_A, store, now })).toBeNull();
     });
+
+    it("treats a real pre-deploy entry (schemaVersion 1, from before the 2005->2015 date-repair migration shipped) as a miss -- a cache populated moments before that deploy must never keep showing the corrected chart the stale, pre-repair 2005 dates", async () => {
+      const store = fakeStore();
+      const now = () => 1_000_000;
+      const key = `forge-financial-dashboard-cache-v1:${USER_A}`;
+      // Written directly (bypassing writeDashboardCache, which always stamps the CURRENT version)
+      // to simulate an entry that genuinely predates this deploy.
+      await store.set(key, { cachedAt: now(), schemaVersion: 1, payload: { viewModel: { loadState: "ready", note: "pre-repair, shows 2005" } } });
+
+      expect(await readDashboardCache({ userId: USER_A, store, now })).toBeNull();
+    });
   });
 
   describe("isCacheableDashboardLoad", () => {

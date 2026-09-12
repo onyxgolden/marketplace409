@@ -31,8 +31,15 @@ export const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
 // Bumped whenever the shape of the cached `payload` (viewModel/intelligenceModel/
 // propertyOperatingObligations) changes incompatibly, so a cache entry written by a previous
 // deployment is never handed to code expecting the new shape -- it reads as a clean miss instead of
-// risking a runtime error or a subtly wrong render from stale-shaped data.
-const PAYLOAD_SCHEMA_VERSION = 1;
+// risking a runtime error or a subtly wrong render from stale-shaped data. Also deliberately bumped
+// (2, from 1) alongside 20260911010000_correct_rentec_2005_dates_to_2015.sql, even though the
+// payload's own shape did not change: this is the only lever this client-side cache has to react to
+// a server-side DATA correction rather than a code-shape change. Without the bump, up to 5 more
+// minutes of DASHBOARD_CACHE_TTL_MS could still show a stale 2005-dated payload cached moments
+// before that migration ran; since this bump ships in the same deploy as the corrected chart-year
+// logic, every previously-cached entry (all necessarily stamped schemaVersion 1) becomes an instant
+// miss the moment this code is live, independent of exactly when the migration itself applies.
+const PAYLOAD_SCHEMA_VERSION = 2;
 
 const DB_NAME = "forge-financial-dashboard-cache";
 const DB_VERSION = 1;
