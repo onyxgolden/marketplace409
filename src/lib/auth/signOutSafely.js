@@ -4,8 +4,8 @@
 // each caller previously reimplemented this independently.
 //
 // Repository evidence for what "user-specific browser cache" actually means here: a search across
-// every sessionStorage/localStorage usage in src/ found exactly one cache of genuinely fetched,
-// per-owner financial data -- src/app/forge/financial/dashboardCache.js's sessionStorage-backed
+// every sessionStorage/localStorage/IndexedDB usage in src/ found exactly one cache of genuinely
+// fetched, per-owner financial data -- src/app/forge/financial/dashboardCache.js's IndexedDB-backed
 // Financial Overview cache. Every other localStorage usage found (property-panel "show guidance"
 // dismissal flags, rental nav/sidebar collapse state, a report favorites list, scheduling palette
 // collapse state) is a device-level UI preference, not fetched user data, and is intentionally left
@@ -26,7 +26,11 @@ export async function signOutSafely({ supabase, redirectTo = "/" }) {
     return { success: false, error };
   }
 
-  clearDashboardCache();
+  // Wipes every cached Financial FORGE dashboard entry in this browser, for every
+  // (actingUserId, canonicalWorkspaceId) pair it ever held -- not just whoever happened to just
+  // sign out -- so a shared device never keeps showing anyone's cached financial data after any
+  // sign-out. No identity needed to call this; see dashboardCache.js.
+  await clearDashboardCache();
   window.location.href = redirectTo;
   return { success: true, error: null };
 }

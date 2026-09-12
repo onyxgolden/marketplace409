@@ -106,9 +106,19 @@ export function buildFinancialForgePerformance(financialEvents = [], {
     periodStart = `${year}-01-01`;
     periodEnd = `${year}-12-31`;
   } else if (periodType === "allTime") {
+    // Spans only the earliest-to-latest year that actually has scoped activity -- never a leading
+    // or trailing year invented just because "today" is later, and never a fabricated single
+    // current-year point when there is no activity at all (an empty `keys` here is the deliberate
+    // empty-dataset signal; the caller renders its own empty state rather than a chart with one
+    // invented zero-value year). Years strictly between the earliest and latest active year ARE
+    // still filled in at zero so the timeline stays visually continuous -- only the unbounded ends
+    // are trimmed.
     granularity = "yearly";
-    const earliestWithData = availableYears.length > 0 ? availableYears[0] : todayYear;
-    for (let year = earliestWithData; year <= todayYear; year += 1) keys.push(String(year));
+    if (availableYears.length > 0) {
+      const earliestWithData = availableYears[0];
+      const latestWithData = availableYears[availableYears.length - 1];
+      for (let year = earliestWithData; year <= latestWithData; year += 1) keys.push(String(year));
+    }
     periodStart = null;
     periodEnd = null;
   }

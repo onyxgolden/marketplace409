@@ -1,7 +1,16 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DASHBOARD_CACHE_TTL_MS, readDashboardCache, writeDashboardCache } from "@/app/forge/financial/dashboardCache.js";
 import { signOutSafely } from "./signOutSafely.js";
+
+const { clearDashboardCache } = vi.hoisted(() => ({ clearDashboardCache: vi.fn() }));
+
+// dashboardCache.js's own read/write/clear behavior (TTL, per-(actingUserId, canonicalWorkspaceId)
+// isolation, schema versioning, IndexedDB fallback, whole-store clear) is verified once, directly,
+// in dashboardCache.test.js -- this file only needs to prove signOutSafely calls the real
+// clearDashboardCache export, in the right order relative to signOut(). jsdom has no real IndexedDB
+// to observe end-to-end through, so mocking the export (rather than injecting a fake store
+// signOutSafely has no way to accept anyway) is the accurate way to test this boundary.
+vi.mock("@/app/forge/financial/dashboardCache.js", () => ({ clearDashboardCache }));
 
 function fakeSupabase(signOutResult) {
   return { auth: { signOut: vi.fn().mockResolvedValue(signOutResult) } };
@@ -11,10 +20,7 @@ describe("signOutSafely", () => {
   let originalLocation;
 
   beforeEach(() => {
-    // Seed a real dashboard-cache entry the way the Financial Overview page actually would, so
-    // success/failure can be asserted against real read/write behavior, not a mocked stand-in.
-    writeDashboardCache({ reports: ["real financial data"] }, { now: () => 1000 });
-
+    clearDashboardCache.mockReset().mockResolvedValue(undefined);
     originalLocation = window.location;
     delete window.location;
     window.location = { ...originalLocation, href: "" };
@@ -22,16 +28,17 @@ describe("signOutSafely", () => {
 
   afterEach(() => {
     window.location = originalLocation;
-    window.sessionStorage.clear();
   });
 
-  it("on success: clears the dashboard cache and redirects to redirectTo, only after clearing", async () => {
+  it("on success: clears the WHOLE dashboard cache (every entry, not one key), then redirects", async () => {
     const supabase = fakeSupabase({ error: null });
 
     const result = await signOutSafely({ supabase, redirectTo: "/" });
 
     expect(result).toEqual({ success: true, error: null });
-    expect(readDashboardCache({ now: () => 1000 + DASHBOARD_CACHE_TTL_MS - 1 })).toBeNull();
+    // No identity argument -- clearDashboardCache() wipes the entire store on its own; see
+    // dashboardCache.test.js for proof it actually does.
+    expect(clearDashboardCache).toHaveBeenCalledWith();
     expect(window.location.href).toBe("/");
   });
 
@@ -53,9 +60,8 @@ describe("signOutSafely", () => {
     const result = await signOutSafely({ supabase, redirectTo: "/" });
 
     expect(result).toEqual({ success: false, error: { message: "network error" } });
-    // The cache seeded in beforeEach must still be readable -- a failed sign-out must never wipe a
-    // still-legitimately-signed-in user's cached data.
-    expect(readDashboardCache({ now: () => 1000 + DASHBOARD_CACHE_TTL_MS - 1 })).toEqual({ reports: ["real financial data"] });
+    // A failed sign-out must never wipe a still-legitimately-signed-in user's cached data.
+    expect(clearDashboardCache).not.toHaveBeenCalled();
     expect(window.location.href).toBe("");
   });
 
@@ -63,5 +69,16 @@ describe("signOutSafely", () => {
     const supabase = fakeSupabase({ error: null });
     await signOutSafely({ supabase, redirectTo: "/" });
     expect(supabase.auth.signOut).toHaveBeenCalledOnce();
+  });
+
+  it("clears the cache only AFTER signOut() actually succeeds, never before", async () => {
+    const supabase = fakeSupabase({ error: null });
+    const callOrder = [];
+    supabase.auth.signOut.mockImplementation(async () => { callOrder.push("signOut"); return { error: null }; });
+    clearDashboardCache.mockImplementation(async () => { callOrder.push("clearDashboardCache"); });
+
+    await signOutSafely({ supabase, redirectTo: "/" });
+
+    expect(callOrder).toEqual(["signOut", "clearDashboardCache"]);
   });
 });

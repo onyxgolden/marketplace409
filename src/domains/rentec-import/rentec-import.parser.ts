@@ -22,6 +22,13 @@ export class RentecImportParser {
       const expense = this.parseMoney(row.EXPENSE);
       const transactionDate = this.normalizeDate(row.DATE);
 
+      // An unparseable or structurally implausible date (see normalizeDate) must never silently
+      // enter the ledger under a fabricated year -- skip the whole row rather than writing an
+      // income/expense transaction with a date nobody actually confirmed.
+      if (!transactionDate) {
+        return;
+      }
+
       if (income > 0) {
         records.push({
           date: transactionDate,
@@ -125,6 +132,21 @@ export class RentecImportParser {
     return Math.abs(Number(normalizedValue) || 0);
   }
 
+  // Real US rental/property accounting does not predate 1900 -- a source year numerically below
+  // that is not a legitimate (if unusual) historical date, it is corrupted input, most plausibly a
+  // truncated 2-digit year that arrived already zero-padded to 4 characters upstream of this parser
+  // (e.g. "15" losing its leading digit down to "5", then padded to "0005" by whatever produced the
+  // CSV, before this code ever sees it -- padStart on the *parser's own* side cannot undo that, since
+  // by the time it runs the string is already 4 characters long and indistinguishable in shape from
+  // a genuine year).
+  private static readonly MIN_PLAUSIBLE_YEAR = 1900;
+
+  // Real production data reproduced exactly this failure: a raw DATE of "11/17/0005" parsed clean
+  // under the old (pad-only) logic, landed in financial_events as 2005-11-17 (a well-known legacy
+  // JS Date-parsing quirk elsewhere in this pipeline coincidentally "corrected" the stored date but
+  // not the record's own id, which still reads "0005"), and silently distorted 20 years of the All
+  // Time chart's start year before anyone noticed. This rejects any date whose parsed year falls
+  // below the floor instead of accepting it at face value.
   private normalizeDate(value?: string): string {
     if (!value) {
       return "";
@@ -134,6 +156,10 @@ export class RentecImportParser {
 
     if (!month || !day || !year) {
       return value;
+    }
+
+    if (Number(year) < RentecImportParser.MIN_PLAUSIBLE_YEAR) {
+      return "";
     }
 
     return `${year.padStart(4, "0")}-${month.padStart(2, "0")}-${day.padStart(
