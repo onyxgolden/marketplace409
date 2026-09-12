@@ -7,6 +7,18 @@
 
 ---
 
+## 2026-09-12 RV-A — Reservation Anonymous-Privilege Revocation — PR OPEN, NOT MERGED
+
+Bounded authorization fix from the RV/cabin production-readiness audit: revokes `anon`'s leftover
+default-privilege table, sequence, and function/RPC access across the reservation domain
+(migration `20260912000100_revoke_reservation_anonymous_privileges.sql`). Not currently exploitable
+(RLS already denies `anon` categorically); this closes the same defense-in-depth gap
+`20260910000200` closed for `authenticated`. PR open, not merged, not deployed, not applied to
+production. Does not touch reservation lifecycle, the dashboard, guest portal, or payments — RV-B
+through RV-E from the same audit remain entirely unstarted. Full details in `FORGE_STATUS.md`.
+
+---
+
 ## 2026-09-01 Active Assignment — RV Multi-User Operations
 
 **Owner authorization:** Claude may inspect, implement, test, push a branch, and open a PR while the owner is away.
