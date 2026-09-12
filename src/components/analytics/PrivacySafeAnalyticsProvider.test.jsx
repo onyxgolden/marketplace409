@@ -56,5 +56,42 @@ describe("PrivacySafeAnalyticsProvider", () => {
     });
     expect(localStorage.getItem(ANALYTICS_CONSENT_KEY)).toBeNull();
     expect(mocks.initializeAnalytics).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Allow anonymous analytics");
+  });
+
+  it("persists denial and sends no analytics request", async () => {
+    process.env.NEXT_PUBLIC_FORGE_ANALYTICS_ENABLED = "true";
+    process.env.NEXT_PUBLIC_FORGE_ANALYTICS_KILL_SWITCH = "false";
+    process.env.NEXT_PUBLIC_POSTHOG_KEY = "phc_public_browser_key";
+    process.env.NEXT_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
+
+    await act(async () => {
+      root.render(<PrivacySafeAnalyticsProvider><main>FORGE</main></PrivacySafeAnalyticsProvider>);
+    });
+    const deny = [...container.querySelectorAll("button")].find((button) => button.textContent === "No thanks");
+    await act(async () => deny.click());
+    expect(localStorage.getItem(ANALYTICS_CONSENT_KEY)).toBe("denied");
+    expect(mocks.initializeAnalytics).not.toHaveBeenCalled();
+    expect(mocks.captureApprovedEvent).not.toHaveBeenCalled();
+  });
+
+  it("initializes only after the user explicitly allows analytics", async () => {
+    process.env.NEXT_PUBLIC_FORGE_ANALYTICS_ENABLED = "true";
+    process.env.NEXT_PUBLIC_FORGE_ANALYTICS_KILL_SWITCH = "false";
+    process.env.NEXT_PUBLIC_POSTHOG_KEY = "phc_public_browser_key";
+    process.env.NEXT_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
+    mocks.initializeAnalytics.mockResolvedValue({ capture: vi.fn() });
+
+    await act(async () => {
+      root.render(<PrivacySafeAnalyticsProvider><main>FORGE</main></PrivacySafeAnalyticsProvider>);
+    });
+    const allow = [...container.querySelectorAll("button")].find((button) => button.textContent === "Allow anonymous analytics");
+    await act(async () => allow.click());
+    expect(localStorage.getItem(ANALYTICS_CONSENT_KEY)).toBe("granted");
+    expect(mocks.initializeAnalytics).toHaveBeenCalledTimes(1);
+    expect(mocks.captureApprovedEvent).toHaveBeenCalledWith("forge_navigation", {
+      surface: "private_financing",
+      destination: "private_financing",
+    });
   });
 });

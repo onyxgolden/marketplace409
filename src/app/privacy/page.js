@@ -1,3 +1,5 @@
+import AnalyticsPrivacyControls from "@/components/analytics/AnalyticsPrivacyControls";
+
 export default function PrivacyPage() {
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900 px-6 py-12">
@@ -44,6 +46,20 @@ export default function PrivacyPage() {
           functionality, including financial integrations and supporting
           infrastructure services.
         </p>
+
+        <section id="analytics" className="scroll-mt-8">
+          <h2 className="text-2xl font-bold mt-8 mb-3">Optional Product Analytics</h2>
+          <p className="mb-4">
+            With your permission, FORGE sends a small set of anonymous usage events to PostHog in the United States. These events help identify completed onboarding and workflows, broad navigation, feature use, and coded errors.
+          </p>
+          <p className="mb-4">
+            FORGE does not send screen recordings, clicks, typed text, names, email addresses, phone numbers, property addresses, tenant or borrower information, lease content, financial amounts, payment or bank details, Stripe information, authentication secrets, or Supabase records to PostHog.
+          </p>
+          <p className="mb-4">
+            Analytics is optional and disabled unless you choose to allow it. The choice is stored only in this browser and can be changed below at any time.
+          </p>
+          <AnalyticsPrivacyControls />
+        </section>
       </article>
     </main>
   );

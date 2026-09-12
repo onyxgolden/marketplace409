@@ -1,6 +1,6 @@
 # PostHog privacy-safe analytics integration
 
-Status: code foundation only; disabled; no production configuration; no deployment.
+Status: consent interface prepared; analytics remains disabled without approved production configuration.
 
 ## Purpose and boundary
 
@@ -9,11 +9,10 @@ explicit user opt-in. It must never receive tenant, borrower, financial,
 payment, lease, property-address, authentication, health, or other personal
 content. PostHog is not an operational system of record.
 
-This slice deliberately provides no consent user interface and sets no
-environment variables. Consequently, it cannot transmit an event in any
-environment as committed. Production enablement requires a separate privacy
-review, approved consent UI, approved public browser key, and deployment
-authorization.
+The consent interface offers equally available allow and decline choices and
+links to the public privacy explanation. It appears only when the complete,
+approved analytics configuration is present. Without that configuration, the
+application cannot transmit an event.
 
 ## Fail-closed controls
 
@@ -69,19 +68,21 @@ They must not include PostHog personal API keys or any server credential.
 ## Consent lifecycle
 
 - Default: denied; the SDK is not imported or initialized.
-- Grant: a future reviewed consent UI may call `grantAnalyticsConsent`, then
-  initialize analytics on the next page load.
-- Revoke: the UI must call `revokeAnalyticsConsent` and
-  `resetAnalyticsSubject`; collection stops on reload. A production proposal
-  should also provide an immediate SDK opt-out before activation.
+- Grant: the consent UI stores `granted` and initializes the anonymous capture
+  transport immediately.
+- Decline: the UI stores `denied`; initialization and network capture remain
+  blocked.
+- Revoke: the Privacy page stores `denied` and reloads, immediately removing
+  the in-memory analytics client. “Ask me again” clears the saved choice.
 - Sign-out: the authentication flow must call `resetAnalyticsSubject` before
   analytics identification is enabled in a future slice.
 
 ## Retention and vendor review gates
 
-Before production activation:
+Before production configuration:
 
-1. Add PostHog to the public Privacy Policy and vendor inventory.
+1. PostHog is disclosed in the public Privacy Policy; keep the internal vendor
+   inventory current.
 2. Record the approved U.S. project, data-processing terms, incident contacts,
    subprocessors, and a short retention period appropriate for coarse product
    events.
