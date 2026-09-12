@@ -104,6 +104,21 @@ describe("RentalOverviewPanel structure and empty state", () => {
     expect(mounted.container.querySelector("[aria-labelledby='rental-needs-attention-heading']")).toBeTruthy();
   });
 
+  // Regression guard: Portfolio performance must sit directly under the Summary hero, ahead of
+  // the KPI tiles and Needs attention, in DOM order — since no CSS `order` utility is used
+  // anywhere in this component, DOM order here also is the visual order, the tab order, and the
+  // screen-reader reading order, so a single assertion on section indices covers all four.
+  it("orders top-level sections as Summary hero, Portfolio performance, KPI tiles, then Needs attention", () => {
+    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents: [] }} initialReport={null} />);
+    const root = mounted.container.querySelector("[data-rental-overview]");
+    const sections = Array.from(root.children);
+    const heroIndex = sections.findIndex((el) => el.querySelector("h2")?.textContent === "Summary");
+    const performanceIndex = sections.findIndex((el) => el.querySelector("#rental-performance-heading"));
+    const kpiIndex = sections.findIndex((el) => el.querySelector("[data-metric-tile]"));
+    const attentionIndex = sections.findIndex((el) => el.querySelector("#rental-needs-attention-heading"));
+    expect([heroIndex, performanceIndex, kpiIndex, attentionIndex]).toEqual([0, 1, 2, 3]);
+  });
+
   it("shows a positive empty state instead of a queue when nothing needs attention", () => {
     const readyData = {
       ...baseData,
