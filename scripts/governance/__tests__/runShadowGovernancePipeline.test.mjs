@@ -275,6 +275,29 @@ function createEligibleValidationEvidence(
     validationDirectoryRelativePath,
   );
 
+  // The fixture copy may have carried over the real repository's tracked
+  // governance/validation/.gitkeep (committed by initializeGitRepository just
+  // above). Wiping the directory to guard against stray real evidence -- see
+  // below -- would otherwise leave that committed file missing from the
+  // working tree, which git reports as an uncommitted deletion and which the
+  // real dirty-tree guard in selectEligibleValidationEvidence.mjs correctly
+  // rejects. Restore it byte-for-byte afterward so the working tree matches
+  // HEAD exactly, the same as it did before this directory was touched.
+  const gitkeepPath = path.join(
+    validationDirectory,
+    ".gitkeep",
+  );
+
+  const hadGitkeep =
+    fs.existsSync(
+      gitkeepPath,
+    );
+
+  // Defensively wipe rather than trust the copy: a developer's real checkout
+  // may have leftover generated evidence (forge-validation-*.json) sitting in
+  // governance/validation/ from prior manual use, which copyFixturePath would
+  // otherwise carry into this fixture and could be mistaken for -- or race
+  // against -- the evidence this function is about to create.
   fs.rmSync(
     validationDirectory,
     {
@@ -289,6 +312,13 @@ function createEligibleValidationEvidence(
       recursive: true,
     },
   );
+
+  if (hadGitkeep) {
+    fs.writeFileSync(
+      gitkeepPath,
+      "",
+    );
+  }
 
   const timestamp =
     "2026-01-01T00:00:00.000Z";

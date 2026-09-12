@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 
 import {
+  afterEach,
   describe,
   expect,
   it,
@@ -11,6 +13,151 @@ import {
 import {
   executeProgrammerCommand,
 } from "./executeProgrammerCommand";
+
+// executeProgrammerCommand's "prepare-next-session" and "complete-session-closeout"
+// commands resolve a real validation-evidence path via findLatestValidationEvidence(),
+// which reads governance/validation/ from disk (it is not an injectable dependency the
+// way listSnapshotNamesFn/readSyncedGovernanceStateFn/readSnapshotFn are). Tests that
+// exercise those commands must therefore run against an isolated temporary repository
+// root carrying exactly the evidence state they need, rather than the developer's real
+// checkout -- whose governance/validation/ directory is gitignored content that a clean
+// checkout never has, and that even a developer's own checkout may or may not have
+// depending on whether they have manually generated evidence recently.
+const managedRepositoryRoots = [];
+
+afterEach(() => {
+  while (managedRepositoryRoots.length > 0) {
+    fs.rmSync(
+      managedRepositoryRoots.pop(),
+      {
+        recursive: true,
+        force: true,
+      },
+    );
+  }
+});
+
+function createRepositoryRootWithEligibleValidationEvidence() {
+  const repositoryRoot =
+    fs.mkdtempSync(
+      path.join(
+        os.tmpdir(),
+        "forge-programmer-command-",
+      ),
+    );
+
+  managedRepositoryRoots.push(
+    repositoryRoot,
+  );
+
+  // executeProgrammerCommand only checks that a ".git" entry exists; it never reads
+  // real Git state, so a marker directory (not a real repository) is sufficient here.
+  fs.mkdirSync(
+    path.join(
+      repositoryRoot,
+      ".git",
+    ),
+  );
+
+  const validationDirectory =
+    path.join(
+      repositoryRoot,
+      "governance",
+      "validation",
+    );
+
+  fs.mkdirSync(
+    validationDirectory,
+    {
+      recursive: true,
+    },
+  );
+
+  const validationId =
+    "forge-validation-20260101-000000";
+
+  const syntheticCommit =
+    "a".repeat(40);
+
+  const repositoryState = {
+    head: syntheticCommit,
+    branch: "main",
+    originMain: syntheticCommit,
+    gitStatus: [],
+  };
+
+  fs.writeFileSync(
+    path.join(
+      validationDirectory,
+      `${validationId}.json`,
+    ),
+    `${JSON.stringify(
+      {
+        schemaVersion: "1.0",
+        validationId,
+        capturedAt:
+          "2026-01-01T00:00:03.000Z",
+        startedAt:
+          "2026-01-01T00:00:00.000Z",
+        completedAt:
+          "2026-01-01T00:00:02.000Z",
+        repository: {
+          before:
+            repositoryState,
+          after:
+            repositoryState,
+        },
+        commands: [
+          {
+            category:
+              "fullTests",
+            command: "npx",
+            args: [
+              "vitest",
+              "run",
+            ],
+            workingDirectory:
+              ".",
+            startedAt:
+              "2026-01-01T00:00:00.000Z",
+            completedAt:
+              "2026-01-01T00:00:01.000Z",
+            exitCode: 0,
+            status:
+              "passing",
+            summary:
+              "Full tests passed.",
+          },
+        ],
+        results: {
+          focusedTests: {
+            status: "not-run",
+            commandIndexes: [],
+            summary: null,
+          },
+          fullTests: {
+            status: "passing",
+            commandIndexes: [
+              0,
+            ],
+            summary:
+              "Full tests passed.",
+          },
+          productionBuild: {
+            status: "not-run",
+            commandIndexes: [],
+            summary: null,
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  return repositoryRoot;
+}
 
 describe(
   "executeProgrammerCommand",
@@ -169,7 +316,7 @@ describe(
           commandId:
             "complete-session-closeout",
           repositoryRoot:
-            process.cwd(),
+            createRepositoryRootWithEligibleValidationEvidence(),
           spawnSyncFn,
           vercelEnvironment:
             undefined,
@@ -221,7 +368,7 @@ describe(
           commandId:
             "prepare-next-session",
           repositoryRoot:
-            process.cwd(),
+            createRepositoryRootWithEligibleValidationEvidence(),
           spawnSyncFn,
           vercelEnvironment:
             undefined,
@@ -321,7 +468,7 @@ describe(
           commandId:
             "prepare-next-session",
           repositoryRoot:
-            process.cwd(),
+            createRepositoryRootWithEligibleValidationEvidence(),
           spawnSyncFn,
           vercelEnvironment:
             undefined,
@@ -467,7 +614,7 @@ describe(
             commandId:
               "prepare-next-session",
             repositoryRoot:
-              process.cwd(),
+              createRepositoryRootWithEligibleValidationEvidence(),
             spawnSyncFn,
             vercelEnvironment:
               undefined,
@@ -667,7 +814,7 @@ describe(
                   commandId:
                     "prepare-next-session",
                   repositoryRoot:
-                    process.cwd(),
+                    createRepositoryRootWithEligibleValidationEvidence(),
                   spawnSyncFn:
                     successfulSpawnSyncFn(),
                   vercelEnvironment:
@@ -714,7 +861,7 @@ describe(
                   commandId:
                     "prepare-next-session",
                   repositoryRoot:
-                    process.cwd(),
+                    createRepositoryRootWithEligibleValidationEvidence(),
                   spawnSyncFn:
                     successfulSpawnSyncFn(),
                   vercelEnvironment:
@@ -765,7 +912,7 @@ describe(
                   commandId:
                     "prepare-next-session",
                   repositoryRoot:
-                    process.cwd(),
+                    createRepositoryRootWithEligibleValidationEvidence(),
                   spawnSyncFn:
                     successfulSpawnSyncFn(),
                   vercelEnvironment:
@@ -820,7 +967,7 @@ describe(
                   commandId:
                     "prepare-next-session",
                   repositoryRoot:
-                    process.cwd(),
+                    createRepositoryRootWithEligibleValidationEvidence(),
                   spawnSyncFn:
                     successfulSpawnSyncFn(),
                   vercelEnvironment:
@@ -879,7 +1026,7 @@ describe(
                   commandId:
                     "prepare-next-session",
                   repositoryRoot:
-                    process.cwd(),
+                    createRepositoryRootWithEligibleValidationEvidence(),
                   spawnSyncFn:
                     successfulSpawnSyncFn(),
                   vercelEnvironment:
@@ -936,7 +1083,7 @@ describe(
                   commandId:
                     "prepare-next-session",
                   repositoryRoot:
-                    process.cwd(),
+                    createRepositoryRootWithEligibleValidationEvidence(),
                   spawnSyncFn:
                     successfulSpawnSyncFn(),
                   vercelEnvironment:
@@ -992,7 +1139,7 @@ describe(
                   commandId:
                     "prepare-next-session",
                   repositoryRoot:
-                    process.cwd(),
+                    createRepositoryRootWithEligibleValidationEvidence(),
                   spawnSyncFn:
                     successfulSpawnSyncFn(),
                   vercelEnvironment:
@@ -1049,7 +1196,7 @@ describe(
                   commandId:
                     "prepare-next-session",
                   repositoryRoot:
-                    process.cwd(),
+                    createRepositoryRootWithEligibleValidationEvidence(),
                   spawnSyncFn:
                     successfulSpawnSyncFn(),
                   vercelEnvironment:
@@ -1134,7 +1281,7 @@ describe(
                       commandId:
                         "prepare-next-session",
                       repositoryRoot:
-                        process.cwd(),
+                        createRepositoryRootWithEligibleValidationEvidence(),
                       spawnSyncFn:
                         successfulSpawnSyncFn(),
                       vercelEnvironment:
@@ -1245,7 +1392,7 @@ describe(
                       commandId:
                         "prepare-next-session",
                       repositoryRoot:
-                        process.cwd(),
+                        createRepositoryRootWithEligibleValidationEvidence(),
                       spawnSyncFn:
                         successfulSpawnSyncFn(),
                       vercelEnvironment:
@@ -1326,7 +1473,7 @@ describe(
                       commandId:
                         "prepare-next-session",
                       repositoryRoot:
-                        process.cwd(),
+                        createRepositoryRootWithEligibleValidationEvidence(),
                       spawnSyncFn:
                         successfulSpawnSyncFn(),
                       vercelEnvironment:
@@ -1401,7 +1548,7 @@ describe(
                       commandId:
                         "prepare-next-session",
                       repositoryRoot:
-                        process.cwd(),
+                        createRepositoryRootWithEligibleValidationEvidence(),
                       spawnSyncFn:
                         successfulSpawnSyncFn(),
                       vercelEnvironment:
@@ -1455,7 +1602,7 @@ describe(
                   commandId:
                     "prepare-next-session",
                   repositoryRoot:
-                    process.cwd(),
+                    createRepositoryRootWithEligibleValidationEvidence(),
                   spawnSyncFn:
                     successfulSpawnSyncFn(),
                   vercelEnvironment:
@@ -1497,7 +1644,7 @@ describe(
                   commandId:
                     "prepare-next-session",
                   repositoryRoot:
-                    process.cwd(),
+                    createRepositoryRootWithEligibleValidationEvidence(),
                   spawnSyncFn:
                     successfulSpawnSyncFn(),
                   vercelEnvironment:
