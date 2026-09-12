@@ -2,25 +2,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signOutSafely } from "./signOutSafely.js";
 
-const USER_ID = "user-aaaaaaaa-1111-1111-1111-111111111111";
-
 const { clearDashboardCache } = vi.hoisted(() => ({ clearDashboardCache: vi.fn() }));
 
-// dashboardCache.js's own read/write/clear behavior (TTL, per-user isolation, schema versioning,
-// IndexedDB fallback) is verified once, directly, in dashboardCache.test.js -- this file only needs
-// to prove signOutSafely calls the real clearDashboardCache export with the right user id, in the
-// right order relative to signOut(). jsdom has no real IndexedDB to observe end-to-end through, so
-// mocking the export (rather than injecting a fake store signOutSafely has no way to accept anyway)
-// is the accurate way to test this boundary.
+// dashboardCache.js's own read/write/clear behavior (TTL, per-(actingUserId, canonicalWorkspaceId)
+// isolation, schema versioning, IndexedDB fallback, whole-store clear) is verified once, directly,
+// in dashboardCache.test.js -- this file only needs to prove signOutSafely calls the real
+// clearDashboardCache export, in the right order relative to signOut(). jsdom has no real IndexedDB
+// to observe end-to-end through, so mocking the export (rather than injecting a fake store
+// signOutSafely has no way to accept anyway) is the accurate way to test this boundary.
 vi.mock("@/app/forge/financial/dashboardCache.js", () => ({ clearDashboardCache }));
 
-function fakeSupabase(signOutResult, { user = { id: USER_ID } } = {}) {
-  return {
-    auth: {
-      getUser: vi.fn().mockResolvedValue({ data: { user } }),
-      signOut: vi.fn().mockResolvedValue(signOutResult),
-    },
-  };
+function fakeSupabase(signOutResult) {
+  return { auth: { signOut: vi.fn().mockResolvedValue(signOutResult) } };
 }
 
 describe("signOutSafely", () => {
@@ -37,13 +30,15 @@ describe("signOutSafely", () => {
     window.location = originalLocation;
   });
 
-  it("on success: clears the dashboard cache for the signing-out user's id, then redirects", async () => {
+  it("on success: clears the WHOLE dashboard cache (every entry, not one key), then redirects", async () => {
     const supabase = fakeSupabase({ error: null });
 
     const result = await signOutSafely({ supabase, redirectTo: "/" });
 
     expect(result).toEqual({ success: true, error: null });
-    expect(clearDashboardCache).toHaveBeenCalledWith({ userId: USER_ID });
+    // No identity argument -- clearDashboardCache() wipes the entire store on its own; see
+    // dashboardCache.test.js for proof it actually does.
+    expect(clearDashboardCache).toHaveBeenCalledWith();
     expect(window.location.href).toBe("/");
   });
 
@@ -76,23 +71,14 @@ describe("signOutSafely", () => {
     expect(supabase.auth.signOut).toHaveBeenCalledOnce();
   });
 
-  it("reads the current user's id BEFORE calling signOut() -- getUser() would return no one once the session is already gone", async () => {
+  it("clears the cache only AFTER signOut() actually succeeds, never before", async () => {
     const supabase = fakeSupabase({ error: null });
     const callOrder = [];
-    supabase.auth.getUser.mockImplementation(async () => { callOrder.push("getUser"); return { data: { user: { id: USER_ID } } }; });
     supabase.auth.signOut.mockImplementation(async () => { callOrder.push("signOut"); return { error: null }; });
+    clearDashboardCache.mockImplementation(async () => { callOrder.push("clearDashboardCache"); });
 
     await signOutSafely({ supabase, redirectTo: "/" });
 
-    expect(callOrder).toEqual(["getUser", "signOut"]);
-  });
-
-  it("does not throw and simply skips clearing when there is no current user to read (already signed out, corrupted session)", async () => {
-    const supabase = fakeSupabase({ error: null }, { user: null });
-    const result = await signOutSafely({ supabase, redirectTo: "/" });
-
-    expect(result).toEqual({ success: true, error: null });
-    expect(clearDashboardCache).not.toHaveBeenCalled();
-    expect(window.location.href).toBe("/");
+    expect(callOrder).toEqual(["signOut", "clearDashboardCache"]);
   });
 });

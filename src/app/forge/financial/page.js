@@ -9,10 +9,28 @@ import {
   FinancialPeriodApplication,
 } from "@/application/financial/FinancialPeriodApplication";
 import FinancialApplicationShell from "@/components/forge/financial/FinancialApplicationShell";
-import { createClient } from "@/lib/supabase/client";
 import { isCacheableDashboardLoad, readDashboardCache, writeDashboardCache } from "./dashboardCache.js";
 import { money } from "./formatMoney.js";
 import { getCurrentMonthProfitKpi } from "./getCurrentMonthProfitKpi.js";
+
+// The one legitimate source of the dashboard cache's isolation identity -- see
+// /api/financial/workspace-identity and dashboardCache.js. Never trust a client-held or
+// client-supplied value for canonicalWorkspaceId; this is a server round trip specifically because
+// it must be. Returns nulls (never throws) on any auth/resolution failure, which the caller treats
+// as "cache is off the table this load" -- not as a reason to fabricate a fallback identity.
+async function loadWorkspaceIdentity() {
+  try {
+    const response = await fetch("/api/financial/workspace-identity");
+    if (!response.ok) return { actingUserId: null, canonicalWorkspaceId: null };
+    const payload = await response.json();
+    if (!payload?.success || !payload.userId || !payload.effectiveOwnerId) {
+      return { actingUserId: null, canonicalWorkspaceId: null };
+    }
+    return { actingUserId: payload.userId, canonicalWorkspaceId: payload.effectiveOwnerId };
+  } catch {
+    return { actingUserId: null, canonicalWorkspaceId: null };
+  }
+}
 
 async function loadPropertyOperatingObligations() {
   try {
@@ -107,19 +125,20 @@ export default function FinancialPage() {
 
   useEffect(() => {
     async function load() {
-      // The cache is keyed to the currently authenticated user (see dashboardCache.js) -- a device
-      // shared between people, or a fresh sign-in after someone else never explicitly signed out,
-      // must never render a stale cache written under a different user's id. No user means no cache
-      // read or write at all, not an unscoped fallback.
-      const {
-        data: { user },
-      } = await createClient().auth.getUser();
-      const userId = user?.id ?? null;
+      // Server-resolved BEFORE any cache read is attempted -- the current session and the
+      // canonical workspace it's authorized within must both be confirmed first, and the cache is
+      // keyed to that exact pair (see dashboardCache.js). No identity (session expired,
+      // unauthenticated, resolution failed) means no cache read or write at all -- fall straight
+      // through to a fresh, uncached load, never an unscoped fallback key.
+      const { actingUserId, canonicalWorkspaceId } = await loadWorkspaceIdentity();
 
       // The three loads below combined take 10-15s on a real dataset (see dashboardCache.js for
-      // why). A cache hit means this visit is a revisit within the TTL window -- render the last
-      // known-good result immediately instead of re-running all three from scratch.
-      const cached = userId ? await readDashboardCache({ userId }) : null;
+      // why). A cache hit means this visit is a revisit within the TTL window, for the SAME acting
+      // user in the SAME canonical workspace -- render the last known-good result immediately
+      // instead of re-running all three from scratch.
+      const cached = (actingUserId && canonicalWorkspaceId)
+        ? await readDashboardCache({ actingUserId, canonicalWorkspaceId })
+        : null;
       if (cached) {
         setViewModel(cached.viewModel);
         setIntelligenceModel(cached.intelligenceModel);
@@ -143,8 +162,14 @@ export default function FinancialPage() {
         obligations,
       );
 
-      if (userId && isCacheableDashboardLoad({ viewModel: result, intelligenceModel: intelligenceResult })) {
-        writeDashboardCache({ viewModel: result, intelligenceModel: intelligenceResult, propertyOperatingObligations: obligations }, { userId });
+      if (
+        actingUserId && canonicalWorkspaceId
+        && isCacheableDashboardLoad({ viewModel: result, intelligenceModel: intelligenceResult })
+      ) {
+        writeDashboardCache(
+          { viewModel: result, intelligenceModel: intelligenceResult, propertyOperatingObligations: obligations },
+          { actingUserId, canonicalWorkspaceId },
+        );
       }
     }
 

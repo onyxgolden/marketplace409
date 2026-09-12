@@ -17,36 +17,42 @@
 // actually holds against real data volume. Reads/writes are necessarily async now (IndexedDB has no
 // synchronous API); callers await them.
 //
-// Per-user key isolation (added after re-review): unlike sessionStorage, IndexedDB survives a tab
-// close and even a browser restart -- it is NOT automatically wiped when someone simply closes the
-// tab instead of clicking Sign Out. The cache key is scoped to the authenticated user's id
-// (buildCacheKey), so one user's cached financial data physically cannot be looked up under a
-// different user's key -- a shared device where the previous person never signed out, and someone
-// else opens /forge/financial, gets a clean miss (their own key has never been written) rather than
-// the previous person's stale figures. `userId` is required precisely so this can't be forgotten at
-// a call site; there is no "unscoped" fallback key.
-const CACHE_KEY_PREFIX = "forge-financial-dashboard-cache-v1";
+// Key isolation is by (actingUserId, canonicalWorkspaceId), not acting-user id alone (revised after
+// review): FORGE has canonical owners, active co-owner membership, and role-based shared workspace
+// access -- one authenticated user can be authorized within only one canonical workspace at a time,
+// but which one is server-resolved and can change (a co-owner's membership can move or be revoked).
+// `canonicalWorkspaceId` must be the exact value resolveEffectiveOwnerId()/
+// createAuthenticatedFinancialApplication() already resolve for real Financial FORGE authorization
+// (see /api/financial/workspace-identity, the only legitimate source for it) -- never a
+// client-supplied or client-inferred value. Both ids are required on every call precisely so a
+// caller cannot forget one and fall back to an under-scoped key.
+//
+// This is application-level cache separation, not an absolute security boundary: it relies on the
+// caller always supplying a genuinely server-resolved workspace id (a caller that ignored this and
+// passed a fabricated one would defeat it, the same way any client-side check can be defeated by a
+// caller that doesn't call it correctly) and on IndexedDB's own same-origin storage guarantees. It
+// is not a substitute for -- and makes no claim to replace -- server-side authorization, which is
+// what actually protects the underlying data on every real request regardless of this cache.
+const CACHE_KEY_PREFIX = "financial-dashboard";
 export const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Bumped whenever the shape of the cached `payload` (viewModel/intelligenceModel/
 // propertyOperatingObligations) changes incompatibly, so a cache entry written by a previous
 // deployment is never handed to code expecting the new shape -- it reads as a clean miss instead of
-// risking a runtime error or a subtly wrong render from stale-shaped data. Also deliberately bumped
-// (2, from 1) alongside 20260911010000_correct_rentec_2005_dates_to_2015.sql, even though the
-// payload's own shape did not change: this is the only lever this client-side cache has to react to
-// a server-side DATA correction rather than a code-shape change. Without the bump, up to 5 more
-// minutes of DASHBOARD_CACHE_TTL_MS could still show a stale 2005-dated payload cached moments
-// before that migration ran; since this bump ships in the same deploy as the corrected chart-year
-// logic, every previously-cached entry (all necessarily stamped schemaVersion 1) becomes an instant
-// miss the moment this code is live, independent of exactly when the migration itself applies.
+// risking a runtime error or a subtly wrong render from stale-shaped data. Embedded directly in the
+// cache key (not just checked against a stored field) so a version bump also acts as an instant,
+// deploy-triggered invalidation of every previously-cached entry, independent of the 5-minute TTL --
+// exactly what was needed to retire stale, pre-repair cached data the moment
+// 20260911010000_correct_rentec_2005_dates_to_2015.sql's corrected code shipped, without waiting up
+// to 5 more minutes for the TTL to catch up.
 const PAYLOAD_SCHEMA_VERSION = 2;
 
 const DB_NAME = "forge-financial-dashboard-cache";
 const DB_VERSION = 1;
 const STORE_NAME = "cache";
 
-function buildCacheKey(userId) {
-  return `${CACHE_KEY_PREFIX}:${userId}`;
+function buildCacheKey(actingUserId, canonicalWorkspaceId) {
+  return `${CACHE_KEY_PREFIX}:${PAYLOAD_SCHEMA_VERSION}:${actingUserId}:${canonicalWorkspaceId}`;
 }
 
 function openDatabase() {
@@ -94,6 +100,7 @@ const indexedDbStore = {
   get: (key) => withStore("readonly", (store) => store.get(key)),
   set: (key, value) => withStore("readwrite", (store) => store.put(value, key)),
   delete: (key) => withStore("readwrite", (store) => store.delete(key)),
+  clear: () => withStore("readwrite", (store) => store.clear()),
 };
 
 function resolveStore(store) {
@@ -101,13 +108,14 @@ function resolveStore(store) {
   return typeof indexedDB === "undefined" ? null : indexedDbStore;
 }
 
-export async function readDashboardCache({ userId, store, now = Date.now, ttlMs = DASHBOARD_CACHE_TTL_MS }) {
-  if (!userId) return null;
+export async function readDashboardCache({ actingUserId, canonicalWorkspaceId, store, now = Date.now, ttlMs = DASHBOARD_CACHE_TTL_MS }) {
+  if (!actingUserId || !canonicalWorkspaceId) return null;
   const target = resolveStore(store);
   if (!target) return null;
   try {
-    const entry = await target.get(buildCacheKey(userId));
+    const entry = await target.get(buildCacheKey(actingUserId, canonicalWorkspaceId));
     if (!entry || typeof entry.cachedAt !== "number") return null;
+    // Defense in depth alongside the version already embedded in the key -- see PAYLOAD_SCHEMA_VERSION.
     if (entry.schemaVersion !== PAYLOAD_SCHEMA_VERSION) return null;
     if (now() - entry.cachedAt > ttlMs) return null;
     return entry.payload;
@@ -118,12 +126,12 @@ export async function readDashboardCache({ userId, store, now = Date.now, ttlMs 
   }
 }
 
-export async function writeDashboardCache(payload, { userId, store, now = Date.now }) {
-  if (!userId) return;
+export async function writeDashboardCache(payload, { actingUserId, canonicalWorkspaceId, store, now = Date.now }) {
+  if (!actingUserId || !canonicalWorkspaceId) return;
   const target = resolveStore(store);
   if (!target) return;
   try {
-    await target.set(buildCacheKey(userId), { cachedAt: now(), schemaVersion: PAYLOAD_SCHEMA_VERSION, payload });
+    await target.set(buildCacheKey(actingUserId, canonicalWorkspaceId), { cachedAt: now(), schemaVersion: PAYLOAD_SCHEMA_VERSION, payload });
   } catch {
     // Storage disabled, blocked, or an unexpected error -- caching is a pure optimization, never
     // worth failing the page over.
@@ -136,12 +144,17 @@ export function isCacheableDashboardLoad({ viewModel, intelligenceModel }) {
   return viewModel?.loadState === "ready" && !intelligenceModel?.auditFindings?.error;
 }
 
-export async function clearDashboardCache({ userId, store }) {
-  if (!userId) return;
+// Wipes every entry in the store, not just one (actingUserId, canonicalWorkspaceId) key -- called on
+// sign-out specifically to protect a shared device: if a browser is used by more than one person, a
+// sign-out is exactly the moment to guarantee NOTHING this cache ever held for ANYONE survives, not
+// only the pair that happened to just sign out. This is deliberately unconditional and requires no
+// identity to call -- there is no scenario where a sign-out should leave any cached financial data
+// behind for the next person on the same device.
+export async function clearDashboardCache({ store } = {}) {
   const target = resolveStore(store);
   if (!target) return;
   try {
-    await target.delete(buildCacheKey(userId));
+    await target.clear();
   } catch {
     // Nothing to do if storage is unavailable.
   }
