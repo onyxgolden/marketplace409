@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const load = vi.fn();
 const rpc = vi.fn();
+vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({
+  createStripeBillingProvider: vi.fn(() => ({ mode: "test" })),
+}));
 vi.mock("@/lib/supabase/createAuthenticatedTenantPortalApplication", () => ({
   createAuthenticatedTenantPortalApplication: vi.fn(async () => ({ user: { id: "auth_tenant_1" },
     supabaseClient: { rpc }, application: { load } })),
@@ -41,7 +44,7 @@ describe("tenant portal route", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
   it("acknowledges only a specified finalized inspection through the tenant rpc",async()=>{rpc.mockResolvedValue({data:{inspection_id:"inspection_1",acknowledged:true},error:null});const response=await POST(new Request("https://example.test/api/rental/portal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({operation:"acknowledge-inspection",inspectionId:"inspection_1"})}));expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("acknowledge_rental_inspection",{p_inspection_id:"inspection_1"});});
-  it("records explicit autopay consent without activating provider billing",async()=>{rpc.mockResolvedValue({data:{id:"autopay_1",status:"setup_required"},error:null});const response=await POST(new Request("https://example.test/api/rental/portal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({operation:"request-autopay",leaseId:"lease_1",paymentMethodType:"us_bank_account",chargeDay:1,reminderDaysBefore:3,consentConfirmed:true})}));expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("request_rental_autopay_enrollment",expect.objectContaining({p_lease_id:"lease_1",p_payment_method_type:"us_bank_account",p_charge_day:1}));});
+  it("records explicit autopay consent without activating provider billing",async()=>{rpc.mockResolvedValue({data:{id:"autopay_1",status:"setup_required"},error:null});const response=await POST(new Request("https://example.test/api/rental/portal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({operation:"request-autopay",leaseId:"lease_1",paymentMethodType:"us_bank_account",chargeDay:1,reminderDaysBefore:3,consentConfirmed:true})}));expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("request_rental_autopay_enrollment",expect.objectContaining({p_lease_id:"lease_1",p_payment_method_type:"us_bank_account",p_charge_day:1,p_provider_mode:"test"}));});
   it("lets the tenant cancel a current autopay enrollment",async()=>{rpc.mockResolvedValue({data:{id:"autopay_1",status:"cancelled"},error:null});const response=await POST(new Request("https://example.test/api/rental/portal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({operation:"cancel-autopay",enrollmentId:"autopay_1"})}));expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("cancel_rental_autopay_enrollment",expect.objectContaining({p_enrollment_id:"autopay_1"}));});
   it("submits an assistance-animal request for human review",async()=>{rpc.mockResolvedValue({data:{id:"animal_1",classification:"assistance_review_requested"},error:null});const response=await POST(new Request("https://example.test/api/rental/portal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({operation:"request-animal",leaseId:"lease_1",name:"Buddy",breedDescription:"Mixed breed",requestType:"assistance_review_requested"})}));expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("request_rental_animal",expect.objectContaining({p_request_type:"assistance_review_requested"}));});
 });
