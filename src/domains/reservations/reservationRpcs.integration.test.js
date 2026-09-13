@@ -57,6 +57,7 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
 
   beforeAll(async () => {
     psql(readFileSync(new URL("../../../supabase/migrations/20260913010000_add_reservation_lifecycle.sql", import.meta.url), "utf8"));
+    psql(readFileSync(new URL("../../../supabase/migrations/20260913020000_add_public_reservation_booking.sql", import.meta.url), "utf8"));
     // This local Supabase CLI stack's default privileges do not match the real, hosted
     // project's (confirmed by querying pg_default_acl on both: production grants
     // authenticated=arwdDxtm by default on every new table; this local stack grants only
@@ -102,6 +103,7 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       delete from reservation_events where owner_id = '${owner.id}';
       alter table reservation_events enable trigger reservation_events_immutable;
       delete from reservation_calendar_blocks where owner_id = '${owner.id}';
+      delete from reservation_confirmation_outbox where owner_id = '${owner.id}';
       delete from reservations where owner_id = '${owner.id}';
       delete from reservation_guests where owner_id = '${owner.id}';
       delete from reservation_rate_plans where owner_id = '${owner.id}';
@@ -445,6 +447,28 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       expect(invalid.error?.message).toMatch(/cannot transition/);
       const blocks = await ownerClient.from("reservation_calendar_blocks").select("id").eq("owner_id", owner.id).eq("source_reference", `res_${suffix}_2`);
       expect(blocks.data).toEqual([]);
+    });
+  });
+
+  describe("public guest booking", () => {
+    it("confirms exactly once through the server role with truthful guest attribution and a private email outbox", async () => {
+      const setting = await ownerClient.from("reservation_inventory_settings").select("public_booking_slug").eq("owner_id", owner.id).eq("unit_id", unitId).single();
+      const args = { p_booking_slug: setting.data.public_booking_slug, p_reservation_id: `public_res_${suffix}`, p_guest_id: `public_guest_${suffix}`, p_guest_name: "Public Guest", p_guest_email: `public-${suffix}@example.test`, p_guest_phone: null, p_check_in_date: "2027-01-10", p_check_out_date: "2027-01-12", p_guest_count: 2, p_lodging_amount_cents: 13000, p_cleaning_fee_cents: 2500, p_lodging_tax_cents: 780, p_security_deposit_cents: 0, p_total_due_cents: 16280, p_currency_code: "USD" };
+      const first = await admin.rpc("confirm_public_reservation", args);
+      const replay = await admin.rpc("confirm_public_reservation", args);
+      expect(first.error).toBeNull(); expect(replay.error).toBeNull(); expect(replay.data.id).toBe(first.data.id);
+      const event = await ownerClient.from("reservation_events").select("acting_user_id,actor_kind").eq("owner_id", owner.id).eq("reservation_id", args.p_reservation_id).single();
+      expect(event.data).toEqual({ acting_user_id: null, actor_kind: "public_guest" });
+      const outbox = await ownerClient.from("reservation_confirmation_outbox").select("recipient,status").eq("owner_id", owner.id).eq("reservation_id", args.p_reservation_id);
+      expect(outbox.data).toEqual([{ recipient: args.p_guest_email, status: "queued" }]);
+    });
+
+    it("keeps guest PII and confirmation delivery records unavailable to anon", async () => {
+      const anonymous = createClient(LOCAL_URL, LOCAL_ANON_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
+      for (const table of ["reservation_guests", "reservations", "reservation_confirmation_outbox"]) {
+        const result = await anonymous.from(table).select("*");
+        expect(result.error).toBeTruthy();
+      }
     });
   });
 });

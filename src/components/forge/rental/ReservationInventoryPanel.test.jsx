@@ -32,4 +32,8 @@ describe("ReservationInventoryPanel", () => {
     expect(selects[0].textContent).toContain("Site 1");
     expect(selects[1].textContent).toContain("RV site");
   });
+  it("shows the opaque guest booking page only for active inventory", async () => {
+    mounted = await mount({ units: [], inventory: [{ unit_id: "unit-1", public_name: "Pine Cabin", inventory_type: "cabin", maximum_guests: 4, minimum_nights: 2, booking_status: "active", public_booking_slug: "stay-opaque" }] });
+    expect(mounted.container.querySelector("a").getAttribute("href")).toBe("/book/stay-opaque");
+  });
 });
