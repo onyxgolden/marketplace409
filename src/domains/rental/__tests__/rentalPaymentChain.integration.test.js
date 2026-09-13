@@ -178,6 +178,30 @@ describe.skipIf(!reachable)("Rental Stripe payment chain (real local Supabase, r
     return result.data;
   }
 
+  // financial_events has no production service_role reader anywhere in this codebase (every real
+  // route reads it via the authenticated client) and no production service_role writer either --
+  // the trigger that posts to it (post_succeeded_rental_payment_to_financial_event /
+  // reconcile_rental_payment_reversal) is SECURITY DEFINER set row_security = off, so it writes as
+  // its own owner and needs no caller privilege at all. Verifying its effect here therefore goes
+  // through the local Postgres administrator via psql, matching reservationRpcs.integration.
+  // test.js's own convention for admin-level verification, rather than the service_role JS client
+  // -- granting service_role a privilege it has no real caller for would be exactly the kind of
+  // unintended grant this whole domain's contract exists to eliminate.
+  function readFinancialEvent(sourceSystem, sourceRecordId, columns) {
+    const output = psql(`
+      select 'ROW:' || ${columns.map((column) => `coalesce((${column})::text, 'NULL')`).join(" || '|' || ")}
+      from financial_events
+      where owner_id = '${owner.id}' and source_system = '${sourceSystem}' and source_record_id = '${sourceRecordId}';
+    `);
+    const match = output.match(/ROW:(.*)/);
+    return match ? match[1].split("|") : null;
+  }
+
+  function countFinancialEvents(sourceRecordId) {
+    const output = psql(`select 'COUNT:' || count(*)::text from financial_events where owner_id = '${owner.id}' and source_record_id = '${sourceRecordId}';`);
+    return Number(output.match(/COUNT:(\d+)/)[1]);
+  }
+
   it("posts a successful payment through the real route with exact-cent allocation, and the charge/ledger/report views all agree (scenarios: successful exact-cent allocation; agreement among ledger, balance, and reporting)", async () => {
     const paymentId = `rp_${suffix}_success`;
     const providerPaymentId = `pi_test_${suffix}_success`;
@@ -203,11 +227,11 @@ describe.skipIf(!reachable)("Rental Stripe payment chain (real local Supabase, r
     // on the same UPDATE this RPC just performed, posting exactly one financial_events row keyed by
     // (owner_id, source_system, source_record_id) -- asserting agreement between the charge (above)
     // and the ledger/reporting row here is the "ledger, balance, and reporting agree" scenario.
-    const financialEvent = await admin.from("financial_events")
-      .select("*").eq("owner_id", owner.id).eq("source_system", "forge_rental_payment").eq("source_record_id", paymentId).single();
-    expect(financialEvent.error).toBeNull();
-    expect(Number(financialEvent.data.amount)).toBe(1000); // 100000 cents / 100.0, exact
-    expect(financialEvent.data.transaction_kind).toBe("income");
+    const financialEventRow = readFinancialEvent("forge_rental_payment", paymentId, ["amount", "transaction_kind"]);
+    expect(financialEventRow).not.toBeNull();
+    const [amount, transactionKind] = financialEventRow;
+    expect(Number(amount)).toBe(1000); // 100000 cents / 100.0, exact
+    expect(transactionKind).toBe("income");
 
     const webhookRow = await admin.from("payment_webhook_events").select("*").eq("provider_event_id", `evt_${suffix}_success`).single();
     expect(webhookRow.data.status).toBe("processed");
@@ -232,8 +256,7 @@ describe.skipIf(!reachable)("Rental Stripe payment chain (real local Supabase, r
     const webhookRows = await admin.from("payment_webhook_events").select("id").eq("provider_event_id", `evt_${suffix}_dup`);
     expect(webhookRows.data).toHaveLength(1);
 
-    const financialEvents = await admin.from("financial_events").select("id").eq("owner_id", owner.id).eq("source_record_id", paymentId);
-    expect(financialEvents.data).toHaveLength(1); // the AFTER UPDATE trigger's own (owner_id,source_system,source_record_id) conflict guard, not just webhook dedup
+    expect(countFinancialEvents(paymentId)).toBe(1); // the AFTER UPDATE trigger's own (owner_id,source_system,source_record_id) conflict guard, not just webhook dedup
   });
 
   it("leaves no partial residue when Stripe reports payment failure (scenario: provider failure with no partial residue)", async () => {
@@ -254,8 +277,7 @@ describe.skipIf(!reachable)("Rental Stripe payment chain (real local Supabase, r
     expect(charge.paid_amount_cents).toBe(0);
     expect(charge.status).toBe("due");
 
-    const financialEvents = await admin.from("financial_events").select("id").eq("owner_id", owner.id).eq("source_record_id", paymentId);
-    expect(financialEvents.data).toEqual([]);
+    expect(countFinancialEvents(paymentId)).toBe(0);
   });
 
   it("does NOT regress a succeeded payment's status when a delayed 'processing' event arrives late -- unlike the equivalent private-financing gap, this RPC's own status guard holds under real infrastructure, not just code reading (scenario: delayed/replayed event)", async () => {
@@ -319,12 +341,12 @@ describe.skipIf(!reachable)("Rental Stripe payment chain (real local Supabase, r
     // the reversal trigger actually re-derives status from real dates, not a hardcoded 'due'.
     expect(charge.status).toBe("overdue");
 
-    const reversalEvent = await admin.from("financial_events")
-      .select("*").eq("owner_id", owner.id).eq("source_system", "forge_rental_payment_adjustment").eq("source_record_id", paymentId).single();
-    expect(reversalEvent.error).toBeNull();
-    expect(Number(reversalEvent.data.amount)).toBe(-1000); // exact offset of the original +$1000.00
-    expect(reversalEvent.data.transaction_kind).toBe("expense");
-    expect(reversalEvent.data.description).toBe("Rent payment refunded");
+    const reversalEventRow = readFinancialEvent("forge_rental_payment_adjustment", paymentId, ["amount", "transaction_kind", "description"]);
+    expect(reversalEventRow).not.toBeNull();
+    const [reversalAmount, reversalTransactionKind, reversalDescription] = reversalEventRow;
+    expect(Number(reversalAmount)).toBe(-1000); // exact offset of the original +$1000.00
+    expect(reversalTransactionKind).toBe("expense");
+    expect(reversalDescription).toBe("Rent payment refunded");
   });
 
   it("reverses a partial refund proportionally, leaving the charge partially paid (scenario: agreement among ledger, balance, and reporting after a partial reversal)", async () => {
@@ -349,9 +371,8 @@ describe.skipIf(!reachable)("Rental Stripe payment chain (real local Supabase, r
     expect(charge.paid_amount_cents).toBe(60000);
     expect(charge.status).toBe("partially_paid");
 
-    const reversalEvent = await admin.from("financial_events")
-      .select("amount").eq("owner_id", owner.id).eq("source_system", "forge_rental_payment_adjustment").eq("source_record_id", paymentId).single();
-    expect(Number(reversalEvent.data.amount)).toBe(-400); // exact offset of the $400.00 refunded, not the full $1000.00
+    const [partialReversalAmount] = readFinancialEvent("forge_rental_payment_adjustment", paymentId, ["amount"]);
+    expect(Number(partialReversalAmount)).toBe(-400); // exact offset of the $400.00 refunded, not the full $1000.00
   });
 
   it("routes a dispute through the same reversal path as a refund (scenario: agreement among ledger, balance, and reporting after a dispute)", async () => {
@@ -373,10 +394,9 @@ describe.skipIf(!reachable)("Rental Stripe payment chain (real local Supabase, r
     const charge = await fetchCharge(chargeId);
     expect(charge.paid_amount_cents).toBe(0);
 
-    const disputeEventRow = await admin.from("financial_events")
-      .select("description,amount").eq("owner_id", owner.id).eq("source_system", "forge_rental_payment_adjustment").eq("source_record_id", paymentId).single();
-    expect(disputeEventRow.data.description).toBe("Rent payment disputed");
-    expect(Number(disputeEventRow.data.amount)).toBe(-600);
+    const [disputeDescription, disputeAmount] = readFinancialEvent("forge_rental_payment_adjustment", paymentId, ["description", "amount"]);
+    expect(disputeDescription).toBe("Rent payment disputed");
+    expect(Number(disputeAmount)).toBe(-600);
   });
 
   it("denies a cross-workspace stranger any visibility into this owner's charges or payments, even via a direct RLS-scoped read (scenario: cross-workspace and unauthorized-user denial)", async () => {

@@ -111,26 +111,65 @@ interpret. This proof's first test now asserts the corrected value (`principalRe
 75000`, agreeing with the raw ledger row's `principal_remaining_by_component_cents.zero_interest`),
 confirming ledger and read-model agreement rather than just documenting the prior disagreement.
 
-## Local-environment issue found and worked around (needs separate production verification)
+## Local-environment issue found and worked around — RESOLVED by PR #174
 
-While building this proof, `service_role` was found to have **no SELECT/INSERT/UPDATE grant on any
-table checked** (`private_financing_events`, `private_financing_components`,
-`private_financing_account_terms_versions`, `private_financing_online_payments`,
-`payment_webhook_events`, `landlord_payment_accounts`, `rental_payments`,
-`rental_autopay_enrollments`) on the local Supabase stack used for this proof — meaning the real
-webhook route's own direct `db.from(...).select(...)` calls (using exactly this service_role client)
-would fail with `permission denied` before this proof could exercise anything. No migration in this
-repo grants these privileges to `service_role`; a schema-wide `GRANT ALL ON ALL TABLES IN SCHEMA
-public TO service_role` was applied **directly to the local Docker Postgres instance only** (never
-committed, never touching any migration file or production) to unblock this proof.
+**Update (2026-09-12): root-caused and fixed.** The restricted local `service_role` grant described
+below was never a local-only quirk — it was a genuine, systemic migration gap. Production has
+always worked only because Supabase-hosted projects run migrations as `supabase_admin`, which
+carries an `ALTER DEFAULT PRIVILEGES` configuration that auto-grants full table privileges to
+`anon`/`authenticated`/`service_role`/`postgres` on every newly created object. The local Supabase
+CLI stack runs migrations as plain `postgres`, which has no such default ACL — so any table created
+without an explicit `GRANT` statement in its own migration has always had zero real privileges for
+these roles locally, while production silently carried (and still carries) an unintended full grant
+on the exact same tables. This was invisible in practice only because every affected table has RLS
+forced with policies scoped to `authenticated` (or none at all), so `anon`/`authenticated` were
+denied at the row level regardless of the unintended table-level grant — `service_role`, which
+bypasses RLS, was the one role where the gap was load-bearing.
 
-**This needs verification against actual production**, which this session has no access to check:
-if production's `service_role` has the same restricted grant, the private-financing Stripe webhook
-path is completely non-functional for real payments right now (every real webhook would fail on its
-first database read); if production's baseline grant differs from this local CLI stack's (plausible,
-since Supabase's local-dev bootstrap and hosted-platform bootstrap are maintained separately), this
-is a local-only artifact and not a real concern. **Do not treat this as confirmed production-broken
-or confirmed production-fine — it is unverified from here.**
+PR #174 (`fix/payment-webhook-events-grant-contract`, migration
+`20260912020000_establish_stripe_webhook_chain_grant_contract.sql`) traces the full extent of this
+gap, starting from a single reported failure on `payment_webhook_events` and expanding twice as each
+fix advanced the same two failing integration tests to the next permission-denied error:
+1. `payment_webhook_events` alone (the original, narrower finding).
+2. Six more rental-domain tables sharing the same root cause: `landlord_payment_accounts`,
+   `rental_payments`, `rental_settlements`, `rent_charges`, `rental_autopay_enrollments`,
+   `ach_authorizations` (the last confirmed dead code — no grant given).
+3. The four private-financing tables this doc already flagged above — `private_financing_online_
+   payments`, `private_financing_events`, `private_financing_components`,
+   `private_financing_account_terms_versions` — discovered because `stripe-webhook/route.js`
+   unconditionally probes `private_financing_online_payments` on every `charge.succeeded`/
+   `charge.updated`/`refund.updated`/`pf_payment_*` event regardless of which domain the event
+   actually belongs to, so even a purely rental-domain refund test failed on a private-financing
+   table it never otherwise touches. Plus one load-bearing dependency, `rental_tenants`
+   (`authenticated: select` — required both by `rental_autopay_enrollments`'s own tenant-read
+   policy and, independently, by the tenant portal's own page-load query).
+
+**Explicitly investigated and NOT granted, each for a distinct, evidenced reason** (see the
+migration's own header comment for the full writeup): `financial_events` has no production
+service_role reader anywhere in this codebase (every real route reads it via the authenticated
+client) — the assertions that appeared to need it were a test-only gap, fixed by rewriting them to
+read via the local Postgres administrator instead of granting a privilege no real caller needs.
+`rental_lease_tenants` and `rent_schedules` are both read only by the tenant-invoked autopay-
+enrollment RPC, which has its own separate, unrelated RLS defect (see below) — deferred together to
+a future PR rather than granted here for no functional benefit.
+
+**Confirmed final state, fresh-stack empirical proof**: both `stripePaymentChain.integration.test.js`
+and `rentalPaymentChain.integration.test.js` pass in full (16 passed, 1 documented skip, 0 failed,
+out of 17 total) on a completely destroyed-and-recreated local Supabase stack running only
+repository migrations — no ad hoc grant, schema-wide `GRANT ALL`, or other local-only patch of any
+kind. The full regression suite passes at 1,013/1,013 files and 7,422/7,422 tests (1 pre-existing
+documented skip), zero failures.
+
+**A related, separate, still-open finding surfaced along the way (deliberately not fixed by PR
+#174)**: `request_rental_autopay_enrollment`/`cancel_rental_autopay_enrollment` are tenant-invoked
+`SECURITY INVOKER` RPCs that insert/update `rental_autopay_enrollments` with `owner_id` set to the
+tenant's landlord, not the tenant's own `auth.uid()` — but the only insert/update-permitting policy
+on that table (`rental_autopay_owner_all`) requires `has_workspace_access(owner_id)`, true only for
+the landlord or an active co-owner, never a mere tenant. Proven directly: a real tenant JWT
+performing the RPC's own insert shape is denied with `new row violates row-level security policy for
+table "rental_autopay_enrollments"`. This means a tenant can never successfully self-enroll in or
+self-cancel autopay today. Tracked as its own future, bounded correction — see "Follow-up:
+tenant-autopay RLS defect" below.
 
 ## What this proof cannot cover
 
@@ -145,18 +184,25 @@ or confirmed production-fine — it is unverified from here.**
   real at the DB layer, fixture-shaped at the Stripe layer) together cover both halves; neither alone
   is a complete substitute for a real Stripe test-mode payment, which the plan itself gates behind
   separate authorization before ever running one.
-- Rental payment chain — see follow-up plan below.
+- Rental payment chain — see follow-up plan below (now done).
 
-## Follow-up plan: rental payment chain
+## Follow-up plan: rental payment chain — DONE
 
-Same method (real local stack, real webhook route, real RPC, signed synthetic events, deterministic
-provider substitution only for the `charge.succeeded`/settlement path), different fixture graph:
-`landlord_payment_accounts` (already have this pattern from this slice) + a minimal
-`rental_properties`/`rental_units`/`rental_tenants`/`rental_leases`/`rental_charges` chain + a
-`rental_payments` row instead of `private_financing_online_payments`. The webhook branches to
-`process_stripe_rental_payment_event` (the `else` branch already read while building this proof) for
-`payment_intent.*` events without a `pf_payment_` prefix — same idempotency guard, same signature
-verification, same no-Stripe-network-call approach applies. Estimate: similar size to this slice,
-should reuse this file's `psql`/`signInFreshClient`/`signedRequest` helpers directly (candidate for
-extracting a small shared test-helper module rather than duplicating them). Needs its own
-authorization to start.
+Completed as `src/domains/rental/__tests__/rentalPaymentChain.integration.test.js`, using exactly
+this method and reusing this file's `psql`/`signInFreshClient`/`signedRequest` helpers (extracted to
+the shared `src/test-helpers/stripeWebhookIntegrationTestHelpers.js` module, as anticipated below).
+Building it out is what surfaced the grant-parity gap resolved by PR #174 above.
+
+## Follow-up: tenant-autopay RLS defect — separate, bounded, future PR
+
+Not fixed by PR #174 (deliberately out of scope — see above). `request_rental_autopay_enrollment`
+and `cancel_rental_autopay_enrollment` (`supabase/migrations/20260822010000_add_rent_schedule_
+collection_authority.sql` and `20260813002800_create_rental_autopay_controls.sql`) are `SECURITY
+INVOKER` RPCs invoked by an authenticated tenant session
+(`src/app/api/rental/portal/route.js`'s `POST` handler) that insert/update `rental_autopay_
+enrollments` with `owner_id` set to the tenant's landlord — but the only insert/update-permitting
+policy, `rental_autopay_owner_all`, requires `has_workspace_access(owner_id)`, which is false for a
+mere tenant. A tenant can never successfully self-enroll in or self-cancel autopay today. Fixing it
+requires a genuine RLS policy change (e.g., a tenant-scoped write policy gated by real lease
+membership), which is a materially different, larger change than a grants-only PR should make in
+the same breath — needs its own authorization, design, and test coverage to start.
