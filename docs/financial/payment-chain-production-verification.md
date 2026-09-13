@@ -140,9 +140,11 @@ fix advanced the same two failing integration tests to the next permission-denie
    unconditionally probes `private_financing_online_payments` on every `charge.succeeded`/
    `charge.updated`/`refund.updated`/`pf_payment_*` event regardless of which domain the event
    actually belongs to, so even a purely rental-domain refund test failed on a private-financing
-   table it never otherwise touches. Plus one load-bearing dependency, `rental_tenants`
-   (`authenticated: select` — required both by `rental_autopay_enrollments`'s own tenant-read
-   policy and, independently, by the tenant portal's own page-load query).
+   table it never otherwise touches. Plus one shared dependency, `rental_tenants`: authenticated
+   CRUD preserves Rental Manager's existing owner operations (including its guarded unused-tenant
+   deletion), while service-role SELECT preserves tenant payment-session and import lookups. Its
+   tenant self-read also remains RLS-gated. Eleven tables receive positive grants;
+   `ach_authorizations` is the deliberately zero-grant twelfth table.
 
 **Explicitly investigated and NOT granted, each for a distinct, evidenced reason** (see the
 migration's own header comment for the full writeup): `financial_events` has no production
