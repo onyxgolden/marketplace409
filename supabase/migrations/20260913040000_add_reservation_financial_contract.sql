@@ -46,15 +46,13 @@ create table if not exists public.reservation_payment_attempts (
   updated_at timestamptz not null default now(),
   primary key (owner_id, id),
   unique (owner_id, idempotency_key),
-  unique nulls not distinct (owner_id, provider, provider_mode, provider_reference),
   foreign key (owner_id, reservation_id) references public.reservation_financial_contracts(owner_id, reservation_id) on delete restrict,
   foreign key (owner_id, guest_id) references public.reservation_guests(owner_id, id) on delete restrict,
   check (applied_amount_cents <= amount_cents),
   check (refunded_amount_cents <= applied_amount_cents),
   check (disputed_amount_cents <= applied_amount_cents),
   check (settled_amount_cents <= applied_amount_cents - refunded_amount_cents),
-  check (paid_out_amount_cents <= settled_amount_cents),
-  check ((purpose <> 'security_deposit') or applied_amount_cents = 0)
+  check (paid_out_amount_cents <= settled_amount_cents)
 );
 
 create table if not exists public.reservation_payment_events (
@@ -80,6 +78,9 @@ create table if not exists public.reservation_payment_events (
 
 create index if not exists reservation_payment_attempts_reservation_idx
   on public.reservation_payment_attempts(owner_id, reservation_id, created_at);
+create unique index if not exists reservation_payment_attempt_provider_reference_key
+  on public.reservation_payment_attempts(owner_id, provider, provider_mode, provider_reference)
+  where provider_reference is not null;
 create index if not exists reservation_payment_events_attempt_idx
   on public.reservation_payment_events(owner_id, payment_attempt_id, occurred_at);
 
