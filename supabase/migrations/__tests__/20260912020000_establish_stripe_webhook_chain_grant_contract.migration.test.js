@@ -38,6 +38,8 @@ const TEST_PASSWORD = "correct-horse-battery-staple-1";
 const currentFilePath = fileURLToPath(import.meta.url);
 const migrationPath = path.resolve(path.dirname(currentFilePath), "../20260912020000_establish_stripe_webhook_chain_grant_contract.sql");
 const migrationSql = fs.readFileSync(migrationPath, "utf8");
+const tenantAutopayMigrationPath = path.resolve(path.dirname(currentFilePath), "../20260913000000_fix_tenant_autopay_rpc_rls.sql");
+const tenantAutopayMigrationSql = fs.readFileSync(tenantAutopayMigrationPath, "utf8");
 
 // Per-table expected steady-state grants (post-migration), independently derived per the
 // migration's own comments -- deliberately not a single blanket set.
@@ -113,7 +115,7 @@ const AUTHENTICATED_ONLY_FUNCTIONS = [
   "approve_rentec_payment_import(text, text, text, text, bigint, date, text, text, text, text)",
   "commit_rentec_rental_import(text, jsonb, jsonb, jsonb)",
   "queue_rental_balance_reminder(text, text, timestamptz, text, smallint)",
-  "request_rental_autopay_enrollment(text, text, smallint, smallint, text)",
+  "request_rental_autopay_enrollment(text, text, smallint, smallint, text, text)",
   "cancel_rental_autopay_enrollment(text, text)",
 ];
 
@@ -144,7 +146,10 @@ function psql(sql, attemptsRemaining = 3) {
 // deliberately reapplies the GRANT contract: without it, psql autocommits each REVOKE/GRANT and a
 // concurrent Stripe integration worker can observe the artificial in-between privilege state.
 function applyMigration() {
-  return psql(`begin;\n${migrationSql}\ncommit;`);
+  // This historical contract originally granted the five-argument tenant-autopay RPC. Apply the
+  // later migration in the same transaction so a full-suite replay always leaves the shared
+  // database at current-head state and never resurrects that retired entry point.
+  return psql(`begin;\n${migrationSql}\n${tenantAutopayMigrationSql}\ncommit;`);
 }
 
 function rows(output) {
