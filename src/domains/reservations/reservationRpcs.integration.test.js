@@ -45,6 +45,7 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
   let ownerClient;
   let coOwnerClient;
   let strangerClient;
+  let reservationSnapshotBefore;
   const suffix = crypto.randomUUID().slice(0, 8);
   const unitId = `unit_${suffix}`;
 
@@ -58,7 +59,8 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
   beforeAll(async () => {
     psql(readFileSync(new URL("../../../supabase/migrations/20260913010000_add_reservation_lifecycle.sql", import.meta.url), "utf8"));
     psql(readFileSync(new URL("../../../supabase/migrations/20260913020000_add_public_reservation_booking.sql", import.meta.url), "utf8"));
-    psql(readFileSync(new URL("../../../supabase/migrations/20260913030000_add_guest_agreement_and_timed_access.sql", import.meta.url), "utf8"));\n    const financialMigration = readFileSync(new URL("../../../supabase/migrations/20260913040000_add_reservation_financial_contract.sql", import.meta.url), "utf8");\n    psql(`${financialMigration}\n${financialMigration}`);
+    psql(readFileSync(new URL("../../../supabase/migrations/20260913030000_add_guest_agreement_and_timed_access.sql", import.meta.url), "utf8"));\n    reservationSnapshotBefore = psql("select coalesce(md5(string_agg(row_to_json(r)::text, '|' order by owner_id,id)), md5('')) from reservations r;").trim();
+    const financialMigration = readFileSync(new URL("../../../supabase/migrations/20260913040000_add_reservation_financial_contract.sql", import.meta.url), "utf8");\n    psql(`${financialMigration}\n${financialMigration}`);
     // This local Supabase CLI stack's default privileges do not match the real, hosted
     // project's (confirmed by querying pg_default_acl on both: production grants
     // authenticated=arwdDxtm by default on every new table; this local stack grants only
@@ -124,6 +126,11 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       if (error) throw new Error(`Failed to delete test user ${user.email}: ${error.message}`);
     }
   }, 30000);
+
+  it("does not modify any pre-existing reservation row when applied or reapplied", () => {
+    const after = psql("select coalesce(md5(string_agg(row_to_json(r)::text, '|' order by owner_id,id)), md5('')) from reservations r;").trim();
+    expect(after).toBe(reservationSnapshotBefore);
+  });
 
   // --- Defense in depth: RLS alone (no matching policy) already blocks direct mutation --------
   describe("direct mutation on RPC-only tables is denied even before/without the grant hardening", () => {
