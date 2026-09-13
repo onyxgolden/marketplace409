@@ -6,6 +6,25 @@
 
 ---
 
+## 2026-09-13 RV-D — Public Guest Booking — IMPLEMENTED, PR PENDING
+
+RV-A through RV-C are merged, deployed, and their migrations (where applicable) are applied.
+RV-D now adds an opaque per-inventory booking URL, a server-shaped public listing, signed and
+expiring exact-price previews, explicit cancellation acknowledgement and typed `BOOK` confirmation,
+atomic guest/reservation/event/calendar writes, truthful `public_guest` attribution, and a private,
+retryable confirmation-email outbox. The guest UI states that no payment is collected. Anonymous
+table access remains denied; only the server service role may execute the public-confirmation RPC.
+
+This slice does not add payments, deposit collection/reconciliation, refunds, agreements,
+e-signatures, or access-code automation. Those remain RV-E. No Trading work is included.
+
+Validation: focused runnable tests 15/15; full suite 7,296 passed, 158 infrastructure-gated skips,
+zero failures; scoped lint, TypeScript, and `git diff --check` are clean. The included real-Postgres
+reservation suite adds atomicity, idempotency, actor-attribution, outbox-privacy, and anonymous-denial
+proofs and self-skips when a local Supabase stack is unavailable.
+
+---
+
 ## 2026-09-12 RV-A — Reservation Anonymous-Privilege Revocation — PR OPEN, NOT MERGED
 
 **Status: bounded fix implemented and opened for review; not merged, not deployed, not applied to

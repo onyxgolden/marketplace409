@@ -7,6 +7,16 @@
 
 ---
 
+## 2026-09-13 RV-D — Public Guest Booking — PR PENDING
+
+RV-A, RV-B, and RV-C are complete in production. RV-D is implemented as an isolated public-booking
+slice: opaque booking links, availability and exact-price preview, reviewed cancellation terms,
+typed confirmation, honest public-guest audit attribution, calendar blocking, and queued email
+confirmation. It never collects or implies collection of payment. RV-E payments/deposits/agreements/
+access remains unstarted, and no Trading phase has begun.
+
+---
+
 ## 2026-09-12 RV-A — Reservation Anonymous-Privilege Revocation — PR OPEN, NOT MERGED
 
 Bounded authorization fix from the RV/cabin production-readiness audit: revokes `anon`'s leftover
