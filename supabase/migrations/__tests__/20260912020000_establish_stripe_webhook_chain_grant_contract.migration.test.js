@@ -38,6 +38,8 @@ const TEST_PASSWORD = "correct-horse-battery-staple-1";
 const currentFilePath = fileURLToPath(import.meta.url);
 const migrationPath = path.resolve(path.dirname(currentFilePath), "../20260912020000_establish_stripe_webhook_chain_grant_contract.sql");
 const migrationSql = fs.readFileSync(migrationPath, "utf8");
+const tenantAutopayMigrationPath = path.resolve(path.dirname(currentFilePath), "../20260913000000_fix_tenant_autopay_rpc_rls.sql");
+const tenantAutopayMigrationSql = fs.readFileSync(tenantAutopayMigrationPath, "utf8");
 
 // Per-table expected steady-state grants (post-migration), independently derived per the
 // migration's own comments -- deliberately not a single blanket set.
@@ -113,7 +115,7 @@ const AUTHENTICATED_ONLY_FUNCTIONS = [
   "approve_rentec_payment_import(text, text, text, text, bigint, date, text, text, text, text)",
   "commit_rentec_rental_import(text, jsonb, jsonb, jsonb)",
   "queue_rental_balance_reminder(text, text, timestamptz, text, smallint)",
-  "request_rental_autopay_enrollment(text, text, smallint, smallint, text)",
+  "request_rental_autopay_enrollment(text, text, smallint, smallint, text, text)",
   "cancel_rental_autopay_enrollment(text, text)",
 ];
 
@@ -138,6 +140,16 @@ function psql(sql, attemptsRemaining = 3) {
     }
     throw error;
   }
+}
+
+// Supabase applies a migration as one transaction. Preserve that boundary when this suite
+// deliberately reapplies the GRANT contract: without it, psql autocommits each REVOKE/GRANT and a
+// concurrent Stripe integration worker can observe the artificial in-between privilege state.
+function applyMigration() {
+  // This historical contract originally granted the five-argument tenant-autopay RPC. Apply the
+  // later migration in the same transaction so a full-suite replay always leaves the shared
+  // database at current-head state and never resurrects that retired entry point.
+  return psql(`begin;\n${migrationSql}\n${tenantAutopayMigrationSql}\ncommit;`);
 }
 
 function rows(output) {
@@ -288,9 +300,9 @@ describe.skipIf(!reachable)("rental payment domain explicit grant contract (real
         where table_schema='public' and table_name = any(array[${ALL_TABLES.map((t) => `'${t}'`).join(",")}])
         group by table_name order by table_name;
       `);
-      expect(() => psql(migrationSql)).not.toThrow();
+      expect(() => applyMigration()).not.toThrow();
       const firstPass = snapshotGrants();
-      expect(() => psql(migrationSql)).not.toThrow();
+      expect(() => applyMigration()).not.toThrow();
       const secondPass = snapshotGrants();
       expect(firstPass).toBe(secondPass);
     });
@@ -313,7 +325,7 @@ describe.skipIf(!reachable)("rental payment domain explicit grant contract (real
         from payment_webhook_events where id = '${webhookCanaryId}';
       `);
       const before = snapshot();
-      psql(migrationSql);
+      applyMigration();
       const after = snapshot();
       expect(after).toBe(before);
       psql(`delete from payment_webhook_events where id = '${webhookCanaryId}';`);
@@ -322,7 +334,7 @@ describe.skipIf(!reachable)("rental payment domain explicit grant contract (real
 
   describe("after the migration: the independently-derived per-table contract holds exactly", () => {
     beforeAll(() => {
-      psql(migrationSql);
+      applyMigration();
     });
 
     it.each(ALL_TABLES)("%s: PUBLIC and anon hold zero table privileges", (table) => {
@@ -512,7 +524,7 @@ describe.skipIf(!reachable)("rental payment domain explicit grant contract (real
   describe("the five shared dependencies: complete explicit contracts", () => {
     // The migration is already genuinely applied by this point -- the earlier sibling describe
     // ("after the migration: the independently-derived per-table contract holds exactly") already
-    // ran psql(migrationSql) in its own beforeAll, and that state persists for every later sibling
+    // ran applyMigration() in its own beforeAll, and that state persists for every later sibling
     // describe in this same file. The real "before" proof for these five additions runs earlier,
     // inside "before the migration: the vulnerable baseline genuinely exists on every table",
     // before any beforeAll in this file has applied the migration.
@@ -595,7 +607,7 @@ describe.skipIf(!reachable)("rental payment domain explicit grant contract (real
         // Canary proof: reapplying the migration changes nothing about this exact row.
         const snapshot = () => psql(`select status || '|' || updated_at::text from private_financing_online_payments where owner_id = '${ownerA.id}' and id = '${paymentId}';`);
         const before = snapshot();
-        psql(migrationSql);
+        applyMigration();
         const after = snapshot();
         expect(after).toBe(before);
       });

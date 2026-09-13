@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedTenantPortalApplication } from "@/lib/supabase/createAuthenticatedTenantPortalApplication";
+import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 export async function GET() {
   try {
     const authenticated = await createAuthenticatedTenantPortalApplication();
@@ -28,7 +29,8 @@ export async function POST(request) {
     if(body?.operation==="request-autopay"){
       if(!body.leaseId||!["card","us_bank_account"].includes(body.paymentMethodType)||body.consentConfirmed!==true)return NextResponse.json({error:"Lease, payment method, and explicit consent are required."},{status:400});
       const consentText="I authorize recurring rent payments under the displayed schedule, understand Stripe payment-method and mandate setup is required before activation, and may cancel future payments.";
-      const{data,error}=await authenticated.supabaseClient.rpc("request_rental_autopay_enrollment",{p_lease_id:body.leaseId,p_payment_method_type:body.paymentMethodType,p_charge_day:Number(body.chargeDay),p_reminder_days_before:Number(body.reminderDaysBefore),p_consent_text:consentText});if(error)throw error;return NextResponse.json({success:true,enrollment:data});
+      const provider=createStripeBillingProvider();
+      const{data,error}=await authenticated.supabaseClient.rpc("request_rental_autopay_enrollment",{p_lease_id:body.leaseId,p_payment_method_type:body.paymentMethodType,p_charge_day:Number(body.chargeDay),p_reminder_days_before:Number(body.reminderDaysBefore),p_consent_text:consentText,p_provider_mode:provider.mode});if(error)throw error;return NextResponse.json({success:true,enrollment:data});
     }
     if(body?.operation==="cancel-autopay"){
       if(!body.enrollmentId)return NextResponse.json({error:"enrollmentId is required."},{status:400});const{data,error}=await authenticated.supabaseClient.rpc("cancel_rental_autopay_enrollment",{p_enrollment_id:body.enrollmentId,p_reason:body.reason||"Cancelled by tenant"});if(error)throw error;return NextResponse.json({success:true,enrollment:data});

@@ -195,16 +195,25 @@ this method and reusing this file's `psql`/`signInFreshClient`/`signedRequest` h
 the shared `src/test-helpers/stripeWebhookIntegrationTestHelpers.js` module, as anticipated below).
 Building it out is what surfaced the grant-parity gap resolved by PR #174 above.
 
-## Follow-up: tenant-autopay RLS defect — separate, bounded, future PR
+## Follow-up: tenant-autopay RLS defect — bounded correction prepared after PR #174
 
-Not fixed by PR #174 (deliberately out of scope — see above). `request_rental_autopay_enrollment`
+Not fixed by PR #174 (deliberately out of scope — see above). The separate correction is migration
+`20260913000000_fix_tenant_autopay_rpc_rls.sql`. `request_rental_autopay_enrollment`
 and `cancel_rental_autopay_enrollment` (`supabase/migrations/20260822010000_add_rent_schedule_
 collection_authority.sql` and `20260813002800_create_rental_autopay_controls.sql`) are `SECURITY
 INVOKER` RPCs invoked by an authenticated tenant session
 (`src/app/api/rental/portal/route.js`'s `POST` handler) that insert/update `rental_autopay_
 enrollments` with `owner_id` set to the tenant's landlord — but the only insert/update-permitting
 policy, `rental_autopay_owner_all`, requires `has_workspace_access(owner_id)`, which is false for a
-mere tenant. A tenant can never successfully self-enroll in or self-cancel autopay today. Fixing it
-requires a genuine RLS policy change (e.g., a tenant-scoped write policy gated by real lease
-membership), which is a materially different, larger change than a grants-only PR should make in
-the same breath — needs its own authorization, design, and test coverage to start.
+mere tenant. A tenant can never successfully self-enroll in or self-cancel autopay today.
+
+The bounded correction deliberately does **not** add a tenant table-write policy: doing so would
+allow direct PostgREST writes to bypass the RPC's consent, timing, FORGE-cutover, and billing-pause
+validation. Instead, both RPCs become `SECURITY DEFINER` with `row_security=off`, a fixed public
+search path, and explicit checks deriving the tenant, active lease, owner, and enrollment ownership
+from `auth.uid()` before either write. Enrollment also requires the server-resolved Stripe
+`provider_mode`; the obsolete five-argument entry point is revoked so a tenant cannot select or
+omit test/live isolation through a direct RPC call. Direct tenant writes remain denied. Its real-local-Supabase
+test proves successful self-enrollment/cancellation, unrelated-user denial, inactive-lease denial,
+direct-write denial, and idempotent migration application. It requires separate review, merge, and
+production-apply gates; preparing it does not activate autopay or create a production enrollment.
