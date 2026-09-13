@@ -2,7 +2,9 @@
 -- closing a gap first found in payment_webhook_events (see the now-superseded
 -- 20260912010000_establish_payment_webhook_events_grant_contract.sql, folded into this file) and
 -- then proven -- by advancing the same failing integration tests one permission-denied error at a
--- time -- to extend across eleven more tables in two domains that share the same webhook route:
+-- time -- to extend across eleven more tables in two domains that share the same webhook route.
+-- Eleven tables receive explicit positive grants; ach_authorizations is the twelfth table and is
+-- deliberately normalized to a zero-grant contract because it has no production caller:
 --   rental domain (6 more): landlord_payment_accounts, rental_payments, rental_settlements,
 --     rent_charges, rental_autopay_enrollments, ach_authorizations.
 --   private-financing domain (4): private_financing_online_payments, private_financing_events,
@@ -12,8 +14,8 @@
 --     pf_payment_*-prefixed event, REGARDLESS of whether the event turns out to belong to the
 --     rental or private-financing domain, so a rental-only refund/settlement test failed on a
 --     private-financing table it never otherwise touches.
---   plus one load-bearing dependency of a rental table's own pre-existing policy: rental_tenants
---     (authenticated: select only -- see its own section below).
+--   plus one load-bearing dependency shared by Rental Manager CRUD and tenant payment routes:
+--     rental_tenants (authenticated CRUD; service_role select -- see its own section below).
 --
 -- Root cause (identical across all twelve tables): production migrations run as supabase_admin,
 -- which carries this project's ALTER DEFAULT PRIVILEGES configuration -- an ambient default ACL
@@ -53,8 +55,8 @@
 -- This migration does not touch RLS. Every policy below is pre-existing and unchanged; grep
 -- `pg_policies` after this migration and it will read identically to before. It does not touch
 -- this project's ALTER DEFAULT PRIVILEGES configuration, which remains correct and in place for
--- every table outside this seven-table domain. It does not modify any existing row in any of the
--- seven tables -- every statement below is a privilege-only REVOKE/GRANT, and both are inherently
+-- every table outside these twelve explicitly-normalized tables. It does not modify any existing
+-- row -- every statement below is a privilege-only REVOKE/GRANT, and both are inherently
 -- idempotent: revoking a privilege a role no longer holds, or granting one it already holds, is a
 -- no-op, not an error. Re-running this entire file is safe and produces zero drift.
 --
@@ -152,8 +154,9 @@
 --   privilege" this migration exists to eliminate elsewhere.
 --   -> authenticated: nothing. service_role: nothing. (No legitimate direct client access today.)
 --
--- No DELETE is granted to any role on any of these tables. No production or test-application
--- code path anywhere in this domain calls .delete() through the JS client; every migration test
+-- No DELETE is granted on any payment/ledger table. rental_tenants is the sole exception: Rental
+-- Manager's existing delete-unused-tenant operation performs a guarded authenticated DELETE after
+-- proving the tenant is unclaimed and has no related lease/history rows. Every migration test
 -- below cleans up its own fixtures via the local PostgreSQL superuser (through the shared psql()
 -- helper, i.e. `docker exec ... psql`, which bypasses table grants entirely) or via row-scoped
 -- canary deletes issued the same way -- never by widening any role's production grant.
@@ -237,8 +240,16 @@ grant select, update on rental_autopay_enrollments to service_role;
 --       that exact query fail with the identical "permission denied for table rental_tenants";
 --       re-granting it restores success. This alone would justify the grant even setting (1) and
 --       the autopay RLS defect aside entirely.
--- No other privilege on rental_tenants is granted here -- only what these two read paths need.
-grant select on rental_tenants to authenticated;
+-- Rental Manager also directly upserts/updates tenants and conditionally deletes an unused tenant
+-- through the authenticated client (src/app/api/rental/route.js and
+-- SupabaseRentalTenantRepository.js). Tenant payment-session and Rentec payment-import routes read
+-- the tenant through the service-role client. Preserve exactly those established operations.
+revoke all privileges on rental_tenants from public;
+revoke all privileges on rental_tenants from anon;
+revoke all privileges on rental_tenants from authenticated;
+revoke all privileges on rental_tenants from service_role;
+grant select, insert, update, delete on rental_tenants to authenticated;
+grant select on rental_tenants to service_role;
 
 -- ---------------------------------------------------------------------------------------------
 -- ach_authorizations -- confirmed dead code; explicit zero-grant, not an oversight.
@@ -263,7 +274,11 @@ revoke all privileges on ach_authorizations from service_role;
 --   private_financing_events below); granting all four tables in this domain together is what
 --   made the full payment/refund/fee-credit chain succeed end to end.
 --   -> service_role: select, insert, update (no delete -- no delete workflow found anywhere).
+revoke all privileges on private_financing_online_payments from public;
+revoke all privileges on private_financing_online_payments from anon;
+revoke all privileges on private_financing_online_payments from authenticated;
 revoke all privileges on private_financing_online_payments from service_role;
+grant select on private_financing_online_payments to authenticated;
 grant select, insert, update on private_financing_online_payments to service_role;
 
 -- ---------------------------------------------------------------------------------------------
@@ -280,9 +295,23 @@ grant select, insert, update on private_financing_online_payments to service_rol
 --   restated as a no-op revoke/grant below only to keep this file a complete, self-contained
 --   statement of the whole chain's contract); only service_role's own missing grant is new.
 -- ---------------------------------------------------------------------------------------------
-grant select on private_financing_events to service_role;
-grant select on private_financing_components to service_role;
-grant select on private_financing_account_terms_versions to service_role;
+revoke all privileges on private_financing_events from public;
+revoke all privileges on private_financing_events from anon;
+revoke all privileges on private_financing_events from authenticated;
+revoke all privileges on private_financing_events from service_role;
+grant select on private_financing_events to authenticated, service_role;
+
+revoke all privileges on private_financing_components from public;
+revoke all privileges on private_financing_components from anon;
+revoke all privileges on private_financing_components from authenticated;
+revoke all privileges on private_financing_components from service_role;
+grant select on private_financing_components to authenticated, service_role;
+
+revoke all privileges on private_financing_account_terms_versions from public;
+revoke all privileges on private_financing_account_terms_versions from anon;
+revoke all privileges on private_financing_account_terms_versions from authenticated;
+revoke all privileges on private_financing_account_terms_versions from service_role;
+grant select on private_financing_account_terms_versions to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------------------------
 -- Functions -- every function whose body touches any of the tables above. All of these
