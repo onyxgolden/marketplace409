@@ -211,7 +211,9 @@ The bounded correction deliberately does **not** add a tenant table-write policy
 allow direct PostgREST writes to bypass the RPC's consent, timing, FORGE-cutover, and billing-pause
 validation. Instead, both RPCs become `SECURITY DEFINER` with `row_security=off`, a fixed public
 search path, and explicit checks deriving the tenant, active lease, owner, and enrollment ownership
-from `auth.uid()` before either write. Direct tenant writes remain denied. Its real-local-Supabase
+from `auth.uid()` before either write. Enrollment also requires the server-resolved Stripe
+`provider_mode`; the obsolete five-argument entry point is revoked so a tenant cannot select or
+omit test/live isolation through a direct RPC call. Direct tenant writes remain denied. Its real-local-Supabase
 test proves successful self-enrollment/cancellation, unrelated-user denial, inactive-lease denial,
 direct-write denial, and idempotent migration application. It requires separate review, merge, and
 production-apply gates; preparing it does not activate autopay or create a production enrollment.
