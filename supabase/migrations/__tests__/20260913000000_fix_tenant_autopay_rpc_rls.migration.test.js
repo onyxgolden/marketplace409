@@ -15,13 +15,13 @@ function psql(sql) {
   });
 }
 
-function asAuthenticated(userId, sql) {
+function asAuthenticated(userId, sql, { commit = false } = {}) {
   return psql(`begin;
     set local role authenticated;
     select set_config('request.jwt.claim.sub', '${userId}', true);
     select set_config('request.jwt.claim.role', 'authenticated', true);
     ${sql}
-    rollback;`);
+    ${commit ? "commit" : "rollback"};`);
 }
 
 async function reachable() {
@@ -81,12 +81,12 @@ describe.skipIf(!localStackReachable)("tenant autopay RPC RLS correction (real l
   }, 30000);
 
   it("is idempotent and keeps both RPCs SECURITY DEFINER with row security disabled", () => {
-    const output = psql(`select oid::regprocedure::text, prosecdef, coalesce(array_to_string(proconfig,','),'')
+    const output = psql(`select pg_proc.oid::regprocedure::text, prosecdef, coalesce(array_to_string(proconfig,','),'')
       from pg_proc join pg_namespace on pg_namespace.oid=pg_proc.pronamespace
-      where nspname='public' and oid in (
+      where nspname='public' and pg_proc.oid in (
         'request_rental_autopay_enrollment(text,text,smallint,smallint,text,text)'::regprocedure,
         'cancel_rental_autopay_enrollment(text,text)'::regprocedure
-      ) order by oid::regprocedure::text;
+      ) order by pg_proc.oid::regprocedure::text;
       select has_function_privilege('authenticated',
         'request_rental_autopay_enrollment(text,text,smallint,smallint,text)', 'execute');`);
     expect(output).toContain("cancel_rental_autopay_enrollment(text,text)|t|");
@@ -99,7 +99,7 @@ describe.skipIf(!localStackReachable)("tenant autopay RPC RLS correction (real l
     const consent = "I knowingly authorize recurring rent payments and may cancel future payments.";
     const output = asAuthenticated(tenantUserId, `select row_to_json(result)::text from request_rental_autopay_enrollment(
       '${leaseId}','us_bank_account',1::smallint,3::smallint,'${consent}','test'
-    ) result;`);
+    ) result;`, { commit: true });
     const data = JSON.parse(output.trim().split("\n").find((line) => line.startsWith("{")));
     expect(data).toMatchObject({ owner_id: ownerId, lease_id: leaseId, tenant_id: tenantId, status: "setup_required" });
     enrollmentId = data.id;
@@ -120,7 +120,7 @@ describe.skipIf(!localStackReachable)("tenant autopay RPC RLS correction (real l
       .toThrow(/Current tenant autopay enrollment was not found/);
 
     const output = asAuthenticated(tenantUserId, `select row_to_json(result)::text
-      from cancel_rental_autopay_enrollment('${enrollmentId}','Cancelled by tenant') result;`);
+      from cancel_rental_autopay_enrollment('${enrollmentId}','Cancelled by tenant') result;`, { commit: true });
     const data = JSON.parse(output.trim().split("\n").find((line) => line.startsWith("{")));
     expect(data).toMatchObject({ id: enrollmentId, owner_id: ownerId, tenant_id: tenantId, status: "cancelled" });
   });
