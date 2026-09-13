@@ -9,9 +9,9 @@
 // contract, see TABLES below) plus five additive grants proven necessary by chain-walking the two
 // integration test files' real permission errors one at a time: private_financing_online_payments,
 // private_financing_events, private_financing_components, private_financing_account_terms_versions
-// (service_role only -- authenticated already holds correct grants from an earlier, separate
-// migration, untouched here), and rental_tenants (authenticated: select only, a load-bearing
-// dependency of two independent, currently-reachable read paths -- see its own describe block).
+// (authenticated read plus the independently-derived service_role operations), and rental_tenants
+// (authenticated CRUD plus service_role read, preserving existing Rental Manager and payment-
+// session callers -- see its own describe block).
 // Deliberately excludes financial_events (no production service_role reader exists anywhere in
 // this codebase; its own test-verification need was fixed by rewriting the test to read via the
 // local Postgres administrator instead -- see rentalPaymentChain.integration.test.js), and
@@ -52,18 +52,17 @@ const TABLES = {
 };
 const ALL_TABLES = Object.keys(TABLES);
 
-// The five Bucket-1 additions are additive-only grants on tables this migration does NOT revoke-
-// all on first (private_financing_* already has its own correct pre-existing authenticated grant
-// from 20260830000700_grant_private_financing_authenticated_reads.sql; rental_tenants keeps
-// whatever else it already has) -- so they don't fit the full REVOKE-ALL-then-GRANT contract
-// TABLES/ALL_TABLES model above and get their own dedicated before/after checks instead.
-const ADDITIVE_SERVICE_ROLE_TABLES = {
-  private_financing_online_payments: ["SELECT", "INSERT", "UPDATE"],
-  private_financing_events: ["SELECT"],
-  private_financing_components: ["SELECT"],
-  private_financing_account_terms_versions: ["SELECT"],
+// Five shared dependencies have their own exact, fully-normalized contracts. The authenticated
+// reads preserve existing owner/borrower routes; service_role gets only the webhook/portal-server
+// operations proven by production call sites. rental_tenants is asserted separately because its
+// existing Rental Manager CRUD surface is intentionally broader than a payment table's surface.
+const SHARED_TABLES = {
+  private_financing_online_payments: { authenticated: ["SELECT"], service_role: ["SELECT", "INSERT", "UPDATE"] },
+  private_financing_events: { authenticated: ["SELECT"], service_role: ["SELECT"] },
+  private_financing_components: { authenticated: ["SELECT"], service_role: ["SELECT"] },
+  private_financing_account_terms_versions: { authenticated: ["SELECT"], service_role: ["SELECT"] },
 };
-const ADDITIVE_TABLES = Object.keys(ADDITIVE_SERVICE_ROLE_TABLES);
+const SHARED_TABLE_NAMES = Object.keys(SHARED_TABLES);
 
 // Minimal, schema-valid insert payload per table so a denied INSERT fails on privilege/RLS, never
 // on an unrelated "column does not exist" parse error (Postgres resolves columns before checking
@@ -203,12 +202,12 @@ describe.skipIf(!reachable)("rental payment domain explicit grant contract (real
       .join("\n");
     psql(`${grantAllTables}\n${grantAllFunctions}`);
 
-    // Deliberately NOT done here: revoking the five Bucket-1 additions' current privileges to
+    // Deliberately NOT done here: revoking the five shared dependencies' current privileges to
     // artificially recreate a "before" state. Unlike the seven ALL_TABLES above (where this
     // beforeAll only ever WIDENS privilege, which is safe for any other integration test file
     // running concurrently in a sibling vitest worker against this same shared local Postgres
     // instance), private_financing_online_payments/events/components/account_terms_versions and
-    // rental_tenants are targets of an ADDITIVE-only grant this migration makes -- other real
+    // rental_tenants are live dependencies of other real
     // files (stripePaymentChain.integration.test.js, rentalPaymentChain.integration.test.js)
     // depend on those exact privileges being present throughout the ENTIRE regression run, not
     // just outside this file's own execution window. Revoking them here, even briefly, would race
@@ -270,10 +269,10 @@ describe.skipIf(!reachable)("rental payment domain explicit grant contract (real
       expect(result.error.message).not.toMatch(/permission denied for table/);
     });
 
-    // The five Bucket-1 additions' "before" state (service_role/authenticated genuinely lacking
+    // The five shared dependencies' original state (service_role/authenticated genuinely lacking
     // these privileges on a stack where this migration has never run) is deliberately NOT
     // re-proven here via a live revoke: unlike the seven ALL_TABLES above, these five are
-    // additive-only grants that stripePaymentChain.integration.test.js and rentalPaymentChain.
+    // privileges that stripePaymentChain.integration.test.js and rentalPaymentChain.
     // integration.test.js depend on for real, correct behavior throughout the entire regression
     // run -- revoking them, even briefly, inside a shared beforeAll would race those concurrently-
     // running files into a permission-denied failure with nothing to do with either file's own
@@ -510,53 +509,63 @@ describe.skipIf(!reachable)("rental payment domain explicit grant contract (real
     });
   });
 
-  describe("the five Bucket-1 additions: private-financing service_role reads/writes and the rental_tenants dependency", () => {
+  describe("the five shared dependencies: complete explicit contracts", () => {
     // The migration is already genuinely applied by this point -- the earlier sibling describe
     // ("after the migration: the independently-derived per-table contract holds exactly") already
     // ran psql(migrationSql) in its own beforeAll, and that state persists for every later sibling
     // describe in this same file. The real "before" proof for these five additions runs earlier,
     // inside "before the migration: the vulnerable baseline genuinely exists on every table",
     // before any beforeAll in this file has applied the migration.
-    it.each(ADDITIVE_TABLES)("%s: service_role holds exactly its derived privilege set (never DELETE), PUBLIC/anon hold nothing this migration granted", (table) => {
-      // Filtered to the four data-access privilege types: these four tables (like every table in
-      // this schema) also carry ambient REFERENCES/TRIGGER/TRUNCATE for every role -- pre-existing,
-      // unrelated to this migration (which is additive-only here, never a revoke-all), and not the
-      // "unintended privilege" this contract is about. Asserting those away would be asserting
-      // this migration does something it never claims to do.
-      const svcValue = scalar(`
-        select coalesce(string_agg(distinct privilege_type, ',' order by privilege_type), '')
-        from information_schema.role_table_grants
-        where table_schema='public' and table_name='${table}' and grantee = 'service_role'
-          and privilege_type in ('SELECT','INSERT','UPDATE','DELETE');
-      `);
-      const actual = svcValue.split(",").filter(Boolean).sort();
-      expect(actual).toEqual([...ADDITIVE_SERVICE_ROLE_TABLES[table]].sort());
-      expect(actual).not.toContain("DELETE");
-
-      const anonPublicValue = scalar(`
-        select coalesce(string_agg(distinct grantee || ':' || privilege_type, ','), '')
-        from information_schema.role_table_grants
-        where table_schema='public' and table_name='${table}' and grantee in ('anon','PUBLIC')
-          and privilege_type in ('SELECT','INSERT','UPDATE','DELETE');
-      `);
-      expect(anonPublicValue).toBe("");
+    it.each(SHARED_TABLE_NAMES)("%s: every role holds exactly its derived privilege set", (table) => {
+      for (const role of ["PUBLIC", "anon", "authenticated", "service_role"]) {
+        const value = scalar(`
+          select coalesce(string_agg(distinct privilege_type, ',' order by privilege_type), '')
+          from information_schema.role_table_grants
+          where table_schema='public' and table_name='${table}' and grantee = '${role}';
+        `);
+        const actual = value.split(",").filter(Boolean).sort();
+        const expected = role === "authenticated" || role === "service_role" ? SHARED_TABLES[table][role] : [];
+        expect(actual, `${table}:${role}`).toEqual([...expected].sort());
+      }
     });
 
-    it("rental_tenants: authenticated holds exactly SELECT, PUBLIC/anon hold nothing this migration granted", () => {
-      const authValue = scalar(`
-        select coalesce(string_agg(distinct privilege_type, ',' order by privilege_type), '')
-        from information_schema.role_table_grants
-        where table_schema='public' and table_name='rental_tenants' and grantee = 'authenticated'
-          and privilege_type in ('SELECT','INSERT','UPDATE','DELETE');
-      `);
-      expect(authValue).toBe("SELECT");
-      const anonPublicValue = scalar(`
-        select coalesce(string_agg(distinct grantee || ':' || privilege_type, ','), '')
-        from information_schema.role_table_grants
-        where table_schema='public' and table_name='rental_tenants' and grantee in ('anon','PUBLIC')
-          and privilege_type in ('SELECT','INSERT','UPDATE','DELETE');
-      `);
-      expect(anonPublicValue).toBe("");
+    it("rental_tenants: authenticated CRUD and service-role SELECT are exact; PUBLIC/anon hold nothing", () => {
+      const expectedByRole = {
+        PUBLIC: [], anon: [], authenticated: ["SELECT", "INSERT", "UPDATE", "DELETE"], service_role: ["SELECT"],
+      };
+      for (const [role, expected] of Object.entries(expectedByRole)) {
+        const value = scalar(`
+          select coalesce(string_agg(distinct privilege_type, ',' order by privilege_type), '')
+          from information_schema.role_table_grants
+          where table_schema='public' and table_name='rental_tenants' and grantee = '${role}';
+        `);
+        expect(value.split(",").filter(Boolean).sort(), role).toEqual([...expected].sort());
+      }
+    });
+
+    it("rental_tenants: the existing owner CRUD workflow and service-role payment lookup remain functional", async () => {
+      const tenantId = `payment_grant_probe_${suffix}_crud_tenant`;
+      const inserted = await ownerAClient.from("rental_tenants").insert({
+        owner_id: ownerA.id, id: tenantId, display_name: "Grant Contract Tenant",
+        email: `grant-contract-${suffix}@example.test`, status: "invited",
+      }).select("id,status").single();
+      expect(inserted.error).toBeNull();
+      expect(inserted.data.status).toBe("invited");
+
+      const updated = await ownerAClient.from("rental_tenants").update({ status: "active" })
+        .eq("owner_id", ownerA.id).eq("id", tenantId).select("id,status").single();
+      expect(updated.error).toBeNull();
+      expect(updated.data.status).toBe("active");
+
+      const serviceRead = await admin.from("rental_tenants").select("id,status")
+        .eq("owner_id", ownerA.id).eq("id", tenantId).single();
+      expect(serviceRead.error).toBeNull();
+      expect(serviceRead.data.id).toBe(tenantId);
+
+      const deleted = await ownerAClient.from("rental_tenants").delete()
+        .eq("owner_id", ownerA.id).eq("id", tenantId).select("id").single();
+      expect(deleted.error).toBeNull();
+      expect(deleted.data.id).toBe(tenantId);
     });
 
       it("service-role can select, insert, and update private_financing_online_payments end to end (real production call shape, minimal fixture chain)", async () => {
@@ -592,10 +601,10 @@ describe.skipIf(!reachable)("rental payment domain explicit grant contract (real
       });
 
       it("no production path requires service-role delete on any of the four private-financing tables", () => {
-        const checks = ADDITIVE_TABLES.map((table) => `has_table_privilege('service_role', '${table}', 'DELETE') as ${table}`).join(",\n");
+        const checks = SHARED_TABLE_NAMES.map((table) => `has_table_privilege('service_role', '${table}', 'DELETE') as ${table}`).join(",\n");
         const output = psql(`select\n${checks};`);
         const values = rows(output)[0];
-        expect(values).toEqual(ADDITIVE_TABLES.map(() => "f"));
+        expect(values).toEqual(SHARED_TABLE_NAMES.map(() => "f"));
       });
 
       it("function EXECUTE matrix: the four private-financing SECURITY DEFINER RPCs reject public/anon/authenticated", () => {
