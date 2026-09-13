@@ -70,7 +70,6 @@ create table if not exists public.reservation_payment_events (
   acting_user_id uuid references auth.users(id) on delete restrict,
   occurred_at timestamptz not null default now(),
   primary key (owner_id, id),
-  unique nulls not distinct (owner_id, provider_event_id),
   foreign key (owner_id, reservation_id) references public.reservation_financial_contracts(owner_id, reservation_id) on delete restrict,
   foreign key (owner_id, payment_attempt_id) references public.reservation_payment_attempts(owner_id, id) on delete restrict,
   check ((actor_kind = 'workspace_user' and acting_user_id is not null) or actor_kind <> 'workspace_user')
@@ -83,6 +82,9 @@ create unique index if not exists reservation_payment_attempt_provider_reference
   where provider_reference is not null;
 create index if not exists reservation_payment_events_attempt_idx
   on public.reservation_payment_events(owner_id, payment_attempt_id, occurred_at);
+create unique index if not exists reservation_payment_event_provider_id_key
+  on public.reservation_payment_events(owner_id, provider_event_id)
+  where provider_event_id is not null;
 
 alter table public.reservation_financial_contracts enable row level security;
 alter table public.reservation_financial_contracts force row level security;
