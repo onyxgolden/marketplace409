@@ -431,6 +431,39 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       expect(() => psql(`delete from reservation_events where owner_id = '${owner.id}' and id = '${eventId}';`))
         .toThrow(/Reservation events are immutable/);
     });
+
+    it("keeps the financial snapshot and event history immutable and rejects delayed status regression", () => {
+      psql(`
+        insert into reservation_payment_attempts(
+          owner_id,id,reservation_id,guest_id,purpose,provider,provider_mode,
+          provider_reference,idempotency_key,amount_cents,currency_code,payment_status
+        ) values (
+          '${owner.id}','payment_${suffix}','res_${suffix}_1','guest_${suffix}_1',
+          'booking_balance','test_provider','test','provider_${suffix}','idempotency_${suffix}',
+          30060,'USD','processing'
+        );
+        update reservation_payment_attempts
+        set payment_status='succeeded', applied_amount_cents=30060,
+            settlement_status='pending'
+        where owner_id='${owner.id}' and id='payment_${suffix}';
+        insert into reservation_payment_events(
+          owner_id,id,reservation_id,payment_attempt_id,event_type,provider_event_id,
+          from_status,to_status,amount_cents
+        ) values (
+          '${owner.id}','payment_event_${suffix}','res_${suffix}_1','payment_${suffix}',
+          'payment_succeeded','provider_event_${suffix}','processing','succeeded',30060
+        );
+      `);
+
+      expect(() => psql(`update reservation_payment_attempts set payment_status='processing' where owner_id='${owner.id}' and id='payment_${suffix}';`))
+        .toThrow(/status transition is not monotonic/);
+      expect(() => psql(`update reservation_payment_events set event_type='late_processing' where owner_id='${owner.id}' and id='payment_event_${suffix}';`))
+        .toThrow(/payment events are immutable/);
+      expect(() => psql(`delete from reservation_payment_events where owner_id='${owner.id}' and id='payment_event_${suffix}';`))
+        .toThrow(/payment events are immutable/);
+      expect(() => psql(`update reservations set lodging_amount_cents=26001,total_due_cents=30061 where owner_id='${owner.id}' and id='res_${suffix}_1';`))
+        .toThrow(/financial snapshot is immutable/);
+    });
   });
 
   describe("reservation lifecycle: modify, cancel, check in, and check out", () => {
