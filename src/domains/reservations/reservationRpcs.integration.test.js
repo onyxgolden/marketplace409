@@ -58,7 +58,7 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
   beforeAll(async () => {
     psql(readFileSync(new URL("../../../supabase/migrations/20260913010000_add_reservation_lifecycle.sql", import.meta.url), "utf8"));
     psql(readFileSync(new URL("../../../supabase/migrations/20260913020000_add_public_reservation_booking.sql", import.meta.url), "utf8"));
-    psql(readFileSync(new URL("../../../supabase/migrations/20260913030000_add_guest_agreement_and_timed_access.sql", import.meta.url), "utf8"));
+    psql(readFileSync(new URL("../../../supabase/migrations/20260913030000_add_guest_agreement_and_timed_access.sql", import.meta.url), "utf8"));\n    const financialMigration = readFileSync(new URL("../../../supabase/migrations/20260913040000_add_reservation_financial_contract.sql", import.meta.url), "utf8");\n    psql(`${financialMigration}\n${financialMigration}`);
     // This local Supabase CLI stack's default privileges do not match the real, hosted
     // project's (confirmed by querying pg_default_acl on both: production grants
     // authenticated=arwdDxtm by default on every new table; this local stack grants only
@@ -100,6 +100,11 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       -- prevent_reservation_event_mutation) -- there is no user-facing way to delete them, ever,
       -- even for a superuser. Disabling the trigger for this one cleanup statement is a
       -- local-test-only capability no real session has; it is re-enabled immediately after.
+      alter table reservation_payment_events disable trigger reservation_payment_events_immutable;
+      delete from reservation_payment_events where owner_id = '${owner.id}';
+      alter table reservation_payment_events enable trigger reservation_payment_events_immutable;
+      delete from reservation_payment_attempts where owner_id = '${owner.id}';
+      delete from reservation_financial_contracts where owner_id = '${owner.id}';
       alter table reservation_events disable trigger reservation_events_immutable;
       delete from reservation_events where owner_id = '${owner.id}';
       alter table reservation_events enable trigger reservation_events_immutable;
@@ -317,6 +322,25 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       expect(result.error).toBeNull();
       expect(result.data).toMatchObject({ status: "confirmed", created_by: owner.id });
 
+      const financial = await ownerClient.from("reservation_financial_contracts").select("*").eq("owner_id", owner.id).eq("reservation_id", `res_${suffix}_1`).single();
+      expect(financial.error).toBeNull();
+      expect(financial.data).toMatchObject({
+        lodging_amount_cents: 26000, cleaning_fee_cents: 2500, lodging_tax_cents: 1560,
+        booking_balance_cents: 30060, security_deposit_cents: 0, total_due_cents: 30060,
+        currency_code: "USD", guest_id: `guest_${suffix}_1`,
+      });
+      const retry = await ownerClient.rpc("confirm_owner_reservation", {
+        p_owner_id: owner.id, p_reservation_id: `res_${suffix}_1`, p_guest_id: `guest_${suffix}_1`, p_unit_id: unitId,
+        p_guest_name: "Alex Guest", p_guest_email: `alex-${suffix}@example.test`, p_guest_phone: null,
+        p_check_in_date: "2026-11-01", p_check_out_date: "2026-11-05", p_guest_count: 2,
+        p_lodging_amount_cents: 26000, p_cleaning_fee_cents: 2500, p_lodging_tax_cents: 1560,
+        p_security_deposit_cents: 0, p_total_due_cents: 30060, p_currency_code: "usd",
+        p_source_reference: `test_${suffix}_1`, p_owner_notes: "Test reservation 1",
+      });
+      expect(retry.error).toBeNull();
+      const contractCount = psql(`select count(*) from reservation_financial_contracts where owner_id='${owner.id}' and reservation_id='res_${suffix}_1';`).trim();
+      expect(contractCount).toBe("1");
+
       const guest = await ownerClient.from("reservation_guests").select("created_by,display_name").eq("owner_id", owner.id).eq("id", `guest_${suffix}_1`).single();
       expect(guest.data).toMatchObject({ created_by: owner.id, display_name: "Alex Guest" });
 
@@ -376,6 +400,9 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       expect(guest2.data).toEqual([]);
       const reservations = await strangerClient.from("reservations").select("*").eq("owner_id", owner.id);
       expect(reservations.data).toEqual([]);
+      const financial = await strangerClient.from("reservation_financial_contracts").select("*").eq("owner_id", owner.id);
+      expect(financial.error).toBeNull();
+      expect(financial.data).toEqual([]);
     });
 
     it("both the owner and co-owner can see both reservations and both guests -- shared workspace visibility, not per-creator", async () => {
