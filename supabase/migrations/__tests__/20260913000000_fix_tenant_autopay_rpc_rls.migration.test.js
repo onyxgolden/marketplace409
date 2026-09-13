@@ -81,17 +81,24 @@ describe.skipIf(!localStackReachable)("tenant autopay RPC RLS correction (real l
   }, 30000);
 
   it("is idempotent and keeps both RPCs SECURITY DEFINER with row security disabled", () => {
-    const output = psql(`select proname, prosecdef, coalesce(array_to_string(proconfig,','),'')
+    const output = psql(`select oid::regprocedure::text, prosecdef, coalesce(array_to_string(proconfig,','),'')
       from pg_proc join pg_namespace on pg_namespace.oid=pg_proc.pronamespace
-      where nspname='public' and proname in ('request_rental_autopay_enrollment','cancel_rental_autopay_enrollment') order by proname;`);
-    expect(output).toContain("t");
+      where nspname='public' and oid in (
+        'request_rental_autopay_enrollment(text,text,smallint,smallint,text,text)'::regprocedure,
+        'cancel_rental_autopay_enrollment(text,text)'::regprocedure
+      ) order by oid::regprocedure::text;
+      select has_function_privilege('authenticated',
+        'request_rental_autopay_enrollment(text,text,smallint,smallint,text)', 'execute');`);
+    expect(output).toContain("cancel_rental_autopay_enrollment(text,text)|t|");
+    expect(output).toContain("request_rental_autopay_enrollment(text,text,smallint,smallint,text,text)|t|");
     expect(output.match(/row_security=off/g)).toHaveLength(2);
+    expect(output.trim().split("\n").at(-1)).toBe("f");
   });
 
   it("allows the active tenant to request setup without granting direct table-write access", () => {
     const consent = "I knowingly authorize recurring rent payments and may cancel future payments.";
     const output = asAuthenticated(tenantUserId, `select row_to_json(result)::text from request_rental_autopay_enrollment(
-      '${leaseId}','us_bank_account',1::smallint,3::smallint,'${consent}'
+      '${leaseId}','us_bank_account',1::smallint,3::smallint,'${consent}','test'
     ) result;`);
     const data = JSON.parse(output.trim().split("\n").find((line) => line.startsWith("{")));
     expect(data).toMatchObject({ owner_id: ownerId, lease_id: leaseId, tenant_id: tenantId, status: "setup_required" });
@@ -104,7 +111,7 @@ describe.skipIf(!localStackReachable)("tenant autopay RPC RLS correction (real l
 
   it("denies an unrelated authenticated user from requesting against the lease", () => {
     expect(() => asAuthenticated(strangerUserId, `select request_rental_autopay_enrollment(
-      '${leaseId}','card',1::smallint,3::smallint,'I knowingly authorize recurring rent payments and may cancel future payments.'
+      '${leaseId}','card',1::smallint,3::smallint,'I knowingly authorize recurring rent payments and may cancel future payments.','test'
     );`)).toThrow(/Active tenant lease access is required/);
   });
 
@@ -121,7 +128,7 @@ describe.skipIf(!localStackReachable)("tenant autopay RPC RLS correction (real l
   it("rejects enrollment after the lease is no longer active", () => {
     psql(`update rental_leases set status='ended', ended_at=now() where owner_id='${ownerId}' and id='${leaseId}';`);
     expect(() => asAuthenticated(tenantUserId, `select request_rental_autopay_enrollment(
-      '${leaseId}','card',1::smallint,3::smallint,'I knowingly authorize recurring rent payments and may cancel future payments.'
+      '${leaseId}','card',1::smallint,3::smallint,'I knowingly authorize recurring rent payments and may cancel future payments.','test'
     );`)).toThrow(/Active tenant lease access is required/);
   });
 });
