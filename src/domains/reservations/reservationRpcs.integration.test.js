@@ -8,6 +8,7 @@
 // Requires a local Supabase stack reachable at 127.0.0.1:54321/54322 (e.g. `supabase start` from
 // any worktree of this repo). Self-skips (not fails) when that stack isn't reachable.
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 
@@ -55,6 +56,7 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
   }
 
   beforeAll(async () => {
+    psql(readFileSync(new URL("../../../supabase/migrations/20260913010000_add_reservation_lifecycle.sql", import.meta.url), "utf8"));
     // This local Supabase CLI stack's default privileges do not match the real, hosted
     // project's (confirmed by querying pg_default_acl on both: production grants
     // authenticated=arwdDxtm by default on every new table; this local stack grants only
@@ -398,6 +400,51 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
         .toThrow(/Reservation events are immutable/);
       expect(() => psql(`delete from reservation_events where owner_id = '${owner.id}' and id = '${eventId}';`))
         .toThrow(/Reservation events are immutable/);
+    });
+  });
+
+  describe("reservation lifecycle: modify, cancel, check in, and check out", () => {
+    it("lets a co-owner atomically modify a confirmed stay and records before/after history", async () => {
+      const result = await coOwnerClient.rpc("modify_owner_reservation", {
+        p_owner_id: owner.id, p_reservation_id: `res_${suffix}_1`, p_unit_id: unitId,
+        p_check_in_date: "2026-11-02", p_check_out_date: "2026-11-06", p_guest_count: 3,
+        p_lodging_amount_cents: 26000, p_cleaning_fee_cents: 2500, p_lodging_tax_cents: 1560,
+        p_security_deposit_cents: 0, p_total_due_cents: 30060, p_currency_code: "USD", p_owner_notes: "Modified by co-owner",
+      });
+      expect(result.error).toBeNull();
+      expect(result.data).toMatchObject({ check_in_date: "2026-11-02", check_out_date: "2026-11-06", guest_count: 3 });
+      const block = await ownerClient.from("reservation_calendar_blocks").select("start_date,end_date").eq("owner_id", owner.id).eq("source_reference", `res_${suffix}_1`).single();
+      expect(block.data).toEqual({ start_date: "2026-11-02", end_date: "2026-11-06" });
+      const event = await ownerClient.from("reservation_events").select("event_type,acting_user_id,event_payload").eq("owner_id", owner.id).eq("reservation_id", `res_${suffix}_1`).eq("event_type", "modified").single();
+      expect(event.data.acting_user_id).toBe(coOwner.id);
+      expect(event.data.event_payload.before.checkInDate).toBe("2026-11-01");
+      expect(event.data.event_payload.after.checkInDate).toBe("2026-11-02");
+    });
+
+    it("denies cross-workspace lifecycle mutation", async () => {
+      const result = await strangerClient.rpc("transition_owner_reservation", { p_owner_id: owner.id, p_reservation_id: `res_${suffix}_1`, p_action: "cancel", p_reason: null });
+      expect(result.error?.message).toContain("Workspace access is required");
+    });
+
+    it("cancels exactly once, releases its block, and preserves immutable history", async () => {
+      const first = await ownerClient.rpc("transition_owner_reservation", { p_owner_id: owner.id, p_reservation_id: `res_${suffix}_1`, p_action: "cancel", p_reason: "Guest request" });
+      const retry = await ownerClient.rpc("transition_owner_reservation", { p_owner_id: owner.id, p_reservation_id: `res_${suffix}_1`, p_action: "cancel", p_reason: "Guest request" });
+      expect(first.error).toBeNull(); expect(retry.error).toBeNull(); expect(retry.data.status).toBe("cancelled");
+      const blocks = await ownerClient.from("reservation_calendar_blocks").select("id").eq("owner_id", owner.id).eq("source_reference", `res_${suffix}_1`);
+      expect(blocks.data).toEqual([]);
+      const events = await ownerClient.from("reservation_events").select("id").eq("owner_id", owner.id).eq("reservation_id", `res_${suffix}_1`).eq("event_type", "cancelled");
+      expect(events.data).toHaveLength(1);
+    });
+
+    it("enforces confirmed to checked-in to checked-out and releases the block", async () => {
+      const checkedIn = await coOwnerClient.rpc("transition_owner_reservation", { p_owner_id: owner.id, p_reservation_id: `res_${suffix}_2`, p_action: "check_in", p_reason: null });
+      expect(checkedIn.data.status).toBe("checked_in");
+      const checkedOut = await coOwnerClient.rpc("transition_owner_reservation", { p_owner_id: owner.id, p_reservation_id: `res_${suffix}_2`, p_action: "check_out", p_reason: null });
+      expect(checkedOut.data.status).toBe("checked_out");
+      const invalid = await coOwnerClient.rpc("transition_owner_reservation", { p_owner_id: owner.id, p_reservation_id: `res_${suffix}_2`, p_action: "check_in", p_reason: null });
+      expect(invalid.error?.message).toMatch(/cannot transition/);
+      const blocks = await ownerClient.from("reservation_calendar_blocks").select("id").eq("owner_id", owner.id).eq("source_reference", `res_${suffix}_2`);
+      expect(blocks.data).toEqual([]);
     });
   });
 });
