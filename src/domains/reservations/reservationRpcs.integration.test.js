@@ -58,6 +58,7 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
   beforeAll(async () => {
     psql(readFileSync(new URL("../../../supabase/migrations/20260913010000_add_reservation_lifecycle.sql", import.meta.url), "utf8"));
     psql(readFileSync(new URL("../../../supabase/migrations/20260913020000_add_public_reservation_booking.sql", import.meta.url), "utf8"));
+    psql(readFileSync(new URL("../../../supabase/migrations/20260913030000_add_guest_agreement_and_timed_access.sql", import.meta.url), "utf8"));
     // This local Supabase CLI stack's default privileges do not match the real, hosted
     // project's (confirmed by querying pg_default_acl on both: production grants
     // authenticated=arwdDxtm by default on every new table; this local stack grants only
@@ -452,6 +453,8 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
 
   describe("public guest booking", () => {
     it("confirms exactly once through the server role with truthful guest attribution and a private email outbox", async () => {
+      psql(`select set_config('request.jwt.claim.sub', '${owner.id}', false);
+        update reservation_inventory_settings set public_arrival_instructions = 'Gate code 2468', public_access_release_hours = 24 where owner_id = '${owner.id}' and unit_id = '${unitId}';`);
       const setting = await ownerClient.from("reservation_inventory_settings").select("public_booking_slug").eq("owner_id", owner.id).eq("unit_id", unitId).single();
       const args = { p_booking_slug: setting.data.public_booking_slug, p_reservation_id: `public_res_${suffix}`, p_guest_id: `public_guest_${suffix}`, p_guest_name: "Public Guest", p_guest_email: `public-${suffix}@example.test`, p_guest_phone: null, p_check_in_date: "2027-01-10", p_check_out_date: "2027-01-12", p_guest_count: 2, p_lodging_amount_cents: 13000, p_cleaning_fee_cents: 2500, p_lodging_tax_cents: 780, p_security_deposit_cents: 0, p_total_due_cents: 16280, p_currency_code: "USD" };
       const first = await admin.rpc("confirm_public_reservation", args);
@@ -459,8 +462,25 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       expect(first.error).toBeNull(); expect(replay.error).toBeNull(); expect(replay.data.id).toBe(first.data.id);
       const event = await ownerClient.from("reservation_events").select("acting_user_id,actor_kind").eq("owner_id", owner.id).eq("reservation_id", args.p_reservation_id).single();
       expect(event.data).toEqual({ acting_user_id: null, actor_kind: "public_guest" });
-      const outbox = await ownerClient.from("reservation_confirmation_outbox").select("recipient,status").eq("owner_id", owner.id).eq("reservation_id", args.p_reservation_id);
-      expect(outbox.data).toEqual([{ recipient: args.p_guest_email, status: "queued" }]);
+      const reservation = await ownerClient.from("reservations").select("guest_agreement_text,guest_agreement_acknowledged_at,guest_access_token,guest_access_release_at").eq("owner_id", owner.id).eq("id", args.p_reservation_id).single();
+      expect(reservation.data.guest_agreement_text).toBeTruthy();
+      expect(reservation.data.guest_agreement_acknowledged_at).toBeTruthy();
+      expect(reservation.data.guest_access_token).toHaveLength(64);
+      const outbox = await ownerClient.from("reservation_confirmation_outbox").select("recipient,status,body_text").eq("owner_id", owner.id).eq("reservation_id", args.p_reservation_id);
+      expect(outbox.data[0]).toMatchObject({ recipient: args.p_guest_email, status: "queued" });
+      expect(outbox.data[0].body_text).toContain(`/access?token=${reservation.data.guest_access_token}`);
+      expect(outbox.data[0].body_text).not.toContain("Arrival instructions:");
+      const locked = await admin.rpc("get_public_reservation_access", { p_booking_slug: setting.data.public_booking_slug, p_access_token: reservation.data.guest_access_token });
+      expect(locked.error).toBeNull(); expect(locked.data.available).toBe(false); expect(locked.data.arrivalInstructions).toBeNull();
+      psql(`update reservations set guest_access_release_at = now() - interval '1 minute' where owner_id = '${owner.id}' and id = '${args.p_reservation_id}';`);
+      const released = await admin.rpc("get_public_reservation_access", { p_booking_slug: setting.data.public_booking_slug, p_access_token: reservation.data.guest_access_token });
+      expect(released.error).toBeNull(); expect(released.data.available).toBe(true); expect(released.data.arrivalInstructions).toBe("Gate code 2468");
+      const wrongToken = await admin.rpc("get_public_reservation_access", { p_booking_slug: setting.data.public_booking_slug, p_access_token: `${reservation.data.guest_access_token}x` });
+      expect(wrongToken.error?.message).toContain("not found");
+      const cancelled = await ownerClient.rpc("transition_owner_reservation", { p_owner_id: owner.id, p_reservation_id: args.p_reservation_id, p_action: "cancel", p_reason: "Guest request" });
+      expect(cancelled.error).toBeNull();
+      const revoked = await admin.rpc("get_public_reservation_access", { p_booking_slug: setting.data.public_booking_slug, p_access_token: reservation.data.guest_access_token });
+      expect(revoked.error?.message).toContain("not found");
     });
 
     it("keeps guest PII and confirmation delivery records unavailable to anon", async () => {

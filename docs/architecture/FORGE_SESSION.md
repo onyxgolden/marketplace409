@@ -7,13 +7,23 @@
 
 ---
 
-## 2026-09-13 RV-D — Public Guest Booking — PR PENDING
+## 2026-09-13 RV-E1 — Guest Agreement and Timed Access — PR PENDING
 
-RV-A, RV-B, and RV-C are complete in production. RV-D is implemented as an isolated public-booking
+RV-D is complete in production. RV-E1 snapshots the exact agreement accepted by a public guest and
+time-locks sensitive arrival instructions behind an opaque private credential. Cancellation removes
+access eligibility while preserving the immutable acknowledgement. Payments, deposits, refunds,
+e-signatures, and physical lock automation are explicitly outside this slice. No Trading phase has
+begun.
+
+---
+
+## 2026-09-13 RV-D — Public Guest Booking — COMPLETE IN PRODUCTION
+
+RV-A, RV-B, RV-C, and RV-D are complete in production. RV-D is an isolated public-booking
 slice: opaque booking links, availability and exact-price preview, reviewed cancellation terms,
 typed confirmation, honest public-guest audit attribution, calendar blocking, and queued email
-confirmation. It never collects or implies collection of payment. RV-E payments/deposits/agreements/
-access remains unstarted, and no Trading phase has begun.
+confirmation. It never collects or implies collection of payment. Migration `20260913020000` is
+applied in production. RV-E payment and deposit work remains unstarted, and no Trading phase has begun.
 
 ---
 

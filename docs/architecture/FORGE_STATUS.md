@@ -6,7 +6,22 @@
 
 ---
 
-## 2026-09-13 RV-D — Public Guest Booking — IMPLEMENTED, PR PENDING
+## 2026-09-13 RV-E1 — Guest Agreement and Timed Access — IMPLEMENTED, PR PENDING
+
+RV-D is merged, deployed, and migration `20260913020000` is applied in production. RV-E1 adds an
+owner-configurable guest agreement and access-release window, snapshots the exact agreement and
+acknowledgement time on every public reservation, and creates a private 256-bit bearer credential.
+Arrival/access instructions are removed from immediate confirmation and confirmation-email text;
+the credential reveals them only at the configured time and only while the reservation remains
+confirmed or checked in. Cancellation therefore revokes access without deleting audit evidence.
+
+This slice does not collect payments or deposits, execute refunds, provide e-signatures, or automate
+physical lock systems. No Trading work is included. Implementation must be reviewed and proven on
+real local Postgres before merge, deployment, or production migration.
+
+---
+
+## 2026-09-13 RV-D — Public Guest Booking — COMPLETE IN PRODUCTION
 
 RV-A through RV-C are merged, deployed, and their migrations (where applicable) are applied.
 RV-D now adds an opaque per-inventory booking URL, a server-shaped public listing, signed and
@@ -15,8 +30,9 @@ atomic guest/reservation/event/calendar writes, truthful `public_guest` attribut
 retryable confirmation-email outbox. The guest UI states that no payment is collected. Anonymous
 table access remains denied; only the server service role may execute the public-confirmation RPC.
 
-This slice does not add payments, deposit collection/reconciliation, refunds, agreements,
-e-signatures, or access-code automation. Those remain RV-E. No Trading work is included.
+Migration `20260913020000` is applied and its Local/Remote migration-history entries match. This
+slice does not add payments, deposit collection/reconciliation, refunds, e-signatures, or physical
+access-code automation. No Trading work is included.
 
 Validation: focused runnable tests 15/15; full suite 7,296 passed, 158 infrastructure-gated skips,
 zero failures; scoped lint, TypeScript, and `git diff --check` are clean. The included real-Postgres

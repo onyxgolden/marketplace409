@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import PublicReservationBooking from "./PublicReservationBooking";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const listing = { publicName: "Pine Cabin", publicDescription: "Quiet cabin", inventoryType: "cabin", maximumGuests: 4, minimumNights: 2, cancellationPolicy: "Contact the property before arrival." };
+const listing = { publicName: "Pine Cabin", publicDescription: "Quiet cabin", inventoryType: "cabin", maximumGuests: 4, minimumNights: 2, cancellationPolicy: "Contact the property before arrival.", guestAgreement: "Follow the cabin rules." };
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }); }
 
 describe("PublicReservationBooking", () => {
@@ -19,6 +19,7 @@ describe("PublicReservationBooking", () => {
     await act(async () => { container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }); await flush();
     expect(container.textContent).toContain("$292.00");
     expect(container.textContent).toContain("No payment will be collected now");
+    expect(container.textContent).toContain("Follow the cabin rules");
     const confirm = [...container.querySelectorAll("button")].find(button => button.textContent === "Confirm reservation");
     expect(confirm.disabled).toBe(true);
   });
