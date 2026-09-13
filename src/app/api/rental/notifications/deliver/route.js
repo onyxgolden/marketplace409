@@ -18,7 +18,9 @@ export async function POST(request) {
       const settings = await db.from("rental_email_settings").select("provider,sender_name,sender_email,status").eq("owner_id", notification.owner_id).eq("status", "active").single();
       if (settings.error) throw settings.error;
       if (settings.data.provider !== "resend") throw new Error("Rental email settings do not use the approved Resend provider.");
-      const sent = await createResendRentalEmailProvider().send({ id: notification.id, ownerId: notification.owner_id, senderName: settings.data.sender_name, senderEmail: settings.data.sender_email, recipient: notification.recipient, subject: notification.subject, bodyText: notification.body_text });
+      const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://409marketplace.online").replace(/\/$/, "");
+      const bodyText = reservationConfirmation ? notification.body_text.replace(/(^|\s)(\/book\/[^\s]+)/g, `$1${siteUrl}$2`) : notification.body_text;
+      const sent = await createResendRentalEmailProvider().send({ id: notification.id, ownerId: notification.owner_id, senderName: settings.data.sender_name, senderEmail: settings.data.sender_email, recipient: notification.recipient, subject: notification.subject, bodyText });
       const completion = reservationConfirmation ? "complete_reservation_confirmation" : "complete_rental_email_delivery";
       const idKey = reservationConfirmation ? "p_id" : "p_notification_id";
       const done = await db.rpc(completion, { p_owner_id: notification.owner_id, [idKey]: notification.id, p_succeeded: true, p_provider_message_id: sent.messageId, p_failure_message: null });

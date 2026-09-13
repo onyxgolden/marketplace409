@@ -24,6 +24,8 @@ export function normalizeReservationInventory(input) {
   if (!RESERVATION_INVENTORY_TYPES.includes(input.inventoryType)) throw new Error("Inventory type is not supported.");
   const publicName = String(input.publicName || "").trim();
   if (!publicName) throw new Error("Public name is required.");
+  const publicGuestAgreement = String(input.publicGuestAgreement ?? "Guests agree to follow the property rules and are responsible for damage caused during the stay.").trim();
+  if (!publicGuestAgreement) throw new Error("A guest agreement is required.");
   const maximumGuests = Number(input.maximumGuests ?? 1);
   const minimumNights = Number(input.minimumNights ?? 1);
   const maximumNights = input.maximumNights === null || input.maximumNights === undefined || input.maximumNights === ""
@@ -33,6 +35,7 @@ export function normalizeReservationInventory(input) {
   const cleaningFeeCents = Number(input.cleaningFeeCents ?? 0);
   const securityDepositCents = Number(input.securityDepositCents ?? 0);
   const lodgingTaxBasisPoints = Number(input.lodgingTaxBasisPoints ?? 0);
+  const publicAccessReleaseHours = Number(input.publicAccessReleaseHours ?? 24);
   if (!Number.isSafeInteger(maximumGuests) || maximumGuests < 1) throw new Error("Maximum guests must be a positive whole number.");
   if (!Number.isSafeInteger(minimumNights) || minimumNights < 1) throw new Error("Minimum nights must be a positive whole number.");
   if (maximumNights !== null && (!Number.isSafeInteger(maximumNights) || maximumNights < minimumNights)) {
@@ -44,6 +47,9 @@ export function normalizeReservationInventory(input) {
   if (![nightlyRateCents, cleaningFeeCents, securityDepositCents, lodgingTaxBasisPoints].every(Number.isSafeInteger)
     || nightlyRateCents < 0 || cleaningFeeCents < 0 || securityDepositCents < 0
     || lodgingTaxBasisPoints < 0 || lodgingTaxBasisPoints > 10000) throw new Error("Reservation pricing is invalid.");
+  if (!Number.isSafeInteger(publicAccessReleaseHours) || publicAccessReleaseHours < 0 || publicAccessReleaseHours > 168) {
+    throw new Error("Access release must be between 0 and 168 hours before check-in.");
+  }
   return Object.freeze({
     unitId: String(input.unitId || "").trim(), inventoryType: input.inventoryType,
     bookingStatus: ["draft", "active", "paused", "inactive"].includes(input.bookingStatus) ? input.bookingStatus : "draft",
@@ -52,6 +58,9 @@ export function normalizeReservationInventory(input) {
     maximumNights, turnoverBufferHours,
     amenities: Object.freeze([...new Set((input.amenities || []).map((item) => String(item).trim()).filter(Boolean))].sort()),
     nightlyRateCents, cleaningFeeCents, securityDepositCents, lodgingTaxBasisPoints,
+    publicGuestAgreement,
+    publicArrivalInstructions: String(input.publicArrivalInstructions || "").trim() || null,
+    publicAccessReleaseHours,
   });
 }
 

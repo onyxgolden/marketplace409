@@ -10,7 +10,7 @@ const clean = value => String(value || "").trim();
 function input(body) { return { guestName: clean(body?.guestName), guestEmail: clean(body?.guestEmail).toLowerCase(), guestPhone: clean(body?.guestPhone), checkIn: clean(body?.checkIn), checkOut: clean(body?.checkOut), guestCount: Number(body?.guestCount || 0) }; }
 
 async function load(db, slug, stay = null) {
-  const settings = await db.from("reservation_inventory_settings").select("owner_id,unit_id,inventory_type,booking_status,public_name,public_description,maximum_guests,minimum_nights,maximum_nights,turnover_buffer_hours,check_in_time,check_out_time,amenities,cleaning_fee_cents,security_deposit_cents,lodging_tax_basis_points,public_cancellation_policy").eq("public_booking_slug", slug).eq("booking_status", "active").maybeSingle();
+  const settings = await db.from("reservation_inventory_settings").select("owner_id,unit_id,inventory_type,booking_status,public_name,public_description,maximum_guests,minimum_nights,maximum_nights,turnover_buffer_hours,check_in_time,check_out_time,amenities,cleaning_fee_cents,security_deposit_cents,lodging_tax_basis_points,public_cancellation_policy,public_guest_agreement,public_access_release_hours").eq("public_booking_slug", slug).eq("booking_status", "active").maybeSingle();
   if (settings.error) throw settings.error;
   if (!settings.data) return null;
   if (!stay) return { settings: settings.data };
@@ -29,7 +29,7 @@ async function load(db, slug, stay = null) {
   return { settings: s, quote: quoteReservation({ checkIn: stay.checkIn, checkOut: stay.checkOut, ratePlans: rates.data || [], cleaningFeeCents: s.cleaning_fee_cents, securityDepositCents: s.security_deposit_cents, lodgingTaxBasisPoints: s.lodging_tax_basis_points }) };
 }
 
-function publicListing(s) { return { inventoryType: s.inventory_type, publicName: s.public_name, publicDescription: s.public_description, maximumGuests: s.maximum_guests, minimumNights: s.minimum_nights, maximumNights: s.maximum_nights, checkInTime: s.check_in_time, checkOutTime: s.check_out_time, amenities: s.amenities, cancellationPolicy: s.public_cancellation_policy }; }
+function publicListing(s) { return { inventoryType: s.inventory_type, publicName: s.public_name, publicDescription: s.public_description, maximumGuests: s.maximum_guests, minimumNights: s.minimum_nights, maximumNights: s.maximum_nights, checkInTime: s.check_in_time, checkOutTime: s.check_out_time, amenities: s.amenities, cancellationPolicy: s.public_cancellation_policy, guestAgreement: s.public_guest_agreement }; }
 
 export async function GET(_request, { params }) {
   try { const { slug } = await params; const result = await load(createPublicReservationClient(), clean(slug)); return result ? NextResponse.json({ listing: publicListing(result.settings) }) : bad("Bookable stay was not found.", 404); }
@@ -44,18 +44,21 @@ export async function POST(request, { params }) {
     if (body.operation === "preview") {
       const result = await load(db, clean(slug), stay); if (!result) return bad("Bookable stay was not found.", 404);
       const preview = { listing: publicListing(result.settings), stay, quote: result.quote };
-      const previewToken = encodeReservationPreview({ operation: "public_booking", bookingSlug: clean(slug), stay, quote: result.quote, cancellationPolicy: result.settings.public_cancellation_policy }, { key: tokenKey() });
+      const previewToken = encodeReservationPreview({ operation: "public_booking", bookingSlug: clean(slug), stay, quote: result.quote, cancellationPolicy: result.settings.public_cancellation_policy, guestAgreement: result.settings.public_guest_agreement }, { key: tokenKey() });
       return NextResponse.json({ preview, previewToken });
     }
     if (body.operation !== "confirm" || body.acknowledged !== true || body.confirmationText !== "BOOK") return bad("Review the terms and type BOOK to confirm.");
     const token = decodeReservationPreview(body.previewToken, { key: tokenKey() });
     if (token.operation !== "public_booking" || token.bookingSlug !== clean(slug) || JSON.stringify(token.stay) !== JSON.stringify(stay)) return bad("Booking details changed after preview. Preview again.", 409);
     const fresh = await load(db, clean(slug), stay); if (!fresh) return bad("Bookable stay was not found.", 404);
-    if (JSON.stringify(fresh.quote) !== JSON.stringify(token.quote) || fresh.settings.public_cancellation_policy !== token.cancellationPolicy) return bad("Availability, price, or terms changed. Preview again.", 409);
+    if (JSON.stringify(fresh.quote) !== JSON.stringify(token.quote) || fresh.settings.public_cancellation_policy !== token.cancellationPolicy || fresh.settings.public_guest_agreement !== token.guestAgreement) return bad("Availability, price, or terms changed. Preview again.", 409);
     const q = fresh.quote, reservationId = `public_reservation_${token.confirmationId}`;
     const result = await db.rpc("confirm_public_reservation", { p_booking_slug: clean(slug), p_reservation_id: reservationId, p_guest_id: `public_guest_${token.confirmationId}`, p_guest_name: stay.guestName, p_guest_email: stay.guestEmail, p_guest_phone: stay.guestPhone || null, p_check_in_date: stay.checkIn, p_check_out_date: stay.checkOut, p_guest_count: stay.guestCount, p_lodging_amount_cents: q.lodgingAmountCents, p_cleaning_fee_cents: q.cleaningFeeCents, p_lodging_tax_cents: q.lodgingTaxCents, p_security_deposit_cents: q.securityDepositCents, p_total_due_cents: q.totalDueCents, p_currency_code: q.currencyCode });
     if (result.error) { if (/no longer available|blocked/i.test(result.error.message || "")) return bad("Those dates are no longer available. Preview again.", 409); throw result.error; }
-    return NextResponse.json({ confirmation: result.data, paymentCollected: false });
+    const access = await db.from("reservations").select("guest_access_token,guest_access_release_at,guest_agreement_acknowledged_at").eq("id", reservationId).single();
+    if (access.error || !access.data?.guest_access_token) throw access.error || new Error("Guest access credential was not created.");
+    const confirmation = { ...result.data, arrivalInstructions: undefined, accessToken: access.data.guest_access_token, accessAvailableAt: access.data.guest_access_release_at, agreementAcknowledgedAt: access.data.guest_agreement_acknowledged_at };
+    return NextResponse.json({ confirmation, paymentCollected: false });
   } catch (error) {
     if (/required|invalid|expired|unavailable|stay rules|guest count|nightly rate/i.test(error?.message || "")) return bad(error.message);
     console.error("Public reservation request failed", { name: error?.name || "Error" }); return bad("Unable to complete the reservation.", 500);
