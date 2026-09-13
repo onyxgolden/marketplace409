@@ -11,7 +11,8 @@ create or replace function request_rental_autopay_enrollment(
   p_payment_method_type text,
   p_charge_day smallint,
   p_reminder_days_before smallint,
-  p_consent_text text
+  p_consent_text text,
+  p_provider_mode text
 )
 returns rental_autopay_enrollments
 language plpgsql
@@ -27,6 +28,9 @@ declare
 begin
   if authenticated_user_id is null then
     raise exception 'Authentication is required.' using errcode = '42501';
+  end if;
+  if p_provider_mode is null or p_provider_mode not in ('test', 'live') then
+    raise exception 'A valid provider mode is required.' using errcode = '22023';
   end if;
 
   select tenant.* into tenant_record
@@ -83,7 +87,7 @@ begin
 
   insert into rental_autopay_enrollments (
     owner_id, id, lease_id, tenant_id, status, payment_method_type, charge_day,
-    reminder_days_before, consent_text, consented_at
+    reminder_days_before, consent_text, consented_at, provider_mode
   ) values (
     tenant_record.owner_id,
     'rental_autopay_' || gen_random_uuid()::text,
@@ -94,7 +98,8 @@ begin
     p_charge_day,
     p_reminder_days_before,
     btrim(p_consent_text),
-    now()
+    now(),
+    p_provider_mode
   ) returning * into result;
 
   return result;
@@ -143,9 +148,13 @@ begin
 end;
 $$;
 
+-- Retire the pre-provider-mode entry point. Keeping the object (with no caller grants) avoids a
+-- destructive DROP while ensuring PostgREST cannot use the stale implementation.
 revoke all on function request_rental_autopay_enrollment(text, text, smallint, smallint, text)
+  from public, anon, authenticated;
+revoke all on function request_rental_autopay_enrollment(text, text, smallint, smallint, text, text)
   from public, anon;
-grant execute on function request_rental_autopay_enrollment(text, text, smallint, smallint, text)
+grant execute on function request_rental_autopay_enrollment(text, text, smallint, smallint, text, text)
   to authenticated;
 
 revoke all on function cancel_rental_autopay_enrollment(text, text)
