@@ -13,7 +13,10 @@ describe("GuestReservationAccess", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ access: { publicName: "Pine Cabin", checkIn: "2026-10-02", checkOut: "2026-10-04", available: false, availableAt: "2026-10-01T15:00:00Z", arrivalInstructions: null, financial: { bookingBalanceCents: 20000, securityDepositCents: 5000, bookingAmountDueCents: 20000, currencyCode: "USD", bookingPaymentStatus: "unpaid", securityDepositStatus: "required", settlementStatus: "not_applicable" } } }) }));
     const container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container); act(() => root.render(<GuestReservationAccess slug="stay" token="private" />)); await flush();
     expect(container.textContent).toContain("Access details will be available");
-    expect(container.textContent).not.toContain("Gate code");\n    expect(container.textContent).toContain("No payment has been collected");\n    expect(container.textContent).toContain("$200.00");\n    expect(container.textContent).toContain("$50.00");
+    expect(container.textContent).not.toContain("Gate code");
+    expect(container.textContent).toContain("No payment has been collected");
+    expect(container.textContent).toContain("$200.00");
+    expect(container.textContent).toContain("$50.00");
   });
   it("shows released instructions", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ access: { publicName: "Pine Cabin", checkIn: "2026-10-02", checkOut: "2026-10-04", available: true, availableAt: "2026-10-01T15:00:00Z", arrivalInstructions: "Gate code 2468" } }) }));
