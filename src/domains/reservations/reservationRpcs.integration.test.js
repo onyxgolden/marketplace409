@@ -64,6 +64,9 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
     const financialMigration = readFileSync(new URL("../../../supabase/migrations/20260913040000_add_reservation_financial_contract.sql", import.meta.url), "utf8");
     psql(`${financialMigration}
 ${financialMigration}`);
+    const initiationMigration = readFileSync(new URL("../../../supabase/migrations/20260913050000_add_reservation_payment_initiation.sql", import.meta.url), "utf8");
+    psql(`${initiationMigration}
+${initiationMigration}`);
     // This local Supabase CLI stack's default privileges do not match the real, hosted
     // project's (confirmed by querying pg_default_acl on both: production grants
     // authenticated=arwdDxtm by default on every new table; this local stack grants only
@@ -110,6 +113,7 @@ ${financialMigration}`);
       alter table reservation_payment_events enable trigger reservation_payment_events_immutable;
       delete from reservation_payment_attempts where owner_id = '${owner.id}';
       delete from reservation_financial_contracts where owner_id = '${owner.id}';
+      delete from landlord_payment_accounts where owner_id = '${owner.id}';
       alter table reservation_events disable trigger reservation_events_immutable;
       delete from reservation_events where owner_id = '${owner.id}';
       alter table reservation_events enable trigger reservation_events_immutable;
@@ -526,7 +530,7 @@ ${financialMigration}`);
       psql(`select set_config('request.jwt.claim.sub', '${owner.id}', false);
         update reservation_inventory_settings set public_arrival_instructions = 'Gate code 2468', public_access_release_hours = 24 where owner_id = '${owner.id}' and unit_id = '${unitId}';`);
       const setting = await ownerClient.from("reservation_inventory_settings").select("public_booking_slug").eq("owner_id", owner.id).eq("unit_id", unitId).single();
-      const args = { p_booking_slug: setting.data.public_booking_slug, p_reservation_id: `public_res_${suffix}`, p_guest_id: `public_guest_${suffix}`, p_guest_name: "Public Guest", p_guest_email: `public-${suffix}@example.test`, p_guest_phone: null, p_check_in_date: "2027-01-10", p_check_out_date: "2027-01-12", p_guest_count: 2, p_lodging_amount_cents: 13000, p_cleaning_fee_cents: 2500, p_lodging_tax_cents: 780, p_security_deposit_cents: 0, p_total_due_cents: 16280, p_currency_code: "USD" };
+      const args = { p_booking_slug: setting.data.public_booking_slug, p_reservation_id: `public_res_${suffix}`, p_guest_id: `public_guest_${suffix}`, p_guest_name: "Public Guest", p_guest_email: `public-${suffix}@example.test`, p_guest_phone: null, p_check_in_date: "2027-01-10", p_check_out_date: "2027-01-12", p_guest_count: 2, p_lodging_amount_cents: 13000, p_cleaning_fee_cents: 2500, p_lodging_tax_cents: 780, p_security_deposit_cents: 5000, p_total_due_cents: 21280, p_currency_code: "USD" };
       const first = await admin.rpc("confirm_public_reservation", args);
       const replay = await admin.rpc("confirm_public_reservation", args);
       expect(first.error).toBeNull(); expect(replay.error).toBeNull(); expect(replay.data.id).toBe(first.data.id);
@@ -536,6 +540,73 @@ ${financialMigration}`);
       expect(reservation.data.guest_agreement_text).toBeTruthy();
       expect(reservation.data.guest_agreement_acknowledged_at).toBeTruthy();
       expect(reservation.data.guest_access_token).toHaveLength(64);
+      psql(`insert into landlord_payment_accounts
+        (owner_id,id,provider,provider_mode,provider_account_id,status,details_submitted,charges_enabled,payouts_enabled,ach_debit_enabled,card_payments_enabled)
+        values ('${owner.id}','reservation_lpa_${suffix}','stripe','test','acct_test_reservation_${suffix}','enabled',true,true,true,false,true);`);
+      const paymentArgs = {
+        p_booking_slug: setting.data.public_booking_slug,
+        p_access_token: reservation.data.guest_access_token,
+      };
+      const paymentFirst = await admin.rpc("begin_public_reservation_payment_attempt", paymentArgs);
+      const paymentReplay = await admin.rpc("begin_public_reservation_payment_attempt", paymentArgs);
+      expect(paymentFirst.error).toBeNull();
+      expect(paymentReplay.error).toBeNull();
+      expect(paymentReplay.data.paymentAttemptId).toBe(paymentFirst.data.paymentAttemptId);
+      expect(paymentFirst.data).toMatchObject({
+        ownerId: owner.id,
+        reservationId: args.p_reservation_id,
+        amountCents: 16280,
+        currencyCode: "USD",
+        paymentStatus: "created",
+        connectedAccountId: `acct_test_reservation_${suffix}`,
+      });
+      const attempt = await ownerClient.from("reservation_payment_attempts")
+        .select("owner_id,reservation_id,guest_id,purpose,provider,provider_mode,amount_cents,payment_status,provider_reference")
+        .eq("owner_id", owner.id).eq("id", paymentFirst.data.paymentAttemptId).single();
+      expect(attempt.error).toBeNull();
+      expect(attempt.data).toMatchObject({
+        owner_id: owner.id,
+        reservation_id: args.p_reservation_id,
+        purpose: "booking_balance",
+        provider: "stripe",
+        provider_mode: "test",
+        amount_cents: 16280,
+        payment_status: "created",
+        provider_reference: null,
+      });
+      const contract = await ownerClient.from("reservation_financial_contracts")
+        .select("booking_balance_cents,security_deposit_cents,total_due_cents")
+        .eq("owner_id", owner.id).eq("reservation_id", args.p_reservation_id).single();
+      expect(contract.data).toEqual({
+        booking_balance_cents: 16280,
+        security_deposit_cents: 5000,
+        total_due_cents: 21280,
+      });
+      const wrongPaymentToken = await admin.rpc("begin_public_reservation_payment_attempt", {
+        ...paymentArgs,
+        p_access_token: `${reservation.data.guest_access_token}x`,
+      });
+      expect(wrongPaymentToken.error?.message).toContain("not found");
+      const wrongOwnerFinalize = await admin.rpc("record_public_reservation_payment_intent", {
+        p_owner_id: stranger.id,
+        p_payment_attempt_id: paymentFirst.data.paymentAttemptId,
+        p_provider_payment_id: `pi_test_reservation_${suffix}`,
+      });
+      expect(wrongOwnerFinalize.error?.message).toContain("could not be finalized");
+      const finalized = await admin.rpc("record_public_reservation_payment_intent", {
+        p_owner_id: owner.id,
+        p_payment_attempt_id: paymentFirst.data.paymentAttemptId,
+        p_provider_payment_id: `pi_test_reservation_${suffix}`,
+      });
+      const finalizedReplay = await admin.rpc("record_public_reservation_payment_intent", {
+        p_owner_id: owner.id,
+        p_payment_attempt_id: paymentFirst.data.paymentAttemptId,
+        p_provider_payment_id: `pi_test_reservation_${suffix}`,
+      });
+      expect(finalized.error).toBeNull();
+      expect(finalizedReplay.error).toBeNull();
+      expect(finalized.data).toEqual(finalizedReplay.data);
+      expect(finalized.data.paymentStatus).toBe("pending");
       const outbox = await ownerClient.from("reservation_confirmation_outbox").select("recipient,status,body_text").eq("owner_id", owner.id).eq("reservation_id", args.p_reservation_id);
       expect(outbox.data[0]).toMatchObject({ recipient: args.p_guest_email, status: "queued" });
       expect(outbox.data[0].body_text).toContain(`/access?token=${reservation.data.guest_access_token}`);
