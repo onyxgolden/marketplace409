@@ -348,8 +348,8 @@ ${financialMigration}`);
         p_source_reference: `test_${suffix}_1`, p_owner_notes: "Test reservation 1",
       });
       expect(retry.error).toBeNull();
-      const contractCount = psql(`select count(*) from reservation_financial_contracts where owner_id='${owner.id}' and reservation_id='res_${suffix}_1';`).trim();
-      expect(contractCount).toBe("1");
+      const contractCount = psql(`select 'contract_count=' || count(*) from reservation_financial_contracts where owner_id='${owner.id}' and reservation_id='res_${suffix}_1';`);
+      expect(contractCount).toContain("contract_count=1");
 
       const guest = await ownerClient.from("reservation_guests").select("created_by,display_name").eq("owner_id", owner.id).eq("id", `guest_${suffix}_1`).single();
       expect(guest.data).toMatchObject({ created_by: owner.id, display_name: "Alex Guest" });
