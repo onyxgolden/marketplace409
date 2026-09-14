@@ -633,6 +633,7 @@ ${applicationMigration}`);
         p_provider_event_id: `evt_reservation_delayed_${suffix}`,
         p_event_type: "payment_intent.processing",
         p_amount_cents: 16280,
+        p_occurred_at: "2026-09-14T04:05:00.000Z",
       });
       expect(delayed.error).toBeNull();
       expect(delayed.data).toMatchObject({ ignored: true, paymentStatus: "succeeded" });
