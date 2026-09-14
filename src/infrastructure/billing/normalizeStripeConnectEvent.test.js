@@ -6,10 +6,18 @@ describe("normalizeStripeConnectEvent", () => {
     expect(normalizeStripeConnectEvent({ id: "evt_1", type: "payment_intent.processing", account: "acct_kent",
       livemode: false, data: { object: { id: "pi_1", metadata: { forge_payment_id: "payment_1" } } } })).toEqual({
       providerEventId: "evt_1", connectedAccountId: "acct_kent", eventType: "payment_intent.processing",
-      objectId: "pi_1", paymentId: "payment_1", refundStatus: null, refundedAmountCents: null, paymentIntentId:null,balanceTransactionId:null,paymentMethodId:null,mandateId:null,failureCode: null, failureMessage: null,
+      objectId: "pi_1", paymentId: "payment_1", amountCents: null, currencyCode: null, refundStatus: null, refundedAmountCents: null, paymentIntentId:null,balanceTransactionId:null,paymentMethodId:null,mandateId:null,failureCode: null, failureMessage: null,
       occurredAt: expect.any(String), supported: true, livemode: false,
     });
   });
+
+  it("normalizes the exact PaymentIntent amount and currency used by reservation application", () => {
+    expect(normalizeStripeConnectEvent({
+      id: "evt_reservation", type: "payment_intent.succeeded", account: "acct_kent",
+      data: { object: { id: "pi_reservation", amount: 16280, amount_received: 16280, currency: "usd" } },
+    })).toMatchObject({ amountCents: 16280, currencyCode: "USD" });
+  });
+
   it("carries mapped refund amounts and the refund's own status into reconciliation",()=>{expect(normalizeStripeConnectEvent({id:"evt_refund",type:"refund.updated",account:"acct_kent",data:{object:{id:"re_1",amount:5000,status:"succeeded",metadata:{forge_payment_id:"payment_1"}}}})).toMatchObject({paymentId:"payment_1",refundStatus:"succeeded",refundedAmountCents:5000,supported:true});});
 
   it("carries a pending or failed refund's status too — callers, not this function, decide whether to act on it", () => {
