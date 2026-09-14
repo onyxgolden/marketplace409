@@ -184,6 +184,7 @@ end
 $$;
 
 create or replace function public.record_public_reservation_payment_intent(
+  p_owner_id text,
   p_payment_attempt_id text,
   p_provider_payment_id text
 ) returns jsonb
@@ -195,7 +196,8 @@ as $$
 declare
   v_attempt public.reservation_payment_attempts;
 begin
-  if nullif(btrim(p_payment_attempt_id), '') is null
+  if nullif(btrim(p_owner_id), '') is null
+     or nullif(btrim(p_payment_attempt_id), '') is null
      or nullif(btrim(p_provider_payment_id), '') is null then
     raise exception 'Payment attempt and provider payment are required.';
   end if;
@@ -203,7 +205,8 @@ begin
   update public.reservation_payment_attempts
   set provider_reference = btrim(p_provider_payment_id),
       payment_status = 'pending'
-  where id = btrim(p_payment_attempt_id)
+  where owner_id = btrim(p_owner_id)
+    and id = btrim(p_payment_attempt_id)
     and provider = 'stripe'
     and provider_mode = 'test'
     and payment_status = 'created'
@@ -213,7 +216,8 @@ begin
   if not found then
     select * into v_attempt
     from public.reservation_payment_attempts
-    where id = btrim(p_payment_attempt_id)
+    where owner_id = btrim(p_owner_id)
+      and id = btrim(p_payment_attempt_id)
       and provider = 'stripe'
       and provider_mode = 'test'
       and provider_reference = btrim(p_provider_payment_id)
@@ -233,6 +237,7 @@ end
 $$;
 
 create or replace function public.fail_public_reservation_payment_attempt(
+  p_owner_id text,
   p_payment_attempt_id text
 ) returns void
 language plpgsql
@@ -243,7 +248,8 @@ as $$
 begin
   update public.reservation_payment_attempts
   set payment_status = 'failed'
-  where id = btrim(p_payment_attempt_id)
+  where owner_id = btrim(p_owner_id)
+    and id = btrim(p_payment_attempt_id)
     and provider = 'stripe'
     and provider_mode = 'test'
     and payment_status = 'created'
@@ -253,9 +259,9 @@ $$;
 
 revoke all on function public.begin_public_reservation_payment_attempt(text,text)
   from public, anon, authenticated;
-revoke all on function public.record_public_reservation_payment_intent(text,text)
+revoke all on function public.record_public_reservation_payment_intent(text,text,text)
   from public, anon, authenticated;
-revoke all on function public.fail_public_reservation_payment_attempt(text)
+revoke all on function public.fail_public_reservation_payment_attempt(text,text)
   from public, anon, authenticated;
 
 grant execute on function public.begin_public_reservation_payment_attempt(text,text)
