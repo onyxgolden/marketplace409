@@ -59,8 +59,11 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
   beforeAll(async () => {
     psql(readFileSync(new URL("../../../supabase/migrations/20260913010000_add_reservation_lifecycle.sql", import.meta.url), "utf8"));
     psql(readFileSync(new URL("../../../supabase/migrations/20260913020000_add_public_reservation_booking.sql", import.meta.url), "utf8"));
-    psql(readFileSync(new URL("../../../supabase/migrations/20260913030000_add_guest_agreement_and_timed_access.sql", import.meta.url), "utf8"));\n    reservationSnapshotBefore = psql("select coalesce(md5(string_agg(row_to_json(r)::text, '|' order by owner_id,id)), md5('')) from reservations r;").trim();
-    const financialMigration = readFileSync(new URL("../../../supabase/migrations/20260913040000_add_reservation_financial_contract.sql", import.meta.url), "utf8");\n    psql(`${financialMigration}\n${financialMigration}`);
+    psql(readFileSync(new URL("../../../supabase/migrations/20260913030000_add_guest_agreement_and_timed_access.sql", import.meta.url), "utf8"));
+    reservationSnapshotBefore = psql("select coalesce(md5(string_agg(row_to_json(r)::text, '|' order by owner_id,id)), md5('')) from reservations r;").trim();
+    const financialMigration = readFileSync(new URL("../../../supabase/migrations/20260913040000_add_reservation_financial_contract.sql", import.meta.url), "utf8");
+    psql(`${financialMigration}
+${financialMigration}`);
     // This local Supabase CLI stack's default privileges do not match the real, hosted
     // project's (confirmed by querying pg_default_acl on both: production grants
     // authenticated=arwdDxtm by default on every new table; this local stack grants only
