@@ -66,12 +66,14 @@ export async function POST(request, { params }) {
         );
       } catch (providerError) {
         await database.rpc("fail_public_reservation_payment_attempt", {
+          p_owner_id: attempt.ownerId,
           p_payment_attempt_id: attempt.paymentAttemptId,
         });
         throw providerError;
       }
 
       const recorded = await database.rpc("record_public_reservation_payment_intent", {
+        p_owner_id: attempt.ownerId,
         p_payment_attempt_id: attempt.paymentAttemptId,
         p_provider_payment_id: session.paymentIntentId,
       });
