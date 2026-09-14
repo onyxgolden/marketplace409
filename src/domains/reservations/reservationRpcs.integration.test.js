@@ -371,7 +371,7 @@ ${initiationMigration}`);
         p_guest_name: "Jamie Guest", p_guest_email: `jamie-${suffix}@example.test`, p_guest_phone: "555-0100",
         p_check_in_date: "2026-11-10", p_check_out_date: "2026-11-12", p_guest_count: 1,
         p_lodging_amount_cents: 13000, p_cleaning_fee_cents: 2500, p_lodging_tax_cents: 780,
-        p_security_deposit_cents: 5000, p_total_due_cents: 21280, p_currency_code: "usd",
+        p_security_deposit_cents: 0, p_total_due_cents: 16280, p_currency_code: "usd",
         p_source_reference: `test_${suffix}_2`, p_owner_notes: "Test reservation 2 by co-owner",
       });
       expect(result.error).toBeNull();
@@ -530,7 +530,7 @@ ${initiationMigration}`);
       psql(`select set_config('request.jwt.claim.sub', '${owner.id}', false);
         update reservation_inventory_settings set public_arrival_instructions = 'Gate code 2468', public_access_release_hours = 24 where owner_id = '${owner.id}' and unit_id = '${unitId}';`);
       const setting = await ownerClient.from("reservation_inventory_settings").select("public_booking_slug").eq("owner_id", owner.id).eq("unit_id", unitId).single();
-      const args = { p_booking_slug: setting.data.public_booking_slug, p_reservation_id: `public_res_${suffix}`, p_guest_id: `public_guest_${suffix}`, p_guest_name: "Public Guest", p_guest_email: `public-${suffix}@example.test`, p_guest_phone: null, p_check_in_date: "2027-01-10", p_check_out_date: "2027-01-12", p_guest_count: 2, p_lodging_amount_cents: 13000, p_cleaning_fee_cents: 2500, p_lodging_tax_cents: 780, p_security_deposit_cents: 0, p_total_due_cents: 16280, p_currency_code: "USD" };
+      const args = { p_booking_slug: setting.data.public_booking_slug, p_reservation_id: `public_res_${suffix}`, p_guest_id: `public_guest_${suffix}`, p_guest_name: "Public Guest", p_guest_email: `public-${suffix}@example.test`, p_guest_phone: null, p_check_in_date: "2027-01-10", p_check_out_date: "2027-01-12", p_guest_count: 2, p_lodging_amount_cents: 13000, p_cleaning_fee_cents: 2500, p_lodging_tax_cents: 780, p_security_deposit_cents: 5000, p_total_due_cents: 21280, p_currency_code: "USD" };
       const first = await admin.rpc("confirm_public_reservation", args);
       const replay = await admin.rpc("confirm_public_reservation", args);
       expect(first.error).toBeNull(); expect(replay.error).toBeNull(); expect(replay.data.id).toBe(first.data.id);
