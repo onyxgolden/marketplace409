@@ -179,6 +179,39 @@ export class StripeBillingProvider {
     return Object.freeze({ connectedAccountId: context.connectedAccountId, paymentIntentId: intent.id, clientSecret: intent.client_secret });
   }
 
+  async createReservationPaymentSession(context, input) {
+    if (this.mode !== "test") {
+      throw new Error("Reservation payment initiation is limited to Stripe test mode.");
+    }
+    const amountCents = input.amountCents;
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+      throw new Error("Reservation payment amount must be a positive whole-cent value.");
+    }
+    const currencyCode = required(input.currencyCode, "a currency code").toLowerCase();
+    const intent = await this.stripe.paymentIntents.create({
+      amount: amountCents,
+      currency: currencyCode,
+      payment_method_types: ["card"],
+      metadata: {
+        forge_payment_id: required(input.paymentAttemptId, "a payment attempt id"),
+        forge_reservation_id: required(input.reservationId, "a reservation id"),
+        forge_owner_id: context.ownerId,
+        forge_payment_purpose: "booking_balance",
+      },
+    }, {
+      stripeAccount: required(context.connectedAccountId, "a connected account id"),
+      idempotencyKey: required(input.idempotencyKey, "an idempotency key"),
+    });
+    if (!intent.client_secret) {
+      throw new Error("Stripe did not return a PaymentIntent client secret.");
+    }
+    return Object.freeze({
+      connectedAccountId: context.connectedAccountId,
+      paymentIntentId: intent.id,
+      clientSecret: intent.client_secret,
+    });
+  }
+
   async retrievePaymentIntent(context, id) {
     const intent = await this.stripe.paymentIntents.retrieve(required(id, "a payment intent id"), {},
       { stripeAccount: required(context.connectedAccountId, "a connected account id") });
