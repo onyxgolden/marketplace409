@@ -492,4 +492,30 @@ describe("Stripe rental webhook route", () => {
     expect(logged).not.toContain("signature mismatch");
     consoleSpy.mockRestore();
   });
+  it("routes a signed reservation success with exact amount and currency to the reservation RPC", async () => {
+    signsOnlyWith(CONNECT_SECRET, {
+      id: "evt_reservation_succeeded", type: "payment_intent.succeeded", account: "acct_landlord", livemode: false,
+      created: 1789358400,
+      data: { object: {
+        id: "pi_reservation_1", amount: 16280, amount_received: 16280, currency: "usd",
+        metadata: { forge_payment_id: "reservation_payment_1", forge_payment_purpose: "booking_balance" },
+      } },
+    });
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("process_stripe_reservation_payment_event", {
+      p_provider_event_id: "evt_reservation_succeeded",
+      p_connected_account_id: "acct_landlord",
+      p_event_type: "payment_intent.succeeded",
+      p_payment_id: "reservation_payment_1",
+      p_payment_intent_id: "pi_reservation_1",
+      p_amount_cents: 16280,
+      p_currency_code: "USD",
+      p_failure_code: null,
+      p_occurred_at: "2026-09-14T04:00:00.000Z",
+      p_provider_mode: "test",
+    });
+    expect(mocks.rpc).not.toHaveBeenCalledWith("process_stripe_rental_payment_event", expect.anything());
+  });
+
 });
