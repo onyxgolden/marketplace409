@@ -279,6 +279,56 @@ describe("StripeBillingProvider", () => {
     expect(result).toMatchObject({ connectedAccountId: "acct_kent", paymentIntentId: "pi_rent", clientSecret: "pi_rent_secret_test" });
   });
 
+  it("creates a test-mode card PaymentIntent for only the reservation booking balance", async () => {
+    const { provider, stripeClient } = setup();
+    provider.mode = "test";
+    const result = await provider.createReservationPaymentSession(
+      { ownerId: "owner_1", connectedAccountId: "acct_kent" },
+      {
+        paymentAttemptId: "reservation_payment_1",
+        reservationId: "reservation_1",
+        amountCents: 42500,
+        currencyCode: "USD",
+        idempotencyKey: "reservation:test:owner_1:reservation_1:nonce",
+      },
+    );
+    expect(stripeClient.paymentIntents.create).toHaveBeenCalledWith({
+      amount: 42500,
+      currency: "usd",
+      payment_method_types: ["card"],
+      metadata: {
+        forge_payment_id: "reservation_payment_1",
+        forge_reservation_id: "reservation_1",
+        forge_owner_id: "owner_1",
+        forge_payment_purpose: "booking_balance",
+      },
+    }, {
+      stripeAccount: "acct_kent",
+      idempotencyKey: "reservation:test:owner_1:reservation_1:nonce",
+    });
+    expect(result).toEqual({
+      connectedAccountId: "acct_kent",
+      paymentIntentId: "pi_rent",
+      clientSecret: "pi_rent_secret_test",
+    });
+  });
+
+  it("refuses reservation PaymentIntent creation outside test mode", async () => {
+    const { provider, stripeClient } = setup();
+    provider.mode = "live";
+    await expect(provider.createReservationPaymentSession(
+      { ownerId: "owner_1", connectedAccountId: "acct_live" },
+      {
+        paymentAttemptId: "reservation_payment_1",
+        reservationId: "reservation_1",
+        amountCents: 42500,
+        currencyCode: "USD",
+        idempotencyKey: "reservation:live:forbidden",
+      },
+    )).rejects.toThrow(/limited to Stripe test mode/);
+    expect(stripeClient.paymentIntents.create).not.toHaveBeenCalled();
+  });
+
   it("verifies webhook signatures with the unparsed body", () => {
     const { provider, stripeClient } = setup();
     provider.constructWebhookEvent("raw-body", "signature", "whsec_test");
