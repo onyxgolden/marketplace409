@@ -18,7 +18,10 @@ describe("public reservation access route", () => {
     createPublicReservationClient.mockReturnValue({ rpc });
     const response = await GET(new NextRequest("https://test/api/book/stay/access?token=private"), { params: Promise.resolve({ slug: "stay" }) });
     expect(response.status).toBe(200);
-    const body = await response.json();\n    expect(body.access.arrivalInstructions).toBeNull();\n    expect(body.access.financial).toMatchObject({ bookingPaymentStatus: "unpaid", paymentCollectionEnabled: false });
-    expect(rpc).toHaveBeenCalledWith("get_public_reservation_access", { p_booking_slug: "stay", p_access_token: "private" });\n    expect(rpc).toHaveBeenCalledWith("get_public_reservation_financial_summary", { p_booking_slug: "stay", p_access_token: "private" });
+    const body = await response.json();
+    expect(body.access.arrivalInstructions).toBeNull();
+    expect(body.access.financial).toMatchObject({ bookingPaymentStatus: "unpaid", paymentCollectionEnabled: false });
+    expect(rpc).toHaveBeenCalledWith("get_public_reservation_access", { p_booking_slug: "stay", p_access_token: "private" });
+    expect(rpc).toHaveBeenCalledWith("get_public_reservation_financial_summary", { p_booking_slug: "stay", p_access_token: "private" });
   });
 });
