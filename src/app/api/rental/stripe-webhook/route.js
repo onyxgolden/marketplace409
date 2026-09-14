@@ -205,6 +205,20 @@ export async function POST(request) {
           p_provider_mode: provider.mode,
         });
       }
+      else if (normalized.paymentId?.startsWith("reservation_payment_") && normalized.eventType.startsWith("payment_intent.")) {
+        projection = await supabase.rpc("process_stripe_reservation_payment_event", {
+          p_provider_event_id: normalized.providerEventId,
+          p_connected_account_id: normalized.connectedAccountId,
+          p_event_type: normalized.eventType,
+          p_payment_id: normalized.paymentId,
+          p_payment_intent_id: normalized.objectId,
+          p_amount_cents: normalized.amountCents,
+          p_currency_code: normalized.currencyCode,
+          p_failure_code: normalized.failureCode,
+          p_occurred_at: normalized.occurredAt,
+          p_provider_mode: provider.mode,
+        });
+      }
       else if (normalized.paymentId?.startsWith("pf_payment_") && normalized.eventType.startsWith("payment_intent.")) {
         projection = await processPrivateFinancingPaymentEvent(supabase, provider, normalized);
         processedPrivateFinancing = true;
