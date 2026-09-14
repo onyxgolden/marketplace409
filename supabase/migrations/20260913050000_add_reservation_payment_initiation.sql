@@ -266,7 +266,7 @@ revoke all on function public.fail_public_reservation_payment_attempt(text,text)
 
 grant execute on function public.begin_public_reservation_payment_attempt(text,text)
   to service_role;
-grant execute on function public.record_public_reservation_payment_intent(text,text)
+grant execute on function public.record_public_reservation_payment_intent(text,text,text)
   to service_role;
-grant execute on function public.fail_public_reservation_payment_attempt(text)
+grant execute on function public.fail_public_reservation_payment_attempt(text,text)
   to service_role;
