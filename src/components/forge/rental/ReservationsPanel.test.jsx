@@ -22,7 +22,10 @@ describe("ReservationsPanel", () => {
     const reservation = [...container.querySelectorAll("button")].find(button => button.textContent.includes("Cabin One"));
     act(() => reservation.click());
     expect(container.querySelector("[aria-label='Reservation detail']").textContent).toContain("Guest One");
-    expect(container.textContent).toContain("Immutable history");\n    expect(container.textContent).toContain("No payment has been collected");\n    expect(container.textContent).toContain("$200.00");\n    expect(container.textContent).toContain("$50.00");
+    expect(container.textContent).toContain("Immutable history");
+    expect(container.textContent).toContain("No payment has been collected");
+    expect(container.textContent).toContain("$200.00");
+    expect(container.textContent).toContain("$50.00");
     expect([...container.querySelectorAll("button")].map(button => button.textContent)).toEqual(expect.arrayContaining(["Modify", "Check in", "Cancel"]));
     act(() => [...container.querySelectorAll("button")].find(button => button.textContent === "Modify").click());
     expect(container.textContent).toContain("Modify reservation");
