@@ -35,6 +35,8 @@ export function normalizeStripeConnectEvent(event) {
     eventType: type,
     objectId: typeof object?.id === "string" ? object.id : null,
     paymentId: typeof object?.metadata?.forge_payment_id === "string" ? object.metadata.forge_payment_id : null,
+    amountCents: Number.isSafeInteger(object?.amount_received) ? object.amount_received : (Number.isSafeInteger(object?.amount) ? object.amount : null),
+    currencyCode: typeof object?.currency === "string" ? object.currency.toUpperCase() : null,
     // A refund's own status — "succeeded" | "pending" | "failed" | "canceled" — is distinct from
     // the fact that a refund.updated event fired at all; Stripe sends this event on every
     // transition, not just completion. Callers must gate any rent reversal on this being
