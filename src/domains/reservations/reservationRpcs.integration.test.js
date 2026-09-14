@@ -45,6 +45,7 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
   let ownerClient;
   let coOwnerClient;
   let strangerClient;
+  let reservationSnapshotBefore;
   const suffix = crypto.randomUUID().slice(0, 8);
   const unitId = `unit_${suffix}`;
 
@@ -59,6 +60,10 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
     psql(readFileSync(new URL("../../../supabase/migrations/20260913010000_add_reservation_lifecycle.sql", import.meta.url), "utf8"));
     psql(readFileSync(new URL("../../../supabase/migrations/20260913020000_add_public_reservation_booking.sql", import.meta.url), "utf8"));
     psql(readFileSync(new URL("../../../supabase/migrations/20260913030000_add_guest_agreement_and_timed_access.sql", import.meta.url), "utf8"));
+    reservationSnapshotBefore = psql("select coalesce(md5(string_agg(row_to_json(r)::text, '|' order by owner_id,id)), md5('')) from reservations r;").trim();
+    const financialMigration = readFileSync(new URL("../../../supabase/migrations/20260913040000_add_reservation_financial_contract.sql", import.meta.url), "utf8");
+    psql(`${financialMigration}
+${financialMigration}`);
     // This local Supabase CLI stack's default privileges do not match the real, hosted
     // project's (confirmed by querying pg_default_acl on both: production grants
     // authenticated=arwdDxtm by default on every new table; this local stack grants only
@@ -100,6 +105,11 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       -- prevent_reservation_event_mutation) -- there is no user-facing way to delete them, ever,
       -- even for a superuser. Disabling the trigger for this one cleanup statement is a
       -- local-test-only capability no real session has; it is re-enabled immediately after.
+      alter table reservation_payment_events disable trigger reservation_payment_events_immutable;
+      delete from reservation_payment_events where owner_id = '${owner.id}';
+      alter table reservation_payment_events enable trigger reservation_payment_events_immutable;
+      delete from reservation_payment_attempts where owner_id = '${owner.id}';
+      delete from reservation_financial_contracts where owner_id = '${owner.id}';
       alter table reservation_events disable trigger reservation_events_immutable;
       delete from reservation_events where owner_id = '${owner.id}';
       alter table reservation_events enable trigger reservation_events_immutable;
@@ -119,6 +129,11 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       if (error) throw new Error(`Failed to delete test user ${user.email}: ${error.message}`);
     }
   }, 30000);
+
+  it("does not modify any pre-existing reservation row when applied or reapplied", () => {
+    const after = psql("select coalesce(md5(string_agg(row_to_json(r)::text, '|' order by owner_id,id)), md5('')) from reservations r;").trim();
+    expect(after).toBe(reservationSnapshotBefore);
+  });
 
   // --- Defense in depth: RLS alone (no matching policy) already blocks direct mutation --------
   describe("direct mutation on RPC-only tables is denied even before/without the grant hardening", () => {
@@ -317,6 +332,25 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       expect(result.error).toBeNull();
       expect(result.data).toMatchObject({ status: "confirmed", created_by: owner.id });
 
+      const financial = await ownerClient.from("reservation_financial_contracts").select("*").eq("owner_id", owner.id).eq("reservation_id", `res_${suffix}_1`).single();
+      expect(financial.error).toBeNull();
+      expect(financial.data).toMatchObject({
+        lodging_amount_cents: 26000, cleaning_fee_cents: 2500, lodging_tax_cents: 1560,
+        booking_balance_cents: 30060, security_deposit_cents: 0, total_due_cents: 30060,
+        currency_code: "USD", guest_id: `guest_${suffix}_1`,
+      });
+      const retry = await ownerClient.rpc("confirm_owner_reservation", {
+        p_owner_id: owner.id, p_reservation_id: `res_${suffix}_1`, p_guest_id: `guest_${suffix}_1`, p_unit_id: unitId,
+        p_guest_name: "Alex Guest", p_guest_email: `alex-${suffix}@example.test`, p_guest_phone: null,
+        p_check_in_date: "2026-11-01", p_check_out_date: "2026-11-05", p_guest_count: 2,
+        p_lodging_amount_cents: 26000, p_cleaning_fee_cents: 2500, p_lodging_tax_cents: 1560,
+        p_security_deposit_cents: 0, p_total_due_cents: 30060, p_currency_code: "usd",
+        p_source_reference: `test_${suffix}_1`, p_owner_notes: "Test reservation 1",
+      });
+      expect(retry.error).toBeNull();
+      const contractCount = psql(`select 'contract_count=' || count(*) from reservation_financial_contracts where owner_id='${owner.id}' and reservation_id='res_${suffix}_1';`);
+      expect(contractCount).toContain("contract_count=1");
+
       const guest = await ownerClient.from("reservation_guests").select("created_by,display_name").eq("owner_id", owner.id).eq("id", `guest_${suffix}_1`).single();
       expect(guest.data).toMatchObject({ created_by: owner.id, display_name: "Alex Guest" });
 
@@ -376,6 +410,9 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
       expect(guest2.data).toEqual([]);
       const reservations = await strangerClient.from("reservations").select("*").eq("owner_id", owner.id);
       expect(reservations.data).toEqual([]);
+      const financial = await strangerClient.from("reservation_financial_contracts").select("*").eq("owner_id", owner.id);
+      expect(financial.error).toBeNull();
+      expect(financial.data).toEqual([]);
     });
 
     it("both the owner and co-owner can see both reservations and both guests -- shared workspace visibility, not per-creator", async () => {
@@ -403,6 +440,39 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
         .toThrow(/Reservation events are immutable/);
       expect(() => psql(`delete from reservation_events where owner_id = '${owner.id}' and id = '${eventId}';`))
         .toThrow(/Reservation events are immutable/);
+    });
+
+    it("keeps the financial snapshot and event history immutable and rejects delayed status regression", () => {
+      psql(`
+        insert into reservation_payment_attempts(
+          owner_id,id,reservation_id,guest_id,purpose,provider,provider_mode,
+          provider_reference,idempotency_key,amount_cents,currency_code,payment_status
+        ) values (
+          '${owner.id}','payment_${suffix}','res_${suffix}_1','guest_${suffix}_1',
+          'booking_balance','test_provider','test','provider_${suffix}','idempotency_${suffix}',
+          30060,'USD','processing'
+        );
+        update reservation_payment_attempts
+        set payment_status='succeeded', applied_amount_cents=30060,
+            settlement_status='pending'
+        where owner_id='${owner.id}' and id='payment_${suffix}';
+        insert into reservation_payment_events(
+          owner_id,id,reservation_id,payment_attempt_id,event_type,provider_event_id,
+          from_status,to_status,amount_cents
+        ) values (
+          '${owner.id}','payment_event_${suffix}','res_${suffix}_1','payment_${suffix}',
+          'payment_succeeded','provider_event_${suffix}','processing','succeeded',30060
+        );
+      `);
+
+      expect(() => psql(`update reservation_payment_attempts set payment_status='processing' where owner_id='${owner.id}' and id='payment_${suffix}';`))
+        .toThrow(/status transition is not monotonic/);
+      expect(() => psql(`update reservation_payment_events set event_type='late_processing' where owner_id='${owner.id}' and id='payment_event_${suffix}';`))
+        .toThrow(/payment events are immutable/);
+      expect(() => psql(`delete from reservation_payment_events where owner_id='${owner.id}' and id='payment_event_${suffix}';`))
+        .toThrow(/payment events are immutable/);
+      expect(() => psql(`update reservations set lodging_amount_cents=26001,total_due_cents=30061 where owner_id='${owner.id}' and id='res_${suffix}_1';`))
+        .toThrow(/financial snapshot is immutable/);
     });
   });
 

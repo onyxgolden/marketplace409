@@ -14,7 +14,7 @@ describe("ReservationsPanel", () => {
 
   it("shows a reservation detail, valid actions, and immutable history", async () => {
     vi.stubGlobal("fetch", vi.fn(url => Promise.resolve(response(url.endsWith("/inventory") ? { inventory: [{ unit_id: "unit-1", public_name: "Cabin One", booking_status: "active" }] } : {
-      reservations: [{ id: "res-1", unit_id: "unit-1", status: "confirmed", check_in_date: "2026-10-01", check_out_date: "2026-10-03", guest_count: 2, total_due_cents: 25000, owner_notes: "Late arrival", reservation_guests: { display_name: "Guest One", email: "guest@example.test" }, reservation_inventory_settings: { public_name: "Cabin One" } }],
+      reservations: [{ id: "res-1", unit_id: "unit-1", status: "confirmed", check_in_date: "2026-10-01", check_out_date: "2026-10-03", guest_count: 2, total_due_cents: 25000, owner_notes: "Late arrival", reservation_guests: { display_name: "Guest One", email: "guest@example.test" }, reservation_inventory_settings: { public_name: "Cabin One" }, reservation_financial_contracts: { booking_balance_cents: 20000, security_deposit_cents: 5000 } }],
       events: [{ id: "event-1", reservation_id: "res-1", event_type: "confirmed", occurred_at: "2026-09-13T00:00:00Z" }],
     }))));
     const container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
@@ -23,6 +23,9 @@ describe("ReservationsPanel", () => {
     act(() => reservation.click());
     expect(container.querySelector("[aria-label='Reservation detail']").textContent).toContain("Guest One");
     expect(container.textContent).toContain("Immutable history");
+    expect(container.textContent).toContain("No payment has been collected");
+    expect(container.textContent).toContain("$200.00");
+    expect(container.textContent).toContain("$50.00");
     expect([...container.querySelectorAll("button")].map(button => button.textContent)).toEqual(expect.arrayContaining(["Modify", "Check in", "Cancel"]));
     act(() => [...container.querySelectorAll("button")].find(button => button.textContent === "Modify").click());
     expect(container.textContent).toContain("Modify reservation");
