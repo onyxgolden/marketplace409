@@ -91,6 +91,7 @@ describe("private guest reservation payment initiation", () => {
       },
     );
     expect(rpc).toHaveBeenNthCalledWith(2, "record_public_reservation_payment_intent", {
+      p_owner_id: "owner_1",
       p_payment_attempt_id: "reservation_payment_1",
       p_provider_payment_id: "pi_test_reservation_1",
     });
@@ -134,6 +135,7 @@ describe("private guest reservation payment initiation", () => {
     const response = await POST(request({ token: "private-token" }), context);
     expect(response.status).toBe(500);
     expect(rpc).toHaveBeenNthCalledWith(2, "fail_public_reservation_payment_attempt", {
+      p_owner_id: "owner_1",
       p_payment_attempt_id: "reservation_payment_1",
     });
   });
