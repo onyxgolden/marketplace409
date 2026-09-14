@@ -167,6 +167,13 @@ describe.skipIf(!reachable)("RV-A: revoke anonymous reservation privileges (real
       delete from reservation_events where owner_id = '${owner.id}';
       alter table reservation_events enable trigger reservation_events_immutable;
       delete from reservation_calendar_blocks where owner_id = '${owner.id}';
+      do $cleanup$
+      begin
+        if to_regclass('public.reservation_financial_contracts') is not null then
+          delete from reservation_financial_contracts where owner_id = '${owner.id}';
+        end if;
+      end
+      $cleanup$;
       delete from reservations where owner_id = '${owner.id}';
       delete from reservation_guests where owner_id = '${owner.id}';
       delete from reservation_rate_plans where owner_id = '${owner.id}';
