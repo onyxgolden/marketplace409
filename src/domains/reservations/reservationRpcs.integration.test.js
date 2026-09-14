@@ -67,6 +67,9 @@ ${financialMigration}`);
     const initiationMigration = readFileSync(new URL("../../../supabase/migrations/20260913050000_add_reservation_payment_initiation.sql", import.meta.url), "utf8");
     psql(`${initiationMigration}
 ${initiationMigration}`);
+    const applicationMigration = readFileSync(new URL("../../../supabase/migrations/20260913060000_add_reservation_payment_application.sql", import.meta.url), "utf8");
+    psql(`${applicationMigration}
+${applicationMigration}`);
     // This local Supabase CLI stack's default privileges do not match the real, hosted
     // project's (confirmed by querying pg_default_acl on both: production grants
     // authenticated=arwdDxtm by default on every new table; this local stack grants only
@@ -607,6 +610,56 @@ ${initiationMigration}`);
       expect(finalizedReplay.error).toBeNull();
       expect(finalized.data).toEqual(finalizedReplay.data);
       expect(finalized.data.paymentStatus).toBe("pending");
+      const webhookArgs = {
+        p_provider_event_id: `evt_reservation_success_${suffix}`,
+        p_connected_account_id: `acct_test_reservation_${suffix}`,
+        p_event_type: "payment_intent.succeeded",
+        p_payment_id: paymentFirst.data.paymentAttemptId,
+        p_payment_intent_id: `pi_test_reservation_${suffix}`,
+        p_amount_cents: 16280,
+        p_currency_code: "USD",
+        p_failure_code: null,
+        p_occurred_at: "2026-09-14T04:00:00.000Z",
+        p_provider_mode: "test",
+      };
+      const applied = await admin.rpc("process_stripe_reservation_payment_event", webhookArgs);
+      const appliedReplay = await admin.rpc("process_stripe_reservation_payment_event", webhookArgs);
+      expect(applied.error).toBeNull();
+      expect(applied.data).toMatchObject({ paymentStatus: "succeeded", appliedAmountCents: 16280, settlementStatus: "pending" });
+      expect(appliedReplay.error).toBeNull();
+      expect(appliedReplay.data).toMatchObject({ duplicate: true, paymentAttemptId: paymentFirst.data.paymentAttemptId });
+      const delayed = await admin.rpc("process_stripe_reservation_payment_event", {
+        ...webhookArgs,
+        p_provider_event_id: `evt_reservation_delayed_${suffix}`,
+        p_event_type: "payment_intent.processing",
+        p_amount_cents: 16280,
+      });
+      expect(delayed.error).toBeNull();
+      expect(delayed.data).toMatchObject({ ignored: true, paymentStatus: "succeeded" });
+      const paidAttempt = await ownerClient.from("reservation_payment_attempts")
+        .select("payment_status,applied_amount_cents,refunded_amount_cents,disputed_amount_cents,settlement_status,settled_amount_cents,paid_out_amount_cents")
+        .eq("owner_id", owner.id).eq("id", paymentFirst.data.paymentAttemptId).single();
+      expect(paidAttempt.data).toEqual({
+        payment_status: "succeeded", applied_amount_cents: 16280,
+        refunded_amount_cents: 0, disputed_amount_cents: 0,
+        settlement_status: "pending", settled_amount_cents: 0, paid_out_amount_cents: 0,
+      });
+      const paidSummary = await ownerClient.from("reservation_financial_summary")
+        .select("booking_amount_due_cents,booking_payment_status,security_deposit_status,settlement_status")
+        .eq("owner_id", owner.id).eq("reservation_id", args.p_reservation_id).single();
+      expect(paidSummary.data).toEqual({
+        booking_amount_due_cents: 0, booking_payment_status: "paid",
+        security_deposit_status: "required", settlement_status: "pending",
+      });
+      const paymentEvents = await ownerClient.from("reservation_payment_events")
+        .select("event_type,provider_event_id,from_status,to_status,amount_cents")
+        .eq("owner_id", owner.id).eq("payment_attempt_id", paymentFirst.data.paymentAttemptId)
+        .order("occurred_at", { ascending: true });
+      expect(paymentEvents.data).toHaveLength(2);
+      expect(paymentEvents.data.map(event => event.event_type)).toEqual([
+        "payment_intent.succeeded", "provider_event_ignored",
+      ]);
+
       const outbox = await ownerClient.from("reservation_confirmation_outbox").select("recipient,status,body_text").eq("owner_id", owner.id).eq("reservation_id", args.p_reservation_id);
       expect(outbox.data[0]).toMatchObject({ recipient: args.p_guest_email, status: "queued" });
       expect(outbox.data[0].body_text).toContain(`/access?token=${reservation.data.guest_access_token}`);
