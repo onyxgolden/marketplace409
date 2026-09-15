@@ -92,6 +92,7 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
     psql(readFileSync(new URL("../../../supabase/migrations/20260913010000_add_reservation_lifecycle.sql", import.meta.url), "utf8"));
     psql(readFileSync(new URL("../../../supabase/migrations/20260913020000_add_public_reservation_booking.sql", import.meta.url), "utf8"));
     psql(readFileSync(new URL("../../../supabase/migrations/20260913030000_add_guest_agreement_and_timed_access.sql", import.meta.url), "utf8"));
+    psql(readFileSync(new URL("../../../supabase/migrations/20260916010000_fix_reservation_access_link_url_shape.sql", import.meta.url), "utf8"));
     reservationSnapshotBefore = reservationContentSnapshot();
     const financialMigration = readFileSync(new URL("../../../supabase/migrations/20260913040000_add_reservation_financial_contract.sql", import.meta.url), "utf8");
     psql(`${financialMigration}
