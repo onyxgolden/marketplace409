@@ -26,6 +26,15 @@ function psql(sql) {
   });
 }
 
+// Tuples-only, unaligned output -- for queries this file needs to parse structured rows out of,
+// as opposed to psql()'s default aligned format (fine for the single-blob string-equality checks
+// used elsewhere in this file, not for anything that needs real per-row parsing in JS).
+function psqlRows(sql) {
+  return execFileSync("docker", ["exec", "-i", DB_CONTAINER, "psql", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"], {
+    input: sql, encoding: "utf8",
+  }).trim();
+}
+
 async function isLocalStackReachable() {
   try {
     const response = await fetch(`${LOCAL_URL}/auth/v1/health`, { signal: AbortSignal.timeout(2000) });
@@ -49,6 +58,29 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
   const suffix = crypto.randomUUID().slice(0, 8);
   const unitId = `unit_${suffix}`;
 
+  // Snapshot every EXISTING reservation row's own content, keyed by its own primary key, instead of
+  // a single whole-table hash -- this suite's default Vitest concurrency runs many test files against
+  // one shared local Postgres, and other files legitimately insert/mutate their own reservations rows
+  // at the same time. A single table-wide hash treats any concurrent sibling's fixture activity as
+  // "this migration changed data," which is a false failure, not evidence of a real regression (this
+  // exact collision was observed and root-caused during the reservation-lifecycle migration test
+  // addition). Comparing only the set of rows that existed at snapshot time, by their own key, proves
+  // the real claim -- "applying/reapplying these migrations does not modify any pre-existing row" --
+  // without being sensitive to unrelated concurrent inserts (new rows, including this file's own
+  // later fixtures) or unrelated concurrent deletes (another file's own cleanup of its own rows).
+  function reservationContentSnapshot() {
+    const map = new Map();
+    const output = psqlRows(`select owner_id || '|' || id || '|' || md5(row_to_json(r)::text)
+      from reservations r order by owner_id, id;`);
+    for (const line of output.split("\n")) {
+      if (!line) continue;
+      const hash = line.slice(-32);
+      const key = line.slice(0, -33);
+      map.set(key, hash);
+    }
+    return map;
+  }
+
   async function signInFreshClient(email) {
     const client = createClient(LOCAL_URL, LOCAL_ANON_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
     const { error } = await client.auth.signInWithPassword({ email, password: TEST_PASSWORD });
@@ -60,7 +92,7 @@ describe.skipIf(!reachable)("RV/cabin reservation multi-user RLS and RPCs (real 
     psql(readFileSync(new URL("../../../supabase/migrations/20260913010000_add_reservation_lifecycle.sql", import.meta.url), "utf8"));
     psql(readFileSync(new URL("../../../supabase/migrations/20260913020000_add_public_reservation_booking.sql", import.meta.url), "utf8"));
     psql(readFileSync(new URL("../../../supabase/migrations/20260913030000_add_guest_agreement_and_timed_access.sql", import.meta.url), "utf8"));
-    reservationSnapshotBefore = psql("select coalesce(md5(string_agg(row_to_json(r)::text, '|' order by owner_id,id)), md5('')) from reservations r;").trim();
+    reservationSnapshotBefore = reservationContentSnapshot();
     const financialMigration = readFileSync(new URL("../../../supabase/migrations/20260913040000_add_reservation_financial_contract.sql", import.meta.url), "utf8");
     psql(`${financialMigration}
 ${financialMigration}`);
@@ -138,8 +170,12 @@ ${applicationMigration}`);
   }, 30000);
 
   it("does not modify any pre-existing reservation row when applied or reapplied", () => {
-    const after = psql("select coalesce(md5(string_agg(row_to_json(r)::text, '|' order by owner_id,id)), md5('')) from reservations r;").trim();
-    expect(after).toBe(reservationSnapshotBefore);
+    const after = reservationContentSnapshot();
+    for (const [key, beforeHash] of reservationSnapshotBefore) {
+      const afterHash = after.get(key);
+      if (afterHash === undefined) continue; // removed by unrelated concurrent cleanup, not by these migrations
+      expect(afterHash, `reservation ${key} content changed`).toBe(beforeHash);
+    }
   });
 
   // --- Defense in depth: RLS alone (no matching policy) already blocks direct mutation --------
