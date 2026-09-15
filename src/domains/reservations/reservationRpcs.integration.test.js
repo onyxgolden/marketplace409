@@ -699,7 +699,7 @@ ${applicationMigration}`);
 
       const outbox = await ownerClient.from("reservation_confirmation_outbox").select("recipient,status,body_text").eq("owner_id", owner.id).eq("reservation_id", args.p_reservation_id);
       expect(outbox.data[0]).toMatchObject({ recipient: args.p_guest_email, status: "queued" });
-      expect(outbox.data[0].body_text).toContain(`/access?token=${reservation.data.guest_access_token}`);
+      expect(outbox.data[0].body_text).toContain(`/access/${reservation.data.guest_access_token}`);
       expect(outbox.data[0].body_text).not.toContain("Arrival instructions:");
       const locked = await admin.rpc("get_public_reservation_access", { p_booking_slug: setting.data.public_booking_slug, p_access_token: reservation.data.guest_access_token });
       expect(locked.error).toBeNull(); expect(locked.data.available).toBe(false); expect(locked.data.arrivalInstructions).toBeNull();
