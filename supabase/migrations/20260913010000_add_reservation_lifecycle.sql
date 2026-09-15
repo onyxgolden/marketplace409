@@ -48,6 +48,20 @@ begin
   if p_check_out_date <= p_check_in_date then
     raise exception 'Check-out must follow check-in.';
   end if;
+  -- Once a reservation has a financial-contract snapshot (every reservation gets one immediately on
+  -- insert, per 20260913040000_add_reservation_financial_contract.sql), that snapshot is deliberately
+  -- immutable -- prevent_reservation_financial_snapshot_rewrite blocks any UPDATE that changes these
+  -- exact columns. Detect an attempted price change explicitly and reject it here, honestly and early,
+  -- instead of letting the caller hit that trigger's own lower-level error deep inside this function's
+  -- own UPDATE. Non-financial fields (dates, guest count, unit, notes) remain freely modifiable below.
+  if p_lodging_amount_cents <> v_current.lodging_amount_cents
+     or p_cleaning_fee_cents <> v_current.cleaning_fee_cents
+     or p_lodging_tax_cents <> v_current.lodging_tax_cents
+     or p_security_deposit_cents <> v_current.security_deposit_cents
+     or p_total_due_cents <> v_current.total_due_cents
+     or upper(p_currency_code) <> v_current.currency_code then
+    raise exception 'Reservation pricing is immutable once a financial contract exists; modify_owner_reservation cannot change price. Pass the reservation''s existing amounts unchanged.';
+  end if;
 
   select * into v_settings
   from public.reservation_inventory_settings

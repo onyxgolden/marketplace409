@@ -191,32 +191,36 @@ describe.skipIf(!localStackReachable)("reservation lifecycle RPCs (real local Su
     expect(payload.after).toMatchObject({ checkInDate: "2027-03-11", checkOutDate: "2027-03-17", guestCount: 3, totalDueCents: 47000 });
   });
 
-  it("DEFECT: modify_owner_reservation can never actually change financial amounts once a reservation has a financial-contract snapshot (which every reservation has, immediately on insert)", () => {
-    // modify_owner_reservation (20260913010000) accepts p_lodging_amount_cents/p_cleaning_fee_cents/
-    // p_lodging_tax_cents/p_security_deposit_cents/p_total_due_cents and unconditionally writes them
-    // in its own UPDATE -- the RPC's own signature says changing price during a modification is a
-    // supported operation. But the LATER migration 20260913040000_add_reservation_financial_contract.sql
-    // added trigger prevent_reservation_financial_snapshot_rewrite directly on `reservations`, which
-    // raises whenever any of those same columns changes AND a matching reservation_financial_contracts
-    // row exists for it -- and initialize_reservation_financial_contract (same migration) creates that
-    // row on every reservation INSERT, unconditionally. So in practice, on every reservation created
-    // after 20260913040000 was applied, ANY modify_owner_reservation call that also changes price --
-    // which is the normal real-world case for a date change (different dates usually reprice) --
-    // fails with "Reservation financial snapshot is immutable", even though modify_owner_reservation's
-    // own RLS/EXECUTE contract and parameter list say this is a legitimate owner-invoked operation.
-    // This is a cross-migration regression, not a fixture problem: confirmed by first successfully
-    // creating the reservation (which auto-creates its financial-contract snapshot), then calling
-    // modify_owner_reservation with a genuinely different total -- it fails every time.
+  it("gives an honest, explicit rejection for an attempted price change, instead of the trigger's own confusing low-level error", () => {
+    // A reservation's financial-contract snapshot (auto-created on insert by
+    // initialize_reservation_financial_contract, 20260913040000) is deliberately immutable --
+    // prevent_reservation_financial_snapshot_rewrite blocks any UPDATE on `reservations` that changes
+    // lodging_amount_cents/cleaning_fee_cents/lodging_tax_cents/security_deposit_cents/total_due_cents/
+    // currency_code once that snapshot exists, which is true for every reservation immediately. Before
+    // this fix, modify_owner_reservation didn't know that and would let a price-changing call reach the
+    // trigger, surfacing "Reservation financial snapshot is immutable" from deep inside its own UPDATE.
+    // It now detects the same condition itself, first, and raises a clear, specific exception.
     expect(() => asAuthenticated(ownerUserId, `select modify_owner_reservation(
       '${ownerId}','${reservationA}','${unitId}','2027-03-11','2027-03-18',3,36000,5000,2400,10000,53400,'USD','Owner adjusted price too'
-    );`)).toThrow(/Reservation financial snapshot is immutable/);
+    );`)).toThrow(/Reservation pricing is immutable once a financial contract exists/);
+
+    // A currency-only change (amounts held numerically identical) is also caught by the same guard.
+    expect(() => asAuthenticated(ownerUserId, `select modify_owner_reservation(
+      '${ownerId}','${reservationA}','${unitId}','2027-03-11','2027-03-18',3,30000,5000,2000,10000,47000,'EUR','Currency swap attempt'
+    );`)).toThrow(/Reservation pricing is immutable once a financial contract exists/);
+
+    // Passing the reservation's own existing amounts back unchanged (the honest, supported path for a
+    // pure date/guest-count/notes modification) still succeeds -- covered by the "lets the owner
+    // successfully modify..." test above; this test only proves the rejection path.
   });
 
-  it("rejects a modification whose totals don't reconcile, and one that exceeds the unit's guest limit", () => {
-    expect(() => asAuthenticated(ownerUserId, `select modify_owner_reservation(
-      '${ownerId}','${reservationB}','${unitId}','2027-04-10','2027-04-15',2,30000,5000,2000,10000,999999,'USD',null
-    );`)).toThrow(/Reservation quote total is invalid/);
-
+  it("rejects a modification that exceeds the unit's guest limit", () => {
+    // The migration's own "Reservation quote total is invalid" reconciliation check
+    // (total_due_cents <> sum of components) is retained as defense in depth but is no longer
+    // reachable through this RPC for a validly-created row: total_due_cents is itself one of the
+    // six columns the price-immutability guard above checks, so any call whose total differs from
+    // the reservation's current total is rejected by that guard first, before reconciliation is
+    // even evaluated. Not exercised here as a result -- see the price-immutability tests above.
     expect(() => asAuthenticated(ownerUserId, `select modify_owner_reservation(
       '${ownerId}','${reservationB}','${unitId}','2027-04-10','2027-04-15',5,30000,5000,2000,10000,47000,'USD',null
     );`)).toThrow(/Guest count is outside the inventory limit/);
