@@ -23,4 +23,22 @@ describe("GuestReservationAccess", () => {
     const container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container); act(() => root.render(<GuestReservationAccess slug="stay" token="private" />)); await flush();
     expect(container.textContent).toContain("Gate code 2468");
   });
+  it.each(["partially_refunded", "refunded"])("keeps payment, %s, dispute and payout distinct without requesting another booking payment", async refundStatus => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ access: {
+      publicName: "Pine Cabin", checkIn: "2026-10-02", checkOut: "2026-10-04", available: true,
+      financial: { bookingBalanceCents: 20000, bookingAppliedCents: 20000, bookingAmountDueCents: 0,
+        securityDepositCents: 5000, securityDepositStatus: "required", bookingPaymentStatus: "paid",
+        refundStatus, bookingRefundedCents: 10000, disputeStatus: "won", settlementStatus: "available",
+        payoutStatus: "paid_out", paidOutAmountCents: 19400, grossCents: 20000, feeCents: 600, netCents: 19400,
+        reconciliationStatus: "unknown", currencyCode: "USD" },
+    } }) }));
+    const container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    act(() => root.render(<GuestReservationAccess slug="stay" token="private" />)); await flush();
+    expect(container.textContent).toContain(refundStatus.replaceAll("_", " "));
+    expect(container.textContent).toContain("won");
+    expect(container.textContent).toContain("paid out");
+    expect(container.textContent).toContain("$194.00");
+    expect(container.textContent).toContain("needs review");
+    expect(container.querySelector('[aria-label="Test payment"]')).toBeNull();
+  });
 });
