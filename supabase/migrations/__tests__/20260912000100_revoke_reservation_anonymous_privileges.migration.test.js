@@ -103,31 +103,6 @@ describe.skipIf(!reachable)("RV-A: revoke anonymous reservation privileges (real
   // `postgres`, which does not), so without this, several assertions below would fail for
   // reasons that have nothing to do with RV-A's actual authorization behavior.
   beforeAll(async () => {
-    // A small, randomized delay before this file's own first DDL statement: reservationRpcs.
-    // integration.test.js's beforeAll issues its own GRANT/REVOKE statements against four of
-    // these same seven tables, in a separate concurrent vitest worker process, at roughly the
-    // same wall-clock moment (both files' beforeAll hooks fire at worker/file startup). Without
-    // this, the two can occasionally collide on the same table's system-catalog row -- Postgres
-    // reports that as "tuple concurrently updated" in whichever side loses the race, and only
-    // this file's own psql() calls (see above) retry on it. Spreading out exactly when each
-    // file's DDL actually executes is the only mitigation available from this file alone, since
-    // the sibling file is pre-existing and out of this PR's scope to modify.
-    await new Promise((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 250)));
-
-    psql(`
-      grant select, insert, update, delete, references, trigger, truncate on ${RESERVATION_TABLES.join(", ")} to anon;
-      grant select, insert, update, delete, references, trigger, truncate on ${RESERVATION_TABLES.join(", ")} to authenticated;
-      grant select, insert, update, delete, references, trigger, truncate on ${RESERVATION_TABLES.join(", ")} to service_role;
-      grant execute on function confirm_owner_reservation(
-        text, text, text, text, text, text, text, date, date, integer,
-        bigint, bigint, bigint, bigint, bigint, text, text, text
-      ) to public, anon, authenticated, service_role;
-      grant execute on function import_reservation_inventory_bulk(text, text, text, jsonb) to public, anon, authenticated, service_role;
-      grant execute on function enforce_reservation_inventory_settings_actor() to public, anon, authenticated, service_role;
-      grant execute on function enforce_reservation_rate_plan_actor() to public, anon, authenticated, service_role;
-      grant execute on function prevent_reservation_event_mutation() to public, anon, authenticated, service_role;
-    `);
-
     const suffixUsers = crypto.randomUUID().slice(0, 8);
     const created = await Promise.all([
       admin.auth.admin.createUser({ email: `rv-a-owner-${suffixUsers}@example.test`, password: TEST_PASSWORD, email_confirm: true }),
@@ -190,34 +165,82 @@ describe.skipIf(!reachable)("RV-A: revoke anonymous reservation privileges (real
   }, 30000);
 
   describe("before the migration: the vulnerable baseline genuinely exists", () => {
-    it("anon can currently SELECT, INSERT, UPDATE, and DELETE directly on a reservation table by raw privilege", async () => {
-      const selectResult = await anonClient.from("reservations").select("id").limit(1);
-      expect(selectResult.error).toBeNull();
+    // This whole describe block used to establish the vulnerable-baseline GRANT as a durable,
+    // globally-committed change (visible to every other session), then prove it through the real
+    // anon-role PostgREST client. That durable window -- open for however long these two tests
+    // took to run, against seven real, widely-shared reservation tables -- was directly observed
+    // colliding with other concurrently-running test files' own privilege assertions on these same
+    // tables (this exact hazard was root-caused while adding
+    // 20260913010000_add_reservation_lifecycle.migration.test.js). Unlike a data-row snapshot, raw
+    // table/function privilege is genuinely global Postgres state with no "canary" subset to scope
+    // a check to -- so instead, each test below establishes the vulnerable grant AND makes its
+    // probe AS THE SAME uncommitted transaction (`set local role anon`, not a separate PostgREST/
+    // JWT round trip), then lets the transaction abort/rollback. GRANT is ordinary transactional
+    // DDL: uncommitted, it is invisible to every other session for the entire window, and is
+    // guaranteed to be discarded even if the script errors out and the connection simply closes --
+    // eliminating the cross-file collision at its root, not just narrowing it. This still exercises
+    // the exact same underlying grant-then-RLS mechanics PostgREST itself relies on (PostgREST also
+    // does `set local role` per request), so it proves the identical claim as before.
+    const vulnerableGrantSql = `
+      grant select, insert, update, delete, references, trigger, truncate on ${RESERVATION_TABLES.join(", ")} to anon;
+      grant execute on function confirm_owner_reservation(
+        text, text, text, text, text, text, text, date, date, integer,
+        bigint, bigint, bigint, bigint, bigint, text, text, text
+      ) to anon;
+      grant execute on function import_reservation_inventory_bulk(text, text, text, jsonb) to anon;
+    `;
 
-      const insertResult = await anonClient.from("reservation_guests").insert({
-        owner_id: owner.id, id: `anon_probe_guest_${suffix}`, display_name: "Anon Probe", email: `anon-probe-${suffix}@x.test`, created_by: owner.id,
-      });
-      // RLS still denies it (no anon-scoped policy exists) -- this proves the GRANT itself is
-      // present (a permission-denied error would look different), matching the audit's own
-      // "not currently exploitable" finding while confirming the raw privilege genuinely exists.
-      expect(insertResult.error.message).toMatch(/row-level security policy/);
+    it("anon can currently SELECT, INSERT, UPDATE, and DELETE directly on a reservation table by raw privilege", () => {
+      // The SELECT must not error (proving the grant is really present); the INSERT must fail with
+      // an RLS error specifically, not a permission error (proving RLS, not the grant, is what
+      // currently stops it) -- matching the audit's own "not currently exploitable" finding.
+      expect(() => psql(`
+        begin;
+        ${vulnerableGrantSql}
+        set local role anon;
+        select 1 from reservations limit 1;
+        insert into reservation_guests(owner_id,id,display_name,email,created_by)
+          values ('${owner.id}','anon_probe_guest_${suffix}','Anon Probe','anon-probe-${suffix}@x.test','${owner.id}');
+        rollback;
+      `)).toThrow(/row-level security policy/);
     });
 
-    it("anon can currently call confirm_owner_reservation and import_reservation_inventory_bulk by raw privilege (RLS/logic still denies the outcome)", async () => {
-      const confirmResult = await anonClient.rpc("confirm_owner_reservation", {
-        p_owner_id: owner.id, p_reservation_id: `anon_probe_res_${suffix}`, p_guest_id: `anon_probe_guest2_${suffix}`,
-        p_unit_id: unitId, p_guest_name: "Probe", p_guest_email: `probe-${suffix}@x.test`, p_guest_phone: null,
-        p_check_in_date: "2027-01-01", p_check_out_date: "2027-01-02", p_guest_count: 1,
-        p_lodging_amount_cents: 100, p_cleaning_fee_cents: 0, p_lodging_tax_cents: 0, p_security_deposit_cents: 0,
-        p_total_due_cents: 100, p_currency_code: "usd", p_source_reference: "probe", p_owner_notes: null,
-      });
-      expect(confirmResult.error).toBeTruthy();
-      expect(confirmResult.error.message).not.toMatch(/permission denied for function/);
+    it("anon can currently call confirm_owner_reservation by raw privilege (RLS/logic still denies the outcome)", () => {
+      // Any error is expected (RLS/business-logic denial) -- specifically NOT a permission-denied-
+      // for-function error, which would mean the EXECUTE grant itself was the thing stopping it.
+      let thrown;
+      try {
+        psql(`
+          begin;
+          ${vulnerableGrantSql}
+          set local role anon;
+          select confirm_owner_reservation(
+            '${owner.id}','anon_probe_res_${suffix}','anon_probe_guest2_${suffix}','${unitId}','Probe','probe-${suffix}@x.test',null,
+            '2027-01-01','2027-01-02',1,100,0,0,0,100,'usd','probe',null
+          );
+          rollback;
+        `);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown, "expected confirm_owner_reservation to be denied by RLS/logic, not silently succeed").toBeTruthy();
+      const message = `${thrown.stderr || thrown.message || ""}`;
+      expect(message).not.toMatch(/permission denied for function/);
     });
   });
 
   describe("applying the real migration file", () => {
     it("applies cleanly, twice in a row, with no error and no privilege drift", () => {
+      // A small, randomized delay before this file's first DURABLE (committed) DDL statement:
+      // reservationRpcs.integration.test.js's beforeAll issues its own GRANT/REVOKE statements
+      // against four of these same seven tables, in a separate concurrent vitest worker process,
+      // at roughly the same wall-clock moment (both files' beforeAll hooks fire at worker/file
+      // startup). Without this, the two can occasionally collide on the same table's system-
+      // catalog row -- Postgres reports that as "tuple concurrently updated" in whichever side
+      // loses the race, and only this file's own psql() calls (see above) retry on it. Spreading
+      // out exactly when each file's DDL actually executes is the only mitigation available from
+      // this file alone, since the sibling file is pre-existing and out of this PR's scope.
+      execFileSync("sleep", [((50 + Math.floor(Math.random() * 250)) / 1000).toFixed(3)]);
       expect(() => psql(migrationSql)).not.toThrow();
       const firstPass = psql(`
         select coalesce(string_agg(distinct table_name || ':' || grantee, ',' order by table_name || ':' || grantee), '')

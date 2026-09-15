@@ -87,25 +87,48 @@ describe("RV-E2B reservation payment initiation migration", () => {
 });
 
 describe.skipIf(!localStackReachable)("RV-E2B migration against real local Supabase", () => {
-  let beforeCounts;
-  let afterCounts;
+  let beforeSnapshot;
+  let afterSnapshot;
+
+  // Content-hash per pre-existing row, per table, keyed by its own primary key -- not a raw
+  // count(*). Vitest's default concurrency runs many test files against one shared local
+  // Postgres, and other files legitimately insert/delete their own rows in these same four
+  // tables at the same time; a plain count(*) treats any such concurrent activity as "this
+  // migration changed data," which is a false failure (observed and root-caused while adding
+  // 20260913010000_add_reservation_lifecycle.migration.test.js). Comparing only rows that
+  // existed at snapshot time, by identity, proves the real claim -- reapplying this migration's
+  // DDL performs no DML on any pre-existing row -- without being sensitive to unrelated
+  // concurrent inserts (including this file's own later fixtures) or deletes.
+  function snapshot() {
+    const map = new Map();
+    // reservation_financial_contracts is keyed (owner_id, reservation_id) -- it has no `id` column.
+    const tables = [
+      ["reservations", "id"], ["reservation_financial_contracts", "reservation_id"],
+      ["reservation_payment_attempts", "id"], ["reservation_payment_events", "id"],
+    ];
+    for (const [table, keyColumn] of tables) {
+      const output = psql(`select owner_id || '|' || ${keyColumn} || '|' || md5(row_to_json(r)::text) from ${table} r order by owner_id, ${keyColumn};`);
+      for (const line of output.split("\n")) {
+        if (!line) continue;
+        const hash = line.slice(-32);
+        map.set(`${table}:${line.slice(0, -33)}`, hash);
+      }
+    }
+    return map;
+  }
 
   beforeAll(() => {
-    const counts = () => psql(`
-      select json_build_array(
-        (select count(*) from reservations),
-        (select count(*) from reservation_financial_contracts),
-        (select count(*) from reservation_payment_attempts),
-        (select count(*) from reservation_payment_events)
-      )::text;
-    `).trim();
-    beforeCounts = counts();
+    beforeSnapshot = snapshot();
     psql(`${migrationSql}\n${migrationSql}`);
-    afterCounts = counts();
+    afterSnapshot = snapshot();
   });
 
-  it("applies twice without changing any reservation or financial row", () => {
-    expect(afterCounts).toBe(beforeCounts);
+  it("applies twice without changing any pre-existing reservation or financial row", () => {
+    for (const [key, beforeHash] of beforeSnapshot) {
+      const afterHash = afterSnapshot.get(key);
+      if (afterHash === undefined) continue; // removed by unrelated concurrent cleanup, not by this migration
+      expect(afterHash, `${key} content changed`).toBe(beforeHash);
+    }
   });
 
   it("keeps all three initiation functions SECURITY DEFINER with row security disabled", () => {
