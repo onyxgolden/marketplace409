@@ -82,7 +82,7 @@ async function loadWorkspaceHub() {
   };
 }
 
-export default async function HubPage() {
+export default async function HubPage({ searchParams } = {}) {
   const { user, stats, isOwnerOrCoOwner, isDeveloperAuthorized, favoriteWorkspaceId } = await loadWorkspaceHub();
 
   // Dev is filtered out of the array itself (not just skipped when rendering) so both the tile grid
@@ -94,9 +94,14 @@ export default async function HubPage() {
     ? WORKSPACES
     : WORKSPACES.filter((workspace) => workspace.id !== "dev");
 
-  // A favorite sends a fresh visit here straight to it, instead of the picker -- the "Choose
-  // workspace" link on every app's sidebar is how someone gets back to this page on purpose.
-  if (favoriteWorkspaceId) {
+  // A favorite sends a fresh visit here straight to it, instead of the picker -- every app's "All
+  // apps" sidebar link is how someone gets back to this page on purpose, so it passes chooseWorkspace
+  // to explicitly opt out of that redirect (previously it linked to plain "/", which just re-triggered
+  // the same redirect it was meant to escape -- a favorited workspace could never be left via that
+  // link, only by clearing the favorite from outside this page, which itself lives only on this page).
+  const params = await searchParams;
+  const wantsPicker = params?.chooseWorkspace === "1";
+  if (favoriteWorkspaceId && !wantsPicker) {
     const favorite = favoriteWorkspaceId === HEALTH_SHORTCUT.id
       ? (isOwnerOrCoOwner ? HEALTH_SHORTCUT : null)
       : visibleWorkspaces.find((workspace) => workspace.id === favoriteWorkspaceId);
