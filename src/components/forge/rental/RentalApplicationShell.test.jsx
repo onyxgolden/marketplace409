@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import RentalApplicationShell, { buildRentalSurface, RENTAL_FUNCTIONS, RENTAL_NAVIGATION } from "./RentalApplicationShell.jsx";
+import RentalApplicationShell, { buildRentalSurface, HIDEABLE_SIDEBAR_SECTIONS, RENTAL_FUNCTIONS, RENTAL_NAVIGATION } from "./RentalApplicationShell.jsx";
 import RentalLeasePanel from "./RentalLeasePanel.jsx";
 
 function mount(ui) {
@@ -17,6 +17,7 @@ function unmount({ container, root }) {
   act(() => { root.unmount(); });
   container.remove();
 }
+async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }); }
 
 describe("RentalApplicationShell navigation reachability (quieted nav rail)", () => {
   let mounted;
@@ -215,4 +216,137 @@ describe("RentalApplicationShell", () => {
     }
   });
 
+});
+
+describe("Customize sidebar (hide/show nav items)", () => {
+  let mounted;
+  let fetchMock;
+
+  function mockFetch({ initialHidden = [], patchOk = true } = {}) {
+    fetchMock = vi.fn((url, options) => {
+      if (!options) return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true, hiddenItemIds: initialHidden }) });
+      if (options.method === "PATCH") {
+        const body = JSON.parse(options.body);
+        return Promise.resolve(patchOk
+          ? { ok: true, json: () => Promise.resolve({ success: true, hiddenItemIds: body.hiddenItemIds }) }
+          : { ok: false, json: () => Promise.resolve({ error: "boom" }) });
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url} ${JSON.stringify(options)}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  }
+
+  function expandEverything(container) {
+    let collapsedToggles;
+    do {
+      collapsedToggles = Array.from(container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-expanded="false"]'));
+      collapsedToggles.forEach((toggle) => act(() => { toggle.click(); }));
+    } while (collapsedToggles.length > 0);
+  }
+
+  function navButtonLabels(container) {
+    return Array.from(container.querySelectorAll('nav[aria-label="Rental Manager functions"] button'))
+      .filter((button) => !button.hasAttribute("aria-expanded"))
+      .map((button) => button.textContent);
+  }
+
+  function checkboxFor(container, label) {
+    return Array.from(container.querySelectorAll('input[type="checkbox"]'))
+      .find((input) => input.closest("label").textContent === label);
+  }
+
+  // The Help button also carries aria-haspopup="dialog", so the Customize trigger has to be found
+  // by its own text rather than that shared attribute.
+  function openCustomize(container) {
+    act(() => { Array.from(container.querySelectorAll("button")).find((button) => button.textContent.trim() === "Customize").click(); });
+  }
+
+  afterEach(() => {
+    if (mounted) { unmount(mounted); mounted = null; }
+    vi.unstubAllGlobals();
+  });
+
+  it("never offers an Overview item as hideable", () => {
+    const overviewIds = RENTAL_NAVIGATION.find((group) => group.label === "Overview").items.map((item) => item.id);
+    const listedIds = HIDEABLE_SIDEBAR_SECTIONS.flatMap((section) => section.items.map((item) => item.id));
+    overviewIds.forEach((id) => expect(listedIds).not.toContain(id));
+  });
+
+  it("loads saved hidden items on mount, GETs the rental-manager sidebar key, and reflects them as unchecked while removing them from the nav", async () => {
+    mockFetch({ initialHidden: ["support"] });
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    await flush();
+    expect(fetchMock).toHaveBeenCalledWith("/api/preferences/sidebar/rental-manager");
+    openCustomize(mounted.container);
+    expect(checkboxFor(mounted.container, "Support").checked).toBe(false);
+    expandEverything(mounted.container);
+    expect(navButtonLabels(mounted.container)).not.toContain("Support");
+  });
+
+  it("hiding an item persists via PATCH and removes it from both the nav and the mobile select fallback", async () => {
+    mockFetch({ initialHidden: [] });
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    await flush();
+    openCustomize(mounted.container);
+    act(() => { checkboxFor(mounted.container, "Support").click(); });
+    await flush();
+    expect(fetchMock).toHaveBeenCalledWith("/api/preferences/sidebar/rental-manager", expect.objectContaining({
+      method: "PATCH", body: JSON.stringify({ hiddenItemIds: ["support"] }),
+    }));
+    const options = Array.from(mounted.container.querySelectorAll("select option")).map((option) => option.value);
+    expect(options).not.toContain("support");
+  });
+
+  it("rolls the checkbox and the nav back, and shows a visible error, when the PATCH fails", async () => {
+    mockFetch({ initialHidden: [], patchOk: false });
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    await flush();
+    openCustomize(mounted.container);
+    act(() => { checkboxFor(mounted.container, "Support").click(); });
+    await flush();
+    expect(mounted.container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(checkboxFor(mounted.container, "Support").checked).toBe(true);
+    const options = Array.from(mounted.container.querySelectorAll("select option")).map((option) => option.value);
+    expect(options).toContain("support");
+  });
+
+  it("Show all clears every hidden item with one PATCH of an empty array", async () => {
+    mockFetch({ initialHidden: ["support", "rentec-migration"] });
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    await flush();
+    openCustomize(mounted.container);
+    const showAllButton = Array.from(mounted.container.querySelectorAll("button")).find((button) => button.textContent === "Show all");
+    act(() => { showAllButton.click(); });
+    await flush();
+    expect(fetchMock).toHaveBeenCalledWith("/api/preferences/sidebar/rental-manager", expect.objectContaining({
+      method: "PATCH", body: JSON.stringify({ hiddenItemIds: [] }),
+    }));
+    const options = Array.from(mounted.container.querySelectorAll("select option")).map((option) => option.value);
+    expect(options).toContain("support");
+    expect(options).toContain("rentec-migration");
+  });
+
+  it("removes a sub-category from the nav entirely once every one of its items is hidden, while leaving Portfolio's genuinely-empty Multi Family placeholder untouched", async () => {
+    const singleFamilyIds = RENTAL_NAVIGATION.find((group) => group.label === "Portfolio").subCategories
+      .find((subCategory) => subCategory.label === "Single Family").items.map((item) => item.id);
+    mockFetch({ initialHidden: singleFamilyIds });
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    await flush();
+    expandEverything(mounted.container);
+    const headers = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-expanded]'))
+      .map((button) => button.textContent.replace(/[▾▸]/g, "").trim());
+    expect(headers).not.toContain("Single Family");
+    expect(headers).toContain("Multi Family");
+    expect(mounted.container.textContent).toContain("No multi family tools yet");
+  });
+
+  it("removes a whole flat top-level group (no sub-categories) from the nav once every one of its items is hidden", async () => {
+    const controlsIds = RENTAL_NAVIGATION.find((group) => group.label === "Controls").items.map((item) => item.id);
+    mockFetch({ initialHidden: controlsIds });
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    await flush();
+    const headers = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-expanded]'))
+      .map((button) => button.textContent.replace(/[▾▸]/g, "").trim());
+    expect(headers).not.toContain("Controls");
+  });
 });
