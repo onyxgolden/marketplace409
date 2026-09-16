@@ -25,13 +25,16 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
   it("keeps every existing destination reachable through the desktop nav rail even though non-active groups start collapsed", () => {
     const visited = [];
     mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={(id) => visited.push(id)} />);
-    // Expand every collapsible group header first — the quieted nav collapses non-active groups
-    // by default, but every destination must still be one click away.
-    const groupToggles = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] > div > button'));
-    groupToggles.forEach((toggle) => {
-      if (toggle.getAttribute("aria-expanded") === "false") act(() => { toggle.click(); });
-    });
-    const itemButtons = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-current], nav[aria-label="Rental Manager functions"] div > div > button'))
+    // Expand every collapsible header first, at every nesting depth (top-level groups and any
+    // sub-categories within them) — the quieted nav collapses non-active groups by default, but
+    // every destination must still be reachable. Re-scan after each pass since expanding a group
+    // can reveal further toggle buttons nested inside it.
+    let collapsedToggles;
+    do {
+      collapsedToggles = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-expanded="false"]'));
+      collapsedToggles.forEach((toggle) => act(() => { toggle.click(); }));
+    } while (collapsedToggles.length > 0);
+    const itemButtons = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button'))
       .filter((button) => !button.hasAttribute("aria-expanded"));
     itemButtons.forEach((button) => act(() => { button.click(); }));
     expect(new Set(visited)).toEqual(new Set(RENTAL_FUNCTIONS.map(({ id }) => id)));
@@ -46,14 +49,35 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
 
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
-    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "renewal", "setup", "reservable-inventory", "reservation-dashboard", "reservations", "tenants", "leases", "rentec-migration", "rentec-files", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "private-financing", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "renewal", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "reservable-inventory", "reservation-dashboard", "reservations", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "private-financing", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
   });
   it("renders an exception-first summary in grouped navigation", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
     expect(markup).toContain("Rental operations");
     expect(markup).toContain("Loading rental summary");
     expect(markup).toContain('aria-label="Rental Manager functions"');
-    expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Overview", "Portfolio", "Money", "Operations", "Controls"]);
+    expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Overview", "Portfolio", "RV & Short-Term Rentals", "Money", "Operations", "Controls"]);
+  });
+  it("keeps RV & Short-Term Rentals structurally separate from Portfolio, so viewing an RV page no longer forces Portfolio open", () => {
+    const portfolioGroup = RENTAL_NAVIGATION.find((group) => group.label === "Portfolio");
+    const rvGroup = RENTAL_NAVIGATION.find((group) => group.label === "RV & Short-Term Rentals");
+    const rvIds = ["reservable-inventory", "reservation-dashboard", "reservations"];
+    const portfolioIds = portfolioGroup.subCategories.flatMap((subCategory) => subCategory.items.map(({ id }) => id));
+    expect(portfolioIds).not.toEqual(expect.arrayContaining(rvIds));
+    expect(rvGroup.items.map(({ id }) => id)).toEqual(rvIds);
+  });
+  it("splits Portfolio into extensible collapsible sub-categories, without hiding a universally-needed tool inside a property-type-specific one", () => {
+    const portfolioGroup = RENTAL_NAVIGATION.find((group) => group.label === "Portfolio");
+    expect(portfolioGroup.items).toBeUndefined();
+    expect(portfolioGroup.subCategories.map(({ label }) => label)).toEqual(["General", "Single Family", "Multi Family"]);
+    const general = portfolioGroup.subCategories.find((subCategory) => subCategory.label === "General");
+    expect(general.items.map(({ id }) => id)).toEqual(["setup", "tenants", "leases", "rentec-migration", "rentec-files"]);
+    // Single Family and Multi Family are intentionally empty today (no property_type distinction
+    // exists anywhere in the rental data model) but must already render as real, independently
+    // collapsible sections so a future "Trailer Parks" sub-category is a one-line addition to
+    // portfolioSubCategories.jsx, not a new rendering path.
+    expect(portfolioGroup.subCategories.find((subCategory) => subCategory.label === "Single Family").items).toEqual([]);
+    expect(portfolioGroup.subCategories.find((subCategory) => subCategory.label === "Multi Family").items).toEqual([]);
   });
   it("renders one selected function surface", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("leases"));
