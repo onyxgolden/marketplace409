@@ -12,6 +12,7 @@ import SimplifiImportPanel from "@/components/forge/financial/SimplifiImportPane
 import FinancialAssetsPanel from "@/components/forge/financial/FinancialAssetsPanel";
 import InvestmentAccountsPanel from "@/components/forge/financial/InvestmentAccountsPanel";
 import FinancialLoanToolsPanel from "@/components/forge/financial/FinancialLoanToolsPanel";
+import FinancialWelcomeOnboarding from "@/components/forge/financial/FinancialWelcomeOnboarding";
 
 export const FINANCIAL_FUNCTIONS =
   Object.freeze([
@@ -77,6 +78,7 @@ export function buildFinancialActiveSurface({
   selectedAccountName = null,
   onSelectAccount,
   onClearSelectedAccount,
+  onFunctionChange,
 }) {
   switch (activeFunctionId) {
     case "transactions":
@@ -147,6 +149,10 @@ export function buildFinancialActiveSurface({
             .sort((a, b) => String(b.eventDate || "").localeCompare(String(a.eventDate || "")))
         : [];
 
+      // Loaded, real data, and genuinely zero financial_accounts -- never during a loading or
+      // error state, which have their own handling and shouldn't flash the welcome screen.
+      const showWelcome = loadState === "ready" && (accounts || []).length === 0;
+
       return (
         <div className="space-y-6">
           <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
@@ -164,6 +170,10 @@ export function buildFinancialActiveSurface({
                   transactions={selectedAccountTransactions}
                   accountName={selectedAccountName}
                   onBack={onClearSelectedAccount}
+                />
+              ) : showWelcome ? (
+                <FinancialWelcomeOnboarding
+                  onNavigateToImport={() => onFunctionChange?.("import")}
                 />
               ) : (
                 <>
@@ -192,10 +202,12 @@ export function buildFinancialActiveSurface({
             </div>
           </div>
 
-          <FinancialWorkspaceHeader
-            health={health}
-            kpis={kpis}
-          />
+          {!showWelcome && (
+            <FinancialWorkspaceHeader
+              health={health}
+              kpis={kpis}
+            />
+          )}
         </div>
       );
     }
@@ -214,6 +226,7 @@ export default function FinancialApplicationShell({
   const activeSurface =
     buildFinancialActiveSurface({
       activeFunctionId,
+      onFunctionChange,
       ...presentation,
       selectedAccountId: selectedAccount?.id ?? null,
       selectedAccountName: selectedAccount?.name ?? null,

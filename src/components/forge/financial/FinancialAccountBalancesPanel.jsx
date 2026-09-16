@@ -610,7 +610,20 @@ export default function FinancialAccountBalancesPanel({ onSelectAccount, selecte
 
   if (error) return <p role="alert" className="rounded-2xl bg-red-50 p-4 text-red-800 dark:bg-red-950/30 dark:text-red-300">{error}</p>;
   if (!data) return null;
-  if (groups.length === 0) return null;
+
+  // Every real group is omitted entirely when it has no rows (see buildTree above), so a genuinely
+  // new workspace would otherwise render this whole panel as nothing at all -- no "Accounts"
+  // heading, no way in. A standalone "+ Add account" (banking's own row, reused as-is, no dedicated
+  // create form duplicated here) keeps a manual-entry path visible even before anything exists.
+  if (groups.length === 0) {
+    return (
+      <section data-financial-account-balances className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <h3 className="px-1.5 text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Accounts</h3>
+        <p className="px-1.5 py-2 text-xs text-slate-500 dark:text-slate-400">No accounts yet.</p>
+        <div className="pl-1"><AddAccountRow groupKey="banking" onCreated={load} /></div>
+      </section>
+    );
+  }
 
   return (
     <section data-financial-account-balances className="max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
