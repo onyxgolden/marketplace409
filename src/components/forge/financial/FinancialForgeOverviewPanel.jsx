@@ -1,6 +1,6 @@
 "use client";
-import { Fragment, useMemo, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, X } from "lucide-react";
 import { buildFinancialForgePerformance } from "@/application/financial/buildFinancialForgePerformance";
 import { groupExpenseCategory, groupOrderIndex } from "@/application/financial/expenseCategoryGroups";
 import ForgeCategoryDonutChart from "@/components/forge/ForgeCategoryDonutChart";
@@ -43,6 +43,87 @@ function formatDate(value) {
     .format(new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]))));
 }
 
+// "manual" is an internal implementation string, not something written for an owner to read --
+// same convention as FinancialTransactionsSurface.jsx's sourceLabel(), adapted to this component's
+// own raw financial-event shape (sourceSystem, not a pre-mapped display object).
+function sourceLabel(event) {
+  if (event.sourceSystem === "manual") return "Manual entry";
+  return event.sourceSystem || "Unknown";
+}
+
+// Renders in place of the OPPOSING donut card (income selection -> shown where the Expenses card
+// was, and vice versa) -- see FinancialForgeOverviewPanel's layout below. Deliberately its own,
+// compact list rather than a reuse of FinancialTransactionsSurface: that surface is a full-width
+// table meant for its own tab, not something that fits inside a card, and (separately) it expects
+// a pre-mapped display shape (categoryLabel/isIncome/a pre-formatted amount string) that raw
+// financial-event objects like the ones this panel already works with don't carry -- amount here
+// is signed decimal dollars (see financial-event.types.ts), formatted directly with `money`.
+function CategoryActivityList({ selection, transactions, onClose }) {
+  return (
+    <div data-category-activity-list className="flex h-full flex-col">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs font-black text-sky-700 hover:underline dark:text-sky-400"
+          >
+            ← Back
+          </button>
+          <h4 className="mt-2 truncate text-sm font-black text-slate-950 dark:text-slate-50">
+            {selection.label}
+          </h4>
+          <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
+            {selection.side === "income" ? "Income" : "Expense"} activity, newest first
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="shrink-0 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="mt-3 max-h-72 min-w-0 flex-1 space-y-1 overflow-y-auto">
+        {transactions.length === 0 ? (
+          <p className="p-3 text-xs font-semibold text-slate-500 dark:text-slate-400">
+            No transactions in this period.
+          </p>
+        ) : (
+          transactions.map((event) => (
+            <div
+              key={event.id}
+              className="flex items-start justify-between gap-2 rounded-lg px-1.5 py-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/60"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-bold text-slate-800 dark:text-slate-200">
+                  {event.description || "Transaction"}
+                </p>
+                <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                  {formatDate(event.eventDate) || "Date unavailable"} · {sourceLabel(event)}
+                </p>
+              </div>
+              <span
+                className={`shrink-0 font-black tabular-nums ${
+                  event.transactionKind === "income"
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-slate-950 dark:text-slate-50"
+                }`}
+              >
+                {event.transactionKind === "income" ? "+" : "-"}
+                {money.format(Math.abs(Number(event.amount) || 0))}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function FinancialForgeOverviewPanel({ loadState, transactions = [], accounts = [] }) {
   const [scope, setScope] = useState("business");
   const [periodType, setPeriodType] = useState("sixMonths");
@@ -57,6 +138,19 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
     });
   }
   const [selectedYear, setSelectedYear] = useState(null);
+  const [categorySelection, setCategorySelection] = useState(null);
+  const donutCardsRef = useRef(null);
+
+  useEffect(() => {
+    if (!categorySelection) return undefined;
+    function handleOutsideClick(event) {
+      if (donutCardsRef.current && !donutCardsRef.current.contains(event.target)) {
+        setCategorySelection(null);
+      }
+    }
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [categorySelection]);
 
   const accountsById = useMemo(
     () => Object.fromEntries(accounts.map((account) => [account.id, account.name])),
@@ -118,6 +212,45 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
     }
     return [...groups.values()].sort((left, right) => right.valueCents - left.valueCents);
   }, [donutPerformance.categories]);
+
+  // The raw, per-transaction analogue of donutPerformance's own aggregation -- same scope + period
+  // window, but as individual events rather than bucketed totals, so a clicked category slice can
+  // be traced back to exactly the transactions that produced it. "sixMonths" narrows to the same
+  // set of month keys donutPerformance's own series actually included (its bucketing is internal,
+  // this reads the result back out); "allTime" and "month" mirror donutPerformance's own handling
+  // above directly. Plain per-render computation, matching this file's own established pattern for
+  // performance/donutPerformance above -- not wrapped in useMemo.
+  const donutScopedTransactions = (() => {
+    const scoped = transactions.filter((event) => event.businessScope === scope
+      && (event.transactionKind === "income" || event.transactionKind === "expense"));
+    if (donutPeriodType === "month") {
+      return scoped.filter((event) => String(event.eventDate || "").slice(0, 7) === currentMonthKey);
+    }
+    if (donutPeriodType === "allTime") return scoped;
+    const includedMonthKeys = new Set(donutPerformance.series.map((point) => point.key));
+    return scoped.filter((event) => includedMonthKeys.has(String(event.eventDate || "").slice(0, 7)));
+  })();
+
+  const categoryDetailTransactions = categorySelection
+    ? donutScopedTransactions
+      .filter((event) => event.transactionKind === categorySelection.side)
+      .filter((event) => (categorySelection.side === "income"
+        ? (event.category || "uncategorized") === categorySelection.key
+        : groupExpenseCategory(event.category).key === categorySelection.key))
+      .sort((a, b) => String(b.eventDate || "").localeCompare(String(a.eventDate || "")))
+    : [];
+
+  function handleSelectIncomeSlice(slice) {
+    setCategorySelection((current) => (current?.side === "income" && current.key === slice.key
+      ? null
+      : { side: "income", key: slice.key, label: slice.label }));
+  }
+
+  function handleSelectExpenseSlice(slice) {
+    setCategorySelection((current) => (current?.side === "expense" && current.key === slice.key
+      ? null
+      : { side: "expense", key: slice.key, label: slice.label }));
+  }
 
   const currentKey = performance.granularity === "yearly"
     ? String(today.getUTCFullYear())
@@ -186,22 +319,40 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
         ))}
       </div>
 
-      <div data-financial-forge-summary className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <div ref={donutCardsRef} data-financial-forge-summary className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-          <ForgeCategoryDonutChart
-            title="Income by category"
-            slices={incomeSlices}
-            formatValue={(cents) => money.format(cents / 100)}
-            emptyLabel="No income recorded in this period."
-          />
+          {categorySelection?.side === "expense" ? (
+            <CategoryActivityList
+              selection={categorySelection}
+              transactions={categoryDetailTransactions}
+              onClose={() => setCategorySelection(null)}
+            />
+          ) : (
+            <ForgeCategoryDonutChart
+              title="Income by category"
+              slices={incomeSlices}
+              formatValue={(cents) => money.format(cents / 100)}
+              emptyLabel="No income recorded in this period."
+              onSelectSlice={handleSelectIncomeSlice}
+            />
+          )}
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-          <ForgeCategoryDonutChart
-            title="Expenses by category"
-            slices={expenseSlices}
-            formatValue={(cents) => money.format(cents / 100)}
-            emptyLabel="No expenses recorded in this period."
-          />
+          {categorySelection?.side === "income" ? (
+            <CategoryActivityList
+              selection={categorySelection}
+              transactions={categoryDetailTransactions}
+              onClose={() => setCategorySelection(null)}
+            />
+          ) : (
+            <ForgeCategoryDonutChart
+              title="Expenses by category"
+              slices={expenseSlices}
+              formatValue={(cents) => money.format(cents / 100)}
+              emptyLabel="No expenses recorded in this period."
+              onSelectSlice={handleSelectExpenseSlice}
+            />
+          )}
         </div>
       </div>
 

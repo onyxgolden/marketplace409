@@ -1,7 +1,26 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import ForgeCategoryDonutChart from "./ForgeCategoryDonutChart.jsx";
+
+let mounted = null;
+function mount(ui) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => { root.render(ui); });
+  mounted = { container, root };
+  return mounted;
+}
+afterEach(() => {
+  if (mounted) {
+    act(() => { mounted.root.unmount(); });
+    mounted.container.remove();
+    mounted = null;
+  }
+});
 
 const money = (cents) => `$${(cents / 100).toFixed(2)}`;
 
@@ -51,5 +70,43 @@ describe("ForgeCategoryDonutChart", () => {
     const markup = renderToStaticMarkup(<ForgeCategoryDonutChart title="Expenses by category" slices={slices} formatValue={money} />);
     const colors = [...markup.matchAll(/stroke="(var\(--forge-cat-\d\)\S*?)"/g)].map((match) => match[1]);
     expect(colors).toEqual(["var(--forge-cat-1)", "var(--forge-cat-2)", "var(--forge-cat-3)"]);
+  });
+
+  it("without onSelectSlice, legend rows are plain (not buttons) and slices carry no click affordance -- unchanged from before click support existed", () => {
+    const slices = [{ key: "a", label: "A", valueCents: 100 }];
+    const { container } = mount(<ForgeCategoryDonutChart title="Expenses by category" slices={slices} formatValue={money} />);
+    expect(container.querySelector('[data-donut-legend-row="a"] button')).toBeNull();
+    expect(container.querySelector('[data-donut-slice="a"]').getAttribute("role")).toBeNull();
+  });
+
+  it("with onSelectSlice, clicking the legend row or the arc calls back with that slice", () => {
+    const slices = [
+      { key: "a", label: "A", valueCents: 500 },
+      { key: "b", label: "B", valueCents: 300 },
+    ];
+    const onSelectSlice = vi.fn();
+    const { container } = mount(<ForgeCategoryDonutChart title="Expenses by category" slices={slices} formatValue={money} onSelectSlice={onSelectSlice} />);
+
+    const legendButton = container.querySelector('[data-donut-legend-row="a"] button');
+    expect(legendButton).not.toBeNull();
+    act(() => { legendButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onSelectSlice).toHaveBeenCalledTimes(1);
+    expect(onSelectSlice.mock.calls[0][0]).toMatchObject({ key: "a", label: "A", valueCents: 500 });
+
+    const arc = container.querySelector('[data-donut-slice="b"]');
+    expect(arc.getAttribute("role")).toBe("button");
+    act(() => { arc.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onSelectSlice).toHaveBeenCalledTimes(2);
+    expect(onSelectSlice.mock.calls[1][0]).toMatchObject({ key: "b", label: "B", valueCents: 300 });
+  });
+
+  it("with onSelectSlice, Enter and Space on the arc also trigger the callback (keyboard access)", () => {
+    const slices = [{ key: "a", label: "A", valueCents: 500 }];
+    const onSelectSlice = vi.fn();
+    const { container } = mount(<ForgeCategoryDonutChart title="Expenses by category" slices={slices} formatValue={money} onSelectSlice={onSelectSlice} />);
+    const arc = container.querySelector('[data-donut-slice="a"]');
+    act(() => { arc.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); });
+    act(() => { arc.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true })); });
+    expect(onSelectSlice).toHaveBeenCalledTimes(2);
   });
 });
