@@ -142,6 +142,13 @@ describe("buildRentalFinancialPerformance — period controls", () => {
     event({ event_date: "2026-08-01", amount: "1500.00", transaction_kind: "income", source_system: "forge_rental_payment" }),
   ];
 
+  it("oneMonth covers only the current calendar month", () => {
+    const result = buildRentalFinancialPerformance(events, { today: "2026-08-13", period: { type: "oneMonth" } });
+    expect(result.series.map((p) => p.key)).toEqual(["2026-08"]);
+    expect(result.granularity).toBe("monthly");
+    expect(result.totals.collectedCents).toBe(150000);
+  });
+
   it("sixMonths ends on the current month and covers exactly the trailing six calendar months", () => {
     const result = buildRentalFinancialPerformance(events, { today: "2026-08-13", period: { type: "sixMonths" } });
     expect(result.series.map((p) => p.key)).toEqual(["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"]);
