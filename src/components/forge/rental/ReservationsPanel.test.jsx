@@ -31,4 +31,23 @@ describe("ReservationsPanel", () => {
     expect(container.textContent).toContain("Modify reservation");
     expect(container.textContent).toContain("Preview changes");
   });
+  it("renders the owner financial projection instead of hardcoded unpaid and unavailable labels", async () => {
+    vi.stubGlobal("fetch", vi.fn(url => Promise.resolve(response(url.endsWith("/inventory") ? { inventory: [] } : {
+      reservations: [{ id: "res-paid", unit_id: "unit-paid", status: "confirmed", check_in_date: "2026-10-01", check_out_date: "2026-10-03", guest_count: 2,
+        reservation_inventory_settings: { public_name: "Paid cabin" }, reservation_financial_contracts: { booking_balance_cents: 20000, security_deposit_cents: 5000 },
+        financial: { bookingPaymentStatus: "paid", bookingAppliedCents: 20000, settlementStatus: "available", refundStatus: "partially_refunded",
+          bookingRefundedCents: 5000, disputeStatus: "lost", payoutStatus: "paid_out", paidOutAmountCents: 19400,
+          grossCents: 20000, feeCents: 600, netCents: 19400, reconciliationStatus: "matched", currencyCode: "USD" } }], events: [],
+    }))));
+    const container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    act(() => root.render(<ReservationsPanel />)); await flush();
+    act(() => [...container.querySelectorAll("button")].find(button => button.textContent.includes("Paid cabin")).click());
+    const detail = container.querySelector('[aria-label="Reservation financial status"]');
+    expect(detail.textContent).toContain("Stripe has confirmed payment");
+    expect(detail.textContent).not.toContain("No payment has been collected");
+    expect(detail.textContent).toContain("partially refunded");
+    expect(detail.textContent).toContain("lost");
+    expect(detail.textContent).toContain("paid out");
+    expect(detail.textContent).toContain("$194.00");
+  });
 });

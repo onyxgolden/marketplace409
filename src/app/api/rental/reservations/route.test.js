@@ -19,7 +19,7 @@ vi.mock("@/domains/reservations/availability", () => ({
   canReserveRange: vi.fn(() => ({ allowed: true })),
 }));
 
-import { PATCH } from "./route";
+import { GET, PATCH } from "./route";
 
 const INPUT = { unitId: "cabin-1", guestName: "", guestEmail: "", guestPhone: "", checkIn: "2099-02-01", checkOut: "2099-02-05", guestCount: 2, ownerNotes: "" };
 
@@ -78,5 +78,41 @@ describe("reservation lifecycle PATCH route error passthrough (modify_owner_rese
     const body = await response.json();
     expect(response.status).toBe(500);
     expect(body.error).toBe("Unable to update reservation.");
+  });
+});
+
+describe("owner reservation finance read model authorization", () => {
+  let from;
+  let eqCalls;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    from = vi.fn();
+    eqCalls = vi.fn();
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({ effectiveOwnerId: "canonical-owner", user: { id: "acting-member" }, supabaseClient: { from } });
+    from.mockImplementation((table) => {
+      const result = { error: null, data: table === "reservations" ? [{ id: "res_test", owner_id: "canonical-owner" }]
+        : table === "reservation_finance_summary" ? [{ reservation_id: "res_test", booking_payment_status: "paid", finance_payment_status: "paid", refund_status: "refunded", finance_settlement_status: "pending", payout_status: "not_paid_out", owner_id: "canonical-owner" }] : [] };
+      const query = { select: () => query, eq: (...args) => { eqCalls(table, ...args); return query; }, order: async () => result,
+        then: (resolve, reject) => Promise.resolve(result).then(resolve, reject) };
+      return query;
+    });
+  });
+
+  it("uses canonical workspace ownership for every read while preserving acting-user authorization", async () => {
+    const response = await GET();
+    expect(response.status).toBe(200);
+    for (const table of ["reservations", "reservation_events", "reservation_finance_summary"]) {
+      expect(eqCalls).toHaveBeenCalledWith(table, "owner_id", "canonical-owner");
+    }
+    const body = await response.json();
+    expect(body.reservations[0].financial).toMatchObject({ bookingPaymentStatus: "paid", refundStatus: "refunded", settlementStatus: "pending", payoutStatus: "not_paid_out" });
+    expect(body.reservations[0].financial.owner_id).toBeUndefined();
+  });
+
+  it("honors an authentication denial before accessing finance data", async () => {
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({ response: new Response(null, { status: 401 }) });
+    expect((await GET()).status).toBe(401);
+    expect(from).not.toHaveBeenCalled();
   });
 });
