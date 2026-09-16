@@ -14,6 +14,7 @@ import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 const PERIOD_OPTIONS = Object.freeze([
+  { type: "oneMonth", label: "1 Month" },
   { type: "sixMonths", label: "6 Months" },
   { type: "ytd", label: "YTD" },
   { type: "year", label: "Year" },

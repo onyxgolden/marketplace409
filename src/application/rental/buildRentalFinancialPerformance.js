@@ -111,7 +111,7 @@ function seriesPoint(key, bucket) {
   });
 }
 
-const PERIOD_TYPES = Object.freeze(["sixMonths", "ytd", "year", "allTime"]);
+const PERIOD_TYPES = Object.freeze(["oneMonth", "sixMonths", "ytd", "year", "allTime"]);
 
 // This owner's rental portfolio began operating in 2014. A couple of stray pre-acquisition
 // ledger entries from 2005 and 2007 exist in the historical Rentec data (asset-purchase-adjacent
@@ -129,7 +129,9 @@ export function buildRentalFinancialPerformance(financialEvents = [], { today = 
   let granularity = "monthly";
   let keys = [];
 
-  if (periodType === "sixMonths") {
+  if (periodType === "oneMonth") {
+    keys = monthsInRange(todayYear, todayMonth, 1);
+  } else if (periodType === "sixMonths") {
     keys = monthsInRange(todayYear, todayMonth - 5, 6);
   } else if (periodType === "ytd") {
     keys = monthsInRange(todayYear, 1, todayMonth);

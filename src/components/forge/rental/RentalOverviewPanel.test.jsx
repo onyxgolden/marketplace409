@@ -194,6 +194,19 @@ describe("RentalOverviewPanel Portfolio performance (collected vs. expenses)", (
     { event_date: daysFromNow(-2), amount: "1600.00", transaction_kind: "income", source_system: "forge_rental_payment", status: "active", is_deleted: false },
   ];
 
+  it("offers a 1 Month option before 6 Months, and switches to it correctly", () => {
+    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents }} initialReport={null} />);
+    const optionButtons = mounted.container.querySelectorAll("[data-period-option]");
+    expect(Array.from(optionButtons).map((button) => button.getAttribute("data-period-option"))).toEqual(["oneMonth", "sixMonths", "ytd", "year", "allTime"]);
+    const oneMonthButton = mounted.container.querySelector('[data-period-option="oneMonth"]');
+    expect(oneMonthButton.textContent).toBe("1 Month");
+    act(() => { oneMonthButton.click(); });
+    expect(oneMonthButton.getAttribute("aria-pressed")).toBe("true");
+    expect(mounted.container.querySelector('[data-period-option="sixMonths"]').getAttribute("aria-pressed")).toBe("false");
+    const points = mounted.container.querySelectorAll("[data-comparison-point]");
+    expect(points.length).toBe(1);
+  });
+
   it("defaults to the 6 Months period and shows an accessible, plain-language totals summary", () => {
     mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents }} initialReport={null} />);
     const sixMonthsButton = mounted.container.querySelector('[data-period-option="sixMonths"]');
