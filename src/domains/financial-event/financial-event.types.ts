@@ -28,6 +28,12 @@ export type ResolvedFinancialEventInput = {
 
   sourceRecordId?: string | null;
 
+  // The real financial_accounts.id this event belongs to, when the source is known to have one
+  // (the Transaction-to-FinancialEvent pipeline always knows it -- see
+  // financial-event-import.service.ts). Absent for sources that have no per-account concept
+  // (Rentec, QuickBooks, manual entry), which correctly leaves financial_account_id null.
+  financialAccountId?: string | null;
+
   metadata?: Record<string, unknown> | null;
 };
 

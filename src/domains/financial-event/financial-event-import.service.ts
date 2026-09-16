@@ -115,6 +115,12 @@ export class FinancialEventImportService {
       knowledge: this.normalizer.normalize(semanticDescription),
       sourceSystem: "transaction",
       sourceRecordId: transaction.id,
+      // Promoted to the actual financial_events.financial_account_id column (see
+      // financial-event.factory.ts) -- previously only written into metadata, which left the
+      // column itself null for every Plaid/Stripe-synced event and silently broke the
+      // per-account activity view for every account except Stripe-FC-synced ones happening to be
+      // read out of metadata elsewhere.
+      financialAccountId: transaction.financialAccountId ?? null,
       metadata: {
         connectionId: transaction.connectionId,
         financialAccountId: transaction.financialAccountId,

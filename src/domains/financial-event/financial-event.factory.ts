@@ -25,7 +25,7 @@ export class FinancialEventFactory {
       deleted_at: null,
 
       property_id: record.resolvedProperty.id,
-      financial_account_id: null,
+      financial_account_id: record.financialAccountId ?? null,
 
       event_date: record.date,
 
