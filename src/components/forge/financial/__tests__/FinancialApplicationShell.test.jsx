@@ -64,7 +64,11 @@ vi.mock(
         <section data-transactions-function data-account-name={accountName || undefined}>
           Transaction function
           <ul data-mock-transaction-ids>
-            {transactions.map((transaction) => <li key={transaction.id}>{transaction.id}</li>)}
+            {transactions.map((transaction) => (
+              <li key={transaction.id} data-income={transaction.isIncome || undefined}>
+                {transaction.id} {transaction.categoryLabel} {transaction.amount}
+              </li>
+            ))}
           </ul>
           {onBack && <button type="button" data-mock-back onClick={onBack}>Back</button>}
         </section>
@@ -275,14 +279,26 @@ describe(
         vi.unstubAllGlobals();
       });
 
-      it("filters allScopeTransactions to the clicked account, sorted newest-first, and shows its name; Back restores the overview", async () => {
+      it("filters allScopeTransactionPresentations to the clicked account, sorted newest-first, with real display fields intact, and shows its name; Back restores the overview", async () => {
         stubAccountBalancesFetch();
-        const allScopeTransactions = [
-          { id: "tx-old", financialAccountId: "acct-bank", eventDate: "2026-07-01" },
-          { id: "tx-new", financialAccountId: "acct-bank", eventDate: "2026-08-15" },
-          { id: "tx-other-account", financialAccountId: "acct-other", eventDate: "2026-08-20" },
+        // Realistic presentation shape (as produced by page.js's presentTransaction()), not raw
+        // financial-event fields -- this is the exact shape mismatch that made every account's
+        // activity list render blank before this fix, regardless of account or provider.
+        const allScopeTransactionPresentations = [
+          {
+            id: "tx-old", financialAccountId: "acct-bank", eventDate: "2026-07-01",
+            categoryLabel: "Office Supplies", amount: "$42.00", isIncome: false,
+          },
+          {
+            id: "tx-new", financialAccountId: "acct-bank", eventDate: "2026-08-15",
+            categoryLabel: "Rent Collected", amount: "$1,500.00", isIncome: true,
+          },
+          {
+            id: "tx-other-account", financialAccountId: "acct-other", eventDate: "2026-08-20",
+            categoryLabel: "Other", amount: "$10.00", isIncome: false,
+          },
         ];
-        mounted = mount(<FinancialApplicationShell activeFunctionId="overview" allScopeTransactions={allScopeTransactions} />);
+        mounted = mount(<FinancialApplicationShell activeFunctionId="overview" allScopeTransactionPresentations={allScopeTransactionPresentations} />);
         await flush();
 
         expect(mounted.container.querySelector("[data-financial-forge-overview]")).not.toBeNull();
@@ -297,7 +313,10 @@ describe(
         const surface = mounted.container.querySelector("[data-transactions-function]");
         expect(surface).not.toBeNull();
         expect(surface.getAttribute("data-account-name")).toBe("Business Checking");
-        expect(Array.from(surface.querySelectorAll("[data-mock-transaction-ids] li")).map((li) => li.textContent)).toEqual(["tx-new", "tx-old"]);
+        const rows = Array.from(surface.querySelectorAll("[data-mock-transaction-ids] li"));
+        expect(rows.map((li) => li.textContent)).toEqual(["tx-new Rent Collected $1,500.00", "tx-old Office Supplies $42.00"]);
+        expect(rows[0].getAttribute("data-income")).toBe("true");
+        expect(rows[1].hasAttribute("data-income")).toBe(false);
 
         const backButton = surface.querySelector("[data-mock-back]");
         act(() => { backButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
@@ -308,7 +327,7 @@ describe(
 
       it("clicking the same account again clears the selection, same as Back", async () => {
         stubAccountBalancesFetch();
-        mounted = mount(<FinancialApplicationShell activeFunctionId="overview" allScopeTransactions={[]} />);
+        mounted = mount(<FinancialApplicationShell activeFunctionId="overview" allScopeTransactionPresentations={[]} />);
         await flush();
 
         const bankingGroup = mounted.container.querySelector('[data-account-category="banking"]');
