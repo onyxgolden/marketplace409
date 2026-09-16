@@ -1,4 +1,9 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+
 import {
+  afterEach,
   describe,
   expect,
   it,
@@ -9,6 +14,24 @@ import {
 } from "react-dom/server";
 
 import FinancialPositionSnapshot from "../FinancialPositionSnapshot.jsx";
+
+let mounted = null;
+
+function mount(ui) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => { root.render(ui); });
+  return { container, root };
+}
+
+afterEach(() => {
+  if (mounted) {
+    act(() => { mounted.root.unmount(); });
+    mounted.container.remove();
+    mounted = null;
+  }
+});
 
 describe("FinancialPositionSnapshot", () => {
   it("renders presentation-ready balance-sheet lines", () => {
@@ -56,5 +79,27 @@ describe("FinancialPositionSnapshot", () => {
     );
 
     expect(markup).toContain("<table");
+  });
+
+  it("starts expanded, and collapsing hides the table while the heading stays visible", () => {
+    mounted = mount(
+      <FinancialPositionSnapshot
+        lines={[{ accountId: "cash", accountName: "Cash", amount: "$125,000", isNegative: false }]}
+      />,
+    );
+    const toggle = mounted.container.querySelector("button");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(mounted.container.querySelector("table")).not.toBeNull();
+
+    act(() => { toggle.click(); });
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(mounted.container.querySelector("table")).toBeNull();
+    expect(mounted.container.textContent).toContain("Balance Sheet Snapshot");
+
+    act(() => { toggle.click(); });
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(mounted.container.querySelector("table")).not.toBeNull();
   });
 });
