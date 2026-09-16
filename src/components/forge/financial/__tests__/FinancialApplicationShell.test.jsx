@@ -246,6 +246,24 @@ describe(
       expect(markup).toContain("Customize");
     });
 
+    it("shows a subtle refreshing note when isRefreshing is true, and never shows it by default", () => {
+      const withRefreshing = renderToStaticMarkup(
+        <FinancialApplicationShell activeFunctionId="overview" isRefreshing />,
+      );
+      expect(withRefreshing).toContain("Refreshing");
+
+      const withoutRefreshing = renderFunction("overview");
+      expect(withoutRefreshing).not.toContain("Refreshing");
+    });
+
+    it("prefers the error banner over the refreshing note when both are present -- a failed background refresh is worth surfacing, not silently hidden behind a stale note", () => {
+      const markup = renderToStaticMarkup(
+        <FinancialApplicationShell activeFunctionId="overview" isRefreshing error="Unable to load dashboard intelligence." />,
+      );
+      expect(markup).toContain("Financial data failed to load.");
+      expect(markup).not.toContain("Refreshing");
+    });
+
     describe("clicking an account replaces the overview with its filtered activity", () => {
       let mounted;
 

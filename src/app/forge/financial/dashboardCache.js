@@ -108,7 +108,11 @@ function resolveStore(store) {
   return typeof indexedDB === "undefined" ? null : indexedDbStore;
 }
 
-export async function readDashboardCache({ actingUserId, canonicalWorkspaceId, store, now = Date.now, ttlMs = DASHBOARD_CACHE_TTL_MS }) {
+// Shared by readDashboardCache and readLastKnownDashboardCache: fetches the raw entry and applies
+// the checks common to both (present, well-formed, current schema) -- version skew is always a
+// hard miss regardless of age, since a stale-shaped payload isn't safe to render at all, let alone
+// stale-while-revalidate.
+async function getValidEntry({ actingUserId, canonicalWorkspaceId, store }) {
   if (!actingUserId || !canonicalWorkspaceId) return null;
   const target = resolveStore(store);
   if (!target) return null;
@@ -117,13 +121,31 @@ export async function readDashboardCache({ actingUserId, canonicalWorkspaceId, s
     if (!entry || typeof entry.cachedAt !== "number") return null;
     // Defense in depth alongside the version already embedded in the key -- see PAYLOAD_SCHEMA_VERSION.
     if (entry.schemaVersion !== PAYLOAD_SCHEMA_VERSION) return null;
-    if (now() - entry.cachedAt > ttlMs) return null;
-    return entry.payload;
+    return entry;
   } catch {
     // Corrupt entry, storage disabled (private browsing), a blocked/failed open, or an unexpected
     // IndexedDB error -- treat as a cache miss rather than failing the page over it.
     return null;
   }
+}
+
+export async function readDashboardCache({ actingUserId, canonicalWorkspaceId, store, now = Date.now, ttlMs = DASHBOARD_CACHE_TTL_MS }) {
+  const entry = await getValidEntry({ actingUserId, canonicalWorkspaceId, store });
+  if (!entry) return null;
+  if (now() - entry.cachedAt > ttlMs) return null;
+  return entry.payload;
+}
+
+// Stale-while-revalidate: the page's first render should never sit on a loading skeleton when a
+// PREVIOUS successful load exists at all, no matter how old -- last known data beats no data. The
+// caller renders `payload` immediately regardless of `isStale`, then decides whether to also kick
+// off a fresh background load (see page.js): skip it when `isStale` is false (revisit within the
+// TTL window -- the original "instant, no re-fetch" optimization this cache exists for), run it
+// when true (swap in fresh data once it arrives, never blocking or blanking the render on it).
+export async function readLastKnownDashboardCache({ actingUserId, canonicalWorkspaceId, store, now = Date.now, ttlMs = DASHBOARD_CACHE_TTL_MS }) {
+  const entry = await getValidEntry({ actingUserId, canonicalWorkspaceId, store });
+  if (!entry) return null;
+  return { payload: entry.payload, isStale: now() - entry.cachedAt > ttlMs };
 }
 
 export async function writeDashboardCache(payload, { actingUserId, canonicalWorkspaceId, store, now = Date.now }) {
