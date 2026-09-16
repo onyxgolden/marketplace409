@@ -82,8 +82,6 @@ export const RENTAL_FUNCTION_HELP = Object.freeze({
   setup: Object.freeze({ title: "Property & Unit", summary: "Create and maintain the rental portfolio records that other workflows depend on.", actions: Object.freeze(["Add or select a property and its rentable units.", "Use property actions to open related financial setup or operating work."]) }),
   tenants: Object.freeze({ title: "Tenants", summary: "Create and manage renter identity records.", actions: Object.freeze(["Add a tenant before creating a lease.", "Select a tenant to work with leases, payments, documents, and communications in context."]) }),
   leases: Object.freeze({ title: "Leases", summary: "Connect a saved tenant to a saved unit and maintain rent schedules.", actions: Object.freeze(["Choose persisted unit and tenant records; do not enter internal IDs manually.", "Review dates, rent, deposit, and schedule before activation."]) }),
-  "rentec-migration": Object.freeze({ title: "Rentec Migration", summary: "Preview and prepare migration of Rentec rental records.", actions: Object.freeze(["Resolve exceptions before committing any approved import.", "Preview steps do not write Rentec data."]) }),
-  "rentec-files": Object.freeze({ title: "Rentec Files", summary: "Inspect available Rentec file metadata without exposing file contents unnecessarily.", actions: Object.freeze(["Use the inventory to identify documents that require deliberate migration.", "File names and contents are not automatically returned."]) }),
   charges: Object.freeze({ title: "Rent & Payments", summary: "Manage charges, balances, payment records, and billing setup.", actions: Object.freeze(["Confirm the tenant, lease, amount, and payment status before recording money.", "Consent or a saved payment method alone does not authorize a debit."]) }),
   reconciliation: Object.freeze({ title: "Reconciliation", summary: "Compare FORGE payment records with provider and settlement evidence.", actions: Object.freeze(["Investigate mismatches instead of forcing balances to agree.", "Finish reconciliation before treating reports as final."]) }),
   "rentec-payment-import": Object.freeze({ title: "Rentec Payment Import", summary: "Preview externally collected Rentec payments for controlled recording in FORGE.", actions: Object.freeze(["Review matched, ambiguous, ignored, and conflict classifications.", "Never approve an ambiguous transaction by guessing."]) }),
@@ -101,14 +99,16 @@ export const RENTAL_FUNCTION_HELP = Object.freeze({
   autopay: Object.freeze({ title: "Autopay", summary: "Review tenant authorization and owner-side collection readiness.", actions: Object.freeze(["Confirm authorization, payment method, lease, and amount controls.", "Authorization alone never activates a debit."]) }),
   animals: Object.freeze({ title: "Animals", summary: "Separate pet approval and fees from assistance-animal review.", actions: Object.freeze(["Record each animal and owner decision.", "Never charge a pet fee for an assistance animal."]) }),
   support: Object.freeze({ title: "Support", summary: "Track incidents and support cases without silently changing money records.", actions: Object.freeze(["Document the issue, evidence, owner, and resolution.", "A support action never moves money automatically."]) }),
+  "rentec-migration": Object.freeze({ title: "Rentec Migration", summary: "Preview and prepare migration of Rentec rental records.", actions: Object.freeze(["Resolve exceptions before committing any approved import.", "Preview steps do not write Rentec data."]) }),
+  "rentec-files": Object.freeze({ title: "Rentec Files", summary: "Inspect available Rentec file metadata without exposing file contents unnecessarily.", actions: Object.freeze(["Use the inventory to identify documents that require deliberate migration.", "File names and contents are not automatically returned."]) }),
 });
 
 export const RENTAL_HELP_GROUPS = Object.freeze([
   Object.freeze({ title: "Overview", ids: Object.freeze(["overview"]) }),
-  Object.freeze({ title: "Portfolio", ids: Object.freeze(["setup", "tenants", "leases", "rentec-migration", "rentec-files"]) }),
+  Object.freeze({ title: "Portfolio", ids: Object.freeze(["setup", "tenants", "leases"]) }),
   Object.freeze({ title: "Money", ids: Object.freeze(["charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports"]) }),
   Object.freeze({ title: "Operations", ids: Object.freeze(["maintenance", "inspections", "insurance", "documents", "communications"]) }),
-  Object.freeze({ title: "Controls", ids: Object.freeze(["lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]) }),
+  Object.freeze({ title: "Controls", ids: Object.freeze(["lease-lifecycle", "lease-preparation", "autopay", "animals", "support", "rentec-migration", "rentec-files"]) }),
 ]);
 
 export function getRentalFunctionHelp(activeFunctionId) {

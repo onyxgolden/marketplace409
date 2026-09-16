@@ -8,11 +8,11 @@ import {
 } from "./rentalHelpContent";
 
 const EXPECTED_FUNCTION_IDS = [
-  "overview", "setup", "tenants", "leases", "rentec-migration", "rentec-files",
+  "overview", "setup", "tenants", "leases",
   "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import",
   "financial-setup", "deposits", "reports", "maintenance", "inspections", "insurance",
   "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay",
-  "animals", "support",
+  "animals", "support", "rentec-migration", "rentec-files",
 ];
 
 describe("rentalHelpContent", () => {

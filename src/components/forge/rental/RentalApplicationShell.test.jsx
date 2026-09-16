@@ -49,7 +49,7 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
 
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
-    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "renewal", "setup", "tenants", "leases", "rentec-migration", "rentec-files", "reservable-inventory", "reservation-dashboard", "reservations", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "private-financing", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support"]);
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "renewal", "setup", "tenants", "leases", "reservable-inventory", "reservation-dashboard", "reservations", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "private-financing", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support", "rentec-migration", "rentec-files"]);
   });
   it("renders an exception-first summary in grouped navigation", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
@@ -66,18 +66,21 @@ describe("RentalApplicationShell", () => {
     expect(portfolioIds).not.toEqual(expect.arrayContaining(rvIds));
     expect(rvGroup.items.map(({ id }) => id)).toEqual(rvIds);
   });
-  it("splits Portfolio into extensible collapsible sub-categories, without hiding a universally-needed tool inside a property-type-specific one", () => {
+  it("splits Portfolio into extensible collapsible sub-categories, with today's single-family tools under Single Family", () => {
     const portfolioGroup = RENTAL_NAVIGATION.find((group) => group.label === "Portfolio");
     expect(portfolioGroup.items).toBeUndefined();
-    expect(portfolioGroup.subCategories.map(({ label }) => label)).toEqual(["General", "Single Family", "Multi Family"]);
-    const general = portfolioGroup.subCategories.find((subCategory) => subCategory.label === "General");
-    expect(general.items.map(({ id }) => id)).toEqual(["setup", "tenants", "leases", "rentec-migration", "rentec-files"]);
-    // Single Family and Multi Family are intentionally empty today (no property_type distinction
-    // exists anywhere in the rental data model) but must already render as real, independently
-    // collapsible sections so a future "Trailer Parks" sub-category is a one-line addition to
-    // portfolioSubCategories.jsx, not a new rendering path.
-    expect(portfolioGroup.subCategories.find((subCategory) => subCategory.label === "Single Family").items).toEqual([]);
+    expect(portfolioGroup.subCategories.map(({ label }) => label)).toEqual(["Single Family", "Multi Family"]);
+    const singleFamily = portfolioGroup.subCategories.find((subCategory) => subCategory.label === "Single Family");
+    expect(singleFamily.items.map(({ id }) => id)).toEqual(["setup", "tenants", "leases"]);
+    // Multi Family is intentionally empty today (no property_type distinction exists anywhere in
+    // the rental data model) but must already render as a real, independently collapsible section
+    // so a future "Trailer Parks" sub-category is a one-line addition to portfolioSubCategories.jsx,
+    // not a new rendering path.
     expect(portfolioGroup.subCategories.find((subCategory) => subCategory.label === "Multi Family").items).toEqual([]);
+  });
+  it("puts the Rentec import utilities under Controls, not under a property-type split", () => {
+    const controlsGroup = RENTAL_NAVIGATION.find((group) => group.label === "Controls");
+    expect(controlsGroup.items.map(({ id }) => id)).toEqual(["lease-lifecycle", "lease-preparation", "autopay", "animals", "support", "rentec-migration", "rentec-files"]);
   });
   it("renders one selected function surface", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("leases"));
