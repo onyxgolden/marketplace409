@@ -3,8 +3,7 @@ import { createPublicReservationClient } from "@/lib/supabase/createPublicReserv
 
 export async function GET(request, { params }) {
   try {
-    const { slug } = await params;
-    const token = new URL(request.url).searchParams.get("token") || "";
+    const { slug, token = "" } = await params;
     if (!token) return NextResponse.json({ error: "An access credential is required." }, { status: 400 });
     const client = createPublicReservationClient();
     const args = { p_booking_slug: String(slug || "").trim(), p_access_token: token };

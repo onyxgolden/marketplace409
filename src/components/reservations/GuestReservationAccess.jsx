@@ -9,7 +9,7 @@ export default function GuestReservationAccess({ slug, token }) {
   const [state, setState] = useState({ loading: true, access: null, error: "" });
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`/api/book/${encodeURIComponent(slug)}/access?token=${encodeURIComponent(token)}`, { signal: controller.signal })
+    fetch(`/api/book/${encodeURIComponent(slug)}/access/${encodeURIComponent(token)}`, { signal: controller.signal })
       .then(async response => { const body = await response.json(); if (!response.ok) throw new Error(body.error); setState({ loading: false, access: body.access, error: "" }); })
       .catch(error => { if (error.name !== "AbortError") setState({ loading: false, access: null, error: error.message }); });
     return () => controller.abort();

@@ -89,7 +89,7 @@ export async function POST(request, { params }) {
       connectedAccountId: session.connectedAccountId,
       amountCents: Number(attempt.amountCents),
       currencyCode: attempt.currencyCode,
-      returnUrl: `${request.nextUrl.origin}/book/${encodeURIComponent(String(slug || "").trim())}/access?token=${encodeURIComponent(token)}`,
+      returnUrl: `${request.nextUrl.origin}/book/${encodeURIComponent(String(slug || "").trim())}/access/${encodeURIComponent(token)}`,
       notice: "This is a Stripe test-mode payment session. No payment has been collected.",
     });
   } catch (error) {
