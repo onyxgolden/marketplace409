@@ -80,8 +80,45 @@ describe("FinancialAccountBalancesPanel", () => {
     expandGroup(mounted.container, "liabilities");
 
     expect(mounted.container.textContent).toContain("Chase Credit Card");
-    expect(mounted.container.textContent).toContain("Synced from plaid");
+    expect(mounted.container.textContent).toContain("Synced from Plaid");
     expect(mounted.container.querySelector('[data-account-balance-row="acct-1"] input')).toBeNull();
+  });
+
+  it("shortens a long raw provider value so the account name stays readable, but keeps the full value available on hover", async () => {
+    stubFetch({
+      accountBalances: {
+        success: true,
+        accounts: [{
+          id: "acct-2", name: "Business Checking", type: "depository", kind: "asset",
+          latestBalance: { currentBalanceCents: 500000, asOf: "2026-08-01", provider: "stripe_financial_connections", editable: false },
+        }],
+      },
+    });
+    mounted = mount(<FinancialAccountBalancesPanel />);
+    await flush();
+    expandGroup(mounted.container, "banking");
+
+    expect(mounted.container.textContent).toContain("Synced from Stripe");
+    expect(mounted.container.textContent).not.toContain("stripe_financial_connections");
+    const label = mounted.container.querySelector('[data-account-balance-row="acct-2"] p[title]');
+    expect(label.getAttribute("title")).toBe("Synced from stripe_financial_connections");
+  });
+
+  it("humanizes an unmapped provider value instead of showing it raw", async () => {
+    stubFetch({
+      accountBalances: {
+        success: true,
+        accounts: [{
+          id: "acct-3", name: "Old Brokerage", type: "investment", kind: "asset",
+          latestBalance: { currentBalanceCents: 100000, asOf: "2026-08-01", provider: "manual_investment", editable: false },
+        }],
+      },
+    });
+    mounted = mount(<FinancialAccountBalancesPanel />);
+    await flush();
+    expandGroup(mounted.container, "investments");
+
+    expect(mounted.container.textContent).toContain("Synced from Manual Investment");
   });
 
   it("shows an editable form for an account with no balance yet, and saves it", async () => {
