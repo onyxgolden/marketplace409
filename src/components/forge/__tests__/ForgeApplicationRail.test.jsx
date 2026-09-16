@@ -164,8 +164,11 @@ describe(
         expect(markup).toContain(
           "All apps",
         );
+        // "All apps" links to /?chooseWorkspace=1, not plain "/" -- the hub page redirects a
+        // fresh "/" visit straight to a saved favorite workspace, so "All apps" must opt out of
+        // that redirect explicitly or it would just send you right back where you came from.
         expect(
-          markup.match(/href="\/"/g),
+          markup.match(/href="\/\?chooseWorkspace=1"/g),
         ).not.toBeNull();
       },
     );
