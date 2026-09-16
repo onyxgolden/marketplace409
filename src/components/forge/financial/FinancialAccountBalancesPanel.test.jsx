@@ -413,4 +413,116 @@ describe("FinancialAccountBalancesPanel", () => {
     expect(mounted.container.textContent).toContain("Share Lane Mortgage");
     expect(mounted.container.querySelector('[data-account-balance-row="financial_account_manual_new"]').textContent).toContain("$176,012.60");
   });
+
+  describe("click-to-view-activity", () => {
+    it("calls onSelectAccount with the account's id and name when a Banking/Liabilities row's name is clicked", async () => {
+      stubFetch({
+        accountBalances: {
+          success: true,
+          accounts: [{ id: "acct-bank", name: "Business Checking", type: "depository", kind: "asset", latestBalance: { currentBalanceCents: 100000, asOf: "2026-08-01", provider: "manual", editable: true } }],
+        },
+      });
+      const onSelectAccount = vi.fn();
+      mounted = mount(<FinancialAccountBalancesPanel onSelectAccount={onSelectAccount} />);
+      await flush();
+      expandGroup(mounted.container, "banking");
+
+      const row = mounted.container.querySelector('[data-account-balance-row="acct-bank"]');
+      act(() => { row.querySelector("button").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+      expect(onSelectAccount).toHaveBeenCalledWith("acct-bank", "Business Checking");
+    });
+
+    it("does not call onSelectAccount when clicking the Edit button on a row with an existing balance", async () => {
+      stubFetch({
+        accountBalances: {
+          success: true,
+          accounts: [{ id: "acct-bank", name: "Business Checking", type: "depository", kind: "asset", latestBalance: { currentBalanceCents: 100000, asOf: "2026-08-01", provider: "manual", editable: true } }],
+        },
+      });
+      const onSelectAccount = vi.fn();
+      mounted = mount(<FinancialAccountBalancesPanel onSelectAccount={onSelectAccount} />);
+      await flush();
+      expandGroup(mounted.container, "banking");
+
+      const row = mounted.container.querySelector('[data-account-balance-row="acct-bank"]');
+      const editButton = Array.from(row.querySelectorAll("button")).find((button) => button.textContent === "Edit");
+      act(() => { editButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+      expect(onSelectAccount).not.toHaveBeenCalled();
+      expect(row.querySelector("form")).not.toBeNull();
+    });
+
+    it("does not call onSelectAccount when a Group or SubGroup header is clicked -- only collapses/expands", async () => {
+      stubFetch({
+        accountBalances: {
+          success: true,
+          accounts: [{ id: "acct-bank", name: "Business Checking", type: "depository", kind: "asset", latestBalance: { currentBalanceCents: 100000, asOf: "2026-08-01", provider: "manual", editable: true } }],
+        },
+      });
+      const onSelectAccount = vi.fn();
+      mounted = mount(<FinancialAccountBalancesPanel onSelectAccount={onSelectAccount} />);
+      await flush();
+      expandGroup(mounted.container, "banking");
+
+      expect(onSelectAccount).not.toHaveBeenCalled();
+    });
+
+    it("calls onSelectAccount when an investment-registry row is clicked", async () => {
+      stubFetch({
+        investmentAccounts: {
+          success: true,
+          accounts: [{ id: "inv-1", name: "Traditional IRA", accountType: "ira", ownershipScope: "personal", latestValuation: { amountCents: 410213, effectiveDate: "2026-08-01" } }],
+        },
+      });
+      const onSelectAccount = vi.fn();
+      mounted = mount(<FinancialAccountBalancesPanel onSelectAccount={onSelectAccount} />);
+      await flush();
+      expandGroup(mounted.container, "investments");
+      expandGroup(mounted.container, "investments.retirement");
+
+      const row = mounted.container.querySelector('[data-account-balance-row="inv-1"]');
+      act(() => { row.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+      expect(onSelectAccount).toHaveBeenCalledWith("inv-1", "Traditional IRA");
+    });
+
+    it("does not offer click-to-view-activity on an asset row -- assets track valuation history, not financial_events activity", async () => {
+      stubFetch({
+        assets: {
+          success: true,
+          assets: [{ id: "asset-1", name: "145 Laxon", assetClass: "real_estate", ownershipScope: "business", latestValuation: { amountCents: 15000000, effectiveDate: "2026-08-01" } }],
+        },
+      });
+      const onSelectAccount = vi.fn();
+      mounted = mount(<FinancialAccountBalancesPanel onSelectAccount={onSelectAccount} />);
+      await flush();
+      expandGroup(mounted.container, "assets");
+      expandGroup(mounted.container, "assets.real_estate");
+
+      const row = mounted.container.querySelector('[data-account-balance-row="asset-1"]');
+      expect(row.tagName).not.toBe("BUTTON");
+      act(() => { row.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+      expect(onSelectAccount).not.toHaveBeenCalled();
+    });
+
+    it("visually marks the selected account via data-account-selected", async () => {
+      stubFetch({
+        accountBalances: {
+          success: true,
+          accounts: [
+            { id: "acct-bank", name: "Business Checking", type: "depository", kind: "asset", latestBalance: { currentBalanceCents: 100000, asOf: "2026-08-01", provider: "manual", editable: true } },
+            { id: "acct-savings", name: "Business Savings", type: "depository", kind: "asset", latestBalance: { currentBalanceCents: 200000, asOf: "2026-08-01", provider: "manual", editable: true } },
+          ],
+        },
+      });
+      mounted = mount(<FinancialAccountBalancesPanel selectedAccountId="acct-bank" />);
+      await flush();
+      expandGroup(mounted.container, "banking");
+
+      expect(mounted.container.querySelector('[data-account-balance-row="acct-bank"]').getAttribute("data-account-selected")).toBe("true");
+      expect(mounted.container.querySelector('[data-account-balance-row="acct-savings"]').getAttribute("data-account-selected")).toBeNull();
+    });
+  });
 });

@@ -1,4 +1,9 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+
 import {
+  afterEach,
   describe,
   expect,
   it,
@@ -54,10 +59,14 @@ vi.mock(
 vi.mock(
   "../FinancialTransactionsSurface",
   () => ({
-    default: function MockTransactions() {
+    default: function MockTransactions({ transactions = [], accountName = null, onBack = null }) {
       return (
-        <section data-transactions-function>
+        <section data-transactions-function data-account-name={accountName || undefined}>
           Transaction function
+          <ul data-mock-transaction-ids>
+            {transactions.map((transaction) => <li key={transaction.id}>{transaction.id}</li>)}
+          </ul>
+          {onBack && <button type="button" data-mock-back onClick={onBack}>Back</button>}
         </section>
       );
     },
@@ -231,6 +240,87 @@ describe(
     it("passes sidebarKey=\"financial\" through to ApplicationShell, so the Customize control renders", () => {
       const markup = renderFunction("overview");
       expect(markup).toContain("Customize");
+    });
+
+    describe("clicking an account replaces the overview with its filtered activity", () => {
+      let mounted;
+
+      function mount(ui) {
+        const container = document.createElement("div");
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        act(() => { root.render(ui); });
+        return { container, root };
+      }
+      async function flush() {
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+      }
+      function stubAccountBalancesFetch() {
+        vi.stubGlobal("fetch", vi.fn(async (url) => {
+          if (url === "/api/financial/account-balances") {
+            return {
+              ok: true,
+              json: async () => ({
+                success: true,
+                accounts: [{ id: "acct-bank", name: "Business Checking", type: "depository", kind: "asset", latestBalance: { currentBalanceCents: 100000, asOf: "2026-08-01", provider: "manual", editable: true } }],
+              }),
+            };
+          }
+          return { ok: true, json: async () => ({ success: true, accounts: [], assets: [] }) };
+        }));
+      }
+
+      afterEach(() => {
+        if (mounted) { act(() => { mounted.root.unmount(); }); mounted.container.remove(); mounted = null; }
+        vi.unstubAllGlobals();
+      });
+
+      it("filters allScopeTransactions to the clicked account, sorted newest-first, and shows its name; Back restores the overview", async () => {
+        stubAccountBalancesFetch();
+        const allScopeTransactions = [
+          { id: "tx-old", financialAccountId: "acct-bank", eventDate: "2026-07-01" },
+          { id: "tx-new", financialAccountId: "acct-bank", eventDate: "2026-08-15" },
+          { id: "tx-other-account", financialAccountId: "acct-other", eventDate: "2026-08-20" },
+        ];
+        mounted = mount(<FinancialApplicationShell activeFunctionId="overview" allScopeTransactions={allScopeTransactions} />);
+        await flush();
+
+        expect(mounted.container.querySelector("[data-financial-forge-overview]")).not.toBeNull();
+        expect(mounted.container.querySelector("[data-transactions-function]")).toBeNull();
+
+        const bankingGroup = mounted.container.querySelector('[data-account-category="banking"]');
+        act(() => { bankingGroup.querySelector("button").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+        const accountButton = mounted.container.querySelector('[data-account-balance-row="acct-bank"] button');
+        act(() => { accountButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+        expect(mounted.container.querySelector("[data-financial-forge-overview]")).toBeNull();
+        const surface = mounted.container.querySelector("[data-transactions-function]");
+        expect(surface).not.toBeNull();
+        expect(surface.getAttribute("data-account-name")).toBe("Business Checking");
+        expect(Array.from(surface.querySelectorAll("[data-mock-transaction-ids] li")).map((li) => li.textContent)).toEqual(["tx-new", "tx-old"]);
+
+        const backButton = surface.querySelector("[data-mock-back]");
+        act(() => { backButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+        expect(mounted.container.querySelector("[data-financial-forge-overview]")).not.toBeNull();
+        expect(mounted.container.querySelector("[data-transactions-function]")).toBeNull();
+      });
+
+      it("clicking the same account again clears the selection, same as Back", async () => {
+        stubAccountBalancesFetch();
+        mounted = mount(<FinancialApplicationShell activeFunctionId="overview" allScopeTransactions={[]} />);
+        await flush();
+
+        const bankingGroup = mounted.container.querySelector('[data-account-category="banking"]');
+        act(() => { bankingGroup.querySelector("button").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+        const accountButton = mounted.container.querySelector('[data-account-balance-row="acct-bank"] button');
+        act(() => { accountButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+        expect(mounted.container.querySelector("[data-transactions-function]")).not.toBeNull();
+
+        act(() => { mounted.container.querySelector('[data-account-balance-row="acct-bank"] button').dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+        expect(mounted.container.querySelector("[data-transactions-function]")).toBeNull();
+        expect(mounted.container.querySelector("[data-financial-forge-overview]")).not.toBeNull();
+      });
     });
   },
 );
