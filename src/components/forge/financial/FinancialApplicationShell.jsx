@@ -206,6 +206,7 @@ export default function FinancialApplicationShell({
   activeFunctionId,
   onFunctionChange,
   error = null,
+  isRefreshing = false,
   ...presentation
 }) {
   const [selectedAccount, setSelectedAccount] = useState(null);
@@ -236,6 +237,12 @@ export default function FinancialApplicationShell({
       }
       activeSurface={
         <div className="space-y-5">
+          {isRefreshing && !error && (
+            <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
+              Refreshing with the latest data&hellip;
+            </p>
+          )}
+
           {error && (
             <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-900 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
               <div className="font-black">

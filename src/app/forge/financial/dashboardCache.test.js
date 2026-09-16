@@ -4,6 +4,7 @@ import {
   clearDashboardCache,
   isCacheableDashboardLoad,
   readDashboardCache,
+  readLastKnownDashboardCache,
   writeDashboardCache,
 } from "./dashboardCache.js";
 
@@ -217,6 +218,54 @@ describe("dashboardCache", () => {
       await store.set(oldKey, { cachedAt: now(), schemaVersion: 1, payload: { viewModel: { loadState: "ready", note: "pre-repair, shows 2005" } } });
 
       expect(await readDashboardCache({ actingUserId: USER_OWNER, canonicalWorkspaceId: WORKSPACE_1, store, now })).toBeNull();
+    });
+  });
+
+  describe("readLastKnownDashboardCache (stale-while-revalidate: last known data beats a blank loading skeleton)", () => {
+    it("returns null on a true cache miss, same as readDashboardCache", async () => {
+      expect(await readLastKnownDashboardCache({ actingUserId: USER_OWNER, canonicalWorkspaceId: WORKSPACE_1, store: fakeStore() })).toBeNull();
+    });
+
+    it("returns the payload with isStale=false within the TTL window", async () => {
+      const store = fakeStore();
+      const writeNow = () => 1_000_000;
+      const payload = { viewModel: { loadState: "ready" } };
+      await writeDashboardCache(payload, { actingUserId: USER_OWNER, canonicalWorkspaceId: WORKSPACE_1, store, now: writeNow });
+
+      const withinTtl = () => 1_000_000 + DASHBOARD_CACHE_TTL_MS - 1;
+      expect(await readLastKnownDashboardCache({ actingUserId: USER_OWNER, canonicalWorkspaceId: WORKSPACE_1, store, now: withinTtl }))
+        .toEqual({ payload, isStale: false });
+    });
+
+    it("still returns the payload past the TTL, but with isStale=true -- unlike readDashboardCache, age never turns this into a miss", async () => {
+      const store = fakeStore();
+      const writeNow = () => 1_000_000;
+      const payload = { viewModel: { loadState: "ready" } };
+      await writeDashboardCache(payload, { actingUserId: USER_OWNER, canonicalWorkspaceId: WORKSPACE_1, store, now: writeNow });
+
+      const wayPastTtl = () => 1_000_000 + DASHBOARD_CACHE_TTL_MS * 100;
+      expect(await readLastKnownDashboardCache({ actingUserId: USER_OWNER, canonicalWorkspaceId: WORKSPACE_1, store, now: wayPastTtl }))
+        .toEqual({ payload, isStale: true });
+      // readDashboardCache, by contrast, treats the same entry as a hard miss once past the TTL.
+      expect(await readDashboardCache({ actingUserId: USER_OWNER, canonicalWorkspaceId: WORKSPACE_1, store, now: wayPastTtl })).toBeNull();
+    });
+
+    it("still treats a schema-version mismatch as a miss, regardless of age", async () => {
+      const store = fakeStore();
+      const now = () => 1_000_000;
+      await writeDashboardCache({ viewModel: { loadState: "ready" } }, { actingUserId: USER_OWNER, canonicalWorkspaceId: WORKSPACE_1, store, now });
+      const key = [...store._map.keys()][0];
+      const entry = store._map.get(key);
+      store._map.set(key, { ...entry, schemaVersion: entry.schemaVersion + 1 });
+
+      expect(await readLastKnownDashboardCache({ actingUserId: USER_OWNER, canonicalWorkspaceId: WORKSPACE_1, store, now })).toBeNull();
+    });
+
+    it("still requires both actingUserId and canonicalWorkspaceId, and no-ops when the store is unavailable", async () => {
+      const store = fakeStore();
+      expect(await readLastKnownDashboardCache({ actingUserId: null, canonicalWorkspaceId: WORKSPACE_1, store })).toBeNull();
+      expect(await readLastKnownDashboardCache({ actingUserId: USER_OWNER, canonicalWorkspaceId: undefined, store })).toBeNull();
+      expect(await readLastKnownDashboardCache({ actingUserId: USER_OWNER, canonicalWorkspaceId: WORKSPACE_1, store: null })).toBeNull();
     });
   });
 

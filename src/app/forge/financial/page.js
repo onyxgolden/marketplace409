@@ -9,7 +9,7 @@ import {
   FinancialPeriodApplication,
 } from "@/application/financial/FinancialPeriodApplication";
 import FinancialApplicationShell from "@/components/forge/financial/FinancialApplicationShell";
-import { isCacheableDashboardLoad, readDashboardCache, writeDashboardCache } from "./dashboardCache.js";
+import { isCacheableDashboardLoad, readLastKnownDashboardCache, writeDashboardCache } from "./dashboardCache.js";
 import { money } from "./formatMoney.js";
 import { getCurrentMonthProfitKpi } from "./getCurrentMonthProfitKpi.js";
 
@@ -142,6 +142,7 @@ export default function FinancialPage() {
     setPropertyOperatingObligations,
   ] = useState([]);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -152,18 +153,19 @@ export default function FinancialPage() {
       // through to a fresh, uncached load, never an unscoped fallback key.
       const { actingUserId, canonicalWorkspaceId } = await loadWorkspaceIdentity();
 
-      // The three loads below combined take 10-15s on a real dataset (see dashboardCache.js for
-      // why). A cache hit means this visit is a revisit within the TTL window, for the SAME acting
-      // user in the SAME canonical workspace -- render the last known-good result immediately
-      // instead of re-running all three from scratch.
+      // Stale-while-revalidate: render the last known-good result immediately regardless of its
+      // age -- last known data beats a blank loading skeleton every time. `isStale` (past the
+      // 5-minute TTL) only decides whether a background refresh follows; it never decides whether
+      // to render the cached data at all (see readLastKnownDashboardCache in dashboardCache.js).
       const cached = (actingUserId && canonicalWorkspaceId)
-        ? await readDashboardCache({ actingUserId, canonicalWorkspaceId })
+        ? await readLastKnownDashboardCache({ actingUserId, canonicalWorkspaceId })
         : null;
       if (cached) {
-        setViewModel(cached.viewModel);
-        setIntelligenceModel(cached.intelligenceModel);
-        setPropertyOperatingObligations(cached.propertyOperatingObligations);
-        return;
+        setViewModel(cached.payload.viewModel);
+        setIntelligenceModel(cached.payload.intelligenceModel);
+        setPropertyOperatingObligations(cached.payload.propertyOperatingObligations);
+        if (!cached.isStale) return; // still within the TTL window -- fresh enough, skip the refetch.
+        setIsRefreshing(true);
       }
 
       const [
@@ -181,6 +183,7 @@ export default function FinancialPage() {
       setPropertyOperatingObligations(
         obligations,
       );
+      setIsRefreshing(false);
 
       if (
         actingUserId && canonicalWorkspaceId
@@ -422,6 +425,7 @@ export default function FinancialPage() {
         setActiveFunctionId
       }
       loadState={loadState}
+      isRefreshing={isRefreshing}
       error={
         loadState === "error"
           ? error
