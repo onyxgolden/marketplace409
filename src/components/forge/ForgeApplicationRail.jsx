@@ -250,7 +250,7 @@ export default function ForgeApplicationRail({
            one-click way back to the outer picker itself -- identical markup to WorkspaceShell's
            own "All apps" link, so the affordance looks and reads the same everywhere. */}
         <Link
-          href="/"
+          href="/?chooseWorkspace=1"
           title={expanded ? undefined : "All apps"}
           className={[
             "mb-5 flex min-h-12 items-center rounded-xl border border-white/10 bg-white/5 text-sm font-black text-slate-300 transition hover:bg-white/10 hover:text-white",
@@ -347,7 +347,7 @@ export default function ForgeApplicationRail({
               </div>
 
               <Link
-                href="/"
+                href="/?chooseWorkspace=1"
                 onClick={() => setMobileOpen(false)}
                 className="mb-5 flex min-h-12 items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 text-sm font-black text-slate-300"
               >

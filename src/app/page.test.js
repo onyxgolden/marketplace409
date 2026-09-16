@@ -124,6 +124,18 @@ describe("HubPage (Choose a workspace)", () => {
     expect(mocks.redirect).toHaveBeenCalledWith("/forge");
   });
 
+  it("shows the picker instead of redirecting when the All apps link's chooseWorkspace param is present, even with a saved favorite", async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: "owner-1" } } });
+    mocks.isOwnerOrActiveCoOwner.mockResolvedValue(false);
+    mocks.favoriteWorkspaceId = "forge";
+
+    const markup = renderToStaticMarkup(
+      await HubPage({ searchParams: Promise.resolve({ chooseWorkspace: "1" }) }),
+    );
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(markup).toContain("Choose a workspace");
+  });
+
   it("redirects to the health shortcut when it's the favorite and the actor is still owner/co-owner", async () => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: "owner-1" } } });
     mocks.isOwnerOrActiveCoOwner.mockResolvedValue(true);
