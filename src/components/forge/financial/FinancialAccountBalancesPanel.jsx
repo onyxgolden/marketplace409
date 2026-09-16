@@ -37,7 +37,7 @@ function accountBalanceCents(account) {
   return account.latestBalance ? Math.abs(account.latestBalance.currentBalanceCents) : 0;
 }
 
-function BalanceRow({ account, onSaved }) {
+function BalanceRow({ account, onSaved, onSelectAccount, isSelected }) {
   const [editing, setEditing] = useState(!account.latestBalance);
   const [dollars, setDollars] = useState(
     account.latestBalance ? String(Math.abs(account.latestBalance.currentBalanceCents) / 100) : "",
@@ -75,10 +75,17 @@ function BalanceRow({ account, onSaved }) {
   const notEditable = account.latestBalance && !account.latestBalance.editable;
 
   return (
-    <div data-account-balance-row={account.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
-      <p className="min-w-0 flex-1 truncate text-xs font-bold text-slate-900 dark:text-slate-100" title={account.name}>
+    <div data-account-balance-row={account.id} data-account-selected={isSelected || undefined} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+      <button
+        type="button"
+        onClick={() => onSelectAccount?.(account.id, account.name)}
+        title={`View activity for ${account.name}`}
+        className={`min-w-0 flex-1 truncate rounded px-1 text-left text-xs font-bold hover:underline ${
+          isSelected ? "text-sky-700 dark:text-sky-400" : "text-slate-900 dark:text-slate-100"
+        }`}
+      >
         {account.name}
-      </p>
+      </button>
 
       {notEditable ? (
         <div className="text-right">
@@ -218,14 +225,23 @@ function AddAccountRow({ groupKey, onCreated }) {
 // A read-only leaf for Investments-registry items: that table has its own dedicated create/edit
 // form on the Investments tab, so this tree only displays it. Assets get EditableAssetRow instead
 // (below) -- the same quick add/edit convenience Banking/Liabilities already have via AddAccountRow.
-function ReadOnlyValueRow({ id, name, amountCents }) {
+function ReadOnlyValueRow({ id, name, amountCents, onSelectAccount, isSelected }) {
   return (
-    <div data-account-balance-row={id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
-      <p className="min-w-0 flex-1 truncate text-xs font-bold text-slate-900 dark:text-slate-100" title={name}>
+    <button
+      type="button"
+      data-account-balance-row={id}
+      data-account-selected={isSelected || undefined}
+      onClick={() => onSelectAccount?.(id, name)}
+      title={`View activity for ${name}`}
+      className={`flex w-full flex-wrap items-center justify-between gap-2 rounded px-1 py-1.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+        isSelected ? "bg-sky-50 dark:bg-sky-950/30" : ""
+      }`}
+    >
+      <p className={`min-w-0 flex-1 truncate text-xs font-bold ${isSelected ? "text-sky-700 dark:text-sky-400" : "text-slate-900 dark:text-slate-100"}`} title={name}>
         {name}
       </p>
       <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">{money.format(amountCents / 100)}</p>
-    </div>
+    </button>
   );
 }
 
@@ -399,21 +415,26 @@ function AddAssetRow({ onCreated }) {
   );
 }
 
-function accountRowDescriptor(account, onSaved) {
+function accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId) {
   return {
     key: account.id,
     amountCents: accountBalanceCents(account),
-    node: <BalanceRow key={account.id} account={account} onSaved={onSaved} />,
+    node: <BalanceRow key={account.id} account={account} onSaved={onSaved} onSelectAccount={onSelectAccount} isSelected={account.id === selectedAccountId} />,
   };
 }
-function investmentAccountRowDescriptor(account) {
+function investmentAccountRowDescriptor(account, onSelectAccount, selectedAccountId) {
   const amountCents = account.latestValuation ? Number(account.latestValuation.amountCents) || 0 : 0;
   return {
     key: account.id,
     amountCents,
-    node: <ReadOnlyValueRow key={account.id} id={account.id} name={account.name} amountCents={amountCents} />,
+    node: <ReadOnlyValueRow key={account.id} id={account.id} name={account.name} amountCents={amountCents} onSelectAccount={onSelectAccount} isSelected={account.id === selectedAccountId} />,
   };
 }
+// Deliberately NOT click-to-view-activity like the rows above: assets track valuation history
+// (financial_asset_valuations), not transaction activity -- financial_events never carries an
+// asset's mirrored financial_accounts id (that mirror exists only so Net Worth stays accurate, not
+// because assets generate ledger activity), so filtering the Financial Activity surface by an
+// asset's id would always and correctly show zero transactions. Not a useful click.
 function assetRowDescriptor(asset, onSaved) {
   const amountCents = asset.latestValuation ? Number(asset.latestValuation.amountCents) || 0 : 0;
   return {
@@ -427,7 +448,7 @@ function subtotal(rows) {
   return rows.reduce((sum, row) => sum + row.amountCents, 0);
 }
 
-function buildTree({ accounts, investmentAccounts, assets }, onSaved) {
+function buildTree({ accounts, investmentAccounts, assets }, onSaved, onSelectAccount, selectedAccountId) {
   // The investment-accounts registry's create/update RPCs mirror themselves into financial_accounts
   // (as type "investment") so Net Worth elsewhere in the app, which is computed from
   // financial_accounts alone, stays accurate. That mirrored row reuses the SAME id as the row
@@ -435,16 +456,16 @@ function buildTree({ accounts, investmentAccounts, assets }, onSaved) {
   // account would be counted -- and shown -- twice.
   const investmentAccountIds = new Set(investmentAccounts.map((account) => account.id));
 
-  const banking = accounts.filter((account) => account.type === "depository").map((account) => accountRowDescriptor(account, onSaved));
+  const banking = accounts.filter((account) => account.type === "depository").map((account) => accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId));
   const linkedInvestments = accounts
     .filter((account) => account.type === "investment" && !investmentAccountIds.has(account.id))
-    .map((account) => accountRowDescriptor(account, onSaved));
-  const liabilities = accounts.filter((account) => account.type === "credit" || account.type === "loan").map((account) => accountRowDescriptor(account, onSaved));
+    .map((account) => accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId));
+  const liabilities = accounts.filter((account) => account.type === "credit" || account.type === "loan").map((account) => accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId));
 
   const investmentSubgroups = [];
   if (linkedInvestments.length > 0) investmentSubgroups.push({ key: "linked", label: "Linked Accounts", rows: linkedInvestments });
   for (const definition of INVESTMENT_SUBGROUPS) {
-    const rows = investmentAccounts.filter((account) => definition.types.includes(account.accountType)).map(investmentAccountRowDescriptor);
+    const rows = investmentAccounts.filter((account) => definition.types.includes(account.accountType)).map((account) => investmentAccountRowDescriptor(account, onSelectAccount, selectedAccountId));
     if (rows.length > 0) investmentSubgroups.push({ key: definition.key, label: definition.label, rows });
   }
 
@@ -524,7 +545,7 @@ async function fetchJson(url) {
   return body;
 }
 
-export default function FinancialAccountBalancesPanel() {
+export default function FinancialAccountBalancesPanel({ onSelectAccount, selectedAccountId = null } = {}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [collapsedKeys, setCollapsedKeys] = useState(() => new Set(["banking", "investments", "assets", "liabilities"]));
@@ -552,7 +573,10 @@ export default function FinancialAccountBalancesPanel() {
     load();
   }, [load]);
 
-  const groups = useMemo(() => (data ? buildTree(data, load) : []), [data, load]);
+  const groups = useMemo(
+    () => (data ? buildTree(data, load, onSelectAccount, selectedAccountId) : []),
+    [data, load, onSelectAccount, selectedAccountId],
+  );
 
   const netWorthCents = useMemo(() => groups.reduce(
     (sum, group) => sum + (group.kind === "liability" ? -1 : 1) * (group.rows ? subtotal(group.rows) : group.subgroups.reduce((s, sub) => s + subtotal(sub.rows), 0)),

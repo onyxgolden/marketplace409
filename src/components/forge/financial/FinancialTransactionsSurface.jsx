@@ -1,6 +1,16 @@
+// "manual" is accurate but reads as an internal implementation string, not something written for
+// an owner to read -- shown wherever a transaction's source is surfaced, filtered view or not, so
+// there's one consistent label rather than a rough edge that only shows up sometimes.
+function sourceLabel(transaction) {
+  if (transaction.sourceSystem === "manual") return "Manual entry";
+  return transaction.sourceSystem || "Unknown";
+}
+
 export default function FinancialTransactionsSurface({
   transactions = [],
   loadState = "ready",
+  accountName = null,
+  onBack = null,
 }) {
   return (
     <section
@@ -8,18 +18,30 @@ export default function FinancialTransactionsSurface({
       className="rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
     >
       <header className="border-b border-slate-200 p-5 lg:p-6 dark:border-slate-800">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="mb-3 text-xs font-black text-sky-700 hover:underline dark:text-sky-400"
+          >
+            ← Back to overview
+          </button>
+        )}
+
         <div className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">
           Financial Activity
         </div>
 
         <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h3 className="text-2xl font-black tracking-tight text-slate-950 dark:text-slate-50">
-              Recent transactions
+            <h3 data-financial-activity-heading className="text-2xl font-black tracking-tight text-slate-950 dark:text-slate-50">
+              {accountName ? accountName : "Recent transactions"}
             </h3>
 
             <p className="mt-2 max-w-3xl text-sm font-semibold text-slate-600 dark:text-slate-400">
-              Review recent income and spending across properties, categories, and connected sources.
+              {accountName
+                ? "Every transaction that makes up this account's balance, newest first."
+                : "Review recent income and spending across properties, categories, and connected sources."}
             </p>
           </div>
 
@@ -89,8 +111,7 @@ export default function FinancialTransactionsSurface({
                     </td>
 
                     <td className="px-5 py-4">
-                      {transaction.sourceSystem ||
-                        "Unknown"}
+                      {sourceLabel(transaction)}
                     </td>
 
                     <td

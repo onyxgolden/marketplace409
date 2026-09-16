@@ -1,3 +1,4 @@
+import { useState } from "react";
 import ApplicationShell from "@/components/forge/workspace/ApplicationShell";
 import FinancialExecutiveIntelligence from "@/components/forge/financial/FinancialExecutiveIntelligence";
 import FinancialForgeOverviewPanel from "@/components/forge/financial/FinancialForgeOverviewPanel";
@@ -71,6 +72,10 @@ export function buildFinancialActiveSurface({
   statusItems,
   activities,
   operations,
+  selectedAccountId = null,
+  selectedAccountName = null,
+  onSelectAccount,
+  onClearSelectedAccount,
 }) {
   switch (activeFunctionId) {
     case "transactions":
@@ -128,35 +133,59 @@ export function buildFinancialActiveSurface({
       return <SimplifiImportPanel />;
 
     case "overview":
-    default:
+    default: {
+      // Clicking a leaf (non-rolled-up) account row in the Accounts panel replaces this right-hand
+      // column with that account's own activity -- every financial_events row carrying its id,
+      // newest first -- instead of the normal overview stack. onClearSelectedAccount (the surface's
+      // own "Back to overview" control) is how you get back.
+      const selectedAccountTransactions = selectedAccountId
+        ? (allScopeTransactions || [])
+            .filter((event) => event.financialAccountId === selectedAccountId)
+            .sort((a, b) => String(b.eventDate || "").localeCompare(String(a.eventDate || "")))
+        : [];
+
       return (
         <div className="space-y-6">
           <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
             <div className="lg:sticky lg:top-4">
-              <FinancialAccountBalancesPanel />
+              <FinancialAccountBalancesPanel
+                onSelectAccount={onSelectAccount}
+                selectedAccountId={selectedAccountId}
+              />
             </div>
 
             <div className="min-w-0 space-y-6">
-              <FinancialForgeOverviewPanel
-                loadState={loadState}
-                transactions={allScopeTransactions}
-                accounts={accounts}
-              />
+              {selectedAccountId ? (
+                <FinancialTransactionsSurface
+                  loadState={loadState}
+                  transactions={selectedAccountTransactions}
+                  accountName={selectedAccountName}
+                  onBack={onClearSelectedAccount}
+                />
+              ) : (
+                <>
+                  <FinancialForgeOverviewPanel
+                    loadState={loadState}
+                    transactions={allScopeTransactions}
+                    accounts={accounts}
+                  />
 
-              <FinancialExecutiveIntelligence
-                executiveBriefing={
-                  executiveBriefing
-                }
-                riskSummary={riskSummary}
-                riskAssessment={
-                  riskAssessment
-                }
-                insights={insights}
-              />
+                  <FinancialExecutiveIntelligence
+                    executiveBriefing={
+                      executiveBriefing
+                    }
+                    riskSummary={riskSummary}
+                    riskAssessment={
+                      riskAssessment
+                    }
+                    insights={insights}
+                  />
 
-              <FinancialPositionSnapshot
-                lines={balanceSheetLines}
-              />
+                  <FinancialPositionSnapshot
+                    lines={balanceSheetLines}
+                  />
+                </>
+              )}
             </div>
           </div>
 
@@ -166,6 +195,7 @@ export function buildFinancialActiveSurface({
           />
         </div>
       );
+    }
   }
 }
 
@@ -175,10 +205,18 @@ export default function FinancialApplicationShell({
   error = null,
   ...presentation
 }) {
+  const [selectedAccount, setSelectedAccount] = useState(null);
+
   const activeSurface =
     buildFinancialActiveSurface({
       activeFunctionId,
       ...presentation,
+      selectedAccountId: selectedAccount?.id ?? null,
+      selectedAccountName: selectedAccount?.name ?? null,
+      // Clicking the already-selected account again clears the filter, same as the explicit
+      // "Back to overview" control -- a second, low-friction way back.
+      onSelectAccount: (id, name) => setSelectedAccount((current) => (current?.id === id ? null : { id, name })),
+      onClearSelectedAccount: () => setSelectedAccount(null),
     });
 
   return (
