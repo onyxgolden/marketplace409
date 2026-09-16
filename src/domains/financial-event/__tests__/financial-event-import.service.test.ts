@@ -105,6 +105,7 @@ describe("FinancialEventImportService", () => {
     expect(event.owner_id).toBe("owner-1");
     expect(event.event_date).toBe("2026-07-01");
     expect(event.description).toBe("Repairs (170 John)");
+    expect(event.financial_account_id).toBe("financial-account-1");
     // 12500 minor units (amountCents) -> $125.00 decimal dollars -- the corrected conversion.
     expect(event.amount).toBe(125);
     expect(event.source_system).toBe("transaction");
@@ -127,6 +128,22 @@ describe("FinancialEventImportService", () => {
       // or interpreted by provider-specific code.
       amountUnitVersion: 1,
     });
+  });
+
+  it("leaves financial_account_id null when the transaction carries none", async () => {
+    const repository = new InMemoryFinancialEventRepository();
+    const service = new FinancialEventImportService({
+      repository,
+      ownerId: "owner-1",
+    });
+
+    const result = await service.import(
+      buildTransactionImport([
+        buildTransaction({ financialAccountId: null as unknown as string }),
+      ]),
+    );
+
+    expect(result.financialEvents[0].financial_account_id).toBeNull();
   });
 
   it("uses merchant name for knowledge normalization when available", async () => {

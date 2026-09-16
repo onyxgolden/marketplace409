@@ -74,5 +74,29 @@ describe("FinancialEventFactory", () => {
       source_system: "rentec",
       source_record_id: "rentec-record-asset-purchase-1",
     });
+    expect(event.financial_account_id).toBeNull();
+  });
+
+  test("carries financialAccountId through onto financial_account_id when the resolved input provides one", () => {
+    const record: RentecImportRecord = {
+      date: "2026-01-01",
+      property: "170 John",
+      description: "Rental Income (Rentec EasyPay)",
+      type: "income",
+      amount: 1500,
+      sourceCategory: "Rental Income (Rentec EasyPay)",
+      sourceRecordId: "rentec-record-rental-income-2",
+      rawRow: {
+        PROPERTY: "170 John",
+      },
+    };
+
+    const resolved = rentecSemanticResolver.resolve(record);
+    const event = financialEventFactory.fromResolvedInput({
+      ...resolved,
+      financialAccountId: "financial-account-1",
+    });
+
+    expect(event.financial_account_id).toBe("financial-account-1");
   });
 });
