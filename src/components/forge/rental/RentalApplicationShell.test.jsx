@@ -56,11 +56,11 @@ describe("RentalApplicationShell", () => {
     expect(markup).toContain("Rental operations");
     expect(markup).toContain("Loading rental summary");
     expect(markup).toContain('aria-label="Rental Manager functions"');
-    expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Overview", "Portfolio", "RV & Short-Term Rentals", "Money", "Operations", "Controls"]);
+    expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Overview", "Portfolio", "RVs & Cabins", "Money", "Operations", "Controls"]);
   });
-  it("keeps RV & Short-Term Rentals structurally separate from Portfolio, so viewing an RV page no longer forces Portfolio open", () => {
+  it("keeps RVs & Cabins structurally separate from Portfolio, so viewing an RV page no longer forces Portfolio open", () => {
     const portfolioGroup = RENTAL_NAVIGATION.find((group) => group.label === "Portfolio");
-    const rvGroup = RENTAL_NAVIGATION.find((group) => group.label === "RV & Short-Term Rentals");
+    const rvGroup = RENTAL_NAVIGATION.find((group) => group.label === "RVs & Cabins");
     const rvIds = ["reservable-inventory", "reservation-dashboard", "reservations"];
     const portfolioIds = portfolioGroup.subCategories.flatMap((subCategory) => subCategory.items.map(({ id }) => id));
     expect(portfolioIds).not.toEqual(expect.arrayContaining(rvIds));
