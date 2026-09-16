@@ -177,9 +177,9 @@ describe(
       },
     );
 
-    it("does not pass a sidebarKey, so ApplicationShell renders no Customize control -- Property is unaffected by the customizable-sidebar feature", () => {
+    it("passes sidebarKey=\"property\" through to ApplicationShell, so the Customize control renders", () => {
       const markup = renderFunction("valuations");
-      expect(markup).not.toContain("Customize");
+      expect(markup).toContain("Customize");
     });
   },
 );

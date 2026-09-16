@@ -67,6 +67,7 @@ export default function PropertyApplicationShell({
       applicationName="Property"
       applicationDescription="Property value, standardized condition history, operating obligations, HVAC systems, service events, and private evidence."
       functions={PROPERTY_FUNCTIONS}
+      sidebarKey="property"
       activeFunctionId={
         activeFunctionId
       }

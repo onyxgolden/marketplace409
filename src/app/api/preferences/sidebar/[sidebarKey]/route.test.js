@@ -49,6 +49,14 @@ describe("GET /api/preferences/sidebar/[sidebarKey]", () => {
     expect((await response.json()).hiddenItemIds).toEqual(["assets"]);
   });
 
+  it("accepts the property sidebar key, reusing the same table/shape as rental-manager", async () => {
+    const supabase = fakeSupabase({ fromResult: { data: { hidden_item_ids: ["hvac"] }, error: null } });
+    mocks.createClient.mockResolvedValue(supabase);
+    const response = await GET(null, ctx("property"));
+    expect(response.status).toBe(200);
+    expect((await response.json()).hiddenItemIds).toEqual(["hvac"]);
+  });
+
   it("requires authentication", async () => {
     mocks.createClient.mockResolvedValue(fakeSupabase({ user: null, authError: { message: "no session" } }));
     expect((await GET(null, ctx("rental-manager"))).status).toBe(401);
@@ -126,5 +134,13 @@ describe("PATCH /api/preferences/sidebar/[sidebarKey]", () => {
     const response = await PATCH(patchRequest({ hiddenItemIds: ["assets"] }), ctx("financial"));
     expect(response.status).toBe(200);
     expect(supabase.builder.upsertedWith).toMatchObject({ user_id: "user-42", sidebar_key: "financial", hidden_item_ids: ["assets"] });
+  });
+
+  it("upserts under the property sidebar key, isolated from rental-manager and financial", async () => {
+    const supabase = fakeSupabase({ user: { id: "user-42" } });
+    mocks.createClient.mockResolvedValue(supabase);
+    const response = await PATCH(patchRequest({ hiddenItemIds: ["hvac"] }), ctx("property"));
+    expect(response.status).toBe(200);
+    expect(supabase.builder.upsertedWith).toMatchObject({ user_id: "user-42", sidebar_key: "property", hidden_item_ids: ["hvac"] });
   });
 });
