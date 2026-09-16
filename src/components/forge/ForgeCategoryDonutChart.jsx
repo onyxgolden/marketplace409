@@ -32,7 +32,7 @@ function positionSlices(slices, total) {
 // always-present legend list (required "relief" since 3 of the 8 slots fall below 3:1 contrast on
 // the light surface). A native <title> gives every slice a zero-JS hover/focus tooltip; hovering
 // either the arc or its legend row highlights both, so identity is never color-alone.
-export default function ForgeCategoryDonutChart({ title, slices = [], formatValue, emptyLabel = "No activity in this period." }) {
+export default function ForgeCategoryDonutChart({ title, slices = [], formatValue, emptyLabel = "No activity in this period.", onSelectSlice = null }) {
   const [activeKey, setActiveKey] = useState(null);
   const format = formatValue || ((cents) => String(cents));
 
@@ -61,10 +61,16 @@ export default function ForgeCategoryDonutChart({ title, slices = [], formatValu
                   strokeLinecap="round"
                   className="cursor-pointer transition-[stroke-width] motion-reduce:transition-none"
                   tabIndex={0}
+                  role={onSelectSlice ? "button" : undefined}
+                  aria-label={onSelectSlice ? `${slice.label}: ${format(slice.valueCents)} (${formatPercent(slice.fraction)})` : undefined}
                   onMouseEnter={() => setActiveKey(slice.key)}
                   onMouseLeave={() => setActiveKey(null)}
                   onFocus={() => setActiveKey(slice.key)}
                   onBlur={() => setActiveKey(null)}
+                  onClick={onSelectSlice ? () => onSelectSlice(slice) : undefined}
+                  onKeyDown={onSelectSlice ? (event) => {
+                    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectSlice(slice); }
+                  } : undefined}
                 >
                   <title>{`${slice.label}: ${format(slice.valueCents)} (${formatPercent(slice.fraction)})`}</title>
                 </circle>
@@ -79,22 +85,35 @@ export default function ForgeCategoryDonutChart({ title, slices = [], formatValu
           </svg>
 
           <ul aria-label={title} className="w-full min-w-0 space-y-1">
-            {positioned.map((slice) => (
-              <li
-                key={slice.key}
-                data-donut-legend-row={slice.key}
-                onMouseEnter={() => setActiveKey(slice.key)}
-                onMouseLeave={() => setActiveKey(null)}
-                className={`flex items-center gap-2 rounded-lg px-1.5 py-1 text-xs transition-colors motion-reduce:transition-none ${
-                  activeKey === slice.key ? "bg-slate-50 dark:bg-slate-800/60" : ""
-                }`}
-              >
-                <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: slice.color }} />
-                <span className="min-w-0 flex-1 truncate font-bold text-slate-800 dark:text-slate-200">{slice.label}</span>
-                <span className="shrink-0 font-black tabular-nums text-slate-900 dark:text-slate-100">{format(slice.valueCents)}</span>
-                <span className="w-9 shrink-0 text-right font-bold tabular-nums text-slate-500 dark:text-slate-400">{formatPercent(slice.fraction)}</span>
-              </li>
-            ))}
+            {positioned.map((slice) => {
+              const rowContent = (
+                <>
+                  <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: slice.color }} />
+                  <span className="min-w-0 flex-1 truncate font-bold text-slate-800 dark:text-slate-200">{slice.label}</span>
+                  <span className="shrink-0 font-black tabular-nums text-slate-900 dark:text-slate-100">{format(slice.valueCents)}</span>
+                  <span className="w-9 shrink-0 text-right font-bold tabular-nums text-slate-500 dark:text-slate-400">{formatPercent(slice.fraction)}</span>
+                </>
+              );
+              const rowClassName = `flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-xs transition-colors motion-reduce:transition-none ${
+                activeKey === slice.key ? "bg-slate-50 dark:bg-slate-800/60" : ""
+              }`;
+              return (
+                <li
+                  key={slice.key}
+                  data-donut-legend-row={slice.key}
+                  onMouseEnter={() => setActiveKey(slice.key)}
+                  onMouseLeave={() => setActiveKey(null)}
+                >
+                  {onSelectSlice ? (
+                    <button type="button" onClick={() => onSelectSlice(slice)} className={`${rowClassName} text-left`}>
+                      {rowContent}
+                    </button>
+                  ) : (
+                    <div className={rowClassName}>{rowContent}</div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
