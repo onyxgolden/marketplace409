@@ -5,6 +5,22 @@ import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
+// Raw provider values (e.g. "stripe_financial_connections") are long enough that "Synced from
+// <raw value>" squeezes the account name's own truncated space down to almost nothing in this
+// panel's narrow sidebar column. Short, human-readable labels fix that; any provider not listed
+// here still degrades gracefully via humanizeProvider() rather than showing nothing.
+const PROVIDER_LABELS = Object.freeze({
+  stripe_financial_connections: "Stripe", plaid: "Plaid",
+});
+function humanizeProvider(provider) {
+  if (PROVIDER_LABELS[provider]) return PROVIDER_LABELS[provider];
+  return String(provider || "")
+    .split("_")
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(" ") || "sync";
+}
+
 const INVESTMENT_TYPE_LABELS = Object.freeze({
   taxable_brokerage: "Taxable brokerage", ira: "IRA", roth_ira: "Roth IRA", "401k": "401(k)", pension: "Pension",
   crypto_exchange: "Crypto exchange", crypto_wallet: "Crypto wallet", metals_vault: "Metals vault",
@@ -88,12 +104,12 @@ function BalanceRow({ account, onSaved, onSelectAccount, isSelected }) {
       </button>
 
       {notEditable ? (
-        <div className="text-right">
+        <div className="shrink-0 text-right">
           <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">
             {money.format(Math.abs(account.latestBalance.currentBalanceCents) / 100)}
           </p>
-          <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-            Synced from {account.latestBalance.provider}
+          <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400" title={`Synced from ${account.latestBalance.provider}`}>
+            Synced from {humanizeProvider(account.latestBalance.provider)}
           </p>
         </div>
       ) : editing ? (
