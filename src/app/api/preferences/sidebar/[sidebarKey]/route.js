@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 // Only sidebars this app actually wires the customize control up for. A future Property sidebar
 // reuses the same table/route shape by adding its own key here -- no new migration or route
 // needed, just this allowlist entry plus passing sidebarKey to its own ApplicationShell.
-const VALID_SIDEBAR_KEYS = new Set(["rental-manager", "financial"]);
+const VALID_SIDEBAR_KEYS = new Set(["rental-manager", "financial", "property"]);
 
 async function requireUser(supabase) {
   const { data: { user }, error } = await supabase.auth.getUser();
