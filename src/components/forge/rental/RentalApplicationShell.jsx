@@ -22,7 +22,7 @@ export const RENTAL_NAVIGATION = Object.freeze([
   RV_RESERVATIONS_NAV_GROUP,
   Object.freeze({ label: "Money", items: Object.freeze([{ id: "charges", label: "Rent & Payments" }, { id: "reconciliation", label: "Reconciliation" }, { id: "rentec-payment-import", label: "Rentec Payment Import" }, { id: "rentec-financial-history-import", label: "Rentec Financial History Import" }, { id: "financial-setup", label: "Financial Setup" }, { id: "deposits", label: "Deposits" }, { id: "reports", label: "Reports" }, { id: "private-financing", label: "Private Financing" }]) }),
   Object.freeze({ label: "Operations", items: Object.freeze([{ id: "maintenance", label: "Maintenance" }, { id: "inspections", label: "Inspections" }, { id: "insurance", label: "Insurance" }, { id: "documents", label: "Documents" }, { id: "communications", label: "Communications" }]) }),
-  Object.freeze({ label: "Controls", items: Object.freeze([{ id: "lease-lifecycle", label: "Lease Changes" }, { id: "lease-preparation", label: "Lease Editor" }, { id: "autopay", label: "Autopay" }, { id: "animals", label: "Animals" }, { id: "support", label: "Support" }]) }),
+  Object.freeze({ label: "Controls", items: Object.freeze([{ id: "lease-lifecycle", label: "Lease Changes" }, { id: "lease-preparation", label: "Lease Editor" }, { id: "autopay", label: "Autopay" }, { id: "animals", label: "Animals" }, { id: "support", label: "Support" }, { id: "rentec-migration", label: "Rentec Migration" }, { id: "rentec-files", label: "Rentec Files" }]) }),
 ]);
 function itemsForGroup(group) {
   return group.items ?? group.subCategories.flatMap((subCategory) => subCategory.items);
