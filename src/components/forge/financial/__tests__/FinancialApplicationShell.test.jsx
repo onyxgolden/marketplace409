@@ -227,5 +227,10 @@ describe(
         }
       },
     );
+
+    it("passes sidebarKey=\"financial\" through to ApplicationShell, so the Customize control renders", () => {
+      const markup = renderFunction("overview");
+      expect(markup).toContain("Customize");
+    });
   },
 );

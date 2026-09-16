@@ -186,6 +186,7 @@ export default function FinancialApplicationShell({
       applicationName="Financial"
       applicationDescription="Financial position, transactions, property performance, and operating actions."
       functions={FINANCIAL_FUNCTIONS}
+      sidebarKey="financial"
       activeFunctionId={
         activeFunctionId
       }

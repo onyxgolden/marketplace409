@@ -37,8 +37,16 @@ describe("GET /api/preferences/sidebar/[sidebarKey]", () => {
 
   it("rejects an unknown sidebar key before checking authentication", async () => {
     mocks.createClient.mockResolvedValue(fakeSupabase({ user: null, authError: { message: "no session" } }));
-    const response = await GET(null, ctx("financial"));
+    const response = await GET(null, ctx("not-a-real-sidebar"));
     expect(response.status).toBe(400);
+  });
+
+  it("accepts the financial sidebar key, reusing the same table/shape as rental-manager", async () => {
+    const supabase = fakeSupabase({ fromResult: { data: { hidden_item_ids: ["assets"] }, error: null } });
+    mocks.createClient.mockResolvedValue(supabase);
+    const response = await GET(null, ctx("financial"));
+    expect(response.status).toBe(200);
+    expect((await response.json()).hiddenItemIds).toEqual(["assets"]);
   });
 
   it("requires authentication", async () => {
@@ -110,5 +118,13 @@ describe("PATCH /api/preferences/sidebar/[sidebarKey]", () => {
   it("surfaces a 500 when the upsert itself fails", async () => {
     mocks.createClient.mockResolvedValue(fakeSupabase({ fromResult: { data: null, error: { message: "boom" } } }));
     expect((await PATCH(patchRequest({ hiddenItemIds: ["support"] }), ctx("rental-manager"))).status).toBe(500);
+  });
+
+  it("upserts under the financial sidebar key, isolated from rental-manager", async () => {
+    const supabase = fakeSupabase({ user: { id: "user-42" } });
+    mocks.createClient.mockResolvedValue(supabase);
+    const response = await PATCH(patchRequest({ hiddenItemIds: ["assets"] }), ctx("financial"));
+    expect(response.status).toBe(200);
+    expect(supabase.builder.upsertedWith).toMatchObject({ user_id: "user-42", sidebar_key: "financial", hidden_item_ids: ["assets"] });
   });
 });
