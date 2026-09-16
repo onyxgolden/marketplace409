@@ -98,6 +98,26 @@ function displayCategory(category) {
     .join(" ");
 }
 
+// Shared by the "recent transactions" preview AND the full-history account-activity view (see
+// allScopeTransactionPresentations below) -- both need the same display shape
+// (categoryLabel/isIncome/pre-formatted amount) that FinancialTransactionsSurface actually
+// renders, which raw financial-event objects don't have on their own. financialAccountId is
+// preserved (unlike the raw event's other internal fields) specifically so account-activity
+// filtering still works after this mapping.
+function presentTransaction(transaction) {
+  return {
+    id: transaction.id,
+    description: transaction.description,
+    eventDate: transaction.eventDate,
+    propertyName: displayPropertyName(transaction.propertyId),
+    amount: portfolioMoney(transaction.amount),
+    isIncome: transaction.transactionKind === "income",
+    categoryLabel: displayCategory(transaction.category),
+    sourceSystem: transaction.sourceSystem,
+    financialAccountId: transaction.financialAccountId,
+  };
+}
+
 export default function FinancialPage() {
   const [viewModel, setViewModel] = useState(
     ForgeFinancialDashboardApplication.buildLoadingModel(),
@@ -382,21 +402,16 @@ export default function FinancialPage() {
   );
 
   const recentTransactionPresentations =
-    recentTransactions.map((transaction) => ({
-      id: transaction.id,
-      description: transaction.description,
-      eventDate: transaction.eventDate,
-      propertyName: displayPropertyName(
-        transaction.propertyId,
-      ),
-      amount: portfolioMoney(transaction.amount),
-      isIncome:
-        transaction.transactionKind === "income",
-      categoryLabel: displayCategory(
-        transaction.category,
-      ),
-      sourceSystem: transaction.sourceSystem,
-    }));
+    recentTransactions.map(presentTransaction);
+
+  // The account-activity feature (clicking a leaf account row) needs every transaction for that
+  // account, latest to oldest -- not the 8-item, current-period-only recentTransactions slice
+  // above. allScopeTransactions is the full, unscoped history, but in its raw event shape;
+  // present it the same way so FinancialTransactionsSurface renders it correctly either way.
+  const allScopeTransactionPresentations = useMemo(
+    () => allScopeTransactions.map(presentTransaction),
+    [allScopeTransactions],
+  );
 
   return (
     <FinancialApplicationShell
@@ -455,6 +470,9 @@ export default function FinancialPage() {
       }
       allScopeTransactions={
         allScopeTransactions
+      }
+      allScopeTransactionPresentations={
+        allScopeTransactionPresentations
       }
       accounts={accounts}
       statusItems={statusItems}

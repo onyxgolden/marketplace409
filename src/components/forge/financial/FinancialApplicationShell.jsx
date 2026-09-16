@@ -68,6 +68,7 @@ export function buildFinancialActiveSurface({
   categories,
   transactions,
   allScopeTransactions,
+  allScopeTransactionPresentations,
   accounts,
   statusItems,
   activities,
@@ -137,9 +138,11 @@ export function buildFinancialActiveSurface({
       // Clicking a leaf (non-rolled-up) account row in the Accounts panel replaces this right-hand
       // column with that account's own activity -- every financial_events row carrying its id,
       // newest first -- instead of the normal overview stack. onClearSelectedAccount (the surface's
-      // own "Back to overview" control) is how you get back.
+      // own "Back to overview" control) is how you get back. Filters allScopeTransactionPresentations
+      // (already shaped for FinancialTransactionsSurface -- categoryLabel/isIncome/formatted amount),
+      // NOT raw allScopeTransactions, which FinancialForgeOverviewPanel below still needs unshaped.
       const selectedAccountTransactions = selectedAccountId
-        ? (allScopeTransactions || [])
+        ? (allScopeTransactionPresentations || [])
             .filter((event) => event.financialAccountId === selectedAccountId)
             .sort((a, b) => String(b.eventDate || "").localeCompare(String(a.eventDate || "")))
         : [];
