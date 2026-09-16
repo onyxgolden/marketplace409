@@ -1,4 +1,8 @@
 "use client";
+import { useState } from "react";
+import { SlidersHorizontal } from "lucide-react";
+import { useSidebarHiddenItems } from "./useSidebarHiddenItems";
+import SidebarCustomizePopover from "./SidebarCustomizePopover";
 
 export function normalizeApplicationFunctions(
   functions,
@@ -61,17 +65,39 @@ export default function ApplicationShell({
   onFunctionChange,
   utility = null,
   activeSurface,
+  sidebarKey = null,
 }) {
   const normalizedFunctions =
     normalizeApplicationFunctions(
       functions,
     );
 
+  // The first function is this application's landing view and can never be hidden -- same rule as
+  // Rental Manager's "Overview" group, just applied by position instead of by label, since a flat
+  // functions list (Financial, Property) has no named "Overview" group of its own to key off of.
+  const homeId = normalizedFunctions[0]?.id ?? null;
+
+  // Inert (no fetch, no persistence, hiddenItemIds always empty) when sidebarKey is falsy, so this
+  // filter is a true no-op for any ApplicationShell caller that doesn't opt in -- zero behavior
+  // change for Property, which passes no sidebarKey at all.
+  const sidebarPrefs = useSidebarHiddenItems(sidebarKey);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const visibleFunctions = normalizedFunctions.filter(
+    (item) => item.id === homeId || !sidebarPrefs.hiddenItemIds.has(item.id),
+  );
+
+  // Resolved against the FULL function list, not the hidden-filtered one, so a direct/deep link to
+  // an item the user has hidden from the nav still renders its content -- hiding only removes it
+  // from the picker, it never breaks a link someone already has.
   const resolvedActiveFunctionId =
     resolveActiveFunction(
       normalizedFunctions,
       activeFunctionId,
     );
+
+  const hideableSections = sidebarKey
+    ? [Object.freeze({ sectionLabel: null, items: normalizedFunctions.filter((item) => item.id !== homeId) })]
+    : [];
 
   return (
     <section
@@ -110,13 +136,34 @@ export default function ApplicationShell({
             )}
           </div>
 
-          {normalizedFunctions.length >
+          {visibleFunctions.length >
             0 && (
             <nav
               aria-label={`${applicationName} functions`}
-              className="mt-4 flex max-w-full gap-2 overflow-x-auto pb-1"
+              className="mt-4 flex max-w-full items-center gap-2 overflow-x-auto pb-1"
             >
-              {normalizedFunctions.map(
+              {sidebarKey && (
+                <div className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setCustomizeOpen((current) => !current)}
+                    aria-haspopup="dialog"
+                    aria-expanded={customizeOpen}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2.5 text-[11px] font-black uppercase tracking-[0.08em] text-slate-500 hover:border-slate-300 hover:text-slate-950 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-white"
+                  >
+                    <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
+                    <span>Customize</span>
+                  </button>
+                  {customizeOpen && (
+                    <SidebarCustomizePopover
+                      sections={hideableSections}
+                      sidebarPrefs={sidebarPrefs}
+                      onClose={() => setCustomizeOpen(false)}
+                    />
+                  )}
+                </div>
+              )}
+              {visibleFunctions.map(
                 (item) => {
                   const active =
                     item.id ===

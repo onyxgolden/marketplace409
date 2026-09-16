@@ -176,5 +176,10 @@ describe(
         );
       },
     );
+
+    it("does not pass a sidebarKey, so ApplicationShell renders no Customize control -- Property is unaffected by the customizable-sidebar feature", () => {
+      const markup = renderFunction("valuations");
+      expect(markup).not.toContain("Customize");
+    });
   },
 );
