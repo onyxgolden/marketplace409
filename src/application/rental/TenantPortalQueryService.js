@@ -31,7 +31,7 @@ export class TenantPortalQueryService {
       .eq("owner_id", tenantRow.owner_id).in("id", leaseIds).order("start_date", { ascending: false });
     if (leaseError) throw leaseError;
     const rentals = await Promise.all((leases || []).map(async (leaseRow) => {
-      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult, autopayResult, animalResult] = await Promise.all([
+      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult, autopayResult, animalResult, leasePreparationResult, leaseRosterResult] = await Promise.all([
         this.supabase.from("rental_units").select("*").eq("owner_id", tenantRow.owner_id).eq("id", leaseRow.unit_id).maybeSingle(),
         this.supabase.from("rent_schedules").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("effective_start_date", { ascending: false }),
         this.supabase.from("rent_charges").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("due_date", { ascending: false }),
@@ -50,8 +50,17 @@ export class TenantPortalQueryService {
         this.supabase.from("rental_autopay_enrollments").select("id, status, payment_method_type, charge_day, retry_limit, reminder_days_before, consented_at, cancelled_at")
           .eq("owner_id",tenantRow.owner_id).eq("lease_id",leaseRow.id).eq("tenant_id",tenantRow.id).order("created_at",{ascending:false}),
         this.supabase.from("rental_animals").select("id, name, breed_description, classification, approval_status").eq("owner_id",tenantRow.owner_id).eq("lease_id",leaseRow.id).eq("tenant_id",tenantRow.id).order("created_at",{ascending:false}),
+        // Only ever the currently approved preparation -- a draft or superseded one is never shown
+        // to a tenant (matches rental_lease_preparation_version_tenant_select's own RLS gate).
+        this.supabase.from("rental_lease_preparations").select("*")
+          .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).eq("status", "approved").maybeSingle(),
+        // Unfiltered by tenant_id -- rental_lease_tenants_tenant_select's RLS already lets any
+        // tenant on this lease see the full roster, needed to know how many signatures are
+        // outstanding, not just this tenant's own.
+        this.supabase.from("rental_lease_tenants").select("tenant_id, rental_tenants(display_name)")
+          .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id),
       ]);
-      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult, autopayResult,animalResult])
+      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult, autopayResult,animalResult, leasePreparationResult, leaseRosterResult])
         if (result.error) throw result.error;
       const depositIds = (depositResult.data || []).map(({ id }) => id);
       let depositTransactions = [];
@@ -66,6 +75,23 @@ export class TenantPortalQueryService {
         this.supabase.from("rental_inspection_items").select("*").eq("owner_id",tenantRow.owner_id).in("inspection_id",inspectionIds).order("created_at",{ascending:true}),
         this.supabase.from("rental_inspection_acknowledgements").select("*").eq("owner_id",tenantRow.owner_id).eq("tenant_id",tenantRow.id).in("inspection_id",inspectionIds)]);
         if(itemResult.error)throw itemResult.error;if(ackResult.error)throw ackResult.error;inspectionItems=itemResult.data||[];inspectionAcknowledgements=ackResult.data||[];}
+      const preparationRow = leasePreparationResult.data;
+      let leaseVersionTerms = null; let leaseChangeSummary = null; let leaseSignatures = [];
+      if (preparationRow) {
+        const [versionResult, signatureResult] = await Promise.all([
+          this.supabase.from("rental_lease_preparation_versions").select("terms, change_summary")
+            .eq("owner_id", tenantRow.owner_id).eq("preparation_id", preparationRow.id)
+            .eq("version_number", preparationRow.approved_version).maybeSingle(),
+          this.supabase.from("rental_lease_signatures").select("tenant_id, signer_name, signed_at")
+            .eq("owner_id", tenantRow.owner_id).eq("preparation_id", preparationRow.id)
+            .eq("version_number", preparationRow.approved_version),
+        ]);
+        if (versionResult.error) throw versionResult.error;
+        if (signatureResult.error) throw signatureResult.error;
+        leaseVersionTerms = versionResult.data?.terms ?? null;
+        leaseChangeSummary = versionResult.data?.change_summary ?? null;
+        leaseSignatures = signatureResult.data || [];
+      }
       const workUpdateResult=await this.supabase.rpc("load_rental_maintenance_work_updates",{p_lease_id:leaseRow.id});
       if(workUpdateResult.error)throw workUpdateResult.error;const maintenanceWorkOrders=workUpdateResult.data||[];
       const membershipRows = (memberships || []).filter(({ lease_id }) => lease_id === leaseRow.id);
@@ -104,7 +130,24 @@ export class TenantPortalQueryService {
           items:Object.freeze(inspectionItems.filter(item=>item.inspection_id===row.id).map(item=>Object.freeze({id:item.id,area:item.area,
             component:item.component,conditionRating:item.condition_rating,notes:item.notes,damageObserved:item.damage_observed,
             depositReviewRecommended:item.deposit_review_recommended,estimatedCostCents:item.estimated_cost_cents===null?null:Number(item.estimated_cost_cents),evidenceDocumentId:item.evidence_document_id}))),
-          acknowledged:inspectionAcknowledgements.some(item=>item.inspection_id===row.id)}))) });
+          acknowledged:inspectionAcknowledgements.some(item=>item.inspection_id===row.id)}))),
+        leaseSigning: preparationRow ? Object.freeze({
+          preparationId: preparationRow.id,
+          versionNumber: preparationRow.approved_version,
+          approvedAt: preparationRow.approved_at,
+          terms: leaseVersionTerms,
+          changeSummary: leaseChangeSummary,
+          signedByMe: leaseSignatures.some((row) => row.tenant_id === tenantRow.id),
+          mySignedAt: leaseSignatures.find((row) => row.tenant_id === tenantRow.id)?.signed_at ?? null,
+          totalTenants: (leaseRosterResult.data || []).length,
+          signatures: Object.freeze(leaseSignatures.map((row) => Object.freeze({
+            tenantId: row.tenant_id,
+            signerName: row.signer_name,
+            signedAt: row.signed_at,
+            displayName: (leaseRosterResult.data || []).find((member) => member.tenant_id === row.tenant_id)?.rental_tenants?.display_name ?? row.signer_name,
+          }))),
+        }) : null,
+      });
     }));
     return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, rentals: Object.freeze(rentals) });
   }

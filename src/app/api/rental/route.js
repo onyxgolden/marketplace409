@@ -22,7 +22,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, autopayResult, insurancePolicyResult, insuranceRequirementResult, animalResult, supportResult, financialEventResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, leaseSignatureResult, autopayResult, insurancePolicyResult, insuranceRequirementResult, animalResult, supportResult, financialEventResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type, related_charge_id")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -60,6 +60,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_maintenance_work_events").select("*").order("occurred_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_lease_preparations").select("*").order("updated_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_lease_preparation_versions").select("*").order("version_number",{ascending:false}),
+      authenticated.supabaseClient.from("rental_lease_signatures").select("id, lease_id, preparation_id, version_number, tenant_id, signer_name, signed_at").order("signed_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_autopay_enrollments").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("renters_insurance_policies").select("*").order("expiration_date",{ascending:true}),
       // Whether renter's insurance is even required for a given lease -- distinct from the policies
@@ -81,7 +82,7 @@ export async function GET() {
         columns: "event_date, amount, transaction_kind, source_system, status, is_deleted, business_scope",
       }).then((data) => ({ data, error: null })).catch((caught) => ({ data: null, error: caught })),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || autopayResult.error || insurancePolicyResult.error || insuranceRequirementResult.error || animalResult.error || supportResult.error || financialEventResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || leaseSignatureResult.error || autopayResult.error || insurancePolicyResult.error || insuranceRequirementResult.error || animalResult.error || supportResult.error || financialEventResult.error;
     if (error) throw error;
     const [unitsWithPhotos, tenantsWithPhotos] = await Promise.all([
       withPhotoUrls(authenticated.supabaseClient, unitsResult.data || []),
@@ -119,7 +120,7 @@ export async function GET() {
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
       depositTransactions: depositTransactionResult.data || [], inspections: inspectionResult.data || [],
       inspectionItems: inspectionItemResult.data || [], inspectionAcknowledgements: inspectionAckResult.data || [],
-      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],insuranceRequirements:insuranceRequirementResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],financialEvents:financialEventResult.data||[] });
+      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],leaseSignatures:leaseSignatureResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],insuranceRequirements:insuranceRequirementResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],financialEvents:financialEventResult.data||[] });
   } catch (error) {
     console.error("Rental Manager query error", error);
     return NextResponse.json({ error: "Unable to load open rent charges." }, { status: 500 });
