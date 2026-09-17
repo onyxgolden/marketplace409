@@ -30,6 +30,16 @@ vi.mock("../FinancialLoanToolsPanel", () => ({
   default: function MockTools() { return <section data-tools-function>Loan tools</section>; },
 }));
 
+// The real component is a JSX-in-.js file (Next.js compiles it fine; vitest's default esbuild
+// transform only JSX-parses .jsx/.tsx) -- mocked here rather than reconfiguring the shared vitest
+// transform for one file. Keeps the exact heading text FinancialWelcomeOnboarding's own tests check
+// for, so this stand-in is indistinguishable from the real card for those assertions.
+vi.mock("@/components/forge/StripeFinancialConnectionsButton", () => ({
+  default: function MockStripeConnect() {
+    return <section data-stripe-connect-function>Secure Bank Connection</section>;
+  },
+}));
+
 vi.mock(
   "../FinancialExecutiveIntelligence",
   () => ({
@@ -357,6 +367,47 @@ describe(
         act(() => { mounted.container.querySelector('[data-account-balance-row="acct-bank"] button').dispatchEvent(new MouseEvent("click", { bubbles: true })); });
         expect(mounted.container.querySelector("[data-transactions-function]")).toBeNull();
         expect(mounted.container.querySelector("[data-financial-forge-overview]")).not.toBeNull();
+      });
+
+      it("\"Import a CSV instead\" switches to the Import function", async () => {
+        vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ success: true, accounts: [], assets: [] }) })));
+        const onFunctionChange = vi.fn();
+        mounted = mount(
+          <FinancialApplicationShell activeFunctionId="overview" loadState="ready" accounts={[]} onFunctionChange={onFunctionChange} />,
+        );
+        await flush();
+
+        const importLink = Array.from(mounted.container.querySelectorAll("button")).find((button) => button.textContent === "Import a CSV instead");
+        expect(importLink).toBeTruthy();
+        act(() => { importLink.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+        expect(onFunctionChange).toHaveBeenCalledWith("import");
+      });
+    });
+
+    describe("welcome onboarding for a workspace with zero accounts", () => {
+      it("shows the welcome screen, and hides the normal overview panels and KPI header, only once loaded with genuinely zero accounts", () => {
+        const markup = renderToStaticMarkup(
+          <FinancialApplicationShell activeFunctionId="overview" loadState="ready" accounts={[]} />,
+        );
+        expect(markup).toContain("Welcome to Financial FORGE");
+        expect(markup).toContain("Secure Bank Connection"); // the embedded Stripe connect card
+        expect(markup).not.toContain("data-financial-forge-overview");
+        expect(markup).not.toContain("data-financial-workspace-header");
+      });
+
+      it("never shows the welcome screen while still loading, even with zero accounts so far -- that's an in-progress load, not a confirmed-empty workspace", () => {
+        const markup = renderToStaticMarkup(
+          <FinancialApplicationShell activeFunctionId="overview" loadState="loading" accounts={[]} />,
+        );
+        expect(markup).not.toContain("Welcome to Financial FORGE");
+      });
+
+      it("never shows the welcome screen once at least one real account exists", () => {
+        const markup = renderToStaticMarkup(
+          <FinancialApplicationShell activeFunctionId="overview" loadState="ready" accounts={[{ id: "acct-1" }]} />,
+        );
+        expect(markup).not.toContain("Welcome to Financial FORGE");
       });
     });
   },

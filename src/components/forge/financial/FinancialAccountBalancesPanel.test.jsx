@@ -58,11 +58,35 @@ describe("FinancialAccountBalancesPanel", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders nothing when there are no eligible accounts, assets, or investment accounts", async () => {
-    stubFetch();
+  it("still renders the panel with a manual \"+ Add account\" entry point when there are no eligible accounts, assets, or investment accounts -- not nothing at all", async () => {
+    const fetchMock = stubFetch();
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
-    expect(mounted.container.querySelector("[data-financial-account-balances]")).toBeNull();
+
+    const panel = mounted.container.querySelector("[data-financial-account-balances]");
+    expect(panel).not.toBeNull();
+    expect(panel.textContent).toContain("No accounts yet.");
+
+    const addButton = Array.from(panel.querySelectorAll("button")).find((button) => button.textContent === "+ Add account");
+    expect(addButton).toBeTruthy();
+    act(() => { addButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    const nameInput = panel.querySelector("input[placeholder='Account name']");
+    const dollarsInput = panel.querySelector("input[placeholder='0.00']");
+    expect(nameInput).not.toBeNull();
+    expect(dollarsInput).not.toBeNull();
+    act(() => {
+      setter.call(nameInput, "New Checking");
+      nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(dollarsInput, "500");
+      dollarsInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const form = panel.querySelector("form");
+    await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/financial/accounts", expect.objectContaining({ method: "POST" }));
   });
 
   it("shows a read-only row with provider attribution for a synced (non-manual) account", async () => {
