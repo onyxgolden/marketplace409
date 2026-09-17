@@ -2,6 +2,113 @@
 
 ## Last Updated
 
+2026-09-17T~14:45Z — Claude Code (Sonnet 5). **Extends the 2026-09-07 reconciliation below through
+PR #204** (plus PR #164, merged just after) — that entry itself is now the same kind of stale it was
+written to fix. `TASKS.md`'s own Completed table has been updated in place with the detail (new
+consolidated rows, oldest low-value rows trimmed to stay at its stated 20-row cap); this entry is
+the pointer, not a re-narration, same discipline as every entry below.
+
+**RV-MULTIUSER-DASHBOARD is resolved, not still the primary unclaimed assignment.** The prior entry
+(further down) says it remains open as of 2026-09-07. Verified directly (not inferred from title):
+PR #87's spec authorized hardening multi-user RV/cabin access first, THEN building the dashboard.
+PR #150 (audit-attribution forgery fix + RLS/grant closure) and PR #173 (anonymous-privilege
+revocation) did the access hardening; PR #177's own body confirms the dashboard itself — "read-only
+RV/cabin operations dashboard... show active/available/occupied/blocked inventory, complete-period
+occupancy, upcoming arrivals/departures, monthly occupancy, and expected revenue by inventory type."
+Removed from `TASKS.md`'s Ready table; a new `RV-BOOKING-PAYMENTS` row replaces it — the reservation
+system's payment paths (RV-E2A–E2D) are complete but PR #181 is explicit its Stripe PaymentIntent
+creation is "test-mode-only, card-only," so going live is unclaimed follow-on work, not yet scoped.
+
+**Everything else merged to `main` in this window** (PRs #135–#204, plus #164 — see `TASKS.md`'s
+Completed table for the consolidated rows and exact PR ranges, `git log --oneline faded26c1..HEAD`
+on `main` for the full raw list):
+- Full RV/cabin reservation system (RV-A through RV-E2D): lifecycle, calendar, public guest
+  booking, guest agreements, financial contracts, test-mode Stripe payment initiation/application,
+  settlement/refund/dispute/payout reconciliation, and a post-confirmation modify fix that had been
+  resending price and tripping the DB's own immutability guard on every edit.
+- SCHED-20/21: atomic non-destructive board persistence; blackout windows wired into the CPM
+  engine, with live holidays/hammock anchors and backward-compatible day-precision sync.
+- Stripe Financial Connections became the live banking-data provider for Financial FORGE, plus a
+  durable per-account/per-feature refresh-work state machine and an account-group dedup model.
+- Private Financing production hardening: mobile-verified borrower onboarding, a real
+  payment-chain integration proof that surfaced and fixed a live reporting bug, automatic
+  payment-due reminders.
+- FORGE Trading: product-decision groundwork (TR-0 through TR-1F, no code), then TR-1F-A's actual
+  zero-cost synthetic market-data foundation (reserved fictional `XSYN` exchange, 12 synthetic
+  instruments, scenario generator, look-ahead-safe replay — explicitly no order engine, UI, or
+  real/live data yet, per its own phase boundary).
+- Financial data integrity: a 100x chart-inflation unit-conversion bug; the dashboard's IndexedDB
+  cache fixed to actually background-refresh a stale hit instead of never refreshing again (a
+  regression — cache hit rendered last-known data and returned, no refetch ever fired);
+  `financial_account_id` backfilled for Plaid/Stripe transactions that only ever had it in
+  `metadata` (broke every synced account's click-through detail, fixed + 212-row production
+  backfill); a welcome/connect-accounts screen for a workspace with zero accounts.
+- Disabled-by-default, privacy-safe PostHog analytics foundation plus explicit consent controls.
+
+**Two stale open PRs closed as superseded, not reconciled**, since rebasing either would mean
+re-reversing an already-shipped, deliberate decision:
+- PR #5 ("hold mixed Simplifi accounts for review," blocking behavior) — superseded same-day
+  (2026-08-24) by commit `db12e7a1f`, which deliberately imports mixed-account rows as personal
+  instead of blocking them, per PDR-021/022 in `docs/product/FORGE_PRODUCT_DECISIONS.md`: the
+  review queue is a first-class state, not an error path, and every classification stays
+  owner-editable — import-then-correct over block-then-review.
+- PR #1 (Vercel-auto-generated `@vercel/analytics` draft, 2026-06-04, 1600+ commits stale) —
+  superseded by the PostHog foundation above (PRs #169/#170), a different, deliberate analytics
+  choice.
+
+**What this entry does NOT cover**: the ~65 individual PRs in this window were triaged by title and,
+where a claim mattered, by reading the actual PR body — but not every single one was opened. Treat
+`TASKS.md`'s Completed rows and `git log` as the ground truth for any specific PR's detail this
+entry doesn't spell out, same as every prior entry in this file already asks.
+
+2026-09-07T~00:00Z — Claude Code (Sonnet 5). **Reconciliation entry, ported onto a fresh branch off
+`origin/main` rather than editing `chore/agent-handoff` directly** — this branch's own local
+worktree (`.claude/worktrees/agent-handoff`) had an unrelated stale, uncommitted, never-finished
+edit sitting in its index (a partial rewrite dated ~2026-08-23, older than this branch's own
+already-merged history), so this update was authored from a clean worktree checked out fresh from
+this branch's current remote tip instead of building on top of that leftover state. That local
+worktree's uncommitted changes were left untouched, not committed or discarded — whoever owns that
+session should decide what to do with it.
+
+**Targeted correction, not a full resync** — the note directly below (2026-09-05, Forge Brain
+clarification) was already accurate about section E stopping at SCHED-11; it is now further stale.
+**SCHED-12 through SCHED-19 have since shipped and merged to `main`**: Primavera P6 `.xer` export
+(SCHED-12/13), Microsoft Project XML export (SCHED-14/15), Excel task-list import/export
+(SCHED-18, new `exceljs` dependency), and cost codes (PO#/WO#) with a filterable cost rollup
+(SCHED-19) — plus three toolbar/UX cleanup PRs and one production hotfix (PR #130, a
+`ReferenceError` crash on every Gantt-block click, shipped same-day as SCHED-19 and caught live in
+production, not by any pre-existing test). See `git log --oneline --all --grep="SCHED-"` on `main`
+and PRs #119-#133 for the authoritative current state; not re-narrated in full here for the same
+reason the 2026-09-05 entry gave — this doc drifting from git truth on a topic git already answers
+completely is exactly what made itself necessary again.
+
+**A repo-wide `no-undef` ESLint rule was added (PR #132) after that hotfix**, scoped to `.js`/`.jsx`
+(TypeScript files rely on `tsc` for this instead) — the audit that motivated it also found and fixed
+one unrelated pre-existing bug of the same class in the Property domain
+(`PropertyConditionAssessmentPanel.jsx`, PR #133): its "record" workflow referenced six handler
+functions and a variable that were never actually defined in scope, crashing on the first
+interaction. Not a Scheduling issue; flagged here only because the same audit technique (temporarily
+forcing `no-undef` on, verifying it actually reproduces the exact original error before trusting a
+fix) is worth reusing whenever a future session suspects a similar "referenced but never wired"
+bug elsewhere in the app.
+
+**FORGE Health correction** (this doc has never described Health; recorded here because it was
+found stale on the *other* turnover doc, `docs/architecture/FORGE_STATUS.md`, while investigating
+this reconciliation): that file's "2026-09-02 Turnover Checkpoint" section says Health is "not
+merged, migrated, or deployed" as of 2026-09-02. That is no longer true — PR #91 merged Health to
+`main` that same day (2026-09-02T23:30:31Z) and Health work continued through at least PR #108.
+**What git cannot confirm**: whether every Health migration has actually been applied to the
+Production Supabase database — `supabase migration list` against Production is the only way to
+verify that, and no session has run it recently enough to cite a result here. Corrected directly in
+`FORGE_STATUS.md` in a separate, small documentation PR rather than folded into a Scheduling-focused
+handoff update.
+
+**RV multi-user operations remains the primary unclaimed product assignment** — the spec/assignment
+(`docs(handoff): assign RV multi-user operations dashboard slice`, PR #87, and its
+FORGE_STATUS.md/FORGE_SESSION.md/FORGE_ENGINEERING_CONTROL_CENTER.md queue entries) is merged, but
+no subsequent dashboard/access implementation appears anywhere in mainline history since. Still real,
+still queued, still nobody's picked it up.
+
 2026-09-05T~22:00Z — Claude Code (Sonnet 5). **This entry is a targeted correction, not a full
 resync** — the Scheduling P6-parity narrative below (section E) stops at SCHED-02 and is now stale;
 SCHED-03 through SCHED-11 have since shipped and merged (all Gantt-blocks-only, CPM/baselines/
