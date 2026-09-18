@@ -40,9 +40,11 @@ function normalizedCategoryFromLabel(label) {
     .replace(/^_+|_+$/g, "");
 }
 
-// This panel only ever shows/edits the household's own spending -- a business_scope selector is a
-// later feature, not this one (see the budgeting API routes' own BUSINESS_SCOPE constant).
+// Personal and business are two fully separate budgets, not one combined view -- rental income
+// isn't grocery money, and a repair bill shouldn't compete with personal categories for
+// "unassigned" dollars. Switching scope reloads everything from scratch for that scope.
 export default function BudgetPanel() {
+  const [scope, setScope] = useState("personal"); // "personal" | "business"
   const [status, setStatus] = useState("loading"); // "loading" | "available" | "schema-unavailable" | "error"
   const [errorMessage, setErrorMessage] = useState("");
   const [lines, setLines] = useState([]);
@@ -65,8 +67,8 @@ export default function BudgetPanel() {
     setStatus("loading");
     setErrorMessage("");
     return Promise.all([
-      fetch(`/api/budgeting/plan?month=${month}`).then((response) => response.json().then((payload) => ({ response, payload }))),
-      fetch(`/api/budgeting/suggestions?month=${month}`).then((response) => response.json().then((payload) => ({ response, payload }))),
+      fetch(`/api/budgeting/plan?month=${month}&scope=${scope}`).then((response) => response.json().then((payload) => ({ response, payload }))),
+      fetch(`/api/budgeting/suggestions?month=${month}&scope=${scope}`).then((response) => response.json().then((payload) => ({ response, payload }))),
     ])
       .then(([planResult, suggestionsResult]) => {
         for (const { response, payload } of [planResult, suggestionsResult]) {
@@ -91,7 +93,7 @@ export default function BudgetPanel() {
       .finally(() => {
         requestInFlight.current = false;
       });
-  }, [month]);
+  }, [month, scope]);
 
   useEffect(() => {
     load();
@@ -161,7 +163,7 @@ export default function BudgetPanel() {
       fetch("/api/budgeting/categories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ normalizedCategory, displayLabel, sourceType }),
+        body: JSON.stringify({ normalizedCategory, displayLabel, sourceType, businessScope: scope }),
       })
         .then((response) => response.json().then((payload) => ({ response, payload })))
         .then(({ response, payload }) => {
@@ -172,7 +174,7 @@ export default function BudgetPanel() {
         .catch((addError) => setErrorMessage(addError.message))
         .finally(() => setAddingCategory(null));
     },
-    [load],
+    [load, scope],
   );
 
   const renameCategory = useCallback(
@@ -235,11 +237,37 @@ export default function BudgetPanel() {
       aria-label="Budget"
       className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900"
     >
-      <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Money</p>
-      <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Budget — {monthLabel(month)}</h2>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Money</p>
+          <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Budget — {monthLabel(month)}</h2>
+        </div>
+        <div role="tablist" aria-label="Budget scope" className="flex rounded-xl border border-slate-300 p-1 dark:border-slate-600">
+          {[
+            { value: "personal", label: "Personal" },
+            { value: "business", label: "Business" },
+          ].map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="tab"
+              aria-selected={scope === option.value}
+              onClick={() => setScope(option.value)}
+              className={`rounded-lg px-4 py-1.5 text-sm font-bold transition ${FOCUS_RING} ${
+                scope === option.value
+                  ? `${goldControlClassName}`
+                  : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-400">
-        Set your own planned amount for each category. Suggestions are based on your last 3 months of spending — you
-        always choose the final number.
+        {scope === "personal"
+          ? "Set your own planned amount for each category. Suggestions are based on your last 3 months of spending — you always choose the final number."
+          : "Your rental/business income and expenses, kept separate from personal spending. Same suggestion and planning tools, scoped to the business."}
       </p>
 
       {status === "loading" ? (

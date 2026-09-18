@@ -6,12 +6,10 @@ import { SupabaseFinancialEventRepository } from "@/domains/financial-event/Supa
 import { computeCategorySuggestion, addMonths } from "@/domains/budgeting/budgetSuggestion";
 import { groupEventsByCategory } from "@/domains/budgeting/groupEventsByCategory";
 import { resolveCategoryDisplayLabel } from "@/domains/budgeting/categoryDisplayLabel";
+import { parseBudgetScope } from "@/domains/budgeting/parseBudgetScope";
 
 const MONTH_PATTERN = /^\d{4}-\d{2}$/;
 const LOOKBACK_MONTHS = 3;
-// v1 only ever suggests against the household's own spending -- a business_scope selector is a
-// later feature, not this one.
-const BUSINESS_SCOPE = "personal";
 
 // Returns one suggestion per category that has at least one expense event in the lookback window --
 // there is no fixed master category list to enumerate against, so a category with zero history in
@@ -25,6 +23,10 @@ export async function GET(request) {
   if (!month || !MONTH_PATTERN.test(month)) {
     return NextResponse.json({ error: "A valid month (YYYY-MM) is required." }, { status: 400 });
   }
+  const businessScope = parseBudgetScope(searchParams);
+  if (businessScope === null) {
+    return NextResponse.json({ error: "scope must be 'personal' or 'business'." }, { status: 400 });
+  }
 
   const sinceMonth = addMonths(month, -LOOKBACK_MONTHS);
   const sinceDate = `${sinceMonth}-01`;
@@ -35,7 +37,7 @@ export async function GET(request) {
   try {
     events = await repository.findExpenseEventsSince({
       ownerId: authenticated.effectiveOwnerId,
-      businessScope: BUSINESS_SCOPE,
+      businessScope,
       sinceDate,
     });
   } catch (error) {

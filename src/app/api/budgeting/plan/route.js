@@ -5,9 +5,9 @@ import { budgetingSchemaUnavailableResponse } from "@/lib/supabase/budgetingSche
 import { SupabaseFinancialEventRepository } from "@/domains/financial-event/SupabaseFinancialEventRepository";
 import { addMonths } from "@/domains/budgeting/budgetSuggestion";
 import { resolveCategoryDisplayLabel } from "@/domains/budgeting/categoryDisplayLabel";
+import { parseBudgetScope } from "@/domains/budgeting/parseBudgetScope";
 
 const MONTH_PATTERN = /^\d{4}-\d{2}$/;
-const BUSINESS_SCOPE = "personal";
 
 // Joins the caller's own budget categories against that month's planned allocation (if any) and
 // actual spend so far this month (summed live from financial_events -- this schema stores no
@@ -21,11 +21,15 @@ export async function GET(request) {
   if (!month || !MONTH_PATTERN.test(month)) {
     return NextResponse.json({ error: "A valid month (YYYY-MM) is required." }, { status: 400 });
   }
+  const businessScope = parseBudgetScope(searchParams);
+  if (businessScope === null) {
+    return NextResponse.json({ error: "scope must be 'personal' or 'business'." }, { status: 400 });
+  }
 
   const categoriesResult = await authenticated.supabaseClient
     .from("budget_categories")
     .select("*")
-    .eq("business_scope", BUSINESS_SCOPE)
+    .eq("business_scope", businessScope)
     .eq("is_archived", false);
 
   if (categoriesResult.error && isMissingRemoteSchemaError(categoriesResult.error)) return budgetingSchemaUnavailableResponse();
@@ -52,12 +56,12 @@ export async function GET(request) {
             .in("category_id", categoryIds),
       financialEventRepository.findExpenseEventsSince({
         ownerId: authenticated.effectiveOwnerId,
-        businessScope: BUSINESS_SCOPE,
+        businessScope,
         sinceDate: monthStart,
       }),
       financialEventRepository.findIncomeEventsSince({
         ownerId: authenticated.effectiveOwnerId,
-        businessScope: BUSINESS_SCOPE,
+        businessScope,
         sinceDate: monthStart,
       }),
     ]);
