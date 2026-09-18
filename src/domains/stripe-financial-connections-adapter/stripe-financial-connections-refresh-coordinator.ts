@@ -70,7 +70,13 @@ export type AccountBalanceRepositoryLike = {
 };
 
 export type FinancialEventImportServiceLike = {
-  import(input: unknown): Promise<{ importedFinancialEventCount: number; failedFinancialEventCount: number }>;
+  import(input: unknown, options?: { businessScope?: string | null }): Promise<{ importedFinancialEventCount: number; failedFinancialEventCount: number }>;
+};
+
+// Duck-typed against SupabaseFinancialAccountRepository.findById -- only what this coordinator
+// needs to look up an account's business/personal classification before importing its transactions.
+export type FinancialAccountRepositoryLike = {
+  findById(id: string): Promise<{ businessScope?: string | null } | null>;
 };
 
 export type ProcessFinancialConnectionsRefreshInput = Readonly<{
@@ -107,6 +113,7 @@ export function createStripeFinancialConnectionsRefreshCoordinator(deps: {
   refreshRepository: FinancialAccountRefreshRepositoryLike;
   accountBalanceRepository: AccountBalanceRepositoryLike;
   financialEventImportService: FinancialEventImportServiceLike;
+  financialAccountRepository: FinancialAccountRepositoryLike;
 }) {
   async function processRefresh(
     input: ProcessFinancialConnectionsRefreshInput,
@@ -229,7 +236,11 @@ async function persistBalance(
 }
 
 async function persistTransactions(
-  deps: { stripeClient: StripeFinancialConnectionsClient; financialEventImportService: FinancialEventImportServiceLike },
+  deps: {
+    stripeClient: StripeFinancialConnectionsClient;
+    financialEventImportService: FinancialEventImportServiceLike;
+    financialAccountRepository: FinancialAccountRepositoryLike;
+  },
   input: ProcessFinancialConnectionsRefreshInput,
   state: Awaited<ReturnType<typeof retrieveFinancialConnectionsAccount>>,
   transactionRefreshAfter: string | undefined,
@@ -268,7 +279,13 @@ async function persistTransactions(
     readyForFinancialEventImport: true as const,
   };
 
-  const result = await deps.financialEventImportService.import(financialEventImportInput);
+  // Already classified when this account was first imported (see
+  // FinancialAccountImportService.persistFinancialAccounts) -- read here rather than reclassified,
+  // so a future manual override on the account is honored by every subsequent refresh automatically.
+  const financialAccount = await deps.financialAccountRepository.findById(input.financialAccountId);
+  const result = await deps.financialEventImportService.import(financialEventImportInput, {
+    businessScope: financialAccount?.businessScope ?? null,
+  });
   if (result.failedFinancialEventCount > 0) {
     throw new Error(`${result.failedFinancialEventCount} financial event(s) failed to import.`);
   }

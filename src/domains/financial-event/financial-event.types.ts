@@ -34,6 +34,14 @@ export type ResolvedFinancialEventInput = {
   // (Rentec, QuickBooks, manual entry), which correctly leaves financial_account_id null.
   financialAccountId?: string | null;
 
+  // The owning financial_account's business/personal classification (see
+  // classifyAccountBusinessScope.ts), threaded through by the connection-import pipeline
+  // (financial-event-import.service.ts) so it's set explicitly instead of falling through to
+  // financial_events.business_scope's DB default of 'business'. Absent for sources that have no
+  // per-account concept (Rentec, QuickBooks, manual entry, Simplifi CSV), which already set/manage
+  // their own business_scope independently.
+  businessScope?: string | null;
+
   metadata?: Record<string, unknown> | null;
 };
 
@@ -43,6 +51,8 @@ export type FinancialEvent = Entity & {
 
   property_id?: string | null;
   financial_account_id?: string | null;
+
+  business_scope?: string | null;
 
   event_date: string;
 

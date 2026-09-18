@@ -71,6 +71,7 @@ export class FinancialEventImportService {
 
   async import(
     input: FinancialEventImportInput,
+    options: { businessScope?: string | null } = {},
   ): Promise<FinancialEventImportResult> {
     if (!input.readyForFinancialEventImport) {
       throw new Error("Transaction import result is not ready for financial event import");
@@ -78,7 +79,7 @@ export class FinancialEventImportService {
 
     const financialEvents = await Promise.all(
       input.transactions.map((transaction) =>
-        this.toFinancialEvent(transaction),
+        this.toFinancialEvent(transaction, options.businessScope ?? null),
       ),
     );
 
@@ -90,7 +91,7 @@ export class FinancialEventImportService {
     return toFinancialEventImportResult(input, persistedFinancialEvents);
   }
 
-  private async toFinancialEvent(transaction: Transaction): Promise<FinancialEvent> {
+  private async toFinancialEvent(transaction: Transaction, businessScope: string | null): Promise<FinancialEvent> {
     const semanticDescription =
       transaction.merchantName ??
       transaction.description;
@@ -115,6 +116,7 @@ export class FinancialEventImportService {
       knowledge: this.normalizer.normalize(semanticDescription),
       sourceSystem: "transaction",
       sourceRecordId: transaction.id,
+      businessScope,
       // Promoted to the actual financial_events.financial_account_id column (see
       // financial-event.factory.ts) -- previously only written into metadata, which left the
       // column itself null for every Plaid/Stripe-synced event and silently broke the
