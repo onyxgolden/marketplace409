@@ -21,11 +21,13 @@ export class TenantPortalQueryService {
     if (billingSettingsError) throw billingSettingsError;
     const billingEnabled = billingSettingsRow?.billing_enabled === true;
 
+    const conversation = await this.loadConversation(tenantRow);
+
     const { data: memberships, error: membershipError } = await this.supabase.from("rental_lease_tenants")
       .select("owner_id, lease_id, tenant_id").eq("owner_id", tenantRow.owner_id).eq("tenant_id", tenantRow.id);
     if (membershipError) throw membershipError;
     const leaseIds = (memberships || []).map(({ lease_id }) => lease_id);
-    if (leaseIds.length === 0) return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, rentals: Object.freeze([]) });
+    if (leaseIds.length === 0) return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, conversation, rentals: Object.freeze([]) });
 
     const { data: leases, error: leaseError } = await this.supabase.from("rental_leases").select("*")
       .eq("owner_id", tenantRow.owner_id).in("id", leaseIds).order("start_date", { ascending: false });
@@ -149,6 +151,29 @@ export class TenantPortalQueryService {
         }) : null,
       });
     }));
-    return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, rentals: Object.freeze(rentals) });
+    return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, conversation, rentals: Object.freeze(rentals) });
+  }
+
+  // One continuous conversation with the owner (not per-lease) -- messaging is a tenant<->owner
+  // relationship, and a tenant on multiple leases still has just one thread. hasUnread is derived
+  // from what the OWNER most recently sent that the TENANT hasn't read yet -- never the reverse.
+  async loadConversation(tenantRow) {
+    const { data: conversationRow, error: conversationError } = await this.supabase.from("rental_conversations")
+      .select("id, last_message_at, last_message_sender_type, tenant_last_read_at")
+      .eq("owner_id", tenantRow.owner_id).eq("tenant_id", tenantRow.id).maybeSingle();
+    if (conversationError) throw conversationError;
+    if (!conversationRow) return Object.freeze({ messages: Object.freeze([]), hasUnread: false });
+    const { data: messageRows, error: messageError } = await this.supabase.from("rental_conversation_messages")
+      .select("id, sender_type, body, category, created_at")
+      .eq("owner_id", tenantRow.owner_id).eq("conversation_id", conversationRow.id).order("created_at", { ascending: true });
+    if (messageError) throw messageError;
+    const hasUnread = conversationRow.last_message_sender_type === "owner"
+      && (!conversationRow.tenant_last_read_at || conversationRow.tenant_last_read_at < conversationRow.last_message_at);
+    return Object.freeze({
+      messages: Object.freeze((messageRows || []).map((row) => Object.freeze({
+        id: row.id, senderType: row.sender_type, body: row.body, category: row.category, createdAt: row.created_at,
+      }))),
+      hasUnread,
+    });
   }
 }

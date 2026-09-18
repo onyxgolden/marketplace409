@@ -116,4 +116,56 @@ describe("tenant portal route", () => {
       expect(body.error).toBe("Only the currently approved lease version can be signed.");
     });
   });
+
+  describe("send-message", () => {
+    it("sends a tenant message with an optional category", async () => {
+      rpc.mockResolvedValue({ data: { conversationId: "conversation_1", messageId: "m1" }, error: null });
+      const response = await POST(new Request("https://example.test/api/rental/portal", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "send-message", body: "The heater is not working.", category: "issue" }),
+      }));
+      expect(response.status).toBe(200);
+      expect(rpc).toHaveBeenCalledWith("send_rental_conversation_tenant_message", { p_body: "The heater is not working.", p_category: "issue" });
+    });
+
+    it("sends a message with no category when none is given", async () => {
+      rpc.mockResolvedValue({ data: { conversationId: "conversation_1", messageId: "m1" }, error: null });
+      const response = await POST(new Request("https://example.test/api/rental/portal", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "send-message", body: "Just saying thanks!" }),
+      }));
+      expect(response.status).toBe(200);
+      expect(rpc).toHaveBeenCalledWith("send_rental_conversation_tenant_message", { p_body: "Just saying thanks!", p_category: null });
+    });
+
+    it("rejects an empty message body before calling the database", async () => {
+      const response = await POST(new Request("https://example.test/api/rental/portal", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "send-message", body: "   " }),
+      }));
+      expect(response.status).toBe(400);
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid category before calling the database", async () => {
+      const response = await POST(new Request("https://example.test/api/rental/portal", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "send-message", body: "Hello", category: "not-real" }),
+      }));
+      expect(response.status).toBe(400);
+      expect(rpc).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("mark-conversation-read", () => {
+    it("marks the tenant's own conversation read", async () => {
+      rpc.mockResolvedValue({ data: null, error: null });
+      const response = await POST(new Request("https://example.test/api/rental/portal", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "mark-conversation-read" }),
+      }));
+      expect(response.status).toBe(200);
+      expect(rpc).toHaveBeenCalledWith("mark_rental_conversation_read_by_tenant");
+    });
+  });
 });

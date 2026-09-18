@@ -50,7 +50,7 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
 
 describe("RentalApplicationShell", () => {
   it("offers the complete first-tenant operating functions", () => {
-    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "renewal", "setup", "tenants", "leases", "reservable-inventory", "reservation-dashboard", "reservations", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "private-financing", "maintenance", "inspections", "insurance", "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support", "rentec-migration", "rentec-files"]);
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(["overview", "guide", "readiness", "renewal", "setup", "tenants", "leases", "reservable-inventory", "reservation-dashboard", "reservations", "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import", "financial-setup", "deposits", "reports", "private-financing", "maintenance", "inspections", "insurance", "documents", "communications", "messages", "lease-lifecycle", "lease-preparation", "autopay", "animals", "support", "rentec-migration", "rentec-files"]);
   });
   it("renders an exception-first summary in grouped navigation", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);

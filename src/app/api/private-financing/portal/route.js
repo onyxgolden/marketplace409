@@ -289,5 +289,61 @@ export async function GET(request) {
       } : null,
     });
   }
-  return NextResponse.json({ success: true, email: user.email, invitedEmail, mismatched, accounts, claim: claim.data || null });
+
+  // Messaging is a borrower<->owner relationship, not per-loan -- a borrower with several accounts
+  // under the same owner still has just one conversation covering all of them. Deduped by
+  // (owner_id, borrower_id) since memberships.data can carry the same pair once per account.
+  const borrowerOwnerPairs = [...new Map((memberships.data || [])
+    .map((membership) => [`${membership.owner_id}:${membership.borrower_id}`, { ownerId: membership.owner_id, borrowerId: membership.borrower_id }]))
+    .values()];
+  const conversations = [];
+  for (const { ownerId, borrowerId } of borrowerOwnerPairs) {
+    const conversationResult = await db.from("private_financing_conversations")
+      .select("id, last_message_at, last_message_sender_type, borrower_last_read_at")
+      .eq("owner_id", ownerId).eq("borrower_id", borrowerId).maybeSingle();
+    if (conversationResult.error) continue;
+    const conversationRow = conversationResult.data;
+    if (!conversationRow) { conversations.push({ ownerId, borrowerId, messages: [], hasUnread: false }); continue; }
+    const messagesResult = await db.from("private_financing_conversation_messages")
+      .select("id, sender_type, body, category, created_at")
+      .eq("owner_id", ownerId).eq("conversation_id", conversationRow.id).order("created_at", { ascending: true });
+    const hasUnread = conversationRow.last_message_sender_type === "owner"
+      && (!conversationRow.borrower_last_read_at || conversationRow.borrower_last_read_at < conversationRow.last_message_at);
+    conversations.push({
+      ownerId, borrowerId,
+      messages: (messagesResult.data || []).map((row) => ({
+        id: row.id, senderType: row.sender_type, body: row.body, category: row.category, createdAt: row.created_at,
+      })),
+      hasUnread,
+    });
+  }
+
+  return NextResponse.json({ success: true, email: user.email, invitedEmail, mismatched, accounts, conversations, claim: claim.data || null });
+}
+
+export async function POST(request) {
+  const db = await createClient();
+  const { data: { user } } = await db.auth.getUser();
+  if (!user?.id) return NextResponse.json({ error: "Sign in to send a message." }, { status: 401 });
+  const body = await request.json().catch(() => ({}));
+  if (body?.operation === "send-message") {
+    if (typeof body.body !== "string" || !body.body.trim())
+      return NextResponse.json({ error: "A message body is required." }, { status: 400 });
+    if (body.category !== undefined && body.category !== null && !["issue", "suggestion"].includes(body.category))
+      return NextResponse.json({ error: "category must be \"issue\", \"suggestion\", or omitted." }, { status: 400 });
+    // ownerId is only needed to disambiguate a borrower with more than one owner relationship
+    // (see the migration's own comment on send_pf_conversation_borrower_message) -- omitted, the
+    // RPC resolves cleanly whenever exactly one relationship exists.
+    const { data, error } = await db.rpc("send_pf_conversation_borrower_message", {
+      p_body: body.body.trim(), p_category: body.category || null, p_owner_id: body.ownerId || null,
+    });
+    if (error) return NextResponse.json({ error: "Unable to send this message." }, { status: 500 });
+    return NextResponse.json({ success: true, message: data });
+  }
+  if (body?.operation === "mark-conversation-read") {
+    const { error } = await db.rpc("mark_pf_conversation_read_by_borrower", { p_owner_id: body.ownerId || null });
+    if (error) return NextResponse.json({ error: "Unable to mark this conversation as read." }, { status: 500 });
+    return NextResponse.json({ success: true });
+  }
+  return NextResponse.json({ error: "A supported operation is required." }, { status: 400 });
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import PrivateFinancingBorrowerPayment from "./PrivateFinancingBorrowerPayment";
 import PrivateFinancingBorrowerProgress from "./PrivateFinancingBorrowerProgress";
+import PrivateFinancingBorrowerMessages from "./PrivateFinancingBorrowerMessages";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const dollars = (cents) => money.format(Number(cents || 0) / 100);
@@ -126,6 +127,7 @@ export default function PrivateFinancingBorrowerPortal() {
           </ol>
         </section>
       ))}
+      {state.data.accounts.length > 0 ? <PrivateFinancingBorrowerMessages conversations={state.data.conversations || []} onChanged={loadPortal} /> : null}
     </main>
   );
 }

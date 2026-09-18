@@ -54,6 +54,17 @@ export async function POST(request) {
       });
       if(error)throw error;return NextResponse.json({success:true,signature:data});
     }
+    if(body?.operation==="send-message"){
+      if(typeof body.body!=="string"||!body.body.trim())return NextResponse.json({error:"A message body is required."},{status:400});
+      if(body.category!==undefined&&body.category!==null&&!["issue","suggestion"].includes(body.category))
+        return NextResponse.json({error:"category must be \"issue\", \"suggestion\", or omitted."},{status:400});
+      const{data,error}=await authenticated.supabaseClient.rpc("send_rental_conversation_tenant_message",{p_body:body.body.trim(),p_category:body.category||null});
+      if(error)throw error;return NextResponse.json({success:true,message:data});
+    }
+    if(body?.operation==="mark-conversation-read"){
+      const{error}=await authenticated.supabaseClient.rpc("mark_rental_conversation_read_by_tenant");
+      if(error)throw error;return NextResponse.json({success:true});
+    }
     if (body?.operation !== "submit-maintenance-request")
       return NextResponse.json({ error: "A supported tenant portal operation is required." }, { status: 400 });
     if (typeof body.leaseId !== "string" || body.leaseId.trim() === "")
