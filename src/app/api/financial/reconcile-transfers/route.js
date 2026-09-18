@@ -85,10 +85,14 @@ async function computePreview(supabaseClient, ownerId) {
     inbound: { ...describePair(pair.inboundId), businessScope: pair.inboundScope },
     outbound: { ...describePair(pair.outboundId), businessScope: pair.outboundScope },
   }));
+  // entry.side tells whether eventId is the inbound or outbound leg -- an ambiguous row can be
+  // either (e.g. an outbound-only transfer with no inbound counterpart at all in this owner's
+  // data), so this is never assumed to be inbound the way it was before this was made symmetric.
   const ambiguousTransfers = transferMatch.ambiguous.map((entry) => ({
-    ...describePair(entry.inboundId),
+    ...describePair(entry.eventId),
+    side: entry.side,
     reason: entry.reason,
-    candidates: entry.candidateOutboundIds.map((id) => describePair(id)),
+    candidates: entry.candidateIds.map((id) => describePair(id)),
   }));
 
   const totalDirectionFixAmountCents = directionFixes.reduce((total, entry) => total + Math.round(Math.abs(entry.amount) * 100), 0);

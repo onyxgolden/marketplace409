@@ -23,70 +23,103 @@ function daysBetween(dateA, dateB) {
   return Math.abs((new Date(dateA).getTime() - new Date(dateB).getTime()) / msPerDay);
 }
 
+function ambiguityReason(candidateCount) {
+  if (candidateCount === 0) return "no_candidates";
+  if (candidateCount > 1) return "multiple_candidates";
+  // Exactly one candidate on this row's own side, but the pairing still didn't confirm -- the
+  // candidate's own candidate list doesn't point back uniquely at this row (it's contended by, or
+  // itself ambiguous toward, some other row on the opposite side).
+  return "contended_counterparty";
+}
+
 // rows: pre-filtered to isInternalTransferDescription rows only, each
 // { id, eventDate, amount (raw signed dollars), businessScope }.
 // Direction comes from sign (verified 100% consistent across production data, see
 // correctRawBankFeedDirection.js): negative = this account received the money (inbound leg),
 // positive = this account sent the money (outbound leg).
 //
-// Same conservative pairing policy as reconcileTransactionDuplicates.js: exactly one opposite-sign,
-// same-amount, in-window candidate on the other side -> confirmed pair; zero, more than one, or a
-// row contended for by more than one counterparty -> ambiguous, never auto-resolved.
+// Matching is symmetric and conservative: a pair only confirms when each side is the OTHER side's
+// sole candidate (mutual uniqueness). Any row -- inbound or outbound -- left out of a confirmed
+// pair surfaces in `ambiguous`; none are silently dropped just because no inbound row happened to
+// claim them (an outbound-only row with zero inbound candidates is exactly as reportable as an
+// inbound row with zero outbound candidates).
 export function classifyTransferPairs({ rows, toleranceDays = 3 }) {
   if (!Array.isArray(rows)) throw new Error("rows must be an array");
   if (!Number.isFinite(toleranceDays) || toleranceDays < 0) throw new Error("toleranceDays must be a non-negative number");
 
   const inbound = rows.filter((row) => row.amount < 0);
   const outbound = rows.filter((row) => row.amount > 0);
+  const inboundById = new Map(inbound.map((row) => [row.id, row]));
+  const outboundById = new Map(outbound.map((row) => [row.id, row]));
 
-  const candidatesByInboundId = new Map();
+  const isWithinWindow = (a, b) => toCents(a.amount) === toCents(b.amount) && daysBetween(a.eventDate, b.eventDate) <= toleranceDays;
+
+  const inboundCandidates = new Map();
   for (const inRow of inbound) {
-    const cents = toCents(inRow.amount);
-    const candidates = outbound.filter((outRow) => toCents(outRow.amount) === cents && daysBetween(inRow.eventDate, outRow.eventDate) <= toleranceDays);
-    candidatesByInboundId.set(inRow.id, candidates);
+    inboundCandidates.set(inRow.id, outbound.filter((outRow) => isWithinWindow(inRow, outRow)));
   }
 
-  const tentativeMatchByInboundId = new Map();
-  for (const [inboundId, candidates] of candidatesByInboundId) {
-    if (candidates.length === 1) tentativeMatchByInboundId.set(inboundId, candidates[0]);
+  // Derived by inversion of inboundCandidates (the matching predicate is symmetric, so this is
+  // exactly the same relation viewed from the outbound side) rather than a second filter pass.
+  const outboundCandidates = new Map(outbound.map((outRow) => [outRow.id, []]));
+  for (const [inboundId, candidates] of inboundCandidates) {
+    for (const outRow of candidates) {
+      outboundCandidates.get(outRow.id).push(inboundById.get(inboundId));
+    }
   }
 
-  const claimantsByOutboundId = new Map();
-  for (const [inboundId, outRow] of tentativeMatchByInboundId) {
-    const claimants = claimantsByOutboundId.get(outRow.id) ?? [];
-    claimants.push(inboundId);
-    claimantsByOutboundId.set(outRow.id, claimants);
+  const confirmedInboundIds = new Set();
+  const confirmedOutboundIds = new Set();
+  const confirmedPairs = [];
+
+  for (const [inboundId, candidates] of inboundCandidates) {
+    if (candidates.length !== 1) continue;
+    const outRow = candidates[0];
+    const outboundSideCandidates = outboundCandidates.get(outRow.id);
+    // Mutual uniqueness: this outbound row must ALSO see exactly this one inbound row as its sole
+    // candidate. If it sees others too, it's contended -- confirm neither.
+    if (outboundSideCandidates.length !== 1) continue;
+    confirmedPairs.push(Object.freeze({ inboundId, outboundId: outRow.id }));
+    confirmedInboundIds.add(inboundId);
+    confirmedOutboundIds.add(outRow.id);
   }
-  const contendedOutboundIds = new Set([...claimantsByOutboundId.entries()].filter(([, claimants]) => claimants.length > 1).map(([id]) => id));
 
   const internalTransfers = [];
   const distributions = [];
-  const ambiguous = [];
-
-  for (const [inboundId, candidates] of candidatesByInboundId) {
-    const inRow = inbound.find((row) => row.id === inboundId);
-
-    if (candidates.length === 0) {
-      ambiguous.push(Object.freeze({ inboundId, candidateOutboundIds: Object.freeze([]), reason: "no_candidates" }));
-      continue;
-    }
-    if (candidates.length > 1) {
-      ambiguous.push(Object.freeze({ inboundId, candidateOutboundIds: Object.freeze(candidates.map((c) => c.id)), reason: "multiple_candidates" }));
-      continue;
-    }
-
-    const outRow = candidates[0];
-    if (contendedOutboundIds.has(outRow.id)) {
-      ambiguous.push(Object.freeze({ inboundId, candidateOutboundIds: Object.freeze([outRow.id]), reason: "contended_outbound_row" }));
-      continue;
-    }
-
-    const pair = Object.freeze({ inboundId, outboundId: outRow.id });
+  for (const pair of confirmedPairs) {
+    const inRow = inboundById.get(pair.inboundId);
+    const outRow = outboundById.get(pair.outboundId);
     if (inRow.businessScope === outRow.businessScope) {
       internalTransfers.push(pair);
     } else {
       distributions.push(Object.freeze({ ...pair, inboundScope: inRow.businessScope, outboundScope: outRow.businessScope }));
     }
+  }
+
+  const ambiguous = [];
+  for (const inRow of inbound) {
+    if (confirmedInboundIds.has(inRow.id)) continue;
+    const candidates = inboundCandidates.get(inRow.id);
+    ambiguous.push(
+      Object.freeze({
+        side: "inbound",
+        eventId: inRow.id,
+        candidateIds: Object.freeze(candidates.map((c) => c.id)),
+        reason: ambiguityReason(candidates.length),
+      }),
+    );
+  }
+  for (const outRow of outbound) {
+    if (confirmedOutboundIds.has(outRow.id)) continue;
+    const candidates = outboundCandidates.get(outRow.id);
+    ambiguous.push(
+      Object.freeze({
+        side: "outbound",
+        eventId: outRow.id,
+        candidateIds: Object.freeze(candidates.map((c) => c.id)),
+        reason: ambiguityReason(candidates.length),
+      }),
+    );
   }
 
   return Object.freeze({

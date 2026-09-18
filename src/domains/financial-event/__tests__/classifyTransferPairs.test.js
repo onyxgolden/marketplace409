@@ -50,10 +50,23 @@ describe("classifyTransferPairs", () => {
   test("leaves an inbound row with zero outbound candidates ambiguous", () => {
     const rows = [{ id: "in-1", eventDate: "2026-08-20", amount: -500, businessScope: "personal" }];
     const result = classifyTransferPairs({ rows });
-    expect(result.ambiguous).toEqual([{ inboundId: "in-1", candidateOutboundIds: [], reason: "no_candidates" }]);
+    expect(result.ambiguous).toEqual([{ side: "inbound", eventId: "in-1", candidateIds: [], reason: "no_candidates" }]);
   });
 
-  test("leaves an inbound row with multiple same-amount candidates ambiguous, resolving neither", () => {
+  // Regression test for the gap flagged during review: an outbound-only row with zero inbound
+  // candidates must surface in `ambiguous` too, not disappear silently. Before this fix,
+  // `ambiguous` was only ever populated by iterating inbound rows, so an outbound row nobody
+  // claimed was invisible in both the confirmed AND ambiguous buckets -- found against real
+  // production data as two real unmatched transfers ($5,000 and $30,000).
+  test("leaves an outbound row with zero inbound candidates ambiguous -- the exact silent-drop bug this fix closes", () => {
+    const rows = [{ id: "out-1", eventDate: "2026-08-21", amount: 30000, businessScope: "business" }];
+    const result = classifyTransferPairs({ rows });
+    expect(result.internalTransfers).toEqual([]);
+    expect(result.distributions).toEqual([]);
+    expect(result.ambiguous).toEqual([{ side: "outbound", eventId: "out-1", candidateIds: [], reason: "no_candidates" }]);
+  });
+
+  test("leaves an inbound row with multiple same-amount candidates ambiguous, and surfaces both contended outbound rows too", () => {
     const rows = [
       { id: "in-1", eventDate: "2026-08-20", amount: -500, businessScope: "personal" },
       { id: "out-1", eventDate: "2026-08-20", amount: 500, businessScope: "personal" },
@@ -62,12 +75,19 @@ describe("classifyTransferPairs", () => {
     const result = classifyTransferPairs({ rows });
     expect(result.internalTransfers).toEqual([]);
     expect(result.distributions).toEqual([]);
-    expect(result.ambiguous).toHaveLength(1);
-    expect(result.ambiguous[0].reason).toBe("multiple_candidates");
-    expect([...result.ambiguous[0].candidateOutboundIds].sort()).toEqual(["out-1", "out-2"]);
+    // All three rows are unresolved: in-1 (two candidates), and out-1/out-2 (each sees in-1 as its
+    // sole candidate, but that candidacy isn't mutual since in-1 itself has two candidates).
+    expect(result.ambiguous).toHaveLength(3);
+    const byId = Object.fromEntries(result.ambiguous.map((e) => [e.eventId, e]));
+    expect(byId["in-1"].reason).toBe("multiple_candidates");
+    expect([...byId["in-1"].candidateIds].sort()).toEqual(["out-1", "out-2"]);
+    expect(byId["out-1"].reason).toBe("contended_counterparty");
+    expect(byId["out-1"].candidateIds).toEqual(["in-1"]);
+    expect(byId["out-2"].reason).toBe("contended_counterparty");
+    expect(byId["out-2"].candidateIds).toEqual(["in-1"]);
   });
 
-  test("voids a contended outbound match for BOTH contending inbound rows, picks neither", () => {
+  test("voids a contended outbound match for both contending inbound rows AND surfaces the contended outbound row itself", () => {
     const rows = [
       { id: "in-1", eventDate: "2026-08-20", amount: -500, businessScope: "personal" },
       { id: "in-2", eventDate: "2026-08-21", amount: -500, businessScope: "personal" },
@@ -76,18 +96,25 @@ describe("classifyTransferPairs", () => {
     const result = classifyTransferPairs({ rows });
     expect(result.internalTransfers).toEqual([]);
     expect(result.distributions).toEqual([]);
-    const reasons = result.ambiguous.map((entry) => entry.reason).sort();
-    expect(reasons).toEqual(["contended_outbound_row", "contended_outbound_row"]);
+    expect(result.ambiguous).toHaveLength(3);
+    const byId = Object.fromEntries(result.ambiguous.map((e) => [e.eventId, e]));
+    expect(byId["in-1"].reason).toBe("contended_counterparty");
+    expect(byId["in-2"].reason).toBe("contended_counterparty");
+    expect(byId["out-1"].reason).toBe("multiple_candidates");
+    expect([...byId["out-1"].candidateIds].sort()).toEqual(["in-1", "in-2"]);
   });
 
-  test("respects the date tolerance window", () => {
+  test("respects the date tolerance window -- both sides end up ambiguous, neither silently dropped", () => {
     const rows = [
       { id: "out-1", eventDate: "2026-08-01", amount: 100, businessScope: "personal" },
       { id: "in-1", eventDate: "2026-08-10", amount: -100, businessScope: "personal" },
     ];
     const result = classifyTransferPairs({ rows, toleranceDays: 3 });
     expect(result.internalTransfers).toEqual([]);
-    expect(result.ambiguous).toEqual([{ inboundId: "in-1", candidateOutboundIds: [], reason: "no_candidates" }]);
+    expect(result.ambiguous).toHaveLength(2);
+    const byId = Object.fromEntries(result.ambiguous.map((e) => [e.eventId, e]));
+    expect(byId["in-1"]).toEqual({ side: "inbound", eventId: "in-1", candidateIds: [], reason: "no_candidates" });
+    expect(byId["out-1"]).toEqual({ side: "outbound", eventId: "out-1", candidateIds: [], reason: "no_candidates" });
   });
 
   test("compares amounts at cent precision, not exact float equality", () => {
@@ -97,6 +124,29 @@ describe("classifyTransferPairs", () => {
     ];
     const result = classifyTransferPairs({ rows });
     expect(result.internalTransfers).toEqual([{ inboundId: "in-1", outboundId: "out-1" }]);
+    expect(result.ambiguous).toEqual([]);
+  });
+
+  test("a mixed batch: confirmed pair, contended pair, and a lone unmatched outbound row are all classified correctly at once", () => {
+    const rows = [
+      // Clean confirmed pair.
+      { id: "out-clean", eventDate: "2026-05-01", amount: 200, businessScope: "personal" },
+      { id: "in-clean", eventDate: "2026-05-01", amount: -200, businessScope: "personal" },
+      // Contended: two inbound rows, one outbound candidate.
+      { id: "in-a", eventDate: "2026-06-01", amount: -700, businessScope: "personal" },
+      { id: "in-b", eventDate: "2026-06-02", amount: -700, businessScope: "personal" },
+      { id: "out-contended", eventDate: "2026-06-01", amount: 700, businessScope: "personal" },
+      // Lone, entirely unmatched outbound row -- the exact regression case.
+      { id: "out-lone", eventDate: "2026-08-21", amount: 30000, businessScope: "business" },
+    ];
+    const result = classifyTransferPairs({ rows });
+    expect(result.internalTransfers).toEqual([{ inboundId: "in-clean", outboundId: "out-clean" }]);
+    expect(result.distributions).toEqual([]);
+    const ambiguousIds = result.ambiguous.map((e) => e.eventId).sort();
+    expect(ambiguousIds).toEqual(["in-a", "in-b", "out-contended", "out-lone"]);
+    const outLone = result.ambiguous.find((e) => e.eventId === "out-lone");
+    expect(outLone.side).toBe("outbound");
+    expect(outLone.reason).toBe("no_candidates");
   });
 
   test("throws on invalid input", () => {
