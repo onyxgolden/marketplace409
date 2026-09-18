@@ -3,9 +3,13 @@
 ## Current Status
 
 Current Forge: Forge #25  
-Current Milestone: Milestone 5 — Financial Reporting
+Current Milestone: Milestone 5 — Financial Reporting (6 of 7 items complete; multi-period reporting remains)
+
+Milestone 6 work (budgets UI/API) is underway in parallel.
 
 Architecture is governed by `FORGE_CONSTITUTION.md`.
+
+Last verified against codebase: 2026-09-18.
 
 ---
 
@@ -70,32 +74,36 @@ Purpose: Build financial statements from services without embedding accounting l
 Completed:
 
 - FinancialReport base object
+- ReportLine (`src/domains/ledger/reports/ReportLine.js`)
+- TrialBalance report foundation (`TrialBalance.js` + `TrialBalanceBuilder.js`)
+- BalanceSheet foundation (`BalanceSheet.js` + `BalanceSheetBuilder.js` + `BalanceSheetSection.js`)
+- IncomeStatement foundation (`IncomeStatement.js` + `IncomeStatementBuilder.js`)
+- CashFlowStatement foundation (`CashFlowStatement.js` + `CashFlowStatementBuilder.js`)
+- Statement of Equity foundation (`StatementOfOwnersEquity.js`)
+- Report validation layer (`validation/FinancialReportValidator.js`)
+- Snapshot adapters (`SnapshotReportFactory.js`, `SnapshotToAccountBalanceCollectionAdapter.js`, `AccountRollupSnapshotCache.js`)
+
+All of the above ship with unit tests alongside the implementation.
 
 Planned:
 
-- ReportLine
-- TrialBalance report foundation
-- BalanceSheet foundation
-- IncomeStatement foundation
-- CashFlowStatement foundation
-- Statement of Equity foundation
 - Multi-period reporting
 
 ---
 
 ## Future Milestones
 
-### Milestone 6 — Budgets and Forecasting
+### Milestone 6 — Budgets and Forecasting 🚧 (in progress)
 
-- Budgets
-- Forecasts
-- Variance analysis
+- Budgets — in progress (`src/app/api/budgeting`, budget UI: table view, per-category notes, edit/delete, charts)
+- Forecasts — started (`src/domains/financial-intelligence/FinancialForecastService.js`)
+- Variance analysis — planned
 
 ### Milestone 7 — Project Cost Controls
 
 - Projects
 - Cost codes
-- WBS
+- WBS — started (scheduling WBS pages exist: `src/app/forge/scheduling/[projectId]/wbs/`)
 - Earned value
 - Forecast-to-complete
 
