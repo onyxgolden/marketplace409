@@ -82,6 +82,62 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
     );
   }
 
+  // Personal-budgeting suggestions read this: every expense event for one owner/scope from
+  // sinceDate forward. Unlike findByOwnerId, this filters at the query level (business_scope,
+  // transaction_kind, is_deleted, event_date) rather than returning everything for the caller to
+  // sift through -- the budgeting domain layer only ever needs expense rows in its lookback window.
+  async findExpenseEventsSince({ ownerId, businessScope, sinceDate }) {
+    if (!ownerId) {
+      throw new Error("Owner id is required");
+    }
+    if (!businessScope) {
+      throw new Error("Business scope is required");
+    }
+    if (!sinceDate) {
+      throw new Error("Since date is required");
+    }
+
+    const pageSize = 1000;
+    let offset = 0;
+    const rows = [];
+
+    while (true) {
+      const { data, error } = await this.supabaseClient
+        .from("financial_events")
+        .select("event_date, amount, normalized_category, description")
+        .eq("owner_id", ownerId)
+        .eq("business_scope", businessScope)
+        .eq("transaction_kind", "expense")
+        .eq("is_deleted", false)
+        .gte("event_date", sinceDate)
+        .order("event_date", { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) {
+        throw error;
+      }
+
+      rows.push(...(data ?? []));
+
+      if (!data || data.length < pageSize) {
+        break;
+      }
+
+      offset += pageSize;
+    }
+
+    return Object.freeze(
+      rows.map((row) =>
+        Object.freeze({
+          event_date: row.event_date,
+          amount: Number(row.amount),
+          normalized_category: row.normalized_category,
+          description: row.description,
+        }),
+      ),
+    );
+  }
+
   async count(ownerId) {
     if (!ownerId) {
       throw new Error("Owner id is required");

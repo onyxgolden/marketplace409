@@ -6,6 +6,7 @@ const query = {
   upsert: vi.fn(),
   select: vi.fn(),
   eq: vi.fn(),
+  gte: vi.fn(),
   order: vi.fn(),
   range: vi.fn(),
 };
@@ -62,12 +63,14 @@ describe("SupabaseFinancialEventRepository", () => {
     query.upsert.mockReset();
     query.select.mockReset();
     query.eq.mockReset();
+    query.gte.mockReset();
     query.order.mockReset();
     query.range.mockReset();
 
     query.upsert.mockReturnValue(query);
     query.select.mockReturnValue(query);
     query.eq.mockReturnValue(query);
+    query.gte.mockReturnValue(query);
     query.order.mockReturnValue(query);
   });
   test("persists canonical financial events", async () => {
@@ -391,5 +394,58 @@ describe("SupabaseFinancialEventRepository", () => {
     await expect(
       repository.saveMany([buildEvent()]),
     ).rejects.toBe(error);
+  });
+
+  test("finds expense events for an owner/scope since a given date", async () => {
+    query.range.mockResolvedValue({
+      data: [
+        {
+          event_date: "2026-08-10",
+          amount: "42.50",
+          normalized_category: "groceries",
+          description: "Grocery run",
+        },
+      ],
+      error: null,
+    });
+
+    const repository = new SupabaseFinancialEventRepository();
+    const result = await repository.findExpenseEventsSince({
+      ownerId: "owner-1",
+      businessScope: "personal",
+      sinceDate: "2026-06-01",
+    });
+
+    expect(query.select).toHaveBeenCalledWith("event_date, amount, normalized_category, description");
+    expect(query.eq).toHaveBeenCalledWith("owner_id", "owner-1");
+    expect(query.eq).toHaveBeenCalledWith("business_scope", "personal");
+    expect(query.eq).toHaveBeenCalledWith("transaction_kind", "expense");
+    expect(query.eq).toHaveBeenCalledWith("is_deleted", false);
+    expect(query.gte).toHaveBeenCalledWith("event_date", "2026-06-01");
+    expect(result).toEqual([
+      {
+        event_date: "2026-08-10",
+        amount: 42.5,
+        normalized_category: "groceries",
+        description: "Grocery run",
+      },
+    ]);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  test("requires owner id, business scope, and since date for findExpenseEventsSince", async () => {
+    const repository = new SupabaseFinancialEventRepository();
+
+    await expect(
+      repository.findExpenseEventsSince({ businessScope: "personal", sinceDate: "2026-06-01" }),
+    ).rejects.toThrow("Owner id is required");
+
+    await expect(
+      repository.findExpenseEventsSince({ ownerId: "owner-1", sinceDate: "2026-06-01" }),
+    ).rejects.toThrow("Business scope is required");
+
+    await expect(
+      repository.findExpenseEventsSince({ ownerId: "owner-1", businessScope: "personal" }),
+    ).rejects.toThrow("Since date is required");
   });
 });

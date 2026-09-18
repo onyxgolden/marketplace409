@@ -16,4 +16,8 @@ export class FinancialEventRepository {
   count() {
     throw new Error("FinancialEventRepository.count must be implemented");
   }
+
+  findExpenseEventsSince(_args) {
+    throw new Error("FinancialEventRepository.findExpenseEventsSince must be implemented");
+  }
 }
