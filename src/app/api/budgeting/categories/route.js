@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedBudgetingApplication } from "@/lib/supabase/createAuthenticatedBudgetingApplication";
 import { isMissingRemoteSchemaError } from "@/lib/supabase/isMissingRemoteSchemaError";
 import { budgetingSchemaUnavailableResponse } from "@/lib/supabase/budgetingSchemaUnavailableResponse";
+import { parseBudgetScope, isValidBudgetScope } from "@/domains/budgeting/parseBudgetScope";
 
 const SOURCE_TYPES = new Set(["manual", "history_suggested"]);
-const BUSINESS_SCOPE = "personal";
 
 function rowToCategory(row) {
   return {
@@ -19,14 +19,20 @@ function rowToCategory(row) {
 // RLS (budget_categories_owner_all -> has_workspace_access(owner_id)) scopes this to the caller's
 // own workspace with no separate .eq("owner_id", ...) filter needed, matching
 // /api/private-financing/accounts' own precedent.
-export async function GET() {
+export async function GET(request) {
   const authenticated = await createAuthenticatedBudgetingApplication();
   if (authenticated.response) return authenticated.response;
+
+  const { searchParams } = new URL(request.url);
+  const businessScope = parseBudgetScope(searchParams);
+  if (businessScope === null) {
+    return NextResponse.json({ error: "scope must be 'personal' or 'business'." }, { status: 400 });
+  }
 
   const result = await authenticated.supabaseClient
     .from("budget_categories")
     .select("*")
-    .eq("business_scope", BUSINESS_SCOPE)
+    .eq("business_scope", businessScope)
     .eq("is_archived", false)
     .order("display_label", { ascending: true });
 
@@ -44,21 +50,25 @@ export async function POST(request) {
   const normalizedCategory = typeof body.normalizedCategory === "string" ? body.normalizedCategory.trim() : "";
   const displayLabel = typeof body.displayLabel === "string" ? body.displayLabel.trim() : "";
   const sourceType = typeof body.sourceType === "string" ? body.sourceType : "manual";
+  const businessScope = typeof body.businessScope === "string" ? body.businessScope : "personal";
 
   if (!normalizedCategory || !displayLabel) {
     return NextResponse.json({ error: "normalizedCategory and displayLabel are required." }, { status: 400 });
   }
-  // Defense in depth -- the RPC's own CHECK constraint validates this too, but rejecting early
-  // avoids a round trip for the common case of a typo'd sourceType.
+  // Defense in depth -- the RPC's own CHECK constraint validates both of these too, but rejecting
+  // early avoids a round trip for the common case of a typo'd value.
   if (!SOURCE_TYPES.has(sourceType)) {
     return NextResponse.json({ error: "Unrecognized sourceType." }, { status: 400 });
+  }
+  if (!isValidBudgetScope(businessScope)) {
+    return NextResponse.json({ error: "businessScope must be 'personal' or 'business'." }, { status: 400 });
   }
 
   const { data, error } = await authenticated.supabaseClient.rpc("upsert_budget_category", {
     p_owner_id: authenticated.effectiveOwnerId,
     p_normalized_category: normalizedCategory,
     p_display_label: displayLabel,
-    p_business_scope: BUSINESS_SCOPE,
+    p_business_scope: businessScope,
     p_source_type: sourceType,
   });
 
