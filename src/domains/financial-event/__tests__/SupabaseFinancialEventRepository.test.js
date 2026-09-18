@@ -448,4 +448,57 @@ describe("SupabaseFinancialEventRepository", () => {
       repository.findExpenseEventsSince({ ownerId: "owner-1", businessScope: "personal" }),
     ).rejects.toThrow("Since date is required");
   });
+
+  test("finds income events for an owner/scope since a given date", async () => {
+    query.range.mockResolvedValue({
+      data: [
+        {
+          event_date: "2026-08-05",
+          amount: "3200.00",
+          normalized_category: "salary",
+          description: "Paycheck",
+        },
+      ],
+      error: null,
+    });
+
+    const repository = new SupabaseFinancialEventRepository();
+    const result = await repository.findIncomeEventsSince({
+      ownerId: "owner-1",
+      businessScope: "personal",
+      sinceDate: "2026-08-01",
+    });
+
+    expect(query.select).toHaveBeenCalledWith("event_date, amount, normalized_category, description");
+    expect(query.eq).toHaveBeenCalledWith("owner_id", "owner-1");
+    expect(query.eq).toHaveBeenCalledWith("business_scope", "personal");
+    expect(query.eq).toHaveBeenCalledWith("transaction_kind", "income");
+    expect(query.eq).toHaveBeenCalledWith("is_deleted", false);
+    expect(query.gte).toHaveBeenCalledWith("event_date", "2026-08-01");
+    expect(result).toEqual([
+      {
+        event_date: "2026-08-05",
+        amount: 3200,
+        normalized_category: "salary",
+        description: "Paycheck",
+      },
+    ]);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  test("requires owner id, business scope, and since date for findIncomeEventsSince", async () => {
+    const repository = new SupabaseFinancialEventRepository();
+
+    await expect(
+      repository.findIncomeEventsSince({ businessScope: "personal", sinceDate: "2026-06-01" }),
+    ).rejects.toThrow("Owner id is required");
+
+    await expect(
+      repository.findIncomeEventsSince({ ownerId: "owner-1", sinceDate: "2026-06-01" }),
+    ).rejects.toThrow("Business scope is required");
+
+    await expect(
+      repository.findIncomeEventsSince({ ownerId: "owner-1", businessScope: "personal" }),
+    ).rejects.toThrow("Since date is required");
+  });
 });

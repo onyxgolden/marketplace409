@@ -87,6 +87,16 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
   // transaction_kind, is_deleted, event_date) rather than returning everything for the caller to
   // sift through -- the budgeting domain layer only ever needs expense rows in its lookback window.
   async findExpenseEventsSince({ ownerId, businessScope, sinceDate }) {
+    return this.#findEventsSinceByKind({ ownerId, businessScope, sinceDate, transactionKind: "expense" });
+  }
+
+  // The zero-based budget summary reads this: every income event for one owner/scope from
+  // sinceDate forward, so "unassigned" can be computed as income minus total planned.
+  async findIncomeEventsSince({ ownerId, businessScope, sinceDate }) {
+    return this.#findEventsSinceByKind({ ownerId, businessScope, sinceDate, transactionKind: "income" });
+  }
+
+  async #findEventsSinceByKind({ ownerId, businessScope, sinceDate, transactionKind }) {
     if (!ownerId) {
       throw new Error("Owner id is required");
     }
@@ -107,7 +117,7 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
         .select("event_date, amount, normalized_category, description")
         .eq("owner_id", ownerId)
         .eq("business_scope", businessScope)
-        .eq("transaction_kind", "expense")
+        .eq("transaction_kind", transactionKind)
         .eq("is_deleted", false)
         .gte("event_date", sinceDate)
         .order("event_date", { ascending: true })
