@@ -18,10 +18,10 @@ function chainable(result) {
   return builder;
 }
 
-function fakeDb({ user, authError = null, claim = { data: { claimedIdentityCount: 0 }, error: null }, fromResults = {} }) {
+function fakeDb({ user, authError = null, claim = { data: { claimedIdentityCount: 0 }, error: null }, fromResults = {}, rpcResults = {} }) {
   return {
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user }, error: authError }) },
-    rpc: vi.fn().mockResolvedValue(claim),
+    rpc: vi.fn((name) => Promise.resolve(rpcResults[name] ?? (name === "claim_private_financing_borrower_portal" ? claim : { data: [], error: null }))),
     from: vi.fn((table) => chainable(fromResults[table] ?? { data: [], error: null })),
   };
 }
@@ -68,6 +68,101 @@ describe("GET private financing borrower portal", () => {
     const body = await response.json();
     expect(body.mismatched).toBe(false);
     expect(body.invitedEmail).toBeNull();
+  });
+
+  // Regression coverage for the "A payment is already pending for this account" dead end: a
+  // borrower who abandoned the Stripe Elements step (never confirmed) left a
+  // private_financing_online_payments row stuck at requires_payment_method forever, with no way
+  // back in. The portal must surface that row so the UI can offer "Resume payment" instead.
+  it("surfaces a resumable pending payment for an account so the borrower isn't dead-ended", async () => {
+    mocks.createClient.mockResolvedValue(fakeDb({
+      user: { id: "user-1", email: "borrower@example.com" },
+      fromResults: {
+        private_financing_borrowers: { data: [{ id: "borrower-1" }], error: null },
+        private_financing_account_borrowers: {
+          data: [{ account_id: "account-1", role: "primary_borrower", status: "active", owner_id: "owner-1", borrower_id: "borrower-1" }],
+          error: null,
+        },
+        private_financing_accounts: { data: { id: "account-1", product: "note", status: "active", opened_date: "2022-01-01", origination_principal_cents: 1000000 }, error: null },
+        private_financing_components: { data: [], error: null },
+        private_financing_account_terms_versions: { data: [{ version_number: 1, effective_date: "2022-01-01", regular_scheduled_payment_amount_cents: 51785 }], error: null },
+        private_financing_online_payment_settings: { data: { enabled: true }, error: null },
+        private_financing_online_payments: { data: { id: "pf_payment_1", status: "requires_payment_method", amount_cents: 51785 }, error: null },
+      },
+      rpcResults: {
+        read_private_financing_borrower_events: {
+          data: [{
+            id: "pay-1", ledger_sequence: 1, event_type: "payment_posted", amount_cents: 60000,
+            interest_paid_by_component_cents: { note: 10000 }, principal_remaining_by_component_cents: { note: 900000 },
+          }],
+          error: null,
+        },
+      },
+    }));
+    const response = await GET(request());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.accounts[0].pendingPayment).toEqual({ id: "pf_payment_1", status: "requires_payment_method", amountCents: 51785, resumable: true });
+  });
+
+  it("marks a processing pending payment as not resumable", async () => {
+    mocks.createClient.mockResolvedValue(fakeDb({
+      user: { id: "user-1", email: "borrower@example.com" },
+      fromResults: {
+        private_financing_borrowers: { data: [{ id: "borrower-1" }], error: null },
+        private_financing_account_borrowers: {
+          data: [{ account_id: "account-1", role: "primary_borrower", status: "active", owner_id: "owner-1", borrower_id: "borrower-1" }],
+          error: null,
+        },
+        private_financing_accounts: { data: { id: "account-1", product: "note", status: "active", opened_date: "2022-01-01", origination_principal_cents: 1000000 }, error: null },
+        private_financing_components: { data: [], error: null },
+        private_financing_account_terms_versions: { data: [{ version_number: 1, effective_date: "2022-01-01", regular_scheduled_payment_amount_cents: 51785 }], error: null },
+        private_financing_online_payment_settings: { data: { enabled: true }, error: null },
+        private_financing_online_payments: { data: { id: "pf_payment_2", status: "processing", amount_cents: 51785 }, error: null },
+      },
+      rpcResults: {
+        read_private_financing_borrower_events: {
+          data: [{
+            id: "pay-1", ledger_sequence: 1, event_type: "payment_posted", amount_cents: 60000,
+            interest_paid_by_component_cents: { note: 10000 }, principal_remaining_by_component_cents: { note: 900000 },
+          }],
+          error: null,
+        },
+      },
+    }));
+    const response = await GET(request());
+    const body = await response.json();
+    expect(body.accounts[0].pendingPayment).toEqual({ id: "pf_payment_2", status: "processing", amountCents: 51785, resumable: false });
+  });
+
+  it("reports no pending payment when none exists", async () => {
+    mocks.createClient.mockResolvedValue(fakeDb({
+      user: { id: "user-1", email: "borrower@example.com" },
+      fromResults: {
+        private_financing_borrowers: { data: [{ id: "borrower-1" }], error: null },
+        private_financing_account_borrowers: {
+          data: [{ account_id: "account-1", role: "primary_borrower", status: "active", owner_id: "owner-1", borrower_id: "borrower-1" }],
+          error: null,
+        },
+        private_financing_accounts: { data: { id: "account-1", product: "note", status: "active", opened_date: "2022-01-01", origination_principal_cents: 1000000 }, error: null },
+        private_financing_components: { data: [], error: null },
+        private_financing_account_terms_versions: { data: [{ version_number: 1, effective_date: "2022-01-01", regular_scheduled_payment_amount_cents: 51785 }], error: null },
+        private_financing_online_payment_settings: { data: { enabled: true }, error: null },
+        private_financing_online_payments: { data: null, error: null },
+      },
+      rpcResults: {
+        read_private_financing_borrower_events: {
+          data: [{
+            id: "pay-1", ledger_sequence: 1, event_type: "payment_posted", amount_cents: 60000,
+            interest_paid_by_component_cents: { note: 10000 }, principal_remaining_by_component_cents: { note: 900000 },
+          }],
+          error: null,
+        },
+      },
+    }));
+    const response = await GET(request());
+    const body = await response.json();
+    expect(body.accounts[0].pendingPayment).toBeNull();
   });
 });
 

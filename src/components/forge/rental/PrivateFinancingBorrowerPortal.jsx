@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import PrivateFinancingBorrowerPayment from "./PrivateFinancingBorrowerPayment";
 import PrivateFinancingBorrowerProgress from "./PrivateFinancingBorrowerProgress";
 
@@ -11,12 +11,12 @@ export default function PrivateFinancingBorrowerPortal() {
   const [state, setState] = useState({ loading: true });
   const [paying, setPaying] = useState(null);
 
-  useEffect(() => {
+  const loadPortal = useCallback(() => {
     // Forward this page's own query string (the invited ?email=, carried here from the invitation
     // link) so the API can compare it against whoever actually authenticated, even on a direct
     // reload of this URL rather than a fresh click from the invitation email.
     const search = typeof window !== "undefined" ? window.location.search : "";
-    fetch(`/api/private-financing/portal${search}`)
+    return fetch(`/api/private-financing/portal${search}`)
       .then(async (response) => ({ response, payload: await response.json() }))
       .then(({ response, payload }) => setState(response.ok ? { data: payload } : {
         error: payload.error,
@@ -27,6 +27,7 @@ export default function PrivateFinancingBorrowerPortal() {
       }))
       .catch(() => setState({ error: "Unable to load your financing account." }));
   }, []);
+  useEffect(() => { loadPortal(); }, [loadPortal]);
 
   if (state.loading) {
     return <main className="mx-auto max-w-5xl p-8"><p role="status">Loading your financing account…</p></main>;
@@ -68,7 +69,7 @@ export default function PrivateFinancingBorrowerPortal() {
             <p>No invitation matches this signed-in email.</p>
           )}
         </div>
-      ) : state.data.accounts.map(({ account, role, summary, events, regularScheduledPaymentCents, projection, progressAvailable = true, summaryAvailable = true, onlinePaymentsEnabled }) => (
+      ) : state.data.accounts.map(({ account, role, summary, events, regularScheduledPaymentCents, projection, progressAvailable = true, summaryAvailable = true, onlinePaymentsEnabled, pendingPayment }) => (
         <section key={account.id} className="mt-6 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
           <div className="flex justify-between gap-4">
             <h2 className="text-xl font-black">Financing account</h2>
@@ -104,9 +105,14 @@ export default function PrivateFinancingBorrowerPortal() {
 
           {!summaryAvailable ? null : onlinePaymentsEnabled ? (
             paying === account.id ? (
-              <PrivateFinancingBorrowerPayment accountId={account.id} regularScheduledPaymentCents={regularScheduledPaymentCents} onCancel={() => setPaying(null)} />
+              <PrivateFinancingBorrowerPayment accountId={account.id} regularScheduledPaymentCents={regularScheduledPaymentCents}
+                pendingPayment={pendingPayment} onCancel={() => { setPaying(null); loadPortal(); }} />
+            ) : pendingPayment && !pendingPayment.resumable ? (
+              <p className="mt-6 rounded-xl bg-slate-100 p-4 text-sm font-bold">A payment is currently processing for this account. Please check back shortly.</p>
             ) : (
-              <button onClick={() => setPaying(account.id)} className="mt-6 rounded-xl bg-amber-500 px-5 py-3 font-black">Make a payment</button>
+              <button onClick={() => setPaying(account.id)} className="mt-6 rounded-xl bg-amber-500 px-5 py-3 font-black">
+                {pendingPayment ? "Resume payment" : "Make a payment"}
+              </button>
             )
           ) : (
             <p className="mt-6 rounded-xl bg-slate-100 p-4 text-sm">Online payments are not currently active for this account.</p>
