@@ -4,6 +4,7 @@ import { isMissingRemoteSchemaError } from "@/lib/supabase/isMissingRemoteSchema
 import { budgetingSchemaUnavailableResponse } from "@/lib/supabase/budgetingSchemaUnavailableResponse";
 import { SupabaseFinancialEventRepository } from "@/domains/financial-event/SupabaseFinancialEventRepository";
 import { addMonths } from "@/domains/budgeting/budgetSuggestion";
+import { resolveCategoryDisplayLabel } from "@/domains/budgeting/categoryDisplayLabel";
 
 const MONTH_PATTERN = /^\d{4}-\d{2}$/;
 const BUSINESS_SCOPE = "personal";
@@ -78,16 +79,27 @@ export async function GET(request) {
   }
 
   // findIncomeEventsSince only has a lower bound too -- cap it to this month the same way.
-  const totalIncomeCents = incomeEvents.reduce(
-    (total, event) => (event.event_date >= nextMonthStart ? total : total + Math.round(event.amount * 100)),
-    0,
-  );
+  const incomeCentsByCategory = new Map();
+  for (const event of incomeEvents) {
+    if (event.event_date >= nextMonthStart) continue;
+    const current = incomeCentsByCategory.get(event.normalized_category) || 0;
+    incomeCentsByCategory.set(event.normalized_category, current + Math.round(event.amount * 100));
+  }
+  const totalIncomeCents = [...incomeCentsByCategory.values()].reduce((total, cents) => total + cents, 0);
+  const incomeByCategory = [...incomeCentsByCategory.entries()]
+    .map(([normalizedCategory, amountCents]) => ({
+      normalizedCategory,
+      displayLabel: resolveCategoryDisplayLabel(normalizedCategory),
+      amountCents,
+    }))
+    .sort((a, b) => b.amountCents - a.amountCents);
 
   const lines = categories
     .map((category) => ({
       categoryId: category.id,
       normalizedCategory: category.normalized_category,
       displayLabel: category.display_label,
+      note: category.note ?? null,
       plannedAmountCents: plannedByCategoryId.get(category.id) ?? null,
       actualAmountCents: actualCentsByCategory.get(category.normalized_category) || 0,
     }))
@@ -103,7 +115,7 @@ export async function GET(request) {
     unassignedCents: totalIncomeCents - totalPlannedCents,
   };
 
-  return NextResponse.json({ success: true, month, lines, summary });
+  return NextResponse.json({ success: true, month, lines, summary, incomeByCategory });
 }
 
 export async function POST(request) {

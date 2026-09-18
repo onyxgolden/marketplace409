@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { isSavingsOrInvestmentCategory } from "@/domains/budgeting/isSavingsOrInvestmentCategory";
 import { isDebtPayoffCategory } from "@/domains/budgeting/isDebtPayoffCategory";
+import BudgetPieChart from "@/components/forge/budget/BudgetPieChart";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToMoney = (cents) => (typeof cents === "number" ? money.format(cents / 100) : "—");
@@ -46,12 +47,14 @@ export default function BudgetPanel() {
   const [errorMessage, setErrorMessage] = useState("");
   const [lines, setLines] = useState([]);
   const [totalIncomeCents, setTotalIncomeCents] = useState(0);
+  const [incomeByCategory, setIncomeByCategory] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [savingCategoryId, setSavingCategoryId] = useState(null);
   const [addingCategory, setAddingCategory] = useState(null);
   const [renamingCategoryId, setRenamingCategoryId] = useState(null);
   const [removingCategoryId, setRemovingCategoryId] = useState(null);
+  const [savingNoteCategoryId, setSavingNoteCategoryId] = useState(null);
   const [manualLabel, setManualLabel] = useState("");
   const requestInFlight = useRef(false);
   const month = useMemo(() => currentMonth(), []);
@@ -76,6 +79,7 @@ export default function BudgetPanel() {
         setLines(planResult.payload.lines || []);
         setDrafts(draftsFromLines(planResult.payload.lines || []));
         setTotalIncomeCents(planResult.payload.summary?.totalIncomeCents ?? 0);
+        setIncomeByCategory(planResult.payload.incomeByCategory || []);
         setSuggestions(suggestionsResult.payload.categories || []);
         setStatus("available");
         return null;
@@ -117,6 +121,18 @@ export default function BudgetPanel() {
   const totalPlannedCents = useMemo(() => lines.reduce((total, line) => total + (line.plannedAmountCents ?? 0), 0), [lines]);
   const totalActualCents = useMemo(() => lines.reduce((total, line) => total + line.actualAmountCents, 0), [lines]);
   const unassignedCents = totalIncomeCents - totalPlannedCents;
+
+  const incomeChartEntries = useMemo(
+    () => incomeByCategory.map((entry) => ({ label: entry.displayLabel, valueCents: entry.amountCents })),
+    [incomeByCategory],
+  );
+  const plannedChartEntries = useMemo(
+    () =>
+      lines
+        .filter((line) => (line.plannedAmountCents ?? 0) > 0)
+        .map((line) => ({ label: line.displayLabel, valueCents: line.plannedAmountCents })),
+    [lines],
+  );
 
   const saveLine = useCallback(
     (categoryId) => {
@@ -174,6 +190,26 @@ export default function BudgetPanel() {
         })
         .catch((renameError) => setErrorMessage(renameError.message))
         .finally(() => setRenamingCategoryId(null));
+    },
+    [],
+  );
+
+  const saveNote = useCallback(
+    (categoryId, note) => {
+      setSavingNoteCategoryId(categoryId);
+      return fetch(`/api/budgeting/categories/${categoryId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note }),
+      })
+        .then((response) => response.json().then((payload) => ({ response, payload })))
+        .then(({ response, payload }) => {
+          if (!response.ok) throw new Error(payload.error || "Unable to save this note.");
+          const savedNote = payload.category?.note ?? null;
+          setLines((previous) => previous.map((line) => (line.categoryId === categoryId ? { ...line, note: savedNote } : line)));
+        })
+        .catch((noteError) => setErrorMessage(noteError.message))
+        .finally(() => setSavingNoteCategoryId(null));
     },
     [],
   );
@@ -249,6 +285,11 @@ export default function BudgetPanel() {
             unassignedCents={unassignedCents}
           />
 
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <BudgetPieChart title="Income by source" entries={incomeChartEntries} emptyHint="No categorized income recorded yet this month." />
+            <BudgetPieChart title="Planned by category" entries={plannedChartEntries} emptyHint="Set a planned amount on a category to see it here." />
+          </div>
+
           {unassignedCents > 0 && (debtPayoffSuggestions.length > 0 || savingsAndInvestmentSuggestions.length > 0) ? (
             <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-900/60 dark:bg-emerald-950/30">
               <p className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
@@ -282,23 +323,51 @@ export default function BudgetPanel() {
               </p>
             </div>
           ) : (
-            <ul className="mt-6 space-y-3">
-              {lines.map((line) => (
-                <BudgetLineRow
-                  key={line.categoryId}
-                  line={line}
-                  draft={drafts[line.categoryId] ?? ""}
-                  onDraftChange={(value) => setDrafts((previous) => ({ ...previous, [line.categoryId]: value }))}
-                  suggestion={suggestionByCategory.get(line.normalizedCategory) || null}
-                  onSave={() => saveLine(line.categoryId)}
-                  saving={savingCategoryId === line.categoryId}
-                  onRename={(displayLabel) => renameCategory(line.categoryId, displayLabel)}
-                  renaming={renamingCategoryId === line.categoryId}
-                  onRemove={() => removeCategory(line.categoryId)}
-                  removing={removingCategoryId === line.categoryId}
-                />
-              ))}
-            </ul>
+            <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
+              <table className="w-full min-w-[720px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-left dark:border-slate-700 dark:bg-slate-950/40">
+                    <th scope="col" className="px-4 py-2.5 font-bold text-slate-600 dark:text-slate-300">
+                      Category
+                    </th>
+                    <th scope="col" className="px-4 py-2.5 font-bold text-slate-600 dark:text-slate-300">
+                      Note
+                    </th>
+                    <th scope="col" className="px-4 py-2.5 text-right font-bold text-slate-600 dark:text-slate-300">
+                      Suggested
+                    </th>
+                    <th scope="col" className="px-4 py-2.5 text-right font-bold text-slate-600 dark:text-slate-300">
+                      Planned
+                    </th>
+                    <th scope="col" className="px-4 py-2.5 text-right font-bold text-slate-600 dark:text-slate-300">
+                      Actual
+                    </th>
+                    <th scope="col" className="px-4 py-2.5 font-bold text-slate-600 dark:text-slate-300">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {lines.map((line) => (
+                    <BudgetLineRow
+                      key={line.categoryId}
+                      line={line}
+                      draft={drafts[line.categoryId] ?? ""}
+                      onDraftChange={(value) => setDrafts((previous) => ({ ...previous, [line.categoryId]: value }))}
+                      suggestion={suggestionByCategory.get(line.normalizedCategory) || null}
+                      onSave={() => saveLine(line.categoryId)}
+                      saving={savingCategoryId === line.categoryId}
+                      onRename={(displayLabel) => renameCategory(line.categoryId, displayLabel)}
+                      renaming={renamingCategoryId === line.categoryId}
+                      onSaveNote={(note) => saveNote(line.categoryId, note)}
+                      savingNote={savingNoteCategoryId === line.categoryId}
+                      onRemove={() => removeCategory(line.categoryId)}
+                      removing={removingCategoryId === line.categoryId}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           {everydaySuggestions.length > 0 ? (
@@ -431,7 +500,7 @@ function WhereToPutMoneyGroup({ heading, entries, addingCategory, onAdd }) {
   );
 }
 
-function BudgetLineRow({ line, draft, onDraftChange, suggestion, onSave, saving, onRename, renaming, onRemove, removing }) {
+function BudgetLineRow({ line, draft, onDraftChange, suggestion, onSave, saving, onRename, renaming, onSaveNote, savingNote, onRemove, removing }) {
   const draftCents = parseDollarsToCents(draft);
   const dirty = draftCents !== null && !Number.isNaN(draftCents) && draftCents !== line.plannedAmountCents;
   const showSuggestion = suggestion && suggestion.suggestedAmountCents !== line.plannedAmountCents;
@@ -439,6 +508,7 @@ function BudgetLineRow({ line, draft, onDraftChange, suggestion, onSave, saving,
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [labelDraft, setLabelDraft] = useState(line.displayLabel);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(line.note ?? "");
 
   const submitRename = () => {
     const trimmed = labelDraft.trim();
@@ -450,62 +520,99 @@ function BudgetLineRow({ line, draft, onDraftChange, suggestion, onSave, saving,
     Promise.resolve(onRename(trimmed)).then(() => setIsEditingLabel(false));
   };
 
+  const submitNoteIfChanged = () => {
+    if (noteDraft === (line.note ?? "")) return;
+    onSaveNote(noteDraft);
+  };
+
   return (
-    <li className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          {isEditingLabel ? (
-            <form
-              className="flex flex-wrap items-center gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                submitRename();
-              }}
+    <tr className="align-top">
+      <td className="px-4 py-3">
+        {isEditingLabel ? (
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitRename();
+            }}
+          >
+            <label className="sr-only" htmlFor={`budget-line-label-${line.categoryId}`}>
+              Rename {line.displayLabel}
+            </label>
+            <input
+              id={`budget-line-label-${line.categoryId}`}
+              type="text"
+              value={labelDraft}
+              onChange={(event) => setLabelDraft(event.target.value)}
+              autoFocus
+              className="w-32 rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm font-bold text-slate-950 dark:border-slate-600 dark:bg-slate-950 dark:text-white"
+            />
+            <button
+              type="submit"
+              disabled={renaming}
+              className={`rounded-lg px-2 py-1 text-xs font-bold transition disabled:opacity-50 ${goldControlClassName} ${FOCUS_RING}`}
             >
-              <label className="sr-only" htmlFor={`budget-line-label-${line.categoryId}`}>
-                Rename {line.displayLabel}
-              </label>
-              <input
-                id={`budget-line-label-${line.categoryId}`}
-                type="text"
-                value={labelDraft}
-                onChange={(event) => setLabelDraft(event.target.value)}
-                autoFocus
-                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm font-black text-slate-950 dark:border-slate-600 dark:bg-slate-950 dark:text-white"
-              />
-              <button
-                type="submit"
-                disabled={renaming}
-                className={`rounded-lg px-2 py-1 text-xs font-bold transition disabled:opacity-50 ${goldControlClassName} ${FOCUS_RING}`}
-              >
-                {renaming ? "Saving…" : "Save name"}
-              </button>
+              {renaming ? "…" : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsEditingLabel(false);
+                setLabelDraft(line.displayLabel);
+              }}
+              className={`rounded-lg border border-slate-300 px-2 py-1 text-xs font-bold text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 ${FOCUS_RING}`}
+            >
+              Cancel
+            </button>
+          </form>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setIsEditingLabel(true)}
+            className={`rounded px-1 -mx-1 text-left font-bold text-slate-950 transition hover:bg-slate-100 dark:text-white dark:hover:bg-slate-800 ${FOCUS_RING}`}
+            title="Click to rename"
+          >
+            {line.displayLabel}
+          </button>
+        )}
+      </td>
+      <td className="px-4 py-3">
+        <label className="sr-only" htmlFor={`budget-line-note-${line.categoryId}`}>
+          Note for {line.displayLabel}
+        </label>
+        <input
+          id={`budget-line-note-${line.categoryId}`}
+          type="text"
+          value={noteDraft}
+          onChange={(event) => setNoteDraft(event.target.value)}
+          onBlur={submitNoteIfChanged}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+          placeholder={savingNote ? "Saving…" : "Add a note"}
+          className="w-40 rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-slate-700 transition hover:border-slate-300 focus:border-slate-300 focus:bg-white dark:text-slate-300 dark:hover:border-slate-600 dark:focus:border-slate-600 dark:focus:bg-slate-950"
+        />
+      </td>
+      <td className="px-4 py-3 text-right">
+        {suggestion ? (
+          <div className="flex flex-col items-end">
+            <span className="text-slate-600 dark:text-slate-400">{centsToMoney(suggestion.suggestedAmountCents)}</span>
+            {showSuggestion ? (
               <button
                 type="button"
-                onClick={() => {
-                  setIsEditingLabel(false);
-                  setLabelDraft(line.displayLabel);
-                }}
-                className={`rounded-lg border border-slate-300 px-2 py-1 text-xs font-bold text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 ${FOCUS_RING}`}
+                onClick={() => onDraftChange(String(suggestion.suggestedAmountCents / 100))}
+                className={`text-xs font-bold text-sky-700 transition hover:underline dark:text-sky-400 ${FOCUS_RING}`}
               >
-                Cancel
+                use this
               </button>
-            </form>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="font-black text-slate-950 dark:text-white">{line.displayLabel}</p>
-              <button
-                type="button"
-                onClick={() => setIsEditingLabel(true)}
-                className={`rounded px-1.5 py-0.5 text-xs font-bold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 ${FOCUS_RING}`}
-              >
-                Rename
-              </button>
-            </div>
-          )}
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Spent so far this month: {centsToMoney(line.actualAmountCents)}</p>
-        </div>
-        <div className="flex items-center gap-2">
+            ) : null}
+          </div>
+        ) : (
+          <span className="text-slate-400 dark:text-slate-600">—</span>
+        )}
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center justify-end gap-2">
           <label className="sr-only" htmlFor={`budget-line-${line.categoryId}`}>
             Planned amount for {line.displayLabel}
           </label>
@@ -516,38 +623,29 @@ function BudgetLineRow({ line, draft, onDraftChange, suggestion, onSave, saving,
             inputMode="decimal"
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
-            className="w-28 rounded-xl border border-slate-300 bg-white px-3 py-2 text-right text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-950 dark:text-white"
+            className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-right text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-950 dark:text-white"
           />
           <button
             type="button"
             onClick={onSave}
             disabled={!dirty || saving}
-            className={`rounded-lg px-3 py-2 text-sm font-bold transition disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
+            className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
           >
-            {saving ? "Saving…" : "Save"}
+            {saving ? "…" : "Save"}
           </button>
         </div>
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        {showSuggestion ? (
-          <button
-            type="button"
-            onClick={() => onDraftChange(String(suggestion.suggestedAmountCents / 100))}
-            className={`rounded-lg border border-sky-300 px-3 py-1 text-xs font-bold text-sky-800 transition hover:bg-sky-50 dark:border-sky-700 dark:text-sky-300 dark:hover:bg-sky-950/40 ${FOCUS_RING}`}
-          >
-            Suggested: {centsToMoney(suggestion.suggestedAmountCents)} — use this
-          </button>
-        ) : null}
+      </td>
+      <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{centsToMoney(line.actualAmountCents)}</td>
+      <td className="px-4 py-3 text-right">
         {confirmingRemove ? (
-          <span className="flex items-center gap-2 text-xs">
-            <span className="font-bold text-red-700 dark:text-red-400">Remove {line.displayLabel} from your budget?</span>
+          <span className="flex items-center justify-end gap-1.5 whitespace-nowrap text-xs">
             <button
               type="button"
               onClick={onRemove}
               disabled={removing}
               className={`rounded-lg border border-red-400 px-2 py-1 font-bold text-red-800 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-950/40 ${FOCUS_RING}`}
             >
-              {removing ? "Removing…" : "Confirm remove"}
+              {removing ? "…" : "Confirm"}
             </button>
             <button
               type="button"
@@ -561,12 +659,13 @@ function BudgetLineRow({ line, draft, onDraftChange, suggestion, onSave, saving,
           <button
             type="button"
             onClick={() => setConfirmingRemove(true)}
-            className={`rounded-lg px-2 py-1 text-xs font-bold text-slate-500 transition hover:bg-red-50 hover:text-red-700 dark:text-slate-400 dark:hover:bg-red-950/30 dark:hover:text-red-300 ${FOCUS_RING}`}
+            className={`rounded px-1.5 py-1 text-xs font-bold text-slate-400 transition hover:bg-red-50 hover:text-red-700 dark:text-slate-500 dark:hover:bg-red-950/30 dark:hover:text-red-300 ${FOCUS_RING}`}
+            title={`Remove ${line.displayLabel} from your budget`}
           >
-            Remove from budget
+            Remove
           </button>
         )}
-      </div>
-    </li>
+      </td>
+    </tr>
   );
 }
