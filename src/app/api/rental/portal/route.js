@@ -40,6 +40,20 @@ export async function POST(request) {
       const {data,error}=await authenticated.supabaseClient.rpc("acknowledge_rental_inspection",{p_inspection_id:body.inspectionId.trim()});
       if(error)throw error;return NextResponse.json({success:true,acknowledgement:data});
     }
+    if(body?.operation==="sign-lease"){
+      if(typeof body.leaseId!=="string"||!body.leaseId.trim()||typeof body.preparationId!=="string"||!body.preparationId.trim()
+        ||!Number.isInteger(body.versionNumber)||typeof body.signerName!=="string"||!body.signerName.trim())
+        return NextResponse.json({error:"Lease, preparation, version, and a typed signer name are required."},{status:400});
+      // Captured server-side, never trusted from the client -- the ip/user-agent recorded on the
+      // signature are what the request actually arrived with, not whatever a caller could claim.
+      const forwardedFor=request.headers.get("x-forwarded-for");
+      const ipAddress=(forwardedFor?forwardedFor.split(",")[0].trim():null)||request.headers.get("x-real-ip");
+      const{data,error}=await authenticated.supabaseClient.rpc("sign_rental_lease_preparation_version",{
+        p_lease_id:body.leaseId.trim(),p_preparation_id:body.preparationId.trim(),p_version_number:body.versionNumber,
+        p_signer_name:body.signerName.trim(),p_ip_address:ipAddress,p_user_agent:request.headers.get("user-agent"),
+      });
+      if(error)throw error;return NextResponse.json({success:true,signature:data});
+    }
     if (body?.operation !== "submit-maintenance-request")
       return NextResponse.json({ error: "A supported tenant portal operation is required." }, { status: 400 });
     if (typeof body.leaseId !== "string" || body.leaseId.trim() === "")
