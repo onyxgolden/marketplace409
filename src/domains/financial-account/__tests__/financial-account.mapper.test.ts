@@ -23,6 +23,7 @@ describe("mapFinancialAccountRowToFinancialAccount", () => {
       subtype: "checking",
       currency_code: "USD",
       active: true,
+      business_scope: "business",
       created_at: "2026-07-02T00:00:00.000Z",
       updated_at: "2026-07-02T00:00:00.000Z",
     });
@@ -40,10 +41,33 @@ describe("mapFinancialAccountRowToFinancialAccount", () => {
       subtype: "checking",
       currencyCode: "USD",
       active: true,
+      businessScope: "business",
       createdAt: "2026-07-02T00:00:00.000Z",
       updatedAt: "2026-07-02T00:00:00.000Z",
     });
 
     expect(Object.isFrozen(account)).toBe(true);
+  });
+
+  it("defaults business_scope to null when the row has none", () => {
+    const account = mapFinancialAccountRowToFinancialAccount({
+      id: "financial_account_2",
+      connection_id: "connection_1",
+      provider: "plaid",
+      provider_account_id: "plaid_account_2",
+      institution_id: "institution_1",
+      name: "Savings",
+      official_name: null,
+      mask: null,
+      type: "depository",
+      subtype: "savings",
+      currency_code: "USD",
+      active: true,
+      business_scope: null,
+      created_at: "2026-07-02T00:00:00.000Z",
+      updated_at: "2026-07-02T00:00:00.000Z",
+    });
+
+    expect(account.businessScope).toBeNull();
   });
 });

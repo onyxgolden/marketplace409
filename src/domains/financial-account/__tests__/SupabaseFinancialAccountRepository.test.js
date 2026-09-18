@@ -38,6 +38,7 @@ function buildAccount(overrides = {}) {
     subtype: "checking",
     currencyCode: "USD",
     active: true,
+    businessScope: null,
     createdAt: "2026-07-15T00:00:00.000Z",
     updatedAt: "2026-07-15T00:00:00.000Z",
     ...overrides,
@@ -61,6 +62,7 @@ function buildRow(overrides = {}) {
     subtype: account.subtype,
     currency_code: account.currencyCode,
     active: account.active,
+    business_scope: account.businessScope,
     created_at: account.createdAt,
     updated_at: account.updatedAt,
   };

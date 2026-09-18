@@ -195,6 +195,11 @@ export class SupabaseFinancialAccountRepository {
       subtype: account.subtype ?? null,
       currency_code: account.currencyCode,
       active: account.active,
+      // Omitted (not sent as an explicit null) when absent, mirroring
+      // SupabaseFinancialEventRepository.toRow()'s business_scope handling -- lets a future
+      // per-account manual override survive a re-sync that doesn't recompute the heuristic,
+      // instead of silently clobbering it back to null.
+      ...(account.businessScope ? { business_scope: account.businessScope } : {}),
       created_at: account.createdAt,
       updated_at: account.updatedAt,
     };
