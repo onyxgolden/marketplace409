@@ -10,6 +10,7 @@ import StripeFinancialConnectionsButton from "@/components/forge/StripeFinancial
 import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import ConnectionExecutionResultCard from "@/components/forge/ConnectionExecutionResultCard";
+import ReconcileDuplicatesPanel from "@/components/forge/ReconcileDuplicatesPanel";
 import { forgeTheme } from "@/components/forge/theme";
 
 export default function ConnectionPage() {
@@ -484,6 +485,8 @@ export default function ConnectionPage() {
           title="Recent Connection Activity"
           activities={activities}
         />
+
+        <ReconcileDuplicatesPanel />
       </main>
     </div>
   );
