@@ -4,7 +4,9 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./PrivateFinancingBorrowerProgress", () => ({ default: () => <div data-testid="progress" /> }));
-vi.mock("./PrivateFinancingBorrowerPayment", () => ({ default: () => <div data-testid="payment" /> }));
+vi.mock("./PrivateFinancingBorrowerPayment", () => ({
+  default: ({ onCancel }) => <div data-testid="payment"><button data-testid="close-payment" onClick={onCancel}>Close</button></div>,
+}));
 
 import PrivateFinancingBorrowerPortal from "./PrivateFinancingBorrowerPortal.jsx";
 
@@ -134,6 +136,80 @@ describe("PrivateFinancingBorrowerPortal", () => {
 
     expect(mounted.container.textContent).toContain("The optional payoff chart is temporarily unavailable.");
     expect(mounted.container.querySelector('[data-testid="progress"]')).toBeNull();
+  });
+
+  // Regression coverage for the dead-end "A payment is already pending for this account" case:
+  // once a borrower has an abandoned-but-resumable payment, the entry point must say "Resume
+  // payment", not "Make a payment" (which would just bounce off the guard again).
+  it('shows "Resume payment" instead of "Make a payment" when a resumable pending payment exists', async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(200, {
+      success: true, email: "borrower@example.com", invitedEmail: null, mismatched: false,
+      accounts: [{
+        account: { id: "acct_1", status: "active", origination_principal_cents: 1000000 },
+        role: "primary_borrower",
+        summary: { paymentCount: 2, totalPaidCents: 60000, interestPaidCents: 10000, principalRemainingCents: 940000 },
+        events: [], regularScheduledPaymentCents: 51785, projection: null, progressAvailable: true,
+        onlinePaymentsEnabled: true,
+        pendingPayment: { id: "pf_payment_1", status: "requires_payment_method", amountCents: 51785, resumable: true },
+      }],
+    })));
+
+    mounted = mount(<PrivateFinancingBorrowerPortal />);
+    await flush();
+
+    const buttons = [...mounted.container.querySelectorAll("button")];
+    expect(buttons.some((button) => button.textContent === "Resume payment")).toBe(true);
+    expect(buttons.some((button) => button.textContent === "Make a payment")).toBe(false);
+  });
+
+  it("shows a processing message with no clickable action when the pending payment is not resumable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(200, {
+      success: true, email: "borrower@example.com", invitedEmail: null, mismatched: false,
+      accounts: [{
+        account: { id: "acct_1", status: "active", origination_principal_cents: 1000000 },
+        role: "primary_borrower",
+        summary: { paymentCount: 2, totalPaidCents: 60000, interestPaidCents: 10000, principalRemainingCents: 940000 },
+        events: [], regularScheduledPaymentCents: 51785, projection: null, progressAvailable: true,
+        onlinePaymentsEnabled: true,
+        pendingPayment: { id: "pf_payment_1", status: "processing", amountCents: 51785, resumable: false },
+      }],
+    })));
+
+    mounted = mount(<PrivateFinancingBorrowerPortal />);
+    await flush();
+
+    expect(mounted.container.textContent).toContain("A payment is currently processing for this account.");
+    const buttons = [...mounted.container.querySelectorAll("button")];
+    expect(buttons.some((button) => button.textContent === "Resume payment" || button.textContent === "Make a payment")).toBe(false);
+  });
+
+  it("reloads the portal after closing the payment panel, so a newly resumable payment is picked up", async () => {
+    const account = {
+      account: { id: "acct_1", status: "active", origination_principal_cents: 1000000 },
+      role: "primary_borrower",
+      summary: { paymentCount: 0, totalPaidCents: 0, interestPaidCents: 0, principalRemainingCents: 1000000 },
+      events: [], regularScheduledPaymentCents: 51785, projection: null, progressAvailable: true,
+      onlinePaymentsEnabled: true,
+    };
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(response(200, { success: true, email: "borrower@example.com", invitedEmail: null, mismatched: false,
+        accounts: [{ ...account, pendingPayment: null }] }))
+      .mockResolvedValueOnce(response(200, { success: true, email: "borrower@example.com", invitedEmail: null, mismatched: false,
+        accounts: [{ ...account, pendingPayment: { id: "pf_payment_1", status: "requires_payment_method", amountCents: 51785, resumable: true } }] }));
+    vi.stubGlobal("fetch", fetch);
+
+    mounted = mount(<PrivateFinancingBorrowerPortal />);
+    await flush();
+    act(() => [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Make a payment").click());
+    await flush();
+    expect(mounted.container.querySelector('[data-testid="payment"]')).not.toBeNull();
+
+    act(() => mounted.container.querySelector('[data-testid="close-payment"]').click());
+    await flush();
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(mounted.container.querySelector('[data-testid="payment"]')).toBeNull();
+    expect([...mounted.container.querySelectorAll("button")].some((button) => button.textContent === "Resume payment")).toBe(true);
   });
 
   it("fails closed visibly -- no $0.00, no crash, and payment is hidden -- when summaryAvailable is false", async () => {

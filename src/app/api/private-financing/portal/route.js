@@ -234,7 +234,7 @@ export async function GET(request) {
   const memberships = identities.error
     ? { data: null, error: identities.error }
     : identityIds.length
-      ? await db.from("private_financing_account_borrowers").select("account_id,role,status").eq("status", "active").in("borrower_id", identityIds)
+      ? await db.from("private_financing_account_borrowers").select("account_id,role,status,owner_id,borrower_id").eq("status", "active").in("borrower_id", identityIds)
       : { data: [], error: null };
   if (memberships.error) return NextResponse.json({ error: "Unable to load borrower access." }, { status: 500 });
   if (claim.error && !(memberships.data || []).length) {
@@ -249,12 +249,17 @@ export async function GET(request) {
 
   const accounts = [];
   for (const membership of memberships.data || []) {
-    const [accountResult, eventResult, componentResult, termsResult, settingsResult] = await Promise.all([
+    const [accountResult, eventResult, componentResult, termsResult, settingsResult, pendingPaymentResult] = await Promise.all([
       db.from("private_financing_accounts").select("id,product,status,opened_date,origination_principal_cents").eq("id", membership.account_id).maybeSingle(),
       db.rpc("read_private_financing_borrower_events", { p_account_id: membership.account_id }),
       db.from("private_financing_components").select("*").eq("account_id", membership.account_id),
       db.from("private_financing_account_terms_versions").select("*").eq("account_id", membership.account_id),
       db.from("private_financing_online_payment_settings").select("enabled").eq("account_id", membership.account_id).maybeSingle(),
+      // At most one row can match -- private_financing_one_pending_online_payment is a unique
+      // index on (owner_id, account_id, borrower_id) covering exactly these statuses.
+      db.from("private_financing_online_payments").select("id,status,amount_cents")
+        .eq("owner_id", membership.owner_id).eq("account_id", membership.account_id).eq("borrower_id", membership.borrower_id)
+        .in("status", ["created", "requires_payment_method", "requires_action", "processing"]).maybeSingle(),
     ]);
     if (!accountResult.data || eventResult.error || componentResult.error || termsResult.error) continue;
     const model = buildBorrowerPortalModelSafely({
@@ -262,6 +267,7 @@ export async function GET(request) {
       componentRows: componentResult.data || [],
       termsRows: termsResult.data || [],
     });
+    const pendingRow = pendingPaymentResult.error ? null : pendingPaymentResult.data;
     accounts.push({
       account: accountResult.data,
       role: membership.role,
@@ -273,6 +279,14 @@ export async function GET(request) {
       summaryAvailable: model.summaryAvailable !== false,
       summaryUnavailableReason: model.summaryUnavailableReason ?? null,
       onlinePaymentsEnabled: settingsResult.data?.enabled === true,
+      // Lets the portal offer "Resume payment" for an abandoned-but-still-completable attempt
+      // instead of a dead-end "already pending" block -- resumable statuses mirror
+      // payment-session/resume's own RESUMABLE_STATUSES; "processing" is pending but not resumable
+      // (Stripe is actively settling that attempt).
+      pendingPayment: pendingRow ? {
+        id: pendingRow.id, status: pendingRow.status, amountCents: Number(pendingRow.amount_cents),
+        resumable: ["created", "requires_payment_method", "requires_action"].includes(pendingRow.status),
+      } : null,
     });
   }
   return NextResponse.json({ success: true, email: user.email, invitedEmail, mismatched, accounts, claim: claim.data || null });
