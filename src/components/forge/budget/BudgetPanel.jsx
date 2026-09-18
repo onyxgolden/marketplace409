@@ -50,6 +50,8 @@ export default function BudgetPanel() {
   const [drafts, setDrafts] = useState({});
   const [savingCategoryId, setSavingCategoryId] = useState(null);
   const [addingCategory, setAddingCategory] = useState(null);
+  const [renamingCategoryId, setRenamingCategoryId] = useState(null);
+  const [removingCategoryId, setRemovingCategoryId] = useState(null);
   const [manualLabel, setManualLabel] = useState("");
   const requestInFlight = useRef(false);
   const month = useMemo(() => currentMonth(), []);
@@ -157,6 +159,40 @@ export default function BudgetPanel() {
     [load],
   );
 
+  const renameCategory = useCallback(
+    (categoryId, displayLabel) => {
+      setRenamingCategoryId(categoryId);
+      return fetch(`/api/budgeting/categories/${categoryId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ displayLabel }),
+      })
+        .then((response) => response.json().then((payload) => ({ response, payload })))
+        .then(({ response, payload }) => {
+          if (!response.ok) throw new Error(payload.error || "Unable to rename this category.");
+          setLines((previous) => previous.map((line) => (line.categoryId === categoryId ? { ...line, displayLabel } : line)));
+        })
+        .catch((renameError) => setErrorMessage(renameError.message))
+        .finally(() => setRenamingCategoryId(null));
+    },
+    [],
+  );
+
+  const removeCategory = useCallback(
+    (categoryId) => {
+      setRemovingCategoryId(categoryId);
+      return fetch(`/api/budgeting/categories/${categoryId}`, { method: "DELETE" })
+        .then((response) => response.json().then((payload) => ({ response, payload })))
+        .then(({ response, payload }) => {
+          if (!response.ok) throw new Error(payload.error || "Unable to remove this category.");
+          setLines((previous) => previous.filter((line) => line.categoryId !== categoryId));
+        })
+        .catch((removeError) => setErrorMessage(removeError.message))
+        .finally(() => setRemovingCategoryId(null));
+    },
+    [],
+  );
+
   return (
     <section
       data-guided-workflow-panel
@@ -256,6 +292,10 @@ export default function BudgetPanel() {
                   suggestion={suggestionByCategory.get(line.normalizedCategory) || null}
                   onSave={() => saveLine(line.categoryId)}
                   saving={savingCategoryId === line.categoryId}
+                  onRename={(displayLabel) => renameCategory(line.categoryId, displayLabel)}
+                  renaming={renamingCategoryId === line.categoryId}
+                  onRemove={() => removeCategory(line.categoryId)}
+                  removing={removingCategoryId === line.categoryId}
                 />
               ))}
             </ul>
@@ -391,16 +431,78 @@ function WhereToPutMoneyGroup({ heading, entries, addingCategory, onAdd }) {
   );
 }
 
-function BudgetLineRow({ line, draft, onDraftChange, suggestion, onSave, saving }) {
+function BudgetLineRow({ line, draft, onDraftChange, suggestion, onSave, saving, onRename, renaming, onRemove, removing }) {
   const draftCents = parseDollarsToCents(draft);
   const dirty = draftCents !== null && !Number.isNaN(draftCents) && draftCents !== line.plannedAmountCents;
   const showSuggestion = suggestion && suggestion.suggestedAmountCents !== line.plannedAmountCents;
 
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
+  const [labelDraft, setLabelDraft] = useState(line.displayLabel);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+
+  const submitRename = () => {
+    const trimmed = labelDraft.trim();
+    if (!trimmed || trimmed === line.displayLabel) {
+      setIsEditingLabel(false);
+      setLabelDraft(line.displayLabel);
+      return;
+    }
+    Promise.resolve(onRename(trimmed)).then(() => setIsEditingLabel(false));
+  };
+
   return (
     <li className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="font-black text-slate-950 dark:text-white">{line.displayLabel}</p>
+        <div className="min-w-0 flex-1">
+          {isEditingLabel ? (
+            <form
+              className="flex flex-wrap items-center gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitRename();
+              }}
+            >
+              <label className="sr-only" htmlFor={`budget-line-label-${line.categoryId}`}>
+                Rename {line.displayLabel}
+              </label>
+              <input
+                id={`budget-line-label-${line.categoryId}`}
+                type="text"
+                value={labelDraft}
+                onChange={(event) => setLabelDraft(event.target.value)}
+                autoFocus
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm font-black text-slate-950 dark:border-slate-600 dark:bg-slate-950 dark:text-white"
+              />
+              <button
+                type="submit"
+                disabled={renaming}
+                className={`rounded-lg px-2 py-1 text-xs font-bold transition disabled:opacity-50 ${goldControlClassName} ${FOCUS_RING}`}
+              >
+                {renaming ? "Saving…" : "Save name"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditingLabel(false);
+                  setLabelDraft(line.displayLabel);
+                }}
+                className={`rounded-lg border border-slate-300 px-2 py-1 text-xs font-bold text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 ${FOCUS_RING}`}
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="font-black text-slate-950 dark:text-white">{line.displayLabel}</p>
+              <button
+                type="button"
+                onClick={() => setIsEditingLabel(true)}
+                className={`rounded px-1.5 py-0.5 text-xs font-bold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 ${FOCUS_RING}`}
+              >
+                Rename
+              </button>
+            </div>
+          )}
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Spent so far this month: {centsToMoney(line.actualAmountCents)}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -426,15 +528,45 @@ function BudgetLineRow({ line, draft, onDraftChange, suggestion, onSave, saving 
           </button>
         </div>
       </div>
-      {showSuggestion ? (
-        <button
-          type="button"
-          onClick={() => onDraftChange(String(suggestion.suggestedAmountCents / 100))}
-          className={`mt-3 rounded-lg border border-sky-300 px-3 py-1 text-xs font-bold text-sky-800 transition hover:bg-sky-50 dark:border-sky-700 dark:text-sky-300 dark:hover:bg-sky-950/40 ${FOCUS_RING}`}
-        >
-          Suggested: {centsToMoney(suggestion.suggestedAmountCents)} — use this
-        </button>
-      ) : null}
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        {showSuggestion ? (
+          <button
+            type="button"
+            onClick={() => onDraftChange(String(suggestion.suggestedAmountCents / 100))}
+            className={`rounded-lg border border-sky-300 px-3 py-1 text-xs font-bold text-sky-800 transition hover:bg-sky-50 dark:border-sky-700 dark:text-sky-300 dark:hover:bg-sky-950/40 ${FOCUS_RING}`}
+          >
+            Suggested: {centsToMoney(suggestion.suggestedAmountCents)} — use this
+          </button>
+        ) : null}
+        {confirmingRemove ? (
+          <span className="flex items-center gap-2 text-xs">
+            <span className="font-bold text-red-700 dark:text-red-400">Remove {line.displayLabel} from your budget?</span>
+            <button
+              type="button"
+              onClick={onRemove}
+              disabled={removing}
+              className={`rounded-lg border border-red-400 px-2 py-1 font-bold text-red-800 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-950/40 ${FOCUS_RING}`}
+            >
+              {removing ? "Removing…" : "Confirm remove"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmingRemove(false)}
+              className={`rounded-lg border border-slate-300 px-2 py-1 font-bold text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 ${FOCUS_RING}`}
+            >
+              Cancel
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirmingRemove(true)}
+            className={`rounded-lg px-2 py-1 text-xs font-bold text-slate-500 transition hover:bg-red-50 hover:text-red-700 dark:text-slate-400 dark:hover:bg-red-950/30 dark:hover:text-red-300 ${FOCUS_RING}`}
+          >
+            Remove from budget
+          </button>
+        )}
+      </div>
     </li>
   );
 }
