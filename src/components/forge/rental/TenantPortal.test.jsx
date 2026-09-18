@@ -95,6 +95,7 @@ describe("isValidPublishableKey", () => {
 const openChargePortal = {
   tenant: { displayName: "Brandy Morgan" },
   billingEnabled: true,
+  conversation: { messages: [], hasUnread: false },
   rentals: [{
     lease: { id: "lease_1", startDate: "2026-08-19", endDate: null },
     unit: { label: "TEST-" },
@@ -133,6 +134,7 @@ describe("TenantPortal collection-authority containment", () => {
   const externallyManagedPortal = {
     tenant: { displayName: "Brandy Morgan" },
     billingEnabled: true,
+    conversation: { messages: [], hasUnread: false },
     rentals: [{
       lease: { id: "lease_1", startDate: "2026-08-19", endDate: null },
       unit: { label: "TEST-" },

@@ -32,6 +32,7 @@ describe("TenantPortalQueryService", () => {
         created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }, error: null }),
       rental_billing_settings: chain({ data: { billing_enabled: true }, error: null }),
       rental_lease_tenants: chain({ data: [], error: null }),
+      rental_conversations: chain({ data: null, error: null }),
     };
     const service = new TenantPortalQueryService({ from: vi.fn((table) => tables[table]) });
     const portal = await service.load("auth_1");
@@ -46,6 +47,7 @@ describe("TenantPortalQueryService", () => {
         created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }, error: null }),
       rental_billing_settings: chain({ data: null, error: null }),
       rental_lease_tenants: chain({ data: [], error: null }),
+      rental_conversations: chain({ data: null, error: null }),
     };
     const service = new TenantPortalQueryService({ from: vi.fn((table) => tables[table]) });
     const portal = await service.load("auth_1");
@@ -81,6 +83,7 @@ describe("TenantPortalQueryService", () => {
         rental_autopay_enrollments: chain({ data: [], error: null }),
         rental_animals: chain({ data: [], error: null }),
         rental_lease_preparations: chain({ data: null, error: null }),
+        rental_conversations: chain({ data: null, error: null }),
         ...overrides,
       };
     }
@@ -137,6 +140,86 @@ describe("TenantPortalQueryService", () => {
       const portal = await service.load("auth_1");
       expect(portal.rentals[0].leaseSigning.signedByMe).toBe(false);
       expect(portal.rentals[0].leaseSigning.mySignedAt).toBeNull();
+    });
+  });
+
+  describe("conversation", () => {
+    const TENANT = { id: "tenant_1", owner_id: "owner_1", auth_user_id: "auth_1", display_name: "T",
+      email: "t@example.com", phone: null, status: "active", invited_at: null, activated_at: null,
+      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" };
+
+    it("is empty with no unread flag when the tenant has never messaged and the owner never has either", async () => {
+      const tables = {
+        rental_tenants: chain({ data: TENANT, error: null }),
+        rental_billing_settings: chain({ data: { billing_enabled: true }, error: null }),
+        rental_lease_tenants: chain({ data: [], error: null }),
+        rental_conversations: chain({ data: null, error: null }),
+      };
+      const service = new TenantPortalQueryService({ from: fromRouter(tables) });
+      const portal = await service.load("auth_1");
+      expect(portal.conversation).toEqual({ messages: [], hasUnread: false });
+    });
+
+    it("surfaces the full message history in order once a conversation exists", async () => {
+      const tables = {
+        rental_tenants: chain({ data: TENANT, error: null }),
+        rental_billing_settings: chain({ data: { billing_enabled: true }, error: null }),
+        rental_lease_tenants: chain({ data: [], error: null }),
+        rental_conversations: chain({ data: { id: "conversation_1", last_message_at: "2026-09-05T12:00:00Z",
+          last_message_sender_type: "owner", tenant_last_read_at: "2026-09-05T11:00:00Z" }, error: null }),
+        rental_conversation_messages: chain({ data: [
+          { id: "m1", sender_type: "tenant", body: "The heater is not working.", category: "issue", created_at: "2026-09-05T11:00:00Z" },
+          { id: "m2", sender_type: "owner", body: "Sending someone tomorrow.", category: null, created_at: "2026-09-05T12:00:00Z" },
+        ], error: null }),
+      };
+      const service = new TenantPortalQueryService({ from: fromRouter(tables) });
+      const portal = await service.load("auth_1");
+      expect(portal.conversation.messages).toEqual([
+        { id: "m1", senderType: "tenant", body: "The heater is not working.", category: "issue", createdAt: "2026-09-05T11:00:00Z" },
+        { id: "m2", senderType: "owner", body: "Sending someone tomorrow.", category: null, createdAt: "2026-09-05T12:00:00Z" },
+      ]);
+    });
+
+    it("is unread when the owner sent the most recent message and the tenant hasn't read it yet", async () => {
+      const tables = {
+        rental_tenants: chain({ data: TENANT, error: null }),
+        rental_billing_settings: chain({ data: { billing_enabled: true }, error: null }),
+        rental_lease_tenants: chain({ data: [], error: null }),
+        rental_conversations: chain({ data: { id: "conversation_1", last_message_at: "2026-09-05T12:00:00Z",
+          last_message_sender_type: "owner", tenant_last_read_at: null }, error: null }),
+        rental_conversation_messages: chain({ data: [], error: null }),
+      };
+      const service = new TenantPortalQueryService({ from: fromRouter(tables) });
+      const portal = await service.load("auth_1");
+      expect(portal.conversation.hasUnread).toBe(true);
+    });
+
+    it("is not unread when the tenant sent the most recent message themselves", async () => {
+      const tables = {
+        rental_tenants: chain({ data: TENANT, error: null }),
+        rental_billing_settings: chain({ data: { billing_enabled: true }, error: null }),
+        rental_lease_tenants: chain({ data: [], error: null }),
+        rental_conversations: chain({ data: { id: "conversation_1", last_message_at: "2026-09-05T12:00:00Z",
+          last_message_sender_type: "tenant", tenant_last_read_at: "2026-09-05T12:00:00Z" }, error: null }),
+        rental_conversation_messages: chain({ data: [], error: null }),
+      };
+      const service = new TenantPortalQueryService({ from: fromRouter(tables) });
+      const portal = await service.load("auth_1");
+      expect(portal.conversation.hasUnread).toBe(false);
+    });
+
+    it("is not unread once the tenant has read past the owner's last message", async () => {
+      const tables = {
+        rental_tenants: chain({ data: TENANT, error: null }),
+        rental_billing_settings: chain({ data: { billing_enabled: true }, error: null }),
+        rental_lease_tenants: chain({ data: [], error: null }),
+        rental_conversations: chain({ data: { id: "conversation_1", last_message_at: "2026-09-05T12:00:00Z",
+          last_message_sender_type: "owner", tenant_last_read_at: "2026-09-05T13:00:00Z" }, error: null }),
+        rental_conversation_messages: chain({ data: [], error: null }),
+      };
+      const service = new TenantPortalQueryService({ from: fromRouter(tables) });
+      const portal = await service.load("auth_1");
+      expect(portal.conversation.hasUnread).toBe(false);
     });
   });
 });

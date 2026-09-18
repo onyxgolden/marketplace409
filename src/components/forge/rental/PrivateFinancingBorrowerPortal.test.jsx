@@ -7,6 +7,9 @@ vi.mock("./PrivateFinancingBorrowerProgress", () => ({ default: () => <div data-
 vi.mock("./PrivateFinancingBorrowerPayment", () => ({
   default: ({ onCancel }) => <div data-testid="payment"><button data-testid="close-payment" onClick={onCancel}>Close</button></div>,
 }));
+vi.mock("./PrivateFinancingBorrowerMessages", () => ({
+  default: ({ conversations }) => <div data-testid="messages">{conversations.length} conversation(s)</div>,
+}));
 
 import PrivateFinancingBorrowerPortal from "./PrivateFinancingBorrowerPortal.jsx";
 
@@ -111,6 +114,37 @@ describe("PrivateFinancingBorrowerPortal", () => {
     expect(mounted.container.textContent).toContain("$10,000.00");
     expect(mounted.container.textContent).toContain("Online payments are not currently active for this account.");
     expect(mounted.container.querySelector('[data-testid="progress"]')).not.toBeNull();
+  });
+
+  it("renders the borrower's conversations once at least one account exists", async () => {
+    window.history.pushState({}, "", "/forge/private-financing/portal?email=borrower%40example.com");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(200, {
+      success: true,
+      email: "borrower@example.com",
+      invitedEmail: "borrower@example.com",
+      mismatched: false,
+      accounts: [{
+        account: { id: "acct_1", status: "active", origination_principal_cents: 1000000 },
+        role: "primary_borrower",
+        summary: { paymentCount: 2, totalPaidCents: 60000, interestPaidCents: 10000, principalRemainingCents: 940000 },
+        events: [], regularScheduledPaymentCents: 50000, projection: null, progressAvailable: true, onlinePaymentsEnabled: false,
+      }],
+      conversations: [{ ownerId: "owner-1", borrowerId: "brw-1", hasUnread: false, messages: [] }],
+    })));
+
+    mounted = mount(<PrivateFinancingBorrowerPortal />);
+    await flush();
+
+    expect(mounted.container.querySelector('[data-testid="messages"]').textContent).toBe("1 conversation(s)");
+  });
+
+  it("does not render a conversations section when there are no accounts", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(200, {
+      success: true, email: "borrower@example.com", invitedEmail: null, mismatched: false, accounts: [],
+    })));
+    mounted = mount(<PrivateFinancingBorrowerPortal />);
+    await flush();
+    expect(mounted.container.querySelector('[data-testid="messages"]')).toBeNull();
   });
 
   it("shows the no-payoff-chart fallback when progressAvailable is false", async () => {

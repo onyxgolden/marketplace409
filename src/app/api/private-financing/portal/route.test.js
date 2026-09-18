@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ createClient: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: mocks.createClient }));
 
-import { GET, borrowerIdentityIds, buildBorrowerPortalModelSafely, buildBorrowerProjectionModel, summarizeBorrowerEvents, BorrowerSummaryUnavailableError } from "./route";
+import { GET, POST, borrowerIdentityIds, buildBorrowerPortalModelSafely, buildBorrowerProjectionModel, summarizeBorrowerEvents, BorrowerSummaryUnavailableError } from "./route";
 
 // A minimal chainable Supabase query-builder stand-in: every chain method returns itself, and it
 // resolves (via `.then` or `.maybeSingle()`) to the canned `result` regardless of how it was built.
@@ -12,6 +12,7 @@ function chainable(result) {
     select: () => builder,
     eq: () => builder,
     in: () => builder,
+    order: () => builder,
     maybeSingle: () => Promise.resolve(result),
     then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),
   };
@@ -163,6 +164,126 @@ describe("GET private financing borrower portal", () => {
     const response = await GET(request());
     const body = await response.json();
     expect(body.accounts[0].pendingPayment).toBeNull();
+  });
+
+  // Messaging is scoped to the borrower<->owner relationship, not per-loan -- one conversation
+  // covers every account this borrower has with this owner.
+  it("surfaces the borrower's conversation with its full message history", async () => {
+    mocks.createClient.mockResolvedValue(fakeDb({
+      user: { id: "user-1", email: "borrower@example.com" },
+      fromResults: {
+        private_financing_borrowers: { data: [{ id: "borrower-1" }], error: null },
+        private_financing_account_borrowers: {
+          data: [{ account_id: "account-1", role: "primary_borrower", status: "active", owner_id: "owner-1", borrower_id: "borrower-1" }],
+          error: null,
+        },
+        private_financing_accounts: { data: { id: "account-1", product: "note", status: "active", opened_date: "2022-01-01", origination_principal_cents: 1000000 }, error: null },
+        private_financing_components: { data: [], error: null },
+        private_financing_account_terms_versions: { data: [{ version_number: 1, effective_date: "2022-01-01", regular_scheduled_payment_amount_cents: 51785 }], error: null },
+        private_financing_online_payment_settings: { data: { enabled: true }, error: null },
+        private_financing_online_payments: { data: null, error: null },
+        private_financing_conversations: { data: { id: "pf_conversation_1", last_message_at: "2026-09-18T12:00:00Z", last_message_sender_type: "owner", borrower_last_read_at: null }, error: null },
+        private_financing_conversation_messages: { data: [
+          { id: "m1", sender_type: "borrower", body: "You should offer autopay for extra principal.", category: "suggestion", created_at: "2026-09-18T11:00:00Z" },
+          { id: "m2", sender_type: "owner", body: "Good idea, looking into it.", category: null, created_at: "2026-09-18T12:00:00Z" },
+        ], error: null },
+      },
+      rpcResults: {
+        read_private_financing_borrower_events: {
+          data: [{
+            id: "pay-1", ledger_sequence: 1, event_type: "payment_posted", amount_cents: 60000,
+            interest_paid_by_component_cents: { note: 10000 }, principal_remaining_by_component_cents: { note: 900000 },
+          }],
+          error: null,
+        },
+      },
+    }));
+    const response = await GET(request());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.conversations).toEqual([{
+      ownerId: "owner-1", borrowerId: "borrower-1", hasUnread: true,
+      messages: [
+        { id: "m1", senderType: "borrower", body: "You should offer autopay for extra principal.", category: "suggestion", createdAt: "2026-09-18T11:00:00Z" },
+        { id: "m2", senderType: "owner", body: "Good idea, looking into it.", category: null, createdAt: "2026-09-18T12:00:00Z" },
+      ],
+    }]);
+  });
+
+  it("reports an empty conversation with no unread flag when the borrower has never messaged", async () => {
+    mocks.createClient.mockResolvedValue(fakeDb({
+      user: { id: "user-1", email: "borrower@example.com" },
+      fromResults: {
+        private_financing_borrowers: { data: [{ id: "borrower-1" }], error: null },
+        private_financing_account_borrowers: {
+          data: [{ account_id: "account-1", role: "primary_borrower", status: "active", owner_id: "owner-1", borrower_id: "borrower-1" }],
+          error: null,
+        },
+        private_financing_accounts: { data: { id: "account-1", product: "note", status: "active", opened_date: "2022-01-01", origination_principal_cents: 1000000 }, error: null },
+        private_financing_components: { data: [], error: null },
+        private_financing_account_terms_versions: { data: [{ version_number: 1, effective_date: "2022-01-01", regular_scheduled_payment_amount_cents: 51785 }], error: null },
+        private_financing_online_payment_settings: { data: { enabled: true }, error: null },
+        private_financing_online_payments: { data: null, error: null },
+        private_financing_conversations: { data: null, error: null },
+      },
+      rpcResults: {
+        read_private_financing_borrower_events: {
+          data: [{
+            id: "pay-1", ledger_sequence: 1, event_type: "payment_posted", amount_cents: 60000,
+            interest_paid_by_component_cents: { note: 10000 }, principal_remaining_by_component_cents: { note: 900000 },
+          }],
+          error: null,
+        },
+      },
+    }));
+    const response = await GET(request());
+    const body = await response.json();
+    expect(body.conversations).toEqual([{ ownerId: "owner-1", borrowerId: "borrower-1", messages: [], hasUnread: false }]);
+  });
+});
+
+describe("POST private financing borrower portal", () => {
+  it("sends a borrower message with an optional category", async () => {
+    const rpc = vi.fn(async (name) => name === "send_pf_conversation_borrower_message" ? { data: { conversationId: "pf_conversation_1", messageId: "m1" }, error: null } : { data: null, error: null });
+    mocks.createClient.mockResolvedValue({ auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }) }, rpc });
+    const response = await POST(new Request("https://test/api/private-financing/portal", { method: "POST",
+      body: JSON.stringify({ operation: "send-message", body: "You should offer autopay for extra principal.", category: "suggestion" }) }));
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith("send_pf_conversation_borrower_message", { p_body: "You should offer autopay for extra principal.", p_category: "suggestion", p_owner_id: null });
+  });
+
+  it("forwards an explicit ownerId to disambiguate a borrower with more than one owner relationship", async () => {
+    const rpc = vi.fn(async () => ({ data: { conversationId: "pf_conversation_1", messageId: "m1" }, error: null }));
+    mocks.createClient.mockResolvedValue({ auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }) }, rpc });
+    const response = await POST(new Request("https://test/api/private-financing/portal", { method: "POST",
+      body: JSON.stringify({ operation: "send-message", body: "Hello", ownerId: "owner-a" }) }));
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith("send_pf_conversation_borrower_message", { p_body: "Hello", p_category: null, p_owner_id: "owner-a" });
+  });
+
+  it("rejects an empty message body before calling the database", async () => {
+    const rpc = vi.fn();
+    mocks.createClient.mockResolvedValue({ auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }) }, rpc });
+    const response = await POST(new Request("https://test/api/private-financing/portal", { method: "POST",
+      body: JSON.stringify({ operation: "send-message", body: "   " }) }));
+    expect(response.status).toBe(400);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("marks the borrower's own conversation read", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: null }));
+    mocks.createClient.mockResolvedValue({ auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }) }, rpc });
+    const response = await POST(new Request("https://test/api/private-financing/portal", { method: "POST",
+      body: JSON.stringify({ operation: "mark-conversation-read" }) }));
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith("mark_pf_conversation_read_by_borrower", { p_owner_id: null });
+  });
+
+  it("requires authentication", async () => {
+    mocks.createClient.mockResolvedValue({ auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) } });
+    const response = await POST(new Request("https://test/api/private-financing/portal", { method: "POST",
+      body: JSON.stringify({ operation: "send-message", body: "Hello" }) }));
+    expect(response.status).toBe(401);
   });
 });
 
