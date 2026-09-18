@@ -147,6 +147,10 @@ export class ConnectionImportExecutionCoordinator {
       );
 
     const transactionImportResults = [];
+    // Paired 1:1 with transactionImportResults, in the same per-account loop iteration, rather than
+    // zipped back together afterward by array index -- avoids depending on both arrays staying in
+    // matching order.
+    const businessScopeByResultIndex = [];
 
     for (
       const financialAccount of
@@ -173,14 +177,21 @@ export class ConnectionImportExecutionCoordinator {
       transactionImportResults.push(
         transactionImportResult,
       );
+      // The account this batch of transactions was persisted under is already classified (see
+      // FinancialAccountImportService.persistFinancialAccounts) -- reused here rather than
+      // reclassified, so a future manual override on the account is honored automatically.
+      businessScopeByResultIndex.push(
+        financialAccount.businessScope ?? null,
+      );
     }
 
     const financialEventImportResults =
       await Promise.all(
         transactionImportResults.map(
-          (transactionImportResult) =>
+          (transactionImportResult, index) =>
             this.financialEventImportService.import(
               transactionImportResult,
+              { businessScope: businessScopeByResultIndex[index] },
             ),
         ),
       );

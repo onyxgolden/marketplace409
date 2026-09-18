@@ -14,6 +14,10 @@ import {
   toFinancialAccountImportResult,
 } from "./financial-account-import.types";
 
+import {
+  classifyAccountBusinessScope,
+} from "./classifyAccountBusinessScope";
+
 export class FinancialAccountImportService<TProviderAccount = unknown> {
   private readonly repository: FinancialAccountRepository;
   private readonly mapper: FinancialAccountMapper<TProviderAccount>;
@@ -63,9 +67,18 @@ export class FinancialAccountImportService<TProviderAccount = unknown> {
     financialAccounts: readonly any[],
     financialAccountsImportedAt?: string,
   ) {
+    // Classified here, the one place every financial_accounts row is persisted from (both
+    // importAccounts and importCanonicalAccounts funnel through this method) -- a manual override
+    // stored on the account object already (businessScope set) is left untouched, never
+    // reclassified by this heuristic.
+    const classifiedFinancialAccounts = financialAccounts.map((account) => ({
+      ...account,
+      businessScope: account.businessScope ?? classifyAccountBusinessScope(account),
+    }));
+
     const persistedFinancialAccounts =
       await this.repository.saveMany(
-        financialAccounts,
+        classifiedFinancialAccounts,
         {
           ownerId: input.connection.userId,
         },

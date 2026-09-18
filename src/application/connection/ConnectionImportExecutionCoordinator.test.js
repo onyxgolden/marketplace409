@@ -103,11 +103,13 @@ describe(
             id: "financial_account_1",
             providerAccountId:
               "provider_account_1",
+            businessScope: "business",
           },
           {
             id: "financial_account_2",
             providerAccountId:
               "provider_account_2",
+            businessScope: "personal",
           },
         ];
 
@@ -321,6 +323,7 @@ describe(
             readyForFinancialEventImport:
               true,
           }),
+          { businessScope: "business" },
         );
 
         expect(
@@ -334,6 +337,7 @@ describe(
             readyForFinancialEventImport:
               true,
           }),
+          { businessScope: "personal" },
         );
       },
     );

@@ -4,6 +4,7 @@ import {
 
 import type {
   FinancialAccount,
+  FinancialAccountBusinessScope,
   FinancialAccountType,
 } from "./financial-account.types";
 
@@ -20,6 +21,7 @@ export type FinancialAccountRow = Readonly<{
   subtype: string | null;
   currency_code: string;
   active: boolean;
+  business_scope: FinancialAccountBusinessScope | null;
   created_at: string;
   updated_at: string;
 }>;
@@ -40,6 +42,7 @@ export function mapFinancialAccountRowToFinancialAccount(
     subtype: row.subtype,
     currencyCode: row.currency_code,
     active: row.active,
+    businessScope: row.business_scope ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });

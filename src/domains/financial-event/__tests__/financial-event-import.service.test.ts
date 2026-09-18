@@ -130,6 +130,37 @@ describe("FinancialEventImportService", () => {
     });
   });
 
+  it("sets business_scope explicitly from the caller's options, instead of leaving it for the DB default", async () => {
+    const repository = new InMemoryFinancialEventRepository();
+    const service = new FinancialEventImportService({
+      repository,
+      ownerId: "owner-1",
+    });
+
+    const result = await service.import(
+      buildTransactionImport([buildTransaction()]),
+      { businessScope: "personal" },
+    );
+
+    const [event] = result.financialEvents;
+    expect(event.business_scope).toBe("personal");
+  });
+
+  it("leaves business_scope null when the caller supplies none (e.g. a source with no per-account concept)", async () => {
+    const repository = new InMemoryFinancialEventRepository();
+    const service = new FinancialEventImportService({
+      repository,
+      ownerId: "owner-1",
+    });
+
+    const result = await service.import(
+      buildTransactionImport([buildTransaction()]),
+    );
+
+    const [event] = result.financialEvents;
+    expect(event.business_scope).toBeNull();
+  });
+
   it("leaves financial_account_id null when the transaction carries none", async () => {
     const repository = new InMemoryFinancialEventRepository();
     const service = new FinancialEventImportService({

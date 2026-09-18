@@ -26,6 +26,7 @@ export class FinancialEventFactory {
 
       property_id: record.resolvedProperty.id,
       financial_account_id: record.financialAccountId ?? null,
+      business_scope: record.businessScope ?? null,
 
       event_date: record.date,
 

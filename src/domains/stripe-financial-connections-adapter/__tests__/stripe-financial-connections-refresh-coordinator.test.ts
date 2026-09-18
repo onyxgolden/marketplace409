@@ -59,6 +59,13 @@ function fakeFinancialEventImportService(overrides = {}) {
   };
 }
 
+function fakeFinancialAccountRepository(overrides = {}) {
+  return {
+    findById: vi.fn().mockResolvedValue({ businessScope: "personal" }),
+    ...overrides,
+  };
+}
+
 const BASE_INPUT = {
   ownerId: "owner-123",
   connectionId: "connection_1",
@@ -91,6 +98,7 @@ function buildCoordinator(overrides = {}) {
     refreshRepository: fakeRefreshRepository(),
     accountBalanceRepository: fakeAccountBalanceRepository(),
     financialEventImportService: fakeFinancialEventImportService(),
+    financialAccountRepository: fakeFinancialAccountRepository(),
     ...overrides,
   });
 }

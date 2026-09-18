@@ -375,6 +375,7 @@ export async function POST(request) {
       refreshRepository,
       accountBalanceRepository: connectionPlatformSuite.accountBalanceRepository,
       financialEventImportService: connectionPlatformSuite.financialEventImportService,
+      financialAccountRepository: connectionPlatformSuite.financialAccountRepository,
     });
 
     const refreshOutcome = await refreshCoordinator.processRefresh({
