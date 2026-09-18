@@ -31,23 +31,30 @@ export async function GET(request) {
   if (categoriesResult.error) return NextResponse.json({ error: "Unable to load the budget plan." }, { status: 500 });
 
   const categories = categoriesResult.data || [];
-  if (categories.length === 0) {
-    return NextResponse.json({ success: true, month, lines: [] });
-  }
-
   const categoryIds = categories.map((row) => row.id);
   const monthStart = `${month}-01`;
+  const nextMonthStart = `${addMonths(month, 1)}-01`;
+
+  const financialEventRepository = new SupabaseFinancialEventRepository({ supabaseClient: authenticated.supabaseClient });
 
   let allocationsResult;
   let expenseEvents;
+  let incomeEvents;
   try {
-    [allocationsResult, expenseEvents] = await Promise.all([
-      authenticated.supabaseClient
-        .from("budget_monthly_allocations")
-        .select("category_id, planned_amount_cents")
-        .eq("period_month", monthStart)
-        .in("category_id", categoryIds),
-      new SupabaseFinancialEventRepository({ supabaseClient: authenticated.supabaseClient }).findExpenseEventsSince({
+    [allocationsResult, expenseEvents, incomeEvents] = await Promise.all([
+      categoryIds.length === 0
+        ? Promise.resolve({ data: [], error: null })
+        : authenticated.supabaseClient
+            .from("budget_monthly_allocations")
+            .select("category_id, planned_amount_cents")
+            .eq("period_month", monthStart)
+            .in("category_id", categoryIds),
+      financialEventRepository.findExpenseEventsSince({
+        ownerId: authenticated.effectiveOwnerId,
+        businessScope: BUSINESS_SCOPE,
+        sinceDate: monthStart,
+      }),
+      financialEventRepository.findIncomeEventsSince({
         ownerId: authenticated.effectiveOwnerId,
         businessScope: BUSINESS_SCOPE,
         sinceDate: monthStart,
@@ -63,13 +70,18 @@ export async function GET(request) {
 
   const plannedByCategoryId = new Map((allocationsResult.data || []).map((row) => [row.category_id, row.planned_amount_cents]));
 
-  const nextMonthStart = `${addMonths(month, 1)}-01`;
   const actualCentsByCategory = new Map();
   for (const event of expenseEvents) {
     if (event.event_date >= nextMonthStart) continue; // findExpenseEventsSince only has a lower bound
     const current = actualCentsByCategory.get(event.normalized_category) || 0;
     actualCentsByCategory.set(event.normalized_category, current + Math.round(event.amount * 100));
   }
+
+  // findIncomeEventsSince only has a lower bound too -- cap it to this month the same way.
+  const totalIncomeCents = incomeEvents.reduce(
+    (total, event) => (event.event_date >= nextMonthStart ? total : total + Math.round(event.amount * 100)),
+    0,
+  );
 
   const lines = categories
     .map((category) => ({
@@ -81,7 +93,17 @@ export async function GET(request) {
     }))
     .sort((a, b) => a.displayLabel.localeCompare(b.displayLabel));
 
-  return NextResponse.json({ success: true, month, lines });
+  const totalPlannedCents = lines.reduce((total, line) => total + (line.plannedAmountCents ?? 0), 0);
+  const totalActualCents = lines.reduce((total, line) => total + line.actualAmountCents, 0);
+
+  const summary = {
+    totalIncomeCents,
+    totalPlannedCents,
+    totalActualCents,
+    unassignedCents: totalIncomeCents - totalPlannedCents,
+  };
+
+  return NextResponse.json({ success: true, month, lines, summary });
 }
 
 export async function POST(request) {

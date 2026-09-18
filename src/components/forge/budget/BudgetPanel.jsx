@@ -1,6 +1,8 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { isSavingsOrInvestmentCategory } from "@/domains/budgeting/isSavingsOrInvestmentCategory";
+import { isDebtPayoffCategory } from "@/domains/budgeting/isDebtPayoffCategory";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToMoney = (cents) => (typeof cents === "number" ? money.format(cents / 100) : "—");
@@ -43,6 +45,7 @@ export default function BudgetPanel() {
   const [status, setStatus] = useState("loading"); // "loading" | "available" | "schema-unavailable" | "error"
   const [errorMessage, setErrorMessage] = useState("");
   const [lines, setLines] = useState([]);
+  const [totalIncomeCents, setTotalIncomeCents] = useState(0);
   const [suggestions, setSuggestions] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [savingCategoryId, setSavingCategoryId] = useState(null);
@@ -70,6 +73,7 @@ export default function BudgetPanel() {
         }
         setLines(planResult.payload.lines || []);
         setDrafts(draftsFromLines(planResult.payload.lines || []));
+        setTotalIncomeCents(planResult.payload.summary?.totalIncomeCents ?? 0);
         setSuggestions(suggestionsResult.payload.categories || []);
         setStatus("available");
         return null;
@@ -93,6 +97,24 @@ export default function BudgetPanel() {
     () => suggestions.filter((entry) => !plannedCategories.has(entry.normalizedCategory)),
     [suggestions, plannedCategories],
   );
+  // Debt payoff is checked first and takes precedence over a savings/investment match, mirroring
+  // the standard "pay down debt before extra investing" guidance -- ranked ahead in the UI below,
+  // not scored, since there's no balance/interest-rate data here to do a real avalanche/snowball order.
+  const debtPayoffSuggestions = useMemo(() => addableSuggestions.filter((entry) => isDebtPayoffCategory(entry)), [addableSuggestions]);
+  const savingsAndInvestmentSuggestions = useMemo(
+    () => addableSuggestions.filter((entry) => !isDebtPayoffCategory(entry) && isSavingsOrInvestmentCategory(entry)),
+    [addableSuggestions],
+  );
+  // Everyday-spending suggestions only -- debt/savings/investment ones already have their own
+  // "where could this go" callout above, right where the unassigned balance is.
+  const everydaySuggestions = useMemo(
+    () => addableSuggestions.filter((entry) => !isDebtPayoffCategory(entry) && !isSavingsOrInvestmentCategory(entry)),
+    [addableSuggestions],
+  );
+
+  const totalPlannedCents = useMemo(() => lines.reduce((total, line) => total + (line.plannedAmountCents ?? 0), 0), [lines]);
+  const totalActualCents = useMemo(() => lines.reduce((total, line) => total + line.actualAmountCents, 0), [lines]);
+  const unassignedCents = totalIncomeCents - totalPlannedCents;
 
   const saveLine = useCallback(
     (categoryId) => {
@@ -184,6 +206,38 @@ export default function BudgetPanel() {
 
       {status === "available" ? (
         <>
+          <BudgetSummaryBar
+            totalIncomeCents={totalIncomeCents}
+            totalPlannedCents={totalPlannedCents}
+            totalActualCents={totalActualCents}
+            unassignedCents={unassignedCents}
+          />
+
+          {unassignedCents > 0 && (debtPayoffSuggestions.length > 0 || savingsAndInvestmentSuggestions.length > 0) ? (
+            <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-900/60 dark:bg-emerald-950/30">
+              <p className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
+                You have {centsToMoney(unassignedCents)} not yet assigned this month. Debt payoff is listed first —
+                paying down what you owe is generally worth more than extra investing.
+              </p>
+              {debtPayoffSuggestions.length > 0 ? (
+                <WhereToPutMoneyGroup
+                  heading="Debt payoff"
+                  entries={debtPayoffSuggestions}
+                  addingCategory={addingCategory}
+                  onAdd={addCategory}
+                />
+              ) : null}
+              {savingsAndInvestmentSuggestions.length > 0 ? (
+                <WhereToPutMoneyGroup
+                  heading="Savings & investments"
+                  entries={savingsAndInvestmentSuggestions}
+                  addingCategory={addingCategory}
+                  onAdd={addCategory}
+                />
+              ) : null}
+            </div>
+          ) : null}
+
           {lines.length === 0 ? (
             <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
               <p className="text-sm font-bold text-slate-800 dark:text-slate-200">No budget categories yet.</p>
@@ -207,13 +261,13 @@ export default function BudgetPanel() {
             </ul>
           )}
 
-          {addableSuggestions.length > 0 ? (
+          {everydaySuggestions.length > 0 ? (
             <div className="mt-8">
               <h3 className="text-sm font-black uppercase tracking-wide text-slate-700 dark:text-slate-300">
                 Add from your spending history
               </h3>
               <ul className="mt-3 space-y-2">
-                {addableSuggestions.map((entry) => (
+                {everydaySuggestions.map((entry) => (
                   <li
                     key={entry.normalizedCategory}
                     className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-700"
@@ -274,6 +328,66 @@ export default function BudgetPanel() {
         </>
       ) : null}
     </section>
+  );
+}
+
+function BudgetSummaryBar({ totalIncomeCents, totalPlannedCents, totalActualCents, unassignedCents }) {
+  const unassignedTone =
+    unassignedCents > 0
+      ? "text-emerald-700 dark:text-emerald-400"
+      : unassignedCents < 0
+        ? "text-red-700 dark:text-red-400"
+        : "text-slate-900 dark:text-white";
+  const unassignedCaption = unassignedCents > 0 ? "Not yet assigned" : unassignedCents < 0 ? "Over-assigned" : "Every dollar assigned";
+
+  return (
+    <dl className="mt-6 grid grid-cols-2 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 sm:grid-cols-4 dark:border-slate-700 dark:bg-slate-950/40">
+      <div>
+        <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Income this month</dt>
+        <dd className="mt-1 text-xl font-black text-slate-950 dark:text-white">{centsToMoney(totalIncomeCents)}</dd>
+      </div>
+      <div>
+        <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Planned</dt>
+        <dd className="mt-1 text-xl font-black text-slate-950 dark:text-white">{centsToMoney(totalPlannedCents)}</dd>
+      </div>
+      <div>
+        <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Spent so far</dt>
+        <dd className="mt-1 text-xl font-black text-slate-950 dark:text-white">{centsToMoney(totalActualCents)}</dd>
+      </div>
+      <div>
+        <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{unassignedCaption}</dt>
+        <dd className={`mt-1 text-xl font-black ${unassignedTone}`}>{centsToMoney(unassignedCents)}</dd>
+      </div>
+    </dl>
+  );
+}
+
+function WhereToPutMoneyGroup({ heading, entries, addingCategory, onAdd }) {
+  return (
+    <div className="mt-4">
+      <h4 className="text-xs font-black uppercase tracking-wide text-emerald-800 dark:text-emerald-300">{heading}</h4>
+      <ul className="mt-2 space-y-2">
+        {entries.map((entry) => (
+          <li
+            key={entry.normalizedCategory}
+            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-300 bg-white px-4 py-3 dark:border-emerald-800 dark:bg-slate-950"
+          >
+            <div>
+              <p className="font-bold text-slate-900 dark:text-white">{entry.displayLabel}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Recent average: {centsToMoney(entry.suggestedAmountCents)} / month</p>
+            </div>
+            <button
+              type="button"
+              disabled={addingCategory === entry.normalizedCategory}
+              onClick={() => onAdd({ normalizedCategory: entry.normalizedCategory, displayLabel: entry.displayLabel, sourceType: "history_suggested" })}
+              className={`rounded-lg px-3 py-1.5 text-sm font-bold transition disabled:opacity-50 ${goldControlClassName} ${FOCUS_RING}`}
+            >
+              {addingCategory === entry.normalizedCategory ? "Adding…" : "Add"}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

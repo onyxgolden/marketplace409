@@ -20,4 +20,8 @@ export class FinancialEventRepository {
   findExpenseEventsSince(_args) {
     throw new Error("FinancialEventRepository.findExpenseEventsSince must be implemented");
   }
+
+  findIncomeEventsSince(_args) {
+    throw new Error("FinancialEventRepository.findIncomeEventsSince must be implemented");
+  }
 }
