@@ -12,6 +12,7 @@ function rowToCategory(row) {
     normalizedCategory: row.normalized_category,
     displayLabel: row.display_label,
     sourceType: row.source_type,
+    note: row.note ?? null,
   };
 }
 
