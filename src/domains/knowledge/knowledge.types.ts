@@ -31,6 +31,8 @@ export type ForgeCategory =
   | "travel"
   | "taxes"
   | "interest_income"
+  | "internal_transfer"
+  | "owner_distribution"
   | "other";
 
 export type KnowledgeRecord = {

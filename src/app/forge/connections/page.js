@@ -11,6 +11,7 @@ import ForgeRecentActivity from "@/components/forge/ForgeRecentActivity";
 import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import ConnectionExecutionResultCard from "@/components/forge/ConnectionExecutionResultCard";
 import ReconcileDuplicatesPanel from "@/components/forge/ReconcileDuplicatesPanel";
+import ReconcileTransfersPanel from "@/components/forge/ReconcileTransfersPanel";
 import { forgeTheme } from "@/components/forge/theme";
 
 export default function ConnectionPage() {
@@ -487,6 +488,8 @@ export default function ConnectionPage() {
         />
 
         <ReconcileDuplicatesPanel />
+
+        <ReconcileTransfersPanel />
       </main>
     </div>
   );

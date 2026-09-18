@@ -3,6 +3,7 @@ import { PropertyResolverService } from "../property/property-resolver.service";
 import type { Transaction } from "../transaction/transaction.types";
 import { financialEventFactory } from "./financial-event.factory";
 import { CANONICAL_TRANSACTION_AMOUNT_UNIT_VERSION, minorUnitsToDecimalDollars } from "./minorUnitsToDecimalDollars";
+import { applyDirectionCorrection } from "./correctRawBankFeedDirection";
 import type {
   FinancialEvent,
   ResolvedFinancialEventInput,
@@ -96,24 +97,37 @@ export class FinancialEventImportService {
       transaction.merchantName ??
       transaction.description;
 
+    // The Transaction-to-FinancialEvent unit boundary: transaction.amountCents is signed integer
+    // minor units (see transaction.types.ts); the decimal-dollar value below is the amount this
+    // event will carry. This is the ONLY place this conversion happens -- neither TransactionMapper
+    // nor financial-event.factory.ts nor SupabaseFinancialEventRepository perform any further
+    // conversion, and buildFinancialForgePerformance.toCents() on the read side already correctly
+    // assumes financial_events.amount is decimal dollars, so this must run exactly once, here.
+    const rawAmount = minorUnitsToDecimalDollars(transaction.amountCents);
+    const rawKnowledge = this.normalizer.normalize(semanticDescription);
+    // categoryNormalizer's fallback for a description it can't map (the raw bank feed's normal
+    // case -- Stripe Financial Connections supplies no merchant/category data) always returns
+    // transactionKind: "expense" and leaves the raw signed bank amount untouched. For a deposit
+    // that sign is negative, which silently misclassifies real income as a negative expense.
+    // Correct only that specific fallback case -- never a real CategoryNormalizer match.
+    const { transactionKind, normalizedCategory, amount } = applyDirectionCorrection({
+      transactionKind: rawKnowledge.transactionKind,
+      normalizedCategory: rawKnowledge.normalizedCategory,
+      amount: rawAmount,
+    });
+    const knowledge = { ...rawKnowledge, transactionKind, normalizedCategory };
+
     const resolvedInput: ResolvedFinancialEventInput = {
       date: transaction.date,
       description: transaction.description,
-      // The Transaction-to-FinancialEvent unit boundary: transaction.amountCents is signed integer
-      // minor units (see transaction.types.ts); ResolvedFinancialEventInput.amount is signed decimal
-      // dollars (see financial-event.types.ts). This is the ONLY place this conversion happens --
-      // neither TransactionMapper nor financial-event.factory.ts nor
-      // SupabaseFinancialEventRepository perform any further conversion, and
-      // buildFinancialForgePerformance.toCents() on the read side already correctly assumes
-      // financial_events.amount is decimal dollars, so this must run exactly once, here.
-      amount: minorUnitsToDecimalDollars(transaction.amountCents),
+      amount,
       resolvedProperty: (
         await this.propertyResolver.resolveTransaction({
           transaction,
           ownerId: this.ownerId,
         })
       ).property,
-      knowledge: this.normalizer.normalize(semanticDescription),
+      knowledge,
       sourceSystem: "transaction",
       sourceRecordId: transaction.id,
       businessScope,

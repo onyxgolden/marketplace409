@@ -302,7 +302,7 @@ describe("FinancialEventImportService", () => {
       expect(event.transaction_kind).toBe("expense");
     });
 
-    it("Stripe: a real inflow (positive raw Stripe amount) becomes a negative canonical dollar amount (income direction)", async () => {
+    it("Stripe: a real inflow (positive raw Stripe amount) canonicalizes to a positive income FinancialEvent, not a negative expense", async () => {
       const mapper = new StripeFinancialConnectionsTransactionMapper();
       const stripeTransaction: StripeFinancialConnectionsTransaction = {
         transactionId: "fctxn_typographic",
@@ -322,11 +322,14 @@ describe("FinancialEventImportService", () => {
       expect(mappedTransaction.amountCents).toBe(-2500);
 
       const event = await importOneTransaction(mappedTransaction);
-      // transaction_kind is derived from category/description keyword matching (categoryNormalizer),
-      // not from amount's sign -- so "direction" here is verified via the signed amount itself, the
-      // actual value this fix corrects.
-      expect(event.amount).toBe(-25);
-      expect(event.amount).toBeLessThan(0);
+      // "Typographic" doesn't match any CategoryNormalizer entry, so this hits the fallback path
+      // (normalizedCategory 'other', transactionKind 'expense') with a negative raw amount --
+      // exactly the case correctRawBankFeedDirection.js exists to fix: a real inflow must not
+      // surface as a negative expense. See correctRawBankFeedDirection.test.js for the isolated
+      // unit coverage of that correction; this test proves it's actually wired into the import path.
+      expect(event.transaction_kind).toBe("income");
+      expect(event.amount).toBe(25);
+      expect(event.amount).toBeGreaterThan(0);
     });
 
     it("preserves exact cent precision through the full pipeline for a non-round amount ($10.01)", async () => {
