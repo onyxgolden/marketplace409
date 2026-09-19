@@ -55,6 +55,9 @@ export function buildFinancialActiveSurface({
   loadState,
   health,
   kpis,
+  // The screen's one number (see FinancialWorkspaceHeader): { value, label,
+  // caption, ready }. Built by the page from already-fetched KPIs.
+  headline = null,
   executiveBriefing,
   riskSummary,
   riskAssessment,
@@ -217,6 +220,7 @@ export function buildFinancialActiveSurface({
             <FinancialWorkspaceHeader
               health={health}
               kpis={kpis}
+              headline={headline}
             />
           )}
         </div>

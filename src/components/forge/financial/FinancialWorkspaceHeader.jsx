@@ -1,4 +1,5 @@
 import FinancialKpiSurface from "@/components/forge/financial/FinancialKpiSurface";
+import ScreenHeadlineNumber from "@/components/forge/ScreenHeadlineNumber";
 import { forgeTheme } from "@/components/forge/theme";
 
 const headerVariants = Object.freeze({
@@ -24,6 +25,9 @@ export default function FinancialWorkspaceHeader({
     detail: "Financial health is being prepared.",
   },
   kpis = [],
+  // The screen's one number: { value, label, caption, ready }. Rendered large
+  // in the hero; health stays as supporting context beneath it.
+  headline = null,
 }) {
   const styles =
     headerVariants[variant] ??
@@ -51,17 +55,28 @@ export default function FinancialWorkspaceHeader({
             </p>
           </div>
 
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-800/40 dark:bg-amber-950/30">
-            <div className="text-xs font-black uppercase tracking-wide text-amber-700 dark:text-amber-300">
-              Health Status
-            </div>
+          <div className="flex flex-col gap-4 lg:items-end">
+            {headline ? (
+              <ScreenHeadlineNumber
+                value={headline.ready ? headline.value : "–"}
+                label={headline.label}
+                caption={headline.caption}
+                testId="financial-headline-number"
+              />
+            ) : null}
 
-            <div className="mt-1 text-2xl font-black text-amber-950 dark:text-amber-200">
-              {health.label}
-            </div>
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-800/40 dark:bg-amber-950/30">
+              <div className="text-xs font-black uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                Health Status
+              </div>
 
-            <div className="mt-1 max-w-xs text-sm text-amber-800 dark:text-amber-300">
-              {health.detail}
+              <div className="mt-1 text-2xl font-black text-amber-950 dark:text-amber-200">
+                {health.label}
+              </div>
+
+              <div className="mt-1 max-w-xs text-sm text-amber-800 dark:text-amber-300">
+                {health.detail}
+              </div>
             </div>
           </div>
         </div>

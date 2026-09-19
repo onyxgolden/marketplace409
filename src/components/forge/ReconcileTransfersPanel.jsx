@@ -49,7 +49,7 @@ function categoryOptionsFor(suggestionCategory) {
 //   2. Transfers/distributions: money moved between the owner's own accounts, misread as real
 //      income or a real expense instead of an internal transfer -- or, when it crosses the
 //      personal/business line, a real owner distribution that wasn't labeled as one.
-export default function ReconcileTransfersPanel() {
+export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
   const [status, setStatus] = useState("loading"); // "loading" | "available" | "schema-unavailable" | "error"
   const [errorMessage, setErrorMessage] = useState("");
   const [preview, setPreview] = useState(null);
@@ -109,21 +109,24 @@ export default function ReconcileTransfersPanel() {
       .then(({ response, payload }) => {
         if (response.status === 503 && payload.code === "transfer_classification_schema_unavailable") {
           setStatus("schema-unavailable");
+          onBacklogCount?.(null);
           return null;
         }
         if (!response.ok) throw new Error(payload.error || "Unable to check for transfer/distribution classification.");
         setPreview(payload);
         setStatus("available");
+        onBacklogCount?.(payload?.ambiguousTransfers?.length ?? 0);
         return null;
       })
       .catch((loadError) => {
         setErrorMessage(loadError.message);
         setStatus("error");
+        onBacklogCount?.(null);
       })
       .finally(() => {
         requestInFlight.current = false;
       });
-  }, []);
+  }, [onBacklogCount]);
 
   useEffect(() => {
     load();

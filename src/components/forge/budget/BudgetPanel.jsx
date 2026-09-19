@@ -8,6 +8,8 @@ import { lineVarianceCents, varianceLabel } from "@/domains/budgeting/budgetVari
 import { categoryFamilyOf } from "@/domains/budgeting/categoryFamily";
 import { monthlyEquivalentAmount } from "@/domains/financial-event/detectRecurringPayments";
 import BudgetPieChart from "@/components/forge/budget/BudgetPieChart";
+import ScreenHeadlineNumber from "@/components/forge/ScreenHeadlineNumber";
+import { describeLeftToSpend } from "@/components/forge/budget/budgetHeadline";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToMoney = (cents) => (typeof cents === "number" ? money.format(cents / 100) : "—");
@@ -182,6 +184,21 @@ export default function BudgetPanel() {
   const totalActualCents = useMemo(() => lines.reduce((total, line) => total + line.actualAmountCents, 0), [lines]);
   const unassignedCents = totalIncomeCents - totalPlannedCents;
 
+  // The screen's one number: "How much is left to spend this month?" Derived
+  // from the already-fetched plan totals; follows the personal/business scope
+  // tabs. Dashes until the plan loads -- never a fabricated $0.
+  const leftToSpendHeadline = useMemo(
+    () =>
+      describeLeftToSpend({
+        leftToSpendCents:
+          status === "available"
+            ? lineVarianceCents({ plannedAmountCents: totalPlannedCents, actualAmountCents: totalActualCents })
+            : null,
+        totalPlannedCents: status === "available" ? totalPlannedCents : null,
+      }),
+    [status, totalPlannedCents, totalActualCents],
+  );
+
   const incomeChartEntries = useMemo(
     () => incomeByCategory.map((entry) => ({ label: entry.displayLabel, valueCents: entry.amountCents })),
     [incomeByCategory],
@@ -300,7 +317,15 @@ export default function BudgetPanel() {
           <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Money</p>
           <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Budget — {monthLabel(month)}</h2>
         </div>
-        <div role="tablist" aria-label="Budget scope" className="flex rounded-xl border border-slate-300 p-1 dark:border-slate-600">
+        <div className="flex flex-col items-end gap-4">
+          <ScreenHeadlineNumber
+            value={leftToSpendHeadline.value}
+            label="Left to spend"
+            caption={leftToSpendHeadline.caption}
+            tone={leftToSpendHeadline.tone}
+            testId="budget-headline-number"
+          />
+          <div role="tablist" aria-label="Budget scope" className="flex rounded-xl border border-slate-300 p-1 dark:border-slate-600">
           {[
             { value: "personal", label: "Personal" },
             { value: "business", label: "Business" },
@@ -320,6 +345,7 @@ export default function BudgetPanel() {
               {option.label}
             </button>
           ))}
+          </div>
         </div>
       </div>
       <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-400">
