@@ -12,6 +12,7 @@ import ForgeSystemStatus from "@/components/forge/ForgeSystemStatus";
 import ConnectionExecutionResultCard from "@/components/forge/ConnectionExecutionResultCard";
 import ReconcileDuplicatesPanel from "@/components/forge/ReconcileDuplicatesPanel";
 import ReconcileTransfersPanel from "@/components/forge/ReconcileTransfersPanel";
+import RecurringPaymentsPanel from "@/components/forge/RecurringPaymentsPanel";
 import { forgeTheme } from "@/components/forge/theme";
 
 export default function ConnectionPage() {
@@ -490,6 +491,8 @@ export default function ConnectionPage() {
         <ReconcileDuplicatesPanel />
 
         <ReconcileTransfersPanel />
+
+        <RecurringPaymentsPanel />
       </main>
     </div>
   );
