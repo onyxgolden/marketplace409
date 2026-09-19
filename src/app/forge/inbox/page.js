@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { forgeTheme } from "@/components/forge/theme";
+import {
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 import { buildMorningQueue } from "@/domains/ledger/brain/morningQueue.js";
 import { buildBrainDigest } from "@/domains/ledger/brain/digest.js";
 import { lineVarianceCents } from "@/domains/budgeting/budgetVariance.js";
@@ -348,27 +352,23 @@ export default function InboxPage() {
       </header>
 
       {isLoading && (
-        <section className={`mt-6 ${forgeTheme.card}`}>
-          <p className={forgeTheme.textSmall}>Loading your queue…</p>
-        </section>
+        <div className="mt-6">
+          <ForgeLoadingState label="Loading your queue…" />
+        </div>
       )}
 
       {!isLoading && allFailed && (
-        <section className={`mt-6 ${forgeTheme.card}`}>
-          <p className="text-sm font-bold text-red-600 dark:text-red-400">
-            Couldn&apos;t load the queue. {failedSources.join(", ")} failed — try reloading.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
+        <div className="mt-6">
+          <ForgeErrorState
+            title="Couldn't load the queue."
+            detail={`${failedSources.join(", ")} failed — try reloading.`}
+            onRetry={() => {
               setIsLoading(true);
               load();
             }}
-            className="mt-3 min-h-11 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white dark:bg-amber-400 dark:text-slate-950"
-          >
-            Reload
-          </button>
-        </section>
+            retryLabel="Reload"
+          />
+        </div>
       )}
 
       {!isLoading && !allFailed && derived && (

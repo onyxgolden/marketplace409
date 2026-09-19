@@ -1,6 +1,10 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import {
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 import { ACTION_GATE, resolveActionGate } from "@/domains/financial-event/actionGate";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -174,13 +178,7 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
   };
 
   if (status === "loading") {
-    return (
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-        <p role="status" className="text-sm text-slate-500 dark:text-slate-400">
-          Checking for misclassified transfers…
-        </p>
-      </section>
-    );
+    return <ForgeLoadingState label="Checking for misclassified transfers…" />;
   }
 
   if (status === "schema-unavailable") {
@@ -189,18 +187,13 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
 
   if (status === "error") {
     return (
-      <section className="rounded-3xl border border-red-200 bg-red-50 p-6 dark:border-red-900/60 dark:bg-red-950/30">
-        <p role="alert" className="text-sm font-bold text-red-800 dark:text-red-300">
-          {errorMessage || "Something went wrong checking for transfer/distribution classification."}
-        </p>
-        <button
-          type="button"
-          onClick={load}
-          className={`mt-4 rounded-xl border border-red-400 px-4 py-2 text-sm font-bold text-red-800 transition hover:bg-red-100 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/40 ${FOCUS_RING}`}
-        >
-          Retry
-        </button>
-      </section>
+      <ForgeErrorState
+        title={
+          errorMessage ||
+          "Something went wrong checking for transfer/distribution classification."
+        }
+        onRetry={load}
+      />
     );
   }
 
