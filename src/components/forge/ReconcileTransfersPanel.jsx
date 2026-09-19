@@ -54,7 +54,11 @@ export default function ReconcileTransfersPanel() {
     load();
   }, [load]);
 
-  const totalItems = (preview?.directionFixes.length ?? 0) + (preview?.internalTransfers.length ?? 0) + (preview?.distributions.length ?? 0);
+  const totalItems =
+    (preview?.directionFixes.length ?? 0) +
+    (preview?.internalTransfers.length ?? 0) +
+    (preview?.distributions.length ?? 0) +
+    (preview?.debtPayments.length ?? 0);
   const canApply = acknowledged && confirmationText.trim().toUpperCase() === "CONFIRM" && totalItems > 0;
 
   const applyReconciliation = () => {
@@ -114,6 +118,7 @@ export default function ReconcileTransfersPanel() {
   const directionFixes = preview?.directionFixes ?? [];
   const internalTransfers = preview?.internalTransfers ?? [];
   const distributions = preview?.distributions ?? [];
+  const debtPayments = preview?.debtPayments ?? [];
   const ambiguousTransfers = preview?.ambiguousTransfers ?? [];
 
   return (
@@ -134,7 +139,7 @@ export default function ReconcileTransfersPanel() {
         <p className="mt-6 text-sm font-bold text-emerald-700 dark:text-emerald-400">Nothing to reclassify right now.</p>
       ) : (
         <>
-          <dl className="mt-6 grid grid-cols-2 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 sm:grid-cols-4 dark:border-slate-700 dark:bg-slate-950/40">
+          <dl className="mt-6 grid grid-cols-2 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 sm:grid-cols-3 lg:grid-cols-5 dark:border-slate-700 dark:bg-slate-950/40">
             <div>
               <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Direction fixes</dt>
               <dd className="mt-1 text-xl font-black text-slate-950 dark:text-white">{directionFixes.length}</dd>
@@ -142,6 +147,13 @@ export default function ReconcileTransfersPanel() {
             <div>
               <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Internal transfers</dt>
               <dd className="mt-1 text-xl font-black text-slate-950 dark:text-white">{internalTransfers.length}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Loan/HELOC payments</dt>
+              <dd className="mt-1 text-xl font-black text-slate-950 dark:text-white">
+                {debtPayments.length}
+                <span className="ml-1 text-sm font-bold text-slate-500 dark:text-slate-400">({centsToMoney(preview.totalDebtPaymentAmountCents)})</span>
+              </dd>
             </div>
             <div>
               <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Owner distributions</dt>
@@ -176,6 +188,40 @@ export default function ReconcileTransfersPanel() {
                         <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{entry.eventDate}</td>
                         <td className="px-3 py-2 text-right font-bold text-slate-950 dark:text-white">{dollars(entry.amount)}</td>
                         <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{entry.description}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          {debtPayments.length > 0 ? (
+            <div className="mt-6">
+              <h3 className="text-sm font-black uppercase tracking-wide text-slate-700 dark:text-slate-300">
+                Loan/HELOC payments ({centsToMoney(preview.totalDebtPaymentAmountCents)})
+              </h3>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                A transfer into one of your loan/credit accounts is real debt service, not a no-op shuffle — this
+                becomes a real expense category (e.g. a HELOC or mortgage payment) instead of being excluded.
+              </p>
+              <div className="mt-2 max-h-72 overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-700">
+                <table className="w-full min-w-[640px] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 text-left dark:border-slate-700 dark:bg-slate-950/40">
+                      <th scope="col" className="px-3 py-2 font-bold text-slate-600 dark:text-slate-300">Date</th>
+                      <th scope="col" className="px-3 py-2 text-right font-bold text-slate-600 dark:text-slate-300">Amount</th>
+                      <th scope="col" className="px-3 py-2 font-bold text-slate-600 dark:text-slate-300">Paid from</th>
+                      <th scope="col" className="px-3 py-2 font-bold text-slate-600 dark:text-slate-300">Paid into</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {debtPayments.map((pair) => (
+                      <tr key={pair.inbound.eventId}>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{pair.outbound.eventDate}</td>
+                        <td className="px-3 py-2 text-right font-bold text-slate-950 dark:text-white">{dollars(pair.outbound.amount)}</td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{pair.outbound.description}</td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{pair.loanAccountName}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -249,9 +295,10 @@ export default function ReconcileTransfersPanel() {
             <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 dark:border-amber-800 dark:bg-amber-950/30">
               <label className="flex gap-3 text-sm font-bold text-amber-950 dark:text-amber-200">
                 <input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} className={FOCUS_RING} />
-                I reviewed this list and understand it reclassifies these {totalItems} event(s) — direction fixes
-                and distributions still count as income/expense (just correctly), internal transfers are excluded
-                entirely. Amounts and dates never change, nothing is deleted, and this is fully reversible.
+                I reviewed this list and understand it reclassifies these {totalItems} event(s) — direction fixes,
+                distributions, and loan/HELOC payments still count as income/expense (just correctly), internal
+                transfers are excluded entirely. Amounts and dates never change, nothing is deleted, and this is
+                fully reversible.
               </label>
               <label className="mt-4 block text-sm font-bold text-amber-950 dark:text-amber-200">
                 Type CONFIRM to apply

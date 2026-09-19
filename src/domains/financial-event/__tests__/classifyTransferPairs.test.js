@@ -31,7 +31,34 @@ describe("classifyTransferPairs", () => {
     const result = classifyTransferPairs({ rows });
     expect(result.internalTransfers).toEqual([{ inboundId: "in-1", outboundId: "out-1" }]);
     expect(result.distributions).toEqual([]);
+    expect(result.debtPayments).toEqual([]);
     expect(result.ambiguous).toEqual([]);
+  });
+
+  test("classifies a same-scope transfer into a loan/credit account as a debt payment, not an internal transfer", () => {
+    // Real production shape: Regular Savings Account (depository) paying down Home Equity (a
+    // type='credit' HELOC account) -- both personal scope, but this is real debt service, not a
+    // no-op liquidity shuffle.
+    const rows = [
+      { id: "savings-out", eventDate: "2026-09-06", amount: 1482.5, businessScope: "personal", isLoanAccount: false },
+      { id: "heloc-in", eventDate: "2026-09-06", amount: -1482.5, businessScope: "personal", isLoanAccount: true },
+    ];
+    const result = classifyTransferPairs({ rows });
+    expect(result.debtPayments).toEqual([{ inboundId: "heloc-in", outboundId: "savings-out" }]);
+    expect(result.internalTransfers).toEqual([]);
+    expect(result.distributions).toEqual([]);
+    expect(result.ambiguous).toEqual([]);
+  });
+
+  test("classifies a loan payment as a debt payment even when it happens to cross business scope", () => {
+    const rows = [
+      { id: "biz-savings-out", eventDate: "2026-05-01", amount: 500, businessScope: "business", isLoanAccount: false },
+      { id: "personal-loan-in", eventDate: "2026-05-01", amount: -500, businessScope: "personal", isLoanAccount: true },
+    ];
+    const result = classifyTransferPairs({ rows });
+    expect(result.debtPayments).toEqual([{ inboundId: "personal-loan-in", outboundId: "biz-savings-out" }]);
+    expect(result.distributions).toEqual([]);
+    expect(result.internalTransfers).toEqual([]);
   });
 
   test("pairs an unambiguous cross-scope transfer as a distribution, with scope on each leg", () => {
