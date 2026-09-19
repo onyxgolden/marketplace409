@@ -11,6 +11,7 @@ import {
 import FinancialApplicationShell from "@/components/forge/financial/FinancialApplicationShell";
 import { isCacheableDashboardLoad, readLastKnownDashboardCache, writeDashboardCache } from "./dashboardCache.js";
 import { money } from "./formatMoney.js";
+import MonthComparisonPanel from "./MonthComparisonPanel.jsx";
 import { getCurrentMonthProfitKpi } from "./getCurrentMonthProfitKpi.js";
 
 // The one legitimate source of the dashboard cache's isolation identity -- see
@@ -418,6 +419,7 @@ export default function FinancialPage() {
 
   return (
     <FinancialApplicationShell
+      compareMonthsSection={<MonthComparisonPanel />}
       activeFunctionId={
         activeFunctionId
       }

@@ -55,6 +55,17 @@ export class FinancialEngine {
   buildReports() {
     return this.reportService.buildReports();
   }
+
+  buildIncomeStatementForPeriod({ startDate, endDate } = {}) {
+    return this.reportService.buildIncomeStatementForPeriod({
+      startDate,
+      endDate,
+    });
+  }
+
+  buildBalanceSheetAsOf(asOfDate) {
+    return this.reportService.buildBalanceSheetAsOf(asOfDate);
+  }
 }
 
 Object.freeze(FinancialEngine);

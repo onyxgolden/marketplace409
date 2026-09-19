@@ -74,6 +74,7 @@ export function buildFinancialActiveSurface({
   statusItems,
   activities,
   operations,
+  compareMonthsSection = null,
   selectedAccountId = null,
   selectedAccountName = null,
   onSelectAccount,
@@ -197,6 +198,8 @@ export function buildFinancialActiveSurface({
                   <FinancialPositionSnapshot
                     lines={balanceSheetLines}
                   />
+
+                  {compareMonthsSection}
                 </>
               )}
             </div>
