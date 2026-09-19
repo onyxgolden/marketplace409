@@ -2,7 +2,9 @@
 import { useState } from "react";
 import { WEEKDAY_LABELS } from "./schedulingBoardState";
 
-export default function SchedulingCalendarsModal({
+// The panel content, shared by the legacy centered modal below and the docked
+// inspector rail. In the rail, onClose collapses the rail.
+export function SchedulingCalendarsPanel({
   board, onClose, onAddCalendar, onRemoveCalendar, onSetDefaultCalendar, onAddBlackout, onRemoveBlackout,
 }) {
   const [draftName, setDraftName] = useState("");
@@ -31,8 +33,7 @@ export default function SchedulingCalendarsModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose} data-scheduling-calendars>
-      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 text-slate-950 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="p-6 text-slate-950" data-scheduling-calendars>
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-amber-700">Scheduling</p>
@@ -123,6 +124,15 @@ export default function SchedulingCalendarsModal({
               className="rounded bg-slate-950 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">Add blackout</button>
           </div>
         </div>
+    </div>
+  );
+}
+
+export default function SchedulingCalendarsModal(props) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={props.onClose}>
+      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <SchedulingCalendarsPanel {...props} />
       </div>
     </div>
   );

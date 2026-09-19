@@ -21,7 +21,9 @@ function varianceToneClass(days) {
 // blocks (the board's current in-memory Gantt blocks) supplies a human label per taskCode --
 // computeScheduleVariance's compared rows only carry taskCode, since that's the one durable
 // identifier a baseline snapshot and the live board are guaranteed to share.
-export default function SchedulingBaselinesModal({ projectId, isOwner, blocks, onClose }) {
+// The panel content, shared by the legacy centered modal below and the docked
+// inspector rail. In the rail, onClose collapses the rail.
+export function SchedulingBaselinesPanel({ projectId, isOwner, blocks, onClose }) {
   const [baselines, setBaselines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [captureName, setCaptureName] = useState("");
@@ -73,8 +75,7 @@ export default function SchedulingBaselinesModal({ projectId, isOwner, blocks, o
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose} data-scheduling-baselines>
-      <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 text-slate-950 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="p-6 text-slate-950" data-scheduling-baselines>
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-amber-700">Scheduling</p>
@@ -153,6 +154,15 @@ export default function SchedulingBaselinesModal({ projectId, isOwner, blocks, o
             )}
           </div>
         )}
+    </div>
+  );
+}
+
+export default function SchedulingBaselinesModal(props) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={props.onClose}>
+      <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <SchedulingBaselinesPanel {...props} />
       </div>
     </div>
   );

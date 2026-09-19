@@ -10,7 +10,9 @@ function emptyDraft() {
 // WO#, or any other code the owner wants to tag a resource assignment or expense with, so cost can
 // later be filtered/summarized by code in the Costs modal. onChanged fires after any create/update/
 // delete so the block drawer's own cost-code picker (BlockResourcesPanel) can refetch.
-export default function SchedulingCostAccountsModal({ isOwner, onClose, onChanged }) {
+// The panel content, shared by the legacy centered modal below and the docked
+// inspector rail. In the rail, onClose collapses the rail.
+export function SchedulingCostAccountsPanel({ isOwner, onClose, onChanged }) {
   const [costAccounts, setCostAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState(emptyDraft());
@@ -54,8 +56,7 @@ export default function SchedulingCostAccountsModal({ isOwner, onClose, onChange
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose} data-scheduling-cost-accounts>
-      <div className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-6 text-slate-950 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="p-6 text-slate-950" data-scheduling-cost-accounts>
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-amber-700">Scheduling</p>
@@ -111,6 +112,15 @@ export default function SchedulingCostAccountsModal({ isOwner, onClose, onChange
             </table>
           </div>
         </div>
+    </div>
+  );
+}
+
+export default function SchedulingCostAccountsModal(props) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={props.onClose}>
+      <div className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <SchedulingCostAccountsPanel {...props} />
       </div>
     </div>
   );
