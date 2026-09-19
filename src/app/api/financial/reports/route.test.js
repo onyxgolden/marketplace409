@@ -20,6 +20,8 @@ describe("GET /api/financial/reports", () => {
     vi.clearAllMocks();
   });
 
+  const request = (url = "http://localhost/api/financial/reports") => ({ url });
+
   it("returns authenticated reports", async () => {
     mocks.buildDashboardReports.mockReturnValue({
       reports: ["income-statement"],
@@ -34,7 +36,7 @@ describe("GET /api/financial/reports", () => {
       }),
     });
 
-    const response = await GET();
+    const response = await GET(request());
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -56,7 +58,7 @@ describe("GET /api/financial/reports", () => {
       response,
     });
 
-    const result = await GET();
+    const result = await GET(request());
 
     expect(result).toBe(response);
     expect(mocks.buildDashboardReports).not.toHaveBeenCalled();
@@ -69,7 +71,7 @@ describe("GET /api/financial/reports", () => {
       }),
     });
 
-    const response = await GET();
+    const response = await GET(request());
 
     expect(response.status).toBe(503);
 
