@@ -17,6 +17,12 @@ export class AccountRollupCachedService {
     return this.cache.getBalanceByAccount(accountId);
   }
 
+  // Period queries bypass the snapshot cache -- they are ad-hoc reporting queries, and keying the
+  // cache by arbitrary date ranges would trade correctness risk for little gain.
+  getBalanceByAccountInPeriod(accountId, period) {
+    return this.baseService.getBalanceByAccountInPeriod(accountId, period);
+  }
+
   invalidateCache() {
     this.cache.invalidate();
   }

@@ -79,6 +79,21 @@ export class ProductionReportService {
     });
   }
 
+  // Multi-period reporting: an income statement for one accounting period, built from only the
+  // entries whose accounting date falls inside [startDate, endDate]. Call once per period for a
+  // comparative P&L.
+  buildIncomeStatementForPeriod({ startDate, endDate } = {}) {
+    const snapshot = this.snapshotBuilder.build({ startDate, endDate });
+    return this.reportFactory.buildIncomeStatement(snapshot);
+  }
+
+  // Multi-period reporting: a balance sheet as of a point in time -- every entry with an
+  // accounting date on or before asOfDate.
+  buildBalanceSheetAsOf(asOfDate) {
+    const snapshot = this.snapshotBuilder.build({ endDate: asOfDate });
+    return this.reportFactory.buildBalanceSheet(snapshot);
+  }
+
   _buildSnapshot() {
     return this.snapshotBuilder.build();
   }

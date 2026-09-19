@@ -16,11 +16,14 @@ export class AccountRollupSnapshotBuilder {
     Object.freeze(this);
   }
 
-  build() {
+  build(period = null) {
     const result = new Map();
 
     for (const account of this.chartOfAccounts.accounts) {
-      const balance = this.rollupService.getBalanceByAccount(account.id);
+      const balance =
+        period === null
+          ? this.rollupService.getBalanceByAccount(account.id)
+          : this.rollupService.getBalanceByAccountInPeriod(account.id, period);
       result.set(account.id, balance);
     }
 
