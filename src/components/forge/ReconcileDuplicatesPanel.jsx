@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { ACTION_GATE, resolveActionGate } from "@/domains/financial-event/actionGate";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToMoney = (cents) => money.format(cents / 100);
@@ -15,11 +16,23 @@ export default function ReconcileDuplicatesPanel() {
   const [status, setStatus] = useState("loading"); // "loading" | "available" | "schema-unavailable" | "error"
   const [errorMessage, setErrorMessage] = useState("");
   const [preview, setPreview] = useState(null);
-  const [acknowledged, setAcknowledged] = useState(false);
-  const [confirmationText, setConfirmationText] = useState("");
   const [applyStatus, setApplyStatus] = useState("idle"); // "idle" | "applying" | "done" | "error"
   const [applyMessage, setApplyMessage] = useState("");
+  const [applyingIds, setApplyingIds] = useState([]); // ids in flight right now
+  const [lastAppliedIds, setLastAppliedIds] = useState([]); // ids applied by the last successful apply, for Undo
+  const [undoStatus, setUndoStatus] = useState("idle"); // "idle" | "undoing" | "error"
   const requestInFlight = useRef(false);
+
+  // Gate decision, one shared rule (see actionGate.js): these are exact,
+  // unambiguous bidirectional matches the human reviews in the table below,
+  // and every exclusion is undoable -- so this is a single click, not the
+  // typed-CONFIRM gate. Anything ambiguous is listed separately and can never
+  // be applied from here. If the inputs above ever change such that the
+  // shared rule demands the heavy gate, the one-click UI below does not
+  // render -- it fails safe instead of silently demoting.
+  const gate = resolveActionGate({ ambiguous: false, reversible: true });
+  const [typedAcknowledged, setTypedAcknowledged] = useState(false);
+  const [typedConfirmationText, setTypedConfirmationText] = useState("");
 
   const load = useCallback(() => {
     if (requestInFlight.current) return undefined;
@@ -51,28 +64,63 @@ export default function ReconcileDuplicatesPanel() {
     load();
   }, [load]);
 
-  const canApply = acknowledged && confirmationText.trim().toUpperCase() === "CONFIRM" && (preview?.confirmedDuplicates.length ?? 0) > 0;
-
-  const applyReconciliation = () => {
+  const applyExclusions = (transactionIds) => {
+    const ids = Array.isArray(transactionIds) ? transactionIds : [];
     setApplyStatus("applying");
+    setApplyingIds(ids);
     setApplyMessage("");
-    fetch("/api/financial/reconcile-duplicates", { method: "POST" })
+    setLastAppliedIds([]);
+    setUndoStatus("idle");
+    fetch("/api/financial/reconcile-duplicates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ids.length > 0 ? { transactionIds: ids } : {}),
+    })
       .then((response) => response.json().then((payload) => ({ response, payload })))
       .then(({ response, payload }) => {
         if (!response.ok) throw new Error(payload.error || "Unable to apply the reconciliation.");
+        const appliedIds = (payload.applied ?? []).map((entry) => entry.transactionId);
         setApplyStatus("done");
+        setLastAppliedIds(appliedIds);
         setApplyMessage(
           payload.failedCount > 0
             ? `Excluded ${payload.appliedCount} duplicate transaction(s); ${payload.failedCount} could not be applied.`
-            : `Excluded ${payload.appliedCount} duplicate transaction(s) from your books. They stay in the record, just no longer counted.`,
+            : `Excluded ${payload.appliedCount} duplicate transaction(s) from your books. They stay in the record, marked as duplicates -- and you can restore them with Undo below.`,
         );
-        setAcknowledged(false);
-        setConfirmationText("");
         return load();
       })
       .catch((applyError) => {
         setApplyStatus("error");
         setApplyMessage(applyError.message);
+      })
+      .finally(() => setApplyingIds([]));
+  };
+
+  const undoExclusions = () => {
+    if (lastAppliedIds.length === 0) return;
+    setUndoStatus("undoing");
+    setApplyMessage("");
+    fetch("/api/financial/reconcile-duplicates", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transactionIds: lastAppliedIds }),
+    })
+      .then((response) => response.json().then((payload) => ({ response, payload })))
+      .then(({ response, payload }) => {
+        if (!response.ok) throw new Error(payload.error || "Unable to restore the excluded rows.");
+        setUndoStatus("idle");
+        setLastAppliedIds([]);
+        setApplyStatus("done");
+        setApplyMessage(
+          payload.failedCount > 0
+            ? `Restored ${payload.restoredCount} row(s); ${payload.failedCount} could not be restored.`
+            : `Restored ${payload.restoredCount} row(s) -- they're back in your books.`,
+        );
+        return load();
+      })
+      .catch((undoError) => {
+        setUndoStatus("error");
+        setApplyMessage(undoError.message);
       });
   };
 
@@ -154,17 +202,33 @@ export default function ReconcileDuplicatesPanel() {
                     <th scope="col" className="px-3 py-2 text-right font-bold text-slate-600 dark:text-slate-300">Amount</th>
                     <th scope="col" className="px-3 py-2 font-bold text-slate-600 dark:text-slate-300">Bank feed says</th>
                     <th scope="col" className="px-3 py-2 font-bold text-slate-600 dark:text-slate-300">Rentec says</th>
+                    <th scope="col" className="px-3 py-2 text-right font-bold text-slate-600 dark:text-slate-300">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                  {confirmedDuplicates.map((entry) => (
-                    <tr key={entry.transactionId}>
-                      <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{entry.transactionDate}</td>
-                      <td className="px-3 py-2 text-right font-bold text-slate-950 dark:text-white">{dollars(entry.transactionAmount)}</td>
-                      <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{entry.transactionDescription}</td>
-                      <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{entry.rentecDescription}</td>
-                    </tr>
-                  ))}
+                  {confirmedDuplicates.map((entry) => {
+                    const busy = applyingIds.includes(entry.transactionId);
+                    return (
+                      <tr key={entry.transactionId}>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{entry.transactionDate}</td>
+                        <td className="px-3 py-2 text-right font-bold text-slate-950 dark:text-white">{dollars(entry.transactionAmount)}</td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{entry.transactionDescription}</td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{entry.rentecDescription}</td>
+                        <td className="px-3 py-2 text-right">
+                          {gate === ACTION_GATE.SINGLE ? (
+                            <button
+                              type="button"
+                              disabled={busy || applyStatus === "applying"}
+                              onClick={() => applyExclusions([entry.transactionId])}
+                              className={`min-h-11 rounded-lg border border-amber-400 px-3 py-1.5 text-xs font-black text-amber-800 transition hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-950/40 ${FOCUS_RING}`}
+                            >
+                              {busy ? "Excluding…" : "Exclude"}
+                            </button>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -178,46 +242,79 @@ export default function ReconcileDuplicatesPanel() {
           ) : null}
 
           {confirmedDuplicates.length > 0 ? (
-            <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 dark:border-amber-800 dark:bg-amber-950/30">
-              <label className="flex gap-3 text-sm font-bold text-amber-950 dark:text-amber-200">
-                <input
-                  type="checkbox"
-                  checked={acknowledged}
-                  onChange={(event) => setAcknowledged(event.target.checked)}
-                  className={FOCUS_RING}
-                />
-                I reviewed this list and understand it excludes these {confirmedDuplicates.length} bank-feed rows
-                from reports (they stay in the record, marked as a duplicate — this is fully reversible).
-              </label>
-              <label className="mt-4 block text-sm font-bold text-amber-950 dark:text-amber-200">
-                Type CONFIRM to apply
-                <input
-                  value={confirmationText}
-                  onChange={(event) => setConfirmationText(event.target.value)}
-                  autoComplete="off"
-                  className={`mt-2 block w-full max-w-xs rounded-lg border border-amber-400 bg-white px-3 py-2 text-slate-950 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
-                />
-              </label>
-              <button
-                type="button"
-                disabled={!canApply || applyStatus === "applying"}
-                onClick={applyReconciliation}
-                className={`mt-5 rounded-xl px-5 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
-              >
-                {applyStatus === "applying" ? "Applying…" : `Exclude ${confirmedDuplicates.length} confirmed duplicate(s)`}
-              </button>
-            </div>
+            gate === ACTION_GATE.TYPED ? (
+              <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 dark:border-amber-800 dark:bg-amber-950/30">
+                <label className="flex gap-3 text-sm font-bold text-amber-950 dark:text-amber-200">
+                  <input
+                    type="checkbox"
+                    checked={typedAcknowledged}
+                    onChange={(event) => setTypedAcknowledged(event.target.checked)}
+                    className={FOCUS_RING}
+                  />
+                  I reviewed this list and understand it excludes these {confirmedDuplicates.length} bank-feed row(s)
+                  from reports. They stay in the record, marked as duplicates.
+                </label>
+                <label className="mt-4 block text-sm font-bold text-amber-950 dark:text-amber-200">
+                  Type CONFIRM to apply
+                  <input
+                    value={typedConfirmationText}
+                    onChange={(event) => setTypedConfirmationText(event.target.value)}
+                    autoComplete="off"
+                    className={`mt-2 block w-full max-w-xs rounded-lg border border-amber-400 bg-white px-3 py-2 text-slate-950 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={
+                    !typedAcknowledged ||
+                    typedConfirmationText.trim().toUpperCase() !== "CONFIRM" ||
+                    applyStatus === "applying"
+                  }
+                  onClick={() => applyExclusions(confirmedDuplicates.map((entry) => entry.transactionId))}
+                  className={`mt-5 rounded-xl px-5 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
+                >
+                  {applyStatus === "applying" ? "Excluding…" : `Exclude ${confirmedDuplicates.length} confirmed duplicate(s)`}
+                </button>
+              </div>
+            ) : (
+              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Excluding removes these {confirmedDuplicates.length} bank-feed row(s) from reports. They stay in the
+                  record, marked as duplicates -- and every exclusion can be undone.
+                </p>
+                <button
+                  type="button"
+                  disabled={applyStatus === "applying"}
+                  onClick={() => applyExclusions(confirmedDuplicates.map((entry) => entry.transactionId))}
+                  className={`mt-4 min-h-11 rounded-xl px-5 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
+                >
+                  {applyStatus === "applying" ? "Excluding…" : `Exclude ${confirmedDuplicates.length} confirmed duplicate(s)`}
+                </button>
+              </div>
+            )
           ) : null}
         </>
       )}
 
       {applyMessage ? (
-        <p
-          role={applyStatus === "error" ? "alert" : "status"}
-          className={`mt-4 text-sm font-bold ${applyStatus === "error" ? "text-red-700 dark:text-red-300" : "text-emerald-700 dark:text-emerald-300"}`}
-        >
-          {applyMessage}
-        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <p
+            role={applyStatus === "error" || undoStatus === "error" ? "alert" : "status"}
+            className={`text-sm font-bold ${applyStatus === "error" || undoStatus === "error" ? "text-red-700 dark:text-red-300" : "text-emerald-700 dark:text-emerald-300"}`}
+          >
+            {applyMessage}
+          </p>
+          {applyStatus === "done" && lastAppliedIds.length > 0 ? (
+            <button
+              type="button"
+              disabled={undoStatus === "undoing"}
+              onClick={undoExclusions}
+              className={`min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 ${FOCUS_RING}`}
+            >
+              {undoStatus === "undoing" ? "Restoring…" : `Undo (restore ${lastAppliedIds.length})`}
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );
