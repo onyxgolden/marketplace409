@@ -205,6 +205,9 @@ describe(
               getById: vi.fn(
                 async () => connection,
               ),
+              save: vi.fn(
+                async (saved) => saved,
+              ),
             },
             credentialReferenceRepository: {
               getById: vi.fn(
@@ -339,6 +342,158 @@ describe(
           }),
           { businessScope: "personal" },
         );
+
+        // A successful import stamps last_imported_at on the connection.
+        const connectionRepository =
+          coordinator.connectionRepository;
+
+        expect(
+          connectionRepository.save,
+        ).toHaveBeenCalledTimes(1);
+
+        const savedConnection =
+          connectionRepository.save.mock
+            .calls[0][0];
+
+        expect(
+          savedConnection.id,
+        ).toBe("connection_1");
+
+        expect(
+          typeof savedConnection.lastImportedAt,
+        ).toBe("string");
+
+        const stampedAt = Date.parse(
+          savedConnection.lastImportedAt,
+        );
+
+        expect(stampedAt).not.toBeNaN();
+        expect(
+          Math.abs(
+            Date.now() - stampedAt,
+          ),
+        ).toBeLessThan(60_000);
+      },
+    );
+
+    it(
+      "leaves last_imported_at untouched when the import fails",
+      async () => {
+        const connection = {
+          id: "connection_1",
+          userId: "owner_1",
+          name: "Primary Bank",
+          type: "bank",
+          status: "connected",
+          provider: "plaid",
+          credentialReferenceId:
+            "credential_1",
+          createdAt:
+            "2026-01-01T00:00:00.000Z",
+          updatedAt:
+            "2026-01-02T00:00:00.000Z",
+        };
+
+        const payload = {
+          provider: "plaid",
+          connectionId: "connection_1",
+          accounts: [],
+          balances: [],
+          transactions: [],
+          occurredAt:
+            "2026-01-03T00:00:00.000Z",
+        };
+
+        const failingAccountImportResult = {
+          provider: "plaid",
+          connectionId: "connection_1",
+          payload,
+          success: false,
+          importedAccountCount: 0,
+          skippedAccountCount: 0,
+          failedAccountCount: 1,
+        };
+
+        const save = vi.fn(
+          async (saved) => saved,
+        );
+
+        const coordinator =
+          new ConnectionImportExecutionCoordinator({
+            connectionRepository: {
+              getById: vi.fn(
+                async () => connection,
+              ),
+              save,
+            },
+            credentialReferenceRepository: {
+              getById: vi.fn(
+                async () => ({
+                  id: "credential_1",
+                  provider: "plaid",
+                }),
+              ),
+            },
+            institutionReferenceRepository: {
+              getAll: vi.fn(
+                async () => [
+                  {
+                    id: "institution_1",
+                    connectionId:
+                      "connection_1",
+                    provider: "plaid",
+                  },
+                ],
+              ),
+            },
+            accountImportService: {
+              importAccounts: vi.fn(
+                async () =>
+                  failingAccountImportResult,
+              ),
+            },
+            financialAccountImportService: {
+              importCanonicalAccounts: vi.fn(
+                async () => ({
+                  ...failingAccountImportResult,
+                  financialAccounts: [],
+                  importedFinancialAccountCount: 0,
+                  skippedFinancialAccountCount: 0,
+                  failedFinancialAccountCount: 1,
+                }),
+              ),
+            },
+            accountBalanceImportService: {
+              importCanonicalBalances: vi.fn(
+                async () => ({
+                  ...failingAccountImportResult,
+                  accountBalances: [],
+                  importedAccountBalanceCount: 0,
+                  skippedAccountBalanceCount: 0,
+                  failedAccountBalanceCount: 1,
+                }),
+              ),
+            },
+            transactionImportService: {
+              importCanonicalTransactionsForAccount:
+                vi.fn(),
+            },
+            financialEventImportService: {
+              import: vi.fn(),
+            },
+          });
+
+        const result =
+          await coordinator.executeImport({
+            connectionId: "connection_1",
+            ownerId: "owner_1",
+          });
+
+        expect(
+          result.success,
+        ).toBe(false);
+
+        expect(save).not.toHaveBeenCalled();
       },
     );
 

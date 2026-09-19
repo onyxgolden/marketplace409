@@ -248,6 +248,22 @@ export class ConnectionImportExecutionCoordinator {
       ) &&
       failedRecordCount === 0;
 
+    // A successful import is the only thing that moves the "last imported"
+    // marker -- failed or errored executions leave it untouched so the
+    // connections page never claims an import happened that did not.
+    if (success) {
+      await this.connectionRepository.save(
+        {
+          ...connection,
+          lastImportedAt:
+            new Date().toISOString(),
+          updatedAt:
+            new Date().toISOString(),
+        },
+        context,
+      );
+    }
+
     return Object.freeze({
       provider: payload.provider,
       connectionId: payload.connectionId,

@@ -15,6 +15,64 @@ import ReconcileTransfersPanel from "@/components/forge/ReconcileTransfersPanel"
 import RecurringPaymentsPanel from "@/components/forge/RecurringPaymentsPanel";
 import { forgeTheme } from "@/components/forge/theme";
 
+// "Last imported 2h ago · Sep 18, 2026 10:42 PM" -- absolute time in the
+// user's timezone so an import is unambiguous across daylight-saving
+// boundaries and travel.
+function formatRelativeTime(diffMs) {
+  if (diffMs < 0) {
+    return "just now";
+  }
+
+  const minutes = Math.floor(diffMs / 60000);
+
+  if (minutes < 1) {
+    return "just now";
+  }
+
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+
+  const days = Math.floor(hours / 24);
+
+  if (days < 30) {
+    return `${days}d ago`;
+  }
+
+  const months = Math.floor(days / 30);
+
+  if (months < 12) {
+    return `${months}mo ago`;
+  }
+
+  return `${Math.floor(months / 12)}y ago`;
+}
+
+function formatLastImportedAt(iso) {
+  const date = new Date(iso);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const absolute = date.toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  return `${formatRelativeTime(Date.now() - date.getTime())} · ${absolute}`;
+}
+
 export default function ConnectionPage() {
   const [viewModel, setViewModel] = useState(
     ForgeConnectionDashboardApplication.buildLoadingModel(),
@@ -463,12 +521,46 @@ export default function ConnectionPage() {
                         <div className="mt-2 text-sm text-slate-600 dark:text-slate-300">
                           Status: {connection.status || "unknown"}
                         </div>
+                        {connection.lastImportedAt ? (
+                          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                            Last imported{" "}
+                            {formatLastImportedAt(
+                              connection.lastImportedAt,
+                            ) || "unknown"}
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-xs italic text-slate-400 dark:text-slate-500">
+                            Never imported
+                          </div>
+                        )}
                       </div>
 
-                      <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-800 dark:bg-slate-800/60 dark:text-slate-200">
-                        {connection.readyForImport
-                          ? "Ready for import"
-                          : "Import not ready"}
+                      <div className="flex flex-col items-end gap-2">
+                        <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-800 dark:bg-slate-800/60 dark:text-slate-200">
+                          {connection.readyForImport
+                            ? "Ready for import"
+                            : "Import not ready"}
+                        </div>
+                        {connection.readyForImport &&
+                        connection.id ? (
+                          <button
+                            type="button"
+                            disabled={isExecuting}
+                            onClick={() =>
+                              executeConnectionOperation({
+                                action:
+                                  "import-transactions",
+                                connectionId:
+                                  connection.id,
+                              })
+                            }
+                            className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950"
+                          >
+                            {isExecuting
+                              ? "Importing..."
+                              : "Import now"}
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   </article>
