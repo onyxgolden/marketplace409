@@ -56,6 +56,17 @@ function addDaysIso(iso, days) {
   return new Date(t + Math.round(days) * DAY_MS).toISOString().slice(0, 10);
 }
 
+// Monthly budget equivalent of a recurring pattern: scales the median occurrence
+// amount to a 30.44-day month. A biweekly $1,482.50 mortgage (~16d rhythm) becomes
+// ~$2,820/mo; a monthly $3.75 charge stays ~$3.75.
+export function monthlyEquivalentAmount(pattern) {
+  const amount = Number(pattern?.medianAmount);
+  if (!Number.isFinite(amount)) return 0;
+  const interval = Number(pattern?.medianIntervalDays);
+  if (!Number.isFinite(interval) || interval <= 0) return Math.round(amount * 100) / 100;
+  return Math.round(((amount * 30.44) / interval) * 100) / 100;
+}
+
 export function detectRecurringPayments(inputRows, options = {}) {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const rows = (inputRows ?? []).filter(
@@ -99,7 +110,9 @@ export function detectRecurringPayments(inputRows, options = {}) {
     const last = sorted[sorted.length - 1];
     patterns.push(
       Object.freeze({
+        accountId: sorted[0].accountId ?? null,
         accountName: sorted[0].accountName ?? null,
+        businessScope: sorted[0].businessScope ?? null,
         direction: sorted[0].amount < 0 ? "inbound" : "outbound",
         category: sorted[0].normalizedCategory ?? sorted[0].transactionKind ?? null,
         cadence: cadenceLabel(medianInterval),
