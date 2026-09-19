@@ -1,4 +1,6 @@
 "use client";import{useState}from"react";
+import StatusTimeline from "@/components/forge/StatusTimeline";
+import { buildLeaseSigningSteps } from "@/domains/rental/leaseSigningTimeline";
 // Same term labels RentalLeasePreparationPanel.jsx (the owner-side editor) uses, so a tenant reads
 // the exact same field names the owner filled in -- never a re-derived or re-worded copy of them.
 const fields=[['landlordName','Landlord/legal owner'],['tenantNames','Tenant names'],['propertyAddress','Rental property address'],['leaseStart','Lease start'],['leaseEnd','Lease end'],['monthlyRent','Monthly rent'],['dueDay','Rent due day'],['securityDeposit','Security deposit'],['lateFeeTerms','Late-fee terms'],['utilities','Utilities responsibility'],['pets','Pet terms'],['maintenance','Maintenance responsibilities'],['specialProvisions','Special provisions']];
@@ -15,7 +17,6 @@ function LeaseSigningCard({rental,onSigned}){
   const[expanded,setExpanded]=useState(!leaseSigning.signedByMe);
   const[busy,setBusy]=useState(false);
   const[error,setError]=useState("");
-  const signedCount=leaseSigning.signatures.length;
   async function sign(event){
     event.preventDefault();setBusy(true);setError("");
     try{
@@ -31,11 +32,8 @@ function LeaseSigningCard({rental,onSigned}){
   return <article className="rounded-xl border p-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><strong>{unit?.label||"Rental home"}</strong><p className="text-sm text-slate-500">Lease {lease.startDate}{lease.endDate?` through ${lease.endDate}`:" — current"} · version {leaseSigning.versionNumber}</p></div>
-      <div className="text-right text-sm">
-        {leaseSigning.signedByMe?<span className="font-bold text-emerald-700">You signed {dateTime.format(new Date(leaseSigning.mySignedAt))}</span>:<span className="font-bold text-amber-700">Your signature is needed</span>}
-        <p className="text-slate-500">{signedCount} of {leaseSigning.totalTenants} tenant{leaseSigning.totalTenants===1?"":"s"} signed</p>
-      </div>
     </div>
+    <StatusTimeline heading="Signature progress" steps={buildLeaseSigningSteps({ versionNumber: leaseSigning.versionNumber, signatures: leaseSigning.signatures, totalTenants: leaseSigning.totalTenants, signedByMe: leaseSigning.signedByMe, mySignedAt: leaseSigning.mySignedAt })} />
     <button type="button" onClick={()=>setExpanded(current=>!current)} className="mt-3 text-sm font-bold text-sky-700 underline-offset-2 hover:underline">{expanded?"Hide terms":"Review terms"}</button>
     {expanded?<div className="mt-4 space-y-4">
       <dl className="grid gap-3 sm:grid-cols-2">{fields.map(([key,label])=>{const value=leaseSigning.terms?.[key];if(!value)return null;return <div key={key}><dt className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</dt><dd className="text-sm text-slate-800">{value}</dd></div>;})}</dl>
