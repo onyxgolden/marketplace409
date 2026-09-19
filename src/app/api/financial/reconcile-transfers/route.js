@@ -5,9 +5,13 @@ import { transferClassificationSchemaUnavailableResponse } from "@/lib/supabase/
 import { needsDirectionCorrection } from "@/domains/financial-event/correctRawBankFeedDirection";
 import { isInternalTransferDescription, classifyTransferPairs } from "@/domains/financial-event/classifyTransferPairs";
 import { buildApplyPayloads } from "@/domains/financial-event/buildTransferApplyPayloads";
+import { isPairAlreadyApplied } from "@/domains/financial-event/isPairAlreadyApplied";
 
 const PAGE_SIZE = 1000;
 const TRANSACTION_SOURCE_SYSTEM = "transaction";
+
+// Target state the apply writes for a plain internal-transfer pair (both legs).
+const TRANSFER_INTERNAL_TARGET = Object.freeze({ kind: "transfer", category: "internal_transfer" });
 
 // Best-effort specific label from the real loan account's own name ("Home Equity" -> heloc_payment)
 // so it lines up with isDebtPayoffCategory's existing "heloc" keyword; anything else falls back to
@@ -95,28 +99,70 @@ async function computePreview(supabaseClient, ownerId) {
     return { eventId: id, eventDate: row.event_date, amount: Number(row.amount), description: row.description };
   };
 
-  const internalTransfers = transferMatch.internalTransfers.map((pair) => ({
-    inbound: describePair(pair.inboundId),
-    outbound: describePair(pair.outboundId),
-  }));
-  const distributions = transferMatch.distributions.map((pair) => ({
-    inbound: { ...describePair(pair.inboundId), businessScope: pair.inboundScope },
-    outbound: { ...describePair(pair.outboundId), businessScope: pair.outboundScope },
-  }));
+  // The expense category a debt-payment pair's depository leg will be written with --
+  // shared by the already-applied filter and the preview entry so they can't disagree.
+  const debtExpenseCategory = (pair) => {
+    const inRow = rowsById.get(pair.inboundId);
+    const loanAccountName = accountDetailsById.get(inRow.financial_account_id)?.accountName ?? "Loan";
+    return { loanAccountName, expenseCategory: loanPaymentCategory(loanAccountName) };
+  };
+
+  const internalTransfers = transferMatch.internalTransfers
+    // Already in the target state? Re-applying is a no-op, so hide it -- otherwise the
+    // panel never empties after a successful apply and the user re-confirms done work.
+    .filter(
+      (pair) =>
+        !isPairAlreadyApplied({
+          inboundId: pair.inboundId,
+          outboundId: pair.outboundId,
+          expectedInbound: TRANSFER_INTERNAL_TARGET,
+          expectedOutbound: TRANSFER_INTERNAL_TARGET,
+          rowById: rowsById,
+        }),
+    )
+    .map((pair) => ({
+      inbound: describePair(pair.inboundId),
+      outbound: describePair(pair.outboundId),
+    }));
+  const distributions = transferMatch.distributions
+    .filter(
+      (pair) =>
+        !isPairAlreadyApplied({
+          inboundId: pair.inboundId,
+          outboundId: pair.outboundId,
+          expectedInbound: { kind: "income", category: "owner_distribution" },
+          expectedOutbound: { kind: "expense", category: "owner_distribution" },
+          rowById: rowsById,
+        }),
+    )
+    .map((pair) => ({
+      inbound: { ...describePair(pair.inboundId), businessScope: pair.inboundScope },
+      outbound: { ...describePair(pair.outboundId), businessScope: pair.outboundScope },
+    }));
   // outbound = the depository account the payment left (the real, budget-visible expense);
   // inbound = the loan account receiving it (kept signed so the pair stays re-pairable).
   // expenseCategory is resolved here (not in buildApplyPayloads) so the preview shows the human
   // exactly the category the apply will write.
-  const debtPayments = transferMatch.debtPayments.map((pair) => {
-    const inRow = rowsById.get(pair.inboundId);
-    const loanAccountName = accountDetailsById.get(inRow.financial_account_id)?.accountName ?? "Loan";
-    return {
-      inbound: describePair(pair.inboundId),
-      outbound: describePair(pair.outboundId),
-      loanAccountName,
-      expenseCategory: loanPaymentCategory(loanAccountName),
-    };
-  });
+  const debtPayments = transferMatch.debtPayments
+    .filter(
+      (pair) =>
+        !isPairAlreadyApplied({
+          inboundId: pair.inboundId,
+          outboundId: pair.outboundId,
+          expectedInbound: TRANSFER_INTERNAL_TARGET,
+          expectedOutbound: { kind: "expense", category: debtExpenseCategory(pair).expenseCategory },
+          rowById: rowsById,
+        }),
+    )
+    .map((pair) => {
+      const { loanAccountName, expenseCategory } = debtExpenseCategory(pair);
+      return {
+        inbound: describePair(pair.inboundId),
+        outbound: describePair(pair.outboundId),
+        loanAccountName,
+        expenseCategory,
+      };
+    });
   // entry.side tells whether eventId is the inbound or outbound leg -- an ambiguous row can be
   // either (e.g. an outbound-only transfer with no inbound counterpart at all in this owner's
   // data), so this is never assumed to be inbound the way it was before this was made symmetric.
