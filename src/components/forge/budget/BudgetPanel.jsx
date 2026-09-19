@@ -4,6 +4,7 @@ import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { isSavingsOrInvestmentCategory } from "@/domains/budgeting/isSavingsOrInvestmentCategory";
 import { isDebtPayoffCategory } from "@/domains/budgeting/isDebtPayoffCategory";
 import { resolveCategoryDisplayLabel } from "@/domains/budgeting/categoryDisplayLabel";
+import { lineVarianceCents, varianceLabel } from "@/domains/budgeting/budgetVariance";
 import { monthlyEquivalentAmount } from "@/domains/financial-event/detectRecurringPayments";
 import BudgetPieChart from "@/components/forge/budget/BudgetPieChart";
 
@@ -537,9 +538,16 @@ function BudgetSummaryBar({ totalIncomeCents, totalPlannedCents, totalActualCent
         ? "text-red-700 dark:text-red-400"
         : "text-slate-900 dark:text-white";
   const unassignedCaption = unassignedCents > 0 ? "Not yet assigned" : unassignedCents < 0 ? "Over-assigned" : "Every dollar assigned";
+  const leftToSpendCents = lineVarianceCents({ plannedAmountCents: totalPlannedCents, actualAmountCents: totalActualCents });
+  const leftToSpendTone =
+    leftToSpendCents > 0
+      ? "text-emerald-700 dark:text-emerald-400"
+      : leftToSpendCents < 0
+        ? "text-red-700 dark:text-red-400"
+        : "text-slate-900 dark:text-white";
 
   return (
-    <dl className="mt-6 grid grid-cols-2 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 sm:grid-cols-4 dark:border-slate-700 dark:bg-slate-950/40">
+    <dl className="mt-6 grid grid-cols-2 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 sm:grid-cols-3 lg:grid-cols-5 dark:border-slate-700 dark:bg-slate-950/40">
       <div>
         <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Income this month</dt>
         <dd className="mt-1 text-xl font-black text-slate-950 dark:text-white">{centsToMoney(totalIncomeCents)}</dd>
@@ -551,6 +559,13 @@ function BudgetSummaryBar({ totalIncomeCents, totalPlannedCents, totalActualCent
       <div>
         <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Spent so far</dt>
         <dd className="mt-1 text-xl font-black text-slate-950 dark:text-white">{centsToMoney(totalActualCents)}</dd>
+      </div>
+      <div>
+        <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Left to spend</dt>
+        <dd className={`mt-1 text-xl font-black ${leftToSpendTone}`}>
+          {centsToMoney(Math.abs(leftToSpendCents))}
+          <span className="ml-1 text-sm font-bold">{varianceLabel(leftToSpendCents)}</span>
+        </dd>
       </div>
       <div>
         <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{unassignedCaption}</dt>
@@ -758,7 +773,26 @@ function BudgetLineRow({ line, draft, onDraftChange, suggestion, onSave, saving,
           </button>
         </div>
       </td>
-      <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{centsToMoney(line.actualAmountCents)}</td>
+      <td className="px-4 py-3 text-right">
+        <div className="text-slate-700 dark:text-slate-300">{centsToMoney(line.actualAmountCents)}</div>
+        {(() => {
+          const variance = lineVarianceCents({ plannedAmountCents: line.plannedAmountCents, actualAmountCents: line.actualAmountCents });
+          if (variance == null) return null;
+          return (
+            <div
+              className={`text-xs font-bold ${
+                variance > 0
+                  ? "text-emerald-700 dark:text-emerald-400"
+                  : variance < 0
+                    ? "text-red-700 dark:text-red-400"
+                    : "text-slate-500 dark:text-slate-400"
+              }`}
+            >
+              {variance === 0 ? "on plan" : `${centsToMoney(Math.abs(variance))} ${varianceLabel(variance)}`}
+            </div>
+          );
+        })()}
+      </td>
       <td className="px-4 py-3 text-right">
         {confirmingRemove ? (
           <span className="flex items-center justify-end gap-1.5 whitespace-nowrap text-xs">
