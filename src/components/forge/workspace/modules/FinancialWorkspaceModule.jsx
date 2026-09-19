@@ -1,5 +1,6 @@
 import ForgeExecutiveBriefing from "@/components/forge/ForgeExecutiveBriefing";
 import FinancialKpiSurface from "@/components/forge/financial/FinancialKpiSurface";
+import NetWorthMissingBalancesWarning from "@/components/forge/financial/NetWorthMissingBalancesWarning";
 import { buildFinancialTilePresentation } from "@/components/forge/financial/buildFinancialTilePresentation";
 import ForgeWorkspaceTile from "@/components/forge/workspace/ForgeWorkspaceTile";
 import { WorkspaceModule } from "@/components/forge/workspace/composition/WorkspaceModule";
@@ -44,6 +45,12 @@ function renderFinancialWorkspaceTile({
       <FinancialKpiSurface
         kpis={presentation.kpis}
         variant="embedded"
+      />
+
+      <NetWorthMissingBalancesWarning
+        missingBalances={
+          presentation.missingBalances
+        }
       />
 
       <div className="mt-5">

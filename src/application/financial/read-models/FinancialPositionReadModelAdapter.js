@@ -110,6 +110,12 @@ export class FinancialPositionReadModelAdapter {
       liabilities: freezeItems(position.liabilities),
       balanceSheetLines:
         buildBalanceSheetLines(position),
+      // Accounts excluded from the aggregates because they have no balance row at all.
+      // Surfaced so the UI can disclose the exclusion instead of presenting the total as
+      // complete household net worth. Empty (frozen) when every account has a balance.
+      missingBalances: freezeItems(
+        position.missingBalances ?? [],
+      ),
       metadata: freezeObject({
         provider: "financial-position",
         snapshotStatus: "repository-backed",

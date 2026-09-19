@@ -215,4 +215,77 @@ describe("FinancialWorkspaceModule", () => {
     expect(markup).toContain("$0");
     expect(markup).toContain("0.0%");
   });
+
+  it("renders the missing-balances warning when the read model reports exclusions", () => {
+    const markup = renderToStaticMarkup(
+      FinancialWorkspaceModule.renderTile({
+        financialKpiModel: {
+          type: "kpi-model",
+          kpis: {
+            equity: 3821325,
+            assets: 4244014,
+            liabilities: 422689,
+          },
+          missingBalances: [
+            { id: "a1", name: "Tractor", type: "other" },
+            { id: "a2", name: "Card Ladder", type: "credit" },
+          ],
+        },
+        financialExecutiveSummary: {
+          type: "executive-summary",
+          health: {
+            label: "Healthy",
+            detail: "Financial performance is positive.",
+          },
+        },
+        executiveBriefing: {
+          headline: "Cash remains resilient",
+        },
+        riskAssessment: {
+          recommendations: [],
+        },
+      }),
+    );
+
+    expect(markup).toContain(
+      "data-net-worth-missing-balances",
+    );
+    expect(markup).toContain(
+      "Excludes 2 accounts without recorded balances",
+    );
+    expect(markup).toContain("Tractor");
+  });
+
+  it("omits the missing-balances warning when nothing is excluded", () => {
+    const markup = renderToStaticMarkup(
+      FinancialWorkspaceModule.renderTile({
+        financialKpiModel: {
+          type: "kpi-model",
+          kpis: {
+            equity: 3821325,
+            assets: 4244014,
+            liabilities: 422689,
+          },
+          missingBalances: [],
+        },
+        financialExecutiveSummary: {
+          type: "executive-summary",
+          health: {
+            label: "Healthy",
+            detail: "Financial performance is positive.",
+          },
+        },
+        executiveBriefing: {
+          headline: "Cash remains resilient",
+        },
+        riskAssessment: {
+          recommendations: [],
+        },
+      }),
+    );
+
+    expect(markup).not.toContain(
+      "data-net-worth-missing-balances",
+    );
+  });
 });

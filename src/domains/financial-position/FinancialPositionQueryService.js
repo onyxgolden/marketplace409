@@ -161,13 +161,23 @@ function buildAuthorityByAccountId(groupsWithMembers, financialAccountsById, bal
   return authorityByAccountId;
 }
 
-function projectAssets(financialAccounts, balanceByAccountId, authorityByAccountId, supersededBalances) {
+function projectAssets(financialAccounts, balanceByAccountId, authorityByAccountId, supersededBalances, missingBalances) {
   return financialAccounts
     .filter((account) => account.active !== false && ASSET_ACCOUNT_TYPES.has(account.type))
     .flatMap((account) => {
       const balance = balanceByAccountId.get(account.id);
 
       if (!balance) {
+        // No balance row at all -- the account is silently dropped from the aggregates.
+        // Record it so the read model can disclose the exclusion instead of presenting the
+        // total as complete. A balance row of 0 cents is NOT missing: it is found above and
+        // projected with value 0. Inactive accounts never reach this filter, so a retired
+        // account is not reported as missing -- only live accounts with no data.
+        missingBalances.push({
+          id: account.id,
+          name: account.name,
+          type: account.type,
+        });
         return [];
       }
 
@@ -206,6 +216,7 @@ function projectLiabilities(
   balanceByAccountId,
   authorityByAccountId,
   supersededBalances,
+  missingBalances,
 ) {
   return financialAccounts
     .filter((account) =>
@@ -215,6 +226,13 @@ function projectLiabilities(
       const balance = balanceByAccountId.get(account.id);
 
       if (!balance) {
+        // Same disclosure contract as projectAssets: no balance row at all means the
+        // account is dropped from the aggregates, so record it for the read model.
+        missingBalances.push({
+          id: account.id,
+          name: account.name,
+          type: account.type,
+        });
         return [];
       }
 
@@ -366,6 +384,7 @@ export class FinancialPositionQueryService {
     );
 
     const supersededBalances = [];
+    const missingBalances = [];
 
     const immutableAssets = freezeItems(
       projectAssets(
@@ -373,6 +392,7 @@ export class FinancialPositionQueryService {
         balanceByAccountId,
         authorityByAccountId,
         supersededBalances,
+        missingBalances,
       ),
     );
 
@@ -382,6 +402,7 @@ export class FinancialPositionQueryService {
         balanceByAccountId,
         authorityByAccountId,
         supersededBalances,
+        missingBalances,
       ),
     );
 
@@ -399,6 +420,11 @@ export class FinancialPositionQueryService {
       liabilities: immutableLiabilities,
       accountBalances: immutableAccountBalances,
       supersededBalances: freezeItems(supersededBalances),
+      // Active asset/liability accounts with NO balance row at all -- silently excluded from
+      // the aggregates above, so reported here for disclosure. A 0-cent balance row counts as
+      // "has a balance" and is projected with value 0 (never listed here). Inactive accounts
+      // are deliberately retired from net worth, not missing data, and are never listed.
+      missingBalances: freezeItems(missingBalances),
       netWorth,
       metrics: null,
       insights: Object.freeze([]),

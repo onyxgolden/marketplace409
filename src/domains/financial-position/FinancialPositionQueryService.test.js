@@ -629,3 +629,79 @@ describe("FinancialPositionQueryService -- account-group balance authority", () 
     expect("source_label" in position.assets[0]).toBe(false);
   });
 });
+
+describe("missingBalances disclosure", () => {
+  function buildService(accounts, balances) {
+    return new FinancialPositionQueryService({
+      financialAccountRepository: {
+        findByOwnerId: vi.fn().mockResolvedValue(accounts),
+      },
+      accountBalanceRepository: {
+        findLatestByOwnerId: vi.fn().mockResolvedValue(balances),
+      },
+    });
+  }
+
+  test("reports active accounts with no balance row at all, without changing the aggregates", async () => {
+    const service = buildService(
+      [
+        { id: "acct-cash", name: "Operating Cash", type: "depository", subtype: "checking", active: true },
+        { id: "acct-tractor", name: "Tractor", type: "other", subtype: "equipment", active: true },
+        { id: "acct-card", name: "Card Ladder", type: "credit", subtype: "credit_card", active: true },
+        { id: "acct-zero", name: "Empty Savings", type: "depository", subtype: "savings", active: true },
+        { id: "acct-retired", name: "Sold Trailer", type: "other", subtype: "trailer", active: false },
+        { id: "acct-weird", name: "Untyped Thing", type: "mystery", subtype: "x", active: true },
+      ],
+      [
+        { id: "b1", financialAccountId: "acct-cash", currentBalanceCents: 100000, availableBalanceCents: null, asOf: "2026-09-01T00:00:00.000Z" },
+        { id: "b2", financialAccountId: "acct-zero", currentBalanceCents: 0, availableBalanceCents: null, asOf: "2026-09-01T00:00:00.000Z" },
+      ],
+    );
+
+    const position = await service.buildPosition("owner-1");
+
+    // Dynamic: exactly the active, typed accounts with no balance row -- nothing hardcoded.
+    expect(position.missingBalances).toEqual([
+      { id: "acct-tractor", name: "Tractor", type: "other" },
+      { id: "acct-card", name: "Card Ladder", type: "credit" },
+    ]);
+
+    // A 0-cent balance row is real data, not a missing balance: projected with value 0.
+    expect(
+      position.assets.some(
+        (asset) => asset.id === "acct-zero" && asset.current_value === 0,
+      ),
+    ).toBe(true);
+
+    // Inactive accounts are retired from net worth, not missing data; untyped accounts were
+    // never in the aggregates -- neither is reported.
+    expect(
+      position.missingBalances.some((entry) => entry.id === "acct-retired"),
+    ).toBe(false);
+    expect(
+      position.missingBalances.some((entry) => entry.id === "acct-weird"),
+    ).toBe(false);
+
+    // The aggregates are unchanged by the disclosure: still dollars, still excluding.
+    expect(position.assets.some((asset) => asset.id === "acct-tractor")).toBe(false);
+    expect(position.liabilities.some((liability) => liability.id === "acct-card")).toBe(false);
+    expect(position.netWorth.totalAssets).toBe(1000);
+    expect(position.netWorth.totalLiabilities).toBe(0);
+    expect(position.netWorth.netWorth).toBe(1000);
+  });
+
+  test("returns an empty missingBalances list when every account has a balance", async () => {
+    const service = buildService(
+      [
+        { id: "acct-cash", name: "Operating Cash", type: "depository", subtype: "checking", active: true },
+      ],
+      [
+        { id: "b1", financialAccountId: "acct-cash", currentBalanceCents: 100000, availableBalanceCents: null, asOf: "2026-09-01T00:00:00.000Z" },
+      ],
+    );
+
+    const position = await service.buildPosition("owner-1");
+
+    expect(position.missingBalances).toEqual([]);
+  });
+});

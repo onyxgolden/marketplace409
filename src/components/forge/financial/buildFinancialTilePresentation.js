@@ -42,11 +42,25 @@ export function buildFinancialTilePresentation({
     executiveSummary?.health ||
     defaultHealth;
 
+  // Accounts the aggregates silently exclude for lack of any balance row. Passed through so
+  // the tile can disclose the exclusion (the figure covers only accounts with a recorded
+  // balance) instead of presenting it as complete household net worth.
+  const missingBalances = Object.freeze(
+    (kpiModel?.missingBalances ?? []).map((entry) =>
+      Object.freeze({
+        id: entry.id,
+        name: entry.name,
+        type: entry.type,
+      }),
+    ),
+  );
+
   return Object.freeze({
     health: Object.freeze({
       label: health.label,
       detail: health.detail,
     }),
+    missingBalances,
     kpis: Object.freeze([
       Object.freeze({
         id: "equity",
