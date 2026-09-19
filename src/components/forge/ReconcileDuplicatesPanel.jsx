@@ -1,10 +1,10 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import {
   ForgeErrorState,
   ForgeLoadingState,
 } from "@/components/forge/ForgeStates";
+import { ForgeActionButton } from "@/components/forge/ForgeActions";
 import { ACTION_GATE, resolveActionGate } from "@/domains/financial-event/actionGate";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -209,14 +209,13 @@ export default function ReconcileDuplicatesPanel() {
                         <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{entry.rentecDescription}</td>
                         <td className="px-3 py-2 text-right">
                           {gate === ACTION_GATE.SINGLE ? (
-                            <button
-                              type="button"
+                            <ForgeActionButton
+                              variant="warn"
                               disabled={busy || applyStatus === "applying"}
                               onClick={() => applyExclusions([entry.transactionId])}
-                              className={`min-h-11 rounded-lg border border-amber-400 px-3 py-1.5 text-xs font-black text-amber-800 transition hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-950/40 ${FOCUS_RING}`}
                             >
                               {busy ? "Excluding…" : "Exclude"}
-                            </button>
+                            </ForgeActionButton>
                           ) : null}
                         </td>
                       </tr>
@@ -236,13 +235,13 @@ export default function ReconcileDuplicatesPanel() {
 
           {confirmedDuplicates.length > 0 ? (
             gate === ACTION_GATE.TYPED ? (
-              <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 dark:border-amber-800 dark:bg-amber-950/30">
+              <div className="sticky bottom-4 z-10 mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 shadow-lg dark:border-amber-800 dark:bg-amber-950/30">
                 <label className="flex gap-3 text-sm font-bold text-amber-950 dark:text-amber-200">
                   <input
                     type="checkbox"
                     checked={typedAcknowledged}
                     onChange={(event) => setTypedAcknowledged(event.target.checked)}
-                    className={FOCUS_RING}
+                    className={`mt-1 h-5 w-5 shrink-0 ${FOCUS_RING}`}
                   />
                   I reviewed this list and understand it excludes these {confirmedDuplicates.length} bank-feed row(s)
                   from reports. They stay in the record, marked as duplicates.
@@ -253,36 +252,36 @@ export default function ReconcileDuplicatesPanel() {
                     value={typedConfirmationText}
                     onChange={(event) => setTypedConfirmationText(event.target.value)}
                     autoComplete="off"
-                    className={`mt-2 block w-full max-w-xs rounded-lg border border-amber-400 bg-white px-3 py-2 text-slate-950 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
+                    className={`mt-2 block min-h-11 w-full max-w-xs rounded-lg border border-amber-400 bg-white px-3 py-2 text-slate-950 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
                   />
                 </label>
-                <button
-                  type="button"
+                <ForgeActionButton
+                  variant="gold"
                   disabled={
                     !typedAcknowledged ||
                     typedConfirmationText.trim().toUpperCase() !== "CONFIRM" ||
                     applyStatus === "applying"
                   }
                   onClick={() => applyExclusions(confirmedDuplicates.map((entry) => entry.transactionId))}
-                  className={`mt-5 rounded-xl px-5 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
+                  className="mt-5"
                 >
                   {applyStatus === "applying" ? "Excluding…" : `Exclude ${confirmedDuplicates.length} confirmed duplicate(s)`}
-                </button>
+                </ForgeActionButton>
               </div>
             ) : (
-              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
+              <div className="sticky bottom-4 z-10 mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-lg dark:border-slate-700 dark:bg-slate-950/40">
                 <p className="text-sm text-slate-600 dark:text-slate-400">
                   Excluding removes these {confirmedDuplicates.length} bank-feed row(s) from reports. They stay in the
                   record, marked as duplicates -- and every exclusion can be undone.
                 </p>
-                <button
-                  type="button"
+                <ForgeActionButton
+                  variant="gold"
                   disabled={applyStatus === "applying"}
                   onClick={() => applyExclusions(confirmedDuplicates.map((entry) => entry.transactionId))}
-                  className={`mt-4 min-h-11 rounded-xl px-5 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
+                  className="mt-4"
                 >
                   {applyStatus === "applying" ? "Excluding…" : `Exclude ${confirmedDuplicates.length} confirmed duplicate(s)`}
-                </button>
+                </ForgeActionButton>
               </div>
             )
           ) : null}
@@ -298,14 +297,13 @@ export default function ReconcileDuplicatesPanel() {
             {applyMessage}
           </p>
           {applyStatus === "done" && lastAppliedIds.length > 0 ? (
-            <button
-              type="button"
+            <ForgeActionButton
+              variant="secondary"
               disabled={undoStatus === "undoing"}
               onClick={undoExclusions}
-              className={`min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 ${FOCUS_RING}`}
             >
               {undoStatus === "undoing" ? "Restoring…" : `Undo (restore ${lastAppliedIds.length})`}
-            </button>
+            </ForgeActionButton>
           ) : null}
         </div>
       ) : null}
