@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { ACTION_GATE, resolveActionGate } from "@/domains/financial-event/actionGate";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToMoney = (cents) => money.format(cents / 100);
@@ -133,7 +134,18 @@ export default function ReconcileTransfersPanel() {
     (preview?.internalTransfers.length ?? 0) +
     (preview?.distributions.length ?? 0) +
     (preview?.debtPayments.length ?? 0);
-  const canApply = acknowledged && confirmationText.trim().toUpperCase() === "CONFIRM" && totalItems > 0;
+  // Gate decision, one shared rule (see actionGate.js): this bulk apply covers
+  // auto-paired transfers, distributions, and debt payments -- ambiguous
+  // inference through debt/transfer pairing logic, the exact shape that
+  // corrupted the books in the HELOC sign incident. The shared rule keeps the
+  // typed-CONFIRM gate here. (The per-row suggestion path above is already
+  // one-click: the human picks the exact row and category, and the write is
+  // reversible through the conversational-actions API.)
+  const bulkGate = resolveActionGate({ ambiguous: true, touchesDebtOrTransfer: true });
+  const canApply =
+    bulkGate === ACTION_GATE.TYPED
+      ? acknowledged && confirmationText.trim().toUpperCase() === "CONFIRM" && totalItems > 0
+      : totalItems > 0;
 
   const applyReconciliation = () => {
     setApplyStatus("applying");
@@ -461,32 +473,49 @@ export default function ReconcileTransfersPanel() {
           ) : null}
 
           {totalItems > 0 ? (
-            <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 dark:border-amber-800 dark:bg-amber-950/30">
-              <label className="flex gap-3 text-sm font-bold text-amber-950 dark:text-amber-200">
-                <input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} className={FOCUS_RING} />
-                I reviewed this list and understand it reclassifies these {totalItems} event(s) — direction fixes,
-                distributions, and loan/HELOC payments still count as income/expense (just correctly), internal
-                transfers are excluded entirely. Amounts and dates never change, nothing is deleted, and this is
-                fully reversible.
-              </label>
-              <label className="mt-4 block text-sm font-bold text-amber-950 dark:text-amber-200">
-                Type CONFIRM to apply
-                <input
-                  value={confirmationText}
-                  onChange={(event) => setConfirmationText(event.target.value)}
-                  autoComplete="off"
-                  className={`mt-2 block w-full max-w-xs rounded-lg border border-amber-400 bg-white px-3 py-2 text-slate-950 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
-                />
-              </label>
-              <button
-                type="button"
-                disabled={!canApply || applyStatus === "applying"}
-                onClick={applyReconciliation}
-                className={`mt-5 rounded-xl px-5 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
-              >
-                {applyStatus === "applying" ? "Applying…" : `Reclassify ${totalItems} event(s)`}
-              </button>
-            </div>
+            bulkGate === ACTION_GATE.TYPED ? (
+              <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 dark:border-amber-800 dark:bg-amber-950/30">
+                <label className="flex gap-3 text-sm font-bold text-amber-950 dark:text-amber-200">
+                  <input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} className={FOCUS_RING} />
+                  I reviewed this list and understand it reclassifies these {totalItems} event(s) — direction fixes,
+                  distributions, and loan/HELOC payments still count as income/expense (just correctly), internal
+                  transfers are excluded entirely. Amounts and dates never change, nothing is deleted, and this is
+                  fully reversible.
+                </label>
+                <label className="mt-4 block text-sm font-bold text-amber-950 dark:text-amber-200">
+                  Type CONFIRM to apply
+                  <input
+                    value={confirmationText}
+                    onChange={(event) => setConfirmationText(event.target.value)}
+                    autoComplete="off"
+                    className={`mt-2 block w-full max-w-xs rounded-lg border border-amber-400 bg-white px-3 py-2 text-slate-950 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={!canApply || applyStatus === "applying"}
+                  onClick={applyReconciliation}
+                  className={`mt-5 rounded-xl px-5 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
+                >
+                  {applyStatus === "applying" ? "Applying…" : `Reclassify ${totalItems} event(s)`}
+                </button>
+              </div>
+            ) : (
+              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Reclassify these {totalItems} event(s). Amounts and dates never change, nothing is deleted, and
+                  every change is reversible.
+                </p>
+                <button
+                  type="button"
+                  disabled={!canApply || applyStatus === "applying"}
+                  onClick={applyReconciliation}
+                  className={`mt-4 min-h-11 rounded-xl px-5 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
+                >
+                  {applyStatus === "applying" ? "Applying…" : `Reclassify ${totalItems} event(s)`}
+                </button>
+              </div>
+            )
           ) : null}
         </>
       )}
