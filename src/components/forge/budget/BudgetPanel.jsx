@@ -1,6 +1,11 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import {
+  ForgeEmptyState,
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 import { isSavingsOrInvestmentCategory } from "@/domains/budgeting/isSavingsOrInvestmentCategory";
 import { isDebtPayoffCategory } from "@/domains/budgeting/isDebtPayoffCategory";
 import { resolveCategoryDisplayLabel } from "@/domains/budgeting/categoryDisplayLabel";
@@ -355,9 +360,9 @@ export default function BudgetPanel() {
       </p>
 
       {status === "loading" ? (
-        <p role="status" className="mt-6 text-sm text-slate-500 dark:text-slate-400">
-          Loading your budget…
-        </p>
+        <div className="mt-6">
+          <ForgeLoadingState label="Loading your budget…" />
+        </div>
       ) : null}
 
       {status === "schema-unavailable" ? (
@@ -374,17 +379,11 @@ export default function BudgetPanel() {
       ) : null}
 
       {status === "error" ? (
-        <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-900/60 dark:bg-red-950/30">
-          <p role="alert" className="text-sm font-bold text-red-800 dark:text-red-300">
-            {errorMessage || "Something went wrong loading your budget."}
-          </p>
-          <button
-            type="button"
-            onClick={load}
-            className={`mt-4 rounded-xl border border-red-400 px-4 py-2 text-sm font-bold text-red-800 transition hover:bg-red-100 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/40 ${FOCUS_RING}`}
-          >
-            Retry
-          </button>
+        <div className="mt-6">
+          <ForgeErrorState
+            title={errorMessage || "Something went wrong loading your budget."}
+            onRetry={load}
+          />
         </div>
       ) : null}
 
@@ -428,11 +427,11 @@ export default function BudgetPanel() {
           ) : null}
 
           {lines.length === 0 ? (
-            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
-              <p className="text-sm font-bold text-slate-800 dark:text-slate-200">No budget categories yet.</p>
-              <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-                Add one from your spending history below, or add a category by hand.
-              </p>
+            <div className="mt-6">
+              <ForgeEmptyState
+                headline="No budget categories yet."
+                guidance="Add one from your spending history below, or add a category by hand."
+              />
             </div>
           ) : (
             <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">

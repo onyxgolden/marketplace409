@@ -1,5 +1,6 @@
 import { useState } from "react";
 import ApplicationShell from "@/components/forge/workspace/ApplicationShell";
+import { ForgeErrorState } from "@/components/forge/ForgeStates";
 import FinancialExecutiveIntelligence from "@/components/forge/financial/FinancialExecutiveIntelligence";
 import FinancialForgeOverviewPanel from "@/components/forge/financial/FinancialForgeOverviewPanel";
 import FinancialAccountBalancesPanel from "@/components/forge/financial/FinancialAccountBalancesPanel";
@@ -272,15 +273,10 @@ export default function FinancialApplicationShell({
           )}
 
           {error && (
-            <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-900 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
-              <div className="font-black">
-                Financial data failed to load.
-              </div>
-
-              <div className="mt-2 text-sm">
-                {error}
-              </div>
-            </section>
+            <ForgeErrorState
+              title="Financial data failed to load."
+              detail={error}
+            />
           )}
 
           {activeSurface}
