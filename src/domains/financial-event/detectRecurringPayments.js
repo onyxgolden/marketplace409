@@ -67,6 +67,51 @@ export function monthlyEquivalentAmount(pattern) {
   return Math.round(((amount * 30.44) / interval) * 100) / 100;
 }
 
+// Upcoming occurrences of detected recurring patterns inside a forward window.
+// Steps each pattern from its nextExpectedDate by its rhythm so a biweekly bill
+// contributes two occurrences to a 30-day window, not one. Dates are YYYY-MM-DD
+// strings; arithmetic is UTC so timezones can't shift a date.
+export function upcomingRecurringOccurrences(patterns, { fromDate, daysAhead = 30 } = {}) {
+  const from = parseDateOnly(fromDate ?? toDateOnly(new Date()));
+  const endExclusive = addDaysUtc(from, daysAhead);
+  const occurrences = [];
+  for (const pattern of patterns ?? []) {
+    if (!pattern?.nextExpectedDate) continue;
+    const intervalDays = Math.max(1, Math.round(Number(pattern.medianIntervalDays) || 0));
+    if (!Number.isFinite(intervalDays)) continue;
+    let date = parseDateOnly(pattern.nextExpectedDate);
+    for (let guard = 0; guard < 370 && date < endExclusive; guard += 1) {
+      if (date >= from) {
+        occurrences.push({
+          date: toDateOnly(date),
+          amount: Number(pattern.medianAmount) || 0,
+          direction: pattern.direction,
+          accountName: pattern.accountName ?? null,
+          category: pattern.category ?? "other",
+          cadence: pattern.cadence,
+        });
+      }
+      date = addDaysUtc(date, intervalDays);
+    }
+  }
+  return occurrences.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+function parseDateOnly(value) {
+  const [year, month, day] = String(value).split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function toDateOnly(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDaysUtc(date, days) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
 export function detectRecurringPayments(inputRows, options = {}) {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const rows = (inputRows ?? []).filter(
