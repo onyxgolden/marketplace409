@@ -13,6 +13,7 @@ import { isCacheableDashboardLoad, readLastKnownDashboardCache, writeDashboardCa
 import { money } from "./formatMoney.js";
 import MonthComparisonPanel from "./MonthComparisonPanel.jsx";
 import AskBooksPanel from "./AskBooksPanel.jsx";
+import AnomalyAlertsPanel from "./AnomalyAlertsPanel.jsx";
 import { getCurrentMonthProfitKpi } from "./getCurrentMonthProfitKpi.js";
 
 // The one legitimate source of the dashboard cache's isolation identity -- see
@@ -422,6 +423,7 @@ export default function FinancialPage() {
     <FinancialApplicationShell
       compareMonthsSection={<MonthComparisonPanel />}
       askBooksSection={<AskBooksPanel />}
+      anomalyAlertsSection={<AnomalyAlertsPanel />}
       activeFunctionId={
         activeFunctionId
       }
