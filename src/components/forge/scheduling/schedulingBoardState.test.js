@@ -9,7 +9,7 @@ import {
   projectTemplateById, recordHistory, redoHistory, removeBlackoutWindow, removeBlock, removeCalendar,
   removeDependency, renameBlock, renameLane, resetBoard, resizeBlock, resizeBlockFromStart, serializeBoardState,
   setBlockTextStyle, setDefaultCalendar, setLaneCalendar, setProjectDates, suggestPredecessors, suggestSuccessors,
-  todayISO, undoHistory, visibleWeekIndices,
+  todayISO, undoHistory, validateCustomChipDraft, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 const CHIP = { label: "Kickoff", category: "gov", durationWeeks: 0, milestone: true };
@@ -335,6 +335,27 @@ describe("addCustomChip", () => {
     // the slot itself is still valid even though the display name differs from the default.
     const state = addCustomChip(defaultBoardState(undefined, "home_remodel"), { label: "Extra Materials", category: "proc", durationWeeks: 1, milestone: false });
     expect(state.customChips).toHaveLength(1);
+  });
+});
+
+describe("validateCustomChipDraft", () => {
+  const VALID = { label: "Site Survey", category: "field", durationWeeks: 2, milestone: false };
+  it("accepts a fully valid draft", () => {
+    expect(validateCustomChipDraft(VALID)).toEqual({});
+  });
+  it("requires a non-blank label", () => {
+    expect(validateCustomChipDraft({ ...VALID, label: "" })).toHaveProperty("label");
+    expect(validateCustomChipDraft({ ...VALID, label: "   " })).toHaveProperty("label");
+    expect(validateCustomChipDraft({ ...VALID, label: "Survey" })).not.toHaveProperty("label");
+  });
+  it("requires duration greater than zero when not a milestone", () => {
+    for (const durationWeeks of [0, -3, "", NaN]) {
+      expect(validateCustomChipDraft({ ...VALID, durationWeeks })).toHaveProperty("durationWeeks");
+    }
+    expect(validateCustomChipDraft({ ...VALID, durationWeeks: 1 })).not.toHaveProperty("durationWeeks");
+  });
+  it("waives the duration rule for milestone chips (0-duration by design)", () => {
+    expect(validateCustomChipDraft({ ...VALID, milestone: true, durationWeeks: 0 })).toEqual({});
   });
 });
 
