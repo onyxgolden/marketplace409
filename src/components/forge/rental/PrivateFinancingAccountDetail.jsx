@@ -9,6 +9,8 @@ import PrivateFinancingExternalPaymentForm from "./PrivateFinancingExternalPayme
 import PrivateFinancingPaymentPolicyControl from "./PrivateFinancingPaymentPolicyControl";
 import PrivateFinancingBorrowerInvite from "./PrivateFinancingBorrowerInvite";
 import PrivateFinancingOnlinePaymentControl from "./PrivateFinancingOnlinePaymentControl";
+import StatusTimeline from "@/components/forge/StatusTimeline";
+import { buildFinancingLifecycleSteps } from "@/domains/private-financing/lifecycleTimeline";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToMoney = (cents) => (typeof cents === "number" ? money.format(cents / 100) : "—");
@@ -18,7 +20,6 @@ const bpsToPercent = (bps) => (typeof bps === "number" ? percent.format(bps / 10
 const FOCUS_RING = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600";
 
 const PRODUCT_LABELS = { seller_financing: "Seller financing", personal_loan: "Personal loan" };
-const STATUS_LABELS = { active: "Active", paid_off: "Paid off", written_off: "Written off", cancelled: "Cancelled" };
 const POLICY_LABELS = {
   partial_allowed: "Partial payments allowed",
   full_amount_or_more: "Full amount or more",
@@ -216,9 +217,11 @@ function AccountSummary({ account, balance, dueState, servicingPolicy }) {
       <p className="sr-only">
         A financial summary for this private financing account, including principal, interest, and payment-policy figures.
       </p>
+      <div className="mt-4">
+        <StatusTimeline heading="Account progress" steps={buildFinancingLifecycleSteps({ status: account.status, openedDate: account.openedDate })} />
+      </div>
       <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Fact term="Financing type" value={PRODUCT_LABELS[account.product] || account.product} />
-        <Fact term="Account status" value={STATUS_LABELS[account.status] || account.status} />
         <Fact term="Original financed principal" value={centsToMoney(account.originationPrincipalCents)} />
         {/* Every component's own remaining principal is shown separately in Loan components below --
             this total is the only cross-component figure shown here, never a blended per-component one. */}
