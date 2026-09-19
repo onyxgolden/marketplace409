@@ -4,6 +4,7 @@ import { isMissingRemoteSchemaError } from "@/lib/supabase/isMissingRemoteSchema
 import { transferClassificationSchemaUnavailableResponse } from "@/lib/supabase/transferClassificationSchemaUnavailableResponse";
 import { needsDirectionCorrection } from "@/domains/financial-event/correctRawBankFeedDirection";
 import { isInternalTransferDescription, classifyTransferPairs } from "@/domains/financial-event/classifyTransferPairs";
+import { buildApplyPayloads } from "@/domains/financial-event/buildTransferApplyPayloads";
 
 const PAGE_SIZE = 1000;
 const TRANSACTION_SOURCE_SYSTEM = "transaction";
@@ -124,8 +125,9 @@ export async function GET() {
 }
 
 // Applies the CURRENT preview (freshly recomputed, never client-supplied): direction fixes flip
-// kind income<->expense and take the absolute value; internal transfers and distributions both get
-// reclassify_transaction_financial_event on EACH leg. Ambiguous transfer rows are never written.
+// kind income<->expense and take the absolute value; internal transfers keep signed amounts so
+// re-running the preview can still pair them; distributions use positive magnitudes.
+// Ambiguous transfer rows are never written.
 export async function POST() {
   const authenticated = await createAuthenticatedFinancialApplication();
   if (authenticated.response) return authenticated.response;
@@ -142,28 +144,20 @@ export async function POST() {
   const applied = [];
   const failed = [];
 
-  const applyOne = async ({ eventId, transactionKind, normalizedCategory, amount }) => {
+  const applyOne = async ({ eventId, transactionKind, normalizedCategory, pAmount }) => {
     const { data, error } = await authenticated.supabaseClient.rpc("reclassify_transaction_financial_event", {
       p_owner_id: authenticated.effectiveOwnerId,
       p_event_id: eventId,
       p_transaction_kind: transactionKind,
       p_normalized_category: normalizedCategory,
-      p_amount: Math.abs(amount),
+      p_amount: pAmount,
     });
     if (error) failed.push({ eventId, error: error.message });
     else applied.push({ eventId: data.id, transactionKind: data.transaction_kind, normalizedCategory: data.normalized_category });
   };
 
-  for (const entry of preview.directionFixes) {
-    await applyOne({ eventId: entry.eventId, transactionKind: "income", normalizedCategory: "other", amount: entry.amount });
-  }
-  for (const pair of preview.internalTransfers) {
-    await applyOne({ eventId: pair.inbound.eventId, transactionKind: "transfer", normalizedCategory: "internal_transfer", amount: pair.inbound.amount });
-    await applyOne({ eventId: pair.outbound.eventId, transactionKind: "transfer", normalizedCategory: "internal_transfer", amount: pair.outbound.amount });
-  }
-  for (const pair of preview.distributions) {
-    await applyOne({ eventId: pair.inbound.eventId, transactionKind: "income", normalizedCategory: "owner_distribution", amount: pair.inbound.amount });
-    await applyOne({ eventId: pair.outbound.eventId, transactionKind: "expense", normalizedCategory: "owner_distribution", amount: pair.outbound.amount });
+  for (const payload of buildApplyPayloads(preview)) {
+    await applyOne(payload);
   }
 
   return NextResponse.json({
