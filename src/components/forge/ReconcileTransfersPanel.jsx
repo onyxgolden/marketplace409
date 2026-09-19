@@ -1,10 +1,13 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import {
   ForgeErrorState,
   ForgeLoadingState,
 } from "@/components/forge/ForgeStates";
+import {
+  ForgeActionButton,
+  ForgeActionStack,
+} from "@/components/forge/ForgeActions";
 import { ACTION_GATE, resolveActionGate } from "@/domains/financial-event/actionGate";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -400,20 +403,15 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
                       </p>
                       {suggestion ? (
                         <div className="mt-2">
-                          <button
-                            type="button"
+                          <ForgeActionButton
+                            variant={highConfidence ? "accent" : "secondary"}
                             onClick={() =>
                               setRowCategoryChoices((prev) => ({ ...prev, [entry.eventId]: suggestion.category }))
                             }
                             title={suggestion.reasons.join(" · ") || "Brain suggestion"}
-                            className={`rounded-xl px-3 py-1.5 text-xs font-black transition ${FOCUS_RING} ${
-                              highConfidence
-                                ? "bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
-                                : "border border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-900/40"
-                            }`}
                           >
                             Use: {prettyCategory(suggestion.category)} ({Math.round(suggestion.confidence * 100)}%)
-                          </button>
+                          </ForgeActionButton>
                           {suggestion.reasons.length > 0 ? (
                             <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                               {suggestion.reasons.join(" · ")}
@@ -432,7 +430,7 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
                           onChange={(event) =>
                             setRowCategoryChoices((prev) => ({ ...prev, [entry.eventId]: event.target.value }))
                           }
-                          className={`mt-1 block w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-950 dark:border-slate-600 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
+                          className={`mt-1 block min-h-11 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-950 dark:border-slate-600 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
                         >
                           <option value="">Select category…</option>
                           {categoryOptionsFor(suggestion?.category).map((option) => (
@@ -443,23 +441,22 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
                         </select>
                       </label>
                       {choice ? (
-                        <div className="mt-2 flex flex-wrap items-center gap-3">
-                          <button
-                            type="button"
+                        <ForgeActionStack className="mt-2">
+                          <ForgeActionButton
+                            variant="accent"
                             disabled={rowApplyStatus[entry.eventId] === "applying"}
                             onClick={() => applyRowCategory(entry.eventId, choice)}
-                            className={`rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-black text-white hover:bg-amber-600 disabled:opacity-50 dark:bg-amber-600 dark:hover:bg-amber-500 ${FOCUS_RING}`}
                           >
                             {rowApplyStatus[entry.eventId] === "applying"
                               ? "Applying…"
                               : `Apply: ${prettyCategory(choice)}`}
-                          </button>
+                          </ForgeActionButton>
                           {rowApplyStatus[entry.eventId] === "error" ? (
                             <span className="text-xs text-red-600 dark:text-red-400">
                               {rowApplyMessages[entry.eventId]}
                             </span>
                           ) : null}
-                        </div>
+                        </ForgeActionStack>
                       ) : null}
                     </li>
                   );
@@ -470,9 +467,9 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
 
           {totalItems > 0 ? (
             bulkGate === ACTION_GATE.TYPED ? (
-              <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 dark:border-amber-800 dark:bg-amber-950/30">
+              <div className="sticky bottom-4 z-10 mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 shadow-lg dark:border-amber-800 dark:bg-amber-950/30">
                 <label className="flex gap-3 text-sm font-bold text-amber-950 dark:text-amber-200">
-                  <input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} className={FOCUS_RING} />
+                  <input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} className={`mt-1 h-5 w-5 shrink-0 ${FOCUS_RING}`} />
                   I reviewed this list and understand it reclassifies these {totalItems} event(s) — direction fixes,
                   distributions, and loan/HELOC payments still count as income/expense (just correctly), internal
                   transfers are excluded entirely. Amounts and dates never change, nothing is deleted, and this is
@@ -484,32 +481,32 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
                     value={confirmationText}
                     onChange={(event) => setConfirmationText(event.target.value)}
                     autoComplete="off"
-                    className={`mt-2 block w-full max-w-xs rounded-lg border border-amber-400 bg-white px-3 py-2 text-slate-950 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
+                    className={`mt-2 block min-h-11 w-full max-w-xs rounded-lg border border-amber-400 bg-white px-3 py-2 text-slate-950 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
                   />
                 </label>
-                <button
-                  type="button"
+                <ForgeActionButton
+                  variant="gold"
                   disabled={!canApply || applyStatus === "applying"}
                   onClick={applyReconciliation}
-                  className={`mt-5 rounded-xl px-5 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
+                  className="mt-5"
                 >
                   {applyStatus === "applying" ? "Applying…" : `Reclassify ${totalItems} event(s)`}
-                </button>
+                </ForgeActionButton>
               </div>
             ) : (
-              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
+              <div className="sticky bottom-4 z-10 mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-lg dark:border-slate-700 dark:bg-slate-950/40">
                 <p className="text-sm text-slate-600 dark:text-slate-400">
                   Reclassify these {totalItems} event(s). Amounts and dates never change, nothing is deleted, and
                   every change is reversible.
                 </p>
-                <button
-                  type="button"
+                <ForgeActionButton
+                  variant="gold"
                   disabled={!canApply || applyStatus === "applying"}
                   onClick={applyReconciliation}
-                  className={`mt-4 min-h-11 rounded-xl px-5 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 ${goldControlClassName} ${FOCUS_RING}`}
+                  className="mt-4"
                 >
                   {applyStatus === "applying" ? "Applying…" : `Reclassify ${totalItems} event(s)`}
-                </button>
+                </ForgeActionButton>
               </div>
             )
           ) : null}

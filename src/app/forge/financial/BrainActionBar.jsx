@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { forgeTheme } from "@/components/forge/theme";
+import { ForgeActionButton } from "@/components/forge/ForgeActions";
 
 const FOCUS_RING =
   "focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2";
@@ -154,13 +155,13 @@ export default function BrainActionBar() {
               aria-label="Tell the books what to do"
               className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
             />
-            <button
+            <ForgeActionButton
               type="submit"
+              variant="accent"
               disabled={status === "planning"}
-              className={`rounded-xl bg-amber-500 px-5 py-2 text-sm font-bold text-slate-950 disabled:opacity-50 ${FOCUS_RING}`}
             >
               {status === "planning" ? "Planning…" : "Plan"}
-            </button>
+            </ForgeActionButton>
           </form>
 
           <div className="mt-5">
@@ -206,7 +207,7 @@ export default function BrainActionBar() {
                       type="checkbox"
                       checked={acknowledged}
                       onChange={(event) => setAcknowledged(event.target.checked)}
-                      className={FOCUS_RING}
+                      className={`mt-1 h-5 w-5 shrink-0 ${FOCUS_RING}`}
                     />
                     I reviewed this plan and understand it reclassifies these{" "}
                     {plan.items.length} item(s). Amounts and dates never change,
@@ -219,22 +220,22 @@ export default function BrainActionBar() {
                         value={confirmationText}
                         onChange={(event) => setConfirmationText(event.target.value)}
                         autoComplete="off"
-                        className={`mt-2 block w-full max-w-xs rounded-lg border border-amber-400 bg-white px-3 py-2 text-slate-950 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
+                        className={`mt-2 block min-h-11 w-full max-w-xs rounded-lg border border-amber-400 bg-white px-3 py-2 text-slate-950 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
                       />
                     </label>
                   )}
-                  <button
-                    type="button"
+                  <ForgeActionButton
+                    variant="accent"
                     disabled={!canApply || status === "applying"}
                     onClick={applyPlan}
-                    className={`mt-4 rounded-xl bg-amber-500 px-5 py-3 text-sm font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS_RING}`}
+                    className="mt-4"
                   >
                     {status === "applying"
                       ? "Applying…"
                       : gate === "typed"
                         ? `Apply ${plan.items.length} action(s)`
                         : `Confirm & apply ${plan.items.length} action(s)`}
-                  </button>
+                  </ForgeActionButton>
                 </div>
               </div>
             )}

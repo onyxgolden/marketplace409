@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { forgeTheme } from "@/components/forge/theme";
+import { ForgeActionButton } from "@/components/forge/ForgeActions";
 import { formatLedgerAnswer } from "@/domains/ledger/brain/formatLedgerAnswer.js";
 import { money } from "./formatMoney.js";
 
@@ -112,13 +113,13 @@ export default function AskBooksPanel() {
               className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
             />
 
-            <button
+            <ForgeActionButton
               type="submit"
+              variant="accent"
               disabled={isLoading}
-              className="rounded-xl bg-amber-500 px-5 py-2 text-sm font-bold text-slate-950 disabled:opacity-50"
             >
               {isLoading ? "Asking…" : "Ask"}
-            </button>
+            </ForgeActionButton>
           </form>
 
           <div className="mt-5">

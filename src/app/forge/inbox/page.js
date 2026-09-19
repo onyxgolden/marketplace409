@@ -1,12 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { forgeTheme } from "@/components/forge/theme";
 import {
   ForgeErrorState,
   ForgeLoadingState,
 } from "@/components/forge/ForgeStates";
+import {
+  ForgeActionButton,
+  ForgeActionLink,
+  ForgeActionStack,
+} from "@/components/forge/ForgeActions";
 import { buildMorningQueue } from "@/domains/ledger/brain/morningQueue.js";
 import { buildBrainDigest } from "@/domains/ledger/brain/digest.js";
 import { lineVarianceCents } from "@/domains/budgeting/budgetVariance.js";
@@ -125,11 +129,11 @@ function QueueItemCard({ item, onResolve, applyState, confirmState, onConfirmCha
           )}
         </div>
 
-        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+        <ForgeActionStack>
           {item.kind === "uncategorized" && item.payload.suggestionCategory && (
             <>
               {!needsTypedConfirm || confirmState[item.id]?.armed ? (
-                <div className="flex flex-col gap-2 sm:items-end">
+                <>
                   {needsTypedConfirm && (
                     <input
                       value={confirmState[item.id]?.text ?? ""}
@@ -139,54 +143,42 @@ function QueueItemCard({ item, onResolve, applyState, confirmState, onConfirmCha
                       className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm dark:border-amber-700 dark:bg-slate-800"
                     />
                   )}
-                  <button
-                    type="button"
+                  <ForgeActionButton
+                    variant="primary"
                     disabled={busy || (needsTypedConfirm && (confirmState[item.id]?.text ?? "").trim().toUpperCase() !== "CONFIRM")}
                     onClick={() => onResolve(item, needsTypedConfirm ? "CONFIRM" : "SINGLE")}
-                    className="min-h-11 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white disabled:opacity-40 dark:bg-amber-400 dark:text-slate-950"
                   >
                     {busy ? "Applying…" : `Apply: ${item.payload.suggestionCategory.replace(/_/g, " ")}`}
-                  </button>
-                </div>
+                  </ForgeActionButton>
+                </>
               ) : (
-                <button
-                  type="button"
+                <ForgeActionButton
                   onClick={() => onConfirmChange(item.id, "", true)}
-                  className="min-h-11 rounded-xl border border-amber-400 px-4 py-2 text-sm font-black text-amber-700 dark:text-amber-300"
                 >
                   Review suggestion
-                </button>
+                </ForgeActionButton>
               )}
             </>
           )}
           {item.kind === "uncategorized" && !item.payload.suggestionCategory && (
-            <Link
-              href={item.pointer}
-              className="min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 dark:border-slate-600 dark:text-slate-200"
-            >
+            <ForgeActionLink href={item.pointer}>
               Review
-            </Link>
+            </ForgeActionLink>
           )}
           {item.kind === "anomaly" && (
-            <button
-              type="button"
+            <ForgeActionButton
               disabled={busy}
               onClick={() => onResolve(item, "SINGLE")}
-              className="min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200"
             >
               {busy ? "Dismissing…" : "Dismiss"}
-            </button>
+            </ForgeActionButton>
           )}
           {(item.kind === "bill" || item.kind === "overrun") && (
-            <button
-              type="button"
-              onClick={() => onResolve(item, "ACK")}
-              className="min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 dark:border-slate-600 dark:text-slate-200"
-            >
+            <ForgeActionButton onClick={() => onResolve(item, "ACK")}>
               Mark reviewed
-            </button>
+            </ForgeActionButton>
           )}
-        </div>
+        </ForgeActionStack>
       </div>
     </li>
   );
@@ -401,12 +393,9 @@ export default function InboxPage() {
                     <span className="min-w-0 flex-1 text-sm text-slate-800 dark:text-slate-200">
                       {digestItem.summary}
                     </span>
-                    <Link
-                      href={digestItem.pointer}
-                      className="shrink-0 text-xs font-black text-sky-700 dark:text-sky-400"
-                    >
+                    <ForgeActionLink href={digestItem.pointer} inline>
                       Open
-                    </Link>
+                    </ForgeActionLink>
                   </li>
                 ))}
               </ul>
