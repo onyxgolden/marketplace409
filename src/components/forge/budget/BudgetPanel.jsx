@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { isSavingsOrInvestmentCategory } from "@/domains/budgeting/isSavingsOrInvestmentCategory";
 import { isDebtPayoffCategory } from "@/domains/budgeting/isDebtPayoffCategory";
+import { resolveCategoryDisplayLabel } from "@/domains/budgeting/categoryDisplayLabel";
+import { monthlyEquivalentAmount } from "@/domains/financial-event/detectRecurringPayments";
 import BudgetPieChart from "@/components/forge/budget/BudgetPieChart";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -51,6 +53,7 @@ export default function BudgetPanel() {
   const [totalIncomeCents, setTotalIncomeCents] = useState(0);
   const [incomeByCategory, setIncomeByCategory] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
+  const [recurringPatterns, setRecurringPatterns] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [savingCategoryId, setSavingCategoryId] = useState(null);
   const [addingCategory, setAddingCategory] = useState(null);
@@ -69,8 +72,13 @@ export default function BudgetPanel() {
     return Promise.all([
       fetch(`/api/budgeting/plan?month=${month}&scope=${scope}`).then((response) => response.json().then((payload) => ({ response, payload }))),
       fetch(`/api/budgeting/suggestions?month=${month}&scope=${scope}`).then((response) => response.json().then((payload) => ({ response, payload }))),
+      // Recurring detection is advisory -- if it's down, the budget still loads.
+      fetch("/api/financial/recurring")
+        .then((response) => response.json().then((payload) => ({ response, payload })))
+        .then(({ response, payload }) => (response.ok ? payload.patterns ?? [] : []))
+        .catch(() => []),
     ])
-      .then(([planResult, suggestionsResult]) => {
+      .then(([planResult, suggestionsResult, recurringResult]) => {
         for (const { response, payload } of [planResult, suggestionsResult]) {
           if (response.status === 503 && payload.code === "budgeting_schema_unavailable") {
             setStatus("schema-unavailable");
@@ -83,6 +91,7 @@ export default function BudgetPanel() {
         setTotalIncomeCents(planResult.payload.summary?.totalIncomeCents ?? 0);
         setIncomeByCategory(planResult.payload.incomeByCategory || []);
         setSuggestions(suggestionsResult.payload.categories || []);
+        setRecurringPatterns(recurringResult || []);
         setStatus("available");
         return null;
       })
@@ -99,8 +108,33 @@ export default function BudgetPanel() {
     load();
   }, [load]);
 
-  const suggestionByCategory = useMemo(() => new Map(suggestions.map((entry) => [entry.normalizedCategory, entry])), [suggestions]);
   const plannedCategories = useMemo(() => new Set(lines.map((line) => line.normalizedCategory)), [lines]);
+  // Recurring-payment suggestions: detected patterns the history engine didn't already surface
+  // and the user hasn't planned yet. Outbound only (budget lines are spending), matched to the
+  // current scope, and only patterns with a real decided category -- "other"/uncategorized
+  // patterns stay on the connections panel until someone classifies them.
+  const recurringSuggestions = useMemo(() => {
+    const historyCategories = new Set(suggestions.map((entry) => entry.normalizedCategory));
+    return recurringPatterns
+      .filter((pattern) => pattern.direction === "outbound")
+      .filter((pattern) => (pattern.businessScope ?? "personal") === scope)
+      .filter((pattern) => pattern.category && pattern.category !== "other")
+      .filter((pattern) => !plannedCategories.has(pattern.category) && !historyCategories.has(pattern.category))
+      .map((pattern) => ({
+        normalizedCategory: pattern.category,
+        displayLabel: resolveCategoryDisplayLabel(pattern.category),
+        suggestedAmountCents: Math.round(monthlyEquivalentAmount(pattern) * 100),
+        pattern,
+      }));
+  }, [recurringPatterns, suggestions, plannedCategories, scope]);
+  const suggestionByCategory = useMemo(() => {
+    const map = new Map(suggestions.map((entry) => [entry.normalizedCategory, entry]));
+    // Recurring patterns fill gaps the history engine missed -- history suggestions win ties.
+    for (const entry of recurringSuggestions) {
+      if (!map.has(entry.normalizedCategory)) map.set(entry.normalizedCategory, entry);
+    }
+    return map;
+  }, [suggestions, recurringSuggestions]);
   const addableSuggestions = useMemo(
     () => suggestions.filter((entry) => !plannedCategories.has(entry.normalizedCategory)),
     [suggestions, plannedCategories],
@@ -435,6 +469,33 @@ export default function BudgetPanel() {
             </div>
           ) : null}
 
+          {recurringSuggestions.length > 0 ? (
+            <div className="mt-8">
+              <h3 className="text-sm font-black uppercase tracking-wide text-slate-700 dark:text-slate-300">
+                Add from recurring payments
+              </h3>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Detected from your bank feed — same account, steady rhythm. Amounts are scaled to a monthly budget.
+              </p>
+              <ul className="mt-3 space-y-2">
+                {recurringSuggestions.map((entry) => (
+                  <RecurringSuggestionRow
+                    key={`${entry.normalizedCategory}-${entry.pattern.accountId ?? "unknown"}`}
+                    entry={entry}
+                    adding={addingCategory === entry.normalizedCategory}
+                    onAdd={(displayLabel) =>
+                      addCategory({
+                        normalizedCategory: entry.normalizedCategory,
+                        displayLabel,
+                        sourceType: "history_suggested",
+                      })
+                    }
+                  />
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           <div className="mt-8">
             <h3 className="text-sm font-black uppercase tracking-wide text-slate-700 dark:text-slate-300">Add a category by hand</h3>
             <form
@@ -496,6 +557,40 @@ function BudgetSummaryBar({ totalIncomeCents, totalPlannedCents, totalActualCent
         <dd className={`mt-1 text-xl font-black ${unassignedTone}`}>{centsToMoney(unassignedCents)}</dd>
       </div>
     </dl>
+  );
+}
+
+function RecurringSuggestionRow({ entry, adding, onAdd }) {
+  const [label, setLabel] = useState(entry.displayLabel);
+  const { pattern } = entry;
+  const trimmed = label.trim();
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-700">
+      <div className="min-w-0 flex-1 basis-64">
+        <label className="sr-only" htmlFor={`recurring-label-${entry.normalizedCategory}`}>
+          Budget label for this recurring payment
+        </label>
+        <input
+          id={`recurring-label-${entry.normalizedCategory}`}
+          type="text"
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+          className="w-full max-w-xs rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-950 dark:text-white"
+        />
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          {centsToMoney(entry.suggestedAmountCents)} / month · {pattern.cadence} · {pattern.occurrences} payments
+          {pattern.nextExpectedDate ? ` · next ~${pattern.nextExpectedDate}` : ""}
+        </p>
+      </div>
+      <button
+        type="button"
+        disabled={adding || trimmed === ""}
+        onClick={() => onAdd(trimmed)}
+        className={`rounded-lg px-3 py-1.5 text-sm font-bold transition disabled:opacity-50 ${goldControlClassName} ${FOCUS_RING}`}
+      >
+        {adding ? "Adding…" : "Add"}
+      </button>
+    </li>
   );
 }
 

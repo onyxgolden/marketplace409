@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { detectRecurringPayments, cadenceLabel } from "../detectRecurringPayments.js";
+import { detectRecurringPayments, cadenceLabel, monthlyEquivalentAmount } from "../detectRecurringPayments.js";
 
 function row(id, eventDate, amount, extra = {}) {
   return {
@@ -112,5 +112,35 @@ describe("cadenceLabel", () => {
     expect(cadenceLabel(91)).toBe("quarterly");
     expect(cadenceLabel(365)).toBe("yearly");
     expect(cadenceLabel(45)).toBe("every 45 days");
+  });
+});
+
+describe("monthlyEquivalentAmount", () => {
+  test("scales a biweekly amount to a month", () => {
+    // The real mortgage: $1,482.50 every ~16 days -> ~$2,820/mo.
+    expect(monthlyEquivalentAmount({ medianAmount: 1482.5, medianIntervalDays: 16 })).toBeCloseTo(2820.46, 1);
+  });
+
+  test("leaves a monthly amount nearly unchanged", () => {
+    expect(monthlyEquivalentAmount({ medianAmount: 3.75, medianIntervalDays: 30 })).toBeCloseTo(3.81, 1);
+  });
+
+  test("falls back to the raw amount without a usable interval", () => {
+    expect(monthlyEquivalentAmount({ medianAmount: 100, medianIntervalDays: 0 })).toBe(100);
+    expect(monthlyEquivalentAmount({ medianAmount: 100 })).toBe(100);
+    expect(monthlyEquivalentAmount(null)).toBe(0);
+  });
+});
+
+describe("pattern identity passthrough", () => {
+  test("carries accountId and businessScope through to the pattern", () => {
+    const rows = [
+      { id: "a", eventDate: "2026-07-01", amount: 50, accountId: "acct-9", accountName: "Advantage", businessScope: "personal", transactionKind: "expense", normalizedCategory: "groceries" },
+      { id: "b", eventDate: "2026-08-01", amount: 50, accountId: "acct-9", accountName: "Advantage", businessScope: "personal", transactionKind: "expense", normalizedCategory: "groceries" },
+      { id: "c", eventDate: "2026-09-01", amount: 50, accountId: "acct-9", accountName: "Advantage", businessScope: "personal", transactionKind: "expense", normalizedCategory: "groceries" },
+    ];
+    const [pattern] = detectRecurringPayments(rows);
+    expect(pattern.accountId).toBe("acct-9");
+    expect(pattern.businessScope).toBe("personal");
   });
 });

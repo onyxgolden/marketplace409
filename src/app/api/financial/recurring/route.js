@@ -25,18 +25,18 @@ async function fetchIncomeExpenseRows(supabaseClient, ownerId) {
   }
 }
 
-async function fetchAccountNamesById(supabaseClient, ownerId, accountIds) {
-  const namesById = new Map();
+async function fetchAccountDetailsById(supabaseClient, ownerId, accountIds) {
+  const detailsById = new Map();
   const uniqueIds = [...new Set(accountIds.filter(Boolean))];
-  if (uniqueIds.length === 0) return namesById;
+  if (uniqueIds.length === 0) return detailsById;
   const { data, error } = await supabaseClient
     .from("financial_accounts")
-    .select("id, name")
+    .select("id, name, business_scope")
     .eq("owner_id", ownerId)
     .in("id", uniqueIds);
   if (error) throw error;
-  for (const row of data ?? []) namesById.set(row.id, row.name);
-  return namesById;
+  for (const row of data ?? []) detailsById.set(row.id, { name: row.name, businessScope: row.business_scope ?? null });
+  return detailsById;
 }
 
 // Read-only detection: finds subscriptions, loan payments, paychecks, and other repeating
@@ -47,7 +47,7 @@ export async function GET() {
 
   try {
     const transactionRows = await fetchIncomeExpenseRows(authenticated.supabaseClient, authenticated.effectiveOwnerId);
-    const namesById = await fetchAccountNamesById(
+    const detailsById = await fetchAccountDetailsById(
       authenticated.supabaseClient,
       authenticated.effectiveOwnerId,
       transactionRows.map((row) => row.financial_account_id),
@@ -58,7 +58,8 @@ export async function GET() {
         eventDate: row.event_date,
         amount: Number(row.amount),
         accountId: row.financial_account_id,
-        accountName: namesById.get(row.financial_account_id) ?? null,
+        accountName: detailsById.get(row.financial_account_id)?.name ?? null,
+        businessScope: detailsById.get(row.financial_account_id)?.businessScope ?? null,
         transactionKind: row.transaction_kind,
         normalizedCategory: row.normalized_category,
       })),
