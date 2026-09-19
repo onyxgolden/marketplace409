@@ -15,11 +15,11 @@ describe("buildFinancialTilePresentation", () => {
         kpiModel: {
           type: "kpi-model",
           kpis: {
-            equity: 22500000,
-            assets: 42500000,
-            liabilities: 20000000,
-            cash: 12500000,
-            receivables: 2500000,
+            equity: 225000,
+            assets: 425000,
+            liabilities: 200000,
+            cash: 125000,
+            receivables: 2500,
             profit: 1850000,
             revenue: 7500000,
             expenses: 5650000,
@@ -54,7 +54,7 @@ describe("buildFinancialTilePresentation", () => {
         id: "cash",
         label: "Cash",
         value: "$125,000",
-        detail: "Receivables $25,000",
+        detail: "Receivables $2,500",
       },
       {
         id: "profit",
@@ -91,6 +91,25 @@ describe("buildFinancialTilePresentation", () => {
       "$0",
       "0.0%",
     ]);
+  });
+
+  it("does not divide dollar-denominated position KPIs by 100", () => {
+    // Regression: the position adapter hands back dollars; the tile divided them as if they
+    // were cents, rendering a $4.17M net worth as $41,716.
+    const presentation =
+      buildFinancialTilePresentation({
+        kpiModel: {
+          type: "kpi-model",
+          kpis: { equity: 4171641.18, assets: 4244014.07, liabilities: 72372.89 },
+        },
+      });
+
+    expect(presentation.kpis[0].value).toBe(
+      "$4,171,641",
+    );
+    expect(presentation.kpis[0].detail).toBe(
+      "Assets $4,244,014 · Liabilities $72,373",
+    );
   });
 
   it("returns an immutable presentation model", () => {
