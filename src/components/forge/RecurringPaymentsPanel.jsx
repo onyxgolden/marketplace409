@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { upcomingRecurringOccurrences } from "@/domains/financial-event/detectRecurringPayments";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const dollars = (amount) => money.format(Math.abs(amount));
@@ -49,6 +50,19 @@ export default function RecurringPaymentsPanel() {
     load();
   }, [load]);
 
+  const upcoming = useMemo(
+    () => upcomingRecurringOccurrences(patterns, { daysAhead: 30 }),
+    [patterns],
+  );
+  const upcomingOutCents = useMemo(
+    () => upcoming.filter((o) => o.direction === "outbound").reduce((total, o) => total + Math.round(o.amount * 100), 0),
+    [upcoming],
+  );
+  const upcomingInCents = useMemo(
+    () => upcoming.filter((o) => o.direction === "inbound").reduce((total, o) => total + Math.round(o.amount * 100), 0),
+    [upcoming],
+  );
+
   if (status === "loading") {
     return (
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -93,7 +107,50 @@ export default function RecurringPaymentsPanel() {
           No recurring patterns found yet — they emerge as more history lands in the feed.
         </p>
       ) : (
-        <div className="mt-6 space-y-3">
+        <>
+          {upcoming.length > 0 ? (
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="text-sm font-black uppercase tracking-wide text-slate-700 dark:text-slate-300">
+                  Coming up · next 30 days
+                </h3>
+                <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                  <span className="text-red-700 dark:text-red-400">{dollars(upcomingOutCents / 100)} out</span>
+                  {upcomingInCents > 0 ? (
+                    <span className="ml-2 text-emerald-700 dark:text-emerald-400">{dollars(upcomingInCents / 100)} in</span>
+                  ) : null}
+                </p>
+              </div>
+              <ul className="mt-3 space-y-1.5">
+                {upcoming.map((occurrence, index) => (
+                  <li
+                    key={`${occurrence.date}-${occurrence.accountName}-${occurrence.amount}-${index}`}
+                    className="flex items-center justify-between gap-3 text-sm"
+                  >
+                    <span className="text-slate-600 dark:text-slate-400">
+                      <span className="font-bold text-slate-800 dark:text-slate-200">{occurrence.date}</span>
+                      {" · "}
+                      {occurrence.accountName ?? "Unknown account"}
+                      {occurrence.category && occurrence.category !== "other"
+                        ? ` · ${occurrence.category.replace(/_/g, " ")}`
+                        : ""}
+                    </span>
+                    <span
+                      className={`font-bold ${
+                        occurrence.direction === "outbound"
+                          ? "text-red-700 dark:text-red-400"
+                          : "text-emerald-700 dark:text-emerald-400"
+                      }`}
+                    >
+                      {occurrence.direction === "outbound" ? "−" : "+"}
+                      {dollars(occurrence.amount)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <div className="mt-6 space-y-3">
           {patterns.map((pattern) => (
             <article
               key={`${pattern.accountName}-${pattern.direction}-${pattern.category}-${pattern.cadence}`}
@@ -139,7 +196,8 @@ export default function RecurringPaymentsPanel() {
               ) : null}
             </article>
           ))}
-        </div>
+          </div>
+        </>
       )}
     </section>
   );

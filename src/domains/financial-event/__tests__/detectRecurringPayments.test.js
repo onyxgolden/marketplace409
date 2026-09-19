@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { detectRecurringPayments, cadenceLabel, monthlyEquivalentAmount } from "../detectRecurringPayments.js";
+import { detectRecurringPayments, cadenceLabel, monthlyEquivalentAmount, upcomingRecurringOccurrences } from "../detectRecurringPayments.js";
 
 function row(id, eventDate, amount, extra = {}) {
   return {
@@ -142,5 +142,56 @@ describe("pattern identity passthrough", () => {
     const [pattern] = detectRecurringPayments(rows);
     expect(pattern.accountId).toBe("acct-9");
     expect(pattern.businessScope).toBe("personal");
+  });
+});
+
+describe("upcomingRecurringOccurrences", () => {
+  const patterns = [
+    {
+      nextExpectedDate: "2026-09-22",
+      medianIntervalDays: 16,
+      medianAmount: 1482.5,
+      direction: "outbound",
+      accountName: "Home Equity",
+      category: "mortgage_payment",
+      cadence: "biweekly",
+    },
+    {
+      nextExpectedDate: "2026-10-15",
+      medianIntervalDays: 30,
+      medianAmount: 3.75,
+      direction: "outbound",
+      accountName: "Regular Savings",
+      category: "bank_fees",
+      cadence: "monthly",
+    },
+  ];
+
+  test("expands a biweekly pattern to two occurrences in 30 days, sorted by date", () => {
+    const occurrences = upcomingRecurringOccurrences(patterns, { fromDate: "2026-09-19", daysAhead: 30 });
+    expect(occurrences.map((o) => o.date)).toEqual(["2026-09-22", "2026-10-08", "2026-10-15"]);
+    expect(occurrences[0]).toMatchObject({ amount: 1482.5, direction: "outbound", accountName: "Home Equity" });
+  });
+
+  test("drops occurrences outside the window", () => {
+    const occurrences = upcomingRecurringOccurrences(patterns, { fromDate: "2026-09-19", daysAhead: 7 });
+    expect(occurrences.map((o) => o.date)).toEqual(["2026-09-22"]);
+  });
+
+  test("skips patterns without a next expected date", () => {
+    const occurrences = upcomingRecurringOccurrences(
+      [{ ...patterns[0], nextExpectedDate: null }],
+      { fromDate: "2026-09-19", daysAhead: 30 },
+    );
+    expect(occurrences).toEqual([]);
+  });
+
+  test("an overdue pattern still lists its following occurrence", () => {
+    const occurrences = upcomingRecurringOccurrences(
+      [{ ...patterns[0], nextExpectedDate: "2026-09-01" }],
+      { fromDate: "2026-09-19", daysAhead: 30 },
+    );
+    // 09-01 skipped (past); 09-17 skipped (past); next is 10-03.
+    expect(occurrences.map((o) => o.date)).toEqual(["2026-10-03"]);
   });
 });
