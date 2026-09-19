@@ -11,6 +11,10 @@
 //   Defensively forces the sign rather than trusting the preview's sign, so a
 //   re-apply over already-absolutized rows still heals them.
 // - distributions: income/expense legs are positive magnitudes -> Math.abs.
+// - debtPayments: the depository leg (outbound) is a real, budget-visible expense
+//   (heloc_payment/loan_payment/...) -> positive magnitude; the loan leg (inbound)
+//   is written as a signed negative internal_transfer so the pair stays re-pairable
+//   on the next preview instead of being absolutized into unpairable mush.
 export function buildApplyPayloads(preview) {
   const payloads = [];
   for (const entry of preview.directionFixes ?? []) {
@@ -47,6 +51,20 @@ export function buildApplyPayloads(preview) {
       transactionKind: "expense",
       normalizedCategory: "owner_distribution",
       pAmount: Math.abs(pair.outbound.amount),
+    });
+  }
+  for (const pair of preview.debtPayments ?? []) {
+    payloads.push({
+      eventId: pair.outbound.eventId,
+      transactionKind: "expense",
+      normalizedCategory: pair.expenseCategory,
+      pAmount: Math.abs(pair.outbound.amount),
+    });
+    payloads.push({
+      eventId: pair.inbound.eventId,
+      transactionKind: "transfer",
+      normalizedCategory: "internal_transfer",
+      pAmount: -Math.abs(pair.inbound.amount),
     });
   }
   return payloads;

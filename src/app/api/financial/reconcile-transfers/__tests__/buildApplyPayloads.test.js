@@ -91,4 +91,63 @@ describe("buildApplyPayloads preserves transfer direction", () => {
     expect(byId["in-bad"].pAmount).toBe(-1482.5);
     expect(byId["out-bad"].pAmount).toBe(1482.5);
   });
+
+  test("debt payments: depository leg becomes a positive expense with the loan category, loan leg stays a signed negative transfer", () => {
+    const preview = {
+      directionFixes: [],
+      internalTransfers: [],
+      distributions: [],
+      debtPayments: [
+        {
+          inbound: { eventId: "heloc-in", eventDate: "2026-09-06", amount: -1482.5 },
+          outbound: { eventId: "savings-out", eventDate: "2026-09-06", amount: 1482.5 },
+          loanAccountName: "Home Equity",
+          expenseCategory: "heloc_payment",
+        },
+      ],
+    };
+    const payloads = buildApplyPayloads(preview);
+    const byId = Object.fromEntries(payloads.map((p) => [p.eventId, p]));
+    expect(byId["savings-out"]).toEqual({
+      eventId: "savings-out",
+      transactionKind: "expense",
+      normalizedCategory: "heloc_payment",
+      pAmount: 1482.5,
+    });
+    expect(byId["heloc-in"]).toEqual({
+      eventId: "heloc-in",
+      transactionKind: "transfer",
+      normalizedCategory: "internal_transfer",
+      pAmount: -1482.5,
+    });
+  });
+
+  test("debt-payment loan leg keeps its negative sign so the pair stays re-pairable on the next preview", () => {
+    const preview = {
+      directionFixes: [],
+      internalTransfers: [],
+      distributions: [],
+      debtPayments: [
+        {
+          inbound: { eventId: "loan-in", eventDate: "2026-05-01", amount: -500 },
+          outbound: { eventId: "acct-out", eventDate: "2026-05-01", amount: 500 },
+          loanAccountName: "Auto Loan",
+          expenseCategory: "loan_payment",
+        },
+      ],
+    };
+    const payloads = buildApplyPayloads(preview);
+    const byId = Object.fromEntries(payloads.map((p) => [p.eventId, p]));
+    expect(byId["loan-in"].pAmount).toBe(-500);
+    expect(byId["loan-in"].transactionKind).toBe("transfer");
+    // Re-pairing check: signed legs still classify as a debt payment, not ambiguous.
+    const result = classifyTransferPairs({
+      rows: [
+        { id: "loan-in", eventDate: "2026-05-01", amount: byId["loan-in"].pAmount, businessScope: "personal", isLoanAccount: true },
+        { id: "acct-out", eventDate: "2026-05-01", amount: byId["acct-out"].pAmount, businessScope: "personal", isLoanAccount: false },
+      ],
+    });
+    expect(result.debtPayments).toEqual([{ inboundId: "loan-in", outboundId: "acct-out" }]);
+    expect(result.ambiguous).toEqual([]);
+  });
 });

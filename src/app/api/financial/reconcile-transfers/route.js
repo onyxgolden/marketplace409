@@ -9,6 +9,16 @@ import { buildApplyPayloads } from "@/domains/financial-event/buildTransferApply
 const PAGE_SIZE = 1000;
 const TRANSACTION_SOURCE_SYSTEM = "transaction";
 
+// Best-effort specific label from the real loan account's own name ("Home Equity" -> heloc_payment)
+// so it lines up with isDebtPayoffCategory's existing "heloc" keyword; anything else falls back to
+// the generic "loan_payment" (still caught by that same classifier's broad "loan" substring match).
+function loanPaymentCategory(accountName) {
+  const normalized = (accountName ?? "").toLowerCase();
+  if (normalized.includes("equity")) return "heloc_payment";
+  if (normalized.includes("mortgage")) return "mortgage_payment";
+  return "loan_payment";
+}
+
 async function fetchAllTransactionRows(supabaseClient, ownerId) {
   const rows = [];
   for (let from = 0; ; from += PAGE_SIZE) {
@@ -27,21 +37,24 @@ async function fetchAllTransactionRows(supabaseClient, ownerId) {
   }
 }
 
-async function fetchAccountScopeById(supabaseClient, ownerId, accountIds) {
-  const scopeById = new Map();
+// financial_accounts.type === 'credit' means a loan/HELOC/credit line, not a plain checking/savings
+// account -- a transfer that touches one is real debt service, never a no-op internal shuffle. See
+// classifyTransferPairs.js's isLoanAccount doc comment for the production example this came from.
+async function fetchAccountDetailsById(supabaseClient, ownerId, accountIds) {
+  const detailsById = new Map();
   const uniqueIds = [...new Set(accountIds.filter(Boolean))];
-  if (uniqueIds.length === 0) return scopeById;
-  const { data, error } = await supabaseClient.from("financial_accounts").select("id, business_scope").eq("owner_id", ownerId).in("id", uniqueIds);
+  if (uniqueIds.length === 0) return detailsById;
+  const { data, error } = await supabaseClient.from("financial_accounts").select("id, business_scope, type, name").eq("owner_id", ownerId).in("id", uniqueIds);
   if (error) throw error;
-  for (const row of data ?? []) scopeById.set(row.id, row.business_scope);
-  return scopeById;
+  for (const row of data ?? []) detailsById.set(row.id, { businessScope: row.business_scope, isLoanAccount: row.type === "credit", accountName: row.name });
+  return detailsById;
 }
 
 // Fetches fresh and re-derives both classifications every time -- GET and POST both call this so
 // the apply action can never diverge from what a human most recently reviewed as a preview.
 async function computePreview(supabaseClient, ownerId) {
   const transactionRows = await fetchAllTransactionRows(supabaseClient, ownerId);
-  const scopeByAccountId = await fetchAccountScopeById(
+  const accountDetailsById = await fetchAccountDetailsById(
     supabaseClient,
     ownerId,
     transactionRows.map((row) => row.financial_account_id),
@@ -65,12 +78,16 @@ async function computePreview(supabaseClient, ownerId) {
     }));
 
   const transferMatch = classifyTransferPairs({
-    rows: transferRows.map((row) => ({
-      id: row.id,
-      eventDate: row.event_date,
-      amount: Number(row.amount),
-      businessScope: scopeByAccountId.get(row.financial_account_id) ?? null,
-    })),
+    rows: transferRows.map((row) => {
+      const details = accountDetailsById.get(row.financial_account_id);
+      return {
+        id: row.id,
+        eventDate: row.event_date,
+        amount: Number(row.amount),
+        businessScope: details?.businessScope ?? null,
+        isLoanAccount: details?.isLoanAccount ?? false,
+      };
+    }),
   });
 
   const describePair = (id) => {
@@ -86,6 +103,20 @@ async function computePreview(supabaseClient, ownerId) {
     inbound: { ...describePair(pair.inboundId), businessScope: pair.inboundScope },
     outbound: { ...describePair(pair.outboundId), businessScope: pair.outboundScope },
   }));
+  // outbound = the depository account the payment left (the real, budget-visible expense);
+  // inbound = the loan account receiving it (kept signed so the pair stays re-pairable).
+  // expenseCategory is resolved here (not in buildApplyPayloads) so the preview shows the human
+  // exactly the category the apply will write.
+  const debtPayments = transferMatch.debtPayments.map((pair) => {
+    const inRow = rowsById.get(pair.inboundId);
+    const loanAccountName = accountDetailsById.get(inRow.financial_account_id)?.accountName ?? "Loan";
+    return {
+      inbound: describePair(pair.inboundId),
+      outbound: describePair(pair.outboundId),
+      loanAccountName,
+      expenseCategory: loanPaymentCategory(loanAccountName),
+    };
+  });
   // entry.side tells whether eventId is the inbound or outbound leg -- an ambiguous row can be
   // either (e.g. an outbound-only transfer with no inbound counterpart at all in this owner's
   // data), so this is never assumed to be inbound the way it was before this was made symmetric.
@@ -98,6 +129,7 @@ async function computePreview(supabaseClient, ownerId) {
 
   const totalDirectionFixAmountCents = directionFixes.reduce((total, entry) => total + Math.round(Math.abs(entry.amount) * 100), 0);
   const totalDistributionAmountCents = distributions.reduce((total, entry) => total + Math.round(Math.abs(entry.inbound.amount) * 100), 0);
+  const totalDebtPaymentAmountCents = debtPayments.reduce((total, entry) => total + Math.round(Math.abs(entry.outbound.amount) * 100), 0);
 
   return {
     directionFixes,
@@ -105,6 +137,8 @@ async function computePreview(supabaseClient, ownerId) {
     internalTransfers,
     distributions,
     totalDistributionAmountCents,
+    debtPayments,
+    totalDebtPaymentAmountCents,
     ambiguousTransfers,
     scannedCount: transactionRows.length,
   };
@@ -126,7 +160,9 @@ export async function GET() {
 
 // Applies the CURRENT preview (freshly recomputed, never client-supplied): direction fixes flip
 // kind income<->expense and take the absolute value; internal transfers keep signed amounts so
-// re-running the preview can still pair them; distributions use positive magnitudes.
+// re-running the preview can still pair them; distributions use positive magnitudes; debt payments
+// write the depository leg as a real expense (heloc_payment/loan_payment/...) and keep the loan
+// leg signed as an internal_transfer so the pair stays re-pairable.
 // Ambiguous transfer rows are never written.
 export async function POST() {
   const authenticated = await createAuthenticatedFinancialApplication();

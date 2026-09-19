@@ -33,10 +33,18 @@ function ambiguityReason(candidateCount) {
 }
 
 // rows: pre-filtered to isInternalTransferDescription rows only, each
-// { id, eventDate, amount (raw signed dollars), businessScope }.
+// { id, eventDate, amount (raw signed dollars), businessScope, isLoanAccount }.
 // Direction comes from sign (verified 100% consistent across production data, see
 // correctRawBankFeedDirection.js): negative = this account received the money (inbound leg),
 // positive = this account sent the money (outbound leg).
+// isLoanAccount: true when the leg's own financial_accounts.type === 'credit' (a loan/HELOC/credit
+// line, not a plain checking/savings account). A transfer INTO a loan account is real debt service
+// (money leaving the household, paying down a real balance) -- economically nothing like a
+// checking-to-savings shuffle, even though both are "Transfer to/from Share/Loan NNNN" in the raw
+// description. Confirmed against production: "Home Equity" (type=credit) receiving a recurring
+// "Transfer from Share 0000" alongside "Regular Savings Account" sending a matching "Transfer to
+// Loan 0020" is the household's actual HELOC payment -- treating it as a no-op internal transfer
+// would make a real, recurring expense permanently invisible to budgeting.
 //
 // Matching is symmetric and conservative: a pair only confirms when each side is the OTHER side's
 // sole candidate (mutual uniqueness). Any row -- inbound or outbound -- left out of a confirmed
@@ -86,10 +94,16 @@ export function classifyTransferPairs({ rows, toleranceDays = 3 }) {
 
   const internalTransfers = [];
   const distributions = [];
+  const debtPayments = [];
   for (const pair of confirmedPairs) {
     const inRow = inboundById.get(pair.inboundId);
     const outRow = outboundById.get(pair.outboundId);
-    if (inRow.businessScope === outRow.businessScope) {
+    // Checked before the scope split -- a payment into a loan account is real debt service
+    // regardless of whether both legs happen to share a business_scope (the common case: personal
+    // savings paying a personal HELOC) or not.
+    if (inRow.isLoanAccount || outRow.isLoanAccount) {
+      debtPayments.push(pair);
+    } else if (inRow.businessScope === outRow.businessScope) {
       internalTransfers.push(pair);
     } else {
       distributions.push(Object.freeze({ ...pair, inboundScope: inRow.businessScope, outboundScope: outRow.businessScope }));
@@ -125,6 +139,7 @@ export function classifyTransferPairs({ rows, toleranceDays = 3 }) {
   return Object.freeze({
     internalTransfers: Object.freeze(internalTransfers),
     distributions: Object.freeze(distributions),
+    debtPayments: Object.freeze(debtPayments),
     ambiguous: Object.freeze(ambiguous),
   });
 }
