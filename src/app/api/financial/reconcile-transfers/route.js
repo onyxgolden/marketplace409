@@ -6,6 +6,7 @@ import { needsDirectionCorrection } from "@/domains/financial-event/correctRawBa
 import { isInternalTransferDescription, classifyTransferPairs } from "@/domains/financial-event/classifyTransferPairs";
 import { buildApplyPayloads } from "@/domains/financial-event/buildTransferApplyPayloads";
 import { isPairAlreadyApplied } from "@/domains/financial-event/isPairAlreadyApplied";
+import { isAmbiguousRowResolved } from "@/domains/financial-event/isAmbiguousRowResolved";
 import { loanPaymentCategory } from "@/domains/financial-event/loanPaymentCategory";
 
 const PAGE_SIZE = 1000;
@@ -157,12 +158,18 @@ async function computePreview(supabaseClient, ownerId) {
   // entry.side tells whether eventId is the inbound or outbound leg -- an ambiguous row can be
   // either (e.g. an outbound-only transfer with no inbound counterpart at all in this owner's
   // data), so this is never assumed to be inbound the way it was before this was made symmetric.
-  const ambiguousTransfers = transferMatch.ambiguous.map((entry) => ({
-    ...describePair(entry.eventId),
-    side: entry.side,
-    reason: entry.reason,
-    candidates: entry.candidateIds.map((id) => describePair(id)),
-  }));
+  // Rows that already carry a decided classification are hidden here: 'other' is the
+  // system's "undecided" marker, so anything else means a human or a previous apply
+  // already made the call (e.g. one-sided transfers to an unconnectable external
+  // account, or already-applied distribution legs).
+  const ambiguousTransfers = transferMatch.ambiguous
+    .filter((entry) => !isAmbiguousRowResolved(rowsById.get(entry.eventId)?.normalized_category))
+    .map((entry) => ({
+      ...describePair(entry.eventId),
+      side: entry.side,
+      reason: entry.reason,
+      candidates: entry.candidateIds.map((id) => describePair(id)),
+    }));
 
   const totalDirectionFixAmountCents = directionFixes.reduce((total, entry) => total + Math.round(Math.abs(entry.amount) * 100), 0);
   const totalDistributionAmountCents = distributions.reduce((total, entry) => total + Math.round(Math.abs(entry.inbound.amount) * 100), 0);
