@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedFinancialApplication } from "@/lib/supabase/createAuthenticatedFinancialApplication";
 import { isMissingRemoteSchemaError } from "@/lib/supabase/isMissingRemoteSchemaError";
 import { detectRecurringPayments } from "@/domains/financial-event/detectRecurringPayments";
-import { detectAnomalies } from "@/domains/ledger/brain/anomalies.js";
+import { detectAnomalies, alertKeyOf } from "@/domains/ledger/brain/anomalies.js";
 import { categoryFamilyOf } from "@/domains/budgeting/categoryFamily.js";
 
 const PAGE_SIZE = 1000;
@@ -100,6 +100,18 @@ export async function GET() {
     );
     const rowsById = new Map(rows.map((row) => [row.id, row]));
 
+    let dismissedKeys = new Set();
+    try {
+      const { data: dismissed, error: dismissedError } = await authenticated.supabaseClient
+        .from("dismissed_brain_alerts")
+        .select("alert_key")
+        .eq("owner_id", authenticated.effectiveOwnerId);
+      if (dismissedError) throw dismissedError;
+      dismissedKeys = new Set((dismissed ?? []).map((row) => row.alert_key));
+    } catch {
+      dismissedKeys = new Set();
+    }
+
     const patterns = detectRecurringPayments(
       rows.map((row) => ({
         id: row.id,
@@ -116,7 +128,12 @@ export async function GET() {
       postings: toEnginePostings(rows),
       recurringPatterns: toEnginePatterns(patterns, rowsById),
       now: new Date(),
-    });
+    })
+      .map((alert) => ({ ...alert, key: alertKeyOf(alert) }))
+      // Dismissed alerts stay dismissed. Graceful when the dismissals table
+      // doesn't exist yet (migration not deployed): worst case a dismissed
+      // alert reappears, never a 500.
+      .filter((alert) => !dismissedKeys.has(alert.key));
 
     return NextResponse.json({
       success: true,
