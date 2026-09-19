@@ -14,6 +14,7 @@ import { money } from "./formatMoney.js";
 import MonthComparisonPanel from "./MonthComparisonPanel.jsx";
 import AskBooksPanel from "./AskBooksPanel.jsx";
 import AnomalyAlertsPanel from "./AnomalyAlertsPanel.jsx";
+import CashForecastPanel from "./CashForecastPanel.jsx";
 import { getCurrentMonthProfitKpi } from "./getCurrentMonthProfitKpi.js";
 
 // The one legitimate source of the dashboard cache's isolation identity -- see
@@ -424,6 +425,7 @@ export default function FinancialPage() {
       compareMonthsSection={<MonthComparisonPanel />}
       askBooksSection={<AskBooksPanel />}
       anomalyAlertsSection={<AnomalyAlertsPanel />}
+      cashForecastSection={<CashForecastPanel />}
       activeFunctionId={
         activeFunctionId
       }
