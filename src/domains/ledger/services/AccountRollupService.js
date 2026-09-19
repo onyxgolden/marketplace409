@@ -30,4 +30,23 @@ export class AccountRollupService {
       );
     }, new Money(0));
   }
+
+  // Period variant: rolls up the period-filtered balances of the account and its descendants.
+  getBalanceByAccountInPeriod(accountId, { startDate, endDate } = {}) {
+    const accountIds = [
+      accountId,
+      ...this.chartOfAccounts
+        .getDescendants(accountId)
+        .map((account) => account.id),
+    ];
+
+    return accountIds.reduce((total, currentAccountId) => {
+      return total.add(
+        this.balanceCalculator.getBalanceByAccountInPeriod(currentAccountId, {
+          startDate,
+          endDate,
+        }),
+      );
+    }, new Money(0));
+  }
 }
