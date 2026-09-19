@@ -70,7 +70,9 @@ export function monthlyEquivalentAmount(pattern) {
 // Upcoming occurrences of detected recurring patterns inside a forward window.
 // Steps each pattern from its nextExpectedDate by its rhythm so a biweekly bill
 // contributes two occurrences to a 30-day window, not one. Dates are YYYY-MM-DD
-// strings; arithmetic is UTC so timezones can't shift a date.
+// strings; arithmetic is UTC so timezones can't shift a date. Each occurrence
+// carries the pattern's accountId so callers (e.g. cash-flow forecasting) can
+// attribute it back to the right account.
 export function upcomingRecurringOccurrences(patterns, { fromDate, daysAhead = 30 } = {}) {
   const from = parseDateOnly(fromDate ?? toDateOnly(new Date()));
   const endExclusive = addDaysUtc(from, daysAhead);
@@ -86,6 +88,7 @@ export function upcomingRecurringOccurrences(patterns, { fromDate, daysAhead = 3
           date: toDateOnly(date),
           amount: Number(pattern.medianAmount) || 0,
           direction: pattern.direction,
+          accountId: pattern.accountId ?? null,
           accountName: pattern.accountName ?? null,
           category: pattern.category ?? "other",
           cadence: pattern.cadence,
