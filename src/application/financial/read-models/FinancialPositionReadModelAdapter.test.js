@@ -39,6 +39,9 @@ function buildPosition(overrides = {}) {
       ],
     ),
     accountBalances: Object.freeze([]),
+    missingBalances: Object.freeze(
+      overrides.missingBalances || [],
+    ),
     netWorth: Object.freeze(
       overrides.netWorth || {
         totalAssets: 425000,
@@ -242,5 +245,42 @@ describe("FinancialPositionReadModelAdapter", () => {
     expect(Object.isFrozen(model.metadata)).toBe(
       true,
     );
+  });
+});
+
+describe("missingBalances disclosure", () => {
+  test("passes missing balances through for the UI disclosure", () => {
+    const adapter =
+      new FinancialPositionReadModelAdapter();
+
+    const readModel = adapter.buildPosition(
+      buildPosition({
+        missingBalances: Object.freeze([
+          Object.freeze({
+            id: "account-tractor",
+            name: "Tractor",
+            type: "other",
+          }),
+        ]),
+      }),
+    );
+
+    expect(readModel.missingBalances).toEqual([
+      { id: "account-tractor", name: "Tractor", type: "other" },
+    ]);
+    expect(
+      Object.isFrozen(readModel.missingBalances),
+    ).toBe(true);
+  });
+
+  test("defaults to an empty list when the position predates the field", () => {
+    const adapter =
+      new FinancialPositionReadModelAdapter();
+
+    const readModel = adapter.buildPosition(
+      buildPosition(),
+    );
+
+    expect(readModel.missingBalances).toEqual([]);
   });
 });

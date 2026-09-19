@@ -133,3 +133,34 @@ describe("buildFinancialTilePresentation", () => {
     ).toBe(true);
   });
 });
+
+describe("missingBalances disclosure", () => {
+  it("passes missing balances through for the tile warning", () => {
+    const presentation =
+      buildFinancialTilePresentation({
+        kpiModel: {
+          kpis: {
+            equity: 100,
+            assets: 100,
+            liabilities: 0,
+          },
+          missingBalances: [
+            { id: "a1", name: "Tractor", type: "other" },
+          ],
+        },
+      });
+
+    expect(presentation.missingBalances).toEqual([
+      { id: "a1", name: "Tractor", type: "other" },
+    ]);
+  });
+
+  it("defaults missing balances to an empty list", () => {
+    const presentation =
+      buildFinancialTilePresentation({
+        kpiModel: { kpis: {} },
+      });
+
+    expect(presentation.missingBalances).toEqual([]);
+  });
+});
