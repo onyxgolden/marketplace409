@@ -202,6 +202,9 @@ export default function InboxPage() {
       budgetPersonal: fetchJson(`/api/budgeting/plan?month=${month}&scope=personal`),
       budgetBusiness: fetchJson(`/api/budgeting/plan?month=${month}&scope=business`),
       forecast: fetchJson("/api/financial/forecast?days=90"),
+      // The debt-payoff API suppresses topMove when the owner's suggestions
+      // preference is off, so this stays silent for opted-out owners.
+      debtPayoff: fetchJson("/api/financial/debt-payoff?monthlySurplus=500"),
     };
     const entries = await Promise.all(
       Object.entries(jobs).map(async ([name, promise]) => {
@@ -246,6 +249,7 @@ export default function InboxPage() {
       forecast: { warnings: forecastWarnings },
       pendingSuggestions: ambiguousRows.length,
       budgetOverruns: overruns,
+      debtTopMove: sources.debtPayoff?.data?.topMove ?? null,
       now: new Date(),
     });
     return { queue, digest };
