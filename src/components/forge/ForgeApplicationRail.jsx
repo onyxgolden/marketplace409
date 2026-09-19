@@ -30,6 +30,11 @@ export const FORGE_APPLICATIONS =
       exact: true,
     }),
     Object.freeze({
+      href: "/forge/inbox",
+      label: "Inbox",
+      shortLabel: "Q",
+    }),
+    Object.freeze({
       href: "/forge/financial",
       label: "Financial",
       shortLabel: "$",

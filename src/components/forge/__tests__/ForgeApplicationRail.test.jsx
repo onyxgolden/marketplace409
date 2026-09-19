@@ -37,6 +37,7 @@ describe(
           ),
         ).toEqual([
           "Workspace",
+          "Inbox",
           "Financial",
           "Budget",
           "Health",
@@ -58,6 +59,9 @@ describe(
     it(
       "resolves exact and nested active routes",
       () => {
+        const byHref = (href) =>
+          FORGE_APPLICATIONS.find((application) => application.href === href);
+
         expect(
           isForgeApplicationActive(
             "/forge",
@@ -67,41 +71,36 @@ describe(
 
         expect(
           isForgeApplicationActive(
+            "/forge/inbox",
+            byHref("/forge/inbox"),
+          ),
+        ).toBe(true);
+
+        expect(
+          isForgeApplicationActive(
             "/forge/financial/report",
-            FORGE_APPLICATIONS[1],
+            byHref("/forge/financial"),
           ),
         ).toBe(true);
 
         expect(
           isForgeApplicationActive(
             "/forge/property",
-            FORGE_APPLICATIONS[1],
+            byHref("/forge/financial"),
           ),
         ).toBe(false);
 
         expect(
-          FORGE_APPLICATIONS[7].href,
-        ).toBe(
-          "/forge/import",
-        );
-
-        expect(
           isForgeApplicationActive(
             "/forge/import/review",
-            FORGE_APPLICATIONS[7],
+            byHref("/forge/import"),
           ),
         ).toBe(true);
 
         expect(
-          FORGE_APPLICATIONS[8].href,
-        ).toBe(
-          "/forge/workspace",
-        );
-
-        expect(
           isForgeApplicationActive(
             "/forge/workspace",
-            FORGE_APPLICATIONS[8],
+            byHref("/forge/workspace"),
           ),
         ).toBe(true);
       },
