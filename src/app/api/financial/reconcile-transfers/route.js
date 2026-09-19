@@ -8,6 +8,7 @@ import { buildApplyPayloads } from "@/domains/financial-event/buildTransferApply
 import { isPairAlreadyApplied } from "@/domains/financial-event/isPairAlreadyApplied";
 import { isAmbiguousRowResolved } from "@/domains/financial-event/isAmbiguousRowResolved";
 import { loanPaymentCategory } from "@/domains/financial-event/loanPaymentCategory";
+import { trainCategorizer, suggestTopCategory } from "@/domains/ledger/brain/categorize.js";
 
 const PAGE_SIZE = 1000;
 const TRANSACTION_SOURCE_SYSTEM = "transaction";
@@ -48,7 +49,9 @@ async function fetchAccountDetailsById(supabaseClient, ownerId, accountIds) {
 
 // Fetches fresh and re-derives both classifications every time -- GET and POST both call this so
 // the apply action can never diverge from what a human most recently reviewed as a preview.
-async function computePreview(supabaseClient, ownerId) {
+// withSuggestions trains the Brain auto-categorizer on the owner's decided rows and attaches a
+// top suggestion to each ambiguous entry. Read-only: suggestions never apply anything.
+async function computePreview(supabaseClient, ownerId, { withSuggestions = false } = {}) {
   const transactionRows = await fetchAllTransactionRows(supabaseClient, ownerId);
   const accountDetailsById = await fetchAccountDetailsById(
     supabaseClient,
@@ -56,6 +59,21 @@ async function computePreview(supabaseClient, ownerId) {
     transactionRows.map((row) => row.financial_account_id),
   );
   const rowsById = new Map(transactionRows.map((row) => [row.id, row]));
+
+  // Brain auto-categorizer (slice 2): learn from every decided row -- anything
+  // not carrying the 'other'/null undecided marker, i.e. the owner's own
+  // history including previous applies and manual corrections.
+  const suggestionModel = withSuggestions
+    ? trainCategorizer(
+        transactionRows
+          .filter((row) => isAmbiguousRowResolved(row.normalized_category))
+          .map((row) => ({
+            description: row.description,
+            amount: Number(row.amount),
+            category: row.normalized_category,
+          })),
+      )
+    : null;
 
   const transferRows = transactionRows.filter((row) => isInternalTransferDescription(row.description));
   const transferRowIds = new Set(transferRows.map((row) => row.id));
@@ -164,12 +182,20 @@ async function computePreview(supabaseClient, ownerId) {
   // account, or already-applied distribution legs).
   const ambiguousTransfers = transferMatch.ambiguous
     .filter((entry) => !isAmbiguousRowResolved(rowsById.get(entry.eventId)?.normalized_category))
-    .map((entry) => ({
-      ...describePair(entry.eventId),
-      side: entry.side,
-      reason: entry.reason,
-      candidates: entry.candidateIds.map((id) => describePair(id)),
-    }));
+    .map((entry) => {
+      const row = describePair(entry.eventId);
+      return {
+        ...row,
+        side: entry.side,
+        reason: entry.reason,
+        candidates: entry.candidateIds.map((id) => describePair(id)),
+        // Advisory only: the Brain's best guess from the owner's own history.
+        // Ambiguous rows are never written by the apply flow.
+        suggestion: withSuggestions
+          ? suggestTopCategory(suggestionModel, { description: row.description, amount: row.amount })
+          : null,
+      };
+    });
 
   const totalDirectionFixAmountCents = directionFixes.reduce((total, entry) => total + Math.round(Math.abs(entry.amount) * 100), 0);
   const totalDistributionAmountCents = distributions.reduce((total, entry) => total + Math.round(Math.abs(entry.inbound.amount) * 100), 0);
@@ -193,7 +219,9 @@ export async function GET() {
   if (authenticated.response) return authenticated.response;
 
   try {
-    const result = await computePreview(authenticated.supabaseClient, authenticated.effectiveOwnerId);
+    const result = await computePreview(authenticated.supabaseClient, authenticated.effectiveOwnerId, {
+      withSuggestions: true,
+    });
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     if (isMissingRemoteSchemaError(error)) return transferClassificationSchemaUnavailableResponse();

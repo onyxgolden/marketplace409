@@ -7,6 +7,40 @@ const centsToMoney = (cents) => money.format(cents / 100);
 const dollars = (amount) => money.format(Math.abs(amount));
 const FOCUS_RING = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600";
 
+// Category vocabulary the Brain may suggest and the human may pick from -- the
+// same normalized_category strings the reconcile apply flow writes.
+const CATEGORY_OPTIONS = Object.freeze([
+  "internal_transfer",
+  "owner_distribution",
+  "mortgage_payment",
+  "heloc_payment",
+  "loan_payment",
+  "mortgage_interest",
+  "rental_income",
+  "cam_income",
+  "property_repairs",
+  "property_tax",
+  "cleaning_supplies",
+  "legal_fees",
+  "professional_fees",
+  "asset_purchase",
+  "forge_rental_payment",
+]);
+
+function prettyCategory(category) {
+  return String(category || "")
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function categoryOptionsFor(suggestionCategory) {
+  const options = new Set(CATEGORY_OPTIONS);
+  if (suggestionCategory) options.add(suggestionCategory);
+  return [...options].sort();
+}
+
 // Surfaces two related raw-bank-feed problems and lets the owner explicitly apply the fix -- never
 // automatic. See correctRawBankFeedDirection.js and classifyTransferPairs.js for the logic:
 //   1. Direction fixes: a real deposit landed as a negative "expense" (the unmapped-category
@@ -22,6 +56,10 @@ export default function ReconcileTransfersPanel() {
   const [confirmationText, setConfirmationText] = useState("");
   const [applyStatus, setApplyStatus] = useState("idle"); // "idle" | "applying" | "done" | "error"
   const [applyMessage, setApplyMessage] = useState("");
+  // Per-row human category picks for ambiguous entries -- a local scratchpad only.
+  // Ambiguous rows are never written by the apply flow; the Brain's suggestions
+  // are advisory, and these picks are not submitted anywhere (yet).
+  const [rowCategoryChoices, setRowCategoryChoices] = useState({});
   const requestInFlight = useRef(false);
 
   const load = useCallback(() => {
@@ -29,6 +67,7 @@ export default function ReconcileTransfersPanel() {
     requestInFlight.current = true;
     setStatus("loading");
     setErrorMessage("");
+    setRowCategoryChoices({});
     return fetch("/api/financial/reconcile-transfers")
       .then((response) => response.json().then((payload) => ({ response, payload })))
       .then(({ response, payload }) => {
@@ -285,10 +324,85 @@ export default function ReconcileTransfersPanel() {
           ) : null}
 
           {ambiguousTransfers.length > 0 ? (
-            <p className="mt-4 text-xs text-amber-700 dark:text-amber-400">
-              {ambiguousTransfers.length} transfer-looking transaction(s) had zero, more than one, or a contended
-              match on the other side and were left alone — not enough certainty to reclassify automatically.
-            </p>
+            <div className="mt-4">
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                {ambiguousTransfers.length} transfer-looking transaction(s) had zero, more than one, or a contended
+                match on the other side and were left alone — not enough certainty to reclassify automatically.
+              </p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                The Brain suggests a category per row from your own history — advisory only, never auto-applied.
+                Tap a suggestion to fill the row&apos;s category picker as a scratchpad for your review.
+              </p>
+              <ul className="mt-3 space-y-3">
+                {ambiguousTransfers.map((entry) => {
+                  const suggestion = entry.suggestion ?? null;
+                  const highConfidence = (suggestion?.confidence ?? 0) >= 0.5;
+                  const choice = rowCategoryChoices[entry.eventId] ?? "";
+                  return (
+                    <li
+                      key={entry.eventId}
+                      className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-800/60 dark:bg-amber-950/20"
+                    >
+                      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">{entry.eventDate}</span>
+                        <span className="text-sm font-black text-slate-950 dark:text-white">{entry.description}</span>
+                        <span className="text-sm font-bold text-slate-700 dark:text-slate-300">{money.format(entry.amount)}</span>
+                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                          {entry.side}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        Left alone because: {prettyCategory(entry.reason) || "uncertain match"}.
+                      </p>
+                      {suggestion ? (
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRowCategoryChoices((prev) => ({ ...prev, [entry.eventId]: suggestion.category }))
+                            }
+                            title={suggestion.reasons.join(" · ") || "Brain suggestion"}
+                            className={`rounded-xl px-3 py-1.5 text-xs font-black transition ${FOCUS_RING} ${
+                              highConfidence
+                                ? "bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
+                                : "border border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                            }`}
+                          >
+                            Use: {prettyCategory(suggestion.category)} ({Math.round(suggestion.confidence * 100)}%)
+                          </button>
+                          {suggestion.reasons.length > 0 ? (
+                            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                              {suggestion.reasons.join(" · ")}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-[11px] italic text-slate-500 dark:text-slate-400">
+                          No suggestion — not enough history for this one yet.
+                        </p>
+                      )}
+                      <label className="mt-2 block max-w-xs text-xs font-bold text-slate-600 dark:text-slate-300">
+                        Category (your call)
+                        <select
+                          value={choice}
+                          onChange={(event) =>
+                            setRowCategoryChoices((prev) => ({ ...prev, [entry.eventId]: event.target.value }))
+                          }
+                          className={`mt-1 block w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-950 dark:border-slate-600 dark:bg-slate-950 dark:text-white ${FOCUS_RING}`}
+                        >
+                          <option value="">Select category…</option>
+                          {categoryOptionsFor(suggestion?.category).map((option) => (
+                            <option key={option} value={option}>
+                              {prettyCategory(option)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           ) : null}
 
           {totalItems > 0 ? (
