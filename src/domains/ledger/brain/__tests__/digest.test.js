@@ -136,3 +136,38 @@ describe("renderDigestText", () => {
     expect(() => renderDigestText(null)).not.toThrow();
   });
 });
+
+describe("buildBrainDigest debt top move", () => {
+  const topMove = {
+    debtId: "d1",
+    debtName: "Chase Sapphire",
+    extraPerMonth: 500,
+    interestSaved: 3214.1,
+    monthsSaved: 14,
+    strategy: "avalanche",
+  };
+
+  it("surfaces the debt top move as a medium advisory item after overruns", () => {
+    const digest = buildBrainDigest({
+      now: NOW,
+      budgetOverruns: [{ label: "Dining", overAmountCents: 5230, month: "2026-09" }],
+      debtTopMove: topMove,
+      pendingSuggestions: 2,
+    });
+    const kinds = digest.items.map((item) => item.kind);
+    expect(kinds).toEqual(["budget-overrun", "debt-top-move", "uncategorized"]);
+    const item = digest.items.find((entry) => entry.kind === "debt-top-move");
+    expect(item.severity).toBe("medium");
+    expect(item.pointer).toBe("/forge/financial");
+    expect(item.summary).toContain("Chase Sapphire");
+    expect(item.summary).toContain("$3,214.10");
+    expect(item.summary).toContain("14 months sooner");
+  });
+
+  it("stays completely silent when the top move is null (opted out or no benefit)", () => {
+    for (const debtTopMove of [null, undefined, { debtName: "X", interestSaved: 0 }]) {
+      const digest = buildBrainDigest({ now: NOW, debtTopMove });
+      expect(digest.items.map((item) => item.kind)).not.toContain("debt-top-move");
+    }
+  });
+});

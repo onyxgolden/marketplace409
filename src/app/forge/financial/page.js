@@ -16,6 +16,7 @@ import AskBooksPanel from "./AskBooksPanel.jsx";
 import BrainActionBar from "./BrainActionBar.jsx";
 import AnomalyAlertsPanel from "./AnomalyAlertsPanel.jsx";
 import CashForecastPanel from "./CashForecastPanel.jsx";
+import DebtPayoffPanel from "./DebtPayoffPanel.jsx";
 import { getCurrentMonthProfitKpi } from "./getCurrentMonthProfitKpi.js";
 
 // The one legitimate source of the dashboard cache's isolation identity -- see
@@ -439,6 +440,7 @@ export default function FinancialPage() {
       brainActionsSection={<BrainActionBar />}
       anomalyAlertsSection={<AnomalyAlertsPanel />}
       cashForecastSection={<CashForecastPanel />}
+      debtPayoffSection={<DebtPayoffPanel />}
       activeFunctionId={
         activeFunctionId
       }

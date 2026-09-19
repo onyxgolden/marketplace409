@@ -15,11 +15,17 @@
  *     accountName, date, projectedBalance, daysFromStart }])
  *   pendingSuggestions: number of transactions still waiting on a category
  *   budgetOverruns: [{ label, overAmountCents, month }] (month "YYYY-MM")
++ *   debtTopMove: compareDebtPayoffStrategies().topMove
++ *     [{ debtName, extraPerMonth, interestSaved, monthsSaved }] | null.
++ *     Callers suppress this when the owner's debt_payoff_suggestions_enabled
++ *     preference is off, so the digest stays silent by construction.
  *   now: Date | ISO string | ms timestamp; injectable for tests
  * -> { generatedAt, items: [{ severity, kind, summary, pointer }] } (max 5)
  *
  * Ranking: cash shortfalls > anomalies (their own high->low order) >
- * budget overruns > uncategorized backlog > tight-cash warnings.
+- * budget overruns > uncategorized backlog > tight-cash warnings.
++ * budget overruns > debt payoff top move > uncategorized backlog >
++ * tight-cash warnings.
  *
  * renderDigestText(digest) -> the plain-text lines the briefing carries.
  */
@@ -114,6 +120,27 @@ function backlogItem(count) {
   };
 }
 
+// The debt-payoff optimizer's top move, as an advisory digest item. Callers
+// pass null when the owner's debt_payoff_suggestions_enabled preference is
+// off (or there is no beneficial move), so an opted-out owner never sees it.
+function debtTopMoveItem(topMove) {
+  const saved = Number(topMove?.interestSaved);
+  if (!topMove || !topMove.debtName || !Number.isFinite(saved) || saved <= 0) return null;
+  const extra = formatMoney(topMove.extraPerMonth);
+  const sooner =
+    Number.isFinite(Number(topMove.monthsSaved)) && Number(topMove.monthsSaved) > 0
+      ? ` — debt-free ${topMove.monthsSaved} month${Number(topMove.monthsSaved) === 1 ? "" : "s"} sooner`
+      : "";
+  return {
+    severity: "medium",
+    kind: "debt-top-move",
+    summary:
+      `Debt payoff: ${extra}/mo extra toward ${topMove.debtName}` +
+      ` saves ${formatMoney(saved)} interest vs minimums${sooner}`,
+    pointer: "/forge/financial",
+  };
+}
+
 function tightItems(warnings) {
   return asArray(warnings)
     .filter((w) => w && w.type === "tight")
@@ -132,6 +159,7 @@ export function buildBrainDigest({
   forecast = null,
   pendingSuggestions = 0,
   budgetOverruns = [],
+  debtTopMove = null,
   now,
 } = {}) {
   const warnings = asArray(forecast?.warnings);
@@ -139,6 +167,7 @@ export function buildBrainDigest({
     ...shortfallItems(warnings),
     ...anomalyItems(anomalies),
     ...overrunItems(budgetOverruns),
+    ...(debtTopMoveItem(debtTopMove) ? [debtTopMoveItem(debtTopMove)] : []),
     ...(backlogItem(pendingSuggestions) ? [backlogItem(pendingSuggestions)] : []),
     ...tightItems(warnings),
   ].slice(0, MAX_ITEMS);
