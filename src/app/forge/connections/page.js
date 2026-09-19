@@ -13,6 +13,7 @@ import ConnectionExecutionResultCard from "@/components/forge/ConnectionExecutio
 import ReconcileDuplicatesPanel from "@/components/forge/ReconcileDuplicatesPanel";
 import ReconcileTransfersPanel from "@/components/forge/ReconcileTransfersPanel";
 import RecurringPaymentsPanel from "@/components/forge/RecurringPaymentsPanel";
+import ScreenHeadlineNumber, { describeDecisionBacklog } from "@/components/forge/ScreenHeadlineNumber";
 import { forgeTheme } from "@/components/forge/theme";
 
 // "Last imported 2h ago · Sep 18, 2026 10:42 PM" -- absolute time in the
@@ -83,6 +84,13 @@ export default function ConnectionPage() {
 
   const [isExecuting, setIsExecuting] =
     useState(false);
+
+  // The screen's one number: "How many transactions still need a decision?"
+  // Reported up by ReconcileTransfersPanel from the data it already fetches --
+  // no second query. Null until the panel reports: the header shows a dash,
+  // never a fabricated zero.
+  const [decisionBacklogCount, setDecisionBacklogCount] = useState(null);
+  const decisionBacklog = describeDecisionBacklog(decisionBacklogCount);
 
 
   async function executeConnectionOperation(card) {
@@ -171,18 +179,28 @@ export default function ConnectionPage() {
               </p>
             </div>
 
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 dark:bg-amber-950/30">
-              <div className="text-xs font-black uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                Platform State
-              </div>
-              <div className="mt-1 text-2xl font-black text-amber-950 dark:text-amber-200">
-                {health?.overall ||
-                  loadState}
-              </div>
-              <div className="mt-1 max-w-xs text-sm text-amber-800 dark:text-amber-300">
-                {health
-                  ? `Health score ${health.score}. ${health.issueCount} issues and ${health.warningCount} warnings.`
-                  : "Loading connection platform status."}
+            <div className="flex flex-col gap-4 lg:items-end">
+              <ScreenHeadlineNumber
+                value={decisionBacklog.value}
+                label="Need a decision"
+                caption={decisionBacklog.caption}
+                href={decisionBacklog.loaded && decisionBacklogCount > 0 ? "/forge/inbox" : null}
+                testId="connections-headline-number"
+              />
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 dark:bg-amber-950/30">
+                <div className="text-xs font-black uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                  Platform State
+                </div>
+                <div className="mt-1 text-2xl font-black text-amber-950 dark:text-amber-200">
+                  {health?.overall ||
+                    loadState}
+                </div>
+                <div className="mt-1 max-w-xs text-sm text-amber-800 dark:text-amber-300">
+                  {health
+                    ? `Health score ${health.score}. ${health.issueCount} issues and ${health.warningCount} warnings.`
+                    : "Loading connection platform status."}
+                </div>
               </div>
             </div>
           </div>
@@ -582,7 +600,7 @@ export default function ConnectionPage() {
 
         <ReconcileDuplicatesPanel />
 
-        <ReconcileTransfersPanel />
+        <ReconcileTransfersPanel onBacklogCount={setDecisionBacklogCount} />
 
         <RecurringPaymentsPanel />
       </main>

@@ -319,6 +319,17 @@ export default function FinancialPage() {
     },
   ];
 
+  // The screen's one number: "How much cash do I have right now?" Cash is
+  // the dashboard's liquid position KPI, already fetched with the page load --
+  // no new query. The 90-day cash forecast below stays the drill-down for the
+  // forward-looking question.
+  const cashHeadline = {
+    value: money(kpis.cash),
+    label: "Cash on hand",
+    caption: "Liquid cash across your accounts.",
+    ready: loadState === "ready",
+  };
+
   const executiveBriefingPresentation =
     executiveBriefing || {
       headline: "Loading executive briefing",
@@ -443,6 +454,7 @@ export default function FinancialPage() {
       }
       health={health}
       kpis={kpiPresentations}
+      headline={cashHeadline}
       executiveBriefing={
         executiveBriefingPresentation
       }
