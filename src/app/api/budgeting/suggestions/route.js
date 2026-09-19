@@ -5,14 +5,16 @@ import { budgetingSchemaUnavailableResponse } from "@/lib/supabase/budgetingSche
 import { SupabaseFinancialEventRepository } from "@/domains/financial-event/SupabaseFinancialEventRepository";
 import { computeCategorySuggestion, addMonths } from "@/domains/budgeting/budgetSuggestion";
 import { groupEventsByCategory } from "@/domains/budgeting/groupEventsByCategory";
+import { categoryFamilyOf } from "@/domains/budgeting/categoryFamily";
 import { resolveCategoryDisplayLabel } from "@/domains/budgeting/categoryDisplayLabel";
 import { parseBudgetScope } from "@/domains/budgeting/parseBudgetScope";
 
 const MONTH_PATTERN = /^\d{4}-\d{2}$/;
 const LOOKBACK_MONTHS = 3;
 
-// Returns one suggestion per category that has at least one expense event in the lookback window --
-// there is no fixed master category list to enumerate against, so a category with zero history in
+// Returns one suggestion per category *family* with at least one expense event in the lookback
+// window -- parent/child import categories (e.g. "dining_drinks" + "dining_drinks_restaurants")
+// combine into a single suggestion instead of near-duplicate cards. A family with zero history in
 // the window is simply absent rather than present with a fabricated null entry.
 export async function GET(request) {
   const authenticated = await createAuthenticatedBudgetingApplication();
@@ -49,9 +51,20 @@ export async function GET(request) {
     events.map((row) => ({
       eventDate: row.event_date,
       amount: row.amount,
-      normalizedCategory: row.normalized_category,
+      normalizedCategory: categoryFamilyOf(row.normalized_category),
     })),
   );
+
+  // Member categories per family, so the card can say what it combined ("Restaurants, Coffee").
+  // Only non-root members are listed -- a family that is just its root shows no members.
+  const membersByFamily = new Map();
+  for (const row of events) {
+    const family = categoryFamilyOf(row.normalized_category);
+    if (row.normalized_category && row.normalized_category !== family) {
+      if (!membersByFamily.has(family)) membersByFamily.set(family, new Set());
+      membersByFamily.get(family).add(row.normalized_category);
+    }
+  }
 
   const asOfDate = `${month}-01`;
   const categories = [...eventsByCategory.entries()]
@@ -62,6 +75,7 @@ export async function GET(request) {
         displayLabel: resolveCategoryDisplayLabel(normalizedCategory),
         suggestedAmountCents: suggestion.suggestedAmountCents,
         sampleMonths: suggestion.sampleMonths,
+        memberCategories: [...(membersByFamily.get(normalizedCategory) ?? [])].sort(),
       };
     })
     .filter((entry) => entry.sampleMonths > 0)

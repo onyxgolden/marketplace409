@@ -5,6 +5,7 @@ import { budgetingSchemaUnavailableResponse } from "@/lib/supabase/budgetingSche
 import { SupabaseFinancialEventRepository } from "@/domains/financial-event/SupabaseFinancialEventRepository";
 import { addMonths } from "@/domains/budgeting/budgetSuggestion";
 import { resolveCategoryDisplayLabel } from "@/domains/budgeting/categoryDisplayLabel";
+import { categoryFamilyOf } from "@/domains/budgeting/categoryFamily";
 import { parseBudgetScope } from "@/domains/budgeting/parseBudgetScope";
 
 const MONTH_PATTERN = /^\d{4}-\d{2}$/;
@@ -78,8 +79,11 @@ export async function GET(request) {
   const actualCentsByCategory = new Map();
   for (const event of expenseEvents) {
     if (event.event_date >= nextMonthStart) continue; // findExpenseEventsSince only has a lower bound
-    const current = actualCentsByCategory.get(event.normalized_category) || 0;
-    actualCentsByCategory.set(event.normalized_category, current + Math.round(event.amount * 100));
+    // Actuals are tracked by category family, so a "Dining Drinks" budget line sees the combined
+    // spend of dining_drinks + dining_drinks_restaurants + dining_drinks_coffee.
+    const family = categoryFamilyOf(event.normalized_category) ?? event.normalized_category;
+    const current = actualCentsByCategory.get(family) || 0;
+    actualCentsByCategory.set(family, current + Math.round(event.amount * 100));
   }
 
   // findIncomeEventsSince only has a lower bound too -- cap it to this month the same way.
@@ -105,7 +109,10 @@ export async function GET(request) {
       displayLabel: category.display_label,
       note: category.note ?? null,
       plannedAmountCents: plannedByCategoryId.get(category.id) ?? null,
-      actualAmountCents: actualCentsByCategory.get(category.normalized_category) || 0,
+      // A saved line tracks its whole family: a line saved earlier as "dining_drinks_restaurants"
+      // resolves to the same family total as a line saved as "dining_drinks". No saved category is
+      // renamed or merged -- only the actuals lookup is family-aware.
+      actualAmountCents: actualCentsByCategory.get(categoryFamilyOf(category.normalized_category) ?? category.normalized_category) || 0,
     }))
     .sort((a, b) => a.displayLabel.localeCompare(b.displayLabel));
 

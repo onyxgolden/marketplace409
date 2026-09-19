@@ -5,11 +5,26 @@ import { isSavingsOrInvestmentCategory } from "@/domains/budgeting/isSavingsOrIn
 import { isDebtPayoffCategory } from "@/domains/budgeting/isDebtPayoffCategory";
 import { resolveCategoryDisplayLabel } from "@/domains/budgeting/categoryDisplayLabel";
 import { lineVarianceCents, varianceLabel } from "@/domains/budgeting/budgetVariance";
+import { categoryFamilyOf } from "@/domains/budgeting/categoryFamily";
 import { monthlyEquivalentAmount } from "@/domains/financial-event/detectRecurringPayments";
 import BudgetPieChart from "@/components/forge/budget/BudgetPieChart";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToMoney = (cents) => (typeof cents === "number" ? money.format(cents / 100) : "—");
+
+// Short labels for a family suggestion's member categories: "dining_drinks_restaurants" under the
+// "dining_drinks" family renders as just "Restaurants".
+function memberShortLabels(entry) {
+  const prefix = `${entry.normalizedCategory}_`;
+  return (entry.memberCategories ?? []).map((member) => {
+    const remainder = member.startsWith(prefix) ? member.slice(prefix.length) : member;
+    return remainder
+      .split("_")
+      .filter(Boolean)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+  });
+}
 
 const FOCUS_RING = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600";
 
@@ -109,25 +124,33 @@ export default function BudgetPanel() {
     load();
   }, [load]);
 
-  const plannedCategories = useMemo(() => new Set(lines.map((line) => line.normalizedCategory)), [lines]);
+  // Families, not exact categories: a planned "dining_drinks_restaurants" line already covers the
+  // "dining_drinks" family, so the family suggestion must not reappear as addable.
+  const plannedFamilies = useMemo(
+    () => new Set(lines.map((line) => categoryFamilyOf(line.normalizedCategory) ?? line.normalizedCategory)),
+    [lines],
+  );
   // Recurring-payment suggestions: detected patterns the history engine didn't already surface
   // and the user hasn't planned yet. Outbound only (budget lines are spending), matched to the
   // current scope, and only patterns with a real decided category -- "other"/uncategorized
   // patterns stay on the connections panel until someone classifies them.
   const recurringSuggestions = useMemo(() => {
-    const historyCategories = new Set(suggestions.map((entry) => entry.normalizedCategory));
+    const historyFamilies = new Set(suggestions.map((entry) => categoryFamilyOf(entry.normalizedCategory) ?? entry.normalizedCategory));
     return recurringPatterns
       .filter((pattern) => pattern.direction === "outbound")
       .filter((pattern) => (pattern.businessScope ?? "personal") === scope)
       .filter((pattern) => pattern.category && pattern.category !== "other")
-      .filter((pattern) => !plannedCategories.has(pattern.category) && !historyCategories.has(pattern.category))
+      .filter((pattern) => {
+        const family = categoryFamilyOf(pattern.category) ?? pattern.category;
+        return !plannedFamilies.has(family) && !historyFamilies.has(family);
+      })
       .map((pattern) => ({
         normalizedCategory: pattern.category,
         displayLabel: resolveCategoryDisplayLabel(pattern.category),
         suggestedAmountCents: Math.round(monthlyEquivalentAmount(pattern) * 100),
         pattern,
       }));
-  }, [recurringPatterns, suggestions, plannedCategories, scope]);
+  }, [recurringPatterns, suggestions, plannedFamilies, scope]);
   const suggestionByCategory = useMemo(() => {
     const map = new Map(suggestions.map((entry) => [entry.normalizedCategory, entry]));
     // Recurring patterns fill gaps the history engine missed -- history suggestions win ties.
@@ -137,8 +160,8 @@ export default function BudgetPanel() {
     return map;
   }, [suggestions, recurringSuggestions]);
   const addableSuggestions = useMemo(
-    () => suggestions.filter((entry) => !plannedCategories.has(entry.normalizedCategory)),
-    [suggestions, plannedCategories],
+    () => suggestions.filter((entry) => !plannedFamilies.has(categoryFamilyOf(entry.normalizedCategory) ?? entry.normalizedCategory)),
+    [suggestions, plannedFamilies],
   );
   // Debt payoff is checked first and takes precedence over a savings/investment match, mirroring
   // the standard "pay down debt before extra investing" guidance -- ranked ahead in the UI below,
@@ -417,7 +440,7 @@ export default function BudgetPanel() {
                       line={line}
                       draft={drafts[line.categoryId] ?? ""}
                       onDraftChange={(value) => setDrafts((previous) => ({ ...previous, [line.categoryId]: value }))}
-                      suggestion={suggestionByCategory.get(line.normalizedCategory) || null}
+                      suggestion={suggestionByCategory.get(categoryFamilyOf(line.normalizedCategory) ?? line.normalizedCategory) || null}
                       onSave={() => saveLine(line.categoryId)}
                       saving={savingCategoryId === line.categoryId}
                       onRename={(displayLabel) => renameCategory(line.categoryId, displayLabel)}
@@ -449,6 +472,11 @@ export default function BudgetPanel() {
                       <p className="text-xs text-slate-500 dark:text-slate-400">
                         Recent average: {centsToMoney(entry.suggestedAmountCents)} / month
                       </p>
+                      {entry.memberCategories?.length > 0 ? (
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Includes: {memberShortLabels(entry).join(", ")}
+                        </p>
+                      ) : null}
                     </div>
                     <button
                       type="button"
@@ -575,8 +603,7 @@ function BudgetSummaryBar({ totalIncomeCents, totalPlannedCents, totalActualCent
   );
 }
 
-function RecurringSuggestionRow({ entry, adding, onAdd }) {
-  const [label, setLabel] = useState(entry.displayLabel);
+function RecurringSuggestionRow({ entry, adding, onAdd }) {  const [label, setLabel] = useState(entry.displayLabel);
   const { pattern } = entry;
   const trimmed = label.trim();
   return (
