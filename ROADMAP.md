@@ -3,7 +3,7 @@
 ## Current Status
 
 Current Forge: Forge #25  
-Current Milestone: Milestone 5 — Financial Reporting (6 of 7 items complete; multi-period reporting: domain seam done in #228, comparative view remains)
+Current Milestone: Milestone 5 — Financial Reporting (complete — multi-period reporting shipped in #228/#230)
 
 Milestone 6 work (budgets UI/API) is underway in parallel.
 
@@ -87,7 +87,7 @@ All of the above ship with unit tests alongside the implementation.
 
 Planned:
 
-- Multi-period reporting — comparative/API view (domain seam shipped in #228: buildIncomeStatementForPeriod / buildBalanceSheetAsOf)
+- Multi-period reporting — shipped in #228 (domain seam) + #230 (comparative P&L view)
 
 ---
 
