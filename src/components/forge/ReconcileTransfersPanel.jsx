@@ -149,7 +149,7 @@ export default function ReconcileTransfersPanel() {
               <dd className="mt-1 text-xl font-black text-slate-950 dark:text-white">{internalTransfers.length}</dd>
             </div>
             <div>
-              <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Loan/HELOC payments</dt>
+              <dt className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Debt payments</dt>
               <dd className="mt-1 text-xl font-black text-slate-950 dark:text-white">
                 {debtPayments.length}
                 <span className="ml-1 text-sm font-bold text-slate-500 dark:text-slate-400">({centsToMoney(preview.totalDebtPaymentAmountCents)})</span>
@@ -199,7 +199,7 @@ export default function ReconcileTransfersPanel() {
           {debtPayments.length > 0 ? (
             <div className="mt-6">
               <h3 className="text-sm font-black uppercase tracking-wide text-slate-700 dark:text-slate-300">
-                Loan/HELOC payments ({centsToMoney(preview.totalDebtPaymentAmountCents)})
+                Debt payments ({centsToMoney(preview.totalDebtPaymentAmountCents)})
               </h3>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                 A transfer into one of your loan/credit accounts is real debt service, not a no-op shuffle — this

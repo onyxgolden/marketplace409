@@ -6,22 +6,13 @@ import { needsDirectionCorrection } from "@/domains/financial-event/correctRawBa
 import { isInternalTransferDescription, classifyTransferPairs } from "@/domains/financial-event/classifyTransferPairs";
 import { buildApplyPayloads } from "@/domains/financial-event/buildTransferApplyPayloads";
 import { isPairAlreadyApplied } from "@/domains/financial-event/isPairAlreadyApplied";
+import { loanPaymentCategory } from "@/domains/financial-event/loanPaymentCategory";
 
 const PAGE_SIZE = 1000;
 const TRANSACTION_SOURCE_SYSTEM = "transaction";
 
 // Target state the apply writes for a plain internal-transfer pair (both legs).
 const TRANSFER_INTERNAL_TARGET = Object.freeze({ kind: "transfer", category: "internal_transfer" });
-
-// Best-effort specific label from the real loan account's own name ("Home Equity" -> heloc_payment)
-// so it lines up with isDebtPayoffCategory's existing "heloc" keyword; anything else falls back to
-// the generic "loan_payment" (still caught by that same classifier's broad "loan" substring match).
-function loanPaymentCategory(accountName) {
-  const normalized = (accountName ?? "").toLowerCase();
-  if (normalized.includes("equity")) return "heloc_payment";
-  if (normalized.includes("mortgage")) return "mortgage_payment";
-  return "loan_payment";
-}
 
 async function fetchAllTransactionRows(supabaseClient, ownerId) {
   const rows = [];
