@@ -306,17 +306,44 @@ describe("FinancialEventAggregationService", () => {
     );
   });
 
+  test("treats transfer kinds as activity-neutral (no operating totals)", () => {
+    const service = new FinancialEventAggregationService();
+
+    const result = service.aggregate([
+      buildEvent({
+        transaction_kind: "transfer",
+        normalized_category: "internal_transfer",
+        amount: "-10000",
+      }),
+      buildEvent({
+        transaction_kind: "transfer",
+        normalized_category: "internal_transfer",
+        amount: "10000",
+      }),
+    ]);
+
+    expect(result.portfolio).toEqual({
+      income: 0,
+      expenses: 0,
+      noi: 0,
+      cashFlow: 0,
+      transactionCount: 2,
+    });
+
+    expect(result.transactions[0].transactionKind).toBe("transfer");
+  });
+
   test("rejects unsupported transaction kinds", () => {
     const service = new FinancialEventAggregationService();
 
     expect(() =>
       service.aggregate([
         buildEvent({
-          transaction_kind: "transfer",
+          transaction_kind: "mystery",
         }),
       ]),
     ).toThrow(
-      "Unsupported financial event transaction kind: transfer",
+      "Unsupported financial event transaction kind: mystery",
     );
   });
 
