@@ -375,3 +375,101 @@ describe("SchedulingBoard — opening a block's drawer", () => {
     expect(markup).toContain("+ Add lane");
   });
 });
+
+describe("SchedulingBoard — custom activity-chip validation", () => {
+  beforeEach(() => {
+    global.fetch = vi.fn((url, init) => {
+      if (url === "/api/forge/scheduling/resources") return jsonResponse({ success: true, resources: [] });
+      if (url === "/api/forge/scheduling/cost-accounts") return jsonResponse({ success: true, costAccounts: [] });
+      if (init?.method === "PUT") return jsonResponse({ success: true }); // autosave, if its debounce fires
+      return new Promise(() => {}); // the project GET (projectId is undefined here) -- never resolves
+    });
+  });
+
+  function chipForm(container) {
+    return {
+      label: container.querySelector("#custom-chip-label"),
+      duration: container.querySelector("#custom-chip-duration"),
+      milestone: [...container.querySelectorAll("input[type='checkbox']")]
+        .find((c) => c.closest("label")?.textContent.includes("Milestone")),
+      add: [...container.querySelectorAll("button")].find((b) => b.textContent === "Add to palette"),
+    };
+  }
+  function setInputValue(input, value) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    act(() => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  it("disables Add to palette until the draft is valid, with no errors on first render", async () => {
+    const mounted = mount(<SchedulingBoard />);
+    await flush();
+    const form = chipForm(mounted.container);
+    expect(form.add.disabled).toBe(true);
+    expect(mounted.container.querySelector("#custom-chip-label-error")).toBeNull();
+    expect(mounted.container.querySelector("#custom-chip-duration-error")).toBeNull();
+    // Duration defaults to 4 (valid); a label is all that's missing.
+    setInputValue(form.label, "Site Survey");
+    expect(chipForm(mounted.container).add.disabled).toBe(false);
+    unmount(mounted);
+  });
+
+  it("shows inline label feedback on blur and clears it as the user types", async () => {
+    const mounted = mount(<SchedulingBoard />);
+    await flush();
+    const form = chipForm(mounted.container);
+    act(() => { form.label.focus(); form.label.blur(); });
+    const error = mounted.container.querySelector("#custom-chip-label-error");
+    expect(error).not.toBeNull();
+    expect(error.textContent).toBe("Enter a label for the block.");
+    expect(form.label.getAttribute("aria-invalid")).toBe("true");
+    setInputValue(form.label, "Kickoff");
+    expect(mounted.container.querySelector("#custom-chip-label-error")).toBeNull();
+    expect(chipForm(mounted.container).add.disabled).toBe(false);
+    unmount(mounted);
+  });
+
+  it("shows inline duration feedback for zero and keeps Add disabled", async () => {
+    const mounted = mount(<SchedulingBoard />);
+    await flush();
+    const form = chipForm(mounted.container);
+    setInputValue(form.label, "Survey");
+    setInputValue(form.duration, "0");
+    act(() => { form.duration.focus(); form.duration.blur(); });
+    const error = mounted.container.querySelector("#custom-chip-duration-error");
+    expect(error).not.toBeNull();
+    expect(error.textContent).toBe("Duration must be greater than 0.");
+    expect(chipForm(mounted.container).add.disabled).toBe(true);
+    setInputValue(form.duration, "3");
+    expect(mounted.container.querySelector("#custom-chip-duration-error")).toBeNull();
+    expect(chipForm(mounted.container).add.disabled).toBe(false);
+    unmount(mounted);
+  });
+
+  it("waives the duration rule for milestone chips (0-duration by design)", async () => {
+    const mounted = mount(<SchedulingBoard />);
+    await flush();
+    const form = chipForm(mounted.container);
+    setInputValue(form.label, "PSSR Gate");
+    setInputValue(form.duration, "0");
+    act(() => { form.milestone.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    act(() => { form.duration.focus(); form.duration.blur(); });
+    expect(mounted.container.querySelector("#custom-chip-duration-error")).toBeNull();
+    expect(chipForm(mounted.container).add.disabled).toBe(false);
+    unmount(mounted);
+  });
+
+  it("still adds a valid chip to the palette exactly as before", async () => {
+    const mounted = mount(<SchedulingBoard />);
+    await flush();
+    const form = chipForm(mounted.container);
+    setInputValue(form.label, "Regression Chip");
+    setInputValue(form.duration, "2");
+    act(() => { form.add.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flush();
+    expect(mounted.container.textContent).toContain("Regression Chip");
+    unmount(mounted);
+  });
+});

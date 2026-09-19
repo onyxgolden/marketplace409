@@ -13,7 +13,7 @@ import {
   moveBlocksBy, nonWorkingDayRuns, pixelToIndex, recordHistory, redoHistory, removeBlackoutWindow,
   removeBlock, removeCalendar, removeDependency, renameBlock, renameLane, resetBoard, resizeBlock, resizeBlockFromStart,
   serializeBoardState, setBlockTextStyle, setDefaultCalendar, setLaneCalendar, setProjectDates, suggestPredecessors,
-  suggestSuccessors, todayISO, undoHistory, visibleWeekIndices,
+  suggestSuccessors, todayISO, undoHistory, validateCustomChipDraft, visibleWeekIndices,
 } from "./schedulingBoardState";
 
 function isTypingTarget(el) {
@@ -68,6 +68,11 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   // connects consecutive pairs in exactly this order (see handleLinkSelectedInOrder).
   const [selectedBlockIds, setSelectedBlockIds] = useState([]);
   const [customChipDraft, setCustomChipDraft] = useState({ label: "", category: "gov", durationWeeks: 4, milestone: false });
+  // Tracks which custom-chip fields the user has interacted with, so inline validation
+  // feedback appears on blur / as they type rather than on first render.
+  const [customChipTouched, setCustomChipTouched] = useState({ label: false, durationWeeks: false });
+  const customChipErrors = validateCustomChipDraft(customChipDraft);
+  const customChipValid = Object.keys(customChipErrors).length === 0;
   const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const [hideEmptyWeeks, setHideEmptyWeeks] = useState(false);
   const [history, setHistory] = useState(emptyHistory);
@@ -574,9 +579,12 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
     commitBoard(next);
   }
   function handleAddCustomChip() {
-    if (!customChipDraft.label.trim()) { window.alert("Enter a label for the block."); return; }
+    // Defensive: the Add button is disabled while the draft is invalid, so this only
+    // triggers for programmatic calls. Inline feedback (not an alert) covers the UI path.
+    if (!customChipValid) return;
     commitBoard((current) => addCustomChip(current, customChipDraft));
     setCustomChipDraft((current) => ({ ...current, label: "" }));
+    setCustomChipTouched({ label: false, durationWeeks: false });
   }
   function handleExport() {
     const blob = new Blob([serializeBoardState(board)], { type: "application/json" });
@@ -801,22 +809,36 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
 
           <div className="mt-4 flex flex-col gap-2 rounded-lg bg-slate-200 p-3">
             <label className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Add a custom block to the palette</label>
-            <input value={customChipDraft.label} onChange={(e) => setCustomChipDraft((c) => ({ ...c, label: e.target.value }))}
-              placeholder="Block label" className="rounded border border-slate-300 px-2 py-1.5 text-xs" />
+            <input id="custom-chip-label" value={customChipDraft.label}
+              onChange={(e) => setCustomChipDraft((c) => ({ ...c, label: e.target.value }))}
+              onBlur={() => setCustomChipTouched((t) => ({ ...t, label: true }))}
+              placeholder="Block label" aria-invalid={Boolean(customChipTouched.label && customChipErrors.label)}
+              aria-describedby={customChipTouched.label && customChipErrors.label ? "custom-chip-label-error" : undefined}
+              className={`rounded border px-2 py-1.5 text-xs ${customChipTouched.label && customChipErrors.label ? "border-red-500 bg-red-50" : "border-slate-300"}`} />
+            {customChipTouched.label && customChipErrors.label && (
+              <p id="custom-chip-label-error" role="alert" className="text-[11px] font-bold text-red-600">{customChipErrors.label}</p>
+            )}
             <div className="flex items-center gap-1.5">
               <select value={customChipDraft.category} onChange={(e) => setCustomChipDraft((c) => ({ ...c, category: e.target.value }))}
                 className="rounded border border-slate-300 px-2 py-1.5 text-xs">
                 {Object.entries(board.categoryNames).map(([key, name]) => <option key={key} value={key}>{name}</option>)}
               </select>
-              <input type="number" min={0} max={52} value={customChipDraft.durationWeeks} title="Default duration (weeks)"
+              <input id="custom-chip-duration" type="number" min={0} max={52} value={customChipDraft.durationWeeks} title="Default duration (weeks)"
                 onChange={(e) => setCustomChipDraft((c) => ({ ...c, durationWeeks: Number(e.target.value) }))}
-                className="w-14 rounded border border-slate-300 px-2 py-1.5 text-xs" />
+                onBlur={() => setCustomChipTouched((t) => ({ ...t, durationWeeks: true }))}
+                aria-invalid={Boolean(customChipTouched.durationWeeks && customChipErrors.durationWeeks)}
+                aria-describedby={customChipTouched.durationWeeks && customChipErrors.durationWeeks ? "custom-chip-duration-error" : undefined}
+                className={`w-14 rounded border px-2 py-1.5 text-xs ${customChipTouched.durationWeeks && customChipErrors.durationWeeks ? "border-red-500 bg-red-50" : "border-slate-300"}`} />
             </div>
+            {customChipTouched.durationWeeks && customChipErrors.durationWeeks && (
+              <p id="custom-chip-duration-error" role="alert" className="text-[11px] font-bold text-red-600">{customChipErrors.durationWeeks}</p>
+            )}
             <label className="flex items-center gap-1.5 text-xs text-slate-600">
               <input type="checkbox" checked={customChipDraft.milestone} onChange={(e) => setCustomChipDraft((c) => ({ ...c, milestone: e.target.checked }))} />
               Milestone (0-duration)
             </label>
-            <button type="button" onClick={handleAddCustomChip} className="rounded bg-slate-950 px-3 py-2 text-xs font-bold text-white">Add to palette</button>
+            <button type="button" onClick={handleAddCustomChip} disabled={!customChipValid}
+              className="rounded bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">Add to palette</button>
           </div>
         </div>
 

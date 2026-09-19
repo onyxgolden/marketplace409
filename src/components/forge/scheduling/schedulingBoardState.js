@@ -757,8 +757,21 @@ export function dataDateOffset(startDate, endDate, todayIso = todayISO()) {
   return Object.freeze({ realIdx: Math.floor(diffDays / 7), dayOffset: diffDays % 7 });
 }
 
-export function addCustomChip(state, { label, category, durationWeeks, milestone }) {
-  const trimmed = label?.trim();
+// Inline validation for the palette's custom activity-chip form. Pure: returns a map of
+// field -> message; an empty object means the draft is valid. A milestone chip is 0-duration
+// by design (its checkbox reads "Milestone (0-duration)"), so the duration rule is waived
+// when milestone is checked.
+export function validateCustomChipDraft({ label, durationWeeks, milestone }) {
+  const errors = {};
+  if (!String(label ?? "").trim()) errors.label = "Enter a label for the block.";
+  if (!milestone) {
+    const duration = Number(durationWeeks);
+    if (!Number.isFinite(duration) || duration <= 0) errors.durationWeeks = "Duration must be greater than 0.";
+  }
+  return errors;
+}
+
+export function addCustomChip(state, { label, category, durationWeeks, milestone }) {  const trimmed = label?.trim();
   // Validated against the fixed 5 category slots (CATEGORY_COLORS), not this board's own
   // categoryNames -- the slots themselves are permanent across every template, only their
   // display names vary, and a board without categoryNames yet (an older save) should still
