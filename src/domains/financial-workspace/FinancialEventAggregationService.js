@@ -70,6 +70,15 @@ function applyEventToTotals(totals, event) {
       // revenue, operating expense, or NOI.
       break;
 
+    case "transfer":
+      // Internal money movement between accounts.
+      // Count as activity but do not classify as operating
+      // revenue, operating expense, or NOI -- the legs net to
+      // zero at portfolio level, and one-sided legs (e.g. the
+      // Fidelity emergency-fund transfers) must not distort
+      // operating cash flow.
+      break;
+
     default:
       throw new Error(
         `Unsupported financial event transaction kind: ${event.transaction_kind}`,
@@ -152,6 +161,9 @@ export class FinancialEventAggregationService {
       } else if (event.transaction_kind === "asset_purchase") {
         // Preserve category visibility without affecting
         // operating totals.
+      } else if (event.transaction_kind === "transfer") {
+        // Internal money movement: visible in the category row,
+        // never counted as operating income or expense.
       } else {
         throw new Error(
           `Unsupported financial event transaction kind: ${event.transaction_kind}`,
