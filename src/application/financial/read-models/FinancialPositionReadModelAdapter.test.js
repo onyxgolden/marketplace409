@@ -182,6 +182,41 @@ describe("FinancialPositionReadModelAdapter", () => {
     expect(model.kpis.receivables).toBeNull();
   });
 
+  test("exposes the underlying asset and liability records for the dashboard merge", () => {
+    const adapter =
+      new FinancialPositionReadModelAdapter();
+
+    const model = adapter.buildPosition(
+      buildPosition(),
+    );
+
+    expect(model.assets).toEqual([
+      {
+        id: "asset-1",
+        name: "Operating Cash",
+        category: "cash",
+        account_type: "depository",
+        current_value: 125000,
+      },
+      {
+        id: "asset-2",
+        name: "Rental Property",
+        category: "real_estate",
+        account_type: "other",
+        current_value: 300000,
+      },
+    ]);
+
+    expect(model.liabilities).toEqual([
+      {
+        id: "liability-1",
+        name: "Rental Mortgage",
+        category: "mortgage",
+        current_balance: 200000,
+      },
+    ]);
+  });
+
   test("returns an immutable position projection", () => {
     const adapter =
       new FinancialPositionReadModelAdapter();
@@ -192,6 +227,12 @@ describe("FinancialPositionReadModelAdapter", () => {
 
     expect(Object.isFrozen(model)).toBe(true);
     expect(Object.isFrozen(model.kpis)).toBe(true);
+    expect(Object.isFrozen(model.assets)).toBe(true);
+    expect(Object.isFrozen(model.assets[0])).toBe(true);
+    expect(Object.isFrozen(model.liabilities)).toBe(true);
+    expect(Object.isFrozen(model.liabilities[0])).toBe(
+      true,
+    );
     expect(
       Object.isFrozen(model.balanceSheetLines),
     ).toBe(true);

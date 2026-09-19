@@ -117,11 +117,11 @@ describe("FinancialWorkspaceModule", () => {
         financialKpiModel: {
           type: "kpi-model",
           kpis: {
-            equity: 22500000,
-            assets: 42500000,
-            liabilities: 20000000,
-            cash: 12500000,
-            receivables: 2500000,
+            equity: 225000,
+            assets: 425000,
+            liabilities: 200000,
+            cash: 125000,
+            receivables: 2500,
             profit: 1850000,
             revenue: 7500000,
             expenses: 5650000,

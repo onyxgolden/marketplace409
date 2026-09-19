@@ -4,6 +4,12 @@ function freezeObject(value) {
   });
 }
 
+function freezeItems(items) {
+  return Object.freeze(
+    items.map((item) => freezeObject(item)),
+  );
+}
+
 function freezeLines(lines) {
   return Object.freeze(
     lines.map((line) => freezeObject(line)),
@@ -85,6 +91,9 @@ export class FinancialPositionReadModelAdapter {
       position.netWorth.netWorth || 0,
     );
 
+    // Position KPIs stay in DOLLARS here -- that is the adapter's documented contract
+    // (see formatMoney.js on the Financial page). The Workspace tile presenter converts each
+    // field according to its own unit; see buildFinancialTilePresentation.js.
     return Object.freeze({
       kpis: freezeObject({
         cash,
@@ -94,6 +103,11 @@ export class FinancialPositionReadModelAdapter {
         liabilities: totalLiabilities,
         equity,
       }),
+      // The dashboard merge contract (mergeDashboardProjections) reads these arrays onto the
+      // dashboard and the canonical intelligence context; without them the Workspace net worth
+      // projection silently computes from empty arrays.
+      assets: freezeItems(position.assets),
+      liabilities: freezeItems(position.liabilities),
       balanceSheetLines:
         buildBalanceSheetLines(position),
       metadata: freezeObject({

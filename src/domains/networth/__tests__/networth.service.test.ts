@@ -36,6 +36,32 @@ describe("NetWorthService", () => {
     });
   });
 
+  test("counts a negative-stored liability balance as debt owed", () => {
+    // Regression: a mortgage imported with a negative balance must reduce net worth, not
+    // increase it.
+    const summary = NetWorthService.calculate(
+      [
+        {
+          id: "property",
+          name: "Rental Property",
+          category: "real_estate",
+          value: 300000,
+        },
+      ],
+      [
+        {
+          id: "mortgage",
+          name: "Mortgage",
+          category: "real_estate",
+          balance: -200000,
+        },
+      ]
+    );
+
+    expect(summary.totalLiabilities).toBe(200000);
+    expect(summary.netWorth).toBe(100000);
+  });
+
   test("returns zero debt-to-asset ratio when there are no assets", () => {
     const summary = NetWorthService.calculate(
       [],

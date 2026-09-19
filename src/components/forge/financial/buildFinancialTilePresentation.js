@@ -2,6 +2,20 @@ function cents(value) {
   return Number(value || 0);
 }
 
+// The merged dashboard KPI object mixes units, so each field is formatted by its own unit:
+// - Position-sourced KPIs (equity, assets, liabilities, cash, debt) are DOLLARS -- the
+//   FinancialPositionReadModelAdapter projects account balances in dollars (see formatMoney.js
+//   on the Financial page for the same contract).
+// - Event-sourced KPIs (profit, revenue, expenses) are CENTS -- financial events store cents.
+// Dividing position dollars by 100 rendered a $4.17M net worth as $41,716 on the Workspace tile.
+function moneyFromDollars(value) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(cents(value));
+}
+
 function money(value) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -37,17 +51,17 @@ export function buildFinancialTilePresentation({
       Object.freeze({
         id: "equity",
         label: "Net Worth / Equity",
-        value: money(kpis.equity),
+        value: moneyFromDollars(kpis.equity),
         detail:
-          `Assets ${money(kpis.assets)} · ` +
-          `Liabilities ${money(kpis.liabilities)}`,
+          `Assets ${moneyFromDollars(kpis.assets)} · ` +
+          `Liabilities ${moneyFromDollars(kpis.liabilities)}`,
       }),
       Object.freeze({
         id: "cash",
         label: "Cash",
-        value: money(kpis.cash),
+        value: moneyFromDollars(kpis.cash),
         detail:
-          `Receivables ${money(kpis.receivables)}`,
+          `Receivables ${moneyFromDollars(kpis.receivables)}`,
       }),
       Object.freeze({
         id: "profit",
