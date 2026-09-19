@@ -77,6 +77,7 @@ export function buildFinancialActiveSurface({
   compareMonthsSection = null,
   askBooksSection = null,
   anomalyAlertsSection = null,
+  cashForecastSection = null,
   selectedAccountId = null,
   selectedAccountName = null,
   onSelectAccount,
@@ -204,6 +205,7 @@ export function buildFinancialActiveSurface({
                   {compareMonthsSection}
                   {askBooksSection}
                   {anomalyAlertsSection}
+                  {cashForecastSection}
                 </>
               )}
             </div>
