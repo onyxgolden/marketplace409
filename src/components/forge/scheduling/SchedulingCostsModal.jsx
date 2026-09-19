@@ -13,7 +13,9 @@ function formatCurrency(amount) {
 // which narrows the top totals and "Cost by activity" down to just that PO#/WO#'s spend -- the
 // route does the filtering server-side (a pre-filter feeding the same rollup function), so this
 // component only tracks which code (if any) is selected and re-requests.
-export default function SchedulingCostsModal({ projectId, blocks, onClose }) {
+// The panel content, shared by the legacy centered modal below and the docked
+// inspector rail. In the rail, onClose collapses the rail.
+export function SchedulingCostsPanel({ projectId, blocks, onClose }) {
   const [rollup, setRollup] = useState(null);
   const [loading, setLoading] = useState(true);
   const [costAccountFilter, setCostAccountFilter] = useState(null); // { id, code } | null
@@ -40,8 +42,7 @@ export default function SchedulingCostsModal({ projectId, blocks, onClose }) {
   }, [projectId, costAccountFilter]);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose} data-scheduling-costs>
-      <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 text-slate-950 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="p-6 text-slate-950" data-scheduling-costs>
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-amber-700">Scheduling</p>
@@ -159,6 +160,15 @@ export default function SchedulingCostsModal({ projectId, blocks, onClose }) {
             </div>
           </>
         )}
+    </div>
+  );
+}
+
+export default function SchedulingCostsModal(props) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={props.onClose}>
+      <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <SchedulingCostsPanel {...props} />
       </div>
     </div>
   );

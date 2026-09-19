@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 // Read-only preview + an explicit apply action, owner-only (see SchedulingBoard.jsx -- gated the
 // same way Costs/EVM & DCMA are, matching the SCHED-05 migration's decision that resource/cost
 // data has no public-select policy).
-export default function SchedulingLevelingModal({ projectId, blocks, onClose }) {
+// The panel content, shared by the legacy centered modal below and the docked
+// inspector rail. In the rail, onClose collapses the rail.
+export function SchedulingLevelingPanel({ projectId, blocks, onClose }) {
   const [allowExtension, setAllowExtension] = useState(false);
   const [preview, setPreview] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -42,8 +44,7 @@ export default function SchedulingLevelingModal({ projectId, blocks, onClose }) 
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose} data-scheduling-leveling>
-      <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 text-slate-950 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="p-6 text-slate-950" data-scheduling-leveling>
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-amber-700">Scheduling</p>
@@ -120,6 +121,15 @@ export default function SchedulingLevelingModal({ projectId, blocks, onClose }) 
             </div>
           </>
         )}
+    </div>
+  );
+}
+
+export default function SchedulingLevelingModal(props) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={props.onClose}>
+      <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <SchedulingLevelingPanel {...props} />
       </div>
     </div>
   );

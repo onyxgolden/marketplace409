@@ -33,7 +33,9 @@ function DcmaRow({ point, label, value, pass }) {
 // Costs) because EVM's planned value and several DCMA points are meaningless without one to measure
 // against -- defaults to the project's most recently captured baseline, matching the route's own
 // default.
-export default function SchedulingEvmDcmaModal({ projectId, onClose }) {
+// The panel content, shared by the legacy centered modal below and the docked
+// inspector rail. In the rail, onClose collapses the rail.
+export function SchedulingEvmDcmaPanel({ projectId, onClose }) {
   const [baselines, setBaselines] = useState([]);
   const [baselineId, setBaselineId] = useState("");
   const [asOfDate, setAsOfDate] = useState(new Date().toISOString().slice(0, 10));
@@ -70,8 +72,7 @@ export default function SchedulingEvmDcmaModal({ projectId, onClose }) {
   const dcma = report?.dcma;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose} data-scheduling-evm-dcma>
-      <div className="max-h-[85vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 text-slate-950 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="p-6 text-slate-950" data-scheduling-evm-dcma>
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-amber-700">Scheduling</p>
@@ -167,6 +168,15 @@ export default function SchedulingEvmDcmaModal({ projectId, onClose }) {
             </div>
           </>
         )}
+    </div>
+  );
+}
+
+export default function SchedulingEvmDcmaModal(props) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={props.onClose}>
+      <div className="max-h-[85vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <SchedulingEvmDcmaPanel {...props} />
       </div>
     </div>
   );

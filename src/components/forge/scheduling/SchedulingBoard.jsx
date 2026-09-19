@@ -1,14 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import SchedulingHelpModal from "./SchedulingHelpModal";
-import SchedulingCalendarsModal from "./SchedulingCalendarsModal";
-import SchedulingBaselinesModal from "./SchedulingBaselinesModal";
-import SchedulingResourcesModal from "./SchedulingResourcesModal";
-import SchedulingCostAccountsModal from "./SchedulingCostAccountsModal";
-import SchedulingCostsModal from "./SchedulingCostsModal";
-import SchedulingEvmDcmaModal from "./SchedulingEvmDcmaModal";
-import SchedulingLevelingModal from "./SchedulingLevelingModal";
+import SchedulingInspector from "./SchedulingInspector";
 import { usePersistedBoard } from "./usePersistedBoard";
 import {
   LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
@@ -54,14 +47,10 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const [hideEmptyWeeks, setHideEmptyWeeks] = useState(false);
   const [history, setHistory] = useState(emptyHistory);
-  const [showHelp, setShowHelp] = useState(false);
-  const [showCalendars, setShowCalendars] = useState(false);
-  const [showBaselines, setShowBaselines] = useState(false);
-  const [showResources, setShowResources] = useState(false);
-  const [showCostAccounts, setShowCostAccounts] = useState(false);
-  const [showCosts, setShowCosts] = useState(false);
-  const [showEvmDcma, setShowEvmDcma] = useState(false);
-  const [showLeveling, setShowLeveling] = useState(false);
+  // The docked inspector rail (right side): one tab per scheduling workspace.
+  // null = rail collapsed, giving the timeline full width. Opening any toolbar
+  // button opens the rail to that tab instead of a centered modal.
+  const [inspectorTab, setInspectorTab] = useState(null);
   // The owner-global resource dictionary (SCHED-06) -- fetched once for the drawer's per-block
   // assignment picker. Owner-only: a non-owner viewing the shared example project can't see or
   // create assignments on it regardless (schedule_resource_assignments has no public-select
@@ -710,15 +699,15 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
               </>
             )}
             <div className="my-1 border-t border-slate-200" />
-            <button type="button" onClick={() => setShowCalendars(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Calendars</button>
-            <button type="button" onClick={() => setShowBaselines(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Baselines</button>
+            <button type="button" onClick={() => setInspectorTab("calendars")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Calendars</button>
+            <button type="button" onClick={() => setInspectorTab("baselines")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Baselines</button>
             {isOwner && (
               <>
-                <button type="button" onClick={() => setShowResources(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Resources</button>
-                <button type="button" onClick={() => setShowCostAccounts(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Cost Codes</button>
-                <button type="button" onClick={() => setShowCosts(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Costs</button>
-                <button type="button" onClick={() => setShowEvmDcma(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">EVM &amp; DCMA</button>
-                <button type="button" onClick={() => setShowLeveling(true)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Level Resources</button>
+                <button type="button" onClick={() => setInspectorTab("resources")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Resources</button>
+                <button type="button" onClick={() => setInspectorTab("cost-accounts")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Cost Codes</button>
+                <button type="button" onClick={() => setInspectorTab("costs")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Costs</button>
+                <button type="button" onClick={() => setInspectorTab("evm-dcma")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">EVM &amp; DCMA</button>
+                <button type="button" onClick={() => setInspectorTab("leveling")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Level Resources</button>
               </>
             )}
             <div className="my-1 border-t border-slate-200" />
@@ -726,7 +715,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
           </div>
         </details>
         <div className="flex-1" />
-        <button type="button" onClick={() => setShowHelp(true)} title="Help & keyboard shortcuts"
+        <button type="button" onClick={() => setInspectorTab("help")} title="Help & keyboard shortcuts"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-700 text-sm font-black hover:bg-slate-800">?</button>
       </div>
 
@@ -915,6 +904,18 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
             </div>
           </div>
         </div>
+        {/* The inspector rail docks inside the main flex row so the timeline keeps
+            the remaining width beside it; collapsing it gives the timeline full width. */}
+        {inspectorTab && (
+          <SchedulingInspector activeTab={inspectorTab} onSelectTab={setInspectorTab} onCollapse={() => setInspectorTab(null)}
+            isOwner={isOwner} board={board} projectId={projectId}
+            onAddCalendar={(input) => commitBoard((current) => addCalendar(current, input))}
+            onRemoveCalendar={(calendarId) => commitBoard((current) => removeCalendar(current, calendarId))}
+            onSetDefaultCalendar={(calendarId) => commitBoard((current) => setDefaultCalendar(current, calendarId))}
+            onAddBlackout={(input) => commitBoard((current) => addBlackoutWindow(current, input))}
+            onRemoveBlackout={(blackoutId) => commitBoard((current) => removeBlackoutWindow(current, blackoutId))}
+            onResourcesChanged={loadResources} onCostAccountsChanged={loadCostAccounts} />
+        )}
       </div>
 
       {selectedBlockIds.length > 1 && (
@@ -931,33 +932,6 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
           progress={{ ...board.cpm?.byTaskCode?.[selectedBlock.taskCode], ...progressOverrides[selectedBlock.taskCode] }}
           onUpdateProgress={(patch) => updateBlockProgress(selectedBlock.taskCode, patch)}
           projectId={projectId} isOwner={isOwner} resources={resources} costAccounts={costAccounts} />
-      )}
-      {showHelp && <SchedulingHelpModal onClose={() => setShowHelp(false)} />}
-      {showCalendars && (
-        <SchedulingCalendarsModal board={board} onClose={() => setShowCalendars(false)}
-          onAddCalendar={(input) => commitBoard((current) => addCalendar(current, input))}
-          onRemoveCalendar={(calendarId) => commitBoard((current) => removeCalendar(current, calendarId))}
-          onSetDefaultCalendar={(calendarId) => commitBoard((current) => setDefaultCalendar(current, calendarId))}
-          onAddBlackout={(input) => commitBoard((current) => addBlackoutWindow(current, input))}
-          onRemoveBlackout={(blackoutId) => commitBoard((current) => removeBlackoutWindow(current, blackoutId))} />
-      )}
-      {showBaselines && (
-        <SchedulingBaselinesModal projectId={projectId} isOwner={isOwner} blocks={board.blocks} onClose={() => setShowBaselines(false)} />
-      )}
-      {showResources && (
-        <SchedulingResourcesModal isOwner={isOwner} onClose={() => setShowResources(false)} onChanged={loadResources} templateId={board.templateId} />
-      )}
-      {showCostAccounts && (
-        <SchedulingCostAccountsModal isOwner={isOwner} onClose={() => setShowCostAccounts(false)} onChanged={loadCostAccounts} />
-      )}
-      {showCosts && (
-        <SchedulingCostsModal projectId={projectId} blocks={board.blocks} onClose={() => setShowCosts(false)} />
-      )}
-      {showEvmDcma && (
-        <SchedulingEvmDcmaModal projectId={projectId} onClose={() => setShowEvmDcma(false)} />
-      )}
-      {showLeveling && (
-        <SchedulingLevelingModal projectId={projectId} blocks={board.blocks} onClose={() => setShowLeveling(false)} />
       )}
       {contextMenu && (
         <div className="fixed inset-0 z-[90]" onClick={() => setContextMenu(null)}

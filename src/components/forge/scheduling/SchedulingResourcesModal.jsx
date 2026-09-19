@@ -15,7 +15,9 @@ function emptyDraft() {
 // of this owner's projects, same mental model as a P6 enterprise resource pool. onChanged fires
 // after any create/update/delete so the board's own resources list (used by the per-block
 // assignment picker in the drawer) can refetch.
-export default function SchedulingResourcesModal({ isOwner, onClose, onChanged, templateId }) {
+// The panel content, shared by the legacy centered modal below and the docked
+// inspector rail. In the rail, onClose collapses the rail.
+export function SchedulingResourcesPanel({ isOwner, onClose, onChanged, templateId }) {
   const [resources, setResources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState(emptyDraft());
@@ -93,8 +95,7 @@ export default function SchedulingResourcesModal({ isOwner, onClose, onChanged, 
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose} data-scheduling-resources>
-      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 text-slate-950 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="p-6 text-slate-950" data-scheduling-resources>
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-amber-700">Scheduling</p>
@@ -191,6 +192,15 @@ export default function SchedulingResourcesModal({ isOwner, onClose, onChanged, 
             </table>
           </div>
         </div>
+    </div>
+  );
+}
+
+export default function SchedulingResourcesModal(props) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={props.onClose}>
+      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <SchedulingResourcesPanel {...props} />
       </div>
     </div>
   );
