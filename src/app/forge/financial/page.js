@@ -13,6 +13,7 @@ import { isCacheableDashboardLoad, readLastKnownDashboardCache, writeDashboardCa
 import { money } from "./formatMoney.js";
 import MonthComparisonPanel from "./MonthComparisonPanel.jsx";
 import AskBooksPanel from "./AskBooksPanel.jsx";
+import BrainActionBar from "./BrainActionBar.jsx";
 import AnomalyAlertsPanel from "./AnomalyAlertsPanel.jsx";
 import CashForecastPanel from "./CashForecastPanel.jsx";
 import { getCurrentMonthProfitKpi } from "./getCurrentMonthProfitKpi.js";
@@ -424,6 +425,7 @@ export default function FinancialPage() {
     <FinancialApplicationShell
       compareMonthsSection={<MonthComparisonPanel />}
       askBooksSection={<AskBooksPanel />}
+      brainActionsSection={<BrainActionBar />}
       anomalyAlertsSection={<AnomalyAlertsPanel />}
       cashForecastSection={<CashForecastPanel />}
       activeFunctionId={

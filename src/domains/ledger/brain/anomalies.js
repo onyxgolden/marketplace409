@@ -48,6 +48,43 @@ const MIN_BASELINE_MONTHS_WITH_ACTIVITY = 3;
 
 const SEVERITY_RANK = Object.freeze({ high: 0, medium: 1, low: 2 });
 
+// Deterministic, stable identity for an alert across recomputations, so a
+// human can dismiss an alert and have it stay dismissed. Pure: the same alert
+// content always yields the same key, independent of ranking or detection
+// order. Uses an fnv1a hash of the canonically-serialized evidence so keys
+// stay short in the dismissals table.
+function fnv1aHex(text) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .reduce((acc, key) => {
+        acc[key] = canonicalize(value[key]);
+        return acc;
+      }, {});
+  }
+  return value;
+}
+
+/**
+ * alertKeyOf(alert) -> string
+ * Stable dismissal key: "<type>:<fnv1a of canonical evidence JSON>".
+ */
+export function alertKeyOf(alert) {
+  const type = alert?.type ?? "unknown";
+  const evidence = alert?.evidence != null && typeof alert.evidence === "object" ? alert.evidence : {};
+  return `${type}:${fnv1aHex(JSON.stringify(canonicalize(evidence)))}`;
+}
+
 function parseDayMs(value) {
   if (value == null) return null;
   if (typeof value === "number" && Number.isFinite(value)) return value;

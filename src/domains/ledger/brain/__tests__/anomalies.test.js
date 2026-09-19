@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { detectAnomalies } from "../anomalies.js";
+import { detectAnomalies, alertKeyOf } from "../anomalies.js";
 
 // Anchor every test to a fixed "now" so relative windows are deterministic.
 const NOW = "2026-09-19";
@@ -309,5 +309,35 @@ describe("detectAnomalies", () => {
 
     const severities = alerts.map((alert) => alert.severity);
     expect(severities).toEqual(["high", "medium", "low"]);
+  });
+});
+
+describe("alertKeyOf", () => {
+  const alert = {
+    type: "duplicate",
+    severity: "high",
+    title: "Possible duplicate charge: shell",
+    detail: "x",
+    evidence: { merchant: "shell", amount: 45.2, postingIds: ["a", "b"], dates: ["2026-09-10", "2026-09-11"] },
+  };
+
+  test("stable across recomputations and key order", () => {
+    const shuffled = {
+      ...alert,
+      evidence: { dates: ["2026-09-10", "2026-09-11"], amount: 45.2, postingIds: ["a", "b"], merchant: "shell" },
+    };
+    expect(alertKeyOf(alert)).toBe(alertKeyOf(shuffled));
+    expect(alertKeyOf(alert)).toMatch(/^duplicate:[0-9a-f]{8}$/);
+  });
+
+  test("different evidence yields different keys", () => {
+    const other = { ...alert, evidence: { ...alert.evidence, amount: 99.99 } };
+    expect(alertKeyOf(other)).not.toBe(alertKeyOf(alert));
+  });
+
+  test("never throws on junk input", () => {
+    expect(alertKeyOf(null)).toMatch(/^unknown:[0-9a-f]{8}$/);
+    expect(typeof alertKeyOf(undefined)).toBe("string");
+    expect(typeof alertKeyOf({})).toBe("string");
   });
 });

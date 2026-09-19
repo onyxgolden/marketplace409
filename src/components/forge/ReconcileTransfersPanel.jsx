@@ -56,11 +56,46 @@ export default function ReconcileTransfersPanel() {
   const [confirmationText, setConfirmationText] = useState("");
   const [applyStatus, setApplyStatus] = useState("idle"); // "idle" | "applying" | "done" | "error"
   const [applyMessage, setApplyMessage] = useState("");
-  // Per-row human category picks for ambiguous entries -- a local scratchpad only.
-  // Ambiguous rows are never written by the apply flow; the Brain's suggestions
-  // are advisory, and these picks are not submitted anywhere (yet).
+  // Per-row human category picks for ambiguous entries. The "Use:" suggestion
+  // chip fills the picker as a scratchpad; the per-row Apply button below
+  // writes it through the conversational-actions API (single confirmation:
+  // the human picked the exact row and category, and the write is reversible).
   const [rowCategoryChoices, setRowCategoryChoices] = useState({});
+  const [rowApplyStatus, setRowApplyStatus] = useState({});
+  const [rowApplyMessages, setRowApplyMessages] = useState({});
   const requestInFlight = useRef(false);
+
+  const applyRowCategory = (eventId, category) => {
+    setRowApplyStatus((prev) => ({ ...prev, [eventId]: "applying" }));
+    setRowApplyMessages((prev) => ({ ...prev, [eventId]: "" }));
+    return fetch("/api/financial/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        planItems: [{ kind: "categorize", eventId, category }],
+        confirmation: "SINGLE",
+      }),
+    })
+      .then((response) => response.json().then((payload) => ({ response, payload })))
+      .then(({ response, payload }) => {
+        if (!response.ok) throw new Error(payload.error || "Unable to apply the category.");
+        setRowApplyStatus((prev) => ({ ...prev, [eventId]: "done" }));
+        setRowCategoryChoices((prev) => {
+          const next = { ...prev };
+          delete next[eventId];
+          return next;
+        });
+        load();
+        return null;
+      })
+      .catch((applyError) => {
+        setRowApplyStatus((prev) => ({ ...prev, [eventId]: "error" }));
+        setRowApplyMessages((prev) => ({
+          ...prev,
+          [eventId]: applyError instanceof Error ? applyError.message : "Unable to apply the category.",
+        }));
+      });
+  };
 
   const load = useCallback(() => {
     if (requestInFlight.current) return undefined;
@@ -331,7 +366,8 @@ export default function ReconcileTransfersPanel() {
               </p>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                 The Brain suggests a category per row from your own history — advisory only, never auto-applied.
-                Tap a suggestion to fill the row&apos;s category picker as a scratchpad for your review.
+                Tap a suggestion to fill the row&apos;s category picker, then Apply to write it (single click —
+                you picked the exact row, and the write is reversible).
               </p>
               <ul className="mt-3 space-y-3">
                 {ambiguousTransfers.map((entry) => {
@@ -398,6 +434,25 @@ export default function ReconcileTransfersPanel() {
                           ))}
                         </select>
                       </label>
+                      {choice ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            disabled={rowApplyStatus[entry.eventId] === "applying"}
+                            onClick={() => applyRowCategory(entry.eventId, choice)}
+                            className={`rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-black text-white hover:bg-amber-600 disabled:opacity-50 dark:bg-amber-600 dark:hover:bg-amber-500 ${FOCUS_RING}`}
+                          >
+                            {rowApplyStatus[entry.eventId] === "applying"
+                              ? "Applying…"
+                              : `Apply: ${prettyCategory(choice)}`}
+                          </button>
+                          {rowApplyStatus[entry.eventId] === "error" ? (
+                            <span className="text-xs text-red-600 dark:text-red-400">
+                              {rowApplyMessages[entry.eventId]}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </li>
                   );
                 })}
