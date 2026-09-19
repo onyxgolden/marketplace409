@@ -323,4 +323,55 @@ describe("SchedulingBoard — opening a block's drawer", () => {
     expect(mounted.container.querySelector("[data-scheduling-assignment-cost-account]")).toBeTruthy();
     unmount(mounted);
   });
+
+  it("groups the top toolbar into labeled Build, View, and Data clusters", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain('data-toolbar-cluster="build"');
+    expect(markup).toContain('data-toolbar-cluster="view"');
+    expect(markup).toContain('data-toolbar-cluster="data"');
+    expect(markup).toContain(">Build<");
+    expect(markup).toContain(">View<");
+    expect(markup).toContain(">Data<");
+  });
+
+  it("puts block-editing tools in Build, view controls in View, and data controls in Data", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    const clusterMarkup = (cluster) => {
+      const start = markup.indexOf(`data-toolbar-cluster="${cluster}"`);
+      const next = markup.indexOf('data-toolbar-cluster="', start + 1);
+      return markup.slice(start, next === -1 ? undefined : next);
+    };
+    const build = clusterMarkup("build");
+    const view = clusterMarkup("view");
+    const data = clusterMarkup("data");
+    expect(build).toContain('title="Toggle bold"'); // block text-editing tools
+    expect(view).toContain("Zoom");
+    expect(view).toContain("Fit to project");
+    expect(view).toContain("Hide empty weeks");
+    expect(view).toContain('aria-expanded="true"'); // palette collapse toggle
+    expect(view).toContain(">Inspector<"); // inspector rail toggle
+    expect(data).toContain('title="Undo (Ctrl+Z)"');
+    expect(data).toContain('title="Redo (Ctrl+Shift+Z)"');
+    expect(data).toContain("data-scheduling-menu");
+    expect(data).toContain(">Calendars<");
+    expect(data).toContain(">Baselines<");
+    expect(data).toContain('title="Help &amp; keyboard shortcuts"');
+  });
+
+  it("keeps the owner-only inspector tab buttons in the Data cluster for the default (owner) board", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    const start = markup.indexOf('data-toolbar-cluster="data"');
+    const data = markup.slice(start);
+    expect(data).toContain(">Resources<");
+    expect(data).toContain(">Cost Codes<");
+    expect(data).toContain(">Costs<");
+    expect(data).toContain("EVM &amp; DCMA");
+    expect(data).toContain(">Level Resources<");
+  });
+
+  it("labels the activity-palette rail as the Build cluster", () => {
+    const markup = renderToStaticMarkup(<SchedulingBoard />);
+    expect(markup).toContain(">Build</p>");
+    expect(markup).toContain("+ Add lane");
+  });
 });

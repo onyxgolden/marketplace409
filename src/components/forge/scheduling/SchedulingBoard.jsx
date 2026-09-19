@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import SchedulingInspector from "./SchedulingInspector";
+import SchedulingInspector, { visibleInspectorTabs } from "./SchedulingInspector";
 import { usePersistedBoard } from "./usePersistedBoard";
 import {
   LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
@@ -18,6 +18,30 @@ import {
 
 function isTypingTarget(el) {
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+}
+
+// The inspector-tab buttons in the toolbar's Data cluster keep the toolbar's historic
+// labels ("Cost Codes", "EVM & DCMA", "Level Resources"); visibleInspectorTabs supplies
+// the owner gating so non-owners never see the owner-only tabs.
+const DATA_TAB_LABELS = {
+  calendars: "Calendars",
+  baselines: "Baselines",
+  resources: "Resources",
+  "cost-accounts": "Cost Codes",
+  costs: "Costs",
+  "evm-dcma": "EVM & DCMA",
+  leveling: "Level Resources",
+};
+
+// One labeled cluster of the scheduling toolbar: Build / View / Data. The small
+// uppercase tag names the cluster; a left divider separates it from its neighbor.
+function ToolbarCluster({ label, children }) {
+  return (
+    <div className="flex items-center gap-2 border-l border-slate-700 pl-4" data-toolbar-cluster={label.toLowerCase()}>
+      <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{label}</span>
+      {children}
+    </div>
+  );
 }
 
 const PALETTE_COLLAPSE_STORAGE_KEY = "forge-scheduling-palette-collapsed";
@@ -51,6 +75,11 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   // null = rail collapsed, giving the timeline full width. Opening any toolbar
   // button opens the rail to that tab instead of a centered modal.
   const [inspectorTab, setInspectorTab] = useState(null);
+  // The inspector rail toggle reopens the last-used tab.
+  const lastInspectorTabRef = useRef("calendars");
+  useEffect(() => {
+    if (inspectorTab) lastInspectorTabRef.current = inspectorTab;
+  }, [inspectorTab]);
   // The owner-global resource dictionary (SCHED-06) -- fetched once for the drawer's per-block
   // assignment picker. Owner-only: a non-owner viewing the shared example project can't see or
   // create assignments on it regardless (schedule_resource_assignments has no public-select
@@ -635,29 +664,44 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
             className="rounded border border-slate-700 bg-slate-800 px-2 py-1 font-mono text-xs text-white" /></Field>
           <button type="submit" className="rounded bg-amber-500 px-3 py-1.5 text-sm font-bold text-slate-950">Apply dates</button>
         </form>
-        <Field label="Zoom"><input type="range" min={MIN_ZOOM_PX} max={MAX_ZOOM_PX} value={board.weekWidth}
-          onChange={(e) => setBoard((c) => ({ ...c, weekWidth: Number(e.target.value) }))} /></Field>
-        <Field label="Project view">
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={handleFitToProject}
-              className="rounded border border-slate-700 px-2.5 py-1 text-xs font-bold" title="Shrink the board so the whole project fits on screen">
-              Fit to project
-            </button>
-            <label className="flex items-center gap-1 text-xs text-slate-300">
-              <input type="checkbox" checked={hideEmptyWeeks} onChange={(e) => setHideEmptyWeeks(e.target.checked)} />
-              Hide empty weeks
-            </label>
-            <label className="flex items-center gap-1 text-xs text-slate-300" title="Real CPM: calendars, lag, relationship types and constraints all factored in. Highlights every block on a critical path, not just one.">
-              <input type="checkbox" checked={showCriticalPath} onChange={(e) => setShowCriticalPath(e.target.checked)} />
-              Critical path
-            </label>
-          </div>
-        </Field>
-        <TextStyleToolbar
-          disabled={selectedBlockIds.length === 0}
-          activeBlock={selectedBlockIds.length ? board.blocks.find((block) => block.id === selectedBlockIds[0]) : null}
-          onChange={(patch) => selectedBlockIds.length && commitBoard((current) => setBlockTextStyle(current, selectedBlockIds, patch))} />
+        <ToolbarCluster label="Build">
+          <TextStyleToolbar
+            disabled={selectedBlockIds.length === 0}
+            activeBlock={selectedBlockIds.length ? board.blocks.find((block) => block.id === selectedBlockIds[0]) : null}
+            onChange={(patch) => selectedBlockIds.length && commitBoard((current) => setBlockTextStyle(current, selectedBlockIds, patch))} />
+        </ToolbarCluster>
+        <ToolbarCluster label="View">
+          <Field label="Zoom"><input type="range" min={MIN_ZOOM_PX} max={MAX_ZOOM_PX} value={board.weekWidth}
+            onChange={(e) => setBoard((c) => ({ ...c, weekWidth: Number(e.target.value) }))} /></Field>
+          <Field label="Project view">
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={handleFitToProject}
+                className="rounded border border-slate-700 px-2.5 py-1 text-xs font-bold" title="Shrink the board so the whole project fits on screen">
+                Fit to project
+              </button>
+              <label className="flex items-center gap-1 text-xs text-slate-300">
+                <input type="checkbox" checked={hideEmptyWeeks} onChange={(e) => setHideEmptyWeeks(e.target.checked)} />
+                Hide empty weeks
+              </label>
+              <label className="flex items-center gap-1 text-xs text-slate-300" title="Real CPM: calendars, lag, relationship types and constraints all factored in. Highlights every block on a critical path, not just one.">
+                <input type="checkbox" checked={showCriticalPath} onChange={(e) => setShowCriticalPath(e.target.checked)} />
+                Critical path
+              </label>
+            </div>
+          </Field>
+          <button type="button" onClick={togglePaletteCollapsed} aria-expanded={!paletteCollapsed}
+            title="Show or hide the activity palette"
+            className="rounded border border-slate-700 px-2.5 py-1 text-xs font-bold hover:bg-slate-800">
+            {paletteCollapsed ? "Show" : "Hide"}
+          </button>
+          <button type="button" onClick={() => setInspectorTab((current) => (current ? null : lastInspectorTabRef.current))}
+            aria-pressed={inspectorTab !== null} title="Toggle the inspector panel"
+            className={`rounded border px-2.5 py-1 text-xs font-bold ${inspectorTab ? "border-amber-400 bg-amber-500 text-slate-950" : "border-slate-700 hover:bg-slate-800"}`}>
+            Inspector
+          </button>
+        </ToolbarCluster>
         <div className="flex-1" />
+        <ToolbarCluster label="Data">
         <span role="status" className="min-w-[60px] font-mono text-xs text-sky-400">{clipboardStatus}</span>
         <span role="status" className="min-w-[70px] font-mono text-xs text-emerald-400">{saveStatus}</span>
         {!isOwner && (
@@ -699,24 +743,19 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
               </>
             )}
             <div className="my-1 border-t border-slate-200" />
-            <button type="button" onClick={() => setInspectorTab("calendars")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Calendars</button>
-            <button type="button" onClick={() => setInspectorTab("baselines")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Baselines</button>
-            {isOwner && (
-              <>
-                <button type="button" onClick={() => setInspectorTab("resources")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Resources</button>
-                <button type="button" onClick={() => setInspectorTab("cost-accounts")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Cost Codes</button>
-                <button type="button" onClick={() => setInspectorTab("costs")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Costs</button>
-                <button type="button" onClick={() => setInspectorTab("evm-dcma")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">EVM &amp; DCMA</button>
-                <button type="button" onClick={() => setInspectorTab("leveling")} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold hover:bg-slate-100">Level Resources</button>
-              </>
-            )}
-            <div className="my-1 border-t border-slate-200" />
             <button type="button" onClick={handleReset} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-bold text-red-700 hover:bg-red-50">Reset board</button>
           </div>
         </details>
-        <div className="flex-1" />
+        {visibleInspectorTabs(isOwner).filter((tab) => tab.id !== "help").map((tab) => (
+          <button key={tab.id} type="button" onClick={() => setInspectorTab(tab.id)}
+            aria-pressed={inspectorTab === tab.id} title={`Open ${DATA_TAB_LABELS[tab.id]} in the inspector`}
+            className={`rounded border px-2 py-1 text-xs font-bold ${inspectorTab === tab.id ? "border-amber-400 bg-amber-500 text-slate-950" : "border-slate-700 hover:bg-slate-800"}`}>
+            {DATA_TAB_LABELS[tab.id]}
+          </button>
+        ))}
         <button type="button" onClick={() => setInspectorTab("help")} title="Help & keyboard shortcuts"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-700 text-sm font-black hover:bg-slate-800">?</button>
+      </ToolbarCluster>
       </div>
 
       {conflict && (
@@ -734,12 +773,9 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-slate-50 p-3">
-          <div className="mb-2 flex items-center justify-between px-1">
+          <div className="mb-2 px-1">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Build</p>
             <h2 className="text-xs font-black uppercase tracking-widest text-slate-500">Starter objects — drag onto the board</h2>
-            <button type="button" onClick={togglePaletteCollapsed} aria-expanded={!paletteCollapsed}
-              className="shrink-0 text-xs font-bold text-slate-400 hover:text-slate-700">
-              {paletteCollapsed ? "Show" : "Hide"}
-            </button>
           </div>
           {!paletteCollapsed && Object.keys(board.categoryNames).map((category) => (
             <details key={category} open className="mb-1.5 overflow-hidden rounded-lg">
