@@ -136,11 +136,12 @@ export function answerConstraints(_parsed, { cpmBlocks = [], conflicts = [] }) {
 
 // Resolves an activity query against CPM blocks. Match order:
 //   1. exact task code (case-insensitive),
-//   2. exact normalized label (case-insensitive),
+//   2. exact normalized label (case-insensitive) -- collected, not .find():
+//      duplicate labels return an ambiguity result, never an arbitrary pick,
 //   3. partial label match -- but only when it resolves to exactly one block.
-// A partial query matching several blocks returns { ambiguous, candidates }
-// instead of silently picking the first row, so "float for framing" can never
-// select an arbitrary framing activity.
+// A query matching several blocks returns { ambiguous, candidates } instead of
+// silently picking the first row, so "float for framing" can never select an
+// arbitrary framing activity.
 function resolveActivityQuery(cpmBlocks, query) {
   const normalized = String(query ?? "").trim().toLowerCase();
   if (!normalized) return { match: null };
@@ -148,10 +149,11 @@ function resolveActivityQuery(cpmBlocks, query) {
     (block) => String(block.task_code ?? "").trim().toLowerCase() === normalized,
   );
   if (byTaskCode) return { match: byTaskCode };
-  const byLabel = cpmBlocks.find(
+  const byLabel = cpmBlocks.filter(
     (block) => String(block.label ?? "").trim().toLowerCase() === normalized,
   );
-  if (byLabel) return { match: byLabel };
+  if (byLabel.length === 1) return { match: byLabel[0] };
+  if (byLabel.length > 1) return { ambiguous: true, candidates: byLabel };
   const partial = cpmBlocks.filter(
     (block) => String(block.label ?? "").toLowerCase().includes(normalized),
   );

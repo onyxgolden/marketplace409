@@ -191,6 +191,20 @@ describe("answerFloat", () => {
     // No single activity was selected -- the items are the candidates.
     expect(answer.summary).not.toContain("days of total float");
   });
+  it("returns an ambiguity result for duplicate exact labels instead of picking the first", () => {
+    // Two activities share the identical normalized label "Framing". An exact
+    // label query must list both candidates and ask for a task code -- it must
+    // never silently answer with the first row.
+    const blocks = [
+      { id: "b1", task_code: "A1020", label: "Framing", block_type: "task", total_float_days: 2, is_critical: false, early_start: "2026-01-12", early_finish: "2026-01-23", late_start: "2026-01-14", late_finish: "2026-01-25" },
+      { id: "b2", task_code: "A1021", label: "Framing", block_type: "task", total_float_days: 4, is_critical: false, early_start: "2026-01-12", early_finish: "2026-01-23", late_start: "2026-01-16", late_finish: "2026-01-27" },
+    ];
+    const answer = answerFloat({ type: "float", activityQuery: "framing" }, { cpmBlocks: blocks });
+    expect(answer.questionType).toBe("float");
+    expect(answer.summary).toContain("matches 2 activities");
+    expect(answer.items.map((item) => item.taskCode)).toEqual(["A1020", "A1021"]);
+    expect(answer.summary).not.toContain("days of total float");
+  });
   it("reports an unmatched activity reference without guessing", () => {
     const answer = answerFloat({ type: "float", activityQuery: "roofing" }, { cpmBlocks: BLOCKS });
     expect(answer.items).toEqual([]);
