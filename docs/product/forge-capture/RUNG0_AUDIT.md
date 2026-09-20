@@ -23,9 +23,10 @@ Consequences:
   region; existing images from clipboard, drag/drop, or filesystem; screen recordings;
   user-authorized workflows on selected websites or applications.
 - The Rung 1 editor package ships **inside the standalone utility** and is also
-  embeddable as an optional web surface at `/forge/capture` (peer FORGE application
-  route in `ForgeApplicationRail.jsx`, following the Room Designer precedent) for
-  users who want the editor in the browser with an opt-in "Save to FORGE" path.
+  embeddable as an optional web surface at `/forge/capture` (a peer FORGE application
+  entry in `src/components/forge/ForgeApplicationRail.jsx`, following that file's
+  existing peer-application pattern) for users who want the editor in the browser
+  with an opt-in "Save to FORGE" path.
 - Rung 6's context-aware entry points (scheduling, floor-plan designer, Rental
   Manager, property inspection, help, dev tools) deep-link into the tool with a
   minimal, non-sensitive context allowlist — they are conveniences, not the product.
@@ -37,7 +38,7 @@ No navigation or product code changes were made in this rung.
 | Capability | Present in repo | Notes |
 |---|---|---|
 | Canvas 2D (browser) | Yes (platform API) | No code in `src/` uses `getDisplayMedia` yet; `navigator.clipboard` used for text only (`ShareButton.js`, `ProgrammerDashboard.jsx`) |
-| node-canvas `^3.0.0` | Transitive only (via lockfile) | Not a direct dependency; server-side render path would need an explicit, licensed add |
+| node-canvas `^3.0.0` | Uninstalled optional peerDependency of jsdom (declared in `package-lock.json`; no `node_modules/canvas` entry — not installed) | Not a direct dependency; a server-side render path would need an explicit, license-reviewed dependency addition |
 | sharp `^0.35.3` | Transitive only | Same as above |
 | jszip `3.10.1` | Transitive only | Useful for project bundles / image-sequence export later |
 | unpdf `^1.8.0` | Direct | PDF **reading** (HVAC invoice text extraction). No PDF **generation** lib present |
@@ -108,7 +109,7 @@ Authoritative patterns to reuse (Rung 5):
   records to analytics. FORGE Capture's rule ("analytics must never receive screenshot
   pixels, OCR results, annotations, typed content, filenames, or captured metadata") is
   a strict subset of the existing policy — compliant by construction if the editor never
-  calls `captureApprovedEvent` with capture-derived properties.
+  calls `buildApprovedAnalyticsEvent` (`src/lib/analytics/policy.js`) with capture-derived properties.
 - **Data Retention Policy** (`docs/security/DATA_RETENTION_POLICY.md`, active, annual
   review) covers customer/financial/auth/application data. It has **no capture-specific
   section** yet. Rung 0 recommendation: add a capture addendum before Rung 5 defining

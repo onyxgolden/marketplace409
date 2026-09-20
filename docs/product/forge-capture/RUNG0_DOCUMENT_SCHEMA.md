@@ -2,6 +2,15 @@
 
 **Date:** 2026-09-20 · Rung 0 (proposal; no code)
 
+## Status — internal / provisional through Rung 1
+
+This schema is a working proposal for the Rung 1 editor implementation, **not a
+frozen public compatibility contract**. Rung 1 still tests deterministic
+serialization, version rejection, schema round-trips, corrupt-project rejection,
+undo/redo invariants, coordinate transforms, flattened redaction, and large-image
+limits — but Rung 2's native-capture findings may legitimately require schema
+evolution before any public compatibility commitment is made.
+
 ## Design principles
 
 1. **Source image and annotation objects are distinct.** Redactions are annotation

@@ -38,7 +38,9 @@ window capture, input-event sync, system audio, or reliable desktop scrolling ca
 - Rung 1 builds the editor core with no native packaging work.
 - Rung 2 builds the Tauri shell around it, now including scrolling capture as a
   required early capability (ADR-CAP-008).
-- Rung 2 requires a Windows code-signing decision before its PR opens.
+- Rung 2 requires a Windows code-signing decision before its PR opens. No signing
+  decision is required to begin Rung 1; no certificate is chosen or purchased in
+  this program's documentation phases.
 - No Python runtime is introduced into the product.
 
 ---
@@ -77,9 +79,10 @@ standalone and must work without any FORGE account.
 
 ### Decision
 
-- An optional web surface may live at **`/forge/capture`** as a peer application in
-  `ForgeApplicationRail` (Room Designer precedent) for users who want the editor in
-  the browser with an opt-in "Save to FORGE" path.
+- An optional web surface may live at **`/forge/capture`** as a peer application entry
+  in `src/components/forge/ForgeApplicationRail.jsx` (following that file's existing
+  peer-application pattern) for users who want the editor in the browser with an
+  opt-in "Save to FORGE" path.
 - Rung 6 adds context-aware deep links (`/forge/capture?context=…` or the standalone
   app's deep link) with a minimal, non-sensitive context allowlist.
 - The FORGE library and sharing (Rung 5) are an **opt-in cloud destination**; the
