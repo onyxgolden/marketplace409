@@ -13,7 +13,7 @@ describe(
   "FORGE programmer navigation",
   () => {
     it(
-      "no longer lists Rental Manager, Programmer, or Scheduling as internal Forge sub-nav items",
+      "no longer lists Rental Manager, Programmer, Scheduling, or Designer as internal Forge sub-nav items",
       () => {
         const hrefs = FORGE_APPLICATIONS.map(
           (application) => application.href,
@@ -22,6 +22,7 @@ describe(
         expect(hrefs).not.toContain("/forge/rental");
         expect(hrefs).not.toContain("/forge/developer");
         expect(hrefs).not.toContain("/forge/scheduling");
+        expect(hrefs).not.toContain("/forge/designer");
       },
     );
 
@@ -60,6 +61,19 @@ describe(
 
         expect(
           isPromotedSubtree("/forge/scheduling/schedule_project_1"),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      "treats /forge/designer as a promoted subtree the rail steps aside for",
+      () => {
+        expect(
+          isPromotedSubtree("/forge/designer"),
+        ).toBe(true);
+
+        expect(
+          isPromotedSubtree("/forge/designer/design_1"),
         ).toBe(true);
       },
     );

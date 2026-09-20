@@ -28,6 +28,7 @@
     "react-dom": "19.2.4",
     "react-plaid-link": "^4.1.1",
     "stripe": "^22.5.0",
+    "three": "^0.186.0",
     "unpdf": "^1.8.0"
   },
   "devDependencies": {
