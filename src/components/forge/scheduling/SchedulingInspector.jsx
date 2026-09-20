@@ -7,6 +7,7 @@ import { SchedulingCostAccountsPanel } from "./SchedulingCostAccountsModal";
 import { SchedulingCostsPanel } from "./SchedulingCostsModal";
 import { SchedulingEvmDcmaPanel } from "./SchedulingEvmDcmaModal";
 import { SchedulingLevelingPanel } from "./SchedulingLevelingModal";
+import { AskSchedulePanel } from "./AskSchedulePanel";
 
 // The docked inspector rail: one fixed-width right-side panel with a tab per
 // scheduling workspace (previously eight separate centered modals). The board
@@ -15,6 +16,7 @@ import { SchedulingLevelingPanel } from "./SchedulingLevelingModal";
 // see those tabs because the buttons that open them are owner-only there too.
 export const INSPECTOR_TABS = [
   { id: "help", label: "Help" },
+  { id: "ask", label: "Ask" },
   { id: "calendars", label: "Calendars" },
   { id: "baselines", label: "Baselines" },
   { id: "resources", label: "Resources", ownerOnly: true },
@@ -34,6 +36,10 @@ function InspectorPanel({ activeTab, onCollapse, isOwner, board, projectId,
   switch (activeTab) {
     case "help":
       return <SchedulingHelpPanel onClose={onCollapse} />;
+    case "ask":
+      // Read-only dates/CPM/baselines -- visible to non-owners too, matching the
+      // existing convention that non-owners see schedule data but not cost data.
+      return <AskSchedulePanel projectId={projectId} onClose={onCollapse} />;
     case "calendars":
       return (
         <SchedulingCalendarsPanel board={board} onClose={onCollapse}

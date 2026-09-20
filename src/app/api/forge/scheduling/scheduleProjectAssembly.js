@@ -62,10 +62,10 @@ export async function loadProjectRelational(supabaseClient, projectId) {
 // and are excluded -- lane_id is what distinguishes a Gantt block from a WBS activity, see
 // schedulingRelationalToBoard.js), keyed by task_code (never namespaced, unlike every other id
 // here) so callers can look up a block's CPM result without needing to know about relational ids.
-// Also best-effort persists the computed dates back onto schedule_blocks so baseline capture always
-// has fresh early/late/float data -- failures here are logged, never fail the caller. `cpmBlocks` is
-// the raw runCpmEngine output (full rows, not just the summary), which captureBaseline needs as-is.
-export async function computeAndPersistCpm(supabaseClient, project, relational) {
+// Pure compute: performs NO database writes. Read-only callers (e.g. Ask the Schedule) must use
+// this, never computeAndPersistCpm. `cpmBlocks` is the raw runCpmEngine output (full rows, not
+// just the summary), which captureBaseline needs as-is.
+export async function computeCpm(supabaseClient, project, relational) {
   // SCHED-21A: assembled via the same buildCpmEngineInput verifyCpmEngineAgainstRealProjects.mjs
   // uses, so this can't independently drift from it again the way it did with blackout windows in
   // PR #140. This also stopped pre-filtering dependencies down to both-ends-present before calling
@@ -82,7 +82,7 @@ export async function computeAndPersistCpm(supabaseClient, project, relational) 
 
   const byTaskCode = {};
   const criticalTaskCodes = [];
-  await Promise.all(result.blocks.map(async (block) => {
+  for (const block of result.blocks) {
     byTaskCode[block.task_code] = {
       earlyStart: block.early_start, earlyFinish: block.early_finish,
       lateStart: block.late_start, lateFinish: block.late_finish,
@@ -94,13 +94,7 @@ export async function computeAndPersistCpm(supabaseClient, project, relational) 
       percentComplete: block.percent_complete ?? 0, actualStart: block.actual_start ?? null, actualFinish: block.actual_finish ?? null,
     };
     if (block.is_critical) criticalTaskCodes.push(block.task_code);
-    const { error } = await supabaseClient.from("schedule_blocks").update({
-      early_start: block.early_start, early_finish: block.early_finish,
-      late_start: block.late_start, late_finish: block.late_finish,
-      total_float_days: block.total_float_days, is_critical: block.is_critical,
-    }).eq("owner_id", block.owner_id).eq("id", block.id);
-    if (error) console.error("CPM persist error for block", block.id, error);
-  }));
+  }
 
   // SCHED-11: only trace/rank cycles when the CPM engine actually reported one -- diagnoseCycles
   // does a real graph walk, not worth running on every request when the common case has no cycle.
@@ -108,6 +102,26 @@ export async function computeAndPersistCpm(supabaseClient, project, relational) 
   const cycleDiagnoses = hasCycleConflict ? diagnoseCycles({ blocks: input.blocks, dependencies: input.dependencies }) : [];
 
   return { byTaskCode, criticalTaskCodes, conflicts: result.conflicts, cycleDiagnoses, cpmBlocks: result.blocks };
+}
+
+// Best-effort persistence of computed CPM dates onto schedule_blocks so baseline capture always
+// has fresh early/late/float data -- failures here are logged, never fail the caller. Explicitly
+// separate from computeCpm so read-only paths cannot accidentally write.
+export async function persistCpmResults(supabaseClient, cpmBlocks) {
+  await Promise.all((cpmBlocks || []).map(async (block) => {
+    const { error } = await supabaseClient.from("schedule_blocks").update({
+      early_start: block.early_start, early_finish: block.early_finish,
+      late_start: block.late_start, late_finish: block.late_finish,
+      total_float_days: block.total_float_days, is_critical: block.is_critical,
+    }).eq("owner_id", block.owner_id).eq("id", block.id);
+    if (error) console.error("CPM persist error for block", block.id, error);
+  }));
+}
+
+export async function computeAndPersistCpm(supabaseClient, project, relational) {
+  const computed = await computeCpm(supabaseClient, project, relational);
+  await persistCpmResults(supabaseClient, computed.cpmBlocks);
+  return computed;
 }
 
 // SCHED-06: resources are an owner-global dictionary (schedule_resources has no

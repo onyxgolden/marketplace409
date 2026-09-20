@@ -12,10 +12,10 @@ function renderInspector(overrides = {}) {
 }
 
 describe("SchedulingInspector", () => {
-  it("declares eight tabs", () => {
-    expect(INSPECTOR_TABS).toHaveLength(8);
+  it("declares nine tabs", () => {
+    expect(INSPECTOR_TABS).toHaveLength(9);
     expect(INSPECTOR_TABS.map((tab) => tab.id)).toEqual(
-      ["help", "calendars", "baselines", "resources", "cost-accounts", "costs", "evm-dcma", "leveling"]
+      ["help", "ask", "calendars", "baselines", "resources", "cost-accounts", "costs", "evm-dcma", "leveling"]
     );
   });
 
@@ -39,8 +39,8 @@ describe("SchedulingInspector", () => {
   });
 
   it("visibleInspectorTabs filters by ownership", () => {
-    expect(visibleInspectorTabs(true)).toHaveLength(8);
-    expect(visibleInspectorTabs(false).map((tab) => tab.id)).toEqual(["help", "calendars", "baselines"]);
+    expect(visibleInspectorTabs(true)).toHaveLength(9);
+    expect(visibleInspectorTabs(false).map((tab) => tab.id)).toEqual(["help", "ask", "calendars", "baselines"]);
   });
 
   it("renders the active tab's panel and no other panel", () => {
