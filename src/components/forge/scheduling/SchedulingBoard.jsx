@@ -25,6 +25,7 @@ function isTypingTarget(el) {
 // the owner gating so non-owners never see the owner-only tabs.
 const DATA_TAB_LABELS = {
   ask: "Ask",
+  drift: "Drift",
   calendars: "Calendars",
   baselines: "Baselines",
   resources: "Resources",
@@ -166,6 +167,30 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   }
   // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
   useEffect(() => { loadCostAccounts(); }, [isOwner]);
+
+  // Baseline drift badge: read-only count of drifted activities (major count for
+  // the badge color), fetched once per project. Drift is computed from dates/
+  // CPM/baselines, which non-owners can already see, so this fetch is not owner-
+  // gated. A null badge means "not loaded yet" -- never render a stale count.
+  const [driftBadge, setDriftBadge] = useState(null);
+  async function loadDriftBadge() {
+    try {
+      const response = await fetch(`/api/forge/scheduling/${projectId}/drift`);
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) {
+        setDriftBadge(null);
+        return;
+      }
+      setDriftBadge({
+        total: result.summary?.driftedCount ?? 0,
+        major: result.summary?.majorCount ?? 0,
+      });
+    } catch {
+      setDriftBadge(null);
+    }
+  }
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+  useEffect(() => { if (projectId) loadDriftBadge(); else setDriftBadge(null); }, [projectId]);
 
   function handleUndo() {
     setHistory((h) => {
@@ -758,8 +783,14 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
         {visibleInspectorTabs(isOwner).filter((tab) => tab.id !== "help").map((tab) => (
           <button key={tab.id} type="button" onClick={() => setInspectorTab(tab.id)}
             aria-pressed={inspectorTab === tab.id} title={`Open ${DATA_TAB_LABELS[tab.id]} in the inspector`}
-            className={`rounded border px-2 py-1 text-xs font-bold ${inspectorTab === tab.id ? "border-amber-400 bg-amber-500 text-slate-950" : "border-slate-700 hover:bg-slate-800"}`}>
+            className={`flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-bold ${inspectorTab === tab.id ? "border-amber-400 bg-amber-500 text-slate-950" : "border-slate-700 hover:bg-slate-800"}`}>
             {DATA_TAB_LABELS[tab.id]}
+            {tab.id === "drift" && driftBadge && driftBadge.total > 0 && (
+              <span aria-label={`${driftBadge.total} drifted activities`}
+                className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${driftBadge.major > 0 ? "bg-red-600 text-white" : "bg-slate-600 text-white"}`}>
+                {driftBadge.total}
+              </span>
+            )}
           </button>
         ))}
         <button type="button" onClick={() => setInspectorTab("help")} title="Help & keyboard shortcuts"
@@ -967,7 +998,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
             the remaining width beside it; collapsing it gives the timeline full width. */}
         {inspectorTab && (
           <SchedulingInspector activeTab={inspectorTab} onSelectTab={setInspectorTab} onCollapse={() => setInspectorTab(null)}
-            isOwner={isOwner} board={board} projectId={projectId}
+            isOwner={isOwner} board={board} projectId={projectId} driftBadge={driftBadge}
             onAddCalendar={(input) => commitBoard((current) => addCalendar(current, input))}
             onRemoveCalendar={(calendarId) => commitBoard((current) => removeCalendar(current, calendarId))}
             onSetDefaultCalendar={(calendarId) => commitBoard((current) => setDefaultCalendar(current, calendarId))}
