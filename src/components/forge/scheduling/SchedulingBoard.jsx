@@ -24,6 +24,7 @@ function isTypingTarget(el) {
 // labels ("Cost Codes", "EVM & DCMA", "Level Resources"); visibleInspectorTabs supplies
 // the owner gating so non-owners never see the owner-only tabs.
 const DATA_TAB_LABELS = {
+  ask: "Ask",
   calendars: "Calendars",
   baselines: "Baselines",
   resources: "Resources",
