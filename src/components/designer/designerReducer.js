@@ -61,6 +61,7 @@ import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 export const TOOLS = Object.freeze([
   "select",
   "wall",
+  "wallrect",
   "room",
   "door",
   "window",

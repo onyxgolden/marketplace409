@@ -898,7 +898,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const cursorForTool = {
-    select: "default", wall: "crosshair", room: "copy", door: "crosshair",
+    select: "default", wall: "crosshair", wallrect: "crosshair", room: "copy", door: "crosshair",
     window: "crosshair", furniture: "copy", pipe: "crosshair", piping: "copy",
     orgchart: "copy",
     erase: "not-allowed", pan: spaceDown ? "grabbing" : "grab",
