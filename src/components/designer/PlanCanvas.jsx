@@ -557,8 +557,14 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === " ") setSpaceDown(true);
+      // Delete/Backspace deletes the selection — but never while the user is
+      // typing in a field (e.g. editing an org-chart person's name in the
+      // panel input), or it would destroy the selection out from under them.
       if ((e.key === "Delete" || e.key === "Backspace") && tool === "select") {
-        dispatch({ type: "DELETE_SELECTION" });
+        const tag = e.target?.tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          dispatch({ type: "DELETE_SELECTION" });
+        }
       }
       // Enter commits the in-progress pipe run (not while typing in a field).
       if (e.key === "Enter" && tool === "pipe") {
