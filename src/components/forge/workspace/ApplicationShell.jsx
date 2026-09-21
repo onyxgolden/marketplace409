@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeftRight,
   Building2,
@@ -135,6 +135,12 @@ export default function ApplicationShell({
   // Mobile bottom-nav state and tab split. Honors the same hide/show preferences as the desktop
   // chips: a hidden function disappears from both the four primary tabs and the More sheet.
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
+  // Focus management for the More sheet (aria-modal="true" needs it): the More trigger ref gets
+  // focus back on close; the sheet panel and its close button are focused/trapped while open.
+  const moreButtonRef = useRef(null);
+  const sheetPanelRef = useRef(null);
+  const sheetCloseButtonRef = useRef(null);
+  const prevMoreSheetOpenRef = useRef(false);
   const primaryTabs = mobileBottomNav
     ? visibleFunctions.filter((item) => MOBILE_PRIMARY_TAB_IDS.includes(item.id))
     : [];
@@ -148,13 +154,44 @@ export default function ApplicationShell({
     setMoreSheetOpen(false);
   }
 
+  // More sheet: Escape closes, focus moves into the sheet on open, Tab is trapped inside it
+  // while open, and focus returns to the More trigger on close.
   useEffect(() => {
-    if (!moreSheetOpen) return undefined;
-    function handleEscape(event) {
-      if (event.key === "Escape") setMoreSheetOpen(false);
+    if (!moreSheetOpen) {
+      if (prevMoreSheetOpenRef.current) {
+        prevMoreSheetOpenRef.current = false;
+        moreButtonRef.current?.focus?.();
+      }
+      return undefined;
     }
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
+    prevMoreSheetOpenRef.current = true;
+    sheetCloseButtonRef.current?.focus?.();
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setMoreSheetOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const panel = sheetPanelRef.current;
+      if (!panel) return;
+      const focusables = Array.from(
+        panel.querySelectorAll(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [moreSheetOpen]);
 
   return (
@@ -302,6 +339,7 @@ export default function ApplicationShell({
               })}
               <button
                 type="button"
+                ref={moreButtonRef}
                 aria-haspopup="dialog"
                 aria-expanded={moreSheetOpen}
                 aria-current={moreTabActive ? "page" : undefined}
@@ -319,6 +357,7 @@ export default function ApplicationShell({
       {mobileBottomNav && moreSheetOpen && (
         <div
           data-mobile-more-sheet
+          ref={sheetPanelRef}
           role="dialog"
           aria-modal="true"
           aria-label="More functions"
@@ -339,6 +378,7 @@ export default function ApplicationShell({
                 </p>
                 <button
                   type="button"
+                  ref={sheetCloseButtonRef}
                   onClick={() => setMoreSheetOpen(false)}
                   aria-label="Close more functions"
                   className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"

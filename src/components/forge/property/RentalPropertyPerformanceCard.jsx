@@ -68,7 +68,7 @@ export default function RentalPropertyPerformanceCard({
           : "border-slate-200 dark:border-slate-800"
       }`}
     >
-      <summary className="grid min-h-[44px] cursor-pointer list-none items-center gap-2 px-4 py-2.5 transition hover:bg-slate-50 sm:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.7fr)_minmax(8rem,0.8fr)_minmax(8rem,0.8fr)_auto]">
+      <summary className="grid min-h-[44px] cursor-pointer list-none items-center gap-2 px-4 py-2.5 transition hover:bg-slate-50 sm:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.7fr)_minmax(8rem,0.8fr)_minmax(8rem,0.8fr)_auto] lg:min-h-0">
         <div className="min-w-0 truncate font-black text-slate-950 dark:text-slate-50">
           {propertyName}
         </div>

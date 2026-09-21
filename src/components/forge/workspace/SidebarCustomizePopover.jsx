@@ -8,10 +8,13 @@ import { RotateCcw, X } from "lucide-react";
 // positioned popover card -- used inside ApplicationShell's mobile "More" bottom sheet.
 export default function SidebarCustomizePopover({ sections, sidebarPrefs, onClose, inline = false }) {
   const { hiddenItemIds, saving, error, toggleItem, showAll } = sidebarPrefs;
+  // Inline mode lives inside the More sheet's own role="dialog", so it must not render a nested
+  // dialog role and "sidebar" is wrong copy in a bottom-sheet context.
+  const heading = inline ? "Customize navigation" : "Customize sidebar";
   return (
     <div
-      role="dialog"
-      aria-label="Customize sidebar"
+      role={inline ? "group" : "dialog"}
+      aria-label={heading}
       className={
         inline
           ? "w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
@@ -19,15 +22,19 @@ export default function SidebarCustomizePopover({ sections, sidebarPrefs, onClos
       }
     >
       <div className="mb-2 flex items-center justify-between">
-        <p className="text-xs font-black uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">Customize sidebar</p>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close customize sidebar"
-          className="rounded p-0.5 text-slate-400 hover:text-slate-950 dark:hover:text-white"
-        >
-          <X aria-hidden="true" className="h-4 w-4" />
-        </button>
+        <p className="text-xs font-black uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">{heading}</p>
+        {/* Inline mode has no close button: the More sheet already has its own close X, and this
+            one dismissed the entire sheet. */}
+        {!inline && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close customize sidebar"
+            className="rounded p-0.5 text-slate-400 hover:text-slate-950 dark:hover:text-white"
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
+        )}
       </div>
       <button
         type="button"

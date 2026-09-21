@@ -154,13 +154,58 @@ describe("ApplicationShell mobileBottomNav", () => {
     expect(mounted.container.querySelector("[data-mobile-more-sheet]")).toBeNull();
   });
 
+  it("moves focus into the More sheet on open and returns it to the More trigger on close", () => {
+    mockFetch();
+    mounted = renderShell({ mobileBottomNav: true });
+    const moreTab = Array.from(mounted.container.querySelectorAll("[data-mobile-bottom-nav] button")).find((button) => button.textContent === "More");
+    click(moreTab);
+
+    const sheet = mounted.container.querySelector("[data-mobile-more-sheet]");
+    const sheetClose = sheet.querySelector('button[aria-label="Close more functions"]:not(.absolute)');
+    expect(sheetClose).not.toBeNull();
+    expect(document.activeElement).toBe(sheetClose);
+
+    act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    expect(mounted.container.querySelector("[data-mobile-more-sheet]")).toBeNull();
+    expect(document.activeElement).toBe(moreTab);
+  });
+
+  it("traps Tab inside the More sheet while open", () => {
+    mockFetch();
+    mounted = renderShell({ mobileBottomNav: true });
+    const moreTab = Array.from(mounted.container.querySelectorAll("[data-mobile-bottom-nav] button")).find((button) => button.textContent === "More");
+    click(moreTab);
+
+    const sheet = mounted.container.querySelector("[data-mobile-more-sheet]");
+    const focusables = Array.from(
+      sheet.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    expect(focusables.length).toBeGreaterThan(1);
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    last.focus();
+    expect(document.activeElement).toBe(last);
+    act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })); });
+    expect(document.activeElement).toBe(first);
+    act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true })); });
+    expect(document.activeElement).toBe(last);
+  });
+
   it("keeps the customize control inside the More sheet on mobile", () => {
     mockFetch();
     mounted = renderShell({ mobileBottomNav: true });
     const moreTab = Array.from(mounted.container.querySelectorAll("[data-mobile-bottom-nav] button")).find((button) => button.textContent === "More");
     click(moreTab);
     const sheet = mounted.container.querySelector("[data-mobile-more-sheet]");
-    expect(sheet.textContent).toContain("Customize sidebar");
+    expect(sheet.textContent).toContain("Customize navigation");
+    // Inline mode lives inside the sheet's own dialog: no nested dialog role, no close X.
+    const customizeGroup = sheet.querySelector('[role="group"]');
+    expect(customizeGroup).not.toBeNull();
+    expect(customizeGroup.getAttribute("aria-label")).toBe("Customize navigation");
+    expect(sheet.querySelector('[role="group"] [role="dialog"]')).toBeNull();
+    expect(customizeGroup.querySelector('button[aria-label="Close customize sidebar"]')).toBeNull();
   });
 
   it("honors hide/show preferences in the bottom nav and the More sheet", async () => {
