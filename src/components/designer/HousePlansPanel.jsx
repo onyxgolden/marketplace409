@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
 // HOUSE PLANS (HP-L0) — docked reference panel shell for Room Designer.
@@ -38,6 +38,132 @@ function EmptyState({ title, children }) {
   );
 }
 
+// HOUSE PLANS (HP-L2) — live reference browser.
+//
+// Fetches the caller's reference library once, when the Browse tab is first
+// opened. Factual metadata only: title, section identifier, issuing
+// authority/jurisdiction, edition/effective date, official URL, topic tags,
+// provenance, retrieval/verification dates, jurisdiction state. Reference
+// entries are links to official sources — FORGE never writes its own
+// summaries of requirements, and an empty or failed load never invents
+// entries or placeholder links.
+function ReferenceCard({ reference }) {
+  const details = [];
+  if (reference.sectionIdentifier) details.push(`Section ${reference.sectionIdentifier}`);
+  if (reference.jurisdiction) details.push(reference.jurisdiction);
+  if (reference.edition) details.push(`${reference.edition} edition`);
+  if (reference.effectiveDate) details.push(`Effective ${reference.effectiveDate}`);
+
+  return (
+    <div className="rounded border border-gray-800 bg-gray-900/60 p-2.5">
+      <h4 className="text-xs font-semibold leading-snug text-white">{reference.title}</h4>
+      {details.length > 0 && (
+        <p className="mt-1 text-[11px] leading-relaxed text-gray-400">{details.join(" · ")}</p>
+      )}
+      <p className="mt-1 text-[11px] text-gray-400">
+        Issued by <span className="text-gray-200">{reference.issuingAuthority}</span>
+      </p>
+      {reference.topicTags && reference.topicTags.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {reference.topicTags.map((tag) => (
+            <span
+              key={tag}
+              className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-300"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="mt-1.5 space-y-0.5 text-[10px] text-gray-500">
+        {reference.provenance && <p>Source: {reference.provenance}</p>}
+        {reference.retrievalDate && <p>Retrieved {reference.retrievalDate}</p>}
+        {reference.verificationDate && <p>Verified {reference.verificationDate}</p>}
+        <p>Jurisdiction status: {reference.jurisdictionState}</p>
+      </div>
+      <a
+        href={reference.officialUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-1.5 inline-block text-[11px] font-medium text-emerald-400 hover:text-emerald-300 hover:underline"
+      >
+        Official source ↗
+      </a>
+    </div>
+  );
+}
+
+function BrowseReferences() {
+  const [state, setState] = useState({ kind: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/forge/designer/house-plans/references");
+        if (!res.ok) throw new Error(`Load failed (${res.status})`);
+        const body = await res.json();
+        if (cancelled) return;
+        setState({ kind: "ready", references: body.references || [] });
+      } catch (error) {
+        if (!cancelled) setState({ kind: "error" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (state.kind === "loading") {
+    return (
+      <EmptyState title="Browse the reference library">
+        <p>Loading the reference library…</p>
+      </EmptyState>
+    );
+  }
+
+  if (state.kind === "error") {
+    return (
+      <EmptyState title="Browse the reference library">
+        <p>Couldn&apos;t load the reference library.</p>
+        <p>
+          Check your connection and reopen this tab. FORGE never invents
+          reference entries — if the list can&apos;t load, nothing is shown
+          rather than placeholder data.
+        </p>
+      </EmptyState>
+    );
+  }
+
+  if (state.references.length === 0) {
+    return (
+      <EmptyState title="Browse the reference library">
+        <p>The reference library is empty for now.</p>
+        <p>
+          Official Texas and municipal source entries arrive in later slices.
+          Only official sources will be listed here — FORGE never writes its
+          own summaries of requirements.
+        </p>
+      </EmptyState>
+    );
+  }
+
+  return (
+    <div>
+      <h3 className="mb-2 text-sm font-semibold text-white">Browse the reference library</h3>
+      <p className="mb-3 text-xs leading-relaxed text-gray-400">
+        Official reference links only. FORGE points to official sources; it
+        does not interpret them.
+      </p>
+      <div className="space-y-2.5">
+        {state.references.map((reference) => (
+          <ReferenceCard key={reference.id} reference={reference} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TabContent({ tabId }) {
   if (tabId === "project") {
     return (
@@ -64,16 +190,7 @@ function TabContent({ tabId }) {
     );
   }
   if (tabId === "browse") {
-    return (
-      <EmptyState title="Browse the reference library">
-        <p>The reference library is empty for now.</p>
-        <p>
-          Official Texas and municipal source entries arrive in later slices.
-          Only official sources will be listed here — FORGE never writes its
-          own summaries of requirements.
-        </p>
-      </EmptyState>
-    );
+    return <BrowseReferences />;
   }
   if (tabId === "search") {
     return (
