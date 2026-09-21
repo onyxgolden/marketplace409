@@ -29,10 +29,18 @@ export const ORG_TARGETS = Object.freeze([
 ]);
 
 /**
- * Canonical mapping targets for workflow imports. "step" is required;
- * "nextStep" rows become edges and "decision" rows become edge metadata.
+ * Canonical mapping targets for workflow imports. "step" and "nextStep" are
+ * required; "decision" rides on the edge as a label, and "description" /
+ * "owner" enrich the node (slice 3.3 adds the latter two as optional
+ * targets so the wizard can offer them).
  */
-export const WORKFLOW_TARGETS = Object.freeze(["step", "nextStep", "decision"]);
+export const WORKFLOW_TARGETS = Object.freeze([
+  "step",
+  "nextStep",
+  "decision",
+  "description",
+  "owner",
+]);
 
 /**
  * Required targets per mode. A confirmed mapping missing any of these must
@@ -40,7 +48,7 @@ export const WORKFLOW_TARGETS = Object.freeze(["step", "nextStep", "decision"]);
  */
 export const REQUIRED_TARGETS = Object.freeze({
   org: Object.freeze(["name", "supervisor"]),
-  workflow: Object.freeze(["step"]),
+  workflow: Object.freeze(["step", "nextStep"]),
 });
 
 export function assertImportMode(mode) {

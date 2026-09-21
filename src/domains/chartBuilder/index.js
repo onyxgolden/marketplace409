@@ -97,6 +97,10 @@ export {
 } from "./import/orgImportMapper.js";
 
 export {
+  mapWorkflowRows,
+} from "./import/workflowImportMapper.js";
+
+export {
   validateDraftDocument,
 } from "./import/importValidator.js";
 
@@ -113,4 +117,6 @@ export {
 export {
   runOrgImportPipeline,
   commitOrgImport,
+  runWorkflowImportPipeline,
+  commitWorkflowImport,
 } from "./import/importPipeline.js";

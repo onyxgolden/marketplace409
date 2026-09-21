@@ -10,8 +10,25 @@
 // Slice 3.2 covers org imports. The workflow option is shown disabled so the
 // wizard has the shape slice 3.3 will fill in.
 
+// FORGE Chart Builder — import wizard orchestrator (slices 3.2–3.3).
+//
+// Step flow: file → [sheet picker, multi-sheet workbooks only] → mapping
+// confirmation → validation preview → commit. The pipeline is regenerated
+// from scratch every time mappings are confirmed, so going back and changing
+// a mapping always rebuilds the preview — nothing is cached.
+//
+// The chart type (org/workflow) is chosen on the file step and applies to
+// the whole run: the mapping targets, mapper, validator, and commit path
+// all dispatch on it.
+
 import { useState } from "react";
-import { commitOrgImport, ImportError, runOrgImportPipeline } from "@/domains/chartBuilder";
+import {
+  commitOrgImport,
+  commitWorkflowImport,
+  ImportError,
+  runOrgImportPipeline,
+  runWorkflowImportPipeline,
+} from "@/domains/chartBuilder";
 import ImportFileStep from "./ImportFileStep.jsx";
 import SheetPicker from "./SheetPicker.jsx";
 import ColumnMappingStep from "./ColumnMappingStep.jsx";
@@ -19,7 +36,20 @@ import ImportPreviewStep from "./ImportPreviewStep.jsx";
 
 const STEPS = ["file", "sheet", "mapping", "preview", "done"];
 
+function runPipeline(mode, table, confirmed) {
+  return mode === "workflow"
+    ? runWorkflowImportPipeline(table, confirmed)
+    : runOrgImportPipeline(table, confirmed);
+}
+
+function commitPipeline(mode, pipeline) {
+  return mode === "workflow"
+    ? commitWorkflowImport(pipeline)
+    : commitOrgImport(pipeline);
+}
+
 export default function ChartImportWizard({ mode = "org", onComplete, onCancel }) {
+  const [importMode, setImportMode] = useState(mode);
   const [step, setStep] = useState("file");
   const [tables, setTables] = useState(null);
   const [tableIndex, setTableIndex] = useState(0);
@@ -27,6 +57,17 @@ export default function ChartImportWizard({ mode = "org", onComplete, onCancel }
   const [commitError, setCommitError] = useState(null);
 
   const activeTable = tables ? tables[tableIndex] : null;
+
+  function selectMode(nextMode) {
+    if (nextMode === importMode) return;
+    setImportMode(nextMode);
+    // The mode changes the mapping contract, so any in-progress run restarts.
+    setStep("file");
+    setTables(null);
+    setTableIndex(0);
+    setPipeline(null);
+    setCommitError(null);
+  }
 
   function handleParsed({ tables: parsed }) {
     setTables(parsed);
@@ -38,8 +79,7 @@ export default function ChartImportWizard({ mode = "org", onComplete, onCancel }
 
   function handleConfirmMapping(confirmed) {
     try {
-      // Org only in slice 3.2; the workflow pipeline arrives in slice 3.3.
-      const result = runOrgImportPipeline(activeTable, confirmed);
+      const result = runPipeline(importMode, activeTable, confirmed);
       setPipeline(result);
       setCommitError(null);
       setStep("preview");
@@ -54,7 +94,7 @@ export default function ChartImportWizard({ mode = "org", onComplete, onCancel }
 
   function handleCommit() {
     try {
-      const doc = commitOrgImport(pipeline);
+      const doc = commitPipeline(importMode, pipeline);
       setStep("done");
       onComplete(doc);
     } catch (err) {
@@ -103,17 +143,27 @@ export default function ChartImportWizard({ mode = "org", onComplete, onCancel }
       {step === "file" && (
         <div>
           <div className="mb-4 flex gap-2" role="radiogroup" aria-label="Chart type">
-            <ModeButton selected={mode === "org"} label="Org chart" />
-            <button
-              type="button"
-              disabled
-              title="Workflow import arrives in slice 3.3"
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-400"
-            >
-              Workflow chart (soon)
-            </button>
+            <ModeButton
+              selected={importMode === "org"}
+              label="Org chart"
+              onSelect={() => selectMode("org")}
+            />
+            <ModeButton
+              selected={importMode === "workflow"}
+              label="Workflow chart"
+              onSelect={() => selectMode("workflow")}
+            />
           </div>
-          <ImportFileStep onParsed={handleParsed} onBack={onCancel} />
+          <ImportFileStep
+            key={importMode}
+            hint={
+              importMode === "workflow"
+                ? "Columns like Step, Next Step, and Decision become the workflow."
+                : "Columns like Name, Title, and Supervisor become the org chart."
+            }
+            onParsed={handleParsed}
+            onBack={onCancel}
+          />
         </div>
       )}
 
@@ -131,9 +181,9 @@ export default function ChartImportWizard({ mode = "org", onComplete, onCancel }
 
       {step === "mapping" && activeTable && (
         <ColumnMappingStep
-          key={tableIndex}
+          key={`${importMode}-${tableIndex}`}
           rawTable={activeTable}
-          mode={mode}
+          mode={importMode}
           onConfirm={handleConfirmMapping}
           onBack={() => setStep(tables.length > 1 ? "sheet" : "file")}
         />
@@ -151,9 +201,19 @@ export default function ChartImportWizard({ mode = "org", onComplete, onCancel }
         <div className="text-center">
           <p className="text-base font-semibold text-slate-900">Import complete</p>
           <p className="mt-1 text-sm text-slate-600">
-            {pipeline.preview.nodeCount.toLocaleString()} people and{" "}
-            {pipeline.preview.edgeCount.toLocaleString()} reporting lines added to
-            the chart.
+            {importMode === "workflow" ? (
+              <>
+                {pipeline.preview.nodeCount.toLocaleString()} steps and{" "}
+                {pipeline.preview.edgeCount.toLocaleString()} connections added
+                to the chart.
+              </>
+            ) : (
+              <>
+                {pipeline.preview.nodeCount.toLocaleString()} people and{" "}
+                {pipeline.preview.edgeCount.toLocaleString()} reporting lines
+                added to the chart.
+              </>
+            )}
           </p>
         </div>
       )}
@@ -161,18 +221,20 @@ export default function ChartImportWizard({ mode = "org", onComplete, onCancel }
   );
 }
 
-function ModeButton({ selected, label }) {
+function ModeButton({ selected, label, onSelect }) {
   return (
-    <span
+    <button
+      type="button"
       role="radio"
       aria-checked={selected}
+      onClick={onSelect}
       className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
         selected
           ? "border-blue-500 bg-blue-50 text-blue-800"
-          : "border-slate-200 text-slate-600"
+          : "border-slate-200 text-slate-600 hover:border-slate-300"
       }`}
     >
       {label}
-    </span>
+    </button>
   );
 }

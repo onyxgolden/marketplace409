@@ -54,9 +54,13 @@ export function buildImportPreview({
     const firstProblem = rowIssues[0];
     const detail = firstProblem
       ? `${firstProblem.severity === "error" ? "Error" : "Warning"}: ${firstProblem.message}`
-      : source.supervisor
-        ? `Supervisor: ${source.supervisor}`
-        : "Root — no supervisor";
+      : // Workflow nodeSources carry an explicit detail ("Next: …" /
+        // "End step — no next steps"); org sources fall back to the
+        // supervisor-based wording.
+        (source.detail ??
+        (source.supervisor
+          ? `Supervisor: ${source.supervisor}`
+          : "Root — no supervisor"));
     return { rowNumber: source.rowNumber, label: source.name, detail };
   });
 

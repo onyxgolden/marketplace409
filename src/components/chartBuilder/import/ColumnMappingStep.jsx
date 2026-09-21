@@ -42,6 +42,7 @@ export default function ColumnMappingStep({ rawTable, mode, onConfirm, onBack })
   }
 
   const gate = validateConfirmedMappings(mode, analysis, confirmed);
+  const optionalTargets = targets.filter((t) => !required.includes(t));
 
   return (
     <div>
@@ -49,6 +50,12 @@ export default function ColumnMappingStep({ rawTable, mode, onConfirm, onBack })
       <p className="mt-1 text-sm text-slate-600">
         Match each column to what it means. Suggestions are hints only — pick
         each one yourself before continuing.
+        {mode === "workflow" && (
+          <span className="mt-1 block">
+            A Next Step cell can list several steps separated by commas or
+            semicolons — each becomes its own connection.
+          </span>
+        )}
       </p>
       <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
         Required:{" "}
@@ -62,7 +69,9 @@ export default function ColumnMappingStep({ rawTable, mode, onConfirm, onBack })
             {gate.missing.includes(t) ? "✗" : "✓"} {targetLabel(t)}
           </span>
         ))}
-        <span className="ml-1 text-slate-500">Optional: Title, Department, Location</span>
+        <span className="ml-1 text-slate-500">
+          Optional: {optionalTargets.map(targetLabel).join(", ") || "none"}
+        </span>
       </div>
 
       <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">

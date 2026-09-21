@@ -36,10 +36,16 @@ describe("missingRequiredTargets", () => {
     ).toEqual(["name", "supervisor"]);
   });
 
-  it("workflow requires only step", () => {
-    expect(missingRequiredTargets("workflow", [])).toEqual(["step"]);
+  it("workflow requires step and nextStep", () => {
+    expect(missingRequiredTargets("workflow", [])).toEqual(["step", "nextStep"]);
     expect(
       missingRequiredTargets("workflow", [{ headerIndex: 0, target: "step" }])
+    ).toEqual(["nextStep"]);
+    expect(
+      missingRequiredTargets("workflow", [
+        { headerIndex: 0, target: "step" },
+        { headerIndex: 1, target: "nextStep" },
+      ])
     ).toEqual([]);
   });
 

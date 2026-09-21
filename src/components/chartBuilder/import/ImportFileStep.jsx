@@ -16,7 +16,7 @@ function totalRows(tables) {
   return tables.reduce((sum, t) => sum + t.rows.length, 0);
 }
 
-export default function ImportFileStep({ onParsed, onBack }) {
+export default function ImportFileStep({ onParsed, onBack, hint }) {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState(null); // { tables, fileName, rows }
@@ -62,6 +62,7 @@ export default function ImportFileStep({ onParsed, onBack }) {
       <p className="mt-1 text-sm text-slate-600">
         Everything happens in your browser — no employee or workflow data is
         uploaded anywhere.
+        {hint && <span className="mt-1 block">{hint}</span>}
       </p>
       <label className="mt-4 block rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-8 text-center transition hover:border-blue-400">
         <span className="block text-sm font-medium text-slate-700">
