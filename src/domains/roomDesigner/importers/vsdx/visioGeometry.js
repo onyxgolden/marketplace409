@@ -454,7 +454,9 @@ function pointOnArc(arc, t) {
   return { x: cx + ex * cos - ey * sin, y: cy + ex * sin + ey * cos };
 }
 
-/** Flatten one cubic Bézier with adaptive subdivision. Appends to `out`. */
+/** Flatten one cubic Bézier with adaptive subdivision. Appends to `out`.
+ * The budget is PER CURVE: when it is exhausted the exact endpoint is still
+ * emitted and budget.capped is set so the caller can warn. */
 function flattenCubic(p0, c1, c2, p1, toleranceIn, out, budget) {
   // Flatness: max distance of control points from the chord, scaled.
   const dx = p1.x - p0.x;
@@ -465,6 +467,7 @@ function flattenCubic(p0, c1, c2, p1, toleranceIn, out, budget) {
     return Math.abs(dy * p.x - dx * p.y + p1.x * p0.y - p1.y * p0.x) / chordLen;
   };
   if (budget.count >= budget.max) {
+    budget.capped = true;
     out.push({ ...p1 });
     return;
   }
@@ -485,7 +488,10 @@ function flattenCubic(p0, c1, c2, p1, toleranceIn, out, budget) {
   flattenCubic(s, r1, q2, p1, toleranceIn, out, budget);
 }
 
-/** Flatten one arc op with tolerance-derived angular steps. Appends to `out`. */
+/** Flatten one arc op with tolerance-derived angular steps. Appends to `out`.
+ * The budget is PER CURVE. When it is exhausted the row's exact endpoint is
+ * still emitted and budget.capped is set — a curve is never silently
+ * truncated. */
 function flattenArc(arc, toleranceIn, out, budget) {
   const r = Math.max(arc.rx != null ? arc.rx : arc.r, arc.ry != null ? arc.ry : arc.r);
   if (!(r > 0)) return;
@@ -496,7 +502,13 @@ function flattenArc(arc, toleranceIn, out, budget) {
   if (total < EPS) return;
   // Sagitta s = r(1 − cos(θ/2)) ≤ tol  →  θ ≤ 2·acos(1 − tol/r).
   const step = 2 * Math.acos(Math.max(-1, Math.min(1, 1 - Math.min(toleranceIn, r) / r)));
-  const n = Math.max(1, Math.min(budget.max, Math.ceil(total / Math.max(step, 1e-6))));
+  const needed = Math.max(1, Math.ceil(total / Math.max(step, 1e-6)));
+  const n = Math.min(budget.max, needed);
+  if (needed > budget.max) {
+    // The tolerance cannot be satisfied within the per-curve cap: sample
+    // anyway (endpoint preserved below), but flag the approximation.
+    budget.capped = true;
+  }
   let completed = true;
   for (let i = 1; i <= n; i += 1) {
     if (budget.count >= budget.max) {
@@ -506,7 +518,18 @@ function flattenArc(arc, toleranceIn, out, budget) {
     budget.count += 1;
     out.push(pointOnArc(arc, start + (sweep * i) / n));
   }
-  if (completed && out.length > 0) {
+  if (!completed) {
+    // Budget exhausted mid-curve: keep the exact endpoint so the curve's
+    // span is never silently truncated, and flag the approximation.
+    budget.capped = true;
+    if (Number.isFinite(arc.ex) && Number.isFinite(arc.ey)) {
+      out.push({ x: arc.ex, y: arc.ey });
+    } else {
+      out.push(pointOnArc(arc, start + sweep));
+    }
+    return;
+  }
+  if (out.length > 0) {
     // Snap the final sample to the row's exact endpoint: trig evaluation of
     // the end angle leaves float residue (e.g. y = -4.4e-16 instead of 0).
     // Only when the arc flattened fully — never after a budget cut.
@@ -519,12 +542,18 @@ function flattenArc(arc, toleranceIn, out, budget) {
 /**
  * Flatten built subpaths to polylines.
  * Returns [{ points: [{x,y}...], closed, allLines }].
+ *
+ * Each curve op (cubic or arc) gets its OWN segment budget
+ * (maxSegmentsPerCurve): one curve can never starve a later curve in the
+ * same subpath. When a curve's budget is exhausted its exact endpoint is
+ * still emitted and a structured approximation warning is reported through
+ * onWarning — the tolerance is never silently unmet.
  */
-export function flattenPath(subpaths, { toleranceIn = FLATTEN_TOLERANCE_IN, maxSegmentsPerCurve = MAX_SEGMENTS_PER_CURVE } = {}) {
+export function flattenPath(subpaths, { toleranceIn = FLATTEN_TOLERANCE_IN, maxSegmentsPerCurve = MAX_SEGMENTS_PER_CURVE, onWarning } = {}) {
   const result = [];
+  let cappedCurves = 0;
   for (const sp of subpaths) {
     const points = [];
-    const budget = { count: 0, max: maxSegmentsPerCurve };
     let cursor = null;
     for (const op of sp.ops) {
       if (op.op === "move") {
@@ -535,7 +564,9 @@ export function flattenPath(subpaths, { toleranceIn = FLATTEN_TOLERANCE_IN, maxS
         points.push({ ...cursor });
       } else if (op.op === "cubic") {
         const p0 = cursor || { x: op.x1, y: op.y1 };
+        const budget = { count: 0, max: maxSegmentsPerCurve, capped: false };
         flattenCubic(p0, { x: op.x1, y: op.y1 }, { x: op.x2, y: op.y2 }, { x: op.x, y: op.y }, toleranceIn, points, budget);
+        if (budget.capped) cappedCurves += 1;
         cursor = { x: op.x, y: op.y };
       } else if (op.op === "arc") {
         const arcStart = op.full ? 0 : sweepThrough(op.a0, op.a1, op.through).start;
@@ -544,7 +575,9 @@ export function flattenPath(subpaths, { toleranceIn = FLATTEN_TOLERANCE_IN, maxS
           cursor = { ...startPt };
           points.push({ ...cursor });
         }
+        const budget = { count: 0, max: maxSegmentsPerCurve, capped: false };
         flattenArc(op, toleranceIn, points, budget);
+        if (budget.capped) cappedCurves += 1;
         const end = points[points.length - 1];
         cursor = end ? { ...end } : cursor;
       }
@@ -565,6 +598,11 @@ export function flattenPath(subpaths, { toleranceIn = FLATTEN_TOLERANCE_IN, maxS
     const last = clean[clean.length - 1];
     const closed = clean.length > 2 && Math.abs(first.x - last.x) < 1e-6 && Math.abs(first.y - last.y) < 1e-6;
     result.push({ points: closed ? clean.slice(0, -1) : clean, closed, allLines: sp.allLines });
+  }
+  if (cappedCurves > 0 && typeof onWarning === "function") {
+    onWarning(
+      `${cappedCurves} curve${cappedCurves === 1 ? "" : "s"} hit the ${maxSegmentsPerCurve}-segment-per-curve cap — the ${toleranceIn}-inch flattening tolerance may not be met; geometry is approximated.`,
+    );
   }
   return result;
 }

@@ -71,6 +71,39 @@ describe("vsdxPackage", () => {
       { level: 9 },
     );
     expect(() => openVsdxPackage(bytes)).toThrow(/compression ratio/i);
+    // The guard must fire on DECLARED sizes before expansion — not only
+    // after the archive has been decompressed.
+    try {
+      openVsdxPackage(bytes);
+      expect.unreachable("expected openVsdxPackage to throw");
+    } catch (err) {
+      expect(err.code).toBe("compression-ratio-cap");
+      expect(err.message).toMatch(/before expansion/i);
+    }
+  });
+
+  it("rejects a high-ratio archive whose declared entries fit the streaming caps", () => {
+    // 4 x 10 MB of zeros: every entry fits the per-entry cap and the 40 MB
+    // total fits the streaming total cap, so only the declared-size ratio
+    // projection can reject it — before any entry is expanded.
+    const zeros = new Uint8Array(10 * 1024 * 1024);
+    const bytes = zipSync(
+      {
+        ...minimalParts(),
+        "visio/pages/z0.bin": zeros,
+        "visio/pages/z1.bin": zeros,
+        "visio/pages/z2.bin": zeros,
+        "visio/pages/z3.bin": zeros,
+      },
+      { level: 9 },
+    );
+    try {
+      openVsdxPackage(bytes);
+      expect.unreachable("expected openVsdxPackage to throw");
+    } catch (err) {
+      expect(err.code).toBe("compression-ratio-cap");
+      expect(err.message).toMatch(/before expansion/i);
+    }
   });
 
   it("rejects runaway expansion during streaming", () => {

@@ -68,6 +68,26 @@ export function getAttr(el, name) {
   return el.getAttribute(name);
 }
 
+/**
+ * Attribute value matched on localName (namespace-tolerant), or null.
+ * Needed for namespaced attributes such as r:id on <Rel> elements
+ * (real VSDX writes `r:id` with a relationship-namespace prefix).
+ */
+export function getAttrLocal(el, name) {
+  if (!el || typeof el.getAttribute !== "function") return null;
+  const direct = el.getAttribute(name);
+  if (direct != null) return direct;
+  const attrs = el.attributes;
+  if (attrs) {
+    for (let i = 0; i < attrs.length; i += 1) {
+      const attr = attrs[i];
+      const local = attr.localName || String(attr.name || "").split(":").pop();
+      if (local === name) return attr.value;
+    }
+  }
+  return null;
+}
+
 /** Concatenated text content of an element, whitespace-collapsed and trimmed. */
 export function textOf(el) {
   if (!el) return "";

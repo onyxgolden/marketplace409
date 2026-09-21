@@ -10,8 +10,12 @@
  * streaming decompression (fflate exposes each entry's declared
  * originalSize before its bytes are expanded, and ondata lets us abort
  * mid-entry), so a hostile archive fails fast instead of after the tab's
- * memory is gone. XML byte caps are enforced again in getText before DOM
- * parsing. All processing is browser-local; nothing is uploaded.
+ * memory is gone. The compression-ratio rule additionally runs a pre-expansion
+ * projection: the declared uncompressed sizes are accumulated before each
+ * entry starts, and the archive is rejected as soon as the projected
+ * aggregate ratio exceeds the cap — before those bytes are decompressed.
+ * XML byte caps are enforced again in getText before DOM parsing. All
+ * processing is browser-local; nothing is uploaded.
  */
 
 import { Unzip, UnzipInflate } from "fflate";
@@ -76,6 +80,7 @@ export function openVsdxPackage(bytes, limits = VSDX_LIMITS) {
   const files = new Map();
   let entryCount = 0;
   let totalUncompressed = 0;
+  let declaredUncompressed = 0;
   let failure = null;
 
   const unzip = new Unzip();
@@ -110,6 +115,21 @@ export function openVsdxPackage(bytes, limits = VSDX_LIMITS) {
           `Archive entry '${name}' uses unsupported compression method ${file.compression}.`,
           { code: "unsupported-compression" },
         );
+      }
+      // Pre-expansion ratio projection: the declared uncompressed size is
+      // known before the entry's bytes are expanded, so a tiny archive
+      // declaring an enormous expansion fails here — before decompression —
+      // rather than after. (Entries using data descriptors declare 0 and
+      // are covered by the streaming byte caps plus the final ratio check.)
+      if (file.originalSize > 0) {
+        declaredUncompressed += file.originalSize;
+        const projected = declaredUncompressed / Math.max(1, data.length);
+        if (projected > limits.maxCompressionRatio) {
+          throw new VsdxImportError(
+            `Archive declares ${declaredUncompressed} uncompressed bytes (~${projected.toFixed(0)}:1) — exceeding the ${limits.maxCompressionRatio}:1 compression ratio safety cap before expansion.`,
+            { code: "compression-ratio-cap" },
+          );
+        }
       }
       const chunks = [];
       let size = 0;

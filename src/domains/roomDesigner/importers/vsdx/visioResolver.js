@@ -20,7 +20,7 @@
  */
 
 import { VsdxImportError } from "./vsdxErrors";
-import { childElements, firstChild, getAttr, parseXml, textOf } from "./visioXml";
+import { childElements, firstChild, getAttr, getAttrLocal, parseXml, textOf } from "./visioXml";
 import { resolveTarget } from "./visioPages";
 
 const MASTERS_XML = "visio/masters/masters.xml";
@@ -98,8 +98,9 @@ export function constantOf(resolved) {
 
 /**
  * Build the master index once per import: Map<masterId, { id, nameU, name, shapeEl }>.
- * Master parts are matched to <Master> entries positionally (document order),
- * the same rule as pages. A file with no masters at all yields an empty map.
+ * Each <Master> entry carries a <Rel> child holding the OPC relationship id
+ * (r:id); the content part is resolved through that id, never by document
+ * position. A file with no masters at all yields an empty map.
  */
 export function buildMasterIndex(pkg) {
   const index = new Map();
@@ -109,28 +110,44 @@ export function buildMasterIndex(pkg) {
   const masterEls = childElements(mastersEl, "Master");
   if (masterEls.length === 0) return index;
 
-  let rels = [];
+  const relById = new Map();
   if (pkg.has(MASTERS_RELS)) {
     const relDoc = parseXml(pkg.getText(MASTERS_RELS), MASTERS_RELS);
     for (const rel of childElements(relDoc.documentElement, "Relationship")) {
       const type = getAttr(rel, "Type") || "";
       if (!/(^|\/)master$/.test(type)) continue;
+      const rid = getAttr(rel, "Id");
       const target = getAttr(rel, "Target");
-      if (target) rels.push(resolveTarget(MASTERS_XML, target));
+      if (!rid || !target) continue;
+      if (relById.has(rid)) {
+        throw new VsdxImportError(`Duplicate master relationship id '${rid}' in '${MASTERS_RELS}'.`, {
+          provenance: MASTERS_XML,
+          code: "master-rel-mismatch",
+        });
+      }
+      relById.set(rid, resolveTarget(MASTERS_XML, target));
     }
-  }
-  if (rels.length !== masterEls.length) {
-    throw new VsdxImportError(
-      `Master list (${masterEls.length}) does not match master relationships (${rels.length}) — refusing to guess the mapping.`,
-      { provenance: MASTERS_XML, code: "master-rel-mismatch" },
-    );
   }
 
   masterEls.forEach((el, i) => {
     const id = getAttr(el, "ID");
-    const contentPath = rels[i];
+    const name = getAttr(el, "NameU") || getAttr(el, "Name") || `Master ${i + 1}`;
+    const relId = getAttrLocal(firstChild(el, "Rel"), "id");
+    if (relId == null || relId === "") {
+      throw new VsdxImportError(
+        `Master '${name}' has no relationship reference — cannot resolve its content part without guessing.`,
+        { provenance: MASTERS_XML, code: "master-rel-mismatch" },
+      );
+    }
+    if (!relById.has(relId)) {
+      throw new VsdxImportError(`Master '${name}' references unknown relationship '${relId}'.`, {
+        provenance: MASTERS_XML,
+        code: "master-rel-mismatch",
+      });
+    }
+    const contentPath = relById.get(relId);
     if (!pkg.has(contentPath)) {
-      throw new VsdxImportError(`Master '${getAttr(el, "NameU") || id}' points at missing part '${contentPath}'.`, {
+      throw new VsdxImportError(`Master '${name}' points at missing part '${contentPath}'.`, {
         provenance: MASTERS_XML,
         code: "missing-part",
       });

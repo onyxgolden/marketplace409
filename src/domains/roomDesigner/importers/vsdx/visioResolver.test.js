@@ -110,6 +110,27 @@ describe("visioResolver masters", () => {
     expect(MASTER_RECT).toBe(masterBefore);
   });
 
+  it("resolves masters by relationship id when .rels order is reversed", () => {
+    // Two masters whose rels entries are reordered: master id "0" must still
+    // resolve to the Rectangle definition, not to Circle's.
+    const bytes = buildVsdx({
+      masters: [
+        { id: "0", nameU: "Rectangle", shapes: MASTER_RECT },
+        { id: "1", nameU: "Circle", shapes: shapeXml({ id: "0", nameU: "Oval", cells: { Width: { v: "3" } } }) },
+      ],
+      pages: [{ name: "Page-1", file: "page1.xml", shapes: "" }],
+      reversedRels: true,
+    });
+    const pkg = openVsdxPackage(bytes);
+    const masterIndex = buildMasterIndex(pkg);
+    expect(masterIndex.get("0").nameU).toBe("Rectangle");
+    expect(masterIndex.get("1").nameU).toBe("Circle");
+    const rectCells = cellElementMap(masterIndex.get("0").shapeEl);
+    expect(constantOf(resolveCell(rectCells.get("Width"), rectCells))).toBe(2);
+    const circleCells = cellElementMap(masterIndex.get("1").shapeEl);
+    expect(constantOf(resolveCell(circleCells.get("Width"), circleCells))).toBe(3);
+  });
+
   it("warns on unknown master references and keeps local geometry", () => {
     const bytes = buildVsdx({
       pages: [

@@ -261,4 +261,59 @@ describe("visioGeometry flattening", () => {
     const flat = flattenPath(subpaths);
     expect(flat[0].points).toHaveLength(2);
   });
+
+  it("gives every curve its own budget: later curves never vanish under a shared cap", () => {
+    // Two full circles (r=100) in ONE subpath with a 12-segment-per-curve
+    // budget. A shared budget would let the first circle eat the whole cap
+    // and starve the second; per-curve budgets must keep both.
+    const twoCircles = [
+      {
+        ops: [
+          { op: "move", x: 100, y: 0 },
+          { op: "arc", cx: 0, cy: 0, rx: 100, ry: 100, rot: 0, full: true, ex: 100, ey: 0 },
+          { op: "arc", cx: 300, cy: 0, rx: 100, ry: 100, rot: 0, full: true, ex: 300, ey: 0 },
+        ],
+        allLines: false,
+      },
+    ];
+    const warnings = [];
+    const flat = flattenPath(twoCircles, {
+      toleranceIn: 0.01,
+      maxSegmentsPerCurve: 12,
+      onWarning: (message) => warnings.push(message),
+    });
+    const pts = flat[0].points;
+    // Both exact endpoints survive despite the cap …
+    const has = (x, y) => pts.some((p) => p.x === x && p.y === y);
+    expect(has(100, 0)).toBe(true);
+    expect(has(300, 0)).toBe(true);
+    // … the second circle still has its own samples …
+    const secondCircleSamples = pts.filter((p) => p.x > 200);
+    expect(secondCircleSamples.length).toBeGreaterThan(4);
+    // … and the tolerance shortfall is surfaced, not silent.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/2 curves.*12-segment-per-curve cap/i);
+  });
+
+  it("caps a cubic without losing its exact endpoint", () => {
+    const s = [
+      {
+        ops: [
+          { op: "move", x: 0, y: 0 },
+          { op: "cubic", x1: 100, y1: 0, x2: 0, y2: 100, x: 100, y: 100 },
+        ],
+        allLines: false,
+      },
+    ];
+    const warnings = [];
+    const flat = flattenPath(s, {
+      toleranceIn: 1e-9,
+      maxSegmentsPerCurve: 8,
+      onWarning: (m) => warnings.push(m),
+    });
+    const last = flat[0].points.at(-1);
+    expect(last).toMatchObject({ x: 100, y: 100 });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/1 curve.*8-segment-per-curve cap/i);
+  });
 });

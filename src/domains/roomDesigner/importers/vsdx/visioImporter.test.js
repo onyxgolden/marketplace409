@@ -134,4 +134,37 @@ describe("visioImporter end to end", () => {
   it("commit requires a prepared result", () => {
     expect(() => commitVsdxImport(createEmptyDesign(), null)).toThrow(/nothing prepared/i);
   });
+
+  it("missing PageHeight: fallback frame is measured in PAGE space, not local coordinates", async () => {
+    // A rectangle nested in a group rotated 90° at Pin (10,5): local (0,0)–(2,1)
+    // lands in page space at x∈[9,10], y∈[5,7]. The drawing-bounds fallback
+    // must use those page-space bounds (pageHeightIn = 7); measuring bounds in
+    // local coordinates and shifting local points misplaces the drawing.
+    const rotated = shapeXml({
+      id: "20",
+      nameU: "Rotated",
+      cells: {
+        PinX: { v: 10 },
+        PinY: { v: 5 },
+        LocPinX: { v: 0 },
+        LocPinY: { v: 0 },
+        Angle: { v: Math.PI / 2 },
+      },
+      children: `<Shape ID="21" NameU="Rect">${rectGeometry(0, 0, 2, 1)}</Shape>`,
+    });
+    const bytes = buildVsdx({
+      pages: [{ name: "P", file: "page1.xml", shapes: rotated, pageHeight: null }],
+    });
+    const prepared = await prepareVsdxImport(bytes);
+    expect(prepared.pageHeightIn).toBe(7);
+
+    const paths = prepared.records.annotations.filter((a) => a.kind === "path");
+    expect(paths).toHaveLength(1);
+    const xs = paths[0].points.map((p) => p.x).sort((a, b) => a - b);
+    const ys = paths[0].points.map((p) => p.y).sort((a, b) => a - b);
+    // (10,5)→(10,2) (10,7)→(10,0) (9,7)→(9,0) (9,5)→(9,2) under y = 7 − y_page.
+    expect(xs).toEqual([9, 9, 10, 10]);
+    expect(ys).toEqual([0, 0, 2, 2]);
+    expect(prepared.issues.some((i) => /drawing bounds/.test(i.message))).toBe(true);
+  });
 });

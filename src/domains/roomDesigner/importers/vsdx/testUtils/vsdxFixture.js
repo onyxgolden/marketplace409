@@ -54,27 +54,30 @@ export function pageContentXml({ shapes = "", pageWidth = 11, pageHeight = 8.5 }
  *   filename (e.g. "page2.xml"); listing order here is the DISPLAY order and
  *   may differ from filename order.
  * masters: [{ id, nameU, shapes }] — master definition shapes.
+ * reversedRels: when true, the <Relationship> entries in the .rels parts are
+ *   emitted in reverse document order — Page/Master elements still resolve
+ *   through their <Rel r:id>, which must not depend on rel ordering.
  */
-export function buildVsdx({ pages = [], masters = [] } = {}) {
+export function buildVsdx({ pages = [], masters = [], reversedRels = false } = {}) {
+  const REL_NS = `xmlns:r="http://schemas.openxmlformats.org/office/2006/relationships"`;
   const files = {
     "[Content_Types].xml": strToU8(`<?xml version="1.0"?><Types></Types>`),
     "visio/document.xml": strToU8(`<?xml version="1.0"?><VisioDocument></VisioDocument>`),
   };
 
   const pageEls = pages
-    .map((p, i) => `<Page ID="${i}" NameU="${p.name}"/>`)
+    .map((p, i) => `<Page ID="${i}" NameU="${p.name}"><Rel r:id="rId${i + 1}"/></Page>`)
     .join("");
   files["visio/pages/pages.xml"] = strToU8(
-    `<?xml version="1.0"?><Pages xmlns="http://schemas.microsoft.com/office/visio/2012/main">${pageEls}</Pages>`,
+    `<?xml version="1.0"?><Pages xmlns="http://schemas.microsoft.com/office/visio/2012/main" ${REL_NS}>${pageEls}</Pages>`,
   );
-  const pageRels = pages
-    .map(
-      (p, i) =>
-        `<Relationship Id="rId${i + 1}" Type="http://schemas.microsoft.com/office/2011/relationships/page" Target="${p.file}"/>`,
-    )
-    .join("");
+  let pageRels = pages.map(
+    (p, i) =>
+      `<Relationship Id="rId${i + 1}" Type="http://schemas.microsoft.com/office/2011/relationships/page" Target="${p.file}"/>`,
+  );
+  if (reversedRels) pageRels = [...pageRels].reverse();
   files["visio/pages/_rels/pages.xml.rels"] = strToU8(
-    `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${pageRels}</Relationships>`,
+    `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${pageRels.join("")}</Relationships>`,
   );
   for (const p of pages) {
     files[`visio/pages/${p.file}`] = strToU8(
@@ -83,18 +86,19 @@ export function buildVsdx({ pages = [], masters = [] } = {}) {
   }
 
   if (masters.length > 0) {
-    const masterEls = masters.map((m) => `<Master ID="${m.id}" NameU="${m.nameU}"/>`).join("");
-    files["visio/masters/masters.xml"] = strToU8(
-      `<?xml version="1.0"?><Masters xmlns="http://schemas.microsoft.com/office/visio/2012/main">${masterEls}</Masters>`,
-    );
-    const masterRels = masters
-      .map(
-        (m, i) =>
-          `<Relationship Id="rId${i + 1}" Type="http://schemas.microsoft.com/office/2011/relationships/master" Target="master${i + 1}.xml"/>`,
-      )
+    const masterEls = masters
+      .map((m, i) => `<Master ID="${m.id}" NameU="${m.nameU}"><Rel r:id="rId${i + 1}"/></Master>`)
       .join("");
+    files["visio/masters/masters.xml"] = strToU8(
+      `<?xml version="1.0"?><Masters xmlns="http://schemas.microsoft.com/office/visio/2012/main" ${REL_NS}>${masterEls}</Masters>`,
+    );
+    let masterRels = masters.map(
+      (m, i) =>
+        `<Relationship Id="rId${i + 1}" Type="http://schemas.microsoft.com/office/2011/relationships/master" Target="master${i + 1}.xml"/>`,
+    );
+    if (reversedRels) masterRels = [...masterRels].reverse();
     files["visio/masters/_rels/masters.xml.rels"] = strToU8(
-      `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${masterRels}</Relationships>`,
+      `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${masterRels.join("")}</Relationships>`,
     );
     masters.forEach((m, i) => {
       files[`visio/masters/master${i + 1}.xml`] = strToU8(

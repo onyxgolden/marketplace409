@@ -92,7 +92,9 @@ function walkPageSpace(resolved, ancestorMatrices, state) {
       provenance: resolved.provenance,
       onWarning: (message) => state.warn(null, message),
     });
-    const flat = flattenPath(subpaths);
+    const flat = flattenPath(subpaths, {
+      onWarning: (message) => state.warn(null, message),
+    });
     for (const fp of flat) {
       if (fp.points.length === 0) continue;
       pagePolylines.push({ points: fp.points, closed: fp.closed, allLines: fp.allLines });
@@ -114,6 +116,7 @@ function walkPageSpace(resolved, ancestorMatrices, state) {
   return items;
 }
 
+/** Page-space (Visio Y-up) bounds of all items AFTER their page matrices. */
 function pageSpaceBounds(items) {
   let minX = Infinity;
   let minY = Infinity;
@@ -122,10 +125,13 @@ function pageSpaceBounds(items) {
   for (const item of items) {
     for (const pl of item.pagePolylines) {
       for (const p of pl.points) {
-        if (p.x < minX) minX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y > maxY) maxY = p.y;
+        // Bounds must be measured in page space, not local shape space:
+        // local coordinates have not yet had the placement transform applied.
+        const t = applyToPoint(item.pageMatrix, p);
+        if (t.x < minX) minX = t.x;
+        if (t.y < minY) minY = t.y;
+        if (t.x > maxX) maxX = t.x;
+        if (t.y > maxY) maxY = t.y;
       }
     }
   }
@@ -174,25 +180,20 @@ export async function prepareVsdxImport(bytes, { pageIndex = 0, onPhase } = {}) 
   }
 
   // Page height: PageSheet constant preferred; drawing-bounds fallback.
+  // The fallback frame is established in PAGE space (after placement
+  // transforms): content occupies [b.minY, b.maxY], and the coordinate
+  // boundary computes designerY = pageHeightIn − visioY, so passing b.maxY
+  // as the height puts the bounds top at y=0 with no geometry mutation.
+  // Local coordinates must NEVER be shifted to compensate — under rotation
+  // or nesting that mutates the wrong space.
   let pageHeightIn = readPageSize(pageSheetCells).heightIn;
   if (!(pageHeightIn > 0)) {
     const b = pageSpaceBounds(items);
-    pageHeightIn = b ? b.maxY - b.minY : 0;
+    pageHeightIn = b ? b.maxY : 0;
     warn(
       `Page '${page.name}'`,
       "Page size is missing or non-constant — Y coordinates are relative to the drawing bounds, not the Visio page.",
     );
-    // Shift so the fallback frame starts at 0.
-    if (b) {
-      const dy = -b.minY;
-      if (dy !== 0) {
-        for (const item of items) {
-          for (const pl of item.pagePolylines) {
-            for (const p of pl.points) p.y += dy;
-          }
-        }
-      }
-    }
   }
 
   phase("classifying");

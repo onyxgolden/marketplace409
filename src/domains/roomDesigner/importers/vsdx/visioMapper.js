@@ -270,17 +270,60 @@ function tryPlaceOpening(walls, detail, newId, resolved) {
  * Pure: returns a new design; the input design is never mutated.
  * All arrays are appended in one step so the caller can wrap this in a
  * single undo touch — partial application is impossible.
+ *
+ * Imported IDs are deterministic (page index + source shape ID), so
+ * re-importing the same page would append duplicate IDs. An incoming ID
+ * that already exists in the design (or earlier in the same import) gets a
+ * numeric suffix (-2, -3, …) instead of colliding.
  */
 export function applyImportResult(design, importRecords) {
   const r = importRecords.records || importRecords;
+  const usedIds = new Set();
+  for (const key of ["walls", "rooms", "openings", "furniture", "pipes", "symbols", "annotations"]) {
+    for (const record of design[key] || []) {
+      if (record && record.id != null) usedIds.add(String(record.id));
+    }
+  }
+  const uniqueId = (id) => {
+    const base = String(id);
+    if (!usedIds.has(base)) {
+      usedIds.add(base);
+      return base;
+    }
+    let n = 2;
+    while (usedIds.has(`${base}-${n}`)) n += 1;
+    const suffixed = `${base}-${n}`;
+    usedIds.add(suffixed);
+    return suffixed;
+  };
+  const renumbered = {};
+  for (const key of ["walls", "rooms", "openings", "furniture", "pipes", "symbols", "annotations"]) {
+    renumbered[key] = (r[key] || []).map((record) =>
+      record && record.id != null ? { ...record, id: uniqueId(record.id) } : record,
+    );
+  }
+  // Openings reference their wall by wallId: keep that reference pointing at
+  // the wall's (possibly suffixed) new ID.
+  const wallIdMap = new Map();
+  for (let i = 0; i < (r.walls || []).length; i += 1) {
+    const oldId = r.walls[i] && r.walls[i].id != null ? String(r.walls[i].id) : null;
+    if (oldId) wallIdMap.set(oldId, renumbered.walls[i].id);
+  }
+  if (wallIdMap.size > 0) {
+    renumbered.openings = renumbered.openings.map((opening) =>
+      opening && opening.wallId != null && wallIdMap.has(String(opening.wallId))
+        ? { ...opening, wallId: wallIdMap.get(String(opening.wallId)) }
+        : opening,
+    );
+  }
   return {
     ...design,
-    walls: [...(design.walls || []), ...(r.walls || [])],
-    rooms: [...(design.rooms || []), ...(r.rooms || [])],
-    openings: [...(design.openings || []), ...(r.openings || [])],
-    furniture: [...(design.furniture || []), ...(r.furniture || [])],
-    pipes: [...(design.pipes || []), ...(r.pipes || [])],
-    symbols: [...(design.symbols || []), ...(r.symbols || [])],
-    annotations: [...(design.annotations || []), ...(r.annotations || [])],
+    walls: [...(design.walls || []), ...renumbered.walls],
+    rooms: [...(design.rooms || []), ...renumbered.rooms],
+    openings: [...(design.openings || []), ...renumbered.openings],
+    furniture: [...(design.furniture || []), ...renumbered.furniture],
+    pipes: [...(design.pipes || []), ...renumbered.pipes],
+    symbols: [...(design.symbols || []), ...renumbered.symbols],
+    annotations: [...(design.annotations || []), ...renumbered.annotations],
   };
 }
