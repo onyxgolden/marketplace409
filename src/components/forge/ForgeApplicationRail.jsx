@@ -15,10 +15,11 @@ import {
 } from "@/components/workspace-shell";
 import ThemeToggle from "@/components/theme/ThemeToggle";
 
-// Rental Manager and Programmer were promoted to their own sibling
-// workspaces (see src/lib/workspaces.js) — this list is now Forge's
-// *internal* sub-navigation only. Their own nested layouts
-// (forge/rental/layout.js, forge/developer/layout.js) supply the outer
+// Rental Manager, Programmer, Scheduling, and Designer were promoted to
+// their own sibling workspaces (see src/lib/workspaces.js) — this list is
+// now Forge's *internal* sub-navigation only. Their own nested layouts
+// (forge/rental/layout.js, forge/developer/layout.js,
+// forge/scheduling/layout.js, forge/designer/layout.js) supply the outer
 // workspace shell instead, and this rail steps aside for those subtrees
 // below (see PROMOTED_PREFIXES).
 export const FORGE_APPLICATIONS =
@@ -76,7 +77,7 @@ export const FORGE_APPLICATIONS =
     }),
   ]);
 
-export const PROMOTED_PREFIXES = ["/forge/rental", "/forge/developer", "/forge/scheduling"];
+export const PROMOTED_PREFIXES = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer"];
 
 export function isPromotedSubtree(pathname) {
   return PROMOTED_PREFIXES.some(
@@ -183,9 +184,10 @@ export default function ForgeApplicationRail({
     setMobileOpen,
   ] = useState(false);
 
-  // /forge/rental and /forge/developer are their own promoted workspaces
-  // now — their nested layouts already supply WorkspaceShell, so this
-  // rail must not wrap them in Forge's own chrome as well.
+  // /forge/rental, /forge/developer, /forge/scheduling, and /forge/designer
+  // are their own promoted workspaces now — their nested layouts already
+  // supply WorkspaceShell, so this rail must not wrap them in Forge's own
+  // chrome as well.
   if (isPromotedSubtree(pathname)) {
     return <>{children}</>;
   }

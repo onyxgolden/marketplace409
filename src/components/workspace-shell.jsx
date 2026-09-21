@@ -7,6 +7,7 @@ import {
   Bell,
   Building2,
   Code2,
+  DraftingCompass,
   GanttChart,
   Hammer,
   LayoutGrid,
@@ -23,7 +24,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { WORKSPACES, isWorkspaceActive } from "@/lib/workspaces";
 
-const WORKSPACE_ICONS = { Store, Building2, Hammer, GanttChart, Code2 };
+const WORKSPACE_ICONS = { Store, Building2, Hammer, GanttChart, DraftingCompass, Code2 };
 
 // Named export so ForgeApplicationRail can render the identical
 // cross-workspace switcher above its own Forge-internal sub-nav, instead
