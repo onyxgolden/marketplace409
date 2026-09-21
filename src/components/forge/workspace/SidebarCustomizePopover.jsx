@@ -4,13 +4,19 @@ import { RotateCcw, X } from "lucide-react";
 // `sections` is an array of { sectionLabel, items } -- pass a null/omitted sectionLabel for a flat,
 // ungrouped list (e.g. ApplicationShell's own flat `functions` prop, which has no sub-categories to
 // label). Grouped callers (Rental Manager) pass a real sectionLabel per group/sub-category.
-export default function SidebarCustomizePopover({ sections, sidebarPrefs, onClose }) {
+// `inline` renders the same controls as a plain full-width block instead of the absolutely
+// positioned popover card -- used inside ApplicationShell's mobile "More" bottom sheet.
+export default function SidebarCustomizePopover({ sections, sidebarPrefs, onClose, inline = false }) {
   const { hiddenItemIds, saving, error, toggleItem, showAll } = sidebarPrefs;
   return (
     <div
       role="dialog"
       aria-label="Customize sidebar"
-      className="absolute left-0 top-full z-20 mt-1 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-700 dark:bg-slate-900"
+      className={
+        inline
+          ? "w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
+          : "absolute left-0 top-full z-20 mt-1 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-700 dark:bg-slate-900"
+      }
     >
       <div className="mb-2 flex items-center justify-between">
         <p className="text-xs font-black uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">Customize sidebar</p>

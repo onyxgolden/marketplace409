@@ -140,7 +140,7 @@ export default function SimplifiImportPanel() {
     {error ? <p role="alert" className="rounded-xl bg-red-50 p-4 font-bold text-red-800">{error}</p> : null}
     {busy ? <p role="status" className="rounded-xl bg-cyan-50 p-4 font-bold text-cyan-900">Working…</p> : null}
     {preview ? <>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{Object.entries(preview.totals ?? {}).map(([label, total]) => <div key={label} className="rounded-2xl bg-slate-100 p-4 dark:bg-slate-800"><p className="text-xs font-black uppercase text-slate-500">{label.replaceAll("_", " ")}</p><p className="mt-1 text-xl font-black">{total.count}</p><p className="text-sm">{money(total.amount_cents)}</p></div>)}</div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 xl:grid-cols-5">{Object.entries(preview.totals ?? {}).map(([label, total]) => <div key={label} className="rounded-2xl bg-slate-100 p-4 dark:bg-slate-800"><p className="text-xs font-black uppercase text-slate-500">{label.replaceAll("_", " ")}</p><p className="mt-1 text-xl font-black">{total.count}</p><p className="text-sm">{money(total.amount_cents)}</p></div>)}</div>
       <details open className="rounded-2xl border p-4"><summary className="cursor-pointer font-black">1. Map {sourceAccounts.length} Simplifi accounts</summary>
         {!mappingsComplete ? <button type="button" disabled={busy} onClick={createMissingAccounts} className="mt-4 rounded-xl bg-cyan-600 px-4 py-2 font-black text-white disabled:opacity-40">Create and map missing FORGE accounts</button> : null}
         <div className="mt-4 grid gap-3 lg:grid-cols-2">{sourceAccounts.map((account) => <div key={account.account_name} className="grid gap-2 rounded-xl bg-slate-50 p-3 dark:bg-slate-800 sm:grid-cols-[1fr_1fr_auto]">

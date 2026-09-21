@@ -148,7 +148,7 @@ export default function RentalPortfolioPerformance({
 
       {portfolio && (
         <>
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+          <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-6">
             {portfolio.metrics.map((metric) => (
               <div
                 key={metric.label}
@@ -216,7 +216,7 @@ export default function RentalPortfolioPerformance({
                 Income and Expense Breakdown
               </h3>
 
-              <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800">
+              <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
                 <table className="w-full border-collapse text-left text-sm">
                   <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
                     <tr>

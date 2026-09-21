@@ -626,7 +626,7 @@ export default function FinancialAccountBalancesPanel({ onSelectAccount, selecte
   }
 
   return (
-    <section data-financial-account-balances className="max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+    <section data-financial-account-balances className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
       <h3 className="px-1.5 text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Accounts</h3>
       <div className="flex items-center justify-between px-1.5 py-2">
         <span className="text-sm font-black text-slate-900 dark:text-white">Net Worth</span>

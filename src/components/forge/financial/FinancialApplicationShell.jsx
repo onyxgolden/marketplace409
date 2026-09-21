@@ -164,8 +164,8 @@ export function buildFinancialActiveSurface({
       const showWelcome = loadState === "ready" && (accounts || []).length === 0;
 
       return (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <div className="flex flex-col gap-6 lg:block lg:space-y-6">
+          <div className="order-2 grid grid-cols-1 items-start gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
             <div className="lg:sticky lg:top-4">
               <FinancialAccountBalancesPanel
                 onSelectAccount={onSelectAccount}
@@ -220,11 +220,16 @@ export function buildFinancialActiveSurface({
           </div>
 
           {!showWelcome && (
-            <FinancialWorkspaceHeader
-              health={health}
-              kpis={kpis}
-              headline={headline}
-            />
+            // Simplifi-app order on mobile: net-worth headline hero + KPIs first, then accounts,
+            // then the activity/intelligence stack. Desktop keeps the grid-then-header order
+            // because order-* utilities only apply inside the mobile flex container.
+            <div className="order-1">
+              <FinancialWorkspaceHeader
+                health={health}
+                kpis={kpis}
+                headline={headline}
+              />
+            </div>
           )}
         </div>
       );
@@ -260,6 +265,8 @@ export default function FinancialApplicationShell({
       applicationDescription="Financial position, transactions, property performance, and operating actions."
       functions={FINANCIAL_FUNCTIONS}
       sidebarKey="financial"
+      // Simplifi-style fixed bottom nav on phones; desktop chip row is unchanged.
+      mobileBottomNav
       activeFunctionId={
         activeFunctionId
       }

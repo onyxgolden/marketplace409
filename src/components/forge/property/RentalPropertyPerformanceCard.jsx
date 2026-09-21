@@ -68,7 +68,7 @@ export default function RentalPropertyPerformanceCard({
           : "border-slate-200 dark:border-slate-800"
       }`}
     >
-      <summary className="grid cursor-pointer list-none items-center gap-2 px-4 py-2.5 transition hover:bg-slate-50 sm:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.7fr)_minmax(8rem,0.8fr)_minmax(8rem,0.8fr)_auto]">
+      <summary className="grid min-h-[44px] cursor-pointer list-none items-center gap-2 px-4 py-2.5 transition hover:bg-slate-50 sm:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.7fr)_minmax(8rem,0.8fr)_minmax(8rem,0.8fr)_auto]">
         <div className="min-w-0 truncate font-black text-slate-950 dark:text-slate-50">
           {propertyName}
         </div>
@@ -141,7 +141,7 @@ export default function RentalPropertyPerformanceCard({
         data-property-performance-details
         className="border-t border-slate-200 bg-slate-50/60 p-3 dark:bg-slate-800/60 dark:border-slate-800"
       >
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Metric
             label="Income"
             value={income}
