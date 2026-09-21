@@ -9,9 +9,9 @@ import {
 } from "./regulatorySource";
 
 const minimalValid = () => ({
-  title: "2024 International Residential Code",
-  issuingAuthority: "International Code Council",
-  officialUrl: "https://codes.iccsafe.org/",
+  title: "Fictitious Building Code, Section 101 (TEST FIXTURE)",
+  issuingAuthority: "Fictitious Building Authority (TEST FIXTURE)",
+  officialUrl: "https://example.invalid/official-sources/fbc-101",
 });
 
 describe("regulatorySource (HP-L1)", () => {
@@ -94,7 +94,7 @@ describe("regulatorySource (HP-L1)", () => {
     it("accepts a fully populated valid record", () => {
       const result = validateRegulatorySource({
         ...minimalValid(),
-        sectionIdentifier: "R311.7",
+        sectionIdentifier: "SEC-101.4",
         jurisdiction: "Texas",
         edition: "2024",
         effectiveDate: "2024-01-01",
