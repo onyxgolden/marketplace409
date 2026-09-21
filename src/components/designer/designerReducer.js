@@ -4,6 +4,8 @@
 
 import {
   addOpening,
+  addOrgChart,
+  addPerson,
   addPipeRun,
   addRoomFromTemplate,
   addWall,
@@ -11,27 +13,33 @@ import {
   createEmptyDesign,
   deleteFurniture,
   deleteOpening,
+  deleteOrgChart,
   deletePipeRun,
   deleteRoom,
   deleteSymbol,
   deleteWall,
+  findOrgChart,
   findPipeRun,
   findSymbolInstance,
   moveFurniture,
   moveFurnitureMany,
   moveOpening,
+  moveOrgChart,
   movePipeVertex,
   moveSymbol,
   moveUnderlay,
   moveWallEndpoint,
   placeFurniture,
   placeSymbol,
+  removePerson,
   removeUnderlay,
   renameDesign,
+  renameOrgChart,
   resizeOpening,
   rotateFurniture,
   rotateSymbol,
   setFurnitureUnitCost,
+  setPersonManager,
   setPipeFields,
   setRoomFinish,
   setSymbolLayer,
@@ -39,6 +47,7 @@ import {
   setUnderlay,
   setWallMaterial,
   updateDesignSettings,
+  updatePerson,
   updateUnderlay,
 } from "@/domains/roomDesigner/designerDocument";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
@@ -55,6 +64,7 @@ export const TOOLS = Object.freeze([
   "furniture",
   "pipe",
   "piping",
+  "orgchart",
   "erase",
   "pan",
   "calibrate",
@@ -83,9 +93,9 @@ export function createInitialState(design) {
   };
 }
 
-/** Designs saved before piping existed lack the new arrays; default them. */
+/** Designs saved before piping/org-charts existed lack the new arrays; default them. */
 function withPipeDefaults(design) {
-  return { pipes: [], symbols: [], ...design };
+  return { pipes: [], symbols: [], orgCharts: [], ...design };
 }
 
 function touch(state, design) {
@@ -223,6 +233,7 @@ export function designerReducer(state, action) {
       else if (target.kind === "room") design = deleteRoom(design, target.id);
       else if (target.kind === "pipe") design = deletePipeRun(design, target.id);
       else if (target.kind === "symbol") design = deleteSymbol(design, target.id);
+      else if (target.kind === "orgchart") design = deleteOrgChart(design, target.id);
       return { ...touch(state, design), selection: null, multiSelection: pruneMulti(design, state.multiSelection) };
     }
     case "DELETE_SELECTION": {
@@ -236,6 +247,7 @@ export function designerReducer(state, action) {
         else if (sel.kind === "room") design = deleteRoom(design, sel.id);
         else if (sel.kind === "pipe") design = deletePipeRun(design, sel.id);
         else if (sel.kind === "symbol") design = deleteSymbol(design, sel.id);
+        else if (sel.kind === "orgchart") design = deleteOrgChart(design, sel.id);
       }
       for (const m of state.multiSelection) {
         if (design.furniture.some((f) => f.id === m.id)) design = deleteFurniture(design, m.id);
@@ -305,6 +317,60 @@ export function designerReducer(state, action) {
     case "SET_SYMBOL_LAYER":
       if (!findSymbolInstance(state.design, action.symbolId)) return state;
       return touch(state, setSymbolLayer(state.design, action.symbolId, action.layer));
+    // ---- Phase 3: people org charts ----
+    case "ADD_ORG_CHART": {
+      // Placing a chart is a one-shot: drop back to the select tool so the
+      // new diagram can be dragged into place immediately.
+      const design = addOrgChart(state.design, action.name, action.x, action.y);
+      const chart = design.orgCharts[design.orgCharts.length - 1];
+      return {
+        ...touch(state, design),
+        tool: "select",
+        selection: { kind: "orgchart", id: chart.id },
+      };
+    }
+    case "MOVE_ORG_CHART":
+      if (!findOrgChart(state.design, action.chartId)) return state;
+      return touch(state, moveOrgChart(state.design, action.chartId, action.x, action.y));
+    case "RENAME_ORG_CHART":
+      if (!findOrgChart(state.design, action.chartId)) return state;
+      return touch(state, renameOrgChart(state.design, action.chartId, action.name));
+    case "ADD_PERSON": {
+      // User-reachable validation (blank names, bad managers) fails soft:
+      // the panel already constrains its inputs, this is the backstop.
+      if (!findOrgChart(state.design, action.chartId)) return state;
+      try {
+        return touch(state, addPerson(state.design, action.chartId, action.person));
+      } catch {
+        return state;
+      }
+    }
+    case "UPDATE_PERSON": {
+      if (!findOrgChart(state.design, action.chartId)) return state;
+      try {
+        return touch(state, updatePerson(state.design, action.chartId, action.personId, action.fields));
+      } catch {
+        return state;
+      }
+    }
+    case "SET_PERSON_MANAGER": {
+      if (!findOrgChart(state.design, action.chartId)) return state;
+      try {
+        return touch(
+          state,
+          setPersonManager(state.design, action.chartId, action.personId, action.managerId),
+        );
+      } catch {
+        return state;
+      }
+    }
+    case "DELETE_PERSON":
+      if (!findOrgChart(state.design, action.chartId)) return state;
+      try {
+        return touch(state, removePerson(state.design, action.chartId, action.personId));
+      } catch {
+        return state;
+      }
     case "SET_WALL_MATERIAL":
       return touch(state, setWallMaterial(state.design, action.wallId, action.material));
     case "SET_ROOM_FINISH":

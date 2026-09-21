@@ -24,7 +24,8 @@ import {
   pipeRunLengthIn,
 } from "@/domains/roomDesigner/pipingGeometry";
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
-import { renderSymbol2D } from "./symbolDrawRoutines";
+import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
+import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 12;
@@ -159,6 +160,22 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           }
         }
       }
+      // Phase 3: org charts — hit the laid-out bounding box. The anchor is
+      // the top-center of the tree, so the box spans chart.x ± width/2.
+      for (let i = (design.orgCharts || []).length - 1; i >= 0; i -= 1) {
+        const chart = design.orgCharts[i];
+        const layout = layoutOrgChart(chart.nodes);
+        const w = Math.max(layout.widthIn, ORG_CHART_METRICS.boxWidthIn);
+        const h = Math.max(layout.heightIn, ORG_CHART_METRICS.boxHeightIn);
+        if (
+          plan.x >= chart.x - w / 2 - tolIn &&
+          plan.x <= chart.x + w / 2 + tolIn &&
+          plan.y >= chart.y - tolIn &&
+          plan.y <= chart.y + h + tolIn
+        ) {
+          return { kind: "orgchart", id: chart.id };
+        }
+      }
       // openings (gaps on walls)
       for (const wall of design.walls) {
         for (const opening of design.openings.filter((o) => o.wallId === wall.id)) {
@@ -284,6 +301,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       dispatch({ type: "PLACE_SYMBOL", x: point.x, y: point.y });
       return;
     }
+    // Phase 3: org chart — click to place a new chart (it starts with one
+    // placeholder person; the panel edits people and reporting lines).
+    if (tool === "orgchart") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      dispatch({ type: "ADD_ORG_CHART", x: point.x, y: point.y });
+      return;
+    }
     if (tool === "erase") {
       const hit = hitTest(plan);
       if (hit) dispatch({ type: "DELETE_OBJECT", target: hit });
@@ -328,6 +352,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (hit?.kind === "symbol") {
       dispatch({ type: "SELECT", selection: hit });
       setDrag({ kind: "move-symbol", id: hit.id, moved: false });
+      return;
+    }
+    // Phase 3: org chart — click to select, drag to move the whole diagram.
+    if (hit?.kind === "orgchart") {
+      dispatch({ type: "SELECT", selection: hit });
+      setDrag({ kind: "move-orgchart", id: hit.id, moved: false });
       return;
     }
     // Phase 2: pipe vertex handles — drag a vertex of the selected run.
@@ -406,6 +436,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (drag.kind === "move-symbol") {
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
       dispatch({ type: "MOVE_SYMBOL", symbolId: drag.id, x: point.x, y: point.y });
+      setDrag({ ...drag, moved: true });
+    }
+    // Phase 3: org chart drag — the whole diagram moves; people keep their
+    // tree positions (layout is derived, never stored).
+    if (drag.kind === "move-orgchart") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      dispatch({ type: "MOVE_ORG_CHART", chartId: drag.id, x: point.x, y: point.y });
       setDrag({ ...drag, moved: true });
     }
     if (drag.kind === "move-underlay") {
@@ -719,6 +756,18 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     });
   };
 
+  // Phase 3: org chart — people hierarchy diagram. The tree layout derives
+  // from the chart's nodes at render time (see drawOrgChart).
+  const renderOrgChart = (chart) => {
+    const isSelected = selection?.kind === "orgchart" && selection?.id === chart.id;
+    return drawOrgChart({
+      chart,
+      toScreen,
+      scale: view.scale,
+      highlighted: isSelected,
+    });
+  };
+
   // In-progress pipe run: committed vertices, rubber band to the cursor,
   // and the running centerline length.
   const renderPipePreview = () => {
@@ -746,6 +795,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const cursorForTool = {
     select: "default", wall: "crosshair", room: "copy", door: "crosshair",
     window: "crosshair", furniture: "copy", pipe: "crosshair", piping: "copy",
+    orgchart: "copy",
     erase: "not-allowed", pan: spaceDown ? "grabbing" : "grab",
     calibrate: "crosshair",
   }[tool] || "default";
@@ -803,7 +853,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const isEmpty = design.walls.length === 0 && design.rooms.length === 0
-    && (design.pipes || []).length === 0 && (design.symbols || []).length === 0;
+    && (design.pipes || []).length === 0 && (design.symbols || []).length === 0
+    && (design.orgCharts || []).length === 0;
 
   // ---- Background underlay: drawn beneath the grid and the plan,
   // scaling/panning with the canvas transform ----
@@ -880,6 +931,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {(design.pipes || []).map(renderPipe)}
         {design.furniture.map(renderFurniture)}
         {(design.symbols || []).map(renderPipingSymbol)}
+        {(design.orgCharts || []).map(renderOrgChart)}
         {renderPipePreview()}
         {renderCalibrationMarkers()}
         {drawPreview && (() => {

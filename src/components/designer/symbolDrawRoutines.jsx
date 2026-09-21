@@ -13,6 +13,7 @@
 
 import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import { polygonArea } from "@/domains/roomDesigner/designerGeometry";
+import { ORG_CHART_METRICS, departmentColor, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 
 function centroid(points) {
   const n = points.length;
@@ -254,6 +255,158 @@ const routines = new Map([
   ["rooms", drawRoomSymbol],
   ["piping", drawPipingSymbol],
 ]);
+
+/** Truncate a label so it fits a person card; SVG text never wraps. */
+function fitLabel(text, maxChars = 26) {
+  const s = String(text || "");
+  return s.length > maxChars ? `${s.slice(0, maxChars - 1)}…` : s;
+}
+
+/**
+ * Org chart (Phase 3): a placeable people-hierarchy diagram. Person boxes
+ * lay out through the pure layoutOrgChart (derived at render, never
+ * stored); the chart anchor (chart.x, chart.y) is the top-center of the
+ * laid-out tree. Manager -> report edges draw as elbow connectors.
+ * ctx: { chart: {id,name,x,y,nodes}, toScreen, scale, highlighted }
+ *
+ * Text sizes stay TV-readable: name 15px, title 12px, department 11px,
+ * chart title 17px at any zoom.
+ */
+export function drawOrgChart({ chart, toScreen, scale, highlighted }) {
+  const layout = layoutOrgChart(chart.nodes);
+  const anchor = toScreen({ x: chart.x, y: chart.y });
+  const { boxWidthIn, boxHeightIn } = ORG_CHART_METRICS;
+  const boxW = boxWidthIn * scale;
+  const boxH = boxHeightIn * scale;
+  const byId = new Map((chart.nodes || []).map((n) => [n.id, n]));
+  const nodePos = new Map(layout.positions.map((p) => [p.id, p]));
+
+  const connectors = layout.edges.map(({ from, to }) => {
+    const a = nodePos.get(from);
+    const b = nodePos.get(to);
+    if (!a || !b) return null;
+    const x1 = anchor.x + (a.x + boxWidthIn / 2) * scale;
+    const y1 = anchor.y + (a.y + boxHeightIn) * scale;
+    const x2 = anchor.x + (b.x + boxWidthIn / 2) * scale;
+    const y2 = anchor.y + b.y * scale;
+    const midY = (y1 + y2) / 2;
+    return (
+      <path
+        key={`${from}->${to}`}
+        d={`M ${x1} ${y1} V ${midY} H ${x2} V ${y2}`}
+        fill="none"
+        stroke="#64748b"
+        strokeWidth={2}
+      />
+    );
+  });
+
+  const boxes = layout.positions.map((p) => {
+    const person = byId.get(p.id);
+    if (!person) return null;
+    const sx = anchor.x + p.x * scale;
+    const sy = anchor.y + p.y * scale;
+    const isRoot = person.managerId == null || !byId.has(person.managerId);
+    const accent = departmentColor(person.department);
+    const border = highlighted || isRoot ? "#f59e0b" : "#475569";
+    const lines = [
+      { text: fitLabel(person.name), size: 15, weight: 700, fill: "#ffffff" },
+    ];
+    if (person.title) {
+      lines.push({ text: fitLabel(person.title), size: 12, weight: 400, fill: "#cbd5e1" });
+    }
+    if (person.department) {
+      lines.push({ text: fitLabel(person.department), size: 11, weight: 600, fill: accent });
+    }
+    const lineHeight = 20;
+    const firstBaseline = boxH / 2 - ((lines.length - 1) * lineHeight) / 2;
+    return (
+      <g key={p.id} transform={`translate(${sx} ${sy})`}>
+        <rect
+          width={boxW}
+          height={boxH}
+          rx={8}
+          fill="#1e293b"
+          fillOpacity={0.95}
+          stroke={border}
+          strokeWidth={highlighted || isRoot ? 2.5 : 1.5}
+        />
+        <rect width={boxW} height={Math.max(4, boxH * 0.09)} rx={4} fill={accent} opacity={0.9} />
+        {lines.map((line, i) => (
+          <text
+            key={i}
+            x={boxW / 2}
+            y={firstBaseline + i * lineHeight}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={line.size}
+            fontWeight={line.weight}
+            fill={line.fill}
+          >
+            {line.text}
+          </text>
+        ))}
+      </g>
+    );
+  });
+
+  return (
+    <g key={chart.id}>
+      <text
+        x={anchor.x}
+        y={anchor.y - 16}
+        textAnchor="middle"
+        fontSize={17}
+        fontWeight={700}
+        fill="#f1f5f9"
+      >
+        {fitLabel(chart.name, 40)}
+      </text>
+      {boxes.length === 0 ? (
+        <g transform={`translate(${anchor.x - boxW / 2} ${anchor.y})`}>
+          <rect
+            width={boxW}
+            height={boxH}
+            rx={8}
+            fill="none"
+            stroke="#475569"
+            strokeWidth={1.5}
+            strokeDasharray="8 5"
+          />
+          <text
+            x={boxW / 2}
+            y={boxH / 2}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={13}
+            fill="#94a3b8"
+          >
+            Empty chart — add people
+          </text>
+        </g>
+      ) : (
+        <>
+          {connectors}
+          {boxes}
+        </>
+      )}
+      {highlighted && boxes.length > 0 && (
+        <rect
+          x={anchor.x - (layout.widthIn * scale) / 2 - 8}
+          y={anchor.y - 8}
+          width={layout.widthIn * scale + 16}
+          height={layout.heightIn * scale + 16}
+          fill="none"
+          stroke="#f59e0b"
+          strokeWidth={2}
+          strokeDasharray="10 6"
+          rx={10}
+          pointerEvents="none"
+        />
+      )}
+    </g>
+  );
+}
 
 /** Register (or replace) the 2D draw routine for a symbol domain. */
 export function registerDrawRoutine(domain, routine) {

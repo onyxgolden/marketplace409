@@ -21,6 +21,7 @@ import { findSymbol } from "./symbolRegistry";
 // and validateDesign resolve it in every context that loads the document
 // model (app, API routes, tests).
 import "./pipingCatalog";
+import { wouldCreateCycle } from "./orgChartLayout";
 import {
   calibrateUnderlayScale,
   DEFAULT_UNDERLAY_OPACITY,
@@ -71,6 +72,7 @@ export function createEmptyDesign(name = "Untitled design") {
     furniture: [],
     pipes: [], // Phase 2: pipe runs { id, points, diameterIn, material?, service?, layer }
     symbols: [], // Phase 2: placed symbols { id, domain, symbolId, x, y, rotationDeg, layer, tag? }
+    orgCharts: [], // Phase 3: people org charts { id, name, x, y, nodes }
     underlay: null, // background trace-over image; see setUnderlay
   };
 }
@@ -475,6 +477,150 @@ export function setSymbolLayer(design, instanceId, layer) {
   return setShapeField(design, "symbols", instanceId, "layer", layer, "symbol");
 }
 
+// ---- Org charts (Phase 3: people org charts) ----
+// A chart is a placeable diagram: { id, name, x, y, nodes } where nodes are
+// people { id, name, title, department, managerId }. The (x, y) anchor is
+// the top-center of the laid-out tree; the tree layout itself is derived
+// at render time (see orgChartLayout.js) and never stored.
+
+export function findOrgChart(design, chartId) {
+  return (design.orgCharts || []).find((c) => c.id === chartId);
+}
+
+export function findPerson(chart, personId) {
+  return (chart?.nodes || []).find((p) => p.id === personId);
+}
+
+function updateOrgChart(design, chartId, fn) {
+  assertDesign(design);
+  let changed = false;
+  const orgCharts = (design.orgCharts || []).map((c) => {
+    if (c.id !== chartId) return c;
+    changed = true;
+    return fn(c);
+  });
+  if (!changed) throw new Error(`Unknown org chart: ${chartId}`);
+  return { ...design, orgCharts };
+}
+
+/** Validate a manager assignment for a chart's nodes; returns the clean id (or null). */
+function cleanManagerId(chart, personId, managerId) {
+  if (managerId === null || managerId === undefined || managerId === "") return null;
+  if (!findPerson(chart, managerId)) throw new Error(`Unknown manager: ${managerId}`);
+  if (managerId === personId) throw new Error("A person cannot be their own manager.");
+  if (wouldCreateCycle(chart.nodes, personId, managerId)) {
+    throw new Error("That manager would create a reporting cycle.");
+  }
+  return managerId;
+}
+
+/**
+ * Place a new org chart. It starts with one placeholder person so the
+ * diagram is visible and editable immediately.
+ */
+export function addOrgChart(design, name, x, y, { id } = {}) {
+  assertDesign(design);
+  if (!isValidPoint({ x, y })) throw new Error("Org chart position must be valid.");
+  const chart = {
+    id: id || nextId("orgchart"),
+    name: cleanText(name) || "Org chart",
+    x,
+    y,
+    nodes: [
+      { id: nextId("person"), name: "New person", title: "", department: "", managerId: null },
+    ],
+  };
+  return { ...design, orgCharts: [...(design.orgCharts || []), chart] };
+}
+
+export function deleteOrgChart(design, chartId) {
+  assertDesign(design);
+  return { ...design, orgCharts: (design.orgCharts || []).filter((c) => c.id !== chartId) };
+}
+
+export function moveOrgChart(design, chartId, x, y) {
+  assertDesign(design);
+  if (!isValidPoint({ x, y })) throw new Error("Org chart position must be valid.");
+  return updateOrgChart(design, chartId, (chart) => ({ ...chart, x, y }));
+}
+
+export function renameOrgChart(design, chartId, name) {
+  return setShapeField(design, "orgCharts", chartId, "name", cleanText(name) || "Org chart", "org chart");
+}
+
+/** Add a person to a chart; managerId null/blank makes them a top-level root. */
+export function addPerson(design, chartId, { id, name, title, department, managerId } = {}) {
+  assertDesign(design);
+  return updateOrgChart(design, chartId, (chart) => {
+    const cleanName = cleanText(name, 80);
+    if (!cleanName) throw new Error("Person name is required.");
+    const person = {
+      id: id || nextId("person"),
+      name: cleanName,
+      title: cleanText(title, 80) || "",
+      department: cleanText(department, 60) || "",
+      managerId: null,
+    };
+    person.managerId = cleanManagerId(chart, person.id, managerId);
+    return { ...chart, nodes: [...chart.nodes, person] };
+  });
+}
+
+/** Patch a person's name/title/department (manager changes go through setPersonManager). */
+export function updatePerson(design, chartId, personId, fields = {}) {
+  assertDesign(design);
+  return updateOrgChart(design, chartId, (chart) => {
+    let changed = false;
+    const nodes = chart.nodes.map((p) => {
+      if (p.id !== personId) return p;
+      changed = true;
+      const next = { ...p };
+      if (fields.name !== undefined) {
+        const cleanName = cleanText(fields.name, 80);
+        if (!cleanName) throw new Error("Person name is required.");
+        next.name = cleanName;
+      }
+      if (fields.title !== undefined) next.title = cleanText(fields.title, 80) || "";
+      if (fields.department !== undefined) next.department = cleanText(fields.department, 60) || "";
+      return next;
+    });
+    if (!changed) throw new Error(`Unknown person: ${personId}`);
+    return { ...chart, nodes };
+  });
+}
+
+/** Reassign a person's manager (null/blank for top level); cycles are rejected. */
+export function setPersonManager(design, chartId, personId, managerId) {
+  assertDesign(design);
+  return updateOrgChart(design, chartId, (chart) => {
+    if (!findPerson(chart, personId)) throw new Error(`Unknown person: ${personId}`);
+    const clean = cleanManagerId(chart, personId, managerId);
+    return {
+      ...chart,
+      nodes: chart.nodes.map((p) => (p.id === personId ? { ...p, managerId: clean } : p)),
+    };
+  });
+}
+
+/**
+ * Remove a person. Their direct reports keep their place in the tree under
+ * the removed person's manager (or become roots) — the chart stays
+ * connected instead of orphaning a subtree.
+ */
+export function removePerson(design, chartId, personId) {
+  assertDesign(design);
+  return updateOrgChart(design, chartId, (chart) => {
+    const person = findPerson(chart, personId);
+    if (!person) throw new Error(`Unknown person: ${personId}`);
+    return {
+      ...chart,
+      nodes: chart.nodes
+        .filter((p) => p.id !== personId)
+        .map((p) => (p.managerId === personId ? { ...p, managerId: person.managerId } : p)),
+    };
+  });
+}
+
 // ---- Shape data hooks (Visio-style shape data) ----
 // Optional cost/material fields stored on the document. These are the seam
 // the FORGE cost tools will consume later: plain data in, no pricing logic.
@@ -565,6 +711,16 @@ export function validateDesign(design) {
   for (const instance of design.symbols || []) {
     if (!findSymbol(instance.domain, instance.symbolId)) {
       errors.push(`Symbol ${instance.id} references unknown ${instance.domain}/${instance.symbolId}.`);
+    }
+  }
+  for (const chart of design.orgCharts || []) {
+    const personIds = new Set((chart.nodes || []).map((p) => p.id));
+    for (const person of chart.nodes || []) {
+      if (person.managerId != null && !personIds.has(person.managerId)) {
+        errors.push(
+          `Org chart ${chart.id}: ${person.name || person.id} reports to unknown person ${person.managerId}.`,
+        );
+      }
     }
   }
   return errors;
