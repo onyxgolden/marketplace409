@@ -20,7 +20,11 @@ function readCollapsedByCategory() {
     const raw = window.localStorage.getItem(COLLAPSED_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    // Only a strict boolean `true` collapses a category. Valid JSON with
+    // wrong-typed values ("false", 0, {}, []) must not silently collapse
+    // anything, so anything that is not exactly `true` means expanded.
+    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => value === true));
   } catch {
     return {};
   }
@@ -49,6 +53,8 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
         onClick={() => onSelect(tool.id)}
         title={disabled ? "Import a background image first" : tool.hint}
         disabled={disabled}
+        aria-pressed={active}
+        aria-describedby={disabled ? `${tool.id}-disabled-reason` : undefined}
         className={`flex w-full flex-col items-center gap-1 rounded px-1 py-2 text-xs ${
           active ? "bg-emerald-600 text-white" : "text-gray-300 hover:bg-gray-800"
         } ${disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
@@ -56,6 +62,11 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
         <Icon size={20} aria-hidden="true" />
         {tool.label}
       </button>
+      {disabled && (
+        <span id={`${tool.id}-disabled-reason`} className="sr-only">
+          Import a background image first to enable this tool.
+        </span>
+      )}
       <button
         type="button"
         onClick={(e) => {

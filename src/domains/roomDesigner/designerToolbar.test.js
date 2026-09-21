@@ -163,6 +163,12 @@ describe("groupToolsByCategory", () => {
     expect(seen).toHaveLength(withOptOut.length - 1);
   });
 
+  it("throws on duplicate tool ids instead of silently dropping one", () => {
+    expect(() => groupToolsByCategory([tool("wall"), tool("wall")])).toThrow(
+      'duplicate tool id "wall"'
+    );
+  });
+
   it("does not mutate the input array", () => {
     const input = [...currentOrder];
     groupToolsByCategory(input);

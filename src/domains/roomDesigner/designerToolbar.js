@@ -17,7 +17,13 @@ export function orderToolbarTools(toolDefs) {
 // Visio-style stencil groups for the left tool palette. House stuff goes
 // under House, piping under Mechanical, process-engineering symbols under
 // Process, and plan-level tools under Plan. A category with no tools is
-// hidden, so Process appears automatically once its catalog lands.
+// hidden.
+//
+// NOTE: grouping is by explicit tool id, not by name prefix. A future tool
+// like `process-pump` lands in `ungrouped` until the Process category's
+// toolIds actually list it — either by registering a replacement via
+// registerToolCategory({ id: "process", ... }) or by a slice that extends
+// TOOL_CATEGORIES. There is no automatic prefix matching.
 //
 // The list is extensible: future slices (custom reusable shapes,
 // process-engineering catalog) register their own categories at runtime via
@@ -65,6 +71,15 @@ export function resetToolCategories() {
 // that is not listed in any category is returned in `ungrouped` so it can
 // never silently vanish.
 export function groupToolsByCategory(toolDefs, categories = getToolCategories()) {
+  // Fail fast on duplicate ids: without this, the Map below would silently
+  // keep only the last def and React would get duplicate keys.
+  const seenIds = new Set();
+  for (const tool of toolDefs) {
+    if (seenIds.has(tool.id)) {
+      throw new Error(`groupToolsByCategory: duplicate tool id "${tool.id}"`);
+    }
+    seenIds.add(tool.id);
+  }
   const visible = toolDefs.filter((tool) => tool.leftPalette !== false);
   const ordered = orderToolbarTools(visible);
   const pinnedIds = new Set(PINNED_TOOL_IDS);

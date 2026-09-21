@@ -37,7 +37,10 @@ const queryCategoryHeader = (container, label) =>
 
 const queryToolButton = (container, id) =>
   Array.from(container.querySelectorAll("button")).find(
-    (b) => !b.hasAttribute("aria-expanded") && !b.hasAttribute("aria-pressed") && b.textContent.trim() === id
+    (b) =>
+      !b.hasAttribute("aria-expanded") &&
+      !/favorites$/.test(b.getAttribute("aria-label") || "") &&
+      b.textContent.trim() === id
   );
 
 const queryFavoriteToggle = (container, id) =>
@@ -251,5 +254,32 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
   it("enables the calibrate tool when a background underlay exists", async () => {
     await renderPalette({ hasUnderlay: true });
     expect(queryToolButton(container, "calibrate").disabled).toBe(false);
+  });
+
+  it("exposes the active tool to assistive tech via aria-pressed", async () => {
+    await renderPalette({ activeToolId: "wall" });
+    expect(queryToolButton(container, "wall").getAttribute("aria-pressed")).toBe("true");
+    expect(queryToolButton(container, "door").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("treats valid-JSON wrong-typed collapse values as expanded", async () => {
+    window.localStorage.setItem(
+      COLLAPSED_STORAGE_KEY,
+      JSON.stringify({ house: "false", mechanical: 0, plan: {} })
+    );
+    await renderPalette();
+    for (const label of ["House", "Mechanical", "Plan"]) {
+      expect(queryCategoryHeader(container, label).getAttribute("aria-expanded")).toBe("true");
+    }
+  });
+
+  it("associates the disabled calibrate reason as accessible text", async () => {
+    await renderPalette({ hasUnderlay: false });
+    const calibrate = queryToolButton(container, "calibrate");
+    const describedBy = calibrate.getAttribute("aria-describedby");
+    expect(describedBy).toBe("calibrate-disabled-reason");
+    const reason = document.getElementById(describedBy);
+    expect(reason).not.toBeNull();
+    expect(reason.textContent).toMatch(/background image/i);
   });
 });
