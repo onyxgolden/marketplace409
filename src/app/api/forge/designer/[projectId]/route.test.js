@@ -112,3 +112,46 @@ describe("DELETE /api/forge/designer/[projectId]", () => {
     await expect(response.json()).resolves.toEqual({ success: true, id: "design_1" });
   });
 });
+
+describe("workspace authorization on single-project routes", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function authedAs(userId, effectiveOwnerId, client) {
+    return { user: { id: userId }, effectiveOwnerId, supabaseClient: client };
+  }
+
+  it("a co-owner's save scopes to the canonical workspace owner id", async () => {
+    const design = createEmptyDesign("Shared plan");
+    const select = vi.fn(async () => ({ data: [{ id: "design_1" }], error: null }));
+    const eq = vi.fn().mockReturnThis();
+    const query = { update: vi.fn().mockReturnThis(), eq, select };
+    const client = { from: vi.fn(() => query) };
+    createAuthenticatedForgeApplication.mockResolvedValue(
+      authedAs("coowner9", "owner1", client),
+    );
+    const request = new Request("https://test/", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ design }),
+    });
+    const response = await PUT(request, { params });
+    expect(response.status).toBe(200);
+    // Update is scoped to the workspace owner, which has_workspace_access()
+    // authorizes for the co-owner on the DB side.
+    expect(eq).toHaveBeenCalledWith("owner_id", "owner1");
+    expect(eq).toHaveBeenCalledWith("id", "design_1");
+  });
+
+  it("an unrelated user cannot reach another workspace's design", async () => {
+    const maybeSingle = vi.fn(async () => ({ data: null, error: null }));
+    const eq = vi.fn().mockReturnThis();
+    const query = { select: vi.fn().mockReturnThis(), eq, maybeSingle };
+    const client = { from: vi.fn(() => query) };
+    createAuthenticatedForgeApplication.mockResolvedValue(
+      authedAs("stranger7", "stranger7", client),
+    );
+    const response = await GET(new Request("https://test/"), { params });
+    expect(response.status).toBe(404);
+    expect(eq).toHaveBeenCalledWith("owner_id", "stranger7");
+  });
+});

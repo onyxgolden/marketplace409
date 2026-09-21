@@ -639,9 +639,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             <path d={`M ${majorPx.toFixed(2)} 0 L 0 0 0 ${majorPx.toFixed(2)}`} fill="none" stroke="#3b4763" strokeWidth={1.25} />
           </pattern>
         </defs>
+        {renderUnderlay()}
         <rect x={-5000} y={-5000} width={10000} height={10000} fill="url(#designer-grid)"
           transform={`translate(${view.ox % majorPx} ${view.oy % majorPx})`} />
-        {renderUnderlay()}
         {design.rooms.map(renderRoom)}
         {design.walls.map(renderWall)}
         {design.furniture.map(renderFurniture)}

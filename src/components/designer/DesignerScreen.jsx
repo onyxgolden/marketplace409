@@ -73,16 +73,21 @@ export default function DesignerScreen({ projectId, initialName }) {
   }, [projectId]);
 
   const save = useCallback(async () => {
+    // Capture the exact document state AND its revision identity up front:
+    // edits made while this PUT is in flight bump the revision, so a stale
+    // completion cannot clear a newer dirty state (MARK_SAVED checks this).
+    const designToSave = state.design;
+    const savedRevision = state.designRevision;
     setSaving(true);
     try {
       const res = await fetch(`/api/forge/designer/${projectId}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, design: state.design }),
+        body: JSON.stringify({ name, design: designToSave }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `Save failed (${res.status})`);
-      dispatch({ type: "MARK_SAVED" });
+      dispatch({ type: "MARK_SAVED", savedRevision });
       setStatus({ kind: "saved", message: "Saved." });
       setTimeout(() => setStatus((s) => (s.kind === "saved" ? { kind: "ready" } : s)), 2500);
     } catch (error) {
@@ -90,7 +95,7 @@ export default function DesignerScreen({ projectId, initialName }) {
     } finally {
       setSaving(false);
     }
-  }, [projectId, name, state.design]);
+  }, [projectId, name, state.design, state.designRevision]);
 
   useEffect(() => {
     const onKey = (e) => {

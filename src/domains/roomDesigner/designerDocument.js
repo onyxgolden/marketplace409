@@ -478,11 +478,18 @@ export function moveUnderlay(design, x, y) {
 
 /**
  * Calibrate the underlay scale from two clicked plan points that are
- * `realDistanceIn` inches apart in the real world. Pure.
+ * `realDistanceIn` inches apart in the real world. The first calibration
+ * point (clickA) is kept registered to the same image pixel -- the
+ * top-left anchor (x, y) is repositioned so the rescaled image does not
+ * pivot around the image corner and disturb careful registration. Pure.
  */
 export function calibrateUnderlay(design, clickA, clickB, realDistanceIn) {
   assertDesign(design);
   if (!design.underlay) throw new Error("Design has no background underlay.");
-  const pxPerIn = calibrateUnderlayScale(design.underlay, clickA, clickB, realDistanceIn);
-  return updateUnderlay(design, { pxPerIn });
+  const u = design.underlay;
+  const pxPerIn = calibrateUnderlayScale(u, clickA, clickB, realDistanceIn);
+  const scaleRatio = u.pxPerIn / pxPerIn;
+  const x = clickA.x - (clickA.x - u.x) * scaleRatio;
+  const y = clickA.y - (clickA.y - u.y) * scaleRatio;
+  return updateUnderlay(design, { pxPerIn, x, y });
 }

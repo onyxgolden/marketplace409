@@ -102,3 +102,50 @@ describe("POST /api/forge/designer", () => {
     expect((await POST(request)).status).toBe(401);
   });
 });
+
+describe("workspace authorization (primary owner vs co-owner vs unrelated user)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function authedAs(userId, effectiveOwnerId, client) {
+    return { user: { id: userId }, effectiveOwnerId, supabaseClient: client };
+  }
+
+  it("a co-owner lists designs under the canonical workspace owner id", async () => {
+    const db = listQuery([]);
+    createAuthenticatedForgeApplication.mockResolvedValue(
+      authedAs("coowner9", "owner1", db.client),
+    );
+    const response = await GET();
+    expect(response.status).toBe(200);
+    // Queries scope to the effective owner, matching resolve_effective_owner_id()
+    // on the DB side; has_workspace_access() permits the co-owner's read.
+    expect(db.query.eq).toHaveBeenCalledWith("owner_id", "owner1");
+  });
+
+  it("a co-owner creates designs under the canonical workspace owner id", async () => {
+    const insert = vi.fn(async () => ({ data: null, error: null }));
+    const client = { from: vi.fn(() => ({ insert })) };
+    createAuthenticatedForgeApplication.mockResolvedValue(
+      authedAs("coowner9", "owner1", client),
+    );
+    const request = new Request("https://test/api/forge/designer", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Shared plan" }),
+    });
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    // Rows are written under the workspace owner (not the co-owner's own id),
+    // exactly what has_workspace_access() authorizes on the with-check side.
+    expect(insert.mock.calls[0][0].owner_id).toBe("owner1");
+  });
+
+  it("an unrelated user only ever sees their own workspace", async () => {
+    const db = listQuery([]);
+    createAuthenticatedForgeApplication.mockResolvedValue(
+      authedAs("stranger7", "stranger7", db.client),
+    );
+    await GET();
+    expect(db.query.eq).toHaveBeenCalledWith("owner_id", "stranger7");
+  });
+});

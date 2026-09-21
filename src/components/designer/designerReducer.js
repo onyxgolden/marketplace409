@@ -30,6 +30,7 @@ import {
   updateUnderlay,
 } from "@/domains/roomDesigner/designerDocument";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
+import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 
 export const TOOLS = Object.freeze([
   "select",
@@ -54,11 +55,21 @@ export function createInitialState(design) {
     calibration: null, // scale-calibration clicks: { a: point, b?: point }
     view: "2d",
     dirty: false,
+    // Monotonic revision of the design document: every mutation bumps it, and
+    // MARK_SAVED clears `dirty` only when the completed save's revision is
+    // still current -- edits made while a save was in flight stay dirty.
+    designRevision: 0,
   };
 }
 
 function touch(state, design) {
-  return { ...state, design, dirty: true, selection: state.selection };
+  return {
+    ...state,
+    design,
+    dirty: true,
+    selection: state.selection,
+    designRevision: state.designRevision + 1,
+  };
 }
 
 /** Drop multi-selection entries whose furniture no longer exists. */
@@ -67,12 +78,24 @@ function pruneMulti(design, multiSelection) {
   return (multiSelection || []).filter((m) => ids.has(m.id));
 }
 
-/** Furniture pieces currently multi-selected, as {id, x, y}. */
+/** Furniture pieces currently multi-selected, with their rotated footprint dims. */
 function multiPieces(state) {
   const ids = new Set(state.multiSelection.map((m) => m.id));
   return state.design.furniture
     .filter((f) => ids.has(f.id))
-    .map((f) => ({ id: f.id, x: f.x, y: f.y }));
+    .map((f) => {
+      // Placed pieces carry only catalogId; resolve nominal dimensions from
+      // the catalog so align/distribute work on real footprint edges.
+      const entry = getCatalogEntry(f.catalogId);
+      return {
+        id: f.id,
+        x: f.x,
+        y: f.y,
+        widthIn: f.widthIn ?? entry?.widthIn,
+        depthIn: f.depthIn ?? entry?.depthIn,
+        rotationDeg: f.rotationDeg,
+      };
+    });
 }
 
 export function designerReducer(state, action) {
@@ -221,7 +244,11 @@ export function designerReducer(state, action) {
       };
     }
     case "MARK_SAVED":
-      return { ...state, dirty: false };
+      // Only a save whose revision is still current may clear the dirty flag:
+      // an edit that landed while the PUT was in flight must remain dirty.
+      return action.savedRevision === state.designRevision
+        ? { ...state, dirty: false }
+        : state;
     default:
       return state;
   }

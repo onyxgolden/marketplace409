@@ -10,6 +10,7 @@ import {
   distancePointToSegment,
   distributeFurniture,
   feetInchesLabel,
+  footprintXBounds,
   gridSpacingLabel,
   isValidPoint,
   nearestPointOnSegment,
@@ -199,11 +200,52 @@ describe("designerGeometry — dimension lines", () => {
 
 describe("designerGeometry — align and distribute", () => {
   const pieces = (xs) => xs.map((x, i) => ({ id: `p${i}`, x, y: i * 10 }));
+  const withDims = (xs, dims) =>
+    xs.map((x, i) => ({ id: `p${i}`, x, y: 0, ...dims[i] }));
+  const xBounds = (p) => footprintXBounds(p);
 
-  it("aligns piece centers left, center, and right", () => {
+  it("aligns dimension-less pieces by center (point footprints)", () => {
     expect(alignFurniture(pieces([10, 30, 60]), "left").map((p) => p.x)).toEqual([10, 10, 10]);
     expect(alignFurniture(pieces([10, 30, 60]), "right").map((p) => p.x)).toEqual([60, 60, 60]);
     expect(alignFurniture(pieces([10, 30, 60]), "center").map((p) => p.x)).toEqual([35, 35, 35]);
+  });
+
+  it("aligns left/right against rotated footprint EDGES, not centers", () => {
+    // desk (48x24) at x=10: left edge -14. armchair (36x36) at x=40: left edge 22.
+    // loveseat (60x36) rotated 90° at x=100: footprint 36 wide, left edge 82.
+    // All three footprint widths differ so no two centers coincide after align.
+    const list = withDims([10, 40, 100], [
+      { widthIn: 48, depthIn: 24, rotationDeg: 0 },
+      { widthIn: 36, depthIn: 36, rotationDeg: 0 },
+      { widthIn: 36, depthIn: 20, rotationDeg: 90 }, // footprint 20 wide
+    ]);
+    const left = alignFurniture(list, "left");
+    for (const p of left) expect(xBounds(p).left).toBeCloseTo(-14, 9);
+    // centers must NOT be collapsed onto one line anymore
+    expect(new Set(left.map((p) => p.x)).size).toBe(3);
+
+    const right = alignFurniture(list, "right");
+    // right edges: desk 34, armchair 58, loveseat 110 → target 110
+    for (const p of right) expect(xBounds(p).right).toBeCloseTo(110, 9);
+  });
+
+  it("aligns centers for center mode with mixed widths", () => {
+    // 20-wide at x=0, 60-wide at x=100 → bbox [-10, 130], center 60
+    const list = withDims([0, 100], [
+      { widthIn: 20, depthIn: 20, rotationDeg: 0 },
+      { widthIn: 60, depthIn: 20, rotationDeg: 0 },
+    ]);
+    const out = alignFurniture(list, "center");
+    expect(out.map((p) => p.x)).toEqual([60, 60]);
+  });
+
+  it("treats a 90°-rotated piece's footprint with swapped width/depth", () => {
+    const unrotated = { id: "a", x: 0, y: 0, widthIn: 84, depthIn: 36, rotationDeg: 0 };
+    const rotated = { id: "b", x: 0, y: 0, widthIn: 84, depthIn: 36, rotationDeg: 90 };
+    expect(xBounds(unrotated).left).toBe(-42);
+    expect(xBounds(unrotated).right).toBe(42);
+    expect(xBounds(rotated).left).toBeCloseTo(-18, 9);
+    expect(xBounds(rotated).right).toBeCloseTo(18, 9);
   });
 
   it("leaves y coordinates and ids untouched when aligning", () => {
@@ -218,9 +260,31 @@ describe("designerGeometry — align and distribute", () => {
     expect(ALIGN_MODES).toEqual(["left", "center", "right"]);
   });
 
-  it("distributes centers evenly between the outermost pieces", () => {
+  it("distributes dimension-less pieces by center, outermost fixed", () => {
     const out = distributeFurniture(pieces([0, 10, 100]));
     expect(out.map((p) => p.x)).toEqual([0, 50, 100]);
+  });
+
+  it("distributes equal FREE GAPS between rotated footprints, not centers", () => {
+    // desk (48x24) x=0, armchair (36x36) x=50, sofa (84x36) x=300.
+    // Outermost fixed; free space between desk's right edge (24) and sofa's
+    // left edge (258), minus the 36-inch armchair: (258-24-36)/2 = 99 gaps.
+    const list = withDims([0, 50, 300], [
+      { widthIn: 48, depthIn: 24, rotationDeg: 0 },
+      { widthIn: 36, depthIn: 36, rotationDeg: 0 },
+      { widthIn: 84, depthIn: 36, rotationDeg: 0 },
+    ]);
+    const out = distributeFurniture(list);
+    const byId = Object.fromEntries(out.map((p) => [p.id, p]));
+    expect(byId.p0.x).toBe(0); // leftmost stays
+    expect(byId.p2.x).toBe(300); // rightmost stays
+    const gap1 = xBounds(byId.p1).left - xBounds(byId.p0).right;
+    const gap2 = xBounds(byId.p2).left - xBounds(byId.p1).right;
+    expect(gap1).toBeCloseTo(99, 6);
+    expect(gap2).toBeCloseTo(99, 6);
+    // The old center-based math would have put the armchair at 150 (the
+    // midpoint), visibly overlapping neither gap equally:
+    expect(byId.p1.x).not.toBe(150);
   });
 
   it("keeps the outermost pieces fixed and preserves input order", () => {

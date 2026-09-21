@@ -179,34 +179,81 @@ export function dimensionGeometry(wall, offsetIn) {
 export const ALIGN_MODES = Object.freeze(["left", "center", "right"]);
 
 /**
- * Align furniture piece centers horizontally. `pieces` is [{id, x, y}];
- * returns new positions with x set to the left edge, center, or right edge
- * of the group. Pure — y is untouched.
+ * Horizontal extent of one furniture piece's rotated footprint along x.
+ * Pieces carry their center (x, y) plus widthIn/depthIn/rotationDeg (the
+ * shape stored by PLACE_FURNITURE); pieces without dimensions fall back to
+ * a point footprint at their center. Pure.
+ */
+export function footprintXBounds(piece) {
+  if (isFiniteNumber(piece?.widthIn) && isFiniteNumber(piece?.depthIn)) {
+    const corners = rotatedFootprintCorners({
+      x: piece.x,
+      y: piece.y,
+      widthIn: piece.widthIn,
+      depthIn: piece.depthIn,
+      rotationDeg: piece.rotationDeg ?? 0,
+    });
+    const xs = corners.map((c) => c.x);
+    return { left: Math.min(...xs), right: Math.max(...xs) };
+  }
+  return { left: piece.x, right: piece.x };
+}
+
+/**
+ * Align furniture pieces horizontally (Visio-style). `pieces` is
+ * [{id, x, y, widthIn, depthIn, rotationDeg?}]; returns new positions with
+ * y untouched. "left"/"right" match the rotated footprint EDGES of the
+ * group (a 90°-rotated 84×36 sofa contributes a 36-inch-wide footprint),
+ * while "center" matches footprint centers. Pure.
  */
 export function alignFurniture(pieces, mode) {
   const list = (pieces || []).map((p) => ({ ...p }));
   if (list.length < 2) return list;
   if (!ALIGN_MODES.includes(mode)) throw new Error(`Unknown align mode: ${mode}`);
-  const xs = list.map((p) => p.x);
-  const min = Math.min(...xs);
-  const max = Math.max(...xs);
-  const target = mode === "left" ? min : mode === "right" ? max : (min + max) / 2;
-  return list.map((p) => ({ ...p, x: target }));
+  const bounds = list.map(footprintXBounds);
+  const leftEdge = Math.min(...bounds.map((b) => b.left));
+  const rightEdge = Math.max(...bounds.map((b) => b.right));
+  return list.map((p, i) => {
+    if (mode === "center") {
+      const center = (bounds[i].left + bounds[i].right) / 2;
+      return { ...p, x: p.x + ((leftEdge + rightEdge) / 2 - center) };
+    }
+    const target = mode === "left" ? leftEdge : rightEdge;
+    const edge = mode === "left" ? bounds[i].left : bounds[i].right;
+    return { ...p, x: p.x + (target - edge) };
+  });
 }
 
 /**
- * Distribute furniture centers evenly between the outermost two pieces
- * along x. Needs 3+ pieces; fewer returns copies unchanged. Pure.
+ * Distribute furniture evenly along x (Visio-style "Distribute
+ * Horizontally"): the leftmost and rightmost pieces stay fixed and the
+ * FREE GAPS between rotated footprints become equal, so mixed-size pieces
+ * (desk, armchair, 84-inch sofa) cannot overlap each other. Dimension-less
+ * pieces degenerate to point footprints, matching the old center-based
+ * behavior for them. Needs 3+ pieces; fewer returns copies unchanged. Pure.
  */
 export function distributeFurniture(pieces) {
   const list = (pieces || []).map((p) => ({ ...p }));
   if (list.length < 3) return list;
   const sorted = [...list].sort((a, b) => a.x - b.x);
-  const min = sorted[0].x;
-  const max = sorted[sorted.length - 1].x;
-  const step = (max - min) / (sorted.length - 1);
+  const bounds = sorted.map(footprintXBounds);
+  const widths = bounds.map((b) => b.right - b.left);
+  // Free space between the fixed outermost footprints, shared equally.
+  const spanStart = bounds[0].right; // right edge of the fixed leftmost piece
+  const spanEnd = bounds[bounds.length - 1].left; // left edge of the fixed rightmost piece
+  const middleWidth = widths.slice(1, -1).reduce((sum, w) => sum + w, 0);
+  const gap = (spanEnd - spanStart - middleWidth) / (sorted.length - 1);
   const byId = new Map();
-  sorted.forEach((p, i) => byId.set(p.id, { ...p, x: min + step * i }));
+  let cursor = bounds[0].right; // right edge of the fixed leftmost piece
+  sorted.forEach((p, i) => {
+    if (i === 0 || i === sorted.length - 1) {
+      byId.set(p.id, { ...p }); // outermost pieces stay put
+      return;
+    }
+    const newCenter = cursor + gap + widths[i] / 2;
+    byId.set(p.id, { ...p, x: newCenter });
+    cursor = newCenter + widths[i] / 2;
+  });
   return list.map((p) => byId.get(p.id));
 }
 

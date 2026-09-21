@@ -383,6 +383,26 @@ describe("designerDocument — background underlay", () => {
     expect(d.underlay.x).toBe(0);
   });
 
+  it("keeps the first calibration point registered to the same image pixel", () => {
+    let d = setUnderlay(createEmptyDesign(), image); // pxPerIn = 2
+    d = moveUnderlay(d, 100, 200);
+    const before = d.underlay;
+    const clickA = { x: 400, y: 300 };
+    const clickB = { x: 600, y: 300 };
+    // clickA sits on the image at pixel (px = (400-100)*2, py = (300-200)*2).
+    const pixelBefore = {
+      px: (clickA.x - before.x) * before.pxPerIn,
+      py: (clickA.y - before.y) * before.pxPerIn,
+    };
+    d = calibrateUnderlay(d, clickA, clickB, 100);
+    expect(d.underlay.pxPerIn).toBeCloseTo(4);
+    // The same image pixel must still sit under clickA after rescaling --
+    // the top-left anchor moved instead of pivoting around the image corner.
+    expect(d.underlay.x).not.toBe(before.x);
+    expect((clickA.x - d.underlay.x) * d.underlay.pxPerIn).toBeCloseTo(pixelBefore.px, 6);
+    expect((clickA.y - d.underlay.y) * d.underlay.pxPerIn).toBeCloseTo(pixelBefore.py, 6);
+  });
+
   it("survives serialization", () => {
     let d = setUnderlay(createEmptyDesign(), image);
     d = updateUnderlay(d, { locked: true, opacity: 0.7 });
