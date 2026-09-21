@@ -6,6 +6,10 @@ import {
   getChartBackground,
   LAYOUT_NODE_ORG,
   LAYOUT_NODE_WORKFLOW,
+  resolveCardPaint,
+  resolveEdgeWidth,
+  resolveNodeStyle,
+  styleTextMetrics,
 } from "@/domains/chartBuilder";
 import { gridLineColor } from "./gridPreference.js";
 
@@ -55,6 +59,9 @@ export default function ChartCanvas({
   gridPreference,
   onSelect,
   onDrop,
+  connectArmed,
+  connectSourceId,
+  onConnectNode,
 }) {
   const svgRef = useRef(null);
   const dragRef = useRef(null);
@@ -95,6 +102,26 @@ export default function ChartCanvas({
   function positionOf(node) {
     if (preview && preview.id === node.id) return { x: preview.x, y: preview.y };
     return { x: node.position.x + offsetX, y: node.position.y + offsetY };
+  }
+
+  function handleBackgroundPointerDown() {
+    // In connect mode a background click cancels; otherwise it deselects.
+    // onConnectNode(null) is the cancel signal (documented on the prop).
+    if (connectArmed) {
+      onConnectNode?.(null);
+    } else {
+      onSelect(null);
+    }
+  }
+
+  function handleNodePointerDown(event, node) {
+    if (connectArmed) {
+      // Connect mode: clicks draw lines, never drag or select.
+      event.stopPropagation();
+      onConnectNode?.(node.id);
+      return;
+    }
+    handlePointerDown(event, node);
   }
 
   function handlePointerDown(event, node) {
@@ -167,7 +194,7 @@ export default function ChartCanvas({
           width={canvasW}
           height={canvasH}
           className="absolute inset-0 touch-none select-none"
-          onPointerDown={() => onSelect(null)}
+          onPointerDown={handleBackgroundPointerDown}
         >
           <defs>
             <marker
@@ -196,7 +223,7 @@ export default function ChartCanvas({
                   d={edgePath(fromPos, toPos, size.w, size.h, direction)}
                   fill="none"
                   stroke="#6b7280"
-                  strokeWidth="2"
+                  strokeWidth={resolveEdgeWidth(edge, doc.settings)}
                   markerEnd={doc.type === "workflow" ? "url(#chart-arrow)" : undefined}
                 />
                 {edge.label && (
@@ -217,17 +244,22 @@ export default function ChartCanvas({
 
           {doc.nodes.map((node) => {
             const pos = positionOf(node);
-            const accent = node.style?.color ?? "#1f6feb";
+            const style = resolveNodeStyle(node.style);
+            const paint = resolveCardPaint(node.style);
+            const metrics = styleTextMetrics(style.textSize);
             const selected = node.id === selectedId;
             const title = node.fields?.title ?? "";
             const dept = node.fields?.department ?? "";
+            const centered = style.align === "center";
+            const textX = centered ? size.w / 2 : 16;
+            const textAnchor = centered ? "middle" : "start";
             return (
               <g
                 key={node.id}
                 data-node-id={node.id}
                 transform={`translate(${pos.x}, ${pos.y})`}
-                className="cursor-grab active:cursor-grabbing"
-                onPointerDown={(event) => handlePointerDown(event, node)}
+                className={connectArmed ? "cursor-crosshair" : "cursor-grab active:cursor-grabbing"}
+                onPointerDown={(event) => handleNodePointerDown(event, node)}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerCancel={() => {
@@ -235,29 +267,43 @@ export default function ChartCanvas({
                   setPreview(null);
                 }}
               >
+                {node.id === connectSourceId && (
+                  <rect
+                    x={-7}
+                    y={-7}
+                    width={size.w + 14}
+                    height={size.h + 14}
+                    rx={15}
+                    fill="none"
+                    stroke="#2563eb"
+                    strokeWidth={2.5}
+                    strokeDasharray="7 5"
+                    pointerEvents="none"
+                  />
+                )}
                 <rect
                   width={size.w}
                   height={size.h}
                   rx="10"
-                  fill="#ffffff"
-                  stroke={selected ? "#f59e0b" : accent}
-                  strokeWidth={selected ? 3 : 1.5}
+                  fill={paint.fill}
+                  stroke={selected ? "#f59e0b" : paint.stroke}
+                  strokeWidth={selected ? 3 : style.borderWidth}
                 />
-                <rect width="6" height={size.h} rx="3" fill={accent} />
-                <text x="16" y="26" fontSize="13" fontWeight="700" fill="#111827"
+                <rect width="6" height={size.h} rx="3" fill={style.color} />
+                <text x={textX} y="26" fontSize={metrics.name} fontWeight={style.bold ? "700" : "400"} textAnchor={textAnchor} fill="#111827"
                   textLength={size.w - 28} lengthAdjust="spacingAndGlyphs">
-                  {truncate(node.label)}
+                  {truncate(node.label, metrics.nameLimit)}
                 </text>
                 {node.subtitle && (
-                  <text x="16" y="44" fontSize="11" fill="#4b5563"
+                  <text x={textX} y="44" fontSize={metrics.subtitle} textAnchor={textAnchor} fill="#4b5563"
                     textLength={size.w - 28} lengthAdjust="spacingAndGlyphs">
-                    {truncate(node.subtitle, 30)}
+                    {truncate(node.subtitle, metrics.subtitleLimit)}
                   </text>
                 )}
                 {(title || dept) && (
-                  <text x="16" y={size.h - 12} fontSize="10" fill="#6b7280"
+                  <text x={textX} y={size.h - 12} fontSize={metrics.meta} textAnchor={textAnchor} fill="#6b7280"
                     textLength={size.w - 28} lengthAdjust="spacingAndGlyphs">
-                    {truncate([title, dept].filter(Boolean).join(" · "), 34)}
+                    {truncate([title, dept].filter(Boolean).join(" · "), metrics.metaLimit)}
                   </text>
                 )}
               </g>

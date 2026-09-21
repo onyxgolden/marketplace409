@@ -6,6 +6,7 @@ import {
   canUndoChart,
   chartReducer,
   commitChartAction,
+  buildConnectAction,
   contentBounds,
   createChartDocument,
   createEdge,
@@ -15,9 +16,15 @@ import {
   layoutChart,
   LAYOUT_NODE_ORG,
   LAYOUT_NODE_WORKFLOW,
+  LINE_WIDTHS,
+  NODE_CARD_STYLES,
+  NODE_TEXT_ALIGNS,
+  NODE_TEXT_SIZES,
   nodeSupervisor,
   redoChart,
   resolveCanvasDrop,
+  resolveDocSettings,
+  resolveNodeStyle,
   seedChartFromTemplate,
   undoChart,
   validateOrgDocument,
@@ -28,6 +35,9 @@ import TemplatePicker from "./TemplatePicker.jsx";
 import BackgroundPicker from "./BackgroundPicker.jsx";
 import ChartCanvas from "./ChartCanvas.jsx";
 import ChartImportWizard from "./import/ChartImportWizard.jsx";
+import ChartPersistenceControls from "./ChartPersistenceControls.jsx";
+import ChartExportMenu from "./ChartExportMenu.jsx";
+import ChartPrintView from "./ChartPrintView.jsx";
 import {
   getGridPreference,
   GRID_PREFERENCES,
@@ -50,6 +60,11 @@ export default function ChartBuilderPage() {
   const [pickerOpen, setPickerOpen] = useState(true);
   const [bgOpen, setBgOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [printDoc, setPrintDoc] = useState(null);
+  // Connect mode: undefined = off, null = armed awaiting the first click,
+  // a node id = source card chosen, awaiting the second click.
+  const [connectSourceId, setConnectSourceId] = useState(undefined);
+  const connectArmed = connectSourceId !== undefined;
   const [gridPref, setGridPref] = useState(() => getGridPreference());
   const [notice, setNotice] = useNotice();
   const histRef = useRef(hist);
@@ -74,13 +89,14 @@ export default function ChartBuilderPage() {
 
   function applyAction(action, label) {
     const current = histRef.current.present;
-    if (!current) return;
+    if (!current) return false;
     const result = chartReducer(current, action);
     if (result.error) {
       setNotice({ text: result.error, kind: "error" });
-      return;
+      return false;
     }
     commitState(result.state, label ?? action.type);
+    return true;
   }
 
   function stampLayoutPositions(state, tpl) {
@@ -170,12 +186,20 @@ export default function ChartBuilderPage() {
     }
     commitState(next, "add-node");
     setSelectedId(id);
+    if (isOrg && !supervisorId && doc.nodes.length > 0) {
+      setNotice({
+        text: `“${node.label}” has no supervisor yet — no connecting line. Pick one in the Inspector, use Connect, or drag them onto their manager.`,
+        kind: "info",
+      });
+    }
   }
 
   function deleteSelected() {
     if (!doc || !selectedId) return;
     applyAction({ type: "DELETE_NODE", id: selectedId }, "delete-node");
     setSelectedId(null);
+    // Deleting while connecting disarms — the source may be gone.
+    if (connectArmed) setConnectSourceId(undefined);
   }
 
   function changeGrid(pref) {
@@ -208,6 +232,68 @@ export default function ChartBuilderPage() {
       kind: "info",
     });
   }
+
+  function handleLoadChart(loadedDoc) {
+    // Loading starts a fresh undo stack: the saved chart becomes the only
+    // history entry, so undo can never reach into a previous chart.
+    setHist(commitChartAction(emptyChartHistory(), "load-chart", loadedDoc));
+    setSelectedId(null);
+    setPickerOpen(false);
+  }
+
+  function toggleConnect() {
+    if (connectArmed) {
+      setConnectSourceId(undefined);
+    } else {
+      // Arming with a node selected uses it as the connection source.
+      setConnectSourceId(selectedId ?? null);
+    }
+  }
+
+  function handleConnectNode(nodeId) {
+    if (!doc) return;
+    if (nodeId == null) {
+      // Background click cancels connect mode.
+      setConnectSourceId(undefined);
+      return;
+    }
+    if (connectSourceId == null) {
+      setConnectSourceId(nodeId);
+      return;
+    }
+    const { action, error } = buildConnectAction(doc, connectSourceId, nodeId);
+    if (error || !action) {
+      setNotice({ text: error ?? "Could not connect those cards.", kind: "error" });
+      return;
+    }
+    const labelOf = (id) => doc.nodes.find((n) => n.id === id)?.label ?? "card";
+    const ok = applyAction(action, "connect");
+    if (!ok) return; // reducer error (e.g. org cycle) already surfaced
+    if (doc.type === "workflow") {
+      // Chain building: the target becomes the next source.
+      setConnectSourceId(nodeId);
+      setNotice({
+        text: `Connected ${labelOf(connectSourceId)} → ${labelOf(nodeId)} — click the next step, or Esc to finish.`,
+        kind: "info",
+      });
+    } else {
+      setConnectSourceId(undefined);
+      setNotice({
+        text: `${labelOf(nodeId)} now reports to ${labelOf(connectSourceId)}.`,
+        kind: "info",
+      });
+    }
+  }
+
+  // Esc exits connect mode.
+  useEffect(() => {
+    if (!connectArmed) return;
+    const onKey = (event) => {
+      if (event.key === "Escape") setConnectSourceId(undefined);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [connectArmed]);
 
   function importWizardModal() {
     if (!importOpen) return null;
@@ -265,6 +351,14 @@ export default function ChartBuilderPage() {
           </div>
         )}
         <TemplatePicker onPick={pickTemplate} />
+        <div className="border-t border-slate-200 bg-white px-6 py-4">
+          <h2 className="mb-2 text-sm font-semibold text-slate-900">Saved charts</h2>
+          <ChartPersistenceControls
+            doc={doc}
+            onLoad={handleLoadChart}
+            onNotice={setNotice}
+          />
+        </div>
         {importWizardModal()}
       </div>
     );
@@ -272,6 +366,12 @@ export default function ChartBuilderPage() {
 
   const selected = doc.nodes.find((n) => n.id === selectedId) ?? null;
   const supervisor = selected && doc.type === "org" ? nodeSupervisor(doc, selected.id) : null;
+
+  // Print view takes over the whole route: the print dialog captures the
+  // chart and nothing else (no toolbar, inspector, handles, or grid).
+  if (printDoc) {
+    return <ChartPrintView doc={printDoc} onClose={() => setPrintDoc(null)} />;
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-100">
@@ -329,7 +429,30 @@ export default function ChartBuilderPage() {
         <ToolbarButton onClick={addNode}>
           {doc.type === "org" ? "Add person" : "Add step"}
         </ToolbarButton>
+        <ToolbarButton active={connectArmed} onClick={toggleConnect}>
+          Connect
+        </ToolbarButton>
+        <ChartPersistenceControls
+          doc={doc}
+          onLoad={handleLoadChart}
+          onNotice={setNotice}
+        />
+        <ChartExportMenu doc={doc} onPrint={() => setPrintDoc(doc)} onNotice={setNotice} />
         <div className="ml-auto flex items-center gap-2">
+          <span className="text-[11px] font-medium text-slate-500">Connector</span>
+          <Segmented
+            ariaLabel="Connector thickness"
+            value={resolveDocSettings(doc.settings).connectorWidth}
+            onPick={(w) =>
+              commitState(
+                withParts(doc, {
+                  settings: { ...doc.settings, connectorWidth: w },
+                }),
+                "connector-width"
+              )
+            }
+            options={LINE_WIDTHS.map((v) => ({ value: v, label: String(v) }))}
+          />
           {errorCount > 0 && (
             <span className="rounded-full bg-red-600 px-2.5 py-1 text-xs font-semibold text-white">
               {errorCount} error{errorCount === 1 ? "" : "s"}
@@ -351,6 +474,16 @@ export default function ChartBuilderPage() {
       {/* Body */}
       <div className="flex flex-1 gap-4 p-4">
         <div className="min-w-0 flex-1">
+          {connectArmed && (
+            <div
+              role="status"
+              className="mb-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-900"
+            >
+              {connectSourceId == null
+                ? "Connect mode: click a card to start the connection — Esc to cancel."
+                : "Connect mode: click a second card to draw the line — Esc to cancel."}
+            </div>
+          )}
           <ChartCanvas
             doc={doc}
             template={template}
@@ -359,11 +492,17 @@ export default function ChartBuilderPage() {
             gridPreference={gridPref}
             onSelect={setSelectedId}
             onDrop={handleDrop}
+            connectArmed={connectArmed}
+            connectSourceId={connectSourceId}
+            onConnectNode={handleConnectNode}
           />
           <p className="mt-2 text-xs text-slate-500">
-            Drag a node to move it. In org charts, drop a person onto another
-            person to change their supervisor — drops that would create a cycle
-            are rejected. Double-check: click a node to edit it in the panel.
+            Add {doc.type === "org" ? "person" : "step"} links the new card
+            under the selected {doc.type === "org" ? "person" : "step"} — with
+            nothing selected it starts unconnected. Connect draws a line
+            between two cards. Or drag a person onto another person to change
+            their supervisor — drops that would create a cycle are rejected.
+            Click a node to edit it in the panel.
           </p>
         </div>
 
@@ -466,8 +605,48 @@ function ToolbarButton({ children, onClick, disabled, active }) {
 const fieldClass =
   "mt-1 block w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200";
 
+const STYLE_SWATCHES = [
+  "#1f6feb",
+  "#0ea5e9",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#ec4899",
+  "#475569",
+];
+
+function Segmented({ options, value, onPick, ariaLabel }) {
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      className="mt-1 flex overflow-hidden rounded-lg border border-slate-300"
+    >
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          aria-pressed={opt.value === value}
+          onClick={() => onPick(opt.value)}
+          className={`flex-1 px-2 py-1.5 text-xs font-medium ${
+            opt.value === value
+              ? "bg-blue-600 text-white"
+              : "bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function NodeInspector({ doc, node, supervisorId, onPatch, onReparent, onDelete }) {
   const isOrg = doc.type === "org";
+  const style = resolveNodeStyle(node.style);
+  const patchStyle = (key, value) =>
+    onPatch({ style: { ...node.style, [key]: value } });
   return (
     <div>
       <h2 className="text-sm font-semibold text-slate-900">Edit node</h2>
@@ -535,6 +714,79 @@ function NodeInspector({ doc, node, supervisorId, onPatch, onReparent, onDelete 
           </label>
         </>
       )}
+      <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        Style
+      </h3>
+      <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Accent color">
+        {STYLE_SWATCHES.map((c) => (
+          <button
+            key={c}
+            type="button"
+            title={c}
+            aria-label={`Accent color ${c}`}
+            aria-pressed={style.color.toLowerCase() === c.toLowerCase()}
+            onClick={() => patchStyle("color", c)}
+            className={`h-7 w-7 rounded-full ${
+              style.color.toLowerCase() === c.toLowerCase()
+                ? "ring-2 ring-slate-900 ring-offset-2"
+                : "ring-1 ring-slate-300 hover:ring-2 hover:ring-slate-400"
+            }`}
+            style={{ backgroundColor: c }}
+          />
+        ))}
+      </div>
+      <div className="mt-2 text-xs font-medium text-slate-600">Card</div>
+      <Segmented
+        ariaLabel="Card style"
+        value={style.card}
+        onPick={(v) => patchStyle("card", v)}
+        options={NODE_CARD_STYLES.map((v) => ({
+          value: v,
+          label: v === "tint" ? "Tint" : v === "white" ? "White" : "Outline",
+        }))}
+      />
+      <div className="mt-2 text-xs font-medium text-slate-600">Border</div>
+      <Segmented
+        ariaLabel="Border thickness"
+        value={style.borderWidth}
+        onPick={(v) => patchStyle("borderWidth", v)}
+        options={LINE_WIDTHS.map((v) => ({ value: v, label: String(v) }))}
+      />
+      <div className="mt-2 text-xs font-medium text-slate-600">Text size</div>
+      <Segmented
+        ariaLabel="Text size"
+        value={style.textSize}
+        onPick={(v) => patchStyle("textSize", v)}
+        options={NODE_TEXT_SIZES.map((v) => ({
+          value: v,
+          label: v === "sm" ? "S" : v === "md" ? "M" : "L",
+        }))}
+      />
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          aria-pressed={style.bold}
+          onClick={() => patchStyle("bold", !style.bold)}
+          className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-bold ${
+            style.bold
+              ? "border-blue-600 bg-blue-600 text-white"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          B
+        </button>
+        <div className="flex-[2]">
+          <Segmented
+            ariaLabel="Text alignment"
+            value={style.align}
+            onPick={(v) => patchStyle("align", v)}
+            options={NODE_TEXT_ALIGNS.map((v) => ({
+              value: v,
+              label: v === "left" ? "Left" : "Center",
+            }))}
+          />
+        </div>
+      </div>
       <button
         type="button"
         onClick={onDelete}
