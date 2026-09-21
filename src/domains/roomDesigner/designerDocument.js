@@ -16,6 +16,11 @@
 // Coordinates are inches; opening offsets are inches from wall.a.
 
 import { getCatalogEntry, ROOM_TEMPLATES } from "./furnitureCatalog";
+import { findSymbol } from "./symbolRegistry";
+// Side-effect import: registers the "piping" symbol set so placeSymbol
+// and validateDesign resolve it in every context that loads the document
+// model (app, API routes, tests).
+import "./pipingCatalog";
 import {
   calibrateUnderlayScale,
   DEFAULT_UNDERLAY_OPACITY,
@@ -25,6 +30,10 @@ import {
   polygonArea,
   wallLength,
 } from "./designerGeometry";
+import {
+  dedupeConsecutivePoints,
+  PIPE_LAYERS,
+} from "./pipingGeometry";
 
 // Re-exported for the catalog UI; the canonical definition lives in
 // furnitureCatalog.js, where the "rooms" symbol set is registered.
@@ -60,6 +69,8 @@ export function createEmptyDesign(name = "Untitled design") {
     rooms: [],
     openings: [],
     furniture: [],
+    pipes: [], // Phase 2: pipe runs { id, points, diameterIn, material?, service?, layer }
+    symbols: [], // Phase 2: placed symbols { id, domain, symbolId, x, y, rotationDeg, layer, tag? }
     underlay: null, // background trace-over image; see setUnderlay
   };
 }
@@ -294,6 +305,176 @@ export function moveFurnitureMany(design, positions) {
   return { ...design, furniture };
 }
 
+// ---- Pipe runs (Phase 2: piping mode) ----
+// A pipe run is a polyline of plan-inch points carrying nominal diameter,
+// material, service, and a discipline layer. Lengths derive from the
+// geometry (see pipingGeometry.pipeRunLengthIn) — never stored.
+
+function cleanDiameter(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0 || n > 48) {
+    throw new Error("Pipe diameter must be a positive number up to 48 inches.");
+  }
+  return Math.round(n * 100) / 100;
+}
+
+/** Discipline layer for a pipe run; unknown values fall back to "piping". */
+function cleanPipeLayer(value) {
+  return PIPE_LAYERS.includes(value) ? value : "piping";
+}
+
+export function findPipeRun(design, pipeId) {
+  return (design.pipes || []).find((p) => p.id === pipeId);
+}
+
+/**
+ * Add a pipe run. Consecutive near-duplicate points are collapsed (so the
+ * doubled final click of a double-click-to-finish never creates a
+ * zero-length segment); fewer than two distinct points throws.
+ */
+export function addPipeRun(design, points, { id, diameterIn = 2, material, service, layer } = {}) {
+  assertDesign(design);
+  const clean = dedupeConsecutivePoints(points);
+  if (clean.length < 2) throw new Error("Pipe run needs at least two distinct points.");
+  const run = {
+    id: id || nextId("pipe"),
+    points: clean,
+    diameterIn: cleanDiameter(diameterIn),
+    layer: cleanPipeLayer(layer),
+  };
+  const cleanMaterial = cleanText(material);
+  if (cleanMaterial) run.material = cleanMaterial;
+  const cleanService = cleanText(service);
+  if (cleanService) run.service = cleanService;
+  return { ...design, pipes: [...(design.pipes || []), run] };
+}
+
+export function deletePipeRun(design, pipeId) {
+  assertDesign(design);
+  return { ...design, pipes: (design.pipes || []).filter((p) => p.id !== pipeId) };
+}
+
+/** Patch a run's diameter/material/service/layer. Blank material/service clears the field. */
+export function setPipeFields(design, pipeId, fields = {}) {
+  assertDesign(design);
+  let changed = false;
+  const pipes = (design.pipes || []).map((run) => {
+    if (run.id !== pipeId) return run;
+    changed = true;
+    const next = { ...run };
+    if (fields.diameterIn !== undefined) next.diameterIn = cleanDiameter(fields.diameterIn);
+    if (fields.material !== undefined) {
+      const m = cleanText(fields.material);
+      if (m) next.material = m;
+      else delete next.material;
+    }
+    if (fields.service !== undefined) {
+      const s = cleanText(fields.service);
+      if (s) next.service = s;
+      else delete next.service;
+    }
+    if (fields.layer !== undefined) next.layer = cleanPipeLayer(fields.layer);
+    return next;
+  });
+  if (!changed) throw new Error(`Unknown pipe run: ${pipeId}`);
+  return { ...design, pipes };
+}
+
+/** Drag one vertex of a pipe run to a new point. */
+export function movePipeVertex(design, pipeId, index, point) {
+  assertDesign(design);
+  if (!isValidPoint(point)) throw new Error("Vertex must be a valid point.");
+  let changed = false;
+  const pipes = (design.pipes || []).map((run) => {
+    if (run.id !== pipeId) return run;
+    if (!Number.isInteger(index) || index < 0 || index >= run.points.length) {
+      throw new Error("Vertex index out of range.");
+    }
+    changed = true;
+    return {
+      ...run,
+      points: run.points.map((p, i) => (i === index ? { x: point.x, y: point.y } : p)),
+    };
+  });
+  if (!changed) throw new Error(`Unknown pipe run: ${pipeId}`);
+  return { ...design, pipes };
+}
+
+// ---- Generic symbol instances (Phase 2: piping mode) ----
+// Placements of any registered symbol domain ("piping" today, more later).
+// Instances reference the catalog by domain + symbolId; the registry owns
+// the symbol definitions.
+
+export function findSymbolInstance(design, instanceId) {
+  return (design.symbols || []).find((s) => s.id === instanceId);
+}
+
+/**
+ * Place a registered symbol. Layer falls back to the symbol's default
+ * layer ("auto"/unknown values included); tag is optional equipment
+ * tagging (e.g. "P-101").
+ */
+export function placeSymbol(design, domain, symbolId, x, y, { id, rotationDeg = 0, layer, tag } = {}) {
+  assertDesign(design);
+  const symbol = findSymbol(domain, symbolId);
+  if (!symbol) throw new Error(`Unknown symbol: ${domain}/${symbolId}`);
+  if (!isValidPoint({ x, y })) throw new Error("Symbol position must be valid.");
+  const instance = {
+    id: id || nextId("symbol"),
+    domain,
+    symbolId,
+    x,
+    y,
+    rotationDeg: ((rotationDeg % 360) + 360) % 360,
+    layer: PIPE_LAYERS.includes(layer) ? layer : symbol.defaultLayer || "piping",
+  };
+  const cleanTag = cleanText(tag, 40);
+  if (cleanTag) instance.tag = cleanTag;
+  return { ...design, symbols: [...(design.symbols || []), instance] };
+}
+
+export function moveSymbol(design, instanceId, x, y) {
+  assertDesign(design);
+  if (!isValidPoint({ x, y })) throw new Error("Symbol position must be valid.");
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== instanceId) return s;
+    changed = true;
+    return { ...s, x, y };
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${instanceId}`);
+  return { ...design, symbols };
+}
+
+export function rotateSymbol(design, instanceId, rotationDeg) {
+  assertDesign(design);
+  let changed = false;
+  const symbols = (design.symbols || []).map((s) => {
+    if (s.id !== instanceId) return s;
+    changed = true;
+    return { ...s, rotationDeg: ((rotationDeg % 360) + 360) % 360 };
+  });
+  if (!changed) throw new Error(`Unknown symbol instance: ${instanceId}`);
+  return { ...design, symbols };
+}
+
+export function deleteSymbol(design, instanceId) {
+  assertDesign(design);
+  return { ...design, symbols: (design.symbols || []).filter((s) => s.id !== instanceId) };
+}
+
+/** Set (or clear, with a blank) an equipment tag such as "P-101". */
+export function setSymbolTag(design, instanceId, tag) {
+  return setShapeField(design, "symbols", instanceId, "tag", cleanText(tag, 40), "symbol");
+}
+
+/** Move a symbol instance to another discipline layer. */
+export function setSymbolLayer(design, instanceId, layer) {
+  assertDesign(design);
+  if (!PIPE_LAYERS.includes(layer)) throw new Error(`Unknown layer: ${layer}`);
+  return setShapeField(design, "symbols", instanceId, "layer", layer, "symbol");
+}
+
 // ---- Shape data hooks (Visio-style shape data) ----
 // Optional cost/material fields stored on the document. These are the seam
 // the FORGE cost tools will consume later: plain data in, no pricing logic.
@@ -373,6 +554,18 @@ export function validateDesign(design) {
   }
   for (const room of design.rooms || []) {
     if (polygonArea(room.polygon) <= 0) errors.push(`Room ${room.id} has no area.`);
+  }
+  for (const run of design.pipes || []) {
+    if (!Array.isArray(run.points) || run.points.length < 2) {
+      errors.push(`Pipe run ${run.id} has fewer than two points.`);
+    } else if (!(run.diameterIn > 0)) {
+      errors.push(`Pipe run ${run.id} has a bad diameter.`);
+    }
+  }
+  for (const instance of design.symbols || []) {
+    if (!findSymbol(instance.domain, instance.symbolId)) {
+      errors.push(`Symbol ${instance.id} references unknown ${instance.domain}/${instance.symbolId}.`);
+    }
   }
   return errors;
 }

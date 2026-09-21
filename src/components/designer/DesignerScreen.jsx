@@ -16,7 +16,9 @@ import {
   RotateCw,
   Ruler,
   Save,
+  Shapes,
   Sofa,
+  Spline,
   Square,
   Trash2,
   Upload,
@@ -27,8 +29,16 @@ import { isHousePlansEnabled } from "@/lib/housePlans/housePlansFlags";
 import { createSaveScheduler } from "./saveScheduler";
 import { createInitialState, designerReducer } from "./designerReducer";
 import { catalogByCategory, getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
+import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import { ROOM_TEMPLATES } from "@/domains/roomDesigner/designerDocument";
 import { feetInchesLabel, parseDimensionInput, wallLength } from "@/domains/roomDesigner/designerGeometry";
+import {
+  PIPE_DIAMETERS_IN,
+  PIPE_LAYERS,
+  PIPE_MATERIALS,
+  PIPE_SERVICES,
+  pipeRunLengthIn,
+} from "@/domains/roomDesigner/pipingGeometry";
 import { summarizeDesignForEstimating } from "@/domains/roomDesigner/designerExports";
 
 const DesignerViewport3D = dynamic(() => import("./DesignerViewport3D"), {
@@ -47,6 +57,8 @@ const TOOL_DEFS = [
   { id: "door", label: "Door", icon: DoorOpen, hint: "Click a wall to cut a door opening" },
   { id: "window", label: "Window", icon: Box, hint: "Click a wall to cut a window opening" },
   { id: "furniture", label: "Furniture", icon: Sofa, hint: "Pick a piece, then click the plan to place it" },
+  { id: "pipe", label: "Pipe", icon: Spline, hint: "Click to add pipe vertices · double-click or Enter to finish · Esc cancels" },
+  { id: "piping", label: "Piping", icon: Shapes, hint: "Pick a valve, fitting, or equipment symbol, then click the plan to place it" },
   { id: "erase", label: "Erase", icon: Eraser, hint: "Click anything to delete it" },
   { id: "pan", label: "Pan", icon: Hand, hint: "Drag to pan · scroll to zoom (or hold Space anytime)" },
   { id: "calibrate", label: "Calibrate", icon: Ruler, hint: "Set the background image scale: click two points on it, then enter the real distance", needsUnderlay: true },
@@ -128,7 +140,7 @@ export default function DesignerScreen({ projectId, initialName }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [save]);
 
-  const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, view, dirty } = state;
+  const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, orthoSnap, layerVisibility, view, dirty } = state;
   const summary = summarizeDesignForEstimating(design);
   const activeTool = TOOL_DEFS.find((t) => t.id === tool);
 
@@ -223,6 +235,10 @@ export default function DesignerScreen({ projectId, initialName }) {
               calibration={state.calibration}
               pendingCatalogId={pendingCatalogId}
               pendingRoomTemplate={pendingRoomTemplate}
+              pendingPipe={pendingPipe}
+              pendingSymbol={pendingSymbol}
+              orthoSnap={orthoSnap}
+              layerVisibility={layerVisibility}
               dispatch={dispatch}
             />
           ) : (
@@ -261,6 +277,11 @@ function RightPanel({ state, dispatch, summary }) {
   // Scale calibration for the background underlay (Visio trace-over workflow).
   if (tool === "calibrate") {
     return <CalibrationPanel state={state} dispatch={dispatch} />;
+  }
+
+  // Phase 2: piping mode — run defaults, symbol palette, ortho + layers.
+  if (tool === "pipe" || tool === "piping") {
+    return <PipingPanel state={state} dispatch={dispatch} />;
   }
 
   // Visio-style arrange: shift-click 2+ furniture pieces on the plan.
@@ -341,7 +362,16 @@ function RightPanel({ state, dispatch, summary }) {
         <div className="flex justify-between"><dt>Walls</dt><dd>{summary.wallCount} ({feetInchesLabel(summary.totalWallLengthIn)} total)</dd></div>
         <div className="flex justify-between"><dt>Doors / windows</dt><dd>{summary.doorCount} / {summary.windowCount}</dd></div>
         <div className="flex justify-between"><dt>Furniture</dt><dd>{summary.furnitureCount}</dd></div>
+        <div className="flex justify-between"><dt>Pipe runs</dt><dd>{summary.pipeRunCount}</dd></div>
+        {Object.entries(summary.pipeLengthByDiameterIn).map(([diameter, lengthIn]) => (
+          <div key={diameter} className="flex justify-between pl-3 text-gray-400">
+            <dt>⌀{diameter}″ pipe</dt>
+            <dd>{feetInchesLabel(lengthIn)}</dd>
+          </div>
+        ))}
+        <div className="flex justify-between"><dt>Piping symbols</dt><dd>{summary.pipingSymbolCount}</dd></div>
       </dl>
+      <LayerToggles state={state} dispatch={dispatch} />
       <h2 className="mb-2 text-sm font-semibold text-white">Settings</h2>
       <label className="mb-2 block text-xs text-gray-400">
         Wall height
@@ -372,6 +402,156 @@ function RightPanel({ state, dispatch, summary }) {
         scheduling and cost tools — nothing is locked inside the editor.
       </p>
       <UnderlaySection design={design} dispatch={dispatch} />
+    </div>
+  );
+}
+
+// Phase 2: piping mode panel — defaults for new pipe runs, the piping
+// symbol palette, orthogonal snapping, and discipline layer visibility.
+function PipingPanel({ state, dispatch }) {
+  const { pendingPipe, pendingSymbol, orthoSnap, tool } = state;
+  const set = getSymbolSet("piping");
+  const symbols = set ? set.symbols : [];
+  const selectClass = "mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white";
+
+  return (
+    <div>
+      <h2 className="mb-2 text-sm font-semibold text-white">Piping</h2>
+      <div className="mb-3 flex gap-1">
+        <button
+          onClick={() => dispatch({ type: "SET_TOOL", tool: "pipe" })}
+          className={`flex-1 rounded px-2 py-1.5 text-xs font-semibold ${
+            tool === "pipe" ? "bg-sky-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+          }`}
+        >
+          Draw pipe
+        </button>
+        <button
+          onClick={() => dispatch({ type: "SET_TOOL", tool: "piping" })}
+          className={`flex-1 rounded px-2 py-1.5 text-xs font-semibold ${
+            tool === "piping" ? "bg-sky-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+          }`}
+        >
+          Symbols
+        </button>
+      </div>
+
+      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">New pipe runs</h3>
+      <div className="mb-3 space-y-2">
+        <label className="block text-xs text-gray-400">
+          Diameter
+          <select
+            value={pendingPipe.diameterIn}
+            onChange={(e) => dispatch({ type: "SET_PENDING_PIPE", pipe: { diameterIn: Number(e.target.value) } })}
+            className={selectClass}
+          >
+            {PIPE_DIAMETERS_IN.map((d) => (
+              <option key={d} value={d}>⌀{d}″</option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-xs text-gray-400">
+          Material
+          <select
+            value={pendingPipe.material}
+            onChange={(e) => dispatch({ type: "SET_PENDING_PIPE", pipe: { material: e.target.value } })}
+            className={selectClass}
+          >
+            {PIPE_MATERIALS.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-xs text-gray-400">
+          Service
+          <input
+            type="text"
+            value={pendingPipe.service}
+            onChange={(e) => dispatch({ type: "SET_PENDING_PIPE", pipe: { service: e.target.value } })}
+            placeholder="e.g. Process"
+            className={`${selectClass} placeholder:text-gray-600`}
+          />
+        </label>
+        <label className="block text-xs text-gray-400">
+          Layer for new objects
+          <select
+            value={pendingPipe.layer}
+            onChange={(e) => dispatch({ type: "SET_PENDING_PIPE", pipe: { layer: e.target.value } })}
+            className={selectClass}
+          >
+            <option value="auto">Auto (symbol default)</option>
+            {PIPE_LAYERS.map((l) => (
+              <option key={l} value={l}>{l}</option>
+            ))}
+          </select>
+        </label>
+        <button
+          onClick={() => dispatch({ type: "TOGGLE_ORTHO_SNAP" })}
+          title="Lock each new pipe vertex to horizontal/vertical from the previous one"
+          className={`w-full rounded px-2 py-1.5 text-xs font-semibold ${
+            orthoSnap ? "bg-sky-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+          }`}
+        >
+          Ortho 90° snap {orthoSnap ? "on" : "off"}
+        </button>
+      </div>
+
+      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Symbols</h3>
+      <p className="mb-2 text-[11px] text-gray-500">Pick a symbol, then click the plan to place it.</p>
+      <div className="mb-3 grid grid-cols-2 gap-1">
+        {symbols.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => dispatch({ type: "SET_PENDING_SYMBOL", domain: "piping", symbolId: s.id })}
+            className={`rounded border p-1.5 text-left text-xs ${
+              pendingSymbol?.symbolId === s.id
+                ? "border-sky-500 bg-sky-900/40 text-white"
+                : "border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-500"
+            }`}
+          >
+            {s.label}
+            <span className="block text-[10px] text-gray-500">
+              {s.widthIn}″ × {s.depthIn}″ · {s.defaultLayer}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <LayerToggles state={state} dispatch={dispatch} />
+
+      <p className="mt-3 text-[11px] leading-relaxed text-gray-500">
+        Pipe tool: click to add vertices, double-click or press Enter to finish,
+        Esc cancels. Select a run to drag its vertices or edit its diameter,
+        material, and service.
+      </p>
+    </div>
+  );
+}
+
+// Discipline layers, Visio-style seed: toggle visibility of the piping,
+// equipment, and annotation layers on the plan.
+function LayerToggles({ state, dispatch }) {
+  const { layerVisibility } = state;
+  return (
+    <div className="mb-4">
+      <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Layers</h2>
+      <div className="flex gap-1">
+        {PIPE_LAYERS.map((layer) => {
+          const visible = layerVisibility[layer] !== false;
+          return (
+            <button
+              key={layer}
+              onClick={() => dispatch({ type: "TOGGLE_LAYER", layer })}
+              title={visible ? `Hide the ${layer} layer` : `Show the ${layer} layer`}
+              className={`flex-1 rounded px-1 py-1 text-[11px] font-semibold capitalize ${
+                visible ? "bg-sky-600 text-white" : "bg-gray-800 text-gray-500 hover:bg-gray-700"
+              }`}
+            >
+              {layer}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -691,6 +871,105 @@ function SelectionPanel({ state, dispatch }) {
           />
         </label>
         <p className="text-[11px] text-gray-500">Deleting a room also removes its four walls.</p>
+      </PanelShell>
+    );
+  }
+  if (selection.kind === "pipe") {
+    const run = (design.pipes || []).find((p) => p.id === selection.id);
+    if (!run) return null;
+    const selectClass = "mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white";
+    return (
+      <PanelShell title="Pipe run" onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
+        <Row label="Length" value={feetInchesLabel(pipeRunLengthIn(run.points))} />
+        <Row label="Vertices" value={String((run.points || []).length)} />
+        <label className="block text-xs text-gray-400">
+          Diameter
+          <select
+            value={run.diameterIn}
+            onChange={(e) => dispatch({ type: "SET_PIPE_FIELDS", pipeId: run.id, fields: { diameterIn: Number(e.target.value) } })}
+            className={selectClass}
+          >
+            {PIPE_DIAMETERS_IN.map((d) => (
+              <option key={d} value={d}>⌀{d}″</option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-xs text-gray-400">
+          Material
+          <select
+            value={run.material || ""}
+            onChange={(e) => dispatch({ type: "SET_PIPE_FIELDS", pipeId: run.id, fields: { material: e.target.value } })}
+            className={selectClass}
+          >
+            <option value="">—</option>
+            {PIPE_MATERIALS.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-xs text-gray-400">
+          Service
+          <input
+            type="text"
+            value={run.service || ""}
+            placeholder="e.g. Process"
+            onChange={(e) => dispatch({ type: "SET_PIPE_FIELDS", pipeId: run.id, fields: { service: e.target.value } })}
+            className={`${selectClass} placeholder:text-gray-600`}
+          />
+        </label>
+        <label className="block text-xs text-gray-400">
+          Layer
+          <select
+            value={run.layer}
+            onChange={(e) => dispatch({ type: "SET_PIPE_FIELDS", pipeId: run.id, fields: { layer: e.target.value } })}
+            className={selectClass}
+          >
+            {PIPE_LAYERS.map((l) => (
+              <option key={l} value={l}>{l}</option>
+            ))}
+          </select>
+        </label>
+        <p className="text-[11px] text-gray-500">Drag the orange vertices on the plan to reshape the run.</p>
+      </PanelShell>
+    );
+  }
+  if (selection.kind === "symbol") {
+    const inst = (design.symbols || []).find((s) => s.id === selection.id);
+    const symbol = inst && findSymbol(inst.domain, inst.symbolId);
+    if (!inst || !symbol) return null;
+    const selectClass = "mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white";
+    return (
+      <PanelShell title={symbol.label} onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
+        <Row label="Size" value={`${symbol.widthIn}″ × ${symbol.depthIn}″`} />
+        <label className="block text-xs text-gray-400">
+          Equipment tag
+          <input
+            type="text"
+            value={inst.tag || ""}
+            placeholder="e.g. P-101"
+            onChange={(e) => dispatch({ type: "SET_SYMBOL_TAG", symbolId: inst.id, tag: e.target.value })}
+            className={`${selectClass} placeholder:text-gray-600`}
+          />
+        </label>
+        <label className="block text-xs text-gray-400">
+          Layer
+          <select
+            value={inst.layer}
+            onChange={(e) => dispatch({ type: "SET_SYMBOL_LAYER", symbolId: inst.id, layer: e.target.value })}
+            className={selectClass}
+          >
+            {PIPE_LAYERS.map((l) => (
+              <option key={l} value={l}>{l}</option>
+            ))}
+          </select>
+        </label>
+        <button
+          onClick={() => dispatch({ type: "ROTATE_SYMBOL", symbolId: inst.id, rotationDeg: inst.rotationDeg + 45 })}
+          className="mt-2 flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700"
+        >
+          <RotateCw size={13} /> Rotate 45°
+        </button>
+        <p className="mt-2 text-[11px] text-gray-500">Tip: double-click the symbol on the plan to rotate it too.</p>
       </PanelShell>
     );
   }

@@ -120,9 +120,139 @@ export function drawDefaultSymbol({ symbol, instance, toScreen, scale, highlight
   );
 }
 
+/**
+ * Piping symbol: P&ID-inspired glyphs (valve bowties, pump, vessel,
+ * fittings, flow arrow, equipment tag) drawn from symbol.glyph.
+ * ctx: { symbol, instance: {id,x,y,rotationDeg,tag}, toScreen, scale, highlighted }
+ */
+export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighted }) {
+  const c = toScreen({ x: instance.x, y: instance.y });
+  const hw = (symbol.widthIn * scale) / 2;
+  const hh = (symbol.depthIn * scale) / 2;
+  const stroke = selectionStroke(highlighted, "#cbd5e1");
+  const sw = highlighted ? 3 : 2;
+  const accent = highlighted ? "#f59e0b" : "#38bdf8";
+
+  const glyph = (() => {
+    switch (symbol.glyph) {
+      case "gate": // valve bowtie + pipe stub
+        return (
+          <g>
+            <line x1={-hw} y1={0} x2={hw} y2={0} stroke={stroke} strokeWidth={sw} />
+            <polygon points={`${-hw},${-hh} ${-hw},${hh} 0,0`} fill="none" stroke={stroke} strokeWidth={sw} />
+            <polygon points={`${hw},${-hh} ${hw},${hh} 0,0`} fill="none" stroke={stroke} strokeWidth={sw} />
+          </g>
+        );
+      case "ball": // bowtie with filled ball
+        return (
+          <g>
+            <line x1={-hw} y1={0} x2={hw} y2={0} stroke={stroke} strokeWidth={sw} />
+            <polygon points={`${-hw},${-hh} ${-hw},${hh} 0,0`} fill="none" stroke={stroke} strokeWidth={sw} />
+            <polygon points={`${hw},${-hh} ${hw},${hh} 0,0`} fill="none" stroke={stroke} strokeWidth={sw} />
+            <circle r={Math.min(hw, hh) * 0.32} fill={stroke} />
+          </g>
+        );
+      case "check": // bowtie with flow dart
+        return (
+          <g>
+            <line x1={-hw} y1={0} x2={hw} y2={0} stroke={stroke} strokeWidth={sw} />
+            <polygon points={`${-hw},${-hh} ${-hw},${hh} 0,0`} fill="none" stroke={stroke} strokeWidth={sw} />
+            <polygon points={`${hw},${-hh} ${hw},${hh} 0,0`} fill="none" stroke={stroke} strokeWidth={sw} />
+            <polygon
+              points={`${hw * 0.1},${-hh * 0.35} ${hw * 0.1},${hh * 0.35} ${hw * 0.6},0`}
+              fill={accent}
+            />
+          </g>
+        );
+      case "pump": {
+        const r = Math.min(hw, hh) * 0.95;
+        return (
+          <g>
+            <circle r={r} fill="#0f172a" stroke={stroke} strokeWidth={sw} />
+            <polygon
+              points={`${-r * 0.45},${-r * 0.55} ${-r * 0.45},${r * 0.55} ${r * 0.55},0`}
+              fill={accent}
+            />
+          </g>
+        );
+      }
+      case "tank": // vessel with elliptical head
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="#1f2937" stroke={stroke} strokeWidth={sw} />
+            <ellipse cx={0} cy={-hh} rx={hw} ry={hh * 0.28} fill="none" stroke={stroke} strokeWidth={sw} />
+            <line x1={-hw} y1={hh * 0.45} x2={hw} y2={hh * 0.45} stroke={stroke} strokeWidth={1} strokeDasharray="4 3" opacity={0.7} />
+          </g>
+        );
+      case "elbow":
+        return (
+          <path
+            d={`M ${-hw} ${hh * 0.6} Q ${-hw} ${-hh} ${hw * 0.6} ${-hh}`}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={sw + 1}
+            strokeLinecap="round"
+          />
+        );
+      case "tee":
+        return (
+          <g stroke={stroke} strokeWidth={sw + 1} strokeLinecap="round">
+            <line x1={-hw} y1={0} x2={hw} y2={0} />
+            <line x1={0} y1={0} x2={0} y2={hh} />
+          </g>
+        );
+      case "reducer": // concentric reducer: trapezoid
+        return (
+          <polygon
+            points={`${-hw},${-hh} ${hw},${-hh * 0.35} ${hw},${hh * 0.35} ${-hw},${hh}`}
+            fill="#1f2937"
+            stroke={stroke}
+            strokeWidth={sw}
+          />
+        );
+      case "flow":
+        return (
+          <polygon
+            points={`${-hw},${-hh} ${-hw},${hh} ${hw},0`}
+            fill={accent}
+            fillOpacity={0.9}
+          />
+        );
+      case "tag": {
+        const label = (instance.tag || symbol.label || "").slice(0, 12);
+        return (
+          <g>
+            <rect
+              x={-hw} y={-hh} width={hw * 2} height={hh * 2} rx={3}
+              fill="#1f2937" stroke={highlighted ? "#f59e0b" : "#fbbf24"} strokeWidth={sw}
+            />
+            <text textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700} fill="#fde68a">
+              {label}
+            </text>
+          </g>
+        );
+      }
+      default:
+        return (
+          <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="none" stroke={stroke} strokeWidth={sw} />
+        );
+    }
+  })();
+
+  return (
+    <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
+      {glyph}
+      <text y={Math.max(hw, hh) + 14} textAnchor="middle" fontSize={10} fill="#9ca3af">
+        {symbol.label}
+      </text>
+    </g>
+  );
+}
+
 const routines = new Map([
   ["furniture", drawFurnitureSymbol],
   ["rooms", drawRoomSymbol],
+  ["piping", drawPipingSymbol],
 ]);
 
 /** Register (or replace) the 2D draw routine for a symbol domain. */

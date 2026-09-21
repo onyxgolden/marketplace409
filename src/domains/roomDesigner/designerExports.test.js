@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { summarizeDesignForEstimating } from "./designerExports";
 import {
   addOpening,
+  addPipeRun,
   addRoomFromTemplate,
   addWall,
   createEmptyDesign,
   placeFurniture,
+  placeSymbol,
   resetDesignerIds,
 } from "./designerDocument";
+import "./pipingCatalog";
 
 beforeEach(() => resetDesignerIds());
 
@@ -45,6 +48,28 @@ describe("designerExports — summarizeDesignForEstimating", () => {
   it("rejects non-documents", () => {
     expect(() => summarizeDesignForEstimating(null)).toThrow(/document/);
     expect(() => summarizeDesignForEstimating({ version: 1 })).toThrow(/document/);
+  });
+
+  it("totals pipe length by diameter and counts piping symbols", () => {
+    let d = createEmptyDesign();
+    d = addPipeRun(d, [{ x: 0, y: 0 }, { x: 120, y: 0 }], { diameterIn: 2 });
+    d = addPipeRun(d, [{ x: 0, y: 0 }, { x: 60, y: 0 }], { diameterIn: 2 });
+    d = addPipeRun(d, [{ x: 0, y: 0 }, { x: 0, y: 96 }], { diameterIn: 4 });
+    d = placeSymbol(d, "piping", "pump", 200, 200);
+    d = placeSymbol(d, "piping", "gate-valve", 210, 210);
+    const summary = summarizeDesignForEstimating(d);
+    expect(summary.pipeRunCount).toBe(3);
+    expect(summary.pipeLengthByDiameterIn).toEqual({ 2: 180, 4: 96 });
+    expect(summary.pipeRuns).toHaveLength(3);
+    expect(summary.pipeRuns[0].lengthIn).toBe(120);
+    expect(summary.pipingSymbolCount).toBe(2);
+  });
+
+  it("summarizes an empty piping design as zeros", () => {
+    const summary = summarizeDesignForEstimating(createEmptyDesign());
+    expect(summary.pipeRunCount).toBe(0);
+    expect(summary.pipeLengthByDiameterIn).toEqual({});
+    expect(summary.pipingSymbolCount).toBe(0);
   });
 
   it("exposes no editor internals — only plain data", () => {
