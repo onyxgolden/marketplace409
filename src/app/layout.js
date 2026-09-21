@@ -20,6 +20,24 @@ export const metadata = {
   title: "409 Marketplace | Buy Local. Sell Local.",
   description:
     "A local Southeast Texas marketplace for listings, services, rentals, pets, community resources, and American-made products.",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
+  manifest: "/site.webmanifest",
+  openGraph: {
+    title: "409 Marketplace | Buy Local. Sell Local.",
+    description:
+      "A local Southeast Texas marketplace for listings, services, rentals, pets, community resources, and American-made products.",
+    images: [{ url: "/brand/og-image.png", width: 1200, height: 630 }],
+  },
+};
+
+export const viewport = {
+  themeColor: "#1B2A4A",
 };
 
 export default function RootLayout({ children }) {

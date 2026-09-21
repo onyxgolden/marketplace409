@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <clipPath id="tx">
+      <path d="M18 6 H30 V20 L34 22 L38 23 L42 24 L46 25 L52 26 L51 32 L50 38 L47 42 L44 46 L40 50 L37 54 L34 56 L31 52 L28 48 L25 46 L22 44 L19 42 L16 40 L14 36 L12 34 L14 30 L14 28 L18 24 Z"/>
+    </clipPath>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#1B2A4A"/>
+  <g clip-path="url(#tx)">
+    <rect x="8" y="2" width="48" height="60" fill="#0F4C9C"/>
+    <rect x="26" y="2" width="30" height="60" fill="#FFFFFF"/>
+    <rect x="26" y="32" width="30" height="30" fill="#D2202F"/>
+    <polygon points="17,25 18.6,29.4 23.4,29.5 19.7,32.4 21,37 17,34.4 13,37 14.3,32.4 10.6,29.5 15.4,29.4" fill="#FFFFFF"/>
+    <text x="38" y="46" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="12" fill="#FFFFFF" text-anchor="middle">409</text>
+  </g>
+</svg>
