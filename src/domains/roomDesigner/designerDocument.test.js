@@ -16,10 +16,13 @@ import {
   moveUnderlay,
   moveWallEndpoint,
   parseDesign,
+  pieceSize,
   placeFurniture,
   removeUnderlay,
   renameDesign,
   resetDesignerIds,
+  resetFurnitureSize,
+  resizeFurniture,
   resizeOpening,
   rotateFurniture,
   serializeDesign,
@@ -181,6 +184,67 @@ describe("designerDocument — furniture", () => {
   it("rejects unknown catalog pieces", () => {
     const d = createEmptyDesign();
     expect(() => placeFurniture(d, "hover-sofa", 0, 0)).toThrow(/Unknown catalog piece/);
+  });
+});
+
+describe("designerDocument — furniture resize", () => {
+  it("pieceSize resolves catalog dims, then per-piece overrides", () => {
+    let d = createEmptyDesign();
+    d = placeFurniture(d, "bed-queen", 100, 100);
+    const id = d.furniture[0].id;
+    expect(pieceSize(d.furniture[0])).toEqual({ widthIn: 60, depthIn: 80 });
+    d = resizeFurniture(d, id, 72, 84);
+    expect(pieceSize(d.furniture[0])).toEqual({ widthIn: 72, depthIn: 84 });
+    // other pieces keep catalog size
+    d = placeFurniture(d, "toilet", 0, 0);
+    expect(pieceSize(d.furniture[1])).toEqual({ widthIn: 28, depthIn: 24 });
+  });
+
+  it("rounds to half-inch and rejects out-of-range sizes", () => {
+    let d = createEmptyDesign();
+    d = placeFurniture(d, "sofa-3seat", 0, 0);
+    const id = d.furniture[0].id;
+    d = resizeFurniture(d, id, 83.7, 35.2);
+    expect(d.furniture[0]).toMatchObject({ widthIn: 83.5, depthIn: 35 });
+    for (const [w, dd] of [[0, 36], [-5, 36], [36, 0], [36, -1], [36, 481], [481, 36]]) {
+      expect(() => resizeFurniture(d, id, w, dd)).toThrow(/must be between/);
+    }
+    for (const bad of [NaN, Infinity, "wide", undefined]) {
+      expect(() => resizeFurniture(d, id, bad, 36)).toThrow();
+    }
+    expect(() => resizeFurniture(d, "furniture-nope", 36, 36)).toThrow(/Unknown furniture/);
+  });
+
+  it("resetFurnitureSize drops overrides, restoring catalog size", () => {
+    let d = createEmptyDesign();
+    d = placeFurniture(d, "cabinet-base-24", 10, 10);
+    const id = d.furniture[0].id;
+    d = resizeFurniture(d, id, 30, 30);
+    expect(d.furniture[0]).toHaveProperty("widthIn", 30);
+    d = resetFurnitureSize(d, id);
+    expect(d.furniture[0]).not.toHaveProperty("widthIn");
+    expect(d.furniture[0]).not.toHaveProperty("depthIn");
+    expect(pieceSize(d.furniture[0])).toEqual({ widthIn: 24, depthIn: 24 });
+    expect(() => resetFurnitureSize(d, "furniture-nope")).toThrow(/Unknown furniture/);
+  });
+
+  it("keeps round pieces round when resized through the exact-size path", () => {
+    let d = createEmptyDesign();
+    d = placeFurniture(d, "water-heater", 0, 0);
+    const id = d.furniture[0].id;
+    // exact-size inputs go straight through resizeFurniture — no canvas drag
+    d = resizeFurniture(d, id, 30, 20);
+    expect(pieceSize(d.furniture[0])).toEqual({ widthIn: 30, depthIn: 30 });
+    d = resizeFurniture(d, id, 20, 36);
+    expect(pieceSize(d.furniture[0])).toEqual({ widthIn: 36, depthIn: 36 });
+  });
+
+  it("keeps size overrides through serialize/parse round trips", () => {
+    let d = createEmptyDesign();
+    d = placeFurniture(d, "sink-kitchen-33", 5, 5);
+    d = resizeFurniture(d, d.furniture[0].id, 36, 24);
+    const again = parseDesign(serializeDesign(d));
+    expect(pieceSize(again.furniture[0])).toEqual({ widthIn: 36, depthIn: 24 });
   });
 });
 

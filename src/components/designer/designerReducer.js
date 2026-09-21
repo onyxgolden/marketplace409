@@ -35,7 +35,9 @@ import {
   removeUnderlay,
   renameDesign,
   renameOrgChart,
+  resizeFurniture,
   resizeOpening,
+  resetFurnitureSize,
   rotateFurniture,
   rotateSymbol,
   setFurnitureUnitCost,
@@ -265,6 +267,13 @@ export function designerReducer(state, action) {
       return touch(state, moveFurniture(state.design, action.furnitureId, action.x, action.y));
     case "ROTATE_FURNITURE":
       return touch(state, rotateFurniture(state.design, action.furnitureId, action.rotationDeg));
+    case "RESIZE_FURNITURE":
+      return touch(
+        state,
+        resizeFurniture(state.design, action.furnitureId, action.widthIn, action.depthIn),
+      );
+    case "RESET_FURNITURE_SIZE":
+      return touch(state, resetFurnitureSize(state.design, action.furnitureId));
     case "ALIGN_FURNITURE": {
       const pieces = multiPieces(state);
       if (pieces.length < 2) return state;

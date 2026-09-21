@@ -13,7 +13,7 @@ import {
   wallDirection,
   wallLength,
 } from "./designerGeometry";
-import { findWall } from "./designerDocument";
+import { findWall, pieceSize } from "./designerDocument";
 
 export const WINDOW_SILL_IN = 36;
 export const WINDOW_HEADER_IN = 84;
@@ -82,14 +82,15 @@ export function splitWallByOpenings(wall, openings, { wallHeightIn }) {
 export function furnitureToBox(piece) {
   const catalog = getCatalogEntry(piece.catalogId);
   if (!catalog) return null;
+  const { widthIn, depthIn } = pieceSize(piece);
   return {
     kind: "furniture",
     id: piece.id,
     label: catalog.label,
     x: piece.x,
     z: piece.y,
-    widthIn: catalog.widthIn,
-    depthIn: catalog.depthIn,
+    widthIn,
+    depthIn,
     heightIn: catalog.heightIn,
     // screen-space clockwise degrees -> three.js counter-clockwise radians
     rotY: (-piece.rotationDeg * Math.PI) / 180,

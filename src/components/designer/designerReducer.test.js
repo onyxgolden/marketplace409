@@ -76,6 +76,38 @@ describe("designerReducer", () => {
     expect(state.design.furniture[0].rotationDeg).toBe(90);
   });
 
+  it("resizes furniture via RESIZE_FURNITURE and restores via RESET_FURNITURE_SIZE", () => {
+    let state = createInitialState();
+    state = designerReducer(state, {
+      type: "PLACE_FURNITURE", catalogId: "cabinet-base-24", x: 50, y: 60,
+    });
+    const id = state.design.furniture[0].id;
+    const rev = state.designRevision;
+    state = designerReducer(state, { type: "RESIZE_FURNITURE", furnitureId: id, widthIn: 30, depthIn: 26 });
+    expect(state.design.furniture[0]).toMatchObject({ widthIn: 30, depthIn: 26 });
+    expect(state.dirty).toBe(true);
+    expect(state.designRevision).toBe(rev + 1);
+    state = designerReducer(state, { type: "RESET_FURNITURE_SIZE", furnitureId: id });
+    expect(state.design.furniture[0]).not.toHaveProperty("widthIn");
+  });
+
+  it("rejects out-of-range RESIZE_FURNITURE in the reducer (domain backstop)", () => {
+    let state = createInitialState();
+    state = designerReducer(state, {
+      type: "PLACE_FURNITURE", catalogId: "cabinet-base-24", x: 50, y: 60,
+    });
+    const id = state.design.furniture[0].id;
+    // a corner drag past the 1"–480" footprint bounds must not reach the
+    // document: the reducer throws rather than storing invalid sizes
+    expect(() =>
+      designerReducer(state, { type: "RESIZE_FURNITURE", furnitureId: id, widthIn: 0.5, depthIn: 26 })
+    ).toThrow(/must be between/);
+    expect(() =>
+      designerReducer(state, { type: "RESIZE_FURNITURE", furnitureId: id, widthIn: 500, depthIn: 26 })
+    ).toThrow(/must be between/);
+    expect(state.design.furniture[0]).not.toHaveProperty("widthIn");
+  });
+
   it("renames and marks saved when the save revision is current", () => {
     let state = stateWithWall();
     state = designerReducer(state, { type: "RENAME", name: "New name" });
