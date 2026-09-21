@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
+  BookOpen,
   Box,
   DoorOpen,
   Eraser,
@@ -21,6 +22,8 @@ import {
   Upload,
 } from "lucide-react";
 import PlanCanvas from "./PlanCanvas";
+import HousePlansPanel from "./HousePlansPanel";
+import { isHousePlansEnabled } from "@/lib/housePlans/housePlansFlags";
 import { createSaveScheduler } from "./saveScheduler";
 import { createInitialState, designerReducer } from "./designerReducer";
 import { catalogByCategory, getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
@@ -54,6 +57,9 @@ export default function DesignerScreen({ projectId, initialName }) {
   const [name, setName] = useState(initialName || "Untitled design");
   const [status, setStatus] = useState({ kind: "loading", message: "Loading design…" });
   const [saving, setSaving] = useState(false);
+  // HOUSE PLANS (HP-L0): docked reference panel, gated behind the feature flag.
+  const [housePlansOpen, setHousePlansOpen] = useState(false);
+  const housePlansEnabled = isHousePlansEnabled();
 
   // Latest snapshots for saves: a queued save must capture the document and
   // name at the moment it actually sends, not when save() was invoked.
@@ -139,6 +145,20 @@ export default function DesignerScreen({ projectId, initialName }) {
         />
         {dirty && <span className="text-xs text-amber-400">● unsaved</span>}
         <div className="ml-auto flex items-center gap-2">
+          {housePlansEnabled && (
+            <button
+              onClick={() => setHousePlansOpen((open) => !open)}
+              aria-pressed={housePlansOpen}
+              title="Open the HOUSE PLANS reference library"
+              className={`flex items-center gap-1 rounded px-3 py-1 text-sm font-semibold ${
+                housePlansOpen
+                  ? "bg-emerald-600 text-white"
+                  : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+              }`}
+            >
+              <BookOpen size={15} /> House Plans
+            </button>
+          )}
           <div className="flex overflow-hidden rounded border border-gray-700">
             {(["2d", "3d"]).map((v) => (
               <button
@@ -219,6 +239,17 @@ export default function DesignerScreen({ projectId, initialName }) {
         <aside className="w-72 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3">
           <RightPanel state={state} dispatch={dispatch} summary={summary} />
         </aside>
+
+        {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
+            primary; this rail only exists behind the feature flag. */}
+        {housePlansEnabled && housePlansOpen && (
+          <aside
+            className="w-80 shrink-0 overflow-hidden border-l border-gray-800 bg-gray-900"
+            aria-label="House Plans reference library"
+          >
+            <HousePlansPanel onClose={() => setHousePlansOpen(false)} />
+          </aside>
+        )}
       </div>
     </div>
   );
