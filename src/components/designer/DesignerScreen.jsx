@@ -30,8 +30,9 @@ import HousePlansPanel from "./HousePlansPanel";
 import { isHousePlansEnabled } from "@/lib/housePlans/housePlansFlags";
 import { createSaveScheduler } from "./saveScheduler";
 import OrgChartPanel from "./OrgChartPanel";
+import FurnitureCatalogPanel from "./FurnitureCatalogPanel";
 import { createInitialState, designerReducer } from "./designerReducer";
-import { catalogByCategory, getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
+import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import { ROOM_TEMPLATES, pieceSize } from "@/domains/roomDesigner/designerDocument";
 import { feetInchesLabel, parseDimensionInput, wallLength } from "@/domains/roomDesigner/designerGeometry";
@@ -301,36 +302,7 @@ function RightPanel({ state, dispatch, summary }) {
   }
 
   if (tool === "furniture") {
-    return (
-      <div>
-        <h2 className="mb-2 text-sm font-semibold text-white">Furniture catalog</h2>
-        <p className="mb-3 text-xs text-gray-400">Pick a piece, then click the plan to place it.</p>
-        {catalogByCategory().map((group) => (
-          <div key={group.category} className="mb-3">
-            <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">{group.category}</h3>
-            <div className="grid grid-cols-2 gap-1">
-              {group.items.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => dispatch({ type: "SET_PENDING_CATALOG", catalogId: item.id })}
-                  className={`rounded border p-1.5 text-left text-xs ${
-                    pendingCatalogId === item.id
-                      ? "border-emerald-500 bg-emerald-900/40 text-white"
-                      : "border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-500"
-                  }`}
-                >
-                  <span className="mb-1 block h-3 w-6 rounded-sm" style={{ background: item.color }} />
-                  {item.label}
-                  <span className="block text-[10px] text-gray-500">
-                    {item.widthIn}″ × {item.depthIn}″
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    );
+    return <FurnitureCatalogPanel pendingCatalogId={pendingCatalogId} dispatch={dispatch} />;
   }
 
   if (tool === "room") {
