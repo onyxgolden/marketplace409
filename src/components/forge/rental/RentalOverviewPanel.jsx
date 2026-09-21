@@ -1,113 +1,17 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  Building2, AlertTriangle, RefreshCcw, DoorOpen, CalendarClock, Wrench, ShieldCheck,
+  Building2, AlertTriangle, CalendarClock, Wrench, Wallet,
   PauseCircle, PlayCircle, Home,
 } from "lucide-react";
 import { buildRentalDashboardSummary } from "@/application/rental/buildRentalDashboardSummary";
-import { buildRentalFinancialPerformance } from "@/application/rental/buildRentalFinancialPerformance";
-import ForgeMetricTile from "@/components/forge/ForgeMetricTile";
-import ForgeNeedsAttentionQueue from "@/components/forge/ForgeNeedsAttentionQueue";
-import ForgeComparisonBarChart from "@/components/forge/ForgeComparisonBarChart";
-import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import RentalTodaysPrioritiesPanel from "./guided-workflow/RentalTodaysPrioritiesPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-
-const PERIOD_OPTIONS = Object.freeze([
-  { type: "oneMonth", label: "1 Month" },
-  { type: "sixMonths", label: "6 Months" },
-  { type: "ytd", label: "YTD" },
-  { type: "year", label: "Year" },
-  { type: "allTime", label: "All time" },
-]);
-
-function PortfolioPerformanceSection({ financialEvents }) {
-  const [periodType, setPeriodType] = useState("sixMonths");
-  const [selectedYear, setSelectedYear] = useState(null);
-
-  const availableYears = useMemo(
-    () => buildRentalFinancialPerformance(financialEvents, { period: { type: "sixMonths" } }).availableYears,
-    [financialEvents],
-  );
-  const today = new Date();
-  const effectiveYear = selectedYear ?? availableYears.at(-1) ?? today.getUTCFullYear();
-
-  const performance = useMemo(() => buildRentalFinancialPerformance(financialEvents, {
-    period: periodType === "year" ? { type: "year", year: effectiveYear } : { type: periodType },
-  }), [financialEvents, periodType, effectiveYear]);
-
-  const currentKey = performance.granularity === "yearly"
-    ? String(today.getUTCFullYear())
-    : today.toISOString().slice(0, 7);
-
-  return (
-    <section aria-labelledby="rental-performance-heading" className="min-w-0 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h3 id="rental-performance-heading" className="text-lg font-black text-slate-950 dark:text-white">Portfolio performance</h3>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Rent collected vs. rental operating expenses — cash basis (recorded when money moved, not when billed or earned).
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Select time period">
-          {PERIOD_OPTIONS.map((option) => (
-            <button key={option.type} type="button" data-period-option={option.type}
-              aria-pressed={periodType === option.type} onClick={() => setPeriodType(option.type)}
-              className={`rounded-full px-3 py-1.5 text-xs font-black transition motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 ${
-                periodType === option.type
-                  ? goldControlClassName
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-          {periodType === "year" && (
-            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">
-              <span className="sr-only">Select year</span>
-              <select value={effectiveYear} onChange={(event) => setSelectedYear(Number(event.target.value))}
-                disabled={availableYears.length === 0}
-                className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-slate-950 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
-                {availableYears.length === 0
-                  ? <option value={effectiveYear}>{effectiveYear}</option>
-                  : availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
-              </select>
-            </label>
-          )}
-        </div>
-      </div>
-
-      <div data-performance-summary className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div className="rounded-xl bg-emerald-50 p-4 dark:bg-emerald-950/30">
-          <p className="text-xs font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Collected</p>
-          <p className="mt-1 text-xl font-black tabular-nums text-emerald-900 dark:text-emerald-200">{money.format(performance.totals.collectedCents / 100)}</p>
-        </div>
-        <div className="rounded-xl bg-amber-50 p-4 dark:bg-amber-950/30">
-          <p className="text-xs font-black uppercase tracking-wide text-amber-700 dark:text-amber-400">Expenses</p>
-          <p className="mt-1 text-xl font-black tabular-nums text-amber-900 dark:text-amber-200">{money.format(performance.totals.expensesCents / 100)}</p>
-        </div>
-        <div className="rounded-xl bg-cyan-50 p-4 dark:bg-cyan-950/30">
-          <p className="text-xs font-black uppercase tracking-wide text-cyan-700 dark:text-cyan-400">Net</p>
-          <p className="mt-1 text-xl font-black tabular-nums text-cyan-900 dark:text-cyan-200">
-            {performance.totals.netCents < 0 ? `-${money.format(Math.abs(performance.totals.netCents) / 100)}` : money.format(performance.totals.netCents / 100)}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-5">
-        <ForgeComparisonBarChart
-          title="Cash flow by period" series={performance.series.map((point) => Object.freeze({ key: point.key, primaryCents: point.collectedCents, secondaryCents: point.expensesCents }))}
-          primaryLabel="Rent collected" secondaryLabel="Rental operating expenses" netLabel="Net cash flow"
-          formatValue={(cents) => money.format(cents / 100)} currentKey={currentKey}
-        />
-      </div>
-
-      <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
-        Includes rent recorded in Rentec before FORGE began collecting, alongside FORGE-processed payments — this total can differ from "Collected this month" above, which reflects FORGE-processed payments only.
-      </p>
-    </section>
-  );
-}
+// Fixed horizon for the "Expiring leases" card -- matches buildRentalDashboardSummary's window.
+const EXPIRING_LEASE_HORIZON_DAYS = 90;
+// Statuses buildRentalDashboardSummary counts as open maintenance.
+const OPEN_MAINTENANCE_STATUSES_LABEL = "Open, pending, submitted, assigned, or in progress";
 
 function BillingStatusChip({ billingEnabled, onNavigate }) {
   const Icon = billingEnabled ? PlayCircle : PauseCircle;
@@ -148,30 +52,26 @@ function PortfolioStrip({ units }) {
   );
 }
 
-function HeroHeader({ summary, occupancyPercent, onNavigate }) {
+function DashboardCard({ icon: Icon, label, value, detail, destination, onNavigate, tone }) {
+  const tones = {
+    neutral: "border-slate-200 dark:border-slate-700",
+    success: "border-emerald-200 dark:border-emerald-900/60",
+    attention: "border-amber-200 dark:border-amber-900/60",
+  };
   return (
-    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
-      <div className="flex flex-col gap-6 p-6 lg:flex-row lg:items-center lg:justify-between lg:p-8">
-        <div className="min-w-0">
-          <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Rental operations</p>
-          <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Summary</h2>
-          <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-400">Start with what needs attention, then move into the supporting record.</p>
-          <div className="mt-4 flex items-center gap-3">
-            <PortfolioStrip units={summary.portfolioUnits} />
-            <span className="text-sm font-bold text-slate-600 dark:text-slate-400">
-              {summary.totalUnits} unit{summary.totalUnits === 1 ? "" : "s"} · {occupancyPercent}% occupied
-            </span>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-4">
-          <BillingStatusChip billingEnabled={summary.billingEnabled} onNavigate={onNavigate} />
-          <div className="rounded-2xl bg-slate-950 px-6 py-4 text-white dark:bg-slate-800">
-            <p className="text-xs font-black uppercase tracking-wide text-slate-300">Collected this month</p>
-            <p className="mt-1 text-3xl font-black tabular-nums">{money.format(summary.collectedThisMonthCents / 100)}</p>
-          </div>
-        </div>
+    <button
+      type="button"
+      onClick={() => onNavigate?.(destination)}
+      data-dashboard-card={label}
+      className={`min-w-0 rounded-3xl border bg-white p-6 text-left shadow-sm transition hover:shadow-md motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:bg-slate-900 ${tones[tone] || tones.neutral}`}
+    >
+      <div className="flex items-center gap-2">
+        <Icon size={18} className="shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+        <p className="truncate text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
       </div>
-    </div>
+      <p className="mt-3 text-4xl font-black tabular-nums tracking-tight text-slate-950 dark:text-white">{value}</p>
+      <p className="mt-2 text-sm font-semibold text-slate-600 dark:text-slate-400">{detail}</p>
+    </button>
   );
 }
 
@@ -180,7 +80,7 @@ function EmptyPortfolioState({ onNavigate }) {
     <section className="space-y-6" data-rental-overview data-rental-overview-empty>
       <div>
         <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Rental operations</p>
-        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Summary</h2>
+        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Dashboard</h2>
       </div>
       <div className="flex flex-col items-center gap-4 rounded-3xl border border-dashed border-slate-300 bg-white p-12 text-center dark:border-slate-700 dark:bg-slate-900">
         <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-400" aria-hidden="true">
@@ -189,7 +89,7 @@ function EmptyPortfolioState({ onNavigate }) {
         <div>
           <h3 className="text-lg font-black text-slate-950 dark:text-white">Add your first property to get started</h3>
           <p className="mt-2 max-w-md text-sm text-slate-600 dark:text-slate-400">
-            Once a property and unit are on file, this summary will surface occupancy, rent collection, and what needs your attention.
+            Once a property and unit are on file, this dashboard will surface rent collection, balances, occupancy, and what needs your attention.
           </p>
         </div>
         <button type="button" onClick={() => onNavigate?.("setup")}
@@ -219,7 +119,7 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
     <section className="space-y-5" data-rental-overview>
       <div>
         <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Rental operations</p>
-        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Summary</h2>
+        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Dashboard</h2>
       </div>
       <p className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">Loading rental summary…</p>
     </section>
@@ -227,65 +127,71 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
   if (summary.totalUnits === 0) return <EmptyPortfolioState onNavigate={onNavigate} />;
 
   const occupancyPercent = summary.totalUnits > 0 ? Math.round((summary.occupiedUnits / summary.totalUnits) * 100) : 0;
+  const collectedPeriodLabel = new Date().toLocaleString("en-US", { month: "long", year: "numeric" });
 
-  const kpis = [
+  const cards = [
     {
-      metricKey: "occupancy", icon: Building2, label: "Portfolio occupancy", value: `${occupancyPercent}%`,
-      detail: `${summary.occupiedUnits} of ${summary.totalUnits} units occupied`,
-      tone: summary.vacancies > 0 ? "neutral" : "success", destination: "setup",
+      icon: Wallet, label: "Rent collected", destination: "charges", tone: "success",
+      value: money.format(summary.collectedThisMonthCents / 100),
+      detail: `${collectedPeriodLabel} — succeeded payments, net of refunds`,
     },
     {
-      metricKey: "overdue-forge", icon: AlertTriangle, label: "FORGE-collectible overdue", value: money.format(summary.overdueBalanceCents / 100),
-      detail: summary.overdueBalanceCents > 0 ? "Collectible now on FORGE-activated leases." : "Nothing overdue on FORGE-collected leases.",
-      tone: summary.overdueBalanceCents > 0 ? "attention" : "success", destination: "charges",
+      icon: AlertTriangle, label: "Outstanding balances", destination: "charges",
+      tone: summary.openBalanceCents > 0 ? "attention" : "success",
+      value: money.format(summary.openBalanceCents / 100),
+      detail: summary.overdueBalanceCents > 0
+        ? `Open rent-charge balances · ${money.format(summary.overdueBalanceCents / 100)} overdue`
+        : "Open rent-charge balances · nothing overdue",
     },
     {
-      metricKey: "externally-managed", icon: RefreshCcw, label: "Externally managed — reconciliation required", value: money.format(summary.externallyManagedCents / 100),
-      detail: summary.externallyManagedCents > 0
-        ? `${summary.externallyManagedChargeCount} charge${summary.externallyManagedChargeCount === 1 ? "" : "s"} still authoritative in Rentec.`
-        : "No externally managed balance on file.",
-      tone: summary.externallyManagedCents > 0 ? "attention" : "neutral", destination: "rentec-payment-import",
+      icon: Building2, label: "Occupancy", destination: "setup",
+      tone: summary.vacancies > 0 ? "neutral" : "success",
+      value: `${occupancyPercent}%`,
+      detail: `${summary.occupiedUnits} of ${summary.totalUnits} unit${summary.totalUnits === 1 ? "" : "s"} leased`,
     },
     {
-      metricKey: "vacancies", icon: DoorOpen, label: "Vacancies", value: String(summary.vacancies),
-      detail: summary.vacancies > 0 ? "Ready to list or show." : "Fully leased.",
-      tone: summary.vacancies > 0 ? "attention" : "success", destination: "setup",
+      icon: Wrench, label: "Open maintenance", destination: "maintenance",
+      tone: summary.openMaintenance > 0 ? "attention" : "success",
+      value: String(summary.openMaintenance),
+      detail: summary.openMaintenance > 0 ? OPEN_MAINTENANCE_STATUSES_LABEL : "No open requests",
     },
     {
-      metricKey: "lease-expirations", icon: CalendarClock, label: "Lease expirations (90 days)", value: String(summary.expiringLeases),
+      icon: CalendarClock, label: "Expiring leases", destination: "lease-lifecycle",
+      tone: summary.expiringLeases > 0 ? "attention" : "neutral",
+      value: String(summary.expiringLeases),
       detail: summary.expiringLeases > 0
-        ? `${summary.expiringLeasesWithin30Days} of ${summary.expiringLeases} due within 30 days.`
-        : "Nothing expiring in the next 90 days.",
-      tone: summary.expiringLeases > 0 ? "attention" : "neutral", destination: "lease-lifecycle",
-    },
-    {
-      metricKey: "maintenance", icon: Wrench, label: "Open maintenance", value: String(summary.openMaintenance),
-      detail: summary.openMaintenance > 0 ? "Requests in progress." : "No open requests.",
-      tone: summary.openMaintenance > 0 ? "attention" : "success", destination: "maintenance",
-    },
-    {
-      metricKey: "readiness", icon: ShieldCheck, label: "Readiness gaps", value: String(summary.readinessIssueCount),
-      detail: "Insurance, deposits, and move-in inspections.",
-      tone: summary.readinessIssueCount > 0 ? "attention" : "success", destination: "insurance",
+        ? `${summary.expiringLeasesWithin30Days} due within 30 days · ${EXPIRING_LEASE_HORIZON_DAYS}-day window`
+        : `Nothing expiring in the next ${EXPIRING_LEASE_HORIZON_DAYS} days`,
     },
   ];
 
   return (
     <section className="space-y-6" data-rental-overview>
-      <HeroHeader summary={summary} occupancyPercent={occupancyPercent} onNavigate={onNavigate} />
-
-      <PortfolioPerformanceSection financialEvents={summary.financialEvents} />
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {kpis.map((kpi) => <ForgeMetricTile key={kpi.metricKey} onNavigate={onNavigate} {...kpi} />)}
+      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex flex-col gap-6 p-6 lg:flex-row lg:items-center lg:justify-between lg:p-8">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Rental operations</p>
+            <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Dashboard</h2>
+            <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-400">Five numbers that describe the portfolio right now — every figure comes from your rental records.</p>
+            <div className="mt-4 flex items-center gap-3">
+              <PortfolioStrip units={summary.portfolioUnits} />
+              <span className="text-sm font-bold text-slate-600 dark:text-slate-400">
+                {summary.totalUnits} unit{summary.totalUnits === 1 ? "" : "s"} · {occupancyPercent}% occupied
+              </span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <BillingStatusChip billingEnabled={summary.billingEnabled} onNavigate={onNavigate} />
+          </div>
+        </div>
       </div>
 
-      <section aria-labelledby="rental-needs-attention-heading" className="min-w-0 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-        <h3 id="rental-needs-attention-heading" className="text-lg font-black text-slate-950 dark:text-white">Needs attention</h3>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Ordered by urgency — start at the top.</p>
-        <div className="mt-4">
-          <ForgeNeedsAttentionQueue items={summary.needsAttention} onNavigate={onNavigate} />
-        </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        {cards.map((card) => <DashboardCard key={card.label} onNavigate={onNavigate} {...card} />)}
+      </div>
+
+      <section aria-label="Today's priorities" className="min-w-0 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <RentalTodaysPrioritiesPanel onNavigate={onNavigate} />
       </section>
     </section>
   );

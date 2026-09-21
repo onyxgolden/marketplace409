@@ -124,4 +124,22 @@ describe("buildRentalDashboardSummary", () => {
     const summary = buildRentalDashboardSummary({ units: [], leases: [] }, null, "2026-08-13");
     expect(summary.financialEvents).toEqual([]);
   });
+
+  it("passes the authoritative open-charge balance through for the Outstanding balances card, defaulting to zero", () => {
+    const withReport = buildRentalDashboardSummary({ units: [], leases: [] }, { summary: { openBalanceCents: 87550, overdueBalanceCents: 12000 } }, "2026-08-13");
+    expect(withReport.openBalanceCents).toBe(87550);
+    expect(withReport.overdueBalanceCents).toBe(12000);
+    const withoutReport = buildRentalDashboardSummary({ units: [], leases: [] }, null, "2026-08-13");
+    expect(withoutReport.openBalanceCents).toBe(0);
+  });
+
+  it("returns honest zeros for every dashboard card input on a completely empty portfolio", () => {
+    const summary = buildRentalDashboardSummary({}, null, "2026-08-13");
+    expect(summary).toMatchObject({
+      totalUnits: 0, occupiedUnits: 0, vacancies: 0, collectedThisMonthCents: 0,
+      openBalanceCents: 0, overdueBalanceCents: 0, openMaintenance: 0,
+      expiringLeases: 0, expiringLeasesWithin30Days: 0, billingEnabled: false,
+    });
+    expect(summary.needsAttention).toEqual([]);
+  });
 });

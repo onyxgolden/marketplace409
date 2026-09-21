@@ -1,24 +1,8 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import {
-  createElement,
-  useState,
-} from "react";
-
-import PropertyApplicationShell from "@/components/forge/property/PropertyApplicationShell";
-
+// Compatibility entry point: the standalone Property application was absorbed into Rental
+// Manager's Properties section. Existing bookmarks land on the Properties section (not the
+// Dashboard default) via the rental route's `?section=` selector.
 export default function PropertyPage() {
-  const [
-    activeFunctionId,
-    setActiveFunctionId,
-  ] = useState("valuations");
-
-  return createElement(
-    PropertyApplicationShell,
-    {
-      activeFunctionId,
-      onFunctionChange:
-        setActiveFunctionId,
-    },
-  );
+  redirect("/forge/rental?section=properties");
 }

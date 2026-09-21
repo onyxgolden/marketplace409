@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Building2, Code2, DraftingCompass, GanttChart, Hammer, HeartPulse, Star, Store } from "lucide-react";
+import { ArrowRight, Building2, Code2, DraftingCompass, GanttChart, Hammer, HeartPulse, Landmark, Star, Store, Tent } from "lucide-react";
 
-const ICONS = { Store, Building2, Hammer, GanttChart, DraftingCompass, Code2, HeartPulse };
+const ICONS = { Store, Building2, Hammer, GanttChart, DraftingCompass, Code2, HeartPulse, Landmark, Tent };
 
 function FavoriteStar({ workspaceId, isFavorite, saving, onToggle }) {
   return (

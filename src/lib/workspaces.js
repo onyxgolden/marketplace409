@@ -17,6 +17,20 @@ export const WORKSPACES = Object.freeze([
     description: "FORGE Rental Manager — leases, payments, tenants.",
   }),
   Object.freeze({
+    id: "private-financing",
+    name: "Private Financing",
+    href: "/forge/private-financing",
+    iconName: "Landmark",
+    description: "Private lending — borrower accounts, payments, and messages.",
+  }),
+  Object.freeze({
+    id: "reservations",
+    name: "Reservations",
+    href: "/forge/reservations",
+    iconName: "Tent",
+    description: "RV & cabin reservations — inventory, rate plans, and bookings.",
+  }),
+  Object.freeze({
     id: "forge",
     name: "Forge",
     href: "/forge",
@@ -50,7 +64,7 @@ export const WORKSPACES = Object.freeze([
 // sibling workspace (see that file's PROMOTED_PREFIXES) -- "Forge" must not
 // read as active on any of these even though they share the /forge/* URL
 // prefix, or the wrong tile would highlight.
-const PROMOTED_OUT_OF_FORGE = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer"];
+const PROMOTED_OUT_OF_FORGE = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer", "/forge/private-financing", "/forge/reservations"];
 
 export function isWorkspaceActive(pathname, workspace) {
   if (!pathname) return false;

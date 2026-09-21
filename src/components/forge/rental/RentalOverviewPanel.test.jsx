@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import RentalOverviewPanel from "./RentalOverviewPanel";
 
 const baseData = { units: [{ id: "u1" }], leases: [{ id: "l1", unit_id: "u1", status: "active" }] };
@@ -24,43 +24,116 @@ function unmount({ container, root }) {
   act(() => { root.unmount(); });
   container.remove();
 }
+async function flushEffects() {
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+}
 
-describe("RentalOverviewPanel collection-authority labeling (rendered DOM)", () => {
+function card(container, label) {
+  return container.querySelector(`[data-dashboard-card="${label}"]`);
+}
+
+describe("RentalOverviewPanel five-card dashboard", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } });
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); });
 
-  // Rendered-component regression guard for the rental billing cutover containment correction:
-  // the dashboard must never render an externally-managed obligation under the FORGE-collectible
-  // overdue tile — it must remain visible, but only under its own tile, keyed by a stable data
-  // attribute so this stays true no matter how the surrounding markup is redesigned.
-  it("never renders the $14,270 externally-managed balance under the FORGE-collectible overdue tile", () => {
-    const report = { summary: { overdueBalanceCents: 0, externallyManagedCents: 1427000, externallyManagedChargeCount: 9, monthlyScheduledCents: 200000, collectedCents: 0 } };
-    mounted = mount(<RentalOverviewPanel initialData={baseData} initialReport={report} />);
-    const overdueTile = mounted.container.querySelector('[data-metric-tile="overdue-forge"]');
-    const externalTile = mounted.container.querySelector('[data-metric-tile="externally-managed"]');
-    expect(overdueTile).toBeTruthy();
-    expect(externalTile).toBeTruthy();
-    expect(overdueTile.textContent).toContain("FORGE-collectible overdue");
-    expect(overdueTile.textContent).toContain("$0.00");
-    expect(overdueTile.textContent).not.toContain("$14,270.00");
-    expect(externalTile.textContent).toContain("Externally managed — reconciliation required");
-    expect(externalTile.textContent).toContain("$14,270.00");
+  function richFixture() {
+    return {
+      units: [{ id: "u1" }, { id: "u2" }],
+      leases: [
+        { id: "l1", unit_id: "u1", status: "active", end_date: daysFromNow(20) },
+        { id: "l2", unit_id: "u2", status: "active", end_date: daysFromNow(200) },
+      ],
+      payments: [
+        { status: "succeeded", succeeded_at: new Date().toISOString(), amount_cents: 150000, refunded_amount_cents: 0 },
+        { status: "succeeded", succeeded_at: new Date().toISOString(), amount_cents: 50000, refunded_amount_cents: 10000 },
+      ],
+      maintenanceRequests: [{ status: "open" }, { status: "completed" }],
+      workOrders: [{ status: "assigned" }],
+    };
+  }
+  const report = { summary: { openBalanceCents: 87550, overdueBalanceCents: 12000 } };
+
+  it("renders exactly five glanceable cards, each derived from real API data", () => {
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={() => {}} />);
+    const cards = mounted.container.querySelectorAll("[data-dashboard-card]");
+    expect(Array.from(cards).map((el) => el.getAttribute("data-dashboard-card"))).toEqual([
+      "Rent collected", "Outstanding balances", "Occupancy", "Open maintenance", "Expiring leases",
+    ]);
   });
 
-  it("renders a nonzero FORGE overdue figure once a lease is actually cut over and collectible, and it never leaks onto the externally-managed tile", () => {
-    const report = { summary: { overdueBalanceCents: 20000, externallyManagedCents: 0, externallyManagedChargeCount: 0, monthlyScheduledCents: 200000, collectedCents: 0 } };
-    mounted = mount(<RentalOverviewPanel initialData={baseData} initialReport={report} />);
-    const overdueTile = mounted.container.querySelector('[data-metric-tile="overdue-forge"]');
-    const externalTile = mounted.container.querySelector('[data-metric-tile="externally-managed"]');
-    expect(overdueTile.textContent).toContain("$200.00");
-    expect(externalTile.textContent).toContain("$0.00");
-    expect(externalTile.textContent).not.toContain("$200.00");
+  it("labels Rent collected with an explicit reporting period and sums only qualifying payments, net of refunds", () => {
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={() => {}} />);
+    const tile = card(mounted.container, "Rent collected");
+    const periodLabel = new Date().toLocaleString("en-US", { month: "long", year: "numeric" });
+    expect(tile.textContent).toContain("$1,900.00");
+    expect(tile.textContent).toContain(periodLabel);
+    expect(tile.textContent).toContain("succeeded payments, net of refunds");
+  });
+
+  it("derives Outstanding balances from the authoritative open-charge balance, calling out the overdue portion", () => {
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={() => {}} />);
+    const tile = card(mounted.container, "Outstanding balances");
+    expect(tile.textContent).toContain("$875.50");
+    expect(tile.textContent).toContain("$120.00 overdue");
+    expect(tile.textContent).toContain("Open rent-charge balances");
+  });
+
+  it("shows an honest nothing-overdue state instead of hiding the card", () => {
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={{ summary: { openBalanceCents: 0, overdueBalanceCents: 0 } }} onNavigate={() => {}} />);
+    const tile = card(mounted.container, "Outstanding balances");
+    expect(tile.textContent).toContain("$0.00");
+    expect(tile.textContent).toContain("nothing overdue");
+  });
+
+  it("derives Occupancy from actual leased units over total units", () => {
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={() => {}} />);
+    const tile = card(mounted.container, "Occupancy");
+    expect(tile.textContent).toContain("100%");
+    expect(tile.textContent).toContain("2 of 2 units leased");
+  });
+
+  it("counts Open maintenance by explicit open statuses only", () => {
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={() => {}} />);
+    const tile = card(mounted.container, "Open maintenance");
+    expect(tile.textContent).toContain("2");
+    expect(tile.textContent).toContain("Open, pending, submitted, assigned, or in progress");
+  });
+
+  it("shows the true 30-day-of-90-day relationship on the Expiring leases card", () => {
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={() => {}} />);
+    const tile = card(mounted.container, "Expiring leases");
+    expect(tile.textContent).toContain("1");
+    expect(tile.textContent).toContain("1 due within 30 days");
+    expect(tile.textContent).toContain("90-day window");
+  });
+
+  it("navigates each card to its supporting function, never a dead decorative card", () => {
+    const visited = [];
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={(id) => visited.push(id)} />);
+    for (const [label, destination] of [["Rent collected", "charges"], ["Outstanding balances", "charges"], ["Occupancy", "setup"], ["Open maintenance", "maintenance"], ["Expiring leases", "lease-lifecycle"]]) {
+      act(() => { card(mounted.container, label).click(); });
+      expect(visited.at(-1)).toBe(destination);
+    }
+    expect(visited).toEqual(["charges", "charges", "setup", "maintenance", "lease-lifecycle"]);
+  });
+
+  it("shows honest zero cards, not an error, when the portfolio has data but nothing outstanding", () => {
+    const readyData = {
+      ...baseData,
+      insurancePolicies: [{ lease_id: "l1", status: "verified" }],
+      deposits: [{ lease_id: "l1" }],
+      inspections: [{ lease_id: "l1", inspection_type: "move_in", status: "finalized" }],
+    };
+    mounted = mount(<RentalOverviewPanel initialData={readyData} initialReport={{ summary: { openBalanceCents: 0, overdueBalanceCents: 0 } }} onNavigate={() => {}} />);
+    expect(card(mounted.container, "Outstanding balances").textContent).toContain("$0.00");
+    expect(card(mounted.container, "Open maintenance").textContent).toContain("No open requests");
+    expect(card(mounted.container, "Expiring leases").textContent).toContain("Nothing expiring");
   });
 });
 
 describe("RentalOverviewPanel billing status visibility", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } });
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); });
 
   it("visibly shows billing as PAUSED when billingEnabled is absent, with no pause/resume control rendered", () => {
     mounted = mount(<RentalOverviewPanel initialData={baseData} initialReport={null} />);
@@ -91,159 +164,41 @@ describe("RentalOverviewPanel billing status visibility", () => {
 
 describe("RentalOverviewPanel structure and empty state", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } });
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); });
 
-  it("uses a real heading hierarchy: one Summary heading and labelled subsections", () => {
+  it("uses a real heading hierarchy: one Dashboard heading", () => {
     mounted = mount(<RentalOverviewPanel initialData={baseData} initialReport={null} />);
     const h2 = mounted.container.querySelectorAll("h2");
-    expect(Array.from(h2).some((el) => el.textContent === "Summary")).toBe(true);
-    const h3s = Array.from(mounted.container.querySelectorAll("h3")).map((el) => el.textContent);
-    expect(h3s).toContain("Needs attention");
-    expect(h3s).toContain("Portfolio performance");
-    expect(mounted.container.querySelector("#rental-needs-attention-heading")).toBeTruthy();
-    expect(mounted.container.querySelector("[aria-labelledby='rental-needs-attention-heading']")).toBeTruthy();
+    expect(Array.from(h2).some((el) => el.textContent === "Dashboard")).toBe(true);
   });
 
-  // Regression guard: Portfolio performance must sit directly under the Summary hero, ahead of
-  // the KPI tiles and Needs attention, in DOM order — since no CSS `order` utility is used
-  // anywhere in this component, DOM order here also is the visual order, the tab order, and the
-  // screen-reader reading order, so a single assertion on section indices covers all four.
-  it("orders top-level sections as Summary hero, Portfolio performance, KPI tiles, then Needs attention", () => {
-    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents: [] }} initialReport={null} />);
-    const root = mounted.container.querySelector("[data-rental-overview]");
-    const sections = Array.from(root.children);
-    const heroIndex = sections.findIndex((el) => el.querySelector("h2")?.textContent === "Summary");
-    const performanceIndex = sections.findIndex((el) => el.querySelector("#rental-performance-heading"));
-    const kpiIndex = sections.findIndex((el) => el.querySelector("[data-metric-tile]"));
-    const attentionIndex = sections.findIndex((el) => el.querySelector("#rental-needs-attention-heading"));
-    expect([heroIndex, performanceIndex, kpiIndex, attentionIndex]).toEqual([0, 1, 2, 3]);
+  it("embeds Today's Priorities instead of duplicating its logic", async () => {
+    const rentalBody = { ...baseData, actingUserId: "user_1", canonicalOwnerId: "owner_1" };
+    vi.stubGlobal("fetch", async (url) => {
+      if (url === "/api/rental") return { ok: true, json: async () => rentalBody };
+      if (url === "/api/rental/reports") return { ok: true, json: async () => ({ report: null }) };
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    mounted = mount(<RentalOverviewPanel initialData={baseData} initialReport={null} onNavigate={() => {}} />);
+    await flushEffects();
+    expect(mounted.container.textContent).toContain("Today's priorities");
   });
 
-  it("shows a positive empty state instead of a queue when nothing needs attention", () => {
-    const readyData = {
-      ...baseData,
-      insurancePolicies: [{ lease_id: "l1", status: "verified" }],
-      deposits: [{ lease_id: "l1" }],
-      inspections: [{ lease_id: "l1", inspection_type: "move_in", status: "finalized" }],
-    };
-    mounted = mount(<RentalOverviewPanel initialData={readyData} initialReport={{ summary: { overdueBalanceCents: 0, externallyManagedCents: 0, externallyManagedChargeCount: 0, monthlyScheduledCents: 0, collectedCents: 0 } }} />);
-    expect(mounted.container.textContent).toContain("Nothing needs your attention right now.");
-  });
-
-  it("shows an onboarding empty state, not a wall of zero KPIs, when the portfolio has no units yet", () => {
+  it("shows an onboarding empty state, not a wall of zero cards, when the portfolio has no units yet", () => {
     let navigated = null;
     mounted = mount(<RentalOverviewPanel initialData={{ units: [], leases: [] }} initialReport={null} onNavigate={(id) => { navigated = id; }} />);
     expect(mounted.container.querySelector("[data-rental-overview-empty]")).toBeTruthy();
     expect(mounted.container.textContent).toContain("Add your first property to get started");
-    expect(mounted.container.querySelector('[data-metric-tile]')).toBeNull();
+    expect(mounted.container.querySelector('[data-dashboard-card]')).toBeNull();
     act(() => { Array.from(mounted.container.querySelectorAll("button")).find((b) => b.textContent === "Add a property").click(); });
     expect(navigated).toBe("setup");
   });
 
-  it("every KPI tile either navigates somewhere or is explicitly labelled Informational — never a dead decorative card", () => {
+  it("every dashboard card is a button that navigates somewhere — never a dead decorative card", () => {
     mounted = mount(<RentalOverviewPanel initialData={baseData} initialReport={null} onNavigate={() => {}} />);
-    const tiles = mounted.container.querySelectorAll("[data-metric-tile]");
-    expect(tiles.length).toBeGreaterThan(0);
-    tiles.forEach((tile) => {
-      const isButton = tile.tagName === "BUTTON";
-      const isInformational = tile.textContent.includes("Informational");
-      expect(isButton || isInformational).toBe(true);
-    });
-  });
-});
-
-describe("RentalOverviewPanel lease-expiration window truthfulness", () => {
-  let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } });
-
-  // Regression guard for Jason's review feedback: the 90-day KPI tile and the 30-day
-  // needs-attention item must never render as two unrelated-looking numbers that happen to
-  // match — the KPI tile's own detail line must state the true "X of Y" relationship.
-  it("shows the true 30-day-of-90-day relationship on the KPI tile itself, not just the raw 90-day count", () => {
-    const data = {
-      units: [{ id: "u1" }, { id: "u2" }, { id: "u3" }],
-      leases: [
-        { id: "l1", unit_id: "u1", status: "active", end_date: daysFromNow(10) },
-        { id: "l2", unit_id: "u2", status: "active", end_date: daysFromNow(50) },
-        { id: "l3", unit_id: "u3", status: "active", end_date: daysFromNow(75) },
-      ],
-    };
-    mounted = mount(<RentalOverviewPanel initialData={data} initialReport={null} onNavigate={() => {}} />);
-    const tile = mounted.container.querySelector('[data-metric-tile="lease-expirations"]');
-    expect(tile.textContent).toContain("3");
-    expect(tile.textContent).toContain("1 of 3 due within 30 days.");
-  });
-
-  it("never implies a false discrepancy when the 90-day and 30-day counts coincide — states the relationship explicitly instead of a bare duplicate number", () => {
-    const data = { units: [{ id: "u1" }], leases: [{ id: "l1", unit_id: "u1", status: "active", end_date: daysFromNow(7) }] };
-    mounted = mount(<RentalOverviewPanel initialData={data} initialReport={null} onNavigate={() => {}} />);
-    const tile = mounted.container.querySelector('[data-metric-tile="lease-expirations"]');
-    const attentionItem = mounted.container.querySelector('[data-attention-item="leases-expiring-soon"]');
-    expect(tile.textContent).toContain("1 of 1 due within 30 days.");
-    expect(attentionItem.textContent).toContain("1 of 1 lease expiring within 90 days is due in the next 30");
-  });
-});
-
-describe("RentalOverviewPanel Portfolio performance (collected vs. expenses)", () => {
-  let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } });
-
-  const financialEvents = [
-    { event_date: daysFromNow(-40), amount: "1500.00", transaction_kind: "income", source_system: "rentec", status: "active", is_deleted: false },
-    { event_date: daysFromNow(-38), amount: "300.00", transaction_kind: "expense", source_system: "manual", status: "active", is_deleted: false },
-    { event_date: daysFromNow(-2), amount: "1600.00", transaction_kind: "income", source_system: "forge_rental_payment", status: "active", is_deleted: false },
-  ];
-
-  it("offers a 1 Month option before 6 Months, and switches to it correctly", () => {
-    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents }} initialReport={null} />);
-    const optionButtons = mounted.container.querySelectorAll("[data-period-option]");
-    expect(Array.from(optionButtons).map((button) => button.getAttribute("data-period-option"))).toEqual(["oneMonth", "sixMonths", "ytd", "year", "allTime"]);
-    const oneMonthButton = mounted.container.querySelector('[data-period-option="oneMonth"]');
-    expect(oneMonthButton.textContent).toBe("1 Month");
-    act(() => { oneMonthButton.click(); });
-    expect(oneMonthButton.getAttribute("aria-pressed")).toBe("true");
-    expect(mounted.container.querySelector('[data-period-option="sixMonths"]').getAttribute("aria-pressed")).toBe("false");
-    const points = mounted.container.querySelectorAll("[data-comparison-point]");
-    expect(points.length).toBe(1);
-  });
-
-  it("defaults to the 6 Months period and shows an accessible, plain-language totals summary", () => {
-    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents }} initialReport={null} />);
-    const sixMonthsButton = mounted.container.querySelector('[data-period-option="sixMonths"]');
-    expect(sixMonthsButton.getAttribute("aria-pressed")).toBe("true");
-    const summaryText = mounted.container.querySelector("[data-performance-summary]").textContent;
-    expect(summaryText).toContain("$3,100.00");
-    expect(summaryText).toContain("$300.00");
-    expect(summaryText).toContain("$2,800.00");
-  });
-
-  it("switches to Year mode and shows a year selector populated only from years with real financial history", () => {
-    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents }} initialReport={null} />);
-    act(() => { mounted.container.querySelector('[data-period-option="year"]').click(); });
-    const select = mounted.container.querySelector("select");
-    expect(select).toBeTruthy();
-    const options = Array.from(select.querySelectorAll("option")).map((option) => option.value);
-    expect(options.length).toBeGreaterThan(0);
-  });
-
-  it("switches to All time and renders yearly (not monthly) bars", () => {
-    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents }} initialReport={null} />);
-    act(() => { mounted.container.querySelector('[data-period-option="allTime"]').click(); });
-    const points = mounted.container.querySelectorAll("[data-comparison-point]");
-    Array.from(points).forEach((point) => {
-      expect(point.getAttribute("data-comparison-point")).toMatch(/^\d{4}$/);
-    });
-  });
-
-  it("explains the accounting basis and why this total can legitimately differ from the FORGE-only collected-this-month figure", () => {
-    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents }} initialReport={null} />);
-    expect(mounted.container.textContent).toContain("cash basis");
-    expect(mounted.container.textContent).toContain("Rentec before FORGE");
-  });
-
-  it("shows a truthful empty state when there is no safely-attributable rental financial history at all", () => {
-    mounted = mount(<RentalOverviewPanel initialData={{ ...baseData, financialEvents: [] }} initialReport={null} />);
-    expect(mounted.container.textContent).toContain("No recorded activity yet for this period.");
+    const tiles = mounted.container.querySelectorAll("[data-dashboard-card]");
+    expect(tiles.length).toBe(5);
+    tiles.forEach((tile) => expect(tile.tagName).toBe("BUTTON"));
   });
 });
 
