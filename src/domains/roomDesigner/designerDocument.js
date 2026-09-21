@@ -327,10 +327,12 @@ export function moveOpeningStart(design, openingId, newOffsetIn) {
     const wall = findWall(design, o.wallId);
     if (!wall) throw new Error(`Opening references missing wall: ${o.wallId}`);
     changed = true;
-    return {
-      ...o,
-      ...clampOpening(wall, o.type, newOffsetIn, o.offsetIn + o.widthIn - newOffsetIn),
-    };
+    // Clamp the start edge BEFORE deriving the width, so we never hand
+    // clampOpening an already-invalid (negative) width: the opening can
+    // never invert, and the width never drops below the 6" domain minimum.
+    const end = o.offsetIn + o.widthIn;
+    const nextStart = Math.min(Math.max(newOffsetIn, 1), end - 6);
+    return { ...o, ...clampOpening(wall, o.type, nextStart, end - nextStart) };
   });
   if (!changed) throw new Error(`Unknown opening: ${openingId}`);
   return { ...design, openings };

@@ -263,6 +263,21 @@ describe("designerDocument — openings", () => {
     expect(o.offsetIn + o.widthIn).toBeLessThanOrEqual(144);
   });
 
+  it("moveOpeningStart keeps the invariant with an extreme overshoot", () => {
+    let d = wallDesign();
+    const wallId = d.walls[0].id; // 144in wall
+    d = addOpening(d, wallId, { type: "door", offsetIn: 36 }); // 36..72
+    const id = d.openings[0].id;
+    // Start pushed far past the end edge: the start edge itself is clamped
+    // first, so the domain never sees an invalid (negative) intermediate width.
+    d = moveOpeningStart(d, id, 1000);
+    const o = d.openings[0];
+    expect(o.offsetIn).toBeGreaterThanOrEqual(1);
+    expect(o.widthIn).toBeGreaterThanOrEqual(6);
+    expect(o.offsetIn + o.widthIn).toBeLessThanOrEqual(144);
+    expect(o.offsetIn + o.widthIn).toBe(72); // end edge stays fixed
+  });
+
   it("moveOpeningStart rejects unknown openings and missing walls", () => {
     const d = wallDesign();
     expect(() => moveOpeningStart(d, "ghost", 10)).toThrow(/Unknown opening/);
