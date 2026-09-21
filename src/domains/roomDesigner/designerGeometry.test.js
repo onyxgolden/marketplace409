@@ -16,6 +16,7 @@ import {
   nearestPointOnSegment,
   offsetAlongWall,
   parseDimensionInput,
+  pointInPolygon,
   polygonArea,
   rotatePoint,
   rotatedFootprintCorners,
@@ -501,5 +502,41 @@ describe("zoomToFitRect", () => {
     expect(() => zoomToFitRect({ ...rect, heightIn: -3 }, vp)).toThrow();
     expect(() => zoomToFitRect(rect, { w: 0, h: 100 })).toThrow();
     expect(() => zoomToFitRect(rect, vp, { minScale: 2, maxScale: 1 })).toThrow();
+  });
+});
+
+describe("pointInPolygon", () => {
+  const square = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ];
+  it("detects interior and exterior points of a square", () => {
+    expect(pointInPolygon({ x: 50, y: 50 }, square)).toBe(true);
+    expect(pointInPolygon({ x: 1, y: 99 }, square)).toBe(true);
+    expect(pointInPolygon({ x: -1, y: 50 }, square)).toBe(false);
+    expect(pointInPolygon({ x: 101, y: 50 }, square)).toBe(false);
+    expect(pointInPolygon({ x: 50, y: 101 }, square)).toBe(false);
+  });
+  it("handles concave polygons (L-shape notch is outside)", () => {
+    const lShape = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 40 },
+      { x: 40, y: 40 },
+      { x: 40, y: 100 },
+      { x: 0, y: 100 },
+    ];
+    expect(pointInPolygon({ x: 20, y: 20 }, lShape)).toBe(true); // top arm
+    expect(pointInPolygon({ x: 20, y: 80 }, lShape)).toBe(true); // stem
+    expect(pointInPolygon({ x: 70, y: 70 }, lShape)).toBe(false); // notch
+  });
+  it("rejects degenerate and invalid input", () => {
+    expect(pointInPolygon({ x: 50, y: 50 }, [])).toBe(false);
+    expect(pointInPolygon({ x: 50, y: 50 }, [{ x: 0, y: 0 }, { x: 10, y: 0 }])).toBe(false);
+    expect(pointInPolygon({ x: 50, y: 50 }, null)).toBe(false);
+    expect(pointInPolygon(null, square)).toBe(false);
+    expect(pointInPolygon({ x: NaN, y: 50 }, square)).toBe(false);
   });
 });

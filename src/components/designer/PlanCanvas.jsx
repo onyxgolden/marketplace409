@@ -12,6 +12,7 @@ import {
   feetInchesLabel,
   gridSpacingLabel,
   offsetAlongWall,
+  pointInPolygon,
   rotatedFootprintCorners,
   rotatePoint,
   snapPoint,
@@ -245,10 +246,14 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         if (d < bestD) { bestD = d; best = wall; }
       }
       if (best) return { kind: "wall", id: best.id };
-      // rooms
+      // rooms — the interior selects the room; walls still win on the
+      // shared edges above, so wall editing is unaffected.
       for (let i = design.rooms.length - 1; i >= 0; i -= 1) {
         const room = design.rooms[i];
-        if (distancePointToPolygonEdge(plan, room.polygon) < tolIn) {
+        if (
+          pointInPolygon(plan, room.polygon) ||
+          distancePointToPolygonEdge(plan, room.polygon) < tolIn
+        ) {
           return { kind: "room", id: room.id };
         }
       }
@@ -436,6 +441,23 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       }
       return;
     }
+    // Placed room — click to select, drag to move the room and its walls.
+    if (hit?.kind === "room") {
+      const room = (design.rooms || []).find((r) => r.id === hit.id);
+      dispatch({ type: "SELECT", selection: hit });
+      if (room) {
+        const anchor = roomAnchor(room.polygon);
+        setDrag({
+          kind: "move-room",
+          id: hit.id,
+          moved: false,
+          grabX: plan.x - anchor.x,
+          grabY: plan.y - anchor.y,
+          last: anchor,
+        });
+      }
+      return;
+    }
     // Phase 2: pipe vertex handles — drag a vertex of the selected run.
     if (selection?.kind === "pipe") {
       const run = (design.pipes || []).find((p) => p.id === selection.id);
@@ -536,6 +558,19 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (drag.kind === "move-sheet") {
       dispatch({ type: "MOVE_SHEET", sheetId: drag.id, x: plan.x - drag.dx, y: plan.y - drag.dy, coalesce: `move-sheet:${drag.id}` });
       setDrag({ ...drag, moved: true });
+    }
+    // Placed room drag — the grab offset is preserved and the room anchor
+    // follows the snapped pointer, so the room moves on grid increments
+    // while the pointer stays where it grabbed.
+    if (drag.kind === "move-room") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      const anchor = { x: point.x - drag.grabX, y: point.y - drag.grabY };
+      const dx = anchor.x - drag.last.x;
+      const dy = anchor.y - drag.last.y;
+      if (dx !== 0 || dy !== 0) {
+        dispatch({ type: "MOVE_ROOM", roomId: drag.id, dx, dy, coalesce: `move-room:${drag.id}` });
+      }
+      setDrag({ ...drag, last: anchor, moved: true });
     }
     if (drag.kind === "resize-furniture") {
       const piece = design.furniture.find((f) => f.id === drag.id);
@@ -1240,4 +1275,15 @@ function distancePointToPolygonEdge(plan, polygon) {
     best = Math.min(best, distancePointToSegment(plan, a, q));
   }
   return best;
+}
+
+/** Top-left (min x, min y) corner of a room polygon — the drag anchor. */
+function roomAnchor(polygon) {
+  let x = Infinity;
+  let y = Infinity;
+  for (const p of polygon || []) {
+    if (Number.isFinite(p?.x) && p.x < x) x = p.x;
+    if (Number.isFinite(p?.y) && p.y < y) y = p.y;
+  }
+  return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 };
 }

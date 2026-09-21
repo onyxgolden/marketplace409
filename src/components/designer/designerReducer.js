@@ -23,6 +23,7 @@ import {
   deleteWall,
   findOrgChart,
   findPipeRun,
+  findRoom,
   findSheet,
   findSymbolInstance,
   moveFurniture,
@@ -30,6 +31,7 @@ import {
   moveOpening,
   moveOrgChart,
   movePipeVertex,
+  moveRoom,
   moveSheet,
   moveSymbol,
   moveUnderlay,
@@ -281,6 +283,14 @@ export function designerReducer(state, action) {
       return touch(state, addRoomFromTemplate(state.design, action.templateId, action.at));
     case "DELETE_ROOM":
       return { ...touch(state, deleteRoom(state.design, action.roomId)), selection: null };
+    case "MOVE_ROOM": {
+      if (!findRoom(state.design, action.roomId)) return state;
+      return touch(
+        state,
+        moveRoom(state.design, action.roomId, action.dx, action.dy),
+        action.coalesce,
+      );
+    }
     case "ADD_OPENING":
       return touch(
         state,
