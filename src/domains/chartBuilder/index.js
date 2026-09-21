@@ -71,6 +71,16 @@ export { resolveCanvasDrop } from "./chartInteractions.js";
 export { seedChartFromTemplate } from "./chartSeeds.js";
 
 export {
+  CHART_DOCUMENT_TYPE,
+  PERSISTED_CHART_VERSION,
+  ChartPersistenceError,
+  serializeChartDocument,
+  validatePersistedChartDocument,
+  migrateChartDocument,
+  deserializeChartDocument,
+} from "./chartPersistence.js";
+
+export {
   IMPORT_MODES,
   ORG_TARGETS,
   WORKFLOW_TARGETS,

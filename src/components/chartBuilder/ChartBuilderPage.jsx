@@ -28,6 +28,7 @@ import TemplatePicker from "./TemplatePicker.jsx";
 import BackgroundPicker from "./BackgroundPicker.jsx";
 import ChartCanvas from "./ChartCanvas.jsx";
 import ChartImportWizard from "./import/ChartImportWizard.jsx";
+import ChartPersistenceControls from "./ChartPersistenceControls.jsx";
 import {
   getGridPreference,
   GRID_PREFERENCES,
@@ -209,6 +210,14 @@ export default function ChartBuilderPage() {
     });
   }
 
+  function handleLoadChart(loadedDoc) {
+    // Loading starts a fresh undo stack: the saved chart becomes the only
+    // history entry, so undo can never reach into a previous chart.
+    setHist(commitChartAction(emptyChartHistory(), "load-chart", loadedDoc));
+    setSelectedId(null);
+    setPickerOpen(false);
+  }
+
   function importWizardModal() {
     if (!importOpen) return null;
     return (
@@ -265,6 +274,14 @@ export default function ChartBuilderPage() {
           </div>
         )}
         <TemplatePicker onPick={pickTemplate} />
+        <div className="border-t border-slate-200 bg-white px-6 py-4">
+          <h2 className="mb-2 text-sm font-semibold text-slate-900">Saved charts</h2>
+          <ChartPersistenceControls
+            doc={doc}
+            onLoad={handleLoadChart}
+            onNotice={setNotice}
+          />
+        </div>
         {importWizardModal()}
       </div>
     );
@@ -329,6 +346,11 @@ export default function ChartBuilderPage() {
         <ToolbarButton onClick={addNode}>
           {doc.type === "org" ? "Add person" : "Add step"}
         </ToolbarButton>
+        <ChartPersistenceControls
+          doc={doc}
+          onLoad={handleLoadChart}
+          onNotice={setNotice}
+        />
         <div className="ml-auto flex items-center gap-2">
           {errorCount > 0 && (
             <span className="rounded-full bg-red-600 px-2.5 py-1 text-xs font-semibold text-white">
