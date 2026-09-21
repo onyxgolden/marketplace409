@@ -44,6 +44,7 @@ import {
   pipeRunLengthIn,
 } from "@/domains/roomDesigner/pipingGeometry";
 import { summarizeDesignForEstimating } from "@/domains/roomDesigner/designerExports";
+import { orderToolbarTools } from "@/domains/roomDesigner/designerToolbar";
 
 const DesignerViewport3D = dynamic(() => import("./DesignerViewport3D"), {
   ssr: false,
@@ -69,6 +70,10 @@ const TOOL_DEFS = [
   { id: "pan", label: "Pan", icon: Hand, hint: "Drag to pan · scroll to zoom (or hold Space anytime)" },
   { id: "calibrate", label: "Calibrate", icon: Ruler, hint: "Set the background image scale: click two points on it, then enter the real distance", needsUnderlay: true },
 ];
+
+// Select, Erase and Pan are pinned as the first three palette entries, in
+// that order, regardless of where they (or future tools) sit in TOOL_DEFS.
+const ORDERED_TOOL_DEFS = orderToolbarTools(TOOL_DEFS);
 
 export default function DesignerScreen({ projectId, initialName }) {
   const [state, dispatch] = useReducer(designerReducer, undefined, () => createInitialState());
@@ -207,7 +212,7 @@ export default function DesignerScreen({ projectId, initialName }) {
       <div className="flex min-h-0 flex-1">
         {/* tool palette */}
         <nav className="flex w-24 flex-col gap-1 border-r border-gray-800 bg-gray-900 p-2" aria-label="Tools">
-          {TOOL_DEFS.map((t) => {
+          {ORDERED_TOOL_DEFS.map((t) => {
             const Icon = t.icon;
             const active = tool === t.id;
             const disabled = t.needsUnderlay && !design.underlay;
