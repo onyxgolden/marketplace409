@@ -7,6 +7,14 @@ import { NextResponse } from "next/server";
 // constructs the connection platform suite.
 import * as plaidSdk from "plaid";
 
+// The one static edge to the Stripe SDK in the app's server code. This
+// helper backs the /api/connection/*, /api/plaid/*, and
+// /api/stripe/financial-connections/* routes -- the entry points that perform
+// real Stripe Financial Connections operations -- so the ~9.9MB SDK is
+// bundled only into those functions instead of every function that
+// constructs the connection platform suite.
+import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
+
 import {
   ConnectionRepositoryStorage,
   CredentialReferenceRepositoryStorage,
@@ -56,6 +64,12 @@ export async function createAuthenticatedConnectionApplication() {
           ownerId: effectiveOwnerId,
           currentOwnerId,
           plaidSdk,
+          // Lazy factory (never an eagerly constructed client) so this helper
+          // stays as safe to construct unconfigured as before -- the factory
+          // only runs inside an adapter method that's actually performing a
+          // Stripe operation. Reuses StripeBillingProvider's already-configured
+          // SDK instance rather than constructing a second one.
+          stripeClientFactory: () => createStripeBillingProvider().stripe,
           connectionRepositoryStorage:
             ConnectionRepositoryStorage.SUPABASE,
           credentialReferenceRepositoryStorage:

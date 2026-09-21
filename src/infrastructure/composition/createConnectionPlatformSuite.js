@@ -142,6 +142,10 @@ const stripeFinancialConnectionsProvider =
   createStripeFinancialConnectionsAdapter({
     credentialVaultService,
     stripeClient: deps.stripeClient,
+    // Injected (never imported, statically or dynamically) so functions that
+    // build this suite without performing Stripe operations skip the ~9.9MB
+    // stripe SDK.
+    stripeClientFactory: deps.stripeClientFactory,
   });
 
 const providers =

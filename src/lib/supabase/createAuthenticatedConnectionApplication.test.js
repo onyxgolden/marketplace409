@@ -9,10 +9,15 @@ import {
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
   createConnectionPlatformSuite: vi.fn(),
+  createStripeBillingProvider: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: mocks.createClient,
+}));
+
+vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({
+  createStripeBillingProvider: mocks.createStripeBillingProvider,
 }));
 
 vi.mock("@/infrastructure/composition", () => ({
@@ -106,6 +111,7 @@ describe("createAuthenticatedConnectionApplication", () => {
       ownerId: "owner-1",
       currentOwnerId: expect.any(Function),
       plaidSdk: expect.any(Object),
+      stripeClientFactory: expect.any(Function),
       connectionRepositoryStorage:
         "supabase",
       credentialReferenceRepositoryStorage:
@@ -124,6 +130,20 @@ describe("createAuthenticatedConnectionApplication", () => {
       PlaidApi: expect.any(Function),
       PlaidEnvironments: expect.any(Object),
     });
+
+    // The injected Stripe factory must resolve to StripeBillingProvider's
+    // configured SDK instance (the single static edge to the ~9.9MB stripe
+    // package), not a stub -- every Stripe Financial Connections entry point
+    // depends on this wiring. The factory is lazy so this helper stays safe
+    // to construct unconfigured.
+    const fakeStripe = {
+      financialConnections: { sessions: { create: vi.fn() } },
+      customers: { create: vi.fn() },
+    };
+    mocks.createStripeBillingProvider.mockReturnValue({ stripe: fakeStripe });
+    const stripeClient = await suiteArgs.stripeClientFactory();
+    expect(mocks.createStripeBillingProvider).toHaveBeenCalled();
+    expect(stripeClient).toBe(fakeStripe);
 
     await expect(
       result.currentOwnerId(),

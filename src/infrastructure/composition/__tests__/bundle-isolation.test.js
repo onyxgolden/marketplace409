@@ -158,3 +158,69 @@ describe("serverless bundle isolation", () => {
     ).toEqual([]);
   });
 });
+
+// The forge routes build their backend through
+// createAuthenticatedForgeApplication -> createForgeApplicationSuite ->
+// createConnectionPlatformSuite, which constructs the Stripe Financial
+// Connections adapter unconditionally. The adapter's Stripe client is now
+// injected (never imported, statically or dynamically), so these functions
+// must never reach the stripe package again -- this guard fails loudly
+// instead of silently re-bloating ~28 forge functions by ~9.9MB each.
+const FORGE_ENTRIES = [
+  path.join(srcRoot, "lib/supabase/createAuthenticatedForgeApplication.js"),
+  path.join(
+    srcRoot,
+    "infrastructure/composition/createForgeApplicationSuite.js",
+  ),
+];
+
+// The one static edge to the stripe SDK: backs the /api/connection/*,
+// /api/plaid/*, and /api/stripe/financial-connections/* routes, the only
+// entry points that perform real Stripe Financial Connections operations.
+const CONNECTION_ENTRY = path.join(
+  srcRoot,
+  "lib/supabase/createAuthenticatedConnectionApplication.js",
+);
+
+function stripeReachability(entryFiles) {
+  const { bareSpecifiers, visited } = walkModuleGraph(entryFiles);
+  const stripeHits = [...bareSpecifiers].filter(
+    (spec) => spec === "stripe" || spec.startsWith("stripe/"),
+  );
+  const billingProviderFiles = [...visited].filter((file) =>
+    /(^|\/)infrastructure\/billing\/StripeBillingProvider\.js$/.test(
+      path.relative(srcRoot, file).replace(/\\/g, "/"),
+    ),
+  );
+  return {
+    stripeHits,
+    billingProviderFiles,
+    visitedCount: visited.size,
+  };
+}
+
+describe("serverless bundle isolation (stripe)", () => {
+  it("the financial application graph never reaches the stripe package", () => {
+    expect(stripeReachability(FINANCIAL_ENTRIES)).toEqual({
+      stripeHits: [],
+      billingProviderFiles: [],
+      visitedCount: expect.any(Number),
+    });
+  });
+
+  it("the forge application graph never reaches the stripe package", () => {
+    expect(stripeReachability(FORGE_ENTRIES)).toEqual({
+      stripeHits: [],
+      billingProviderFiles: [],
+      visitedCount: expect.any(Number),
+    });
+  });
+
+  it("the connection entry point still reaches the stripe package (non-vacuous control)", () => {
+    const { stripeHits, billingProviderFiles } = stripeReachability([
+      CONNECTION_ENTRY,
+    ]);
+    expect(stripeHits).toContain("stripe");
+    expect(billingProviderFiles.length).toBeGreaterThan(0);
+  });
+});
