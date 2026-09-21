@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
 
+// The one static edge to the Plaid SDK in the app's server code. This
+// helper backs the /api/connection/* and /api/plaid/* routes -- the only
+// entry points that perform real Plaid operations -- so the ~17MB SDK is
+// bundled only into those functions instead of every function that
+// constructs the connection platform suite.
+import * as plaidSdk from "plaid";
+
 import {
   ConnectionRepositoryStorage,
   CredentialReferenceRepositoryStorage,
@@ -48,6 +55,7 @@ export async function createAuthenticatedConnectionApplication() {
           supabaseClient,
           ownerId: effectiveOwnerId,
           currentOwnerId,
+          plaidSdk,
           connectionRepositoryStorage:
             ConnectionRepositoryStorage.SUPABASE,
           credentialReferenceRepositoryStorage:

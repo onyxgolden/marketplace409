@@ -1,4 +1,4 @@
-import {
+import type {
   Configuration,
   CountryCode,
   PlaidApi,
@@ -18,6 +18,42 @@ import type {
 import {
   getPlaidConfig,
 } from "./plaid.config";
+
+/**
+ * The Plaid SDK module surface consumed by createPlaidClient.
+ *
+ * The SDK is injected rather than statically imported so that serverless
+ * functions which construct the connection platform suite without ever
+ * performing a Plaid operation do not bundle the ~17MB plaid package.
+ * Only the connection entry points (which perform real Plaid operations)
+ * provide the SDK.
+ */
+export type PlaidSdk = typeof import("plaid");
+
+export function createPlaidClient(
+  config: PlaidConfig = getPlaidConfig(),
+  sdk?: PlaidSdk,
+): PlaidApi {
+  if (sdk === undefined) {
+    throw new Error(
+      "Plaid SDK is not configured. Provide the plaid SDK module " +
+        "as the second argument to createPlaidClient (via the " +
+        "plaidSdk option on createPlaidAdapter).",
+    );
+  }
+
+  const configuration = new sdk.Configuration({
+    basePath: sdk.PlaidEnvironments[config.environment],
+    baseOptions: {
+      headers: {
+        "PLAID-CLIENT-ID": config.clientId,
+        "PLAID-SECRET": config.secret,
+      },
+    },
+  });
+
+  return new sdk.PlaidApi(configuration);
+}
 
 export type PlaidLinkTokenRequest = {
   userId: string;
@@ -77,22 +113,6 @@ type PlaidBalancesClient =
 
 type PlaidTransactionsSyncClient =
   Pick<PlaidAdapterClient, "transactionsSync">;
-
-export function createPlaidClient(
-  config: PlaidConfig = getPlaidConfig(),
-): PlaidApi {
-  const configuration = new Configuration({
-    basePath: PlaidEnvironments[config.environment],
-    baseOptions: {
-      headers: {
-        "PLAID-CLIENT-ID": config.clientId,
-        "PLAID-SECRET": config.secret,
-      },
-    },
-  });
-
-  return new PlaidApi(configuration);
-}
 
 export async function createPlaidLinkToken(
   client: PlaidLinkTokenClient,

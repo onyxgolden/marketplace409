@@ -105,6 +105,7 @@ describe("createAuthenticatedConnectionApplication", () => {
       supabaseClient,
       ownerId: "owner-1",
       currentOwnerId: expect.any(Function),
+      plaidSdk: expect.any(Object),
       connectionRepositoryStorage:
         "supabase",
       credentialReferenceRepositoryStorage:
