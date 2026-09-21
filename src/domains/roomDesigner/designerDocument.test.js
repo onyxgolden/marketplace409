@@ -3,6 +3,7 @@ import {
   addOpening,
   addRoomFromTemplate,
   addWall,
+  addWallRect,
   calibrateUnderlay,
   createEmptyDesign,
   deleteFurniture,
@@ -35,6 +36,7 @@ import {
   updateDesignSettings,
   updateUnderlay,
   validateDesign,
+  wallRectSegments,
 } from "./designerDocument";
 import { ROOM_TEMPLATES } from "./designerDocument";
 
@@ -69,6 +71,66 @@ describe("designerDocument — walls", () => {
     const d = createEmptyDesign();
     expect(() => addWall(d, { x: 0, y: 0 }, { x: 0, y: 0 })).toThrow(/too short/);
     expect(() => addWall(d, null, { x: 1, y: 1 })).toThrow(/valid points/);
+  });
+
+  describe("wallRectSegments", () => {
+    // All four drag directions must produce the same closed rectangle.
+    const corners = [
+      [{ x: 0, y: 0 }, { x: 144, y: 120 }], // ↘
+      [{ x: 144, y: 120 }, { x: 0, y: 0 }], // ↖
+      [{ x: 144, y: 0 }, { x: 0, y: 120 }], // ↙
+      [{ x: 0, y: 120 }, { x: 144, y: 0 }], // ↗
+    ];
+    it.each(corners)("closes the rectangle for drag %j", (a, b) => {
+      const segs = wallRectSegments(a, b);
+      expect(segs).toHaveLength(4);
+      // Exact closure: each segment starts where the previous ended.
+      for (let i = 0; i < 4; i++) {
+        expect(segs[i].b).toEqual(segs[(i + 1) % 4].a);
+      }
+      // No zero-length segments; all four corners visited.
+      const pts = [segs[0].a, segs[0].b, segs[1].b, segs[2].b];
+      expect(new Set(pts.map((p) => `${p.x},${p.y}`)).size).toBe(4);
+      for (const seg of segs) {
+        expect(Math.hypot(seg.b.x - seg.a.x, seg.b.y - seg.a.y)).toBeGreaterThan(0);
+      }
+    });
+
+    it("rejects invalid corners", () => {
+      expect(() => wallRectSegments(null, { x: 1, y: 1 })).toThrow(/valid points/);
+      expect(() => wallRectSegments({ x: 0, y: 0 }, { x: NaN, y: 1 })).toThrow(/valid points/);
+    });
+  });
+
+  describe("addWallRect", () => {
+    it("adds four closed walls atomically with unique ids", () => {
+      const d0 = createEmptyDesign();
+      const d1 = addWallRect(d0, { x: 0, y: 0 }, { x: 144, y: 120 });
+      expect(d0.walls).toHaveLength(0); // immutable input
+      expect(d1.walls).toHaveLength(4);
+      const ids = d1.walls.map((w) => w.id);
+      expect(new Set(ids).size).toBe(4);
+      // Closure across the wall records.
+      for (let i = 0; i < 4; i++) {
+        expect(d1.walls[i].b).toEqual(d1.walls[(i + 1) % 4].a);
+      }
+    });
+
+    it("rejects rectangles under 1 inch on either side, adding nothing", () => {
+      const d0 = createEmptyDesign();
+      expect(() => addWallRect(d0, { x: 0, y: 0 }, { x: 0.5, y: 120 })).toThrow(/too small/);
+      expect(() => addWallRect(d0, { x: 0, y: 0 }, { x: 144, y: 0.5 })).toThrow(/too small/);
+      expect(() => addWallRect(d0, { x: 10, y: 10 }, { x: 10, y: 10 })).toThrow(/too small/);
+      expect(d0.walls).toHaveLength(0);
+    });
+
+    it("preserves existing walls and design data", () => {
+      let d = addWall(createEmptyDesign(), { x: -50, y: -50 }, { x: -10, y: -50 });
+      d = addWallRect(d, { x: 0, y: 0 }, { x: 144, y: 120 });
+      expect(d.walls).toHaveLength(5);
+      expect(d.walls[0].a).toEqual({ x: -50, y: -50 });
+      expect(d.settings.wallHeightIn).toBe(108);
+    });
   });
 
   it("moves a wall endpoint (resize by dragging)", () => {
