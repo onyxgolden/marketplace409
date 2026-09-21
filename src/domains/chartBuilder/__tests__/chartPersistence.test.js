@@ -69,24 +69,41 @@ describe("serializeChartDocument", () => {
     expect(n1.style.color).toBe("#1f6feb");
   });
 
-  it("strips non-canonical keys so UI/history state can never leak into storage", () => {
+  it("keeps document-level UI state out of storage while preserving unknown node/edge keys", () => {
     const doc = makeDoc();
     const fat = {
       ...doc,
       undoHistory: [{ action: "x" }],
       selection: ["n1"],
       viewport: { zoom: 2 },
-      nodes: doc.nodes.map((n) => ({ ...n, selected: true, dragState: {} })),
+      nodes: doc.nodes.map((n) => ({ ...n, selected: true, customMetadata: { tag: "x" } })),
+      edges: doc.edges.map((e) => ({ ...e, customFlag: true })),
     };
     const env = serializeChartDocument(fat);
     const raw = JSON.stringify(env);
     expect(raw).not.toContain("undoHistory");
     expect(raw).not.toContain("selection");
     expect(raw).not.toContain("viewport");
-    expect(raw).not.toContain("dragState");
-    expect(Object.keys(env.content.nodes[0]).sort()).toEqual(
-      ["fields", "id", "label", "position", "style", "subtitle"].sort()
-    );
+    // Unknown keys now survive the canonical copy verbatim.
+    expect(env.content.nodes[0].customMetadata).toEqual({ tag: "x" });
+    expect(env.content.nodes[0].selected).toBe(true);
+    expect(env.content.edges[0].customFlag).toBe(true);
+    // Known fields keep their canonical defaults.
+    expect(env.content.nodes[1].subtitle).toBe("");
+  });
+
+  it("preserves unknown node and edge fields through serialize → migrate", () => {
+    const doc = makeDoc();
+    const custom = {
+      ...doc,
+      nodes: doc.nodes.map((n) => ({ ...n, customMetadata: { source: "import" } })),
+      edges: doc.edges.map((e) => ({ ...e, customFlag: true })),
+    };
+    const migrated = migrateChartDocument(serializeChartDocument(custom));
+    expect(migrated.content.nodes[0].customMetadata).toEqual({ source: "import" });
+    expect(migrated.content.nodes[1].customMetadata).toEqual({ source: "import" });
+    expect(migrated.content.edges[0].customFlag).toBe(true);
+    expect(migrated.content.nodes[1].subtitle).toBe("");
   });
 
   it("defaults a blank title to Untitled chart", () => {

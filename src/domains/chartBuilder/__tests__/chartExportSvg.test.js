@@ -96,7 +96,7 @@ describe("exportChartSvg", () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
-  it("lays out charts that were never positioned instead of stacking cards", () => {
+  it("preserves all-(0,0) positions exactly by default instead of auto-laying out", () => {
     const doc = createChartDocument({
       id: "unlaid",
       type: "org",
@@ -108,6 +108,26 @@ describe("exportChartSvg", () => {
       edges: [createEdge({ id: "e1", from: "a", to: "b", type: "supervisor" })],
     });
     const { svg } = exportChartSvg(doc);
+    const transforms = [...svg.matchAll(/transform="translate\(([0-9.]+),([0-9.]+)\)/g)].map(
+      (m) => `${m[1]},${m[2]}`
+    );
+    // Every card renders at the same stored position (PAD-offset origin).
+    expect(transforms).toHaveLength(3);
+    expect(new Set(transforms).size).toBe(1);
+  });
+
+  it("applies the deterministic layout only when autoLayout: true is passed", () => {
+    const doc = createChartDocument({
+      id: "unlaid",
+      type: "org",
+      nodes: [
+        createNode({ id: "a", label: "A" }),
+        createNode({ id: "b", label: "B" }),
+        createNode({ id: "c", label: "C" }),
+      ],
+      edges: [createEdge({ id: "e1", from: "a", to: "b", type: "supervisor" })],
+    });
+    const { svg } = exportChartSvg(doc, { autoLayout: true });
     const transforms = [...svg.matchAll(/transform="translate\(([0-9.]+),([0-9.]+)\)/g)].map(
       (m) => `${m[1]},${m[2]}`
     );

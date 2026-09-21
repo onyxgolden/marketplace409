@@ -75,19 +75,21 @@ function assertExportable(doc) {
   }
 }
 
-function resolvePositions(doc) {
+function resolvePositions(doc, { autoLayout = false } = {}) {
   const positions = {};
-  let allDefault = true;
   for (const node of doc.nodes) {
     const x = node?.position?.x ?? 0;
     const y = node?.position?.y ?? 0;
     positions[node.id] = { x, y };
-    if (x !== 0 || y !== 0) allDefault = false;
   }
-  // A document that was never laid out would export as a stack of
-  // overlapping cards; run the deterministic layout instead so the export
-  // is usable.
-  if (doc.nodes.length > 1 && allDefault) {
+  // A document's stored positions are authoritative: never substitute a
+  // layout implicitly. Callers that need a fallback for documents that were
+  // never laid out pass { autoLayout: true } explicitly.
+  if (
+    autoLayout &&
+    doc.nodes.length > 1 &&
+    Object.values(positions).every((p) => p.x === 0 && p.y === 0)
+  ) {
     return layoutChart(doc);
   }
   return positions;
@@ -302,7 +304,10 @@ function renderNodeTexts(node, x, y, size) {
 /**
  * Export a ChartDocument to a standalone SVG string.
  * @param {object} chartDocument canvas chart document
- * @param {{ direction?: "top-down"|"left-right", title?: string }} options
+ * @param {{ direction?: "top-down"|"left-right", title?: string, autoLayout?: boolean }} options
+ *   autoLayout (default false): when true, an all-(0,0) multi-node document
+ *   is exported with the deterministic layout instead of its stored
+ *   positions. The default preserves stored positions exactly.
  * @returns {{ svg: string, width: number, height: number }}
  */
 export function exportChartSvg(chartDocument, options = {}) {
@@ -311,7 +316,9 @@ export function exportChartSvg(chartDocument, options = {}) {
   const direction =
     options.direction ??
     (chartDocument.type === "org" ? "top-down" : "left-right");
-  const positions = resolvePositions(chartDocument);
+  const positions = resolvePositions(chartDocument, {
+    autoLayout: options.autoLayout === true,
+  });
   const bounds = contentBounds(positions, size);
   const width = Math.max(Math.ceil(bounds.w + PAD * 2), MIN_WIDTH);
   const height = Math.max(Math.ceil(bounds.h + PAD * 2), MIN_HEIGHT);

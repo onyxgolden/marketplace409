@@ -7,8 +7,9 @@
 // nodes (ids, labels, subtitles, fields, manual positions, styles), edges,
 // background selection, and migration metadata. The canvas ChartDocument
 // never carries undo history, UI selection, open panels, viewport zoom, or
-// drag state, and serialization additionally strips any non-canonical keys,
-// so none of that can leak into storage.
+// drag state, so none of that can leak into storage. Unknown fields are
+// preserved verbatim at every level — serialization copies the full
+// node/edge and canonicalizes only the known fields.
 //
 // Invalid stored documents can never enter canvas state: deserialize runs
 // migrate → validate → construct, and any failure throws
@@ -52,26 +53,33 @@ function toJsonSafe(value) {
 }
 
 function pickNodeFields(node) {
-  // Canonical node fields only — anything else (selection, drag state,
-  // history pointers) is dropped, never persisted.
+  // Canonical copy: spread the full node so unknown keys (e.g.
+  // customMetadata) survive the round trip, then validate/override the
+  // known fields with their canonical defaults.
+  const source = node ?? {};
   return {
-    id: node.id,
-    label: node.label,
-    subtitle: node.subtitle ?? "",
-    fields: node.fields ?? {},
-    position: node.position ?? { x: 0, y: 0 },
-    style: node.style ?? {},
+    ...source,
+    id: source.id,
+    label: source.label,
+    subtitle: source.subtitle ?? "",
+    fields: source.fields ?? {},
+    position: source.position ?? { x: 0, y: 0 },
+    style: source.style ?? {},
   };
 }
 
 function pickEdgeFields(edge) {
+  // Canonical copy: spread the full edge so unknown keys survive the round
+  // trip, then validate/override the known fields.
+  const source = edge ?? {};
   return {
-    id: edge.id,
-    from: edge.from,
-    to: edge.to,
-    label: edge.label ?? "",
-    type: edge.type ?? "",
-    style: edge.style ?? {},
+    ...source,
+    id: source.id,
+    from: source.from,
+    to: source.to,
+    label: source.label ?? "",
+    type: source.type ?? "",
+    style: source.style ?? {},
   };
 }
 
