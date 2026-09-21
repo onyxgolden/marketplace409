@@ -5,6 +5,7 @@ import {
   PauseCircle, PlayCircle, Home,
 } from "lucide-react";
 import { buildRentalDashboardSummary } from "@/application/rental/buildRentalDashboardSummary";
+import { getRentalSummaryPayload } from "./rentalSummaryClient";
 import RentalTodaysPrioritiesPanel from "./guided-workflow/RentalTodaysPrioritiesPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -106,11 +107,11 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
   const [error, setError] = useState("");
   useEffect(() => {
     if (initialData) return;
-    Promise.all([fetch("/api/rental"), fetch("/api/rental/reports")]).then(async ([rentalResponse, reportResponse]) => {
-      const rentalBody = await rentalResponse.json(); const reportBody = await reportResponse.json();
-      if (!rentalResponse.ok) throw new Error(rentalBody.error || "Rental summary could not be loaded.");
-      if (!reportResponse.ok) throw new Error(reportBody.error || "Rental report could not be loaded.");
-      setSummary(buildRentalDashboardSummary(rentalBody, reportBody.report));
+    // Shared with Today's Priorities: one deduped network pair, retried on network blips.
+    // Reports stays fatal here, exactly as before -- an unavailable report throws.
+    getRentalSummaryPayload().then(({ rentalBody, reports }) => {
+      if (!reports.available) throw new Error(reports.error || "Rental report could not be loaded.");
+      setSummary(buildRentalDashboardSummary(rentalBody, reports.report));
     }).catch((reason) => setError(reason.message));
   }, [initialData]);
 
