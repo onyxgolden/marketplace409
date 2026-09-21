@@ -156,8 +156,10 @@ pub struct ScrollSection {
     /// written before requested-engine tracking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_engine: Option<String>,
-    /// Set when the resolved engine differs from the requested one: why the
-    /// fallback happened. Absent when requested == resolved.
+    /// Set when resolution fell back to a different engine than requested:
+    /// why the fallback happened. Absent when requested == resolved, and
+    /// also absent for normal `auto` resolution (e.g. `auto` -> `dom-aware`,
+    /// which is choosing an engine, not a fallback).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback_reason: Option<String>,
     /// "vertical" | "horizontal".
