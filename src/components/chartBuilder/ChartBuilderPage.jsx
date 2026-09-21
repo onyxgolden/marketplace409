@@ -1,0 +1,486 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  canRedoChart,
+  canUndoChart,
+  chartReducer,
+  commitChartAction,
+  contentBounds,
+  createChartDocument,
+  createEdge,
+  createNode,
+  emptyChartHistory,
+  getChartTemplate,
+  layoutChart,
+  LAYOUT_NODE_ORG,
+  LAYOUT_NODE_WORKFLOW,
+  nodeSupervisor,
+  redoChart,
+  resolveCanvasDrop,
+  seedChartFromTemplate,
+  undoChart,
+  validateOrgDocument,
+  validateWorkflowDocument,
+  withParts,
+} from "@/domains/chartBuilder";
+import TemplatePicker from "./TemplatePicker.jsx";
+import BackgroundPicker from "./BackgroundPicker.jsx";
+import ChartCanvas from "./ChartCanvas.jsx";
+import {
+  getGridPreference,
+  GRID_PREFERENCES,
+  setGridPreference,
+} from "./gridPreference.js";
+
+function useNotice() {
+  const [notice, setNotice] = useState(null);
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(null), 4500);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  return [notice, setNotice];
+}
+
+export default function ChartBuilderPage() {
+  const [hist, setHist] = useState(() => emptyChartHistory());
+  const [selectedId, setSelectedId] = useState(null);
+  const [pickerOpen, setPickerOpen] = useState(true);
+  const [bgOpen, setBgOpen] = useState(false);
+  const [gridPref, setGridPref] = useState(() => getGridPreference());
+  const [notice, setNotice] = useNotice();
+  const histRef = useRef(hist);
+  useEffect(() => {
+    histRef.current = hist;
+  }, [hist]);
+
+  const doc = hist.present;
+  const template = doc ? getChartTemplate(doc.metadata?.templateId) : null;
+  const nodeSize = doc?.type === "workflow" ? LAYOUT_NODE_WORKFLOW : LAYOUT_NODE_ORG;
+
+  const validation = useMemo(() => {
+    if (!doc) return { valid: true, errors: [] };
+    return doc.type === "org" ? validateOrgDocument(doc) : validateWorkflowDocument(doc);
+  }, [doc]);
+  const errorCount = validation.errors.filter((e) => e.severity === "error").length;
+  const warningCount = validation.errors.filter((e) => e.severity === "warning").length;
+
+  function commitState(newState, label) {
+    setHist((h) => commitChartAction(h, label, newState));
+  }
+
+  function applyAction(action, label) {
+    const current = histRef.current.present;
+    if (!current) return;
+    const result = chartReducer(current, action);
+    if (result.error) {
+      setNotice({ text: result.error, kind: "error" });
+      return;
+    }
+    commitState(result.state, label ?? action.type);
+  }
+
+  function stampLayoutPositions(state, tpl) {
+    const positions = layoutChart(state, tpl);
+    const nodes = state.nodes.map((node) =>
+      Object.freeze({
+        ...node,
+        position: Object.freeze(positions[node.id] ?? node.position),
+      })
+    );
+    return withParts(state, { nodes });
+  }
+
+  function pickTemplate(tpl) {
+    const seed = seedChartFromTemplate(tpl);
+    const draft = createChartDocument({
+      id: `chart-${Date.now().toString(36)}`,
+      type: tpl.type,
+      nodes: seed.nodes,
+      edges: seed.edges,
+      metadata: { templateId: tpl.id },
+    });
+    commitState(stampLayoutPositions(draft, tpl), "new-chart");
+    setSelectedId(null);
+    setPickerOpen(false);
+    setNotice({ text: `${tpl.name} ready — drag nodes to arrange them.`, kind: "info" });
+  }
+
+  function handleDrop({ nodeId, position, dropTargetId }) {
+    const current = histRef.current.present;
+    if (!current) return;
+    const result = resolveCanvasDrop(current, { nodeId, position, dropTargetId });
+    if (result.reparentError) {
+      setNotice({ text: result.reparentError, kind: "error" });
+    }
+    if (result.error && !result.reparented) {
+      if (result.state !== current) {
+        setNotice({ text: result.error, kind: "error" });
+      }
+      return;
+    }
+    if (result.reparented) {
+      // Re-run auto-layout so the tree is tidy after the move.
+      commitState(stampLayoutPositions(result.state, template), "reparent");
+      setNotice({ text: "Moved under the new supervisor.", kind: "info" });
+    } else {
+      commitState(result.state, "move-node");
+    }
+  }
+
+  function autoLayout() {
+    if (!doc) return;
+    commitState(stampLayoutPositions(doc, template), "auto-layout");
+    setNotice({ text: "Layout refreshed.", kind: "info" });
+  }
+
+  function addNode() {
+    if (!doc) return;
+    const id = `node-${Date.now().toString(36)}-${doc.nodes.length}`;
+    const isOrg = doc.type === "org";
+    const bounds = contentBounds(
+      Object.fromEntries(doc.nodes.map((n) => [n.id, n.position])),
+      nodeSize
+    );
+    const node = createNode({
+      id,
+      label: isOrg ? "New person" : "New step",
+      subtitle: "",
+      position: { x: bounds.x + bounds.w + 48, y: bounds.y },
+      style: template ? { ...template.defaultNodeStyle } : {},
+    });
+    let next = withParts(doc, { nodes: [...doc.nodes, node] });
+    const supervisorId = isOrg ? selectedId : null;
+    if (supervisorId && doc.nodes.some((n) => n.id === supervisorId)) {
+      const edge = createEdge({
+        id: `e-${Date.now().toString(36)}`,
+        from: supervisorId,
+        to: id,
+        type: "supervisor",
+      });
+      next = withParts(next, { edges: [...next.edges, edge] });
+      next = stampLayoutPositions(next, template);
+    }
+    commitState(next, "add-node");
+    setSelectedId(id);
+  }
+
+  function deleteSelected() {
+    if (!doc || !selectedId) return;
+    applyAction({ type: "DELETE_NODE", id: selectedId }, "delete-node");
+    setSelectedId(null);
+  }
+
+  function changeGrid(pref) {
+    setGridPreference(pref);
+    setGridPref(pref);
+  }
+
+  function doUndo() {
+    const { history } = undoChart(histRef.current);
+    setHist(history);
+    setSelectedId(null);
+  }
+
+  function doRedo() {
+    const { history } = redoChart(histRef.current);
+    setHist(history);
+    setSelectedId(null);
+  }
+
+  if (!doc || pickerOpen) {
+    return (
+      <div className="min-h-screen bg-slate-100">
+        {doc && !pickerOpen ? null : (
+          <div className="border-b border-slate-200 bg-white px-6 py-3">
+            <span className="text-lg font-bold text-slate-900">Chart Builder</span>
+          </div>
+        )}
+        {doc && (
+          <div className="border-b border-slate-200 bg-white px-6 py-2">
+            <button
+              type="button"
+              onClick={() => setPickerOpen(false)}
+              className="text-sm font-medium text-blue-700 hover:underline"
+            >
+              ← Back to current chart
+            </button>
+          </div>
+        )}
+        <TemplatePicker onPick={pickTemplate} />
+      </div>
+    );
+  }
+
+  const selected = doc.nodes.find((n) => n.id === selectedId) ?? null;
+  const supervisor = selected && doc.type === "org" ? nodeSupervisor(doc, selected.id) : null;
+
+  return (
+    <div className="flex min-h-screen flex-col bg-slate-100">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-900 px-4 py-2.5">
+        <span className="mr-2 text-base font-bold text-white">Chart Builder</span>
+        {template && (
+          <span className="rounded-full bg-slate-700 px-2.5 py-1 text-xs font-medium text-slate-200">
+            {template.name}
+          </span>
+        )}
+        <div className="mx-1 h-6 w-px bg-slate-700" />
+        <ToolbarButton onClick={() => setPickerOpen(true)}>New</ToolbarButton>
+        <ToolbarButton onClick={doUndo} disabled={!canUndoChart(hist)}>Undo</ToolbarButton>
+        <ToolbarButton onClick={doRedo} disabled={!canRedoChart(hist)}>Redo</ToolbarButton>
+        <div className="mx-1 h-6 w-px bg-slate-700" />
+        <div className="relative">
+          <ToolbarButton onClick={() => setBgOpen((v) => !v)} active={bgOpen}>
+            Background
+          </ToolbarButton>
+          {bgOpen && (
+            <BackgroundPicker
+              currentId={doc.background}
+              onSelect={(id) => {
+                applyAction({ type: "SET_BACKGROUND", background: id }, "set-background");
+                setBgOpen(false);
+              }}
+              onClose={() => setBgOpen(false)}
+            />
+          )}
+        </div>
+        <div
+          className="flex overflow-hidden rounded-lg border border-slate-600"
+          role="group"
+          aria-label="Drawing grid"
+        >
+          {GRID_PREFERENCES.map((pref) => (
+            <button
+              key={pref}
+              type="button"
+              onClick={() => changeGrid(pref)}
+              aria-pressed={gridPref === pref}
+              className={`px-2.5 py-1.5 text-xs font-medium capitalize transition ${
+                gridPref === pref
+                  ? "bg-blue-600 text-white"
+                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+              }`}
+            >
+              {pref === "off" ? "No grid" : `${pref} grid`}
+            </button>
+          ))}
+        </div>
+        <ToolbarButton onClick={autoLayout}>Auto-layout</ToolbarButton>
+        <ToolbarButton onClick={addNode}>
+          {doc.type === "org" ? "Add person" : "Add step"}
+        </ToolbarButton>
+        <div className="ml-auto flex items-center gap-2">
+          {errorCount > 0 && (
+            <span className="rounded-full bg-red-600 px-2.5 py-1 text-xs font-semibold text-white">
+              {errorCount} error{errorCount === 1 ? "" : "s"}
+            </span>
+          )}
+          {warningCount > 0 && (
+            <span className="rounded-full bg-amber-500 px-2.5 py-1 text-xs font-semibold text-white">
+              {warningCount} warning{warningCount === 1 ? "" : "s"}
+            </span>
+          )}
+          {errorCount === 0 && warningCount === 0 && (
+            <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white">
+              Valid
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="flex flex-1 gap-4 p-4">
+        <div className="min-w-0 flex-1">
+          <ChartCanvas
+            doc={doc}
+            template={template}
+            nodeSize={nodeSize}
+            selectedId={selectedId}
+            gridPreference={gridPref}
+            onSelect={setSelectedId}
+            onDrop={handleDrop}
+          />
+          <p className="mt-2 text-xs text-slate-500">
+            Drag a node to move it. In org charts, drop a person onto another
+            person to change their supervisor — drops that would create a cycle
+            are rejected. Double-check: click a node to edit it in the panel.
+          </p>
+        </div>
+
+        {/* Inspector */}
+        <aside className="w-72 shrink-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          {selected ? (
+            <NodeInspector
+              key={selected.id}
+              doc={doc}
+              node={selected}
+              supervisorId={supervisor?.id ?? ""}
+              onPatch={(patch) =>
+                applyAction({ type: "UPDATE_NODE", id: selected.id, patch }, "update-node")
+              }
+              onReparent={(newSupervisorId) => {
+                if (!newSupervisorId) {
+                  // Make it a root: drop incoming supervisor edges.
+                  const edges = doc.edges.filter(
+                    (e) => !(e.to === selected.id && (e.type === "supervisor" || e.type === "")
+                    )
+                  );
+                  commitState(withParts(doc, { edges }), "unparent");
+                } else {
+                  applyAction(
+                    { type: "REPARENT_NODE", nodeId: selected.id, newSupervisorId },
+                    "reparent"
+                  );
+                }
+              }}
+              onDelete={deleteSelected}
+            />
+          ) : (
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Inspector</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Click a node on the canvas to edit its name, title, department,
+                or supervisor.
+              </p>
+              <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Chart issues
+              </h3>
+              {validation.errors.length === 0 ? (
+                <p className="mt-1 text-xs text-slate-500">No issues found.</p>
+              ) : (
+                <ul className="mt-1 space-y-1">
+                  {validation.errors.map((err, i) => (
+                    <li
+                      key={i}
+                      className={`rounded px-2 py-1 text-xs ${
+                        err.severity === "error"
+                          ? "bg-red-50 text-red-700"
+                          : "bg-amber-50 text-amber-700"
+                      }`}
+                    >
+                      {err.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </aside>
+      </div>
+
+      {/* Notice toast */}
+      {notice && (
+        <div
+          className={`fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-lg px-4 py-2.5 text-sm font-medium shadow-lg ${
+            notice.kind === "error" ? "bg-red-700 text-white" : "bg-slate-900 text-white"
+          }`}
+          role="status"
+        >
+          {notice.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolbarButton({ children, onClick, disabled, active }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+        active
+          ? "bg-blue-600 text-white"
+          : "bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+const fieldClass =
+  "mt-1 block w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200";
+
+function NodeInspector({ doc, node, supervisorId, onPatch, onReparent, onDelete }) {
+  const isOrg = doc.type === "org";
+  return (
+    <div>
+      <h2 className="text-sm font-semibold text-slate-900">Edit node</h2>
+      <label className="mt-3 block text-xs font-medium text-slate-600">
+        Name
+        <input
+          className={fieldClass}
+          defaultValue={node.label}
+          onBlur={(e) => {
+            if (e.target.value !== node.label) onPatch({ label: e.target.value });
+          }}
+        />
+      </label>
+      <label className="mt-2 block text-xs font-medium text-slate-600">
+        Subtitle
+        <input
+          className={fieldClass}
+          defaultValue={node.subtitle}
+          placeholder={isOrg ? "Title" : "Details"}
+          onBlur={(e) => {
+            if (e.target.value !== node.subtitle) onPatch({ subtitle: e.target.value });
+          }}
+        />
+      </label>
+      {isOrg && (
+        <>
+          <label className="mt-2 block text-xs font-medium text-slate-600">
+            Title
+            <input
+              className={fieldClass}
+              defaultValue={node.fields?.title ?? ""}
+              onBlur={(e) => {
+                if (e.target.value !== (node.fields?.title ?? ""))
+                  onPatch({ fields: { title: e.target.value } });
+              }}
+            />
+          </label>
+          <label className="mt-2 block text-xs font-medium text-slate-600">
+            Department
+            <input
+              className={fieldClass}
+              defaultValue={node.fields?.department ?? ""}
+              onBlur={(e) => {
+                if (e.target.value !== (node.fields?.department ?? ""))
+                  onPatch({ fields: { department: e.target.value } });
+              }}
+            />
+          </label>
+          <label className="mt-2 block text-xs font-medium text-slate-600">
+            Supervisor
+            <select
+              className={fieldClass}
+              value={supervisorId}
+              onChange={(e) => onReparent(e.target.value)}
+            >
+              <option value="">— No supervisor (root) —</option>
+              {doc.nodes
+                .filter((n) => n.id !== node.id)
+                .map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.label}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </>
+      )}
+      <button
+        type="button"
+        onClick={onDelete}
+        className="mt-4 w-full rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700"
+      >
+        Delete node
+      </button>
+    </div>
+  );
+}

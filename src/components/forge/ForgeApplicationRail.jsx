@@ -80,9 +80,14 @@ export const FORGE_APPLICATIONS =
       label: "Capture",
       shortLabel: "Cp",
     }),
+    Object.freeze({
+      href: "/forge/charts",
+      label: "Charts",
+      shortLabel: "Ch",
+    }),
   ]);
 
-export const PROMOTED_PREFIXES = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer", "/forge/private-financing", "/forge/reservations"];
+export const PROMOTED_PREFIXES = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer", "/forge/private-financing", "/forge/reservations", "/forge/charts"];
 
 export function isPromotedSubtree(pathname) {
   return PROMOTED_PREFIXES.some(

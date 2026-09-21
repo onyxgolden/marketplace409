@@ -1,6 +1,15 @@
 // FORGE Chart Builder — immutable chart document schema (slice 1).
 // A ChartDocument is a plain data tree of nodes and edges: no React, no DOM,
 // no layout engine. Layout algorithms and rendering arrive in later slices.
+//
+// Slice 2 adds `background`: a chart background preset id (see
+// chartBackground.js) that travels with the document so future exports can
+// reproduce it exactly.
+
+import {
+  DEFAULT_CHART_BACKGROUND,
+  isValidChartBackgroundId,
+} from "./chartBackground.js";
 
 export const CHART_SCHEMA_VERSION = 1;
 
@@ -155,6 +164,17 @@ function normalizeMetadata(metadata) {
   return Object.freeze({ templateId: metadata.templateId ?? null });
 }
 
+function normalizeBackground(background) {
+  // Unknown preset ids are rejected — never invent a background.
+  if (background === undefined || background === null) {
+    return DEFAULT_CHART_BACKGROUND;
+  }
+  if (!isValidChartBackgroundId(background)) {
+    throw new ChartError(`unknown chart background "${background}"`);
+  }
+  return background;
+}
+
 function normalizeNodes(nodes, type) {
   if (!Array.isArray(nodes)) {
     throw new ChartError("document nodes must be an array");
@@ -196,6 +216,7 @@ export function createChartDocument({
   nodes = [],
   edges = [],
   metadata,
+  background,
   createdAt,
 } = {}) {
   assertNonEmptyString(id, "document id");
@@ -210,6 +231,7 @@ export function createChartDocument({
     nodes: normalizeNodes(nodes, type),
     edges: normalizeEdges(edges),
     metadata: normalizeMetadata(metadata),
+    background: normalizeBackground(background),
     createdAt: now,
     updatedAt: now,
   });
@@ -226,12 +248,14 @@ export function getEdge(doc, id) {
 // Returns a new document with bumped updatedAt; structural helpers live in
 // chartReducer.js, but shared "replace parts" logic is kept here so both can
 // use it.
-export function withParts(doc, { nodes, edges, metadata } = {}) {
+export function withParts(doc, { nodes, edges, metadata, background } = {}) {
   return Object.freeze({
     ...doc,
     nodes: nodes !== undefined ? Object.freeze([...nodes]) : doc.nodes,
     edges: edges !== undefined ? Object.freeze([...edges]) : doc.edges,
     metadata: metadata !== undefined ? normalizeMetadata(metadata) : doc.metadata,
+    background:
+      background !== undefined ? normalizeBackground(background) : doc.background,
     updatedAt: new Date().toISOString(),
   });
 }

@@ -14,6 +14,7 @@ export const CHART_ACTIONS = Object.freeze([
   "ADD_EDGE",
   "DELETE_EDGE",
   "REPARENT_NODE",
+  "SET_BACKGROUND",
 ]);
 
 function ok(state) {
@@ -207,6 +208,12 @@ function doReparentNode(state, action) {
   return ok(withParts(state, { edges: [...edges, newEdge] }));
 }
 
+function doSetBackground(state, action) {
+  // Unknown preset ids are rejected by withParts' normalization — backgrounds
+  // are never invented.
+  return ok(withParts(state, { background: action.background }));
+}
+
 // Derives a collision-free edge id: a default or caller-supplied id that is
 // already taken gets a numeric suffix instead of failing the reparent.
 function nextFreeEdgeId(state, baseId) {
@@ -239,6 +246,8 @@ export function chartReducer(state, action) {
         return doDeleteEdge(state, action);
       case "REPARENT_NODE":
         return doReparentNode(state, action);
+      case "SET_BACKGROUND":
+        return doSetBackground(state, action);
       default:
         return fail(state, `unknown action type "${action.type}"`);
     }
