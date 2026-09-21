@@ -62,6 +62,25 @@ describe("GET /api/forge/designer/house-plans/jurisdiction (HP-L5)", () => {
     expect(response.status).toBe(401);
   });
 
+  it("returns 400 for missing or blank coordinates without calling Census", async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+    // Missing params entirely, missing lat, missing lon, blank lat/lon.
+    // Number(null)/Number("") coerce to 0 — these must stay invalid, not
+    // become a real Census lookup for (0,0).
+    const queries = ["", "lon=-97.7431", "lat=30.2672", "lat=&lon="];
+    for (const query of queries) {
+      const response = await GET(
+        new Request(`http://localhost/api/forge/designer/house-plans/jurisdiction?${query}`)
+      );
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: "Provide a valid latitude (-90 to 90) and longitude (-180 to 180).",
+      });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("returns 400 for invalid coordinates without calling Census", async () => {
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock;

@@ -26,10 +26,18 @@ import {
 
 const CENSUS_TIMEOUT_MS = 10000;
 
+// Absent or blank query parameters must stay invalid: Number(null) and
+// Number("") both coerce to 0, which would silently turn a missing
+// coordinate into a real Census lookup for (0,0) in the Gulf of Guinea.
 function readCoordinates(searchParams) {
-  const latitude = Number(searchParams.get("lat"));
-  const longitude = Number(searchParams.get("lon"));
+  const latitude = parseCoordinateParam(searchParams.get("lat"));
+  const longitude = parseCoordinateParam(searchParams.get("lon"));
   return { latitude, longitude };
+}
+
+function parseCoordinateParam(value) {
+  if (value === null || value.trim() === "") return undefined;
+  return Number(value);
 }
 
 // GET /api/forge/designer/house-plans/jurisdiction?lat=..&lon=..
