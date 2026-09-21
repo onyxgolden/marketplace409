@@ -46,7 +46,7 @@ const STATIC_EXPORT_FROM =
 const DYNAMIC_IMPORT = /import\(\s*['"]([^'"]+)['"]\s*\)/g;
 const REQUIRE = /require\(\s*['"]([^'"]+)['"]\s*\)/g;
 
-function collectSpecifiers(source, isTypeScript) {
+function collectSpecifiers(source, isTypeScript, { includeDynamic }) {
   const specifiers = [];
   for (const re of [STATIC_IMPORT, STATIC_EXPORT_FROM]) {
     re.lastIndex = 0;
@@ -60,22 +60,29 @@ function collectSpecifiers(source, isTypeScript) {
       specifiers.push(match[2]);
     }
   }
-  for (const re of [DYNAMIC_IMPORT, REQUIRE]) {
-    re.lastIndex = 0;
-    let match;
-    while ((match = re.exec(source)) !== null) {
-      specifiers.push(match[1]);
+  if (includeDynamic) {
+    for (const re of [DYNAMIC_IMPORT, REQUIRE]) {
+      re.lastIndex = 0;
+      let match;
+      while ((match = re.exec(source)) !== null) {
+        specifiers.push(match[1]);
+      }
     }
   }
   return specifiers;
 }
 
 /**
- * Walks the static + dynamic import graph starting at entryFiles,
- * following only relative and @/ specifiers. Returns the visited files
- * and every bare (node_modules) specifier encountered.
+ * Walks the import graph starting at entryFiles, following only relative
+ * and @/ specifiers. Returns the visited files and every bare
+ * (node_modules) specifier encountered.
+ *
+ * includeDynamic=false follows static imports/exports only -- this is what
+ * lands in a serverless function's initial bundle. includeDynamic=true
+ * also follows dynamic import() edges, which Next.js code-splits into
+ * lazily-loaded chunks (runtime-loaded, never in the initial bundle).
  */
-function walkModuleGraph(entryFiles) {
+function walkModuleGraph(entryFiles, { includeDynamic = true } = {}) {
   const visited = new Set();
   const bareSpecifiers = new Set();
   const queue = entryFiles.map((f) => resolveFile(f)).filter(Boolean);
@@ -90,7 +97,9 @@ function walkModuleGraph(entryFiles) {
     const source = fs.readFileSync(file, "utf8");
     const isTypeScript = file.endsWith(".ts") || file.endsWith(".tsx");
 
-    for (const specifier of collectSpecifiers(source, isTypeScript)) {
+    for (const specifier of collectSpecifiers(source, isTypeScript, {
+      includeDynamic,
+    })) {
       if (!specifier.startsWith(".") && !specifier.startsWith("@/")) {
         bareSpecifiers.add(specifier);
         continue;
@@ -182,8 +191,8 @@ const CONNECTION_ENTRY = path.join(
   "lib/supabase/createAuthenticatedConnectionApplication.js",
 );
 
-function stripeReachability(entryFiles) {
-  const { bareSpecifiers, visited } = walkModuleGraph(entryFiles);
+function stripeReachability(entryFiles, options) {
+  const { bareSpecifiers, visited } = walkModuleGraph(entryFiles, options);
   const stripeHits = [...bareSpecifiers].filter(
     (spec) => spec === "stripe" || spec.startsWith("stripe/"),
   );
@@ -198,6 +207,16 @@ function stripeReachability(entryFiles) {
     visitedCount: visited.size,
   };
 }
+
+// The /api/plaid/* routes are backed by the same connection helper but never
+// perform Stripe operations -- the stripe package must not appear in their
+// static bundles. Checked against the STATIC graph: a dynamic import() edge
+// would only ever execute inside a Stripe adapter method, never on these
+// routes, but the static bundle is what Vercel ships per function.
+const PLAID_ROUTE_ENTRIES = [
+  path.join(srcRoot, "app/api/plaid/exchange-token/route.ts"),
+  path.join(srcRoot, "app/api/plaid/link-token/route.ts"),
+];
 
 describe("serverless bundle isolation (stripe)", () => {
   it("the financial application graph never reaches the stripe package", () => {
@@ -216,11 +235,49 @@ describe("serverless bundle isolation (stripe)", () => {
     });
   });
 
-  it("the connection entry point still reaches the stripe package (non-vacuous control)", () => {
-    const { stripeHits, billingProviderFiles } = stripeReachability([
-      CONNECTION_ENTRY,
-    ]);
-    expect(stripeHits).toContain("stripe");
-    expect(billingProviderFiles.length).toBeGreaterThan(0);
+  it("the connection helper's static graph never reaches the stripe package", () => {
+    // Regression guard for the NO-GO blocker: the helper backs /api/plaid/*
+    // routes too, so even a single static `import ... StripeBillingProvider`
+    // here would re-bundle the ~9.9MB stripe package into Plaid-only
+    // functions. The Stripe client must stay behind the dynamic import()
+    // inside stripeClientFactory. Fails loudly if the static edge returns.
+    expect(
+      stripeReachability([CONNECTION_ENTRY], { includeDynamic: false }),
+    ).toEqual({
+      stripeHits: [],
+      billingProviderFiles: [],
+      visitedCount: expect.any(Number),
+    });
+  });
+
+  it("the plaid-only routes' static graph never reaches the stripe package", () => {
+    expect(
+      stripeReachability(PLAID_ROUTE_ENTRIES, { includeDynamic: false }),
+    ).toEqual({
+      stripeHits: [],
+      billingProviderFiles: [],
+      visitedCount: expect.any(Number),
+    });
+  });
+
+  it("the connection entry still reaches the stripe package through a dynamic import (non-vacuous control)", () => {
+    // The lazy edge must keep existing: the factory loads
+    // StripeBillingProvider via import() only when a Stripe adapter method
+    // actually runs. Full graph (static + dynamic) reaches stripe...
+    const full = stripeReachability([CONNECTION_ENTRY]);
+    expect(full.stripeHits).toContain("stripe");
+    expect(full.billingProviderFiles.length).toBeGreaterThan(0);
+    // ...while the static graph does not (see the guard above), and the
+    // helper source carries exactly one dynamic import of the provider
+    // module and no static one.
+    const helperSource = fs.readFileSync(CONNECTION_ENTRY, "utf8");
+    expect(
+      helperSource.match(
+        /import\(\s*["']@\/infrastructure\/billing\/StripeBillingProvider["']\s*\)/g,
+      ) ?? [],
+    ).toHaveLength(1);
+    expect(helperSource).not.toMatch(
+      /^\s*import\s+[^'"]*from\s+["']@\/infrastructure\/billing\/StripeBillingProvider["']/m,
+    );
   });
 });

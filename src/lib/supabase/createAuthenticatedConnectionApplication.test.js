@@ -132,10 +132,10 @@ describe("createAuthenticatedConnectionApplication", () => {
     });
 
     // The injected Stripe factory must resolve to StripeBillingProvider's
-    // configured SDK instance (the single static edge to the ~9.9MB stripe
-    // package), not a stub -- every Stripe Financial Connections entry point
-    // depends on this wiring. The factory is lazy so this helper stays safe
-    // to construct unconfigured.
+    // configured SDK instance -- every Stripe Financial Connections entry
+    // point depends on this wiring. The factory is async and lazy (dynamic
+    // import inside) so the stripe package stays out of every route's
+    // static bundle and this helper stays safe to construct unconfigured.
     const fakeStripe = {
       financialConnections: { sessions: { create: vi.fn() } },
       customers: { create: vi.fn() },
@@ -144,6 +144,12 @@ describe("createAuthenticatedConnectionApplication", () => {
     const stripeClient = await suiteArgs.stripeClientFactory();
     expect(mocks.createStripeBillingProvider).toHaveBeenCalled();
     expect(stripeClient).toBe(fakeStripe);
+
+    // The factory memoizes: repeated calls reuse the one configured SDK
+    // instance instead of constructing a second Stripe client per call.
+    const stripeClientAgain = await suiteArgs.stripeClientFactory();
+    expect(stripeClientAgain).toBe(fakeStripe);
+    expect(mocks.createStripeBillingProvider).toHaveBeenCalledTimes(1);
 
     await expect(
       result.currentOwnerId(),

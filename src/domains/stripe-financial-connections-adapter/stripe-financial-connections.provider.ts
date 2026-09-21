@@ -77,14 +77,19 @@ export function createStripeFinancialConnectionsAdapter({
    * that construct the connection platform suite without ever performing a
    * Stripe operation. Only the connection entry points (which perform real
    * Stripe Financial Connections operations) provide the factory -- it must
-   * reuse StripeBillingProvider's already-configured SDK instance rather
-   * than constructing a second one (see the client module's header comment).
+   * reuse the one configured Stripe SDK instance rather than constructing a
+   * second one (see the client module's header comment). The factory may be
+   * async: the connection helper loads StripeBillingProvider through a
+   * dynamic import() so the stripe package stays out of every route's static
+   * bundle, including the /api/plaid/* routes the helper also backs.
    * The compile-time contract test in
    * __tests__/stripe-financial-connections.client.test.ts proves a real
    * Stripe instance satisfies StripeFinancialConnectionsClient, so no cast
    * is needed at the injection site.
    */
-  stripeClientFactory?: () => StripeFinancialConnectionsClient;
+  stripeClientFactory?: () =>
+    | StripeFinancialConnectionsClient
+    | Promise<StripeFinancialConnectionsClient>;
 } = {}): StripeFinancialConnectionsAdapter {
   // Lazy, mirroring PlaidAdapter's own resolvePlaidClient -- resolveStripeClient() is only ever
   // called from inside a method that's actually being invoked, never at adapter-construction

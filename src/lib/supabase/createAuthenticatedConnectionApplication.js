@@ -7,13 +7,30 @@ import { NextResponse } from "next/server";
 // constructs the connection platform suite.
 import * as plaidSdk from "plaid";
 
-// The one static edge to the Stripe SDK in the app's server code. This
-// helper backs the /api/connection/*, /api/plaid/*, and
-// /api/stripe/financial-connections/* routes -- the entry points that perform
-// real Stripe Financial Connections operations -- so the ~9.9MB SDK is
-// bundled only into those functions instead of every function that
-// constructs the connection platform suite.
-import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
+// Deliberately NO static edge to the Stripe SDK here: this helper also
+// backs the /api/plaid/* routes, which never perform Stripe operations, and
+// a static import would bundle the ~9.9MB stripe package into those
+// functions. The configured Stripe client is loaded lazily through the
+// stripeClientFactory below -- the dynamic import() keeps the stripe
+// package out of every function's static bundle, and the import only ever
+// executes inside an adapter method that is actually performing a Stripe
+// Financial Connections operation.
+
+// Module-level lazy singleton: exactly one configured Stripe SDK instance
+// per function instance, no matter how many times the factory runs. The
+// provider is constructed on first use only, so this helper stays as safe
+// to import and construct unconfigured as before.
+let cachedStripeClient;
+
+async function resolveStripeBillingClient() {
+  if (cachedStripeClient === undefined) {
+    const { createStripeBillingProvider } = await import(
+      "@/infrastructure/billing/StripeBillingProvider"
+    );
+    cachedStripeClient = createStripeBillingProvider().stripe;
+  }
+  return cachedStripeClient;
+}
 
 import {
   ConnectionRepositoryStorage,
@@ -64,12 +81,15 @@ export async function createAuthenticatedConnectionApplication() {
           ownerId: effectiveOwnerId,
           currentOwnerId,
           plaidSdk,
-          // Lazy factory (never an eagerly constructed client) so this helper
-          // stays as safe to construct unconfigured as before -- the factory
-          // only runs inside an adapter method that's actually performing a
-          // Stripe operation. Reuses StripeBillingProvider's already-configured
-          // SDK instance rather than constructing a second one.
-          stripeClientFactory: () => createStripeBillingProvider().stripe,
+          // Lazy async factory (never an eagerly constructed client) so this
+          // helper stays as safe to construct unconfigured as before -- the
+          // factory only runs inside an adapter method that's actually
+          // performing a Stripe operation. The dynamic import keeps the
+          // stripe package out of every route's static bundle (including the
+          // /api/plaid/* routes this helper also backs), and the memoized
+          // singleton reuses the one configured Stripe SDK instance rather
+          // than constructing a second client per call.
+          stripeClientFactory: () => resolveStripeBillingClient(),
           connectionRepositoryStorage:
             ConnectionRepositoryStorage.SUPABASE,
           credentialReferenceRepositoryStorage:
