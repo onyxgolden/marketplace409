@@ -44,13 +44,15 @@ function assertPlainObject(value, name) {
 // Nodes
 // ---------------------------------------------------------------------------
 
-const NODE_FIELD_KEYS = Object.freeze(["title", "department", "location"]);
+export const NODE_FIELD_KEYS = Object.freeze(["title", "department", "location"]);
 
 function normalizeFields(fields) {
   if (fields === undefined || fields === null) return Object.freeze({});
   assertPlainObject(fields, "node fields");
   const out = {};
-  for (const key of NODE_FIELD_KEYS) {
+  // Known keys are strictly typed; unknown keys are preserved verbatim so
+  // custom importer fields are never silently dropped.
+  for (const key of Object.keys(fields)) {
     if (fields[key] !== undefined) {
       if (typeof fields[key] !== "string") {
         throw new ChartError(`node fields.${key} must be a string`);
@@ -66,8 +68,13 @@ function normalizePosition(position) {
     return Object.freeze({ x: 0, y: 0 });
   }
   assertPlainObject(position, "node position");
-  if (typeof position.x !== "number" || typeof position.y !== "number") {
-    throw new ChartError("node position.x and position.y must be numbers");
+  if (
+    typeof position.x !== "number" ||
+    typeof position.y !== "number" ||
+    !Number.isFinite(position.x) ||
+    !Number.isFinite(position.y)
+  ) {
+    throw new ChartError("node position.x and position.y must be finite numbers");
   }
   return Object.freeze({ x: position.x, y: position.y });
 }
@@ -154,7 +161,10 @@ function normalizeNodes(nodes, type) {
   }
   const ids = new Set();
   const out = nodes.map((raw) => {
-    const node = raw && raw.id !== undefined && raw.label !== undefined ? raw : createNode(raw);
+    // Always normalize through the constructor — a partially trusted object
+    // with id/label but invalid position, fields, or style must not slip
+    // through unvalidated.
+    const node = createNode(raw ?? {});
     if (ids.has(node.id)) {
       throw new ChartError(`duplicate node id "${node.id}" in document`);
     }
@@ -170,7 +180,7 @@ function normalizeEdges(edges) {
   }
   const ids = new Set();
   const out = edges.map((raw) => {
-    const edge = raw && raw.id !== undefined && raw.from !== undefined ? raw : createEdge(raw);
+    const edge = createEdge(raw ?? {});
     if (ids.has(edge.id)) {
       throw new ChartError(`duplicate edge id "${edge.id}" in document`);
     }

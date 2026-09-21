@@ -172,3 +172,22 @@ describe("validateWorkflowDocument", () => {
     expect(result.valid).toBe(true);
   });
 });
+
+describe("review fixes (PR #291)", () => {
+  it("flags nodes with only non-supervisor edges as orphans", () => {
+    const doc = createChartDocument({
+      id: "d",
+      type: "org",
+      nodes: [N("ceo", "CEO"), N("cto", "CTO"), N("coach", "Coach")],
+      edges: [
+        sup("ceo", "cto"),
+        createEdge({ id: "e-x", from: "ceo", to: "coach", type: "dotted" }),
+      ],
+    });
+    const result = validateOrgDocument(doc);
+    const orphan = result.errors.find((e) => e.type === "orphan" && e.nodeId === "coach");
+    expect(orphan).toBeDefined();
+    expect(orphan.severity).toBe("warning");
+    expect(result.valid).toBe(true);
+  });
+});

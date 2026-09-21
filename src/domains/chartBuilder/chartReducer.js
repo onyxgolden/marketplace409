@@ -25,12 +25,13 @@ function fail(state, error) {
 }
 
 function ensureNode(node) {
-  // Accept either a live node or raw params — the constructor validates both.
-  return node && node.id !== undefined && node.label !== undefined ? node : createNode(node);
+  // Always normalize through the constructor so partially trusted objects
+  // with an id/label but invalid position, fields, or style are validated.
+  return createNode(node ?? {});
 }
 
 function ensureEdge(edge) {
-  return edge && edge.id !== undefined && edge.from !== undefined ? edge : createEdge(edge);
+  return createEdge(edge ?? {});
 }
 
 function replaceNode(nodes, id, fn) {
@@ -124,8 +125,13 @@ function doMoveNode(state, action) {
     return fail(state, `unknown node id "${action.id}"`);
   }
   const position = action.position ?? {};
-  if (typeof position.x !== "number" || typeof position.y !== "number") {
-    return fail(state, "MOVE_NODE position must be { x: number, y: number }");
+  if (
+    typeof position.x !== "number" ||
+    typeof position.y !== "number" ||
+    !Number.isFinite(position.x) ||
+    !Number.isFinite(position.y)
+  ) {
+    return fail(state, "MOVE_NODE position must be { x: finite number, y: finite number }");
   }
   const moved = Object.freeze({ ...node, position: Object.freeze({ x: position.x, y: position.y }) });
   return ok(withParts(state, { nodes: replaceNode(state.nodes, node.id, () => moved) }));
@@ -192,16 +198,22 @@ function doReparentNode(state, action) {
     (e) => !(e.to === action.nodeId && (e.type === "supervisor" || e.type === ""))
   );
   const newEdge = createEdge({
-    id: action.edgeId ?? `${action.newSupervisorId}->${action.nodeId}`,
+    id: nextFreeEdgeId(state, action.edgeId ?? `${action.newSupervisorId}->${action.nodeId}`),
     from: action.newSupervisorId,
     to: action.nodeId,
     label: action.edgeLabel ?? "",
     type: "supervisor",
   });
-  if (getEdge(state, newEdge.id)) {
-    return fail(state, `edge id "${newEdge.id}" already exists`);
-  }
   return ok(withParts(state, { edges: [...edges, newEdge] }));
+}
+
+// Derives a collision-free edge id: a default or caller-supplied id that is
+// already taken gets a numeric suffix instead of failing the reparent.
+function nextFreeEdgeId(state, baseId) {
+  if (!getEdge(state, baseId)) return baseId;
+  let n = 2;
+  while (getEdge(state, `${baseId}#${n}`)) n++;
+  return `${baseId}#${n}`;
 }
 
 export function chartReducer(state, action) {

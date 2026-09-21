@@ -178,18 +178,19 @@ export function validateOrgDocument(doc) {
     }
   }
 
-  // Orphans: nodes with no supervisor edges in either direction. They are
-  // reported as warnings — never silently attached to any tree.
+  // Orphans: nodes with no supervisor connectivity at all — no incoming
+  // supervisor edge and no outgoing supervisor edge. Reported as warnings —
+  // never silently attached to any tree. Non-supervisor edges (or none) do
+  // not count: only the supervisor hierarchy determines orphan status.
   for (const id of nodeIds) {
     const inCount = (incomingSupervisor.get(id) ?? []).length;
     const outCount = (outgoingSupervisor.get(id) ?? []).length;
-    const anyEdges = doc.edges.some((e) => e.from === id || e.to === id);
-    if (inCount === 0 && outCount === 0 && !anyEdges) {
+    if (inCount === 0 && outCount === 0) {
       push({
         type: "orphan",
         severity: "warning",
         nodeId: id,
-        message: `node "${id}" is an orphan: no edges; it was not attached to any tree`,
+        message: `node "${id}" is an orphan: no supervisor edges; it was not attached to any tree`,
       });
     }
   }

@@ -88,3 +88,34 @@ describe("createChartDocument", () => {
     expect(doc.nodes).toHaveLength(0);
   });
 });
+
+describe("review fixes (PR #291)", () => {
+  it("validates raw node objects even when id/label are present (no bypass)", () => {
+    expect(() =>
+      createChartDocument({
+        id: "d",
+        type: "org",
+        nodes: [{ id: "r", label: "Raw", position: { x: NaN, y: 0 } }],
+      })
+    ).toThrow(ChartError);
+    expect(() =>
+      createChartDocument({
+        id: "d",
+        type: "org",
+        nodes: [{ id: "r", label: "Raw", style: { shape: "nope" } }],
+      })
+    ).toThrow(ChartError);
+  });
+
+  it("rejects NaN and infinite coordinates", () => {
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      expect(() => createNode({ id: "n", label: "N", position: { x: bad, y: 0 } })).toThrow(ChartError);
+      expect(() => createNode({ id: "n", label: "N", position: { x: 0, y: bad } })).toThrow(ChartError);
+    }
+  });
+
+  it("preserves unknown field keys instead of dropping them", () => {
+    const node = createNode({ id: "n", label: "N", fields: { title: "Boss", nickname: "Ace" } });
+    expect(node.fields.nickname).toBe("Ace");
+  });
+});

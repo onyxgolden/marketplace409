@@ -169,3 +169,58 @@ describe("unknown actions", () => {
     expect(state).toBe(doc);
   });
 });
+
+describe("review fixes (PR #291)", () => {
+  it("rejects self-parenting reparents", () => {
+    const doc = orgDoc();
+    const { state, error } = chartReducer(doc, {
+      type: "REPARENT_NODE",
+      nodeId: "cto",
+      newSupervisorId: "cto",
+      edgeId: "e-self",
+    });
+    expect(error).toMatch(/itself/);
+    expect(state).toBe(doc); // state unchanged
+  });
+
+  it("allows moving a descendant under a non-descendant node", () => {
+    // cfo is a leaf; cto is not a descendant of cfo, so this must succeed.
+    const { state, error } = chartReducer(orgDoc(), {
+      type: "REPARENT_NODE",
+      nodeId: "cfo",
+      newSupervisorId: "cto",
+      edgeId: "e-ok",
+    });
+    expect(error).toBeNull();
+    expect(state.edges.find((e) => e.to === "cfo").from).toBe("cto");
+  });
+
+  it("suffixes colliding reparent edge ids instead of failing", () => {
+    const doc = orgDoc({
+      edges: [
+        createEdge({ id: "e1", from: "ceo", to: "cto", type: "supervisor" }),
+        createEdge({ id: "e2", from: "ceo", to: "cfo", type: "supervisor" }),
+        createEdge({ id: "cto->cfo", from: "cto", to: "ceo", type: "supervisor" }),
+      ],
+    });
+    const { state, error } = chartReducer(doc, {
+      type: "REPARENT_NODE",
+      nodeId: "cfo",
+      newSupervisorId: "cto",
+    });
+    expect(error).toBeNull();
+    const newEdge = state.edges.find((e) => e.to === "cfo" && e.from === "cto");
+    expect(newEdge.id).toBe("cto->cfo#2");
+  });
+
+  it("rejects non-finite MOVE_NODE coordinates", () => {
+    for (const bad of [NaN, Infinity]) {
+      const { error } = chartReducer(orgDoc(), {
+        type: "MOVE_NODE",
+        id: "cto",
+        position: { x: bad, y: 0 },
+      });
+      expect(error).toMatch(/finite/);
+    }
+  });
+});
