@@ -10,7 +10,14 @@
 //     rooms:    [{ id, label, polygon: [{x,y}, ...] }],   // labeled areas
 //     openings: [{ id, wallId, type: "door"|"window", offsetIn, widthIn }],
 //     furniture:[{ id, catalogId, x, y, rotationDeg }],
+//     sheets:   [{ id, sizeId, orientation, x, y,   // printable paper frames
+//                   planWidthIn, planHeightIn, fitScale }],
 //   }
+//
+// Sheet (x, y) is the TOP-LEFT anchor of the frame in plan inches. The plan
+// bounds (planWidthIn/planHeightIn) and fitScale are fixed when the sheet is
+// placed or its format changes and never recomputed from later content, so
+// adding content later cannot silently alter what a sheet prints.
 //
 // Every operation is pure: it takes a design and returns a new design.
 // Coordinates are inches; opening offsets are inches from wall.a.
@@ -21,7 +28,8 @@ import { findSymbol } from "./symbolRegistry";
 // and validateDesign resolve it in every context that loads the document
 // model (app, API routes, tests).
 import "./pipingCatalog";
-import { wouldCreateCycle } from "./orgChartLayout";
+import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
+import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {
   calibrateUnderlayScale,
   DEFAULT_UNDERLAY_OPACITY,
@@ -74,6 +82,7 @@ export function createEmptyDesign(name = "Untitled design") {
     symbols: [], // Phase 2: placed symbols { id, domain, symbolId, x, y, rotationDeg, layer, tag? }
     orgCharts: [], // Phase 3: people org charts { id, name, x, y, nodes }
     underlay: null, // background trace-over image; see setUnderlay
+    sheets: [], // printable paper frames; see addSheet
   };
 }
 
@@ -827,6 +836,22 @@ export function validateDesign(design) {
       }
     }
   }
+  for (const sheet of design.sheets || []) {
+    try {
+      sheetDimensions(sheet.sizeId, sheet.orientation);
+    } catch {
+      errors.push(`Sheet ${sheet.id} references an unknown size/orientation.`);
+    }
+    if (
+      !(sheet.planWidthIn > 0) ||
+      !(sheet.planHeightIn > 0) ||
+      !(sheet.fitScale > 0) ||
+      !isFiniteNumber(sheet.x) ||
+      !isFiniteNumber(sheet.y)
+    ) {
+      errors.push(`Sheet ${sheet.id} has bad geometry (bounds, fit scale, or anchor).`);
+    }
+  }
   return errors;
 }
 
@@ -945,4 +970,237 @@ export function calibrateUnderlay(design, clickA, clickB, realDistanceIn) {
   const x = clickA.x - (clickA.x - u.x) * scaleRatio;
   const y = clickA.y - (clickA.y - u.y) * scaleRatio;
   return updateUnderlay(design, { pxPerIn, x, y });
+}
+
+// ---------------------------------------------------------------------------
+// Printable paper sheets
+//
+// A sheet is a positioned printable paper frame:
+//   { id, sizeId, orientation, x, y, planWidthIn, planHeightIn, fitScale }
+//
+// (x, y) is the TOP-LEFT anchor of the frame in plan inches. The plan
+// bounds and fitScale are fixed when the sheet is placed (or its format
+// changes) and are never recomputed from later content — adding content
+// later cannot silently alter what a sheet represents or prints.
+//
+// Fit scale is UNIFORM: min(printablePaperWidth / planWidth,
+// printablePaperHeight / planHeight). X and Y are never scaled separately,
+// so geometry never distorts. The print view clips everything outside the
+// fixed frame.
+// ---------------------------------------------------------------------------
+
+/** Sheets of a design; old documents that predate sheets read as []. */
+export function sheetsOf(design) {
+  return design?.sheets || [];
+}
+
+export function findSheet(design, sheetId) {
+  return sheetsOf(design).find((s) => s.id === sheetId);
+}
+
+/**
+ * The plan region a sheet represents: the fixed top-left anchor plus the
+ * fixed placement-time dimensions. Never derived from current content.
+ */
+export function sheetPlanBounds(sheet) {
+  if (!sheet) throw new Error("Unknown sheet.");
+  return { x: sheet.x, y: sheet.y, widthIn: sheet.planWidthIn, heightIn: sheet.planHeightIn };
+}
+
+/**
+ * Tight axis-aligned bounds of every drawable element in plan inches:
+ * { x, y, widthIn, heightIn } at the top-left, or null when the design is
+ * empty. Used ONCE at sheet placement / format change to fix the sheet's
+ * plan region; never consulted again afterward.
+ */
+export function designContentBounds(design) {
+  assertDesign(design);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const eat = (x, y) => {
+    if (!isFiniteNumber(x) || !isFiniteNumber(y)) return;
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  };
+  const eatRect = (cx, cy, w, h) => {
+    eat(cx - w / 2, cy - h / 2);
+    eat(cx + w / 2, cy + h / 2);
+  };
+  for (const wall of design.walls || []) {
+    eat(wall.a?.x, wall.a?.y);
+    eat(wall.b?.x, wall.b?.y);
+  }
+  for (const room of design.rooms || []) {
+    for (const p of room.polygon || []) eat(p?.x, p?.y);
+  }
+  for (const piece of design.furniture || []) {
+    const { widthIn, depthIn } = pieceSize(piece);
+    eatRect(piece.x, piece.y, widthIn, depthIn);
+  }
+  for (const run of design.pipes || []) {
+    for (const p of run.points || []) eat(p?.x, p?.y);
+  }
+  for (const instance of design.symbols || []) {
+    const sym = findSymbol(instance.domain, instance.symbolId);
+    eatRect(instance.x, instance.y, sym?.widthIn || 0, sym?.depthIn || 0);
+  }
+  for (const chart of design.orgCharts || []) {
+    const layout = layoutOrgChart(chart.nodes || []);
+    const w = Math.max(layout.widthIn, ORG_CHART_METRICS.boxWidthIn);
+    const h = Math.max(layout.heightIn, ORG_CHART_METRICS.boxHeightIn);
+    eat(chart.x - w / 2, chart.y);
+    eat(chart.x + w / 2, chart.y + h);
+  }
+  const u = design.underlay;
+  if (u) {
+    const w = u.widthPx / u.pxPerIn;
+    const h = u.heightPx / u.pxPerIn;
+    eat(u.x, u.y);
+    eat(u.x + w, u.y + h);
+  }
+  if (minX === Infinity) return null;
+  return { x: minX, y: minY, widthIn: maxX - minX, heightIn: maxY - minY };
+}
+
+/**
+ * Uniform fit scale: paper inches of PRINTED line per plan inch, against the
+ * printable area (paper minus the print margin on every side). Uniform —
+ * min() of the two axes — so geometry never distorts. Degenerate content
+ * dimensions are padded to 1 inch so the scale stays finite.
+ */
+export function computeFitScale(paperW, paperH, contentW, contentH, marginIn = PRINT_MARGIN_IN) {
+  const printableW = paperW - 2 * marginIn;
+  const printableH = paperH - 2 * marginIn;
+  if (!(printableW > 0) || !(printableH > 0)) {
+    throw new Error("Sheet is too small for the print margin.");
+  }
+  const cw = Math.max(contentW, 1);
+  const ch = Math.max(contentH, 1);
+  return Math.min(printableW / cw, printableH / ch);
+}
+
+/**
+ * Exact fit label, e.g. Fit scale: 1" = 53.7". Computed from the exact
+ * stored scale — never a rounded architectural ratio.
+ */
+export function fitScaleLabel(fitScale) {
+  if (!(fitScale > 0)) throw new Error("Fit scale must be positive.");
+  const planInPerPaperIn = 1 / fitScale;
+  const rounded = Math.round(planInPerPaperIn * 10) / 10;
+  return `Fit scale: 1" = ${rounded}"`;
+}
+
+/**
+ * Place a new sheet. On a non-empty design the frame is fitted around the
+ * CURRENT content (uniform fit scale, printable area, frame centered on the
+ * content) and that region + scale is then fixed. On an empty design the
+ * frame starts as a 1:1 paper-size region centered at the plan origin.
+ * Pass { x, y } to override the top-left anchor explicitly.
+ */
+export function addSheet(design, sizeId, orientation = "portrait", { x, y } = {}) {
+  assertDesign(design);
+  const { widthIn: paperW, heightIn: paperH } = sheetDimensions(sizeId, orientation);
+  const content = designContentBounds(design);
+  let fitScale;
+  let planWidthIn;
+  let planHeightIn;
+  let anchorX = x;
+  let anchorY = y;
+  if (!content) {
+    fitScale = 1;
+    planWidthIn = paperW;
+    planHeightIn = paperH;
+    if (anchorX == null) anchorX = -paperW / 2;
+    if (anchorY == null) anchorY = -paperH / 2;
+  } else {
+    fitScale = computeFitScale(paperW, paperH, content.widthIn, content.heightIn);
+    planWidthIn = paperW / fitScale;
+    planHeightIn = paperH / fitScale;
+    if (anchorX == null) anchorX = content.x + content.widthIn / 2 - planWidthIn / 2;
+    if (anchorY == null) anchorY = content.y + content.heightIn / 2 - planHeightIn / 2;
+  }
+  if (!isFiniteNumber(anchorX) || !isFiniteNumber(anchorY)) {
+    throw new Error("Sheet anchor must be finite plan coordinates.");
+  }
+  const sheet = {
+    id: nextId("sheet"),
+    sizeId,
+    orientation,
+    x: anchorX,
+    y: anchorY,
+    planWidthIn,
+    planHeightIn,
+    fitScale,
+  };
+  return { ...design, sheets: [...sheetsOf(design), sheet] };
+}
+
+/** Reposition a sheet's top-left anchor. Bounds and fit scale are untouched. */
+export function moveSheet(design, sheetId, x, y) {
+  assertDesign(design);
+  if (!isFiniteNumber(x) || !isFiniteNumber(y)) {
+    throw new Error("Sheet anchor must be finite plan coordinates.");
+  }
+  const sheet = findSheet(design, sheetId);
+  if (!sheet) throw new Error(`Unknown sheet: ${sheetId}`);
+  return {
+    ...design,
+    sheets: sheetsOf(design).map((s) => (s.id === sheetId ? { ...s, x, y } : s)),
+  };
+}
+
+/** Delete a sheet by id (no-op when missing, like other delete ops). */
+export function deleteSheet(design, sheetId) {
+  assertDesign(design);
+  return { ...design, sheets: sheetsOf(design).filter((s) => s.id !== sheetId) };
+}
+
+/**
+ * Change a sheet's size and/or orientation. The fit scale and plan region
+ * are re-fixed against the CURRENT content (same rule as placement) while
+ * the frame CENTER stays put, so the sheet does not jump across the plan.
+ */
+export function updateSheetFormat(design, sheetId, { sizeId, orientation } = {}) {
+  assertDesign(design);
+  const sheet = findSheet(design, sheetId);
+  if (!sheet) throw new Error(`Unknown sheet: ${sheetId}`);
+  const nextSizeId = sizeId || sheet.sizeId;
+  const nextOrientation = orientation || sheet.orientation;
+  const { widthIn: paperW, heightIn: paperH } = sheetDimensions(nextSizeId, nextOrientation);
+  const content = designContentBounds(design);
+  let fitScale;
+  let planWidthIn;
+  let planHeightIn;
+  if (!content) {
+    fitScale = 1;
+    planWidthIn = paperW;
+    planHeightIn = paperH;
+  } else {
+    fitScale = computeFitScale(paperW, paperH, content.widthIn, content.heightIn);
+    planWidthIn = paperW / fitScale;
+    planHeightIn = paperH / fitScale;
+  }
+  const centerX = sheet.x + sheet.planWidthIn / 2;
+  const centerY = sheet.y + sheet.planHeightIn / 2;
+  return {
+    ...design,
+    sheets: sheetsOf(design).map((s) =>
+      s.id === sheetId
+        ? {
+            ...s,
+            sizeId: nextSizeId,
+            orientation: nextOrientation,
+            x: centerX - planWidthIn / 2,
+            y: centerY - planHeightIn / 2,
+            planWidthIn,
+            planHeightIn,
+            fitScale,
+          }
+        : s,
+    ),
+  };
 }
