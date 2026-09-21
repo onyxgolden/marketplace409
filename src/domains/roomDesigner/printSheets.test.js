@@ -13,6 +13,7 @@ import {
   addWall,
   sheetsOf,
   sheetPlanBounds,
+  updateDesignSettings,
   updateSheetFormat,
   validateDesign,
 } from "./designerDocument";
@@ -131,7 +132,9 @@ describe("addSheet / moveSheet / deleteSheet / updateSheetFormat", () => {
   });
 
   it("fits the frame around current content with a uniform fit scale", () => {
-    const withSheet = addSheet(designWithWall(), "letter", "portrait");
+    // Snap off: this test pins the exact fit/centering math, not placement.
+    const design = updateDesignSettings(designWithWall(), { snapEnabled: false });
+    const withSheet = addSheet(design, "letter", "portrait");
     const sheet = withSheet.sheets[0];
     expect(sheet.sizeId).toBe("letter");
     expect(sheet.orientation).toBe("portrait");
@@ -149,7 +152,9 @@ describe("addSheet / moveSheet / deleteSheet / updateSheetFormat", () => {
   });
 
   it("an empty design gets a 1:1 paper-size frame centered at the origin", () => {
-    const withSheet = addSheet(createEmptyDesign(), "tabloid", "landscape");
+    // Snap off: pins the exact 1:1 centering math, not placement.
+    const design = updateDesignSettings(createEmptyDesign(), { snapEnabled: false });
+    const withSheet = addSheet(design, "tabloid", "landscape");
     const sheet = withSheet.sheets[0];
     expect(sheet.fitScale).toBe(1);
     expect(sheet.planWidthIn).toBe(17);
@@ -159,13 +164,17 @@ describe("addSheet / moveSheet / deleteSheet / updateSheetFormat", () => {
   });
 
   it("accepts an explicit top-left anchor", () => {
-    const withSheet = addSheet(designWithWall(), "letter", "portrait", { x: 5, y: 7 });
+    // Snap off: pins anchor passthrough, not placement.
+    const design = updateDesignSettings(designWithWall(), { snapEnabled: false });
+    const withSheet = addSheet(design, "letter", "portrait", { x: 5, y: 7 });
     expect(withSheet.sheets[0].x).toBe(5);
     expect(withSheet.sheets[0].y).toBe(7);
   });
 
   it("moveSheet moves only the anchor; bounds and scale stay fixed", () => {
-    const withSheet = addSheet(designWithWall(), "letter", "portrait");
+    // Snap off: pins the move semantics, not placement.
+    const design = updateDesignSettings(designWithWall(), { snapEnabled: false });
+    const withSheet = addSheet(design, "letter", "portrait");
     const before = withSheet.sheets[0];
     const moved = moveSheet(withSheet, before.id, 42, 43);
     const after = findSheet(moved, before.id);
@@ -228,5 +237,55 @@ describe("addSheet / moveSheet / deleteSheet / updateSheetFormat", () => {
     const reloaded = JSON.parse(JSON.stringify(design));
     expect(reloaded.sheets).toEqual(design.sheets);
     expect(sheetPlanBounds(reloaded.sheets[0])).toEqual(sheetPlanBounds(design.sheets[0]));
+  });
+});
+
+describe("sheet grid snapping", () => {
+  // Default design settings: gridIn 6, snapEnabled true.
+  it("addSheet snaps an explicit anchor to the grid", () => {
+    const design = addSheet(createEmptyDesign(), "letter", "portrait", { x: 5, y: 7 });
+    expect(design.sheets[0].x).toBe(6);
+    expect(design.sheets[0].y).toBe(6);
+  });
+
+  it("addSheet snaps the computed anchor on an empty design", () => {
+    const design = addSheet(createEmptyDesign(), "tabloid", "landscape");
+    // Raw 1:1 anchor would be (-8.5, -5.5); grid 6″ re-seats it.
+    expect(design.sheets[0].x).toBe(-6);
+    expect(design.sheets[0].y).toBe(-6);
+  });
+
+  it("moveSheet snaps the anchor to the grid", () => {
+    let design = addSheet(createEmptyDesign(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    design = moveSheet(design, id, 10, 20);
+    expect(findSheet(design, id).x).toBe(12);
+    expect(findSheet(design, id).y).toBe(18);
+  });
+
+  it("already-on-grid anchors are untouched", () => {
+    let design = addSheet(createEmptyDesign(), "letter", "portrait", { x: 12, y: -18 });
+    expect(design.sheets[0].x).toBe(12);
+    expect(design.sheets[0].y).toBe(-18);
+    design = moveSheet(design, design.sheets[0].id, 30, 30);
+    expect(design.sheets[0].x).toBe(30);
+    expect(design.sheets[0].y).toBe(30);
+  });
+
+  it("snapEnabled=false preserves raw placement on add and move", () => {
+    const unsnapped = updateDesignSettings(createEmptyDesign(), { snapEnabled: false });
+    let design = addSheet(unsnapped, "letter", "portrait", { x: 5, y: 7 });
+    expect(design.sheets[0].x).toBe(5);
+    expect(design.sheets[0].y).toBe(7);
+    design = moveSheet(design, design.sheets[0].id, 10, 20);
+    expect(design.sheets[0].x).toBe(10);
+    expect(design.sheets[0].y).toBe(20);
+  });
+
+  it("snapping honors a custom grid spacing", () => {
+    const wide = updateDesignSettings(createEmptyDesign(), { gridIn: 12 });
+    const design = addSheet(wide, "letter", "portrait", { x: 14, y: 14 });
+    expect(design.sheets[0].x).toBe(12);
+    expect(design.sheets[0].y).toBe(12);
   });
 });

@@ -27,6 +27,7 @@ import {
   Trash2,
   Undo2,
   Upload,
+  ZoomIn,
 } from "lucide-react";
 import PlanCanvas from "./PlanCanvas";
 import PrintSheetOverlay from "./PrintSheetOverlay";
@@ -182,6 +183,9 @@ export default function DesignerScreen({ projectId, initialName }) {
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, orthoSnap, layerVisibility, view, dirty, past, future } = state;
   const summary = summarizeDesignForEstimating(design);
   const activeTool = TOOL_DEFS.find((t) => t.id === tool);
+  // "Zoom to sheet" requests from the Paper sheets panel: consumed by PlanCanvas.
+  const [zoomRequest, setZoomRequest] = useState(null);
+  const zoomSeq = useRef(0);
 
   return (
     <div className="flex h-screen flex-col bg-gray-950 text-gray-100">
@@ -288,6 +292,7 @@ export default function DesignerScreen({ projectId, initialName }) {
               orthoSnap={orthoSnap}
               layerVisibility={layerVisibility}
               dispatch={dispatch}
+              zoomRequest={zoomRequest}
             />
           ) : (
             <DesignerViewport3D design={design} />
@@ -301,7 +306,7 @@ export default function DesignerScreen({ projectId, initialName }) {
 
         {/* right panel */}
         <aside className="w-72 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3">
-          <RightPanel state={state} dispatch={dispatch} summary={summary} onPrint={openPrint} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} onPrint={openPrint} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} />
         </aside>
 
         {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
@@ -327,7 +332,7 @@ export default function DesignerScreen({ projectId, initialName }) {
   );
 }
 
-function RightPanel({ state, dispatch, summary, onPrint }) {
+function RightPanel({ state, dispatch, summary, onPrint, onZoomToSheet }) {
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate } = state;
 
   // Scale calibration for the background underlay (Visio trace-over workflow).
@@ -405,7 +410,13 @@ function RightPanel({ state, dispatch, summary, onPrint }) {
         <div className="flex justify-between"><dt>Piping symbols</dt><dd>{summary.pipingSymbolCount}</dd></div>
       </dl>
       <LayerToggles state={state} dispatch={dispatch} />
-      <SheetsSection design={design} dispatch={dispatch} selection={selection} onPrint={onPrint} />
+      <SheetsSection
+        design={design}
+        dispatch={dispatch}
+        selection={selection}
+        onPrint={onPrint}
+        onZoomToSheet={onZoomToSheet}
+      />
       <h2 className="mb-2 text-sm font-semibold text-white">Settings</h2>
       <label className="mb-2 block text-xs text-gray-400">
         Wall height
@@ -596,7 +607,7 @@ function LayerToggles({ state, dispatch }) {
 // document as a data URL (Phase 1); a Supabase Storage migration is the
 // follow-up if images get large.
 /** Printable paper sheets: add/select/print/delete sheet frames. */
-function SheetsSection({ design, dispatch, selection, onPrint }) {
+function SheetsSection({ design, dispatch, selection, onPrint, onZoomToSheet }) {
   const sheets = design.sheets || [];
   const [sizeId, setSizeId] = useState("letter");
   const [orientation, setOrientation] = useState("portrait");
@@ -604,7 +615,8 @@ function SheetsSection({ design, dispatch, selection, onPrint }) {
     <div className="mb-4">
       <h2 className="mb-2 text-sm font-semibold text-white">Paper sheets</h2>
       <p className="mb-2 text-[11px] text-gray-500">
-        WYSIWYG print area. Drag the dashed frame on the plan to reposition it.
+        WYSIWYG print area. Frames snap to the grid — drag the dashed frame to
+        reposition it, or zoom to a sheet to draw inside its border.
       </p>
       <div className="mb-2 flex gap-2">
         <select
@@ -666,6 +678,13 @@ function SheetsSection({ design, dispatch, selection, onPrint }) {
                   className="rounded p-1 text-gray-400 hover:bg-gray-700 hover:text-white"
                 >
                   <Printer size={13} />
+                </button>
+                <button
+                  onClick={() => onZoomToSheet(s)}
+                  title="Zoom to sheet"
+                  className="rounded p-1 text-gray-400 hover:bg-gray-700 hover:text-white"
+                >
+                  <ZoomIn size={13} />
                 </button>
                 <button
                   onClick={() =>

@@ -34,11 +34,13 @@ import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartL
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {
   calibrateUnderlayScale,
+  DEFAULT_GRID_IN,
   DEFAULT_UNDERLAY_OPACITY,
   DEFAULT_UNDERLAY_WIDTH_IN,
   isFiniteNumber,
   isValidPoint,
   polygonArea,
+  snapScalar,
   wallLength,
 } from "./designerGeometry";
 import {
@@ -1122,6 +1124,10 @@ export function fitScaleLabel(fitScale) {
  * content) and that region + scale is then fixed. On an empty design the
  * frame starts as a 1:1 paper-size region centered at the plan origin.
  * Pass { x, y } to override the top-left anchor explicitly.
+ *
+ * The final anchor snaps to the design's grid unless snap is disabled
+ * (settings.snapEnabled === false), so the frame border sits on grid lines
+ * and zooming inside it keeps the drawing grid-aligned.
  */
 export function addSheet(design, sizeId, orientation = "portrait", { x, y } = {}) {
   assertDesign(design);
@@ -1148,6 +1154,9 @@ export function addSheet(design, sizeId, orientation = "portrait", { x, y } = {}
   if (!isFiniteNumber(anchorX) || !isFiniteNumber(anchorY)) {
     throw new Error("Sheet anchor must be finite plan coordinates.");
   }
+  const snappedAnchor = snapSheetAnchor(design, anchorX, anchorY);
+  anchorX = snappedAnchor.x;
+  anchorY = snappedAnchor.y;
   const sheet = {
     id: nextId("sheet"),
     sizeId,
@@ -1161,7 +1170,33 @@ export function addSheet(design, sizeId, orientation = "portrait", { x, y } = {}
   return { ...design, sheets: [...sheetsOf(design), sheet] };
 }
 
-/** Reposition a sheet's top-left anchor. Bounds and fit scale are untouched. */
+/** Grid spacing used for sheet-frame snapping; falls back to the 6″ default. */
+function sheetSnapGridIn(design) {
+  const gridIn = design.settings?.gridIn;
+  return gridIn > 0 ? gridIn : DEFAULT_GRID_IN;
+}
+
+/**
+ * Snap a sheet frame's top-left anchor to the design grid. Returns the point
+ * unchanged when the user turned snap off (settings.snapEnabled === false).
+ * Normalizes -0 to 0 so the anchor survives a JSON save/reload unchanged
+ * (JSON.stringify(-0) is "0").
+ */
+function snapSheetAnchor(design, x, y) {
+  if (design.settings?.snapEnabled === false) return { x, y };
+  const gridIn = sheetSnapGridIn(design);
+  const snap = (v) => {
+    const snapped = snapScalar(v, gridIn);
+    return snapped === 0 ? 0 : snapped;
+  };
+  return { x: snap(x), y: snap(y) };
+}
+
+/**
+ * Reposition a sheet's top-left anchor. Bounds and fit scale are untouched.
+ * The anchor snaps to the design grid unless snap is disabled, so a dragged
+ * frame re-seats on grid lines when the drag ends.
+ */
 export function moveSheet(design, sheetId, x, y) {
   assertDesign(design);
   if (!isFiniteNumber(x) || !isFiniteNumber(y)) {
@@ -1169,9 +1204,10 @@ export function moveSheet(design, sheetId, x, y) {
   }
   const sheet = findSheet(design, sheetId);
   if (!sheet) throw new Error(`Unknown sheet: ${sheetId}`);
+  const snapped = snapSheetAnchor(design, x, y);
   return {
     ...design,
-    sheets: sheetsOf(design).map((s) => (s.id === sheetId ? { ...s, x, y } : s)),
+    sheets: sheetsOf(design).map((s) => (s.id === sheetId ? { ...s, x: snapped.x, y: snapped.y } : s)),
   };
 }
 

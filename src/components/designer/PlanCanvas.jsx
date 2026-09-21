@@ -18,6 +18,7 @@ import {
   snapScalar,
   underlayContainsPoint,
   wallLength,
+  zoomToFitRect,
 } from "@/domains/roomDesigner/designerGeometry";
 import {
   applyOrthoSnap,
@@ -44,7 +45,7 @@ const HIT_TOLERANCE_PX = 10;
  * SVG 2D floor-plan editor. All plan math is inches; the component maps
  * plan <-> screen with a pan/zoom transform kept in local state.
  */
-export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, orthoSnap, layerVisibility, dispatch }) {
+export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, orthoSnap, layerVisibility, dispatch, zoomRequest }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
   const [view, setView] = useState({ scale: 1.6, ox: 60, oy: 60 });
@@ -84,6 +85,22 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // External "zoom to sheet" requests from the Paper sheets panel: fit the
+  // sheet's plan rect in the viewport. React's sanctioned "adjust state
+  // during render" pattern (no effect); the nonce makes each request apply
+  // once. Waits until the canvas has been measured.
+  const [appliedZoomNonce, setAppliedZoomNonce] = useState(0);
+  if (zoomRequest && zoomRequest.nonce !== appliedZoomNonce && canvasSize.w > 0 && canvasSize.h > 0) {
+    setAppliedZoomNonce(zoomRequest.nonce);
+    setView(
+      zoomToFitRect(zoomRequest.rect, canvasSize, {
+        paddingPx: 48,
+        minScale: MIN_SCALE,
+        maxScale: MAX_SCALE,
+      }),
+    );
+  }
 
   const toScreen = useCallback(
     (p) => ({ x: view.ox + p.x * view.scale, y: view.oy + p.y * view.scale }),
@@ -513,8 +530,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       dispatch({ type: "MOVE_ORG_CHART", chartId: drag.id, x: point.x, y: point.y, coalesce: `move-orgchart:${drag.id}` });
       setDrag({ ...drag, moved: true });
     }
-    // Printable sheet drag — free positioning (no snap); the frame's plan
-    // region and fit scale stay fixed while it moves.
+    // Printable sheet drag — the frame's plan region and fit scale stay fixed
+    // while it moves; the anchor snaps to the grid on move (see moveSheet)
+    // unless the user turned snap off.
     if (drag.kind === "move-sheet") {
       dispatch({ type: "MOVE_SHEET", sheetId: drag.id, x: plan.x - drag.dx, y: plan.y - drag.dy, coalesce: `move-sheet:${drag.id}` });
       setDrag({ ...drag, moved: true });
