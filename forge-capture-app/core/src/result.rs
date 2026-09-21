@@ -61,6 +61,12 @@ pub enum ScrollIncompleteReason {
     UserAborted,
     /// A documented engine limit was hit (e.g. max scroll distance).
     EngineLimit { limit: String },
+    /// A scroll step moved further than one viewport, leaving a gap no tile
+    /// covers. The missing rows are recorded as [`MissingRegion`]s.
+    ScrollOvershoot,
+    /// The target window moved, resized, or closed mid-scroll, invalidating
+    /// tile placements.
+    TargetChanged,
 }
 
 impl std::fmt::Display for ScrollIncompleteReason {
@@ -78,6 +84,12 @@ impl std::fmt::Display for ScrollIncompleteReason {
             ScrollIncompleteReason::UserAborted => write!(f, "scroll aborted by user"),
             ScrollIncompleteReason::EngineLimit { limit } => {
                 write!(f, "engine limit reached: {limit}")
+            }
+            ScrollIncompleteReason::ScrollOvershoot => {
+                write!(f, "a scroll step overshot the viewport, leaving a gap")
+            }
+            ScrollIncompleteReason::TargetChanged => {
+                write!(f, "the target moved, resized, or closed mid-scroll")
             }
         }
     }

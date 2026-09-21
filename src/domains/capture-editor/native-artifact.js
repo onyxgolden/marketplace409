@@ -29,6 +29,9 @@ const NATIVE_CAPTURE_KINDS = Object.freeze([
   "full-monitor",
   "window",
   "region",
+  // Rung 2b: scrolling captures. The optional `scroll` provenance section
+  // is tolerated but never required.
+  "scrolling",
 ]);
 
 export class NativeArtifactError extends Error {
@@ -155,6 +158,9 @@ export function parseNativeSidecar(json) {
     cursorCaptured: !!(raw.cursor && raw.cursor.captured === true),
     capturedAt: typeof raw.capturedAt === "string" ? raw.capturedAt : null,
     delayMs: Number.isInteger(raw.delayMs) && raw.delayMs >= 0 ? raw.delayMs : 0,
+    // Rung 2b scrolling provenance (engine, direction, tiles, completeness).
+    // Optional: older shells never wrote it, and the editor only surfaces it.
+    scroll: isPlainObject(raw.scroll) ? raw.scroll : null,
   };
 }
 

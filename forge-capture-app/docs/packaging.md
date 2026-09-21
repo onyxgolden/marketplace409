@@ -1,4 +1,4 @@
-# FORGE Capture — packaging & Windows runtime notes (Rung 2a)
+# FORGE Capture — packaging & Windows runtime notes (Rungs 2a + 2b)
 
 ## Distribution decision (2a)
 
@@ -41,6 +41,51 @@ re-verify SmartScreen behavior, then cut the beta.
 - On non-Windows hosts every native entry point returns
   `CaptureError::NativeApi` — the core crate compiles and its
   pure logic is fully testable on Linux/macOS.
+
+## Scrolling capture (2b) — supported targets and limits
+
+Scrolling capture stitches a full scrollable document from viewport tiles.
+It never claims universal support: every run reports **complete**,
+**incomplete** (reason + evidence + partial stitch when tiles landed), or
+**failed** (reason + evidence). A partial stitch is never labeled complete.
+
+- **DOM-aware engine** (window targets only): reads the window's real
+  scrollbar via `GetScrollInfo` and positions it exactly with
+  `WM_VSCROLL`/`WM_HSCROLL` + `SB_THUMBPOSITION`. End of content is known
+  from the geometry, not guessed. Best on classic Win32 scrollbars
+  (Notepad-style editors, list views, MMC-style panes).
+- **Raster-observation engine** (window or region targets): synthesizes
+  wheel input (`SendInput`, `Shift`+wheel for horizontal) parked over the
+  target center, then measures the real pixel displacement between frames
+  with a row-luminance SAD (sum-of-absolute-differences) comparison over
+  candidate vertical shifts. Works on targets with no
+  OS-visible scrollbar (browsers, Electron apps, custom scrollbars) —
+  anything that actually responds to wheel input.
+- **Auto** tries DOM-aware first and falls back to raster-observation when
+  the target exposes no usable scroll geometry (loudly recorded in the
+  sidecar's `scroll.engine` field).
+
+**Known limitations (2b, unverified until real Windows 11 hardware):**
+
+- Occluded windows: tiles are `BitBlt`'d from the screen DC, so a window
+  covered mid-scroll stitches its occluders' pixels (same 2a limitation,
+  now per tile). Keep the target topmost and untouched during a run.
+- `IsWindow` aliveness checks do not detect a window that was *moved or
+  resized* without closing; the correlator's mismatch/stall detectors are
+  the backstop, reported as incomplete, not silent corruption.
+- Wheel synthesis moves the system cursor to the target center and
+  restores it afterwards; don't touch the mouse mid-run.
+- Horizontal scroll direction for `Shift`+wheel follows the common
+  convention; if a target scrolls the other way the run stops on still
+  frames (incomplete) rather than stitching backwards.
+- Infinite feeds hit the tile/distance safeguards and report incomplete
+  (`EngineLimit`), never an unbounded run.
+- Sticky headers/footers and sidebars are detected per tile pair and
+  trimmed; duplicates and missing regions are reported, not hidden.
+- The cursor is excluded from scrolling tiles (it would smear across the
+  stitch and poison displacement measurement).
+- Unsigned NSIS remains internal/dev-only; stable code signing is still
+  required before any public beta/download.
 
 ## Local-first guarantees
 

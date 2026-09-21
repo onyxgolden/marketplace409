@@ -23,6 +23,7 @@
 use crate::artifact::CursorState;
 use crate::coords::{Monitor, RectI};
 use crate::result::CaptureError;
+use crate::scroll::{ScrollDriver, ScrollTarget};
 
 /// One captured piece: RGBA bytes (row-major) for `rect`.
 #[derive(Debug, Clone)]
@@ -124,6 +125,53 @@ pub fn copy_rgba_to_clipboard(width: u32, height: u32, rgba: &[u8]) -> Result<()
     win::copy_rgba_to_clipboard(width, height, rgba)
 }
 
+/// Build the DOM-aware scroll driver for a window: reads the window's real
+/// scroll-bar geometry and scrolls to exact positions. Fails when the
+/// window exposes no usable scroll geometry — the caller falls back to the
+/// raster-observation driver for `Auto` requests.
+#[cfg(not(windows))]
+pub fn dom_scroll_driver(
+    _window_id: &str,
+    _horizontal: bool,
+    _monitors: &[Monitor],
+) -> Result<Box<dyn ScrollDriver>, CaptureError> {
+    Err(CaptureError::NativeApi(
+        "scrolling capture requires Windows 11; this host is not Windows".into(),
+    ))
+}
+
+#[cfg(windows)]
+pub fn dom_scroll_driver(
+    window_id: &str,
+    horizontal: bool,
+    _monitors: &[Monitor],
+) -> Result<Box<dyn ScrollDriver>, CaptureError> {
+    win::WinDomDriver::boxed(window_id, horizontal)
+}
+
+/// Build the raster-observation scroll driver: synthesizes wheel input over
+/// the target and lets the engine measure what actually moved. Works for
+/// window and region targets.
+#[cfg(not(windows))]
+pub fn wheel_scroll_driver(
+    _target: &ScrollTarget,
+    _horizontal: bool,
+    _monitors: &[Monitor],
+) -> Result<Box<dyn ScrollDriver>, CaptureError> {
+    Err(CaptureError::NativeApi(
+        "scrolling capture requires Windows 11; this host is not Windows".into(),
+    ))
+}
+
+#[cfg(windows)]
+pub fn wheel_scroll_driver(
+    target: &ScrollTarget,
+    horizontal: bool,
+    _monitors: &[Monitor],
+) -> Result<Box<dyn ScrollDriver>, CaptureError> {
+    win::WinWheelDriver::boxed(target, horizontal)
+}
+
 /// Swizzle BGRA → RGBA in place, forcing alpha to opaque (255).
 ///
 /// GDI screen-capture bitmaps commonly carry a zero alpha channel; without
@@ -161,7 +209,8 @@ pub(crate) fn cursor_icon_origin(
 #[cfg(windows)]
 mod win {
     use super::{CaptureError, CursorState, Monitor, NativeFrame, NativeWindowInfo, RectI};
-    use std::ffi::OsString;
+    use crate::scroll::{ScrollDriver, ScrollGeometry, ScrollTarget};
+    use std::ffi::{c_void, OsString};
     use std::os::windows::ffi::OsStringExt;
     use windows::core::BOOL;
     use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
@@ -173,10 +222,15 @@ mod win {
     };
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
+        MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{
-        DrawIconEx, EnumWindows, GetClassNameW, GetCursorInfo, GetIconInfo, GetWindowRect,
-        GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, CURSORINFO, CURSOR_SHOWING,
-        DI_NORMAL, ICONINFO,
+        DrawIconEx, EnumWindows, GetClassNameW, GetCursorInfo, GetIconInfo, GetScrollInfo,
+        GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
+        SendMessageW, CURSORINFO, CURSOR_SHOWING, DI_NORMAL, ICONINFO, SB_HORZ, SB_VERT,
+        SCROLLBAR_CONSTANTS, SCROLLINFO, SIF_PAGE, SIF_POS, SIF_RANGE,
     };
 
     fn last_error(context: &str) -> CaptureError {
@@ -500,11 +554,13 @@ mod win {
         height: u32,
         rgba: &[u8],
     ) -> Result<(), CaptureError> {
+        use windows::Win32::Foundation::GlobalFree;
         use windows::Win32::System::DataExchange::{
             CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
         };
-        use windows::Win32::Foundation::GlobalFree;
-        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+        use windows::Win32::System::Memory::{
+            GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+        };
         // Clipboard format constant (CF_DIB = 8). Defined locally: the
         // `windows` crate does not export it under a stable path in 0.62.
         const CF_DIB: u32 = 8;
@@ -567,6 +623,314 @@ mod win {
             }
             // Success: the clipboard owns `hmem` now — do NOT free it.
             Ok(())
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Scrolling drivers (Rung 2b). Compile-checked for the Windows target;
+    // runtime-verified only on real Windows hardware (see
+    // docs/product/forge-capture/scrolling-support.md).
+    // ------------------------------------------------------------------
+
+    const WM_VSCROLL: u32 = 0x0115;
+    const WM_HSCROLL: u32 = 0x0114;
+    const SB_THUMBPOSITION: i32 = 4;
+    const WHEEL_DELTA: i32 = 120;
+
+    /// Recover the real HWND from a window id string produced by
+    /// [`crate::native::list_windows`]. The caller is expected to have
+    /// validated the id via [`find_window`] first.
+    fn hwnd_for_window_id(window_id: &str) -> Result<HWND, CaptureError> {
+        let raw: u64 = window_id
+            .parse()
+            .map_err(|_| CaptureError::NativeApi(format!("bad window id: {window_id}")))?;
+        Ok(HWND(raw as *mut c_void))
+    }
+
+    /// Read a window's scroll-bar geometry. `None` when the bar is missing
+    /// or unusable — custom-drawn scrollbars, browsers, and most modern UI
+    /// frameworks expose nothing here, which is exactly what the `Auto`
+    /// fallback exists for.
+    fn scroll_bar_info(hwnd: HWND, bar: SCROLLBAR_CONSTANTS) -> Option<ScrollGeometry> {
+        unsafe {
+            let mut si = SCROLLINFO {
+                cbSize: std::mem::size_of::<SCROLLINFO>() as u32,
+                fMask: SIF_RANGE | SIF_PAGE | SIF_POS,
+                ..Default::default()
+            };
+            if GetScrollInfo(hwnd, bar, &mut si).is_ok() && si.nPage > 0 {
+                let g = ScrollGeometry {
+                    min: si.nMin as i64,
+                    max: si.nMax as i64,
+                    page: si.nPage as u64,
+                    pos: si.nPos as i64,
+                };
+                if g.scrollable() {
+                    Some(g)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Move a scroll bar to an exact position via thumb positioning.
+    /// Returns the position the bar reports afterwards.
+    fn scroll_bar_set(hwnd: HWND, bar: SCROLLBAR_CONSTANTS, pos: i32) -> Option<i32> {
+        use windows::Win32::Foundation::{LPARAM, WPARAM};
+        let msg = if bar == SB_HORZ {
+            WM_HSCROLL
+        } else {
+            WM_VSCROLL
+        };
+        // wParam: low word = SB_THUMBPOSITION, high word = position.
+        let wparam = WPARAM((((pos as u32) << 16) | SB_THUMBPOSITION as u32) as usize);
+        unsafe {
+            SendMessageW(hwnd, msg, Some(wparam), Some(LPARAM(0)));
+        }
+        scroll_bar_info(hwnd, bar).map(|g| g.pos as i32)
+    }
+
+    /// DOM-aware driver: exact scroll-bar geometry plus exact thumb
+    /// positioning. End of content is known, not guessed.
+    pub(super) struct WinDomDriver {
+        hwnd: HWND,
+        rect: RectI,
+        bar: SCROLLBAR_CONSTANTS,
+        label: String,
+    }
+
+    impl WinDomDriver {
+        pub(super) fn boxed(
+            window_id: &str,
+            horizontal: bool,
+        ) -> Result<Box<dyn ScrollDriver>, CaptureError> {
+            // find_window validates the id and resolves the current rect.
+            let info = find_window(window_id)?;
+            let hwnd = hwnd_for_window_id(window_id)?;
+            let bar = if horizontal { SB_HORZ } else { SB_VERT };
+            match scroll_bar_info(hwnd, bar) {
+                Some(_) => Ok(Box::new(WinDomDriver {
+                    hwnd,
+                    rect: info.rect_virtual,
+                    bar,
+                    label: format!("window '{}' ({})", info.title, info.window_id),
+                })),
+                None => Err(CaptureError::NativeApi(format!(
+                    "window '{}' exposes no usable {} scroll-bar geometry",
+                    info.title,
+                    if horizontal { "horizontal" } else { "vertical" }
+                ))),
+            }
+        }
+    }
+
+    impl ScrollDriver for WinDomDriver {
+        fn target_label(&self) -> String {
+            self.label.clone()
+        }
+
+        fn viewport_size(&mut self) -> Result<(u32, u32), CaptureError> {
+            Ok((self.rect.w as u32, self.rect.h as u32))
+        }
+
+        fn capture_viewport(&mut self) -> Result<Vec<u8>, CaptureError> {
+            // The cursor is excluded from scrolling tiles: it would smear
+            // across the stitch and poison offset measurement.
+            Ok(capture_screen_rect(self.rect, false)?.rgba)
+        }
+
+        fn scroll_geometry(&mut self) -> Option<ScrollGeometry> {
+            scroll_bar_info(self.hwnd, self.bar)
+        }
+
+        fn scroll_by(&mut self, delta_px: i64) -> Result<(), CaptureError> {
+            let g = self.scroll_geometry().ok_or_else(|| {
+                CaptureError::NativeApi("scroll-bar geometry disappeared mid-scroll".into())
+            })?;
+            let page_max = g.max - g.page as i64 + 1;
+            let target = (g.pos + delta_px).clamp(g.min, page_max) as i32;
+            if target as i64 == g.pos {
+                // Already at the end of content; the run loop's still-frame
+                // detector closes the run honestly.
+                return Ok(());
+            }
+            let after = scroll_bar_set(self.hwnd, self.bar, target).ok_or_else(|| {
+                CaptureError::NativeApi("scroll bar refused the new position".into())
+            })?;
+            if after as i64 == g.pos {
+                return Err(CaptureError::NativeApi(
+                    "scroll-bar position did not change after thumb positioning".into(),
+                ));
+            }
+            Ok(())
+        }
+
+        fn target_alive(&mut self) -> bool {
+            unsafe { IsWindow(Some(self.hwnd)).as_bool() }
+        }
+    }
+
+    /// Raster-observation driver: synthesizes wheel input (Shift+wheel for
+    /// horizontal) parked over the target center, then restores the cursor.
+    /// The engine measures what actually moved, so this works on targets
+    /// with no OS-visible scroll geometry.
+    pub(super) struct WinWheelDriver {
+        rect: RectI,
+        hwnd: Option<HWND>,
+        horizontal: bool,
+        label: String,
+    }
+
+    impl WinWheelDriver {
+        pub(super) fn boxed(
+            target: &ScrollTarget,
+            horizontal: bool,
+        ) -> Result<Box<dyn ScrollDriver>, CaptureError> {
+            match target {
+                ScrollTarget::Window { window_id } => {
+                    let info = find_window(window_id)?;
+                    Ok(Box::new(WinWheelDriver {
+                        rect: info.rect_virtual,
+                        hwnd: hwnd_for_window_id(window_id).ok(),
+                        horizontal,
+                        label: format!("window '{}' ({})", info.title, info.window_id),
+                    }))
+                }
+                ScrollTarget::Region { rect } => {
+                    let r = RectI {
+                        x: rect.x.round() as i64,
+                        y: rect.y.round() as i64,
+                        w: rect.w.round().max(1.0) as u64,
+                        h: rect.h.round().max(1.0) as u64,
+                    };
+                    Ok(Box::new(WinWheelDriver {
+                        rect: r,
+                        hwnd: None,
+                        horizontal,
+                        label: format!("region {}x{}@{},{}", r.w, r.h, r.x, r.y),
+                    }))
+                }
+            }
+        }
+
+        fn wheel_input(data: i32) -> INPUT {
+            INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        dx: 0,
+                        dy: 0,
+                        mouseData: data as u32,
+                        dwFlags: MOUSEEVENTF_WHEEL,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            }
+        }
+
+        fn key_input(vk: VIRTUAL_KEY, up: bool) -> INPUT {
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: vk,
+                        wScan: 0,
+                        dwFlags: if up {
+                            KEYEVENTF_KEYUP
+                        } else {
+                            Default::default()
+                        },
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            }
+        }
+
+        /// Synthesize `notches` wheel ticks. Positive `notches` scrolls
+        /// down (or right when `horizontal`); the cursor is parked back
+        /// where it was afterwards.
+        fn send_wheel(&self, notches: i32) -> Result<(), CaptureError> {
+            use windows::Win32::Foundation::POINT;
+            use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, VK_SHIFT};
+            use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
+            let cx = self.rect.x as i32 + self.rect.w as i32 / 2;
+            let cy = self.rect.y as i32 + self.rect.h as i32 / 2;
+            let count = notches.unsigned_abs().max(1) as usize;
+            let data = if notches >= 0 {
+                -WHEEL_DELTA
+            } else {
+                WHEEL_DELTA
+            };
+            unsafe {
+                let mut saved_pt = POINT::default();
+                GetCursorPos(&mut saved_pt)
+                    .map_err(|e| CaptureError::NativeApi(format!("GetCursorPos: {e}")))?;
+                let saved = (saved_pt.x, saved_pt.y);
+                SetCursorPos(cx, cy)
+                    .map_err(|e| CaptureError::NativeApi(format!("SetCursorPos: {e}")))?;
+                let mut inputs: Vec<INPUT> = Vec::with_capacity(count + 2);
+                if self.horizontal {
+                    // Shift+wheel = horizontal scroll. Direction follows the
+                    // common convention; the engine measures the real
+                    // displacement and a wrong guess surfaces as a
+                    // still-frame stop, never a fake stitch.
+                    inputs.push(Self::key_input(VK_SHIFT, false));
+                }
+                for _ in 0..count {
+                    inputs.push(Self::wheel_input(data));
+                }
+                if self.horizontal {
+                    inputs.push(Self::key_input(VK_SHIFT, true));
+                }
+                let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+                let _ = SetCursorPos(saved.0, saved.1); // best-effort restore
+                if sent as usize != inputs.len() {
+                    return Err(CaptureError::NativeApi(format!(
+                        "SendInput delivered {sent}/{} events",
+                        inputs.len()
+                    )));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    impl ScrollDriver for WinWheelDriver {
+        fn target_label(&self) -> String {
+            self.label.clone()
+        }
+
+        fn viewport_size(&mut self) -> Result<(u32, u32), CaptureError> {
+            Ok((self.rect.w as u32, self.rect.h as u32))
+        }
+
+        fn capture_viewport(&mut self) -> Result<Vec<u8>, CaptureError> {
+            Ok(capture_screen_rect(self.rect, false)?.rgba)
+        }
+
+        fn scroll_geometry(&mut self) -> Option<ScrollGeometry> {
+            None // raster observation: no geometry, measure pixels instead
+        }
+
+        fn scroll_by(&mut self, delta_px: i64) -> Result<(), CaptureError> {
+            if delta_px == 0 {
+                return Ok(());
+            }
+            let notches = delta_px.unsigned_abs().div_ceil(120).clamp(1, 20) as i32;
+            let signed = if delta_px > 0 { notches } else { -notches };
+            self.send_wheel(signed)
+        }
+
+        fn target_alive(&mut self) -> bool {
+            match self.hwnd {
+                Some(hwnd) => unsafe { IsWindow(Some(hwnd)).as_bool() },
+                None => true, // region targets have no window to die
+            }
         }
     }
 }
