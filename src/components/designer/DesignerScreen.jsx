@@ -435,6 +435,7 @@ function RightPanel({ state, dispatch, summary, onPrint }) {
         Rooms, areas, and wall lengths are available as plain data for future
         scheduling and cost tools — nothing is locked inside the editor.
       </p>
+      <VsdxImportSection dispatch={dispatch} />
       <UnderlaySection design={design} dispatch={dispatch} />
     </div>
   );
@@ -786,6 +787,253 @@ function UnderlaySection({ design, dispatch }) {
         </div>
       )}
       {importError && <p className="mt-1 text-xs text-red-400">{importError}</p>}
+    </div>
+  );
+}
+
+// Visio import: staged .vsdx import — choose file → (page picker) →
+// prepare → preview → explicit commit. Everything runs locally in the
+// browser; nothing is uploaded.
+const VSDX_PHASE_LABELS = {
+  opening: "Opening drawing",
+  "reading-pages": "Reading pages",
+  "resolving-shapes": "Resolving shapes",
+  "converting-geometry": "Converting geometry",
+  classifying: "Classifying shapes",
+  preparing: "Preparing import",
+};
+
+function summarizeVsdxImport(prepared) {
+  const c = prepared.counts;
+  const semantic = c.mapped - c.annotationShapes;
+  return `Imported ${prepared.shapeCount} shapes from page '${prepared.page.name}': ${semantic} mapped, ${c.annotationShapes} as annotations, ${c.skipped} skipped.`;
+}
+
+export function VsdxImportSection({ dispatch }) {
+  const [stage, setStage] = useState("idle");
+  const [file, setFile] = useState(null);
+  const [pages, setPages] = useState([]);
+  const [phase, setPhase] = useState(null);
+  const [prepared, setPrepared] = useState(null);
+  const [error, setError] = useState(null);
+  const [lastReport, setLastReport] = useState(null);
+  const [lastIssues, setLastIssues] = useState([]);
+
+  const reset = () => {
+    setStage("idle");
+    setFile(null);
+    setPages([]);
+    setPrepared(null);
+    setError(null);
+    setPhase(null);
+  };
+
+  const fail = (err) => {
+    setError(err?.message || "Could not import that file.");
+    setStage("error");
+  };
+
+  const runPrepare = async (f, pageIndex) => {
+    setStage("preparing");
+    setPhase(null);
+    try {
+      const { prepareVsdxImport } = await import("@/domains/roomDesigner/importers/vsdx/visioImporter");
+      const result = await prepareVsdxImport(f, { pageIndex, onPhase: setPhase });
+      setPrepared(result);
+      setStage("preview");
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  const onFile = async (f) => {
+    setError(null);
+    setLastReport(null);
+    if (!f) return;
+    if (!/\.vsdx$/i.test(f.name || "")) {
+      setError("Only .vsdx files are supported — not the legacy binary .vsd format.");
+      setStage("error");
+      return;
+    }
+    setFile(f);
+    setStage("reading");
+    try {
+      const { listVsdxPages } = await import("@/domains/roomDesigner/importers/vsdx/visioImporter");
+      const list = await listVsdxPages(f);
+      if (list.length <= 1) {
+        await runPrepare(f, 0);
+      } else {
+        setPages(list);
+        setStage("pages");
+      }
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  const commit = () => {
+    setStage("committing");
+    try {
+      dispatch({ type: "IMPORT_VSDX_RESULT", importResult: prepared });
+      setLastReport(summarizeVsdxImport(prepared));
+      setLastIssues(prepared.issues || []);
+      setPrepared(null);
+      setStage("done");
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  const recordCounts = (r) =>
+    [
+      ["Walls", r.walls.length],
+      ["Rooms", r.rooms.length],
+      ["Openings", r.openings.length],
+      ["Pipes", r.pipes.length],
+      ["Symbols", r.symbols.length],
+      ["Furniture", r.furniture.length],
+      ["Annotations", r.annotations.length],
+    ].filter(([, n]) => n > 0);
+
+  const issueList = (issues, cap = 12) => (
+    <div className="mt-2">
+      <p className="text-[11px] font-semibold text-amber-300">
+        {issues.length} note{issues.length === 1 ? "" : "s"} — review before building on this import
+      </p>
+      <ul className="mt-1 max-h-40 space-y-1 overflow-y-auto text-[11px] text-gray-400">
+        {issues.slice(0, cap).map((issue, i) => (
+          <li key={i}>
+            <span className="text-gray-500">{issue.provenance}: </span>
+            {issue.message}
+          </li>
+        ))}
+        {issues.length > cap && <li className="text-gray-500">…and {issues.length - cap} more.</li>}
+      </ul>
+    </div>
+  );
+
+  return (
+    <div className="mt-4 border-t border-gray-800 pt-3">
+      <h2 className="mb-2 text-sm font-semibold text-white">Import Visio (.vsdx)</h2>
+
+      {stage === "idle" && (
+        <div>
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded bg-gray-800 px-3 py-1.5 text-xs text-white hover:bg-gray-700">
+            <Upload size={14} />
+            Choose .vsdx file
+            <input
+              type="file"
+              accept=".vsdx"
+              className="hidden"
+              onChange={(e) => onFile(e.target.files?.[0])}
+            />
+          </label>
+          <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
+            One page per import. Walls, rooms, doors, pipes, and furniture map
+            when the drawing gives strong evidence; everything else becomes a
+            read-only annotation. Fully local — nothing is uploaded.
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-gray-600">
+            Limits: .vsdx only (not legacy .vsd) · no formula engine · no
+            macros/OLE · no exact themes or data graphics. The import is an
+            approximation — review it before building on it.
+          </p>
+        </div>
+      )}
+
+      {stage === "reading" && (
+        <p className="text-xs text-gray-400">Opening drawing…</p>
+      )}
+
+      {stage === "pages" && (
+        <div>
+          <p className="mb-1 text-xs text-gray-300">
+            <span className="font-medium text-white">{file?.name}</span> has {pages.length} pages — which one should be imported?
+          </p>
+          <ul className="mb-2 max-h-40 space-y-1 overflow-y-auto">
+            {pages.map((p) => (
+              <li key={p.id}>
+                <button
+                  onClick={() => runPrepare(file, p.index)}
+                  className="w-full rounded bg-gray-800 px-2 py-1.5 text-left text-xs text-white hover:bg-gray-700"
+                >
+                  <span className="text-gray-500">{p.index + 1}.</span> {p.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button onClick={reset} className="text-[11px] text-gray-500 hover:text-gray-300">
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {stage === "preparing" && (
+        <p className="text-xs text-gray-400">
+          {VSDX_PHASE_LABELS[phase] || "Working"}…
+        </p>
+      )}
+
+      {stage === "preview" && prepared && (
+        <div>
+          <p className="text-xs text-gray-300">
+            <span className="font-medium text-white">Page &apos;{prepared.page.name}&apos;</span>
+            {" "}— {prepared.shapeCount} shapes resolved.
+          </p>
+          <dl className="mt-2 space-y-0.5 text-xs text-gray-400">
+            {recordCounts(prepared.records).map(([label, n]) => (
+              <div key={label} className="flex justify-between">
+                <dt>{label}</dt>
+                <dd className="text-gray-200">{n}</dd>
+              </div>
+            ))}
+          </dl>
+          {prepared.issues.length > 0 && issueList(prepared.issues)}
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={commit}
+              className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600"
+            >
+              Import this page
+            </button>
+            <button
+              onClick={reset}
+              className="rounded bg-gray-800 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {stage === "committing" && (
+        <p className="text-xs text-gray-400">Applying import…</p>
+      )}
+
+      {stage === "done" && (
+        <div>
+          <p className="text-xs text-emerald-300">{lastReport}</p>
+          {lastIssues.length > 0 && issueList(lastIssues)}
+          <button
+            onClick={reset}
+            className="mt-2 rounded bg-gray-800 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+          >
+            Import another file
+          </button>
+        </div>
+      )}
+
+      {stage === "error" && (
+        <div>
+          <p className="text-xs text-red-400">{error}</p>
+          <button
+            onClick={reset}
+            className="mt-2 rounded bg-gray-800 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+          >
+            Try another file
+          </button>
+        </div>
+      )}
     </div>
   );
 }

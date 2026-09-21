@@ -915,6 +915,42 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   // In-progress pipe run: committed vertices, rubber band to the cursor,
   // and the running centerline length.
+  // ---- VSDX import: read-only annotation paths/labels ----
+  // Generic strokes Visio geometry maps to when no semantic match exists.
+  // Rendered non-interactive (pointerEvents none); no editing tools in V1.
+  const renderAnnotations = () => {
+    const list = design.annotations || [];
+    if (list.length === 0) return null;
+    return (
+      <g key="vsdx-annotations" pointerEvents="none">
+        {list.map((a) => {
+          if (!a || !Array.isArray(a.points) || a.points.length === 0) return null;
+          const pts = a.points.map(toScreen);
+          const strokeW = Math.max(1, (a.strokeWidthIn || 0.75) * view.scale * 0.6);
+          if (a.kind === "label") {
+            const p = pts[0];
+            return (
+              <text key={a.id} x={p.x} y={p.y} fontSize={13} fill="#94a3b8" textAnchor="middle">
+                {a.text || ""}
+              </text>
+            );
+          }
+          const path = pts.map((pt, i) => `${i === 0 ? "M" : "L"}${pt.x.toFixed(2)},${pt.y.toFixed(2)}`).join(" ");
+          return (
+            <path
+              key={a.id}
+              d={a.closed ? `${path} Z` : path}
+              fill={a.closed ? "rgba(148,163,184,0.08)" : "none"}
+              stroke="#8fa3bf"
+              strokeWidth={strokeW}
+              strokeDasharray="7 5"
+            />
+          );
+        })}
+      </g>
+    );
+  };
+
   const renderPipePreview = () => {
     if (tool !== "pipe" || !pipePreview || pipePreview.length === 0) return null;
     const all = hoverPoint ? [...pipePreview, hoverPoint] : pipePreview;
@@ -1020,7 +1056,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   const isEmpty = design.walls.length === 0 && design.rooms.length === 0
     && (design.pipes || []).length === 0 && (design.symbols || []).length === 0
-    && (design.orgCharts || []).length === 0;
+    && (design.orgCharts || []).length === 0 && (design.annotations || []).length === 0;
 
   // ---- Background underlay: drawn beneath the grid and the plan,
   // scaling/panning with the canvas transform ----
@@ -1093,6 +1129,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         <rect x={-5000} y={-5000} width={10000} height={10000} fill="url(#designer-grid)"
           transform={`translate(${view.ox % majorPx} ${view.oy % majorPx})`} />
         {design.rooms.map(renderRoom)}
+        {renderAnnotations()}
         {design.walls.map(renderWall)}
         {(design.pipes || []).map(renderPipe)}
         {design.furniture.map(renderFurniture)}

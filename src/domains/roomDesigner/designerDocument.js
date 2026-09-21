@@ -12,6 +12,8 @@
 //     furniture:[{ id, catalogId, x, y, rotationDeg }],
 //     sheets:   [{ id, sizeId, orientation, x, y,   // printable paper frames
 //                   planWidthIn, planHeightIn, fitScale }],
+//     annotations: [{ id, kind: "path"|"label", points: [{x,y},...],  // VSDX import (read-only)
+//                     closed?, text?, strokeWidthIn?, source? }],
 //   }
 //
 // Sheet (x, y) is the TOP-LEFT anchor of the frame in plan inches. The plan
@@ -83,6 +85,7 @@ export function createEmptyDesign(name = "Untitled design") {
     orgCharts: [], // Phase 3: people org charts { id, name, x, y, nodes }
     underlay: null, // background trace-over image; see setUnderlay
     sheets: [], // printable paper frames; see addSheet
+    annotations: [], // VSDX import: read-only generic paths/labels { id, kind: "path"|"label", points, closed?, text?, strokeWidthIn?, source? }
   };
 }
 
@@ -828,6 +831,20 @@ export function validateDesign(design) {
       errors.push(`Symbol ${instance.id} references unknown ${instance.domain}/${instance.symbolId}.`);
     }
   }
+  for (const annotation of design.annotations || []) {
+    const aid = annotation && annotation.id ? annotation.id : "(unknown)";
+    if (!annotation || (annotation.kind !== "path" && annotation.kind !== "label")) {
+      errors.push(`Annotation ${aid} has an unknown kind.`);
+    } else if (
+      !Array.isArray(annotation.points) ||
+      annotation.points.length === 0 ||
+      !annotation.points.every(isValidPoint)
+    ) {
+      errors.push(`Annotation ${aid} has no valid points.`);
+    } else if (annotation.kind === "label" && typeof annotation.text !== "string") {
+      errors.push(`Annotation ${aid} is a label without text.`);
+    }
+  }
   for (const chart of design.orgCharts || []) {
     const personIds = new Set((chart.nodes || []).map((p) => p.id));
     for (const person of chart.nodes || []) {
@@ -870,6 +887,9 @@ export function parseDesign(json) {
     throw new Error("Design is not valid JSON.");
   }
   assertDesign(parsed);
+  // Documents saved before the annotations array existed load safely:
+  // normalize the missing array instead of bumping the version.
+  if (!Array.isArray(parsed.annotations)) parsed.annotations = [];
   return parsed;
 }
 
