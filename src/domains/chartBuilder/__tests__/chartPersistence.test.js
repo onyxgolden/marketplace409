@@ -76,18 +76,26 @@ describe("serializeChartDocument", () => {
       undoHistory: [{ action: "x" }],
       selection: ["n1"],
       viewport: { zoom: 2 },
-      nodes: doc.nodes.map((n) => ({ ...n, selected: true, customMetadata: { tag: "x" } })),
-      edges: doc.edges.map((e) => ({ ...e, customFlag: true })),
+      nodes: doc.nodes.map((n) => ({
+        ...n,
+        selected: true,
+        isDragging: false,
+        customMetadata: { tag: "x" },
+      })),
+      edges: doc.edges.map((e) => ({ ...e, selected: true, customFlag: true })),
     };
     const env = serializeChartDocument(fat);
     const raw = JSON.stringify(env);
     expect(raw).not.toContain("undoHistory");
     expect(raw).not.toContain("selection");
     expect(raw).not.toContain("viewport");
-    // Unknown keys now survive the canonical copy verbatim.
+    // Unknown extension keys survive the canonical copy verbatim.
     expect(env.content.nodes[0].customMetadata).toEqual({ tag: "x" });
-    expect(env.content.nodes[0].selected).toBe(true);
     expect(env.content.edges[0].customFlag).toBe(true);
+    // Transient UI/editor keys never reach storage, even when present.
+    expect("selected" in env.content.nodes[0]).toBe(false);
+    expect("isDragging" in env.content.nodes[0]).toBe(false);
+    expect("selected" in env.content.edges[0]).toBe(false);
     // Known fields keep their canonical defaults.
     expect(env.content.nodes[1].subtitle).toBe("");
   });

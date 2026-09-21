@@ -9,7 +9,10 @@
 // never carries undo history, UI selection, open panels, viewport zoom, or
 // drag state, so none of that can leak into storage. Unknown fields are
 // preserved verbatim at every level — serialization copies the full
-// node/edge and canonicalizes only the known fields.
+// node/edge and canonicalizes only the known fields. The one exception is
+// transient UI/editor state keys (selection, drag state, hover): those are
+// stripped before copying so they can never leak into storage, even if a
+// node object arrives carrying them.
 //
 // Invalid stored documents can never enter canvas state: deserialize runs
 // migrate → validate → construct, and any failure throws
@@ -52,11 +55,41 @@ function toJsonSafe(value) {
   }
 }
 
+// Keys that describe live editor/UI state rather than document data. They
+// are stripped from nodes/edges before serialization so they can never
+// leak into storage — even if a node object arrives carrying them (e.g.
+// `{ ...node, selected: true }` built by UI code). Unknown non-transient
+// keys (e.g. customMetadata) are still preserved verbatim for forward
+// compatibility.
+const NODE_TRANSIENT_KEYS = new Set([
+  "selected",
+  "dragState",
+  "isDragging",
+  "hover",
+]);
+// Edges carry no UI state in the current canvas; the filter exists so the
+// invariant holds if edge selection/hover state is ever attached.
+const EDGE_TRANSIENT_KEYS = new Set([
+  "selected",
+  "dragState",
+  "isDragging",
+  "hover",
+]);
+
+function stripTransientKeys(source, transientKeys) {
+  const out = {};
+  for (const key of Object.keys(source)) {
+    if (!transientKeys.has(key)) out[key] = source[key];
+  }
+  return out;
+}
+
 function pickNodeFields(node) {
-  // Canonical copy: spread the full node so unknown keys (e.g.
-  // customMetadata) survive the round trip, then validate/override the
-  // known fields with their canonical defaults.
-  const source = node ?? {};
+  // Canonical copy: strip transient UI/editor keys first, then spread the
+  // full node so unknown extension keys (e.g. customMetadata) survive the
+  // round trip, then validate/override the known fields with their
+  // canonical defaults.
+  const source = stripTransientKeys(node ?? {}, NODE_TRANSIENT_KEYS);
   return {
     ...source,
     id: source.id,
@@ -69,9 +102,10 @@ function pickNodeFields(node) {
 }
 
 function pickEdgeFields(edge) {
-  // Canonical copy: spread the full edge so unknown keys survive the round
-  // trip, then validate/override the known fields.
-  const source = edge ?? {};
+  // Canonical copy: strip transient UI/editor keys first, then spread the
+  // full edge so unknown extension keys survive the round trip, then
+  // validate/override the known fields.
+  const source = stripTransientKeys(edge ?? {}, EDGE_TRANSIENT_KEYS);
   return {
     ...source,
     id: source.id,
@@ -89,6 +123,9 @@ function pickEdgeFields(edge) {
 
 /**
  * Serialize a canvas ChartDocument into the persisted envelope.
+ * Transient UI/editor keys (selection, drag state, hover) are stripped
+ * from nodes/edges; unknown extension keys (e.g. customMetadata) are
+ * preserved verbatim.
  * @param {object} chartDocument canvas chart document
  * @param {{ title?: string, templateId?: string|null }} options
  * @returns {object} JSON-safe persisted envelope
