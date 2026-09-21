@@ -43,7 +43,11 @@ async function fetchJsonWithNetworkRetry(url, delaysMs) {
       const response = await fetch(url);
       if (!response.ok) {
         // Definitive server answer: parse the error body if we can, never retry.
-        const body = await response.json().catch(() => ({}));
+        // A literal `null` (or other non-object) JSON body parses fine, so the
+        // .catch fallback never applies -- normalize it here instead of letting
+        // callers crash on `.error` of null and mask the default message.
+        const parsed = await response.json().catch(() => ({}));
+        const body = parsed && typeof parsed === "object" ? parsed : {};
         return { response, body };
       }
       const body = await response.json();
@@ -68,7 +72,7 @@ async function loadRentalSummaryPayload(retryDelaysMs) {
       if (!response.ok) throw new Error(body.error || "Rental report could not be loaded.");
       return { available: true, report: body.report, error: "" };
     })
-    .catch((reason) => ({ available: false, report: null, error: reason.message }));
+    .catch((reason) => ({ available: false, report: null, error: reason?.message || "Rental report could not be loaded." }));
 
   return { rentalBody, reports };
 }

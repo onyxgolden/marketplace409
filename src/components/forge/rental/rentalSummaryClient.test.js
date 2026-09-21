@@ -92,7 +92,14 @@ describe("getRentalSummaryPayload", () => {
     );
   });
 
-  it("handles a non-JSON !ok body without retrying", async () => {
+  it("falls back to a default message when /api/rental !ok carries a null JSON body", async () => {
+    stubFetch((url) => (url === RENTAL_URL ? { ok: false, json: async () => null } : okJson({ report: null })));
+    await expect(getRentalSummaryPayload({ retryDelaysMs: NO_DELAY })).rejects.toThrow(
+      "Rental summary could not be loaded.",
+    );
+  });
+
+  it("handles a null JSON body without retrying", async () => {
     const fetch = stubFetch((url) =>
       url === RENTAL_URL
         ? { ok: false, json: async () => { throw new SyntaxError("Unexpected token"); } }
@@ -113,6 +120,14 @@ describe("getRentalSummaryPayload", () => {
     const payload = await getRentalSummaryPayload({ retryDelaysMs: NO_DELAY });
     expect(payload.reports).toEqual({ available: false, report: null, error: "Reports service unavailable." });
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("never throws for a null JSON reports body: soft unavailable result, no crash", async () => {
+    stubFetch((url) =>
+      url === RENTAL_URL ? okJson(rentalBody()) : { ok: false, json: async () => null },
+    );
+    const payload = await getRentalSummaryPayload({ retryDelaysMs: NO_DELAY });
+    expect(payload.reports).toEqual({ available: false, report: null, error: "Rental report could not be loaded." });
   });
 
   it("retries a transient reports network failure, then reports available", async () => {
