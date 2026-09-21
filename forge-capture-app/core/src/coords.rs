@@ -172,6 +172,21 @@ impl Monitor {
             y: (y as f64 - self.origin_virtual.1 as f64) / self.scale,
         }
     }
+
+    /// Virtual-desktop (physical-pixel) point → logical point for window
+    /// placement APIs (e.g. Tauri's `position`/`inner_size`), which
+    /// interpret values in logical units and scale them by the containing
+    /// monitor's DPI. Passing physical coordinates directly misplaces and
+    /// mis-sizes windows on mixed-DPI setups; `physical_to_logical` is the
+    /// wrong helper here because it is monitor-*relative* (it subtracts the
+    /// origin), while placement APIs want virtual-desktop-*absolute*
+    /// logical coordinates.
+    pub fn virtual_to_logical_placement(&self, x: i64, y: i64) -> Point {
+        Point {
+            x: x as f64 / self.scale,
+            y: y as f64 / self.scale,
+        }
+    }
 }
 
 /// WebView CSS rect → physical raster rect.
@@ -470,5 +485,25 @@ mod tests {
         assert!(m.bounds_virtual().contains_point(-1, 100));
         assert!(!m.bounds_virtual().contains_point(0, 100)); // x=0 is exclusive edge
         assert!(m.bounds_virtual().contains_point(-3840, 0));
+    }
+
+    #[test]
+    fn virtual_to_logical_placement_divides_by_scale() {
+        // 100% primary: identity.
+        let m0 = &fixture()[0];
+        let p = m0.virtual_to_logical_placement(1920, 1080);
+        assert_eq!((p.x, p.y), (1920.0, 1080.0));
+        // 150% secondary at virtual origin (-3840, 0): placement origin is
+        // (-2560, 0) logical, and the physical size (3840, 2160) maps to the
+        // logical size (2560, 1440).
+        let m1 = &fixture()[1];
+        let p = m1.virtual_to_logical_placement(-3840, 0);
+        assert_eq!((p.x, p.y), (-2560.0, 0.0));
+        let size = m1.virtual_to_logical_placement(3840, 2160);
+        assert_eq!(
+            (size.x as u32, size.y as u32),
+            m1.size_logical,
+            "physical size / scale must equal the logical size used for inner_size"
+        );
     }
 }

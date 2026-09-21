@@ -14,7 +14,11 @@
 //!   unchanged ("import as-is").
 //!
 //! Limits mirror the Rung 1 editor (`src/domains/capture-editor/limits.js`):
-//! 16384 px per side, 128 MiB decoded RGBA, PNG/JPEG/WebP only.
+//! 16384 px per side, 128 MiB encoded raster bytes, 128 MiB decoded RGBA,
+//! PNG/JPEG/WebP only. Both byte checks are enforced: the encoded check
+//! bounds what we write to disk, the decoded check (`check_decoded_len`)
+//! bounds decode memory — a small JPEG/WebP can decode to gigabytes, so the
+//! encoded check alone does not satisfy the safety intent.
 
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -141,6 +145,7 @@ pub enum ArtifactError {
     BadDimensions { width: u32, height: u32 },
     DimensionTooLarge { width: u32, height: u32 },
     TooManyBytes { bytes: usize },
+    DecodedTooLarge { bytes: u64 },
     UnsupportedMime(String),
     BadTimestamp(String),
     BadScale,
@@ -167,6 +172,12 @@ impl std::fmt::Display for ArtifactError {
             }
             ArtifactError::TooManyBytes { bytes } => {
                 write!(f, "raster is {bytes} bytes, exceeding the 128 MiB cap")
+            }
+            ArtifactError::DecodedTooLarge { bytes } => {
+                write!(
+                    f,
+                    "decoded raster would be {bytes} bytes, exceeding the 128 MiB cap"
+                )
             }
             ArtifactError::UnsupportedMime(m) => write!(f, "unsupported raster mime: {m}"),
             ArtifactError::BadTimestamp(t) => write!(f, "captured_at is not ISO-8601 UTC: {t}"),
@@ -216,6 +227,18 @@ pub fn check_byte_len(len: usize) -> Result<(), ArtifactError> {
     Ok(())
 }
 
+/// Bound on *decoded* RGBA bytes (`width × height × 4`). The encoded-raster
+/// check alone does not bound decode memory: a small JPEG/WebP can decode
+/// to gigabytes. This is the check that matches the documented "128 MiB
+/// decoded RGBA" safety intent.
+pub fn check_decoded_len(width: u32, height: u32) -> Result<(), ArtifactError> {
+    let decoded = width as u64 * height as u64 * 4;
+    if decoded > MAX_ARTIFACT_BYTES as u64 {
+        return Err(ArtifactError::DecodedTooLarge { bytes: decoded });
+    }
+    Ok(())
+}
+
 fn check_timestamp(ts: &str) -> Result<(), ArtifactError> {
     // Strict `YYYY-MM-DDTHH:MM:SSZ`, exactly 20 chars.
     let b = ts.as_bytes();
@@ -260,6 +283,7 @@ impl CaptureArtifact {
         }
         check_dimensions(raster_width, raster_height)?;
         check_byte_len(raster_bytes.len())?;
+        check_decoded_len(raster_width, raster_height)?;
         check_timestamp(&captured_at)?;
         if !(scale.is_finite() && scale > 0.0) {
             return Err(ArtifactError::BadScale);
@@ -388,6 +412,7 @@ pub fn parse_sidecar(input: &str) -> Result<Sidecar, ArtifactError> {
     }
     check_dimensions(sidecar.raster.width, sidecar.raster.height)?;
     check_byte_len(sidecar.raster.byte_length)?;
+    check_decoded_len(sidecar.raster.width, sidecar.raster.height)?;
     check_timestamp(&sidecar.captured_at)?;
     if !(sidecar.scale.is_finite() && sidecar.scale > 0.0) {
         return Err(ArtifactError::BadScale);
@@ -659,6 +684,52 @@ mod tests {
             }
         );
         assert!(check_byte_len(MAX_ARTIFACT_BYTES).is_ok());
+    }
+
+    #[test]
+    fn decoded_len_bound_matches_safety_intent() {
+        // 16384x16384 RGBA decodes to 1 GiB: within the per-side cap but
+        // over the 128 MiB decoded-RGBA cap.
+        assert_eq!(
+            check_decoded_len(16384, 16384).unwrap_err(),
+            ArtifactError::DecodedTooLarge {
+                bytes: 16384u64 * 16384 * 4
+            }
+        );
+        // 1920x1080 is fine.
+        assert!(check_decoded_len(1920, 1080).is_ok());
+        // The constructor enforces it too.
+        let err = CaptureArtifact::new(
+            "x".into(),
+            CaptureKind::Region,
+            vec![1, 2, 3],
+            RasterMime::Png,
+            16384,
+            16384,
+            None,
+            None,
+            1.0,
+            CursorState {
+                captured: false,
+                position_physical: None,
+            },
+            "2026-09-21T13:30:00Z".into(),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ArtifactError::DecodedTooLarge { .. }));
+    }
+
+    /// Cross-language CRC fixture (ChatGPT review proof): this exact byte
+    /// vector and its CRC-32 are also asserted in
+    /// `src/domains/capture-editor/__tests__/native-artifact.test.js`
+    /// (`crc32Ieee`). Both sides implement IEEE 0xEDB88320; if either side
+    /// ever changes polynomial, both tests fail together.
+    #[test]
+    fn crc32_cross_language_fixture() {
+        // Fixed vector: bytes 0x00..0x0F.
+        let v: Vec<u8> = (0u8..16).collect();
+        assert_eq!(crate::png::crc32(&v), 0xcecee288);
     }
 
     #[test]

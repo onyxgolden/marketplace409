@@ -15,7 +15,7 @@
     windows_subsystem = "windows"
 )]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -25,7 +25,6 @@ use forge_capture_core::engines::{
 };
 use forge_capture_core::native;
 use forge_capture_core::result::ScrollingResult;
-use forge_capture_core::timestamp;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
 
@@ -43,12 +42,20 @@ struct OverlayContext {
     /// Webview content origin in virtual-desktop coords (physical px).
     origin_virtual: (i32, i32),
     dpr: f64,
+    /// The user's delay/cursor selections at pick time. The overlay page
+    /// cannot see the main window's controls, so the selections travel with
+    /// the context instead of the capture dto.
+    delay_ms: u64,
+    include_cursor: bool,
 }
 
 struct AppState {
     captures: Mutex<HashMap<String, StoredCapture>>,
     pending_overlay: Mutex<Option<OverlayContext>>,
     id_counter: Mutex<u64>,
+    /// File stems already handed out (in-memory part of stem uniqueness;
+    /// the on-disk check in `unique_stem` covers previous runs).
+    used_stems: Mutex<HashSet<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +149,32 @@ fn next_id(state: &State<AppState>) -> String {
     format!("cap-{millis}-{counter}")
 }
 
+/// Make a capture file stem unique. File stems are second-resolution, so
+/// two same-kind captures in one second would collide and overwrite each
+/// other. The in-memory set handles same-run collisions; the on-disk check
+/// also covers files left by previous runs.
+fn unique_stem(
+    state: &State<AppState>,
+    dir: &std::path::Path,
+    base: &str,
+    raster_extension: &str,
+) -> String {
+    let mut used = state.used_stems.lock().unwrap();
+    let mut stem = base.to_string();
+    let mut n = 1u64;
+    let taken = |s: &str| {
+        used.contains(s)
+            || dir.join(format!("{s}.{raster_extension}")).exists()
+            || dir.join(format!("{s}.forge.json")).exists()
+    };
+    while taken(&stem) {
+        n += 1;
+        stem = format!("{base}-{n}");
+    }
+    used.insert(stem.clone());
+    stem
+}
+
 fn captures_dir() -> Result<std::path::PathBuf, String> {
     #[cfg(windows)]
     let base = std::env::var("LOCALAPPDATA")
@@ -199,7 +232,45 @@ fn build_mode(
     dto: &CaptureRequestDto,
     app: &tauri::AppHandle,
     state: &State<AppState>,
-) -> Result<(CaptureMode, Option<u64>), String> {
+) -> Result<(CaptureMode, bool), String> {
+    // Returns (mode, include_cursor). For "region-overlay" the delay and
+    // cursor selections come from the OverlayContext recorded by
+    // begin_region_pick — the overlay page cannot see the main window's
+    // controls, so the dto's delayMs/includeCursor are ignored there.
+    if dto.mode == "region-overlay" {
+        let overlay = state
+            .pending_overlay
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or("no pending region overlay; call begin_region_pick first")?;
+        if let Some(w) = app.get_webview_window("overlay") {
+            let _ = w.close();
+        }
+        let r = dto
+            .overlay_rect
+            .as_ref()
+            .ok_or("overlay_rect is required")?;
+        let phys = forge_capture_core::coords::css_to_physical(
+            Rect {
+                x: r.x,
+                y: r.y,
+                w: r.w,
+                h: r.h,
+            },
+            overlay.origin_virtual,
+            overlay.dpr,
+        );
+        let inner = CaptureMode::RegionVirtual {
+            rect: Rect {
+                x: phys.x as f64,
+                y: phys.y as f64,
+                w: phys.w as f64,
+                h: phys.h as f64,
+            },
+        };
+        return wrap_delayed(inner, overlay.delay_ms, overlay.include_cursor);
+    }
     let delay_ms = dto.delay_ms.unwrap_or(0);
     let inner = match dto.mode.as_str() {
         "full-monitor" => {
@@ -222,54 +293,27 @@ fn build_mode(
                 .normalize(),
             }
         }
-        "region-overlay" => {
-            // CSS-px rect from the overlay picker → virtual-desktop coords.
-            // Snapshot the overlay context, then close the overlay FIRST so
-            // it never appears in its own capture.
-            let overlay = state
-                .pending_overlay
-                .lock()
-                .unwrap()
-                .take()
-                .ok_or("no pending region overlay; call begin_region_pick first")?;
-            if let Some(w) = app.get_webview_window("overlay") {
-                let _ = w.close();
-            }
-            let r = dto
-                .overlay_rect
-                .as_ref()
-                .ok_or("overlay_rect is required")?;
-            let phys = forge_capture_core::coords::css_to_physical(
-                Rect {
-                    x: r.x,
-                    y: r.y,
-                    w: r.w,
-                    h: r.h,
-                },
-                overlay.origin_virtual,
-                overlay.dpr,
-            );
-            CaptureMode::RegionVirtual {
-                rect: Rect {
-                    x: phys.x as f64,
-                    y: phys.y as f64,
-                    w: phys.w as f64,
-                    h: phys.h as f64,
-                },
-            }
-        }
         other => return Err(format!("unknown capture mode: {other}")),
     };
+    wrap_delayed(inner, delay_ms, dto.include_cursor)
+}
+
+/// Wrap a mode in `Delayed` when a delay was requested.
+fn wrap_delayed(
+    inner: CaptureMode,
+    delay_ms: u64,
+    include_cursor: bool,
+) -> Result<(CaptureMode, bool), String> {
     if delay_ms > 0 {
         Ok((
             CaptureMode::Delayed {
                 mode: Box::new(inner),
                 delay_ms,
             },
-            Some(delay_ms),
+            include_cursor,
         ))
     } else {
-        Ok((inner, None))
+        Ok((inner, include_cursor))
     }
 }
 
@@ -280,19 +324,25 @@ fn capture(
     state: State<AppState>,
 ) -> Result<ArtifactRefDto, String> {
     let monitors = current_monitors()?;
-    let (mode, _delay) = build_mode(&dto, &app, &state)?;
+    let (mode, include_cursor) = build_mode(&dto, &app, &state)?;
     let id = next_id(&state);
+    // The engine stamps captured_at at acquisition time (after any delay
+    // sleep); the request carries no request-time timestamp.
     let request = CaptureRequest {
         mode,
-        include_cursor: dto.include_cursor,
+        include_cursor,
         id: id.clone(),
-        captured_at: timestamp::now_utc_iso8601(),
     };
     let mut engine = NativeRasterEngine;
     match engine.acquire(&request, &monitors) {
         ScrollingResult::Complete { artifact } => {
             let dir = captures_dir()?;
-            let stem = artifact.file_stem();
+            let stem = unique_stem(
+                &state,
+                &dir,
+                &artifact.file_stem(),
+                artifact.raster_mime.extension(),
+            );
             let png_name = format!("{stem}.{}", artifact.raster_mime.extension());
             let sidecar_name = format!("{stem}.forge.json");
             let sidecar_json = artifact.to_sidecar_json().map_err(err)?;
@@ -391,9 +441,14 @@ fn export_capture(
 /// Open the fullscreen transparent region-picker overlay on a monitor.
 /// The overlay page calls `overlay_context` for its origin/DPR, then
 /// `capture` with mode "region-overlay" when the user finishes dragging.
+/// `delay_ms` / `include_cursor` are the user's selections from the main
+/// window (the overlay page cannot see them); they are recorded in the
+/// overlay context and applied by `build_mode`.
 #[tauri::command]
 fn begin_region_pick(
     monitor_id: String,
+    delay_ms: Option<u64>,
+    include_cursor: Option<bool>,
     app: tauri::AppHandle,
     state: State<AppState>,
 ) -> Result<(), String> {
@@ -402,25 +457,30 @@ fn begin_region_pick(
         .iter()
         .find(|m| m.id == monitor_id)
         .ok_or_else(|| format!("unknown monitor id: {monitor_id}"))?;
-    let (pw, ph) = monitor.size_physical();
     *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
         origin_virtual: monitor.origin_virtual,
         dpr: monitor.scale,
+        delay_ms: delay_ms.unwrap_or(0),
+        include_cursor: include_cursor.unwrap_or(true),
     });
     if let Some(w) = app.get_webview_window("overlay") {
         let _ = w.close();
     }
+    // Tauri `position`/`inner_size` take *logical* units: convert the
+    // monitor's physical virtual-desktop rect, or the overlay lands in the
+    // wrong place at the wrong size on mixed-DPI setups.
+    let origin = monitor.virtual_to_logical_placement(
+        monitor.origin_virtual.0 as i64,
+        monitor.origin_virtual.1 as i64,
+    );
     let _window = tauri::WebviewWindowBuilder::new(
         &app,
         "overlay",
         tauri::WebviewUrl::App("overlay.html".into()),
     )
     .title("Select region")
-    .position(
-        monitor.origin_virtual.0 as f64,
-        monitor.origin_virtual.1 as f64,
-    )
-    .inner_size(pw as f64, ph as f64)
+    .position(origin.x, origin.y)
+    .inner_size(monitor.size_logical.0 as f64, monitor.size_logical.1 as f64)
     .transparent(true)
     .decorations(false)
     .always_on_top(true)
@@ -478,6 +538,7 @@ fn main() {
             captures: Mutex::new(HashMap::new()),
             pending_overlay: Mutex::new(None),
             id_counter: Mutex::new(0),
+            used_stems: Mutex::new(HashSet::new()),
         })
         .invoke_handler(tauri::generate_handler![
             app_version,

@@ -64,8 +64,11 @@ document.addEventListener("mouseup", async (e) => {
         windowId: null,
         region: null,
         overlayRect: r,
+        // Ignored for region-overlay: the backend applies the delay/cursor
+        // selections recorded by begin_region_pick (this page cannot see
+        // the main window's controls).
         delayMs: 0,
-        includeCursor: true,
+        includeCursor: false,
       },
     });
     // The backend closed this window before capturing; nothing left to do.

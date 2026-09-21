@@ -60,6 +60,15 @@ describe("crc32Ieee", () => {
     const b = new Uint8Array([1, 2, 3, 5]);
     expect(crc32Ieee(a)).not.toBe(crc32Ieee(b));
   });
+
+  it("matches the Rust core on the cross-language fixture vector", () => {
+    // Fixed vector bytes 0x00..0x0F; forge-capture-core asserts the same
+    // value in its artifact tests (crc32_cross_language_fixture). Both
+    // sides implement IEEE 0xEDB88320 — if either polynomial ever changes,
+    // both tests fail together.
+    const v = Uint8Array.from({ length: 16 }, (_, i) => i);
+    expect(crc32Ieee(v)).toBe(0xcecee288);
+  });
 });
 
 describe("parseNativeSidecar", () => {

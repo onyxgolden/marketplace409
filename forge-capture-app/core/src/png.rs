@@ -16,6 +16,7 @@ pub enum PngError {
     EmptyImage,
     DimensionTooLarge { width: u32, height: u32 },
     ByteLengthMismatch { expected: usize, actual: usize },
+    AdlerMismatch { expected: u32, actual: u32 },
 }
 
 impl std::fmt::Display for PngError {
@@ -27,6 +28,12 @@ impl std::fmt::Display for PngError {
             }
             PngError::ByteLengthMismatch { expected, actual } => {
                 write!(f, "expected {expected} RGBA bytes, got {actual}")
+            }
+            PngError::AdlerMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "zlib Adler-32 mismatch: stream says {expected:08x}, computed {actual:08x}"
+                )
             }
         }
     }
@@ -147,7 +154,18 @@ pub fn decode_own(png: &[u8]) -> Result<(u32, u32, Vec<u8>), PngError> {
     if idat[0] != 0x78 || idat[1] != 0x01 {
         return Err(PngError::EmptyImage);
     }
+    // The zlib stream's final 4 bytes are the Adler-32 of the raw
+    // scanlines: verify it instead of stripping it unchecked — a corrupt
+    // stream must not decode silently.
+    let stored_adler = u32::from_be_bytes(idat[idat.len() - 4..].try_into().unwrap());
     let raw = inflate_stored(&idat[2..idat.len() - 4]).ok_or(PngError::EmptyImage)?;
+    let computed_adler = adler32(&raw);
+    if computed_adler != stored_adler {
+        return Err(PngError::AdlerMismatch {
+            expected: stored_adler,
+            actual: computed_adler,
+        });
+    }
     let stride = width as usize * 4;
     if raw.len() != height as usize * (stride + 1) {
         return Err(PngError::ByteLengthMismatch {
@@ -424,5 +442,36 @@ mod tests {
         let mut bad = png.clone();
         bad[40] ^= 0xff;
         assert!(decode_own(&bad).is_err());
+    }
+
+    #[test]
+    fn decode_own_rejects_corrupt_adler() {
+        let w = 4u32;
+        let h = 4u32;
+        let png = encode_rgba(w, h, &make_rgba(w, h)).unwrap();
+        // Corrupt the Adler-32 trailer inside the IDAT data, then repair
+        // the IDAT chunk CRC so the failure is attributable to the Adler
+        // check alone (a chunk-CRC failure would mask it).
+        let mut bad = png.clone();
+        let mut i = 8usize; // skip the PNG signature
+        loop {
+            let len = u32::from_be_bytes(bad[i..i + 4].try_into().unwrap()) as usize;
+            let kind: [u8; 4] = bad[i + 4..i + 8].try_into().unwrap();
+            if &kind == b"IDAT" {
+                let adler_pos = i + 8 + len - 1; // last byte of the Adler trailer
+                bad[adler_pos] ^= 0xff;
+                let mut crc_input = Vec::with_capacity(4 + len);
+                crc_input.extend_from_slice(b"IDAT");
+                crc_input.extend_from_slice(&bad[i + 8..i + 8 + len]);
+                let crc = crc32(&crc_input);
+                bad[i + 8 + len..i + 12 + len].copy_from_slice(&crc.to_be_bytes());
+                break;
+            }
+            i += 12 + len;
+        }
+        assert!(
+            matches!(decode_own(&bad), Err(PngError::AdlerMismatch { .. })),
+            "corrupt Adler-32 must be rejected, not decoded"
+        );
     }
 }

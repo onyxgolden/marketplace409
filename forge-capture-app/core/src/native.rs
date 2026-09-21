@@ -8,15 +8,17 @@
 //!
 //! ## Windows notes (compile-verified via
 //! `cargo check --target x86_64-pc-windows-msvc`; runtime behavior is
-//! Windows-untested until run on real hardware — see RUNG2A_NOTES.md)
+//! Windows-untested until run on real hardware — see docs/packaging.md)
 //!
 //! - The process should be per-monitor-DPI-aware (V2); the Tauri shell sets
 //!   this at startup and virtual-desktop coordinates then coincide with
 //!   physical pixels (see `coords`).
-//! - Window capture uses `GetWindowDC` + `BitBlt`: occluded or minimized
-//!   windows can legitimately come back blank — that surfaces as a successful
-//!   capture of blank pixels, which callers should treat as suspect, not as
-//!   an engine bug. (A future hardening pass can add a blank-frame detector.)
+//! - Window capture currently `BitBlt`s the window's screen rect from the
+//!   screen DC (`GetDC(None)`): an occluded window captures its occluders'
+//!   pixels, not its own content — a known 2a limitation, not a blank
+//!   frame. (A future hardening pass can switch to `PrintWindow` /
+//!   `GetWindowDC` plus a blank-frame detector; it needs real Windows
+//!   hardware to validate, so it is documented, not implemented, here.)
 
 use crate::artifact::CursorState;
 use crate::coords::{Monitor, RectI};
@@ -122,6 +124,36 @@ pub fn copy_rgba_to_clipboard(width: u32, height: u32, rgba: &[u8]) -> Result<()
     win::copy_rgba_to_clipboard(width, height, rgba)
 }
 
+/// Swizzle BGRA → RGBA in place, forcing alpha to opaque (255).
+///
+/// GDI screen-capture bitmaps commonly carry a zero alpha channel; without
+/// the forced alpha the encoded PNG would be fully transparent. Pure and
+/// platform-independent so it is unit-tested on any host.
+#[cfg(any(windows, test))]
+pub(crate) fn bgra_to_rgba_force_opaque(pixels: &mut [u8]) {
+    let (chunks, _remainder) = pixels.as_chunks_mut::<4>();
+    for px in chunks {
+        px.swap(0, 2);
+        px[3] = 255;
+    }
+}
+
+/// Icon top-left draw position for a cursor: the OS reports the cursor's
+/// screen position as the *hotspot* point, so the draw origin is
+/// `screen - hotspot`, made capture-relative by subtracting the capture
+/// rect's origin. Pure and platform-independent for unit testing.
+#[cfg(any(windows, test))]
+pub(crate) fn cursor_icon_origin(
+    screen: (i32, i32),
+    hotspot: (i32, i32),
+    rect_origin: (i64, i64),
+) -> (i32, i32) {
+    (
+        screen.0 - hotspot.0 - rect_origin.0 as i32,
+        screen.1 - hotspot.1 - rect_origin.1 as i32,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Windows implementation (GDI). Compile-checked for the Windows target;
 // runtime-verified only on real Windows hardware (see docs).
@@ -132,7 +164,7 @@ mod win {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use windows::core::BOOL;
-    use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+    use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
     use windows::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
         EnumDisplayMonitors, GetDC, GetDIBits, GetMonitorInfoW, ReleaseDC, SelectObject,
@@ -142,8 +174,9 @@ mod win {
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
     use windows::Win32::UI::WindowsAndMessaging::{
-        DrawIconEx, EnumWindows, GetClassNameW, GetCursorInfo, GetWindowRect, GetWindowTextW,
-        GetWindowThreadProcessId, IsWindowVisible, CURSORINFO, CURSOR_SHOWING, DI_NORMAL,
+        DrawIconEx, EnumWindows, GetClassNameW, GetCursorInfo, GetIconInfo, GetWindowRect,
+        GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, CURSORINFO, CURSOR_SHOWING,
+        DI_NORMAL, ICONINFO,
     };
 
     fn last_error(context: &str) -> CaptureError {
@@ -228,6 +261,23 @@ mod win {
             .collect())
     }
 
+    /// Cursor hotspot offset within the icon, via GetIconInfo. Falls back to
+    /// (0, 0) when the icon info is unavailable.
+    fn cursor_hotspot(hcursor: windows::Win32::UI::WindowsAndMessaging::HCURSOR) -> (i32, i32) {
+        unsafe {
+            let mut info = ICONINFO::default();
+            if GetIconInfo(hcursor.into(), &mut info).is_ok() {
+                let hotspot = (info.xHotspot as i32, info.yHotspot as i32);
+                // GetIconInfo allocates bitmaps the caller must free.
+                let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
+                let _ = DeleteObject(HGDIOBJ(info.hbmColor.0));
+                hotspot
+            } else {
+                (0, 0)
+            }
+        }
+    }
+
     /// BitBlt `rect` (virtual-desktop/physical coords) from the screen DC.
     pub(super) fn capture_screen_rect(
         rect: RectI,
@@ -276,13 +326,20 @@ mod win {
                 let mut ci = CURSORINFO::default();
                 ci.cbSize = std::mem::size_of::<CURSORINFO>() as u32;
                 if GetCursorInfo(&mut ci).is_ok() && ci.flags.0 & CURSOR_SHOWING.0 != 0 {
-                    let cx = ci.ptScreenPos.x - rect.x as i32;
-                    let cy = ci.ptScreenPos.y - rect.y as i32;
-                    if cx >= 0 && cy >= 0 && cx < w && cy < h {
+                    // ptScreenPos is the cursor *hotspot*: subtract it so the
+                    // hotspot lands on the reported position instead of the
+                    // icon's top-left corner.
+                    let hotspot = cursor_hotspot(ci.hCursor);
+                    let (ix, iy) = super::cursor_icon_origin(
+                        (ci.ptScreenPos.x, ci.ptScreenPos.y),
+                        hotspot,
+                        (rect.x, rect.y),
+                    );
+                    if ix >= 0 && iy >= 0 && ix < w && iy < h {
                         let _ = DrawIconEx(
                             mem_dc,
-                            cx,
-                            cy,
+                            ix,
+                            iy,
                             windows::Win32::UI::WindowsAndMessaging::HICON(ci.hCursor.0),
                             0,
                             0,
@@ -300,6 +357,10 @@ mod win {
                     }
                 }
             }
+
+            // GetDIBits requires the bitmap to NOT be selected into a DC, so
+            // deselect it before pulling pixels.
+            SelectObject(mem_dc, old);
 
             // Pull pixels back as top-down 32-bit RGBA.
             let mut rgba = vec![0u8; w as usize * h as usize * 4];
@@ -319,12 +380,10 @@ mod win {
                 &mut bmi as *mut _,
                 DIB_RGB_COLORS,
             );
-            // GDI returns BGRA; swizzle to RGBA in place.
-            for px in rgba.chunks_exact_mut(4) {
-                px.swap(0, 2);
-            }
+            // GDI returns BGRA; swizzle to RGBA and force opaque alpha (see
+            // `bgra_to_rgba_force_opaque`).
+            super::bgra_to_rgba_force_opaque(&mut rgba);
 
-            SelectObject(mem_dc, old);
             let _ = DeleteObject(HGDIOBJ(bitmap.0));
             let _ = DeleteDC(mem_dc);
             ReleaseDC(None, screen_dc);
@@ -388,20 +447,26 @@ mod win {
         use windows::Win32::System::Threading::PROCESS_NAME_WIN32;
         unsafe {
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-            let mut buf = [0u16; 512];
-            let mut len = buf.len() as u32;
-            if windows::Win32::System::Threading::QueryFullProcessImageNameW(
-                handle,
-                PROCESS_NAME_WIN32,
-                PWSTR(buf.as_mut_ptr()),
-                &mut len,
-            )
-            .is_ok()
-            {
-                let full = wide_to_string(&buf[..len as usize]);
-                return full.rsplit(['\\', '/']).next().map(|s| s.to_string());
-            }
-            None
+            let name = {
+                let mut buf = [0u16; 512];
+                let mut len = buf.len() as u32;
+                if windows::Win32::System::Threading::QueryFullProcessImageNameW(
+                    handle,
+                    PROCESS_NAME_WIN32,
+                    PWSTR(buf.as_mut_ptr()),
+                    &mut len,
+                )
+                .is_ok()
+                {
+                    let full = wide_to_string(&buf[..len as usize]);
+                    full.rsplit(['\\', '/']).next().map(|s| s.to_string())
+                } else {
+                    None
+                }
+            };
+            // The process handle is ours to close on every path.
+            let _ = CloseHandle(handle);
+            name
         }
     }
 
@@ -438,9 +503,8 @@ mod win {
         use windows::Win32::System::DataExchange::{
             CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
         };
-        use windows::Win32::System::Memory::{
-            GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
-        };
+        use windows::Win32::Foundation::GlobalFree;
+        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
         // Clipboard format constant (CF_DIB = 8). Defined locally: the
         // `windows` crate does not export it under a stable path in 0.62.
         const CF_DIB: u32 = 8;
@@ -457,6 +521,7 @@ mod win {
             let hmem = GlobalAlloc(GMEM_MOVEABLE, total).map_err(|_| last_error("GlobalAlloc"))?;
             let ptr = GlobalLock(hmem) as *mut u8;
             if ptr.is_null() {
+                let _ = GlobalFree(Some(hmem));
                 return Err(last_error("GlobalLock"));
             }
             let mut bmi = BITMAPINFOHEADER::default();
@@ -485,6 +550,7 @@ mod win {
             // is already done, so its outcome is not load-bearing here.
             let _ = GlobalUnlock(hmem);
             if OpenClipboard(None).is_err() {
+                let _ = GlobalFree(Some(hmem));
                 return Err(last_error("OpenClipboard"));
             }
             let _ = EmptyClipboard();
@@ -492,14 +558,61 @@ mod win {
                 SetClipboardData(CF_DIB, Some(windows::Win32::Foundation::HANDLE(hmem.0)));
             let _ = CloseClipboard();
             if let Err(e) = set_result {
-                // The system did not take ownership; the moveable block is
-                // simply leaked with the process rather than risk a wrong
-                // free path here. (Noted as a known 2a wart.)
+                // The system did not take ownership on failure: free the
+                // block instead of leaking it with the process.
+                let _ = GlobalFree(Some(hmem));
                 return Err(CaptureError::NativeApi(format!(
                     "SetClipboardData failed: {e}"
                 )));
             }
+            // Success: the clipboard owns `hmem` now — do NOT free it.
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn swizzle_converts_bgra_to_rgba_and_forces_opaque() {
+        // GDI screen captures commonly carry a zero alpha channel; the
+        // swizzle must produce opaque RGBA, never transparent pixels.
+        let mut px = vec![
+            10u8, 20, 30, 0, // BGRA with alpha 0
+            40, 50, 60, 128, // BGRA with partial alpha
+        ];
+        bgra_to_rgba_force_opaque(&mut px);
+        assert_eq!(px, vec![30u8, 20, 10, 255, 60, 50, 40, 255]);
+    }
+
+    #[test]
+    fn swizzle_handles_empty_and_ignores_trailing() {
+        let mut px: Vec<u8> = vec![];
+        bgra_to_rgba_force_opaque(&mut px);
+        assert!(px.is_empty());
+        // Trailing bytes that do not form a full pixel are left alone.
+        let mut px = vec![1u8, 2, 3, 0, 9];
+        bgra_to_rgba_force_opaque(&mut px);
+        assert_eq!(px, vec![3u8, 2, 1, 255, 9]);
+    }
+
+    #[test]
+    fn cursor_origin_subtracts_hotspot_and_rect() {
+        // Fake CURSORINFO values: screen pos (500, 300) is the hotspot;
+        // hotspot offset within the icon is (2, 10); capture rect starts
+        // at (100, 100). Icon top-left must be (398, 190).
+        assert_eq!(
+            cursor_icon_origin((500, 300), (2, 10), (100, 100)),
+            (398, 190)
+        );
+        // Zero hotspot and zero rect origin: identity.
+        assert_eq!(cursor_icon_origin((7, 9), (0, 0), (0, 0)), (7, 9));
+        // Negative virtual-desktop origin (monitor left of primary).
+        assert_eq!(
+            cursor_icon_origin((-3800, 200), (5, 5), (-3840, 0)),
+            (35, 195)
+        );
     }
 }

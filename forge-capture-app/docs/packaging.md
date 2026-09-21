@@ -33,8 +33,13 @@ re-verify SmartScreen behavior, then cut the beta.
   showing. Clipboard export uses `CF_DIB` (BITMAPINFOHEADER + bottom-up
   BGRA) — the most compatible clipboard image format on Windows.
 - Window enumeration skips invisible windows and windows with empty titles.
+- **Known limitation (2a):** window capture `BitBlt`s the window's screen
+  rect from the screen DC, so an *occluded* window captures its occluders'
+  pixels rather than its own content. A `PrintWindow`/`GetWindowDC`-based
+  capture plus a blank-frame detector is the follow-up; it needs real
+  Windows hardware to validate, so it is not attempted here.
 - On non-Windows hosts every native entry point returns
-  `CaptureError::UnsupportedPlatform` — the core crate compiles and its
+  `CaptureError::NativeApi` — the core crate compiles and its
   pure logic is fully testable on Linux/macOS.
 
 ## Local-first guarantees

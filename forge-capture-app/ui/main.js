@@ -53,7 +53,14 @@ function onModeChange() {
   $("window-row").hidden = mode !== "window";
 }
 
+const seenCaptureIds = new Set();
+
 function captureItem(ref) {
+  // The backend emits capture-saved for EVERY capture, and direct callers
+  // also add the returned ref: without this guard each main-window capture
+  // would appear twice in the list.
+  if (!ref || seenCaptureIds.has(ref.id)) return;
+  seenCaptureIds.add(ref.id);
   const li = document.createElement("li");
   const title = document.createElement("div");
   title.textContent = `${ref.kind} — ${ref.width}x${ref.height}`;
@@ -112,8 +119,14 @@ async function doCapture() {
   try {
     if (mode === "region-overlay") {
       // The overlay window drives the rest: it collects the drag rect and
-      // calls `capture` itself with mode "region-overlay".
-      await invoke("begin_region_pick", { monitorId: $("monitor").value });
+      // calls `capture` itself with mode "region-overlay". The user's
+      // delay/cursor selections travel with begin_region_pick because the
+      // overlay page cannot see this window's controls.
+      await invoke("begin_region_pick", {
+        monitorId: $("monitor").value,
+        delayMs,
+        includeCursor,
+      });
       setStatus("Drag a region on screen — Esc cancels.");
       return;
     }

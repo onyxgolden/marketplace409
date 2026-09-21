@@ -48,8 +48,10 @@ pub struct CaptureRequest {
     pub include_cursor: bool,
     /// Pre-assigned artifact id (uuid from the host).
     pub id: String,
-    /// ISO-8601 UTC timestamp assigned by the host at request time.
-    pub captured_at: String,
+    // Note: there is intentionally no request-time timestamp here. The
+    // engine stamps `captured_at` at acquisition time (after any delay
+    // sleep) so a delayed capture's timestamp reflects when the pixels
+    // were taken, not when the user clicked.
 }
 
 /// The one acquisition interface. 2b scrolling engines implement the same
@@ -65,6 +67,10 @@ pub trait AcquisitionEngine {
 /// Blit RGBA tiles onto a canvas. Pure; tiles carry their canvas-relative
 /// rect. Used to composite multi-monitor region captures in 2a and tile
 /// sets in 2b.
+///
+/// A tile outside the canvas (negative origin or overflowing edges) is a
+/// caller bug and returns an error — it never panics on slice indexing.
+/// Zero-size tiles are skipped: they contribute no pixels.
 pub fn composite_tiles(
     canvas_width: u32,
     canvas_height: u32,
@@ -83,6 +89,16 @@ pub fn composite_tiles(
                 rect.w,
                 rect.h,
                 rgba.len()
+            )));
+        }
+        if rect.x < 0
+            || rect.y < 0
+            || rect.right() > canvas_width as i64
+            || rect.bottom() > canvas_height as i64
+        {
+            return Err(CaptureError::EncodeFailed(format!(
+                "tile at ({},{}) size {}x{} is outside the {}x{} canvas",
+                rect.x, rect.y, rect.w, rect.h, canvas_width, canvas_height
             )));
         }
         for row in 0..rect.h as usize {
@@ -201,6 +217,10 @@ impl NativeRasterEngine {
         if delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         }
+        // Timestamp at acquisition (after the delay sleep), not at request
+        // time: for a delayed capture the request-time stamp would lie
+        // about when the pixels were taken.
+        let captured_at = crate::timestamp::now_utc_iso8601();
         let (kind, pieces, window) = Self::resolve_pieces(&request.mode, monitors)?;
         // Note: delay is provenance (sidecar `delayMs`), not a capture kind:
         // a delayed full-monitor capture is still a full-monitor capture.
@@ -257,7 +277,7 @@ impl NativeRasterEngine {
             window,
             scale,
             cursor,
-            request.captured_at.clone(),
+            captured_at,
             if delay_ms > 0 { Some(delay_ms) } else { None },
         )
         .map_err(|e| CaptureError::EncodeFailed(e.to_string()))
@@ -376,6 +396,84 @@ mod tests {
     }
 
     #[test]
+    fn composite_tiles_rejects_out_of_canvas_tile() {
+        // Tile's right edge (3+2=5) overflows the 4px-wide canvas.
+        let err = composite_tiles(
+            4,
+            4,
+            &[(
+                RectI {
+                    x: 3,
+                    y: 0,
+                    w: 2,
+                    h: 2,
+                },
+                vec![0u8; 16],
+            )],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, CaptureError::EncodeFailed(_)),
+            "out-of-canvas tile must error, not panic: {err}"
+        );
+    }
+
+    #[test]
+    fn composite_tiles_rejects_negative_origin() {
+        // Negative origins previously wrapped to huge usize and panicked.
+        let err = composite_tiles(
+            4,
+            4,
+            &[(
+                RectI {
+                    x: -1,
+                    y: 0,
+                    w: 2,
+                    h: 2,
+                },
+                vec![0u8; 16],
+            )],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, CaptureError::EncodeFailed(_)),
+            "negative-origin tile must error, not panic: {err}"
+        );
+    }
+
+    #[test]
+    fn composite_tiles_skips_zero_size_tiles() {
+        // Zero-size tiles contribute no pixels and are not an error.
+        let canvas = composite_tiles(
+            4,
+            4,
+            &[
+                (
+                    RectI {
+                        x: 0,
+                        y: 0,
+                        w: 0,
+                        h: 4,
+                    },
+                    vec![],
+                ),
+                (
+                    RectI {
+                        x: 0,
+                        y: 0,
+                        w: 2,
+                        h: 2,
+                    },
+                    vec![255u8; 16],
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(canvas.len(), 4 * 4 * 4);
+        assert_eq!(&canvas[0..4], &[255, 255, 255, 255]);
+    }
+
+    #[test]
     fn resolve_pieces_full_monitor() {
         let (kind, pieces, window) = NativeRasterEngine::resolve_pieces(
             &CaptureMode::FullMonitor {
@@ -444,7 +542,6 @@ mod tests {
             },
             include_cursor: false,
             id: "r1".into(),
-            captured_at: "2026-09-21T13:30:00Z".into(),
         };
         let result = engine.acquire(&req, &monitors());
         #[cfg(not(windows))]
@@ -463,7 +560,6 @@ mod tests {
             },
             include_cursor: false,
             id: "r1".into(),
-            captured_at: "2026-09-21T13:30:00Z".into(),
         };
         let r = dom.acquire(&req, &monitors());
         assert!(r.describe().contains("Rung 2b"));

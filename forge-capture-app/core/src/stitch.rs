@@ -14,7 +14,9 @@ use crate::coords::RectI;
 pub struct TilePlacement {
     pub tile_id: String,
     pub rect: RectI,
-    /// Higher `z` wins where tiles overlap.
+    /// Desired compositing order when tiles overlap (higher `z` on top).
+    /// Recorded for the 2b compositor; [`StitchPlan::coverage`] is a *union*
+    /// computation and does not consult `z`.
     pub z: u32,
 }
 
@@ -62,8 +64,10 @@ impl std::error::Error for StitchError {}
 
 impl StitchPlan {
     /// Structural validation: canvas sane, at least one tile, every tile
-    /// non-empty and fully inside the canvas. Tiles may overlap (z-order
-    /// decides); gaps are reported by [`StitchPlan::coverage`], not here.
+    /// non-empty and fully inside the canvas. Tiles may overlap — `z`
+    /// records the intended compositing order (a 2b concern) and does not
+    /// affect validation; gaps are reported by [`StitchPlan::coverage`],
+    /// not here.
     pub fn validate(&self) -> Result<(), StitchError> {
         if self.canvas_width == 0 || self.canvas_height == 0 {
             return Err(StitchError::EmptyCanvas);
@@ -100,8 +104,11 @@ impl StitchPlan {
         Ok(())
     }
 
-    /// Compute covered vs missing regions of the canvas. Missing regions are
-    /// the evidence for an `Incomplete` scrolling result.
+    /// Compute covered vs missing regions of the canvas as the *union* of
+    /// tile rects: a region counts as covered when any tile covers it,
+    /// regardless of `z` (z-order only matters for compositing, which is a
+    /// 2b concern). Missing regions are the evidence for an `Incomplete`
+    /// scrolling result.
     pub fn coverage(&self) -> Coverage {
         let canvas = RectI {
             x: 0,
@@ -109,14 +116,7 @@ impl StitchPlan {
             w: self.canvas_width as u64,
             h: self.canvas_height as u64,
         };
-        let mut ordered = self.tiles.clone();
-        ordered.sort_by_key(|t| t.z);
-        let mut covered: Vec<RectI> = Vec::new();
-        for t in &ordered {
-            // Subtract what higher-or-equal z tiles already cover… simpler:
-            // accumulate raw covered pieces; overlaps are fine for coverage.
-            covered.push(t.rect);
-        }
+        let covered: Vec<RectI> = self.tiles.iter().map(|t| t.rect).collect();
         let missing = subtract_rect(canvas, &covered);
         Coverage { covered, missing }
     }
