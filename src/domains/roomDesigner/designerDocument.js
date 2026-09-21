@@ -313,6 +313,31 @@ export function moveOpening(design, openingId, offsetIn) {
   return { ...design, openings };
 }
 
+/**
+ * Move an opening's START edge to newOffsetIn along its wall, keeping the
+ * far (end) edge fixed: the width shrinks/grows to compensate. Backs the
+ * canvas start-edge resize handle. Clamping follows clampOpening, so the
+ * opening can never invert or leave the wall.
+ */
+export function moveOpeningStart(design, openingId, newOffsetIn) {
+  assertDesign(design);
+  let changed = false;
+  const openings = design.openings.map((o) => {
+    if (o.id !== openingId) return o;
+    const wall = findWall(design, o.wallId);
+    if (!wall) throw new Error(`Opening references missing wall: ${o.wallId}`);
+    changed = true;
+    // Clamp the start edge BEFORE deriving the width, so we never hand
+    // clampOpening an already-invalid (negative) width: the opening can
+    // never invert, and the width never drops below the 6" domain minimum.
+    const end = o.offsetIn + o.widthIn;
+    const nextStart = Math.min(Math.max(newOffsetIn, 1), end - 6);
+    return { ...o, ...clampOpening(wall, o.type, nextStart, end - nextStart) };
+  });
+  if (!changed) throw new Error(`Unknown opening: ${openingId}`);
+  return { ...design, openings };
+}
+
 export function resizeOpening(design, openingId, widthIn) {
   assertDesign(design);
   let changed = false;

@@ -41,6 +41,13 @@ import { getSheetSize } from "@/domains/roomDesigner/sheetCatalog";
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 12;
 const HIT_TOLERANCE_PX = 10;
+/**
+ * Minimum opening width enforced by the on-canvas resize handles (the
+ * inspector slider starts at 18"; the domain backstops the structural
+ * minimum). Below this the handle drag is ignored so an opening can
+ * never be inverted or collapsed by a handle.
+ */
+const OPENING_MIN_WIDTH_IN = 12;
 
 /**
  * SVG 2D floor-plan editor. All plan math is inches; the component maps
@@ -222,23 +229,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           }
         }
       }
-      // openings (gaps on walls)
-      for (const wall of design.walls) {
-        for (const opening of design.openings.filter((o) => o.wallId === wall.id)) {
-          const dir = { x: 0, y: 0 };
-          const len = wallLength(wall);
-          if (len > 0) {
-            dir.x = (wall.b.x - wall.a.x) / len;
-            dir.y = (wall.b.y - wall.a.y) / len;
-          }
-          const gp1 = { x: wall.a.x + dir.x * opening.offsetIn, y: wall.a.y + dir.y * opening.offsetIn };
-          const gp2 = { x: wall.a.x + dir.x * (opening.offsetIn + opening.widthIn), y: wall.a.y + dir.y * (opening.offsetIn + opening.widthIn) };
-          if (distancePointToSegment(plan, gp1, gp2) < tolIn + 6) {
-            return { kind: "opening", id: opening.id };
-          }
-        }
-      }
-      // walls
+      // walls (CAD priority: a wall hit beats an opening hit on the
+      // shared wall line, so wall editing is never shadowed by openings)
       let best = null;
       let bestD = tolIn;
       for (const wall of design.walls) {
@@ -246,6 +238,17 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         if (d < bestD) { bestD = d; best = wall; }
       }
       if (best) return { kind: "wall", id: best.id };
+      // openings (gaps on walls): the nearest opening wins. Beats room
+      // interiors below, loses to wall hits above.
+      let bestOpening = null;
+      let bestOpeningD = tolIn + 6;
+      for (const opening of design.openings) {
+        const span = openingEndpoints(opening, design.walls);
+        if (!span) continue;
+        const d = distancePointToSegment(plan, span.g1, span.g2);
+        if (d < bestOpeningD) { bestOpeningD = d; bestOpening = opening; }
+      }
+      if (bestOpening) return { kind: "opening", id: bestOpening.id };
       // rooms — the interior selects the room; walls still win on the
       // shared edges above, so wall editing is unaffected.
       for (let i = design.rooms.length - 1; i >= 0; i -= 1) {
@@ -414,6 +417,31 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         }
       }
     }
+    // end handles on the selected opening: the dragged edge follows the
+    // pointer while the far edge stays anchored
+    if (selection?.kind === "opening") {
+      const opening = design.openings.find((o) => o.id === selection.id);
+      const span = opening && openingEndpoints(opening, design.walls);
+      if (span) {
+        const tolIn = HIT_TOLERANCE_PX / view.scale;
+        const nearStart = Math.hypot(plan.x - span.g1.x, plan.y - span.g1.y) < tolIn;
+        const nearEnd = !nearStart && Math.hypot(plan.x - span.g2.x, plan.y - span.g2.y) < tolIn;
+        if (nearStart || nearEnd) {
+          const edge = nearStart ? "start" : "end";
+          const edgeOffset = nearStart ? opening.offsetIn : opening.offsetIn + opening.widthIn;
+          setDrag({
+            kind: "resize-opening",
+            id: opening.id,
+            edge,
+            moved: false,
+            // pointer-to-handle offset along the wall, preserved so the
+            // handle never jumps to the cursor when the drag starts.
+            grab: offsetAlongWall(plan, span.wall) - edgeOffset,
+          });
+          return;
+        }
+      }
+    }
     const hit = hitTest(plan);
     if (hit?.kind === "furniture") {
       dispatch({ type: "SELECT", selection: hit });
@@ -438,6 +466,23 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       dispatch({ type: "SELECT", selection: hit });
       if (sheet) {
         setDrag({ kind: "move-sheet", id: hit.id, dx: plan.x - sheet.x, dy: plan.y - sheet.y });
+      }
+      return;
+    }
+    // Placed opening — click to select, drag along its wall to reposition.
+    if (hit?.kind === "opening") {
+      const opening = design.openings.find((o) => o.id === hit.id);
+      dispatch({ type: "SELECT", selection: hit });
+      const span = opening && openingEndpoints(opening, design.walls);
+      if (span) {
+        setDrag({
+          kind: "move-opening",
+          id: hit.id,
+          moved: false,
+          // pointer-to-opening-start offset along the wall, preserved so
+          // the opening never jumps to the cursor when the drag starts.
+          grab: offsetAlongWall(plan, span.wall) - opening.offsetIn,
+        });
       }
       return;
     }
@@ -534,6 +579,48 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
       dispatch({ type: "MOVE_FURNITURE", furnitureId: drag.id, x: point.x, y: point.y, coalesce: `move-furniture:${drag.id}` });
       setDrag({ ...drag, moved: true });
+    }
+    // Placed opening drag — the grab offset is preserved and the pointer's
+    // projection onto the wall (snapped when snap is on) drives the
+    // opening's offset, so the opening follows the cursor without jumping.
+    // The domain clamps the offset to the wall bounds.
+    if (drag.kind === "move-opening") {
+      const opening = design.openings.find((o) => o.id === drag.id);
+      const wall = opening && design.walls.find((w) => w.id === opening.wallId);
+      if (opening && wall) {
+        const raw = offsetAlongWall(plan, wall) - drag.grab;
+        const target = snapEnabled ? snapScalar(raw, gridIn) : raw;
+        dispatch({ type: "MOVE_OPENING", openingId: drag.id, offsetIn: target, coalesce: `move-opening:${drag.id}` });
+        setDrag({ ...drag, moved: true });
+      }
+      return;
+    }
+    // Opening resize handles — the dragged edge follows the pointer's wall
+    // projection; the far edge stays anchored (the end handle matches the
+    // inspector's anchored-start width semantics). Widths under 12" are
+    // ignored so the handle never inverts the opening; the domain
+    // backstops the structural min/max and wall clearance.
+    if (drag.kind === "resize-opening") {
+      const opening = design.openings.find((o) => o.id === drag.id);
+      const wall = opening && design.walls.find((w) => w.id === opening.wallId);
+      if (opening && wall) {
+        const raw = offsetAlongWall(plan, wall) - drag.grab;
+        const target = snapEnabled ? snapScalar(raw, gridIn) : raw;
+        if (drag.edge === "end") {
+          const widthIn = target - opening.offsetIn;
+          // Start edge stays anchored: 1" end clearance caps the width.
+          const maxWidth = wallLength(wall) - opening.offsetIn - 1;
+          if (widthIn < OPENING_MIN_WIDTH_IN || widthIn > maxWidth) return;
+          dispatch({ type: "RESIZE_OPENING", openingId: drag.id, widthIn, coalesce: `resize-opening:${drag.id}` });
+        } else {
+          const end = opening.offsetIn + opening.widthIn;
+          if (end - target < OPENING_MIN_WIDTH_IN) return;
+          // Pin the start at the 1" wall clearance; the end edge stays put.
+          dispatch({ type: "MOVE_OPENING_START", openingId: drag.id, offsetIn: Math.max(target, 1), coalesce: `resize-opening:${drag.id}` });
+        }
+        setDrag({ ...drag, moved: true });
+      }
+      return;
     }
     // Phase 2: piping mode drags.
     if (drag.kind === "move-pipe-vertex") {
@@ -1047,6 +1134,27 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     );
   };
 
+  // End resize handles on the selected opening (screen-space squares at
+  // the gap's two edges; hit-testing happens in plan space in
+  // onPointerDown).
+  const renderOpeningResizeHandles = () => {
+    if (selection?.kind !== "opening") return null;
+    const opening = design.openings.find((o) => o.id === selection.id);
+    const span = opening && openingEndpoints(opening, design.walls);
+    if (!span) return null;
+    const s = 10;
+    return (
+      <g key={`opening-handles-${opening.id}`} pointerEvents="none">
+        {[span.g1, span.g2].map((p, i) => {
+          const c = toScreen(p);
+          return (
+            <rect key={i} x={c.x - s / 2} y={c.y - s / 2} width={s} height={s}
+              fill="#f59e0b" stroke="#ffffff" strokeWidth={1.5} />
+          );
+        })}
+      </g>
+    );
+  };
   const cursorForTool = {
     select: "default", wall: "crosshair", wallrect: "crosshair", room: "copy", door: "crosshair",
     window: "crosshair", furniture: "copy", pipe: "crosshair", piping: "copy",
@@ -1191,6 +1299,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {(design.sheets || []).map(renderSheet)}
         {renderPipePreview()}
         {renderResizeHandles()}
+        {renderOpeningResizeHandles()}
         {renderCalibrationMarkers()}
         {drawPreview && (() => {
           const a = toScreen(drawPreview.a);
@@ -1286,4 +1395,26 @@ function roomAnchor(polygon) {
     if (Number.isFinite(p?.y) && p.y < y) y = p.y;
   }
   return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 };
+}
+
+/**
+ * Plan-space gap endpoints of an opening on its wall: g1 is the start edge
+ * (wall.a + offsetIn along the wall), g2 the end edge. Returns null when
+ * the wall is missing or degenerate. Shared by hit-testing, the resize
+ * handles, and the drag handlers.
+ */
+function openingEndpoints(opening, walls) {
+  const wall = (walls || []).find((w) => w.id === opening?.wallId);
+  if (!wall) return null;
+  const len = wallLength(wall);
+  if (len === 0) return null;
+  const dir = { x: (wall.b.x - wall.a.x) / len, y: (wall.b.y - wall.a.y) / len };
+  return {
+    wall,
+    g1: { x: wall.a.x + dir.x * opening.offsetIn, y: wall.a.y + dir.y * opening.offsetIn },
+    g2: {
+      x: wall.a.x + dir.x * (opening.offsetIn + opening.widthIn),
+      y: wall.a.y + dir.y * (opening.offsetIn + opening.widthIn),
+    },
+  };
 }

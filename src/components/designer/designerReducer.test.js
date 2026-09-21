@@ -496,3 +496,56 @@ describe("designerReducer — MOVE_ROOM", () => {
     expect(state.design.rooms[0].polygon[0]).toEqual({ x: 18, y: 0 });
   });
 });
+
+describe("designerReducer — opening drag and resize", () => {
+  function stateWithOpening() {
+    let state = stateWithWall();
+    const wallId = state.design.walls[0].id; // 144in wall
+    state = designerReducer(state, {
+      type: "ADD_OPENING", wallId, openingType: "door", offsetIn: 36,
+    });
+    return state;
+  }
+
+  it("coalesces one opening drag into a single undo step", () => {
+    let state = stateWithOpening();
+    const openingId = state.design.openings[0].id;
+    const pastBefore = state.past.length;
+    const key = `move-opening:${openingId}`;
+    state = designerReducer(state, { type: "MOVE_OPENING", openingId, offsetIn: 42, coalesce: key });
+    state = designerReducer(state, { type: "MOVE_OPENING", openingId, offsetIn: 48, coalesce: key });
+    state = designerReducer(state, { type: "MOVE_OPENING", openingId, offsetIn: 54, coalesce: key });
+    expect(state.past.length).toBe(pastBefore + 1);
+    expect(state.design.openings[0].offsetIn).toBe(54);
+    state = designerReducer(state, { type: "UNDO" });
+    expect(state.design.openings[0].offsetIn).toBe(36);
+  });
+
+  it("coalesces one opening resize drag into a single undo step", () => {
+    let state = stateWithOpening();
+    const openingId = state.design.openings[0].id;
+    const pastBefore = state.past.length;
+    const key = `resize-opening:${openingId}`;
+    state = designerReducer(state, { type: "RESIZE_OPENING", openingId, widthIn: 42, coalesce: key });
+    state = designerReducer(state, { type: "RESIZE_OPENING", openingId, widthIn: 48, coalesce: key });
+    expect(state.past.length).toBe(pastBefore + 1);
+    expect(state.design.openings[0].widthIn).toBe(48);
+    expect(state.design.openings[0].offsetIn).toBe(36); // start edge anchored
+    state = designerReducer(state, { type: "UNDO" });
+    expect(state.design.openings[0].widthIn).toBe(36);
+  });
+
+  it("coalesces one opening start-edge resize into a single undo step", () => {
+    let state = stateWithOpening();
+    const openingId = state.design.openings[0].id; // 36..72
+    const pastBefore = state.past.length;
+    const key = `resize-opening:${openingId}`;
+    state = designerReducer(state, { type: "MOVE_OPENING_START", openingId, offsetIn: 42, coalesce: key });
+    state = designerReducer(state, { type: "MOVE_OPENING_START", openingId, offsetIn: 48, coalesce: key });
+    expect(state.past.length).toBe(pastBefore + 1);
+    expect(state.design.openings[0].offsetIn).toBe(48);
+    expect(state.design.openings[0].offsetIn + state.design.openings[0].widthIn).toBe(72);
+    state = designerReducer(state, { type: "UNDO" });
+    expect(state.design.openings[0].offsetIn).toBe(36);
+  });
+});
