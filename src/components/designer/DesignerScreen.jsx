@@ -14,6 +14,8 @@ import {
   LockOpen,
   MousePointer2,
   Network,
+  Printer,
+  Redo2,
   RotateCw,
   Ruler,
   Save,
@@ -23,9 +25,12 @@ import {
   Square,
   SquareDashed,
   Trash2,
+  Undo2,
   Upload,
 } from "lucide-react";
 import PlanCanvas from "./PlanCanvas";
+import PrintSheetOverlay from "./PrintSheetOverlay";
+import { decodeUnderlayFile, UNDERLAY_ACCEPT, UNDERLAY_ACCEPT_LABEL } from "./underlayImage";
 import HousePlansPanel from "./HousePlansPanel";
 import { isHousePlansEnabled } from "@/lib/housePlans/housePlansFlags";
 import { createSaveScheduler } from "./saveScheduler";
@@ -34,7 +39,8 @@ import FurnitureCatalogPanel from "./FurnitureCatalogPanel";
 import { createInitialState, designerReducer } from "./designerReducer";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
-import { ROOM_TEMPLATES, pieceSize } from "@/domains/roomDesigner/designerDocument";
+import { ROOM_TEMPLATES, fitScaleLabel, pieceSize, sheetPlanBounds } from "@/domains/roomDesigner/designerDocument";
+import { SHEET_CATALOG, SHEET_ORIENTATIONS, sheetSizeLabel } from "@/domains/roomDesigner/sheetCatalog";
 import { feetInchesLabel, parseDimensionInput, wallLength } from "@/domains/roomDesigner/designerGeometry";
 import {
   PIPE_DIAMETERS_IN,
@@ -83,6 +89,13 @@ export default function DesignerScreen({ projectId, initialName }) {
   // HOUSE PLANS (HP-L0): docked reference panel, gated behind the feature flag.
   const [housePlansOpen, setHousePlansOpen] = useState(false);
   const housePlansEnabled = isHousePlansEnabled();
+  // Printable sheets: overlay state for the single print flow.
+  const [printOpen, setPrintOpen] = useState(false);
+  const [printSheetId, setPrintSheetId] = useState(null);
+  const openPrint = (sheetId) => {
+    setPrintSheetId(sheetId || null);
+    setPrintOpen(true);
+  };
 
   // Latest snapshots for saves: a queued save must capture the document and
   // name at the moment it actually sends, not when save() was invoked.
@@ -141,17 +154,31 @@ export default function DesignerScreen({ projectId, initialName }) {
   }, [projectId]);
 
   useEffect(() => {
+    const isField = (el) =>
+      el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT");
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         save();
+        return;
+      }
+      // Undo/redo (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y); never hijack typing.
+      if ((e.ctrlKey || e.metaKey) && !isField(e.target)) {
+        const key = e.key.toLowerCase();
+        if (key === "z" && !e.shiftKey) {
+          e.preventDefault();
+          dispatch({ type: "UNDO" });
+        } else if ((key === "z" && e.shiftKey) || key === "y") {
+          e.preventDefault();
+          dispatch({ type: "REDO" });
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [save]);
 
-  const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, orthoSnap, layerVisibility, view, dirty } = state;
+  const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, orthoSnap, layerVisibility, view, dirty, past, future } = state;
   const summary = summarizeDesignForEstimating(design);
   const activeTool = TOOL_DEFS.find((t) => t.id === tool);
 
@@ -193,6 +220,30 @@ export default function DesignerScreen({ projectId, initialName }) {
               </button>
             ))}
           </div>
+          <button
+            onClick={() => dispatch({ type: "UNDO" })}
+            disabled={(past || []).length === 0}
+            title="Undo (Ctrl+Z)"
+            className="flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-40"
+          >
+            <Undo2 size={15} />
+          </button>
+          <button
+            onClick={() => dispatch({ type: "REDO" })}
+            disabled={(future || []).length === 0}
+            title="Redo (Ctrl+Shift+Z)"
+            className="flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-40"
+          >
+            <Redo2 size={15} />
+          </button>
+          <button
+            onClick={() => openPrint(selection?.kind === "sheet" ? selection.id : null)}
+            disabled={(design.sheets || []).length === 0}
+            title="Print a sheet…"
+            className="flex items-center gap-1 rounded bg-gray-800 px-3 py-1 text-sm font-semibold text-gray-200 hover:bg-gray-700 disabled:opacity-40"
+          >
+            <Printer size={15} /> Print
+          </button>
           <button
             onClick={save}
             disabled={saving}
@@ -264,7 +315,7 @@ export default function DesignerScreen({ projectId, initialName }) {
 
         {/* right panel */}
         <aside className="w-72 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3">
-          <RightPanel state={state} dispatch={dispatch} summary={summary} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} onPrint={openPrint} />
         </aside>
 
         {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
@@ -278,11 +329,19 @@ export default function DesignerScreen({ projectId, initialName }) {
           </aside>
         )}
       </div>
+      {printOpen && (design.sheets || []).length > 0 && (
+        <PrintSheetOverlay
+          design={design}
+          sheets={design.sheets}
+          initialSheetId={printSheetId}
+          onClose={() => setPrintOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
-function RightPanel({ state, dispatch, summary }) {
+function RightPanel({ state, dispatch, summary, onPrint }) {
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate } = state;
 
   // Scale calibration for the background underlay (Visio trace-over workflow).
@@ -338,7 +397,7 @@ function RightPanel({ state, dispatch, summary }) {
   }
 
   if (selection) {
-    return <SelectionPanel state={state} dispatch={dispatch} />;
+    return <SelectionPanel state={state} dispatch={dispatch} onPrint={onPrint} />;
   }
 
   // default: design summary + settings
@@ -360,6 +419,7 @@ function RightPanel({ state, dispatch, summary }) {
         <div className="flex justify-between"><dt>Piping symbols</dt><dd>{summary.pipingSymbolCount}</dd></div>
       </dl>
       <LayerToggles state={state} dispatch={dispatch} />
+      <SheetsSection design={design} dispatch={dispatch} selection={selection} onPrint={onPrint} />
       <h2 className="mb-2 text-sm font-semibold text-white">Settings</h2>
       <label className="mb-2 block text-xs text-gray-400">
         Wall height
@@ -548,38 +608,129 @@ function LayerToggles({ state, dispatch }) {
 // with opacity, lock, scale calibration, and removal. Stored in the design
 // document as a data URL (Phase 1); a Supabase Storage migration is the
 // follow-up if images get large.
+/** Printable paper sheets: add/select/print/delete sheet frames. */
+function SheetsSection({ design, dispatch, selection, onPrint }) {
+  const sheets = design.sheets || [];
+  const [sizeId, setSizeId] = useState("letter");
+  const [orientation, setOrientation] = useState("portrait");
+  return (
+    <div className="mb-4">
+      <h2 className="mb-2 text-sm font-semibold text-white">Paper sheets</h2>
+      <p className="mb-2 text-[11px] text-gray-500">
+        WYSIWYG print area. Drag the dashed frame on the plan to reposition it.
+      </p>
+      <div className="mb-2 flex gap-2">
+        <select
+          value={sizeId}
+          onChange={(e) => setSizeId(e.target.value)}
+          className="min-w-0 flex-1 rounded bg-gray-800 px-2 py-1 text-xs text-white"
+          aria-label="Sheet size"
+        >
+          {SHEET_CATALOG.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label} {s.widthIn}″ × {s.heightIn}″
+            </option>
+          ))}
+        </select>
+        <div className="flex shrink-0 overflow-hidden rounded border border-gray-700">
+          {SHEET_ORIENTATIONS.map((o) => (
+            <button
+              key={o}
+              onClick={() => setOrientation(o)}
+              className={`px-2 py-1 text-xs capitalize ${
+                orientation === o ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+              }`}
+            >
+              {o}
+            </button>
+          ))}
+        </div>
+      </div>
+      <button
+        onClick={() => dispatch({ type: "ADD_SHEET", sizeId, orientation })}
+        className="mb-2 flex w-full items-center justify-center gap-1 rounded bg-gray-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-700"
+      >
+        <SquareDashed size={14} /> Add sheet
+      </button>
+      {sheets.length === 0 ? (
+        <p className="text-[11px] text-gray-600">No sheets yet — add one to print this design.</p>
+      ) : (
+        <ul className="space-y-1">
+          {sheets.map((s) => {
+            const active = selection?.kind === "sheet" && selection?.id === s.id;
+            return (
+              <li
+                key={s.id}
+                className={`flex items-center gap-1 rounded border px-2 py-1 ${
+                  active ? "border-cyan-500 bg-cyan-900/30" : "border-gray-700 bg-gray-800"
+                }`}
+              >
+                <button
+                  onClick={() => dispatch({ type: "SELECT", selection: { kind: "sheet", id: s.id } })}
+                  className="min-w-0 flex-1 truncate text-left text-xs text-gray-200"
+                  title={`${sheetSizeLabel(s.sizeId, s.orientation)} · ${fitScaleLabel(s.fitScale)}`}
+                >
+                  {sheetSizeLabel(s.sizeId, s.orientation)}
+                  <span className="block text-[10px] text-gray-500">{fitScaleLabel(s.fitScale)}</span>
+                </button>
+                <button
+                  onClick={() => onPrint(s.id)}
+                  title="Print this sheet"
+                  className="rounded p-1 text-gray-400 hover:bg-gray-700 hover:text-white"
+                >
+                  <Printer size={13} />
+                </button>
+                <button
+                  onClick={() =>
+                    dispatch({
+                      type: "UPDATE_SHEET_FORMAT",
+                      sheetId: s.id,
+                      orientation: s.orientation === "portrait" ? "landscape" : "portrait",
+                    })
+                  }
+                  title="Rotate orientation"
+                  className="rounded p-1 text-gray-400 hover:bg-gray-700 hover:text-white"
+                >
+                  <RotateCw size={13} />
+                </button>
+                <button
+                  onClick={() => dispatch({ type: "DELETE_SHEET", sheetId: s.id })}
+                  title="Delete sheet"
+                  className="rounded p-1 text-gray-400 hover:bg-red-900 hover:text-red-200"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function UnderlaySection({ design, dispatch }) {
   const u = design.underlay;
   const [importError, setImportError] = useState(null);
 
-  const onFile = (file) => {
+  const onFile = async (file) => {
     setImportError(null);
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       setImportError("Please choose an image file (PNG, JPG, WebP, GIF, TIFF, or BMP).");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result;
-      const img = new Image();
-      img.onload = () => {
-        dispatch({
-          type: "SET_UNDERLAY",
-          underlay: {
-            name: file.name,
-            mimeType: file.type,
-            dataUrl,
-            widthPx: img.naturalWidth,
-            heightPx: img.naturalHeight,
-          },
-        });
-      };
-      img.onerror = () => setImportError("Could not read that image.");
-      img.src = dataUrl;
-    };
-    reader.onerror = () => setImportError("Could not read that file.");
-    reader.readAsDataURL(file);
+    try {
+      // The single underlay import path: every format decodes to a PNG data
+      // URL + pixel dimensions (TIFF via UTIF, the rest natively).
+      const decoded = await decodeUnderlayFile(file);
+      dispatch({
+        type: "SET_UNDERLAY",
+        underlay: { name: file.name, ...decoded },
+      });
+    } catch (err) {
+      setImportError(err?.message || "Could not read that image.");
+    }
   };
 
   return (
@@ -592,13 +743,14 @@ function UnderlaySection({ design, dispatch }) {
             Import background
             <input
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif,image/tiff,image/bmp"
+              accept={UNDERLAY_ACCEPT}
               className="hidden"
               onChange={(e) => onFile(e.target.files?.[0])}
             />
           </label>
           <p className="mt-1 text-[11px] text-gray-500">
-            PNG/JPG plot plan to trace over. Calibrate its scale after importing.
+            {UNDERLAY_ACCEPT_LABEL} plot plan to trace over (screen-capture exports included).
+            Calibrate its scale after importing.
           </p>
         </div>
       ) : (
@@ -764,8 +916,47 @@ function ArrangePanel({ state, dispatch }) {
   );
 }
 
-function SelectionPanel({ state, dispatch }) {
+function SelectionPanel({ state, dispatch, onPrint }) {
   const { design, selection } = state;
+  if (selection.kind === "sheet") {
+    const sheet = (design.sheets || []).find((s) => s.id === selection.id);
+    if (!sheet) return null;
+    const bounds = sheetPlanBounds(sheet);
+    return (
+      <PanelShell title="Paper sheet" onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
+        <Row label="Size" value={sheetSizeLabel(sheet.sizeId, sheet.orientation)} />
+        <Row
+          label="Plan area"
+          value={`${Math.round(bounds.widthIn)}″ × ${Math.round(bounds.heightIn)}″`}
+        />
+        <p className="text-xs text-gray-300">{fitScaleLabel(sheet.fitScale)}</p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => onPrint(sheet.id)}
+            className="flex items-center gap-1 rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500"
+          >
+            <Printer size={13} /> Print sheet…
+          </button>
+          <button
+            onClick={() =>
+              dispatch({
+                type: "UPDATE_SHEET_FORMAT",
+                sheetId: sheet.id,
+                orientation: sheet.orientation === "portrait" ? "landscape" : "portrait",
+              })
+            }
+            className="flex items-center gap-1 rounded bg-gray-800 px-3 py-1.5 text-xs text-white hover:bg-gray-700"
+          >
+            <RotateCw size={13} /> Rotate
+          </button>
+        </div>
+        <p className="text-[11px] text-gray-500">
+          Drag the dashed frame on the plan to reposition it. The frame&apos;s area and scale are
+          fixed — only content inside the frame prints.
+        </p>
+      </PanelShell>
+    );
+  }
   if (selection.kind === "wall") {
     const wall = design.walls.find((w) => w.id === selection.id);
     if (!wall) return null;

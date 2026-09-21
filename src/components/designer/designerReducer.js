@@ -8,6 +8,7 @@ import {
   addPerson,
   addPipeRun,
   addRoomFromTemplate,
+  addSheet,
   addWall,
   addWallRect,
   calibrateUnderlay,
@@ -17,16 +18,19 @@ import {
   deleteOrgChart,
   deletePipeRun,
   deleteRoom,
+  deleteSheet,
   deleteSymbol,
   deleteWall,
   findOrgChart,
   findPipeRun,
+  findSheet,
   findSymbolInstance,
   moveFurniture,
   moveFurnitureMany,
   moveOpening,
   moveOrgChart,
   movePipeVertex,
+  moveSheet,
   moveSymbol,
   moveUnderlay,
   moveWallEndpoint,
@@ -51,6 +55,7 @@ import {
   setWallMaterial,
   updateDesignSettings,
   updatePerson,
+  updateSheetFormat,
   updateUnderlay,
 } from "@/domains/roomDesigner/designerDocument";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
@@ -90,6 +95,10 @@ export function createInitialState(design) {
     calibration: null, // scale-calibration clicks: { a: point, b?: point }
     view: "2d",
     dirty: false,
+    // Undo/redo stacks hold design snapshots; see touch(). Drag gestures pass
+    // action.coalesce so a whole drag collapses into one undo step.
+    past: [],
+    future: [],
     // Monotonic revision of the design document: every mutation bumps it, and
     // MARK_SAVED clears `dirty` only when the completed save's revision is
     // still current -- edits made while a save was in flight stay dirty.
@@ -97,18 +106,41 @@ export function createInitialState(design) {
   };
 }
 
-/** Designs saved before piping/org-charts existed lack the new arrays; default them. */
+/** Designs saved before piping/org-charts/sheets existed lack the new arrays; default them. */
 function withPipeDefaults(design) {
-  return { pipes: [], symbols: [], orgCharts: [], ...design };
+  return { pipes: [], symbols: [], orgCharts: [], sheets: [], ...design };
 }
 
-function touch(state, design) {
+/**
+ * Apply a design change: flag dirty, bump the revision, and record the
+ * previous design on the undo stack. Consecutive dispatches carrying the
+ * same coalesceKey (one drag gesture) reuse the top stack entry instead of
+ * pushing a new one, so a drag is a single undo step. Any non-coalesced
+ * edit clears the redo stack.
+ */
+function touch(state, design, coalesceKey) {
+  const past = state.past || [];
+  if (
+    coalesceKey != null &&
+    past.length > 0 &&
+    past[past.length - 1].coalesceKey === coalesceKey
+  ) {
+    return {
+      ...state,
+      design,
+      dirty: true,
+      selection: state.selection,
+      designRevision: state.designRevision + 1,
+    };
+  }
   return {
     ...state,
     design,
     dirty: true,
     selection: state.selection,
     designRevision: state.designRevision + 1,
+    past: [...past, { design: state.design, coalesceKey }],
+    future: [],
   };
 }
 
@@ -142,6 +174,36 @@ export function designerReducer(state, action) {
   switch (action.type) {
     case "LOAD_DESIGN":
       return { ...createInitialState(action.design), view: state.view };
+    case "UNDO": {
+      const past = state.past || [];
+      if (past.length === 0) return state;
+      const prev = past[past.length - 1];
+      return {
+        ...state,
+        design: prev.design,
+        past: past.slice(0, -1),
+        future: [{ design: state.design }, ...(state.future || [])],
+        dirty: true,
+        designRevision: state.designRevision + 1,
+        selection: null,
+        multiSelection: [],
+      };
+    }
+    case "REDO": {
+      const future = state.future || [];
+      if (future.length === 0) return state;
+      const next = future[0];
+      return {
+        ...state,
+        design: next.design,
+        past: [...(state.past || []), { design: state.design, coalesceKey: null }],
+        future: future.slice(1),
+        dirty: true,
+        designRevision: state.designRevision + 1,
+        selection: null,
+        multiSelection: [],
+      };
+    }
     case "SET_TOOL":
       if (!TOOLS.includes(action.tool)) return state;
       return {
@@ -211,6 +273,7 @@ export function designerReducer(state, action) {
       return touch(
         state,
         moveWallEndpoint(state.design, action.wallId, action.end, action.point),
+        action.coalesce,
       );
     case "ADD_ROOM":
       return touch(state, addRoomFromTemplate(state.design, action.templateId, action.at));
@@ -226,7 +289,11 @@ export function designerReducer(state, action) {
         }),
       );
     case "MOVE_OPENING":
-      return touch(state, moveOpening(state.design, action.openingId, action.offsetIn));
+      return touch(
+        state,
+        moveOpening(state.design, action.openingId, action.offsetIn),
+        action.coalesce,
+      );
     case "RESIZE_OPENING":
       return touch(state, resizeOpening(state.design, action.openingId, action.widthIn));
     case "DELETE_OBJECT": {
@@ -240,6 +307,7 @@ export function designerReducer(state, action) {
       else if (target.kind === "pipe") design = deletePipeRun(design, target.id);
       else if (target.kind === "symbol") design = deleteSymbol(design, target.id);
       else if (target.kind === "orgchart") design = deleteOrgChart(design, target.id);
+      else if (target.kind === "sheet") design = deleteSheet(design, target.id);
       return { ...touch(state, design), selection: null, multiSelection: pruneMulti(design, state.multiSelection) };
     }
     case "DELETE_SELECTION": {
@@ -254,6 +322,7 @@ export function designerReducer(state, action) {
         else if (sel.kind === "pipe") design = deletePipeRun(design, sel.id);
         else if (sel.kind === "symbol") design = deleteSymbol(design, sel.id);
         else if (sel.kind === "orgchart") design = deleteOrgChart(design, sel.id);
+        else if (sel.kind === "sheet") design = deleteSheet(design, sel.id);
       }
       for (const m of state.multiSelection) {
         if (design.furniture.some((f) => f.id === m.id)) design = deleteFurniture(design, m.id);
@@ -268,13 +337,18 @@ export function designerReducer(state, action) {
         ),
       );
     case "MOVE_FURNITURE":
-      return touch(state, moveFurniture(state.design, action.furnitureId, action.x, action.y));
+      return touch(
+        state,
+        moveFurniture(state.design, action.furnitureId, action.x, action.y),
+        action.coalesce,
+      );
     case "ROTATE_FURNITURE":
       return touch(state, rotateFurniture(state.design, action.furnitureId, action.rotationDeg));
     case "RESIZE_FURNITURE":
       return touch(
         state,
         resizeFurniture(state.design, action.furnitureId, action.widthIn, action.depthIn),
+        action.coalesce,
       );
     case "RESET_FURNITURE_SIZE":
       return touch(state, resetFurnitureSize(state.design, action.furnitureId));
@@ -303,6 +377,7 @@ export function designerReducer(state, action) {
       return touch(
         state,
         movePipeVertex(state.design, action.pipeId, action.index, action.point),
+        action.coalesce,
       );
     case "PLACE_SYMBOL": {
       const pending = state.pendingSymbol;
@@ -320,7 +395,11 @@ export function designerReducer(state, action) {
     }
     case "MOVE_SYMBOL":
       if (!findSymbolInstance(state.design, action.symbolId)) return state;
-      return touch(state, moveSymbol(state.design, action.symbolId, action.x, action.y));
+      return touch(
+        state,
+        moveSymbol(state.design, action.symbolId, action.x, action.y),
+        action.coalesce,
+      );
     case "ROTATE_SYMBOL":
       if (!findSymbolInstance(state.design, action.symbolId)) return state;
       return touch(state, rotateSymbol(state.design, action.symbolId, action.rotationDeg));
@@ -344,7 +423,11 @@ export function designerReducer(state, action) {
     }
     case "MOVE_ORG_CHART":
       if (!findOrgChart(state.design, action.chartId)) return state;
-      return touch(state, moveOrgChart(state.design, action.chartId, action.x, action.y));
+      return touch(
+        state,
+        moveOrgChart(state.design, action.chartId, action.x, action.y),
+        action.coalesce,
+      );
     case "RENAME_ORG_CHART":
       if (!findOrgChart(state.design, action.chartId)) return state;
       return touch(state, renameOrgChart(state.design, action.chartId, action.name));
@@ -401,7 +484,41 @@ export function designerReducer(state, action) {
         tool: state.tool === "calibrate" ? "select" : state.tool,
       };
     case "MOVE_UNDERLAY":
-      return touch(state, moveUnderlay(state.design, action.x, action.y));
+      return touch(state, moveUnderlay(state.design, action.x, action.y), action.coalesce);
+    // ---- Printable paper sheets ----
+    case "ADD_SHEET": {
+      const design = addSheet(state.design, action.sizeId, action.orientation, {
+        x: action.x,
+        y: action.y,
+      });
+      const sheet = design.sheets[design.sheets.length - 1];
+      return { ...touch(state, design), selection: { kind: "sheet", id: sheet.id } };
+    }
+    case "MOVE_SHEET": {
+      if (!findSheet(state.design, action.sheetId)) return state;
+      return touch(
+        state,
+        moveSheet(state.design, action.sheetId, action.x, action.y),
+        action.coalesce,
+      );
+    }
+    case "DELETE_SHEET": {
+      if (!findSheet(state.design, action.sheetId)) return state;
+      return {
+        ...touch(state, deleteSheet(state.design, action.sheetId)),
+        selection: null,
+      };
+    }
+    case "UPDATE_SHEET_FORMAT": {
+      if (!findSheet(state.design, action.sheetId)) return state;
+      return touch(
+        state,
+        updateSheetFormat(state.design, action.sheetId, {
+          sizeId: action.sizeId,
+          orientation: action.orientation,
+        }),
+      );
+    }
     case "ADD_CALIBRATION_POINT": {
       if (!state.design.underlay) return state;
       const cal = state.calibration;

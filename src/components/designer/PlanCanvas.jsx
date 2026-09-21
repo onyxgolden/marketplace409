@@ -30,8 +30,11 @@ import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgCha
 import {
   FURNITURE_MAX_SIZE_IN,
   FURNITURE_MIN_SIZE_IN,
+  fitScaleLabel,
   pieceSize,
+  sheetPlanBounds,
 } from "@/domains/roomDesigner/designerDocument";
+import { getSheetSize } from "@/domains/roomDesigner/sheetCatalog";
 
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 12;
@@ -181,6 +184,24 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           plan.y <= chart.y + h + tolIn
         ) {
           return { kind: "orgchart", id: chart.id };
+        }
+      }
+      // Printable sheets: hit the frame edges only (not the interior), so a
+      // sheet covering the plan never swallows clicks meant for the content
+      // inside it. Sheets sit below walls/openings in hit priority.
+      for (let i = (design.sheets || []).length - 1; i >= 0; i -= 1) {
+        const sheet = design.sheets[i];
+        const b = sheetPlanBounds(sheet);
+        const corners = [
+          { x: b.x, y: b.y },
+          { x: b.x + b.widthIn, y: b.y },
+          { x: b.x + b.widthIn, y: b.y + b.heightIn },
+          { x: b.x, y: b.y + b.heightIn },
+        ];
+        for (let k = 1; k <= 4; k += 1) {
+          if (distancePointToSegment(plan, corners[k - 1], corners[k % 4]) < tolIn + 4) {
+            return { kind: "sheet", id: sheet.id };
+          }
         }
       }
       // openings (gaps on walls)
@@ -389,6 +410,15 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       setDrag({ kind: "move-orgchart", id: hit.id, moved: false });
       return;
     }
+    // Printable sheet — click to select, drag the frame edges to reposition.
+    if (hit?.kind === "sheet") {
+      const sheet = (design.sheets || []).find((s) => s.id === hit.id);
+      dispatch({ type: "SELECT", selection: hit });
+      if (sheet) {
+        setDrag({ kind: "move-sheet", id: hit.id, dx: plan.x - sheet.x, dy: plan.y - sheet.y });
+      }
+      return;
+    }
     // Phase 2: pipe vertex handles — drag a vertex of the selected run.
     if (selection?.kind === "pipe") {
       const run = (design.pipes || []).find((p) => p.id === selection.id);
@@ -458,29 +488,35 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         snapTargets: snapTargetsExcluding(drag.exclude),
         snapRadiusIn: 9,
       });
-      dispatch({ type: "MOVE_WALL_ENDPOINT", wallId: drag.wallId, end: drag.end, point });
+      dispatch({ type: "MOVE_WALL_ENDPOINT", wallId: drag.wallId, end: drag.end, point, coalesce: `move-wall-endpoint:${drag.wallId}:${drag.end}` });
       return;
     }
     if (drag.kind === "move-furniture") {
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
-      dispatch({ type: "MOVE_FURNITURE", furnitureId: drag.id, x: point.x, y: point.y });
+      dispatch({ type: "MOVE_FURNITURE", furnitureId: drag.id, x: point.x, y: point.y, coalesce: `move-furniture:${drag.id}` });
       setDrag({ ...drag, moved: true });
     }
     // Phase 2: piping mode drags.
     if (drag.kind === "move-pipe-vertex") {
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
-      dispatch({ type: "MOVE_PIPE_VERTEX", pipeId: drag.pipeId, index: drag.index, point });
+      dispatch({ type: "MOVE_PIPE_VERTEX", pipeId: drag.pipeId, index: drag.index, point, coalesce: `move-pipe-vertex:${drag.pipeId}:${drag.index}` });
     }
     if (drag.kind === "move-symbol") {
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
-      dispatch({ type: "MOVE_SYMBOL", symbolId: drag.id, x: point.x, y: point.y });
+      dispatch({ type: "MOVE_SYMBOL", symbolId: drag.id, x: point.x, y: point.y, coalesce: `move-symbol:${drag.id}` });
       setDrag({ ...drag, moved: true });
     }
     // Phase 3: org chart drag — the whole diagram moves; people keep their
     // tree positions (layout is derived, never stored).
     if (drag.kind === "move-orgchart") {
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
-      dispatch({ type: "MOVE_ORG_CHART", chartId: drag.id, x: point.x, y: point.y });
+      dispatch({ type: "MOVE_ORG_CHART", chartId: drag.id, x: point.x, y: point.y, coalesce: `move-orgchart:${drag.id}` });
+      setDrag({ ...drag, moved: true });
+    }
+    // Printable sheet drag — free positioning (no snap); the frame's plan
+    // region and fit scale stay fixed while it moves.
+    if (drag.kind === "move-sheet") {
+      dispatch({ type: "MOVE_SHEET", sheetId: drag.id, x: plan.x - drag.dx, y: plan.y - drag.dy, coalesce: `move-sheet:${drag.id}` });
       setDrag({ ...drag, moved: true });
     }
     if (drag.kind === "resize-furniture") {
@@ -509,12 +545,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         ) {
           return;
         }
-        dispatch({ type: "RESIZE_FURNITURE", furnitureId: piece.id, widthIn, depthIn });
+        dispatch({ type: "RESIZE_FURNITURE", furnitureId: piece.id, widthIn, depthIn, coalesce: `resize-furniture:${piece.id}` });
       }
     }
     if (drag.kind === "move-underlay") {
       // Raw position (no snap) so the image can be aligned to its own features.
-      dispatch({ type: "MOVE_UNDERLAY", x: plan.x - drag.dx, y: plan.y - drag.dy });
+      dispatch({ type: "MOVE_UNDERLAY", x: plan.x - drag.dx, y: plan.y - drag.dy, coalesce: "move-underlay" });
     }
   };
 
@@ -852,6 +888,31 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     });
   };
 
+  // Printable paper sheet — WYSIWYG frame: dashed outline at the exact plan
+  // region the sheet will print, with its size/orientation/fit-scale label.
+  // pointerEvents="none": hit-testing is done manually in plan space so the
+  // frame never swallows clicks meant for content inside it.
+  const renderSheet = (sheet) => {
+    const isSelected = selection?.kind === "sheet" && selection?.id === sheet.id;
+    const b = sheetPlanBounds(sheet);
+    const tl = toScreen({ x: b.x, y: b.y });
+    const w = b.widthIn * view.scale;
+    const h = b.heightIn * view.scale;
+    const stroke = isSelected ? "#f59e0b" : "#22d3ee";
+    return (
+      <g key={sheet.id} pointerEvents="none">
+        <rect
+          x={tl.x} y={tl.y} width={w} height={h}
+          fill="none" stroke={stroke} strokeWidth={isSelected ? 3 : 2}
+          strokeDasharray="12 8"
+        />
+        <text x={tl.x + 10} y={tl.y - 10} fontSize={13} fontWeight={700} fill={stroke}>
+          {`${getSheetSize(sheet.sizeId).label} · ${sheet.orientation} · ${fitScaleLabel(sheet.fitScale)}`}
+        </text>
+      </g>
+    );
+  };
+
   // In-progress pipe run: committed vertices, rubber band to the cursor,
   // and the running centerline length.
   const renderPipePreview = () => {
@@ -1037,6 +1098,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {design.furniture.map(renderFurniture)}
         {(design.symbols || []).map(renderPipingSymbol)}
         {(design.orgCharts || []).map(renderOrgChart)}
+        {(design.sheets || []).map(renderSheet)}
         {renderPipePreview()}
         {renderResizeHandles()}
         {renderCalibrationMarkers()}
