@@ -114,6 +114,17 @@ describe("createAuthenticatedConnectionApplication", () => {
         "supabase",
     });
 
+    // The injected SDK must be the real plaid module surface (the single
+    // static link to the ~17MB SDK), not a stub -- every Plaid entry point
+    // depends on this wiring.
+    const [suiteArgs] =
+      mocks.createConnectionPlatformSuite.mock.calls[0];
+    expect(suiteArgs.plaidSdk).toMatchObject({
+      Configuration: expect.any(Function),
+      PlaidApi: expect.any(Function),
+      PlaidEnvironments: expect.any(Object),
+    });
+
     await expect(
       result.currentOwnerId(),
     ).resolves.toBe("owner-1");
