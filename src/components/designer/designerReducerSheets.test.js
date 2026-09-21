@@ -186,3 +186,23 @@ describe("drag coalescing", () => {
     expect(s.design.walls[0].b.x).toBe(10);
   });
 });
+
+describe("UPDATE_SHEET header/footer in the reducer", () => {
+  it("patches header and footer, marks dirty, and ignores unknown sheet ids", () => {
+    let s = reduce(fresh(), { type: "ADD_SHEET", sizeId: "letter", orientation: "portrait" });
+    const id = s.design.sheets[0].id;
+    s = reduce(s, { type: "MARK_SAVED", savedRevision: s.designRevision });
+    s = reduce(s, {
+      type: "UPDATE_SHEET",
+      sheetId: id,
+      patch: { header: { title: "Site Plan" }, footer: { left: "Drawn by Jason" } },
+    });
+    expect(s.dirty).toBe(true);
+    expect(s.design.sheets[0].header.title).toBe("Site Plan");
+    expect(s.design.sheets[0].footer.left).toBe("Drawn by Jason");
+    // Unknown sheet id: state returned untouched.
+    const before = s;
+    s = reduce(s, { type: "UPDATE_SHEET", sheetId: "missing", patch: { header: { title: "x" } } });
+    expect(s).toBe(before);
+  });
+});

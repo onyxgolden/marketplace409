@@ -2,8 +2,12 @@
 // region and fit scale once; later edits never silently alter them.
 
 import {
+  SHEET_LOGO_MAX_BYTES,
+  SHEET_PNG_DATA_URL_PREFIX,
   addSheet,
   createEmptyDesign,
+  defaultSheetFooter,
+  defaultSheetHeader,
   deleteSheet,
   designContentBounds,
   computeFitScale,
@@ -11,7 +15,10 @@ import {
   fitScaleLabel,
   moveSheet,
   addWall,
+  patchSheet,
   sheetsOf,
+  sheetFooterOf,
+  sheetHeaderOf,
   sheetPlanBounds,
   updateDesignSettings,
   updateSheetFormat,
@@ -287,5 +294,107 @@ describe("sheet grid snapping", () => {
     const design = addSheet(wide, "letter", "portrait", { x: 14, y: 14 });
     expect(design.sheets[0].x).toBe(12);
     expect(design.sheets[0].y).toBe(12);
+  });
+});
+
+describe("sheet header/footer", () => {
+  const designWithWall = () =>
+    addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 200, y: 100 });
+  const png = (n = 100) => `${SHEET_PNG_DATA_URL_PREFIX}${"A".repeat(n)}`;
+
+  it("gives new sheets empty headers and footers", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    expect(design.sheets[0].header).toEqual(defaultSheetHeader());
+    expect(design.sheets[0].footer).toEqual(defaultSheetFooter());
+  });
+
+  it("reads legacy sheets (no header/footer keys) as empty", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const legacy = { ...design.sheets[0] };
+    delete legacy.header;
+    delete legacy.footer;
+    expect(sheetHeaderOf(legacy)).toEqual(defaultSheetHeader());
+    expect(sheetFooterOf(legacy)).toEqual(defaultSheetFooter());
+  });
+
+  it("patches header labels and footer columns, keeping other fields", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    const patched = patchSheet(design, id, {
+      header: { title: "Site Plan" },
+      footer: { left: "Drawn by Jason", right: "Page 1" },
+    });
+    const sheet = findSheet(patched, id);
+    expect(sheet.header).toEqual({ title: "Site Plan", subtitle: "", logo: null });
+    expect(sheet.footer).toEqual({ left: "Drawn by Jason", center: "", right: "Page 1" });
+    // A second partial patch keeps the first edit's values.
+    const again = patchSheet(patched, id, { header: { subtitle: "Lot 4" } });
+    expect(findSheet(again, id).header).toEqual({
+      title: "Site Plan",
+      subtitle: "Lot 4",
+      logo: null,
+    });
+  });
+
+  it("stores a PNG logo data URL and clears it back to null", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    const withLogo = patchSheet(design, id, { header: { logo: png() } });
+    expect(findSheet(withLogo, id).header.logo).toBe(png());
+    const cleared = patchSheet(withLogo, id, { header: { logo: null } });
+    expect(findSheet(cleared, id).header.logo).toBe(null);
+  });
+
+  it("rejects non-PNG data URLs and remote logo URLs", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    expect(() => patchSheet(design, id, { header: { logo: "data:image/jpeg;base64,AAAA" } })).toThrow(
+      /PNG data URL/,
+    );
+    expect(() => patchSheet(design, id, { header: { logo: "https://example.com/logo.png" } })).toThrow(
+      /PNG data URL/,
+    );
+  });
+
+  it("rejects logos at or over the 1.5 MB budget", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    const tooBig = `${SHEET_PNG_DATA_URL_PREFIX}${"A".repeat(SHEET_LOGO_MAX_BYTES)}`;
+    expect(() => patchSheet(design, id, { header: { logo: tooBig } })).toThrow(/1\.5 MB/);
+    // Just under the budget is accepted.
+    const ok = `${SHEET_PNG_DATA_URL_PREFIX}${"A".repeat(SHEET_LOGO_MAX_BYTES - 100)}`;
+    expect(findSheet(patchSheet(design, id, { header: { logo: ok } }), id).header.logo).toBe(ok);
+  });
+
+  it("rejects non-string labels and unknown patch fields", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    expect(() => patchSheet(design, id, { header: { title: 42 } })).toThrow(/must be a string/);
+    expect(() => patchSheet(design, id, { footer: { center: null } })).not.toThrow();
+    expect(() => patchSheet(design, id, { footer: { center: { text: "x" } } })).toThrow(
+      /must be a string/,
+    );
+    expect(() => patchSheet(design, id, { banner: "hi" })).toThrow(/Unknown sheet patch field/);
+    expect(() => patchSheet(design, id, null)).toThrow(/must be an object/);
+  });
+
+  it("rejects patches for unknown sheets and leaves the design untouched on failure", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    expect(() => patchSheet(design, "nope", { header: { title: "x" } })).toThrow(/Unknown sheet/);
+    const before = JSON.stringify(design.sheets);
+    expect(() => patchSheet(design, design.sheets[0].id, { header: { title: 7 } })).toThrow();
+    expect(JSON.stringify(design.sheets)).toBe(before);
+  });
+
+  it("round-trips header/footer through JSON unchanged", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    const patched = patchSheet(design, id, {
+      header: { title: "Site Plan", subtitle: "Lot 4", logo: png() },
+      footer: { left: "A", center: "B", right: "C" },
+    });
+    const reloaded = JSON.parse(JSON.stringify(patched));
+    expect(reloaded.sheets[0].header).toEqual(patched.sheets[0].header);
+    expect(reloaded.sheets[0].footer).toEqual(patched.sheets[0].footer);
   });
 });

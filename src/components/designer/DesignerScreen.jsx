@@ -25,6 +25,7 @@ import {
   Square,
   SquareDashed,
   Trash2,
+  Type,
   Undo2,
   Upload,
   ZoomIn,
@@ -40,7 +41,7 @@ import FurnitureCatalogPanel from "./FurnitureCatalogPanel";
 import { createInitialState, designerReducer } from "./designerReducer";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
-import { ROOM_TEMPLATES, fitScaleLabel, pieceSize, sheetPlanBounds } from "@/domains/roomDesigner/designerDocument";
+import { ROOM_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds } from "@/domains/roomDesigner/designerDocument";
 import { SHEET_CATALOG, SHEET_ORIENTATIONS, sheetSizeLabel } from "@/domains/roomDesigner/sheetCatalog";
 import { feetInchesLabel, parseDimensionInput, wallLength } from "@/domains/roomDesigner/designerGeometry";
 import {
@@ -660,10 +661,11 @@ function SheetsSection({ design, dispatch, selection, onPrint, onZoomToSheet }) 
             return (
               <li
                 key={s.id}
-                className={`flex items-center gap-1 rounded border px-2 py-1 ${
+                className={`rounded border ${
                   active ? "border-cyan-500 bg-cyan-900/30" : "border-gray-700 bg-gray-800"
                 }`}
               >
+                <div className="flex items-center gap-1 px-2 py-1">
                 <button
                   onClick={() => dispatch({ type: "SELECT", selection: { kind: "sheet", id: s.id } })}
                   className="min-w-0 flex-1 truncate text-left text-xs text-gray-200"
@@ -706,6 +708,14 @@ function SheetsSection({ design, dispatch, selection, onPrint, onZoomToSheet }) 
                 >
                   <Trash2 size={13} />
                 </button>
+                </div>
+                {active && (
+                  <SheetHeaderFooterEditor
+                    design={design}
+                    sheet={s}
+                    onPatch={(patch) => dispatch({ type: "UPDATE_SHEET", sheetId: s.id, patch })}
+                  />
+                )}
               </li>
             );
           })}
@@ -715,9 +725,173 @@ function SheetsSection({ design, dispatch, selection, onPrint, onZoomToSheet }) 
   );
 }
 
+// Per-sheet header/footer editor: title, subtitle, optional PNG logo, and
+// left/center/right footer labels. Collapsible inside the selected sheet row.
+// Label edits commit on blur (one undo step per edit); the logo is picked
+// from a local PNG file, validated before it ever reaches the document.
+function SheetHeaderFooterEditor({ design, sheet, onPatch }) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState(null);
+  const [draft, setDraft] = useState(null); // { kind, field, value } while typing
+  const fileRef = useRef(null);
+  const header = sheetHeaderOf(sheet);
+  const footer = sheetFooterOf(sheet);
+
+  // Validate against the domain rules without persisting: reducer errors
+  // surface during render, so check first and only dispatch valid patches.
+  const applyPatch = (patch) => {
+    try {
+      patchSheet(design, sheet.id, patch);
+    } catch (e) {
+      setError(e.message);
+      return;
+    }
+    setError(null);
+    onPatch(patch);
+  };
+
+  const storedValue = (kind, field) => (kind === "header" ? header[field] : footer[field]);
+  const fieldValue = (kind, field) =>
+    draft && draft.kind === kind && draft.field === field
+      ? draft.value
+      : storedValue(kind, field);
+
+  const commitField = (kind, field) => {
+    if (!draft || draft.kind !== kind || draft.field !== field) return;
+    setDraft(null);
+    if (draft.value === storedValue(kind, field)) return;
+    applyPatch({ [kind]: { [field]: draft.value } });
+  };
+
+  const fieldProps = (kind, field) => ({
+    value: fieldValue(kind, field),
+    onChange: (e) => setDraft({ kind, field, value: e.target.value }),
+    onBlur: () => commitField(kind, field),
+    onKeyDown: (e) => {
+      if (e.key === "Enter") e.currentTarget.blur();
+    },
+  });
+
+  const inputClass =
+    "w-full rounded bg-gray-900 px-2 py-1 text-xs text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-cyan-600";
+
+  const onLogoFile = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    if (file.type !== "image/png") {
+      setError("Logo must be a PNG file.");
+      return;
+    }
+    if (file.size > SHEET_LOGO_MAX_BYTES) {
+      setError("Logo must be under 1.5 MB \u2014 pick a smaller PNG.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => setError("Couldn\u2019t read that PNG file.");
+    reader.onload = () => applyPatch({ header: { logo: reader.result } });
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="border-t border-gray-700 px-2 py-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1 text-[11px] font-semibold text-gray-300 hover:text-white"
+      >
+        <Type size={12} />
+        Header &amp; footer
+        <span className="text-gray-500">{open ? "\u25be" : "\u25b8"}</span>
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-1.5">
+          {error && (
+            <p role="alert" className="text-[11px] text-red-400">
+              {error}
+            </p>
+          )}
+          <label className="block text-[11px] text-gray-400">
+            Header title
+            <input
+              className={inputClass}
+              placeholder="e.g. Site Plan"
+              maxLength={200}
+              {...fieldProps("header", "title")}
+            />
+          </label>
+          <label className="block text-[11px] text-gray-400">
+            Header subtitle
+            <input
+              className={inputClass}
+              placeholder="e.g. 123 Main St \u2014 Lot 4"
+              maxLength={200}
+              {...fieldProps("header", "subtitle")}
+            />
+          </label>
+          <div>
+            <div className="mb-1 text-[11px] text-gray-400">Header logo (PNG)</div>
+            {header.logo ? (
+              <div className="flex items-center gap-2">
+                {/* eslint-disable-next-line @next/next/no-img-element -- data-URL logo cannot use the Next image optimizer */}
+                <img
+                  src={header.logo}
+                  alt="Sheet logo"
+                  className="h-8 max-w-[120px] rounded bg-white object-contain px-1"
+                />
+                <button
+                  type="button"
+                  onClick={() => applyPatch({ header: { logo: null } })}
+                  className="rounded bg-gray-800 px-2 py-1 text-[11px] text-gray-300 hover:bg-gray-700 hover:text-white"
+                >
+                  Remove logo
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="rounded bg-gray-800 px-2 py-1 text-[11px] text-gray-300 hover:bg-gray-700 hover:text-white"
+              >
+                Choose PNG\u2026
+              </button>
+            )}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png"
+              className="hidden"
+              aria-label="Upload PNG logo"
+              onChange={onLogoFile}
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            {["left", "center", "right"].map((col) => (
+              <label key={col} className="block text-[11px] capitalize text-gray-400">
+                Footer {col}
+                <input
+                  className={inputClass}
+                  placeholder={col === "left" ? "Drawn by" : col === "center" ? "Page" : "Date"}
+                  maxLength={200}
+                  {...fieldProps("footer", col)}
+                />
+              </label>
+            ))}
+          </div>
+          <p className="text-[10px] leading-relaxed text-gray-600">
+            Header and footer print in the sheet margins. Empty fields keep the
+            standard strips.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function UnderlaySection({ design, dispatch }) {
-  const u = design.underlay;
-  const [importError, setImportError] = useState(null);
+  const u = design.underlay;  const [importError, setImportError] = useState(null);
 
   const onFile = async (file) => {
     setImportError(null);

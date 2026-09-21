@@ -11,7 +11,9 @@
 //     openings: [{ id, wallId, type: "door"|"window", offsetIn, widthIn }],
 //     furniture:[{ id, catalogId, x, y, rotationDeg }],
 //     sheets:   [{ id, sizeId, orientation, x, y,   // printable paper frames
-//                   planWidthIn, planHeightIn, fitScale }],
+//                   planWidthIn, planHeightIn, fitScale,
+//                   header: { title, subtitle, logo },  // PNG data URL or null
+//                   footer: { left, center, right } }],
 //     annotations: [{ id, kind: "path"|"label", points: [{x,y},...],  // VSDX import (read-only)
 //                     closed?, text?, strokeWidthIn?, source? }],
 //   }
@@ -1166,6 +1168,8 @@ export function addSheet(design, sizeId, orientation = "portrait", { x, y } = {}
     planWidthIn,
     planHeightIn,
     fitScale,
+    header: defaultSheetHeader(),
+    footer: defaultSheetFooter(),
   };
   return { ...design, sheets: [...sheetsOf(design), sheet] };
 }
@@ -1260,5 +1264,115 @@ export function updateSheetFormat(design, sheetId, { sizeId, orientation } = {})
           }
         : s,
     ),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Sheet header/footer: printable title block per sheet.
+// ---------------------------------------------------------------------------
+
+/**
+ * Logo budget: the stored PNG data URL must stay under ~1.5 MB so sheets
+ * keep saving fast. Browser-local only — logos are never uploaded anywhere.
+ */
+export const SHEET_LOGO_MAX_BYTES = 1572864; // 1.5 * 1024 * 1024
+
+/** Only PNG data URLs are accepted for sheet logos — never remote URLs. */
+export const SHEET_PNG_DATA_URL_PREFIX = "data:image/png;base64,";
+
+/** Printable label fields are capped so a runaway string can't wreck the title block. */
+export const SHEET_LABEL_MAX_LENGTH = 200;
+
+/** Fresh default header: title/subtitle labels plus an optional PNG logo. */
+export function defaultSheetHeader() {
+  return { title: "", subtitle: "", logo: null };
+}
+
+/** Fresh default footer: three free-text columns. */
+export function defaultSheetFooter() {
+  return { left: "", center: "", right: "" };
+}
+
+/**
+ * Read a sheet's header with defaults for legacy sheets that predate
+ * header/footer (they print exactly as before: no header zone).
+ */
+export function sheetHeaderOf(sheet) {
+  return { ...defaultSheetHeader(), ...(sheet?.header || {}) };
+}
+
+/** Read a sheet's footer with defaults for legacy sheets (legacy title strip). */
+export function sheetFooterOf(sheet) {
+  return { ...defaultSheetFooter(), ...(sheet?.footer || {}) };
+}
+
+function assertSheetLabel(value, field) {
+  if (typeof value !== "string") {
+    throw new Error(`${field} must be a string.`);
+  }
+  if (value.length > SHEET_LABEL_MAX_LENGTH) {
+    throw new Error(`${field} must be ${SHEET_LABEL_MAX_LENGTH} characters or fewer.`);
+  }
+}
+
+function assertSheetLogo(logo) {
+  if (logo == null) return;
+  if (typeof logo !== "string" || !logo.startsWith(SHEET_PNG_DATA_URL_PREFIX)) {
+    throw new Error("Sheet logo must be a PNG data URL.");
+  }
+  if (logo.length > SHEET_LOGO_MAX_BYTES) {
+    throw new Error("Sheet logo must be under 1.5 MB.");
+  }
+}
+
+function assertSheetHeader(header) {
+  if (!header || typeof header !== "object" || Array.isArray(header)) {
+    throw new Error("Sheet header must be an object.");
+  }
+  assertSheetLabel(header.title ?? "", "Header title");
+  assertSheetLabel(header.subtitle ?? "", "Header subtitle");
+  assertSheetLogo(header.logo ?? null);
+}
+
+function assertSheetFooter(footer) {
+  if (!footer || typeof footer !== "object" || Array.isArray(footer)) {
+    throw new Error("Sheet footer must be an object.");
+  }
+  assertSheetLabel(footer.left ?? "", "Footer left");
+  assertSheetLabel(footer.center ?? "", "Footer center");
+  assertSheetLabel(footer.right ?? "", "Footer right");
+}
+
+/**
+ * Patch a sheet's header and/or footer: patch = { header?, footer? } with
+ * partial objects (missing fields keep their current values). Unknown patch
+ * keys, non-string labels, non-PNG logos, and oversized logos throw — the
+ * UI surfaces the message and nothing is persisted. Unknown sheet id throws.
+ */
+export function patchSheet(design, sheetId, patch) {
+  assertDesign(design);
+  const sheet = findSheet(design, sheetId);
+  if (!sheet) throw new Error(`Unknown sheet: ${sheetId}`);
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    throw new Error("Sheet patch must be an object.");
+  }
+  const known = new Set(["header", "footer"]);
+  for (const key of Object.keys(patch)) {
+    if (!known.has(key)) throw new Error(`Unknown sheet patch field: ${key}`);
+  }
+  const next = { ...sheet };
+  if (patch.header !== undefined) {
+    const header = { ...sheetHeaderOf(sheet), ...patch.header };
+    assertSheetHeader(header);
+    next.header = header;
+  }
+  if (patch.footer !== undefined) {
+    const footer = { ...sheetFooterOf(sheet), ...patch.footer };
+    assertSheetFooter(footer);
+    next.footer = footer;
+  }
+  return {
+    ...design,
+    sheets: sheetsOf(design).map((s) => (s.id === sheetId ? next : s)),
   };
 }

@@ -15,8 +15,11 @@
 
 import { getSheetSize, sheetDimensions } from "@/domains/roomDesigner/sheetCatalog";
 import {
+  SHEET_PNG_DATA_URL_PREFIX,
   fitScaleLabel,
   pieceSize,
+  sheetFooterOf,
+  sheetHeaderOf,
   sheetPlanBounds,
 } from "@/domains/roomDesigner/designerDocument";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
@@ -286,6 +289,11 @@ export default function SheetPrintView({ design, sheet, dateLabel }) {
   const clipId = `forge-print-clip-${sheet.id}`;
   const viewBox = `${bounds.x} ${bounds.y} ${bounds.widthIn} ${bounds.heightIn}`;
   const titleDate = dateLabel || new Date().toLocaleDateString();
+  const header = sheetHeaderOf(sheet);
+  const footer = sheetFooterOf(sheet);
+  // Legacy sheets predate header/footer: empty fields print the legacy strips.
+  const hasHeader = Boolean(header.title || header.subtitle || header.logo);
+  const hasFooter = Boolean(footer.left || footer.center || footer.right);
   return (
     <div
       className="forge-print-sheet"
@@ -317,32 +325,115 @@ export default function SheetPrintView({ design, sheet, dateLabel }) {
           <PrintOrgCharts design={design} />
         </g>
       </svg>
-      {/* Title strip lives in the bottom margin: physical units, never scaled. */}
-      <div
-        style={{
-          position: "absolute",
-          left: "0.5in",
-          right: "0.5in",
-          bottom: "0.06in",
-          height: "0.36in",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "0.25in",
-          borderTop: "1pt solid #1a1a1a",
-          fontSize: "9pt",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-        }}
-      >
-        <span style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>
-          {design.name}
-        </span>
-        <span>
-          {getSheetSize(sheet.sizeId).label} · {sheet.orientation}
-        </span>
-        <span>{fitScaleLabel(sheet.fitScale)}</span>
-        <span>{titleDate}</span>
+      {/* Header lives in the top margin: physical units, never scaled. */}
+      {hasHeader && <PrintSheetHeader header={header} />}
+      {/* Footer strip: custom three-column labels when set, else the legacy strip. */}
+      {hasFooter ? (
+        <div
+          style={{
+            position: "absolute",
+            left: "0.5in",
+            right: "0.5in",
+            bottom: "0.06in",
+            height: "0.36in",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "0.25in",
+            borderTop: "1pt solid #1a1a1a",
+            fontSize: "9pt",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+          }}
+        >
+          <span style={{ flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {footer.left}
+          </span>
+          <span style={{ flex: 1, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {footer.center}
+          </span>
+          <span style={{ flex: 1, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {footer.right}
+          </span>
+          <span>{titleDate}</span>
+        </div>
+      ) : (
+        <div
+          style={{
+            position: "absolute",
+            left: "0.5in",
+            right: "0.5in",
+            bottom: "0.06in",
+            height: "0.36in",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "0.25in",
+            borderTop: "1pt solid #1a1a1a",
+            fontSize: "9pt",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+          }}
+        >
+          <span style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {design.name}
+          </span>
+          <span>
+            {getSheetSize(sheet.sizeId).label} · {sheet.orientation}
+          </span>
+          <span>{fitScaleLabel(sheet.fitScale)}</span>
+          <span>{titleDate}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Printed sheet header in the top margin: optional PNG logo plus
+ * title/subtitle. Only rendered when at least one header field is set.
+ * The logo <img> uses only the validated stored PNG data URL — patchSheet
+ * rejects anything else, and the stored value is re-checked here.
+ */
+function PrintSheetHeader({ header }) {
+  const logoSrc =
+    typeof header.logo === "string" && header.logo.startsWith(SHEET_PNG_DATA_URL_PREFIX)
+      ? header.logo
+      : null;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: "0.5in",
+        right: "0.5in",
+        top: "0.06in",
+        display: "flex",
+        alignItems: "center",
+        gap: "0.25in",
+        borderBottom: "1pt solid #1a1a1a",
+        paddingBottom: "0.08in",
+        overflow: "hidden",
+      }}
+    >
+      {logoSrc && (
+        // eslint-disable-next-line @next/next/no-img-element -- data-URL logo cannot use the Next image optimizer
+        <img
+          src={logoSrc}
+          alt=""
+          style={{ height: "0.6in", maxWidth: "2in", objectFit: "contain", flexShrink: 0 }}
+        />
+      )}
+      <div style={{ overflow: "hidden" }}>
+        {header.title && (
+          <div style={{ fontSize: "14pt", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {header.title}
+          </div>
+        )}
+        {header.subtitle && (
+          <div style={{ fontSize: "10pt", color: "#4b5563", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {header.subtitle}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -13,6 +13,7 @@ import {
   createEmptyDesign,
   placeFurniture,
   addOpening,
+  patchSheet,
   placeSymbol,
   setUnderlay,
   sheetPlanBounds,
@@ -104,5 +105,70 @@ describe("SheetPrintView", () => {
     expect(html).toContain("<polyline");
     expect(html).toContain("<polygon");
     expect(html).toContain("Ava");
+  });
+});
+
+describe("SheetPrintView header/footer", () => {
+  const sheetOf = (design) => design.sheets[0];
+  const withHeaderFooter = (design, sheetId, patch) =>
+    patchSheet(design, sheetId, patch);
+  const png = "data:image/png;base64,iVBORw0KGgo=";
+
+  it("renders nothing extra for legacy sheets without header/footer", () => {
+    const design = richDesign();
+    const sheet = sheetOf(design);
+    const html = renderToStaticMarkup(<SheetPrintView design={design} sheet={sheet} />);
+    expect(html).not.toContain("Site Plan");
+    expect(html).not.toContain("<img");
+    // Legacy bottom strip is intact.
+    expect(html).toContain("Print test");
+  });
+
+  it("renders the header title, subtitle, and PNG logo", () => {
+    let design = richDesign();
+    design = withHeaderFooter(design, sheetOf(design).id, {
+      header: { title: "Site Plan", subtitle: "Lot 4", logo: png },
+    });
+    const sheet = sheetOf(design);
+    const html = renderToStaticMarkup(<SheetPrintView design={design} sheet={sheet} />);
+    expect(html).toContain("Site Plan");
+    expect(html).toContain("Lot 4");
+    expect(html).toContain(`<img src="${png}"`);
+  });
+
+  it("renders the custom footer columns and drops the legacy strip", () => {
+    let design = richDesign();
+    design = withHeaderFooter(design, sheetOf(design).id, {
+      footer: { left: "Drawn by Jason", center: "Sheet 1 of 2", right: "Rev C" },
+    });
+    const sheet = sheetOf(design);
+    const html = renderToStaticMarkup(<SheetPrintView design={design} sheet={sheet} />);
+    expect(html).toContain("Drawn by Jason");
+    expect(html).toContain("Sheet 1 of 2");
+    expect(html).toContain("Rev C");
+    // Legacy strip showed the design name bold; custom footer replaces it.
+    expect(html).not.toContain("Print test");
+  });
+
+  it("never emits a remote logo source", () => {
+    let design = richDesign();
+    design = withHeaderFooter(design, sheetOf(design).id, {
+      header: { title: "T", logo: png },
+    });
+    const sheet = sheetOf(design);
+    const html = renderToStaticMarkup(<SheetPrintView design={design} sheet={sheet} />);
+    expect(html).not.toContain("https://");
+    expect(html).not.toContain("http://");
+  });
+
+  it("renders header text safely without script injection", () => {
+    let design = richDesign();
+    design = withHeaderFooter(design, sheetOf(design).id, {
+      header: { title: "<script>alert(1)</script>" },
+    });
+    const sheet = sheetOf(design);
+    const html = renderToStaticMarkup(<SheetPrintView design={design} sheet={sheet} />);
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;");
   });
 });
