@@ -29,6 +29,13 @@ export {
 } from "./chartDocument.js";
 
 export {
+  ChartExportError,
+  escapeSvgText,
+  buildSvgDocument,
+  exportChartSvg,
+} from "./chartExportSvg.js";
+
+export {
   CHART_ACTIONS,
   chartReducer,
   isSupervisorDescendant,

@@ -35,6 +35,7 @@ import BackgroundPicker from "./BackgroundPicker.jsx";
 import ChartCanvas from "./ChartCanvas.jsx";
 import ChartImportWizard from "./import/ChartImportWizard.jsx";
 import ChartPersistenceControls from "./ChartPersistenceControls.jsx";
+import ChartExportMenu from "./ChartExportMenu.jsx";
 import {
   getGridPreference,
   GRID_PREFERENCES,
@@ -357,6 +358,7 @@ export default function ChartBuilderPage() {
           onLoad={handleLoadChart}
           onNotice={setNotice}
         />
+        <ChartExportMenu doc={doc} onNotice={setNotice} />
         <div className="ml-auto flex items-center gap-2">
           <span className="text-[11px] font-medium text-slate-500">Connector</span>
           <Segmented
