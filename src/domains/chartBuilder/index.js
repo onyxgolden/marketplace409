@@ -99,6 +99,12 @@ export {
 } from "./chartPersistence.js";
 
 export {
+  ChartPrintError,
+  createPrintableChart,
+  printChart,
+} from "./chartPrintExport.js";
+
+export {
   IMPORT_MODES,
   ORG_TARGETS,
   WORKFLOW_TARGETS,

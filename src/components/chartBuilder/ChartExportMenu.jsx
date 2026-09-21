@@ -3,9 +3,9 @@ import { exportChartSvg } from "@/domains/chartBuilder";
 
 // Export menu for /forge/charts: Download SVG (slice 4.2) and Print / Save
 // PDF. Export is a pure read of the current chart — nothing is changed, so
-// no confirmation is needed. Slice 4.3 routes Print through the dedicated
-// print view (chartPrintExport.printChart); until then it prints the page.
-export default function ChartExportMenu({ doc, onNotice }) {
+// no confirmation is needed. Print goes through the dedicated print view
+// (slice 4.3) via onPrint; without it, falls back to printing the page.
+export default function ChartExportMenu({ doc, onPrint, onNotice }) {
   const [open, setOpen] = useState(false);
 
   function notify(text, kind) {
@@ -36,7 +36,11 @@ export default function ChartExportMenu({ doc, onNotice }) {
 
   function handlePrint() {
     setOpen(false);
-    window.print();
+    if (typeof onPrint === "function") {
+      onPrint();
+    } else {
+      window.print();
+    }
   }
 
   return (

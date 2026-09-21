@@ -36,6 +36,7 @@ import ChartCanvas from "./ChartCanvas.jsx";
 import ChartImportWizard from "./import/ChartImportWizard.jsx";
 import ChartPersistenceControls from "./ChartPersistenceControls.jsx";
 import ChartExportMenu from "./ChartExportMenu.jsx";
+import ChartPrintView from "./ChartPrintView.jsx";
 import {
   getGridPreference,
   GRID_PREFERENCES,
@@ -58,6 +59,7 @@ export default function ChartBuilderPage() {
   const [pickerOpen, setPickerOpen] = useState(true);
   const [bgOpen, setBgOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [printDoc, setPrintDoc] = useState(null);
   const [gridPref, setGridPref] = useState(() => getGridPreference());
   const [notice, setNotice] = useNotice();
   const histRef = useRef(hist);
@@ -297,6 +299,12 @@ export default function ChartBuilderPage() {
   const selected = doc.nodes.find((n) => n.id === selectedId) ?? null;
   const supervisor = selected && doc.type === "org" ? nodeSupervisor(doc, selected.id) : null;
 
+  // Print view takes over the whole route: the print dialog captures the
+  // chart and nothing else (no toolbar, inspector, handles, or grid).
+  if (printDoc) {
+    return <ChartPrintView doc={printDoc} onClose={() => setPrintDoc(null)} />;
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-slate-100">
       {/* Toolbar */}
@@ -358,7 +366,7 @@ export default function ChartBuilderPage() {
           onLoad={handleLoadChart}
           onNotice={setNotice}
         />
-        <ChartExportMenu doc={doc} onNotice={setNotice} />
+        <ChartExportMenu doc={doc} onPrint={() => setPrintDoc(doc)} onNotice={setNotice} />
         <div className="ml-auto flex items-center gap-2">
           <span className="text-[11px] font-medium text-slate-500">Connector</span>
           <Segmented
