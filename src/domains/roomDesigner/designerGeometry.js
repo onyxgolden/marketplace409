@@ -134,6 +134,45 @@ export function snapScalar(value, gridIn = DEFAULT_GRID_IN) {
   return Math.round(value / gridIn) * gridIn;
 }
 
+/**
+ * Compute a PlanCanvas view ({ scale, ox, oy }) that fits a plan-inches rect
+ * ({ x, y, widthIn, heightIn }, top-left origin) inside a pixel viewport
+ * ({ w, h }), centered with a padding margin. Pure — backs "zoom to sheet".
+ * Scale is clamped to [minScale, maxScale].
+ */
+export function zoomToFitRect(
+  rect,
+  viewport,
+  { paddingPx = 48, minScale = 0.35, maxScale = 12 } = {},
+) {
+  if (
+    !rect ||
+    !isFiniteNumber(rect.x) ||
+    !isFiniteNumber(rect.y) ||
+    !(rect.widthIn > 0) ||
+    !(rect.heightIn > 0)
+  ) {
+    throw new Error("zoomToFitRect needs a rect with positive dimensions.");
+  }
+  if (!viewport || !(viewport.w > 0) || !(viewport.h > 0)) {
+    throw new Error("zoomToFitRect needs a viewport with positive size.");
+  }
+  if (!(minScale > 0) || !(maxScale >= minScale)) {
+    throw new Error("zoomToFitRect needs 0 < minScale <= maxScale.");
+  }
+  const pad = Math.max(0, paddingPx || 0);
+  const availW = Math.max(1, viewport.w - pad * 2);
+  const availH = Math.max(1, viewport.h - pad * 2);
+  let scale = Math.min(availW / rect.widthIn, availH / rect.heightIn);
+  if (!Number.isFinite(scale) || scale <= 0) scale = minScale;
+  scale = Math.min(maxScale, Math.max(minScale, scale));
+  return {
+    scale,
+    ox: (viewport.w - rect.widthIn * scale) / 2 - rect.x * scale,
+    oy: (viewport.h - rect.heightIn * scale) / 2 - rect.y * scale,
+  };
+}
+
 /** Short label for a grid spacing: 6 -> `6″`, 12 -> `1′`. */
 export function gridSpacingLabel(inches) {
   if (!isFiniteNumber(inches) || !(inches > 0)) return "—";

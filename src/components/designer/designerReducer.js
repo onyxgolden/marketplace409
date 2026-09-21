@@ -34,6 +34,7 @@ import {
   moveSymbol,
   moveUnderlay,
   moveWallEndpoint,
+  patchSheet,
   placeFurniture,
   placeSymbol,
   removePerson,
@@ -519,6 +520,10 @@ export function designerReducer(state, action) {
           orientation: action.orientation,
         }),
       );
+    }
+    case "UPDATE_SHEET": {
+      if (!findSheet(state.design, action.sheetId)) return state;
+      return touch(state, patchSheet(state.design, action.sheetId, action.patch));
     }
     case "ADD_CALIBRATION_POINT": {
       if (!state.design.underlay) return state;

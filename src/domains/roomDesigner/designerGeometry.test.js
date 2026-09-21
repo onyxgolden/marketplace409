@@ -30,6 +30,7 @@ import {
   wallDirection,
   wallLength,
   wallNormal,
+  zoomToFitRect,
 } from "./designerGeometry";
 
 const wall = (x1, y1, x2, y2) => ({ a: { x: x1, y: y1 }, b: { x: x2, y: y2 } });
@@ -452,5 +453,53 @@ describe("designerGeometry — background underlay", () => {
       expect(parseDimensionInput(s)).toBeNaN();
     }
     expect(parseDimensionInput(null)).toBeNaN();
+  });
+});
+
+describe("zoomToFitRect", () => {
+  it("fits the rect and centers it in the viewport", () => {
+    const view = zoomToFitRect(
+      { x: 10, y: 20, widthIn: 100, heightIn: 50 },
+      { w: 1000, h: 800 },
+      { paddingPx: 0, minScale: 0.35, maxScale: 12 },
+    );
+    // scale = min(1000/100, 800/50) = 10; rect maps to x 0..1000, y 150..650.
+    expect(view.scale).toBe(10);
+    expect(view.ox).toBe(-100);
+    expect(view.oy).toBe(-50);
+    const toScreen = (p) => ({ x: view.ox + p.x * view.scale, y: view.oy + p.y * view.scale });
+    expect(toScreen({ x: 10, y: 20 })).toEqual({ x: 0, y: 150 });
+    expect(toScreen({ x: 110, y: 70 })).toEqual({ x: 1000, y: 650 });
+  });
+
+  it("respects padding and clamps to maxScale for tiny rects", () => {
+    const view = zoomToFitRect(
+      { x: 0, y: 0, widthIn: 2, heightIn: 2 },
+      { w: 1000, h: 800 },
+      { paddingPx: 100, minScale: 0.35, maxScale: 12 },
+    );
+    // Unclamped scale would be min(800/2, 600/2) = 300 -> clamped to 12.
+    expect(view.scale).toBe(12);
+    // Still centered: rect center (1,1) maps to viewport center (500, 400).
+    expect(view.ox + 1 * view.scale).toBe(500);
+    expect(view.oy + 1 * view.scale).toBe(400);
+  });
+
+  it("clamps to minScale for huge rects", () => {
+    const view = zoomToFitRect(
+      { x: 0, y: 0, widthIn: 100000, heightIn: 100000 },
+      { w: 1000, h: 800 },
+      { paddingPx: 0, minScale: 0.35, maxScale: 12 },
+    );
+    expect(view.scale).toBe(0.35);
+  });
+
+  it("throws on degenerate rects, viewports, or scale bounds", () => {
+    const rect = { x: 0, y: 0, widthIn: 10, heightIn: 10 };
+    const vp = { w: 100, h: 100 };
+    expect(() => zoomToFitRect({ ...rect, widthIn: 0 }, vp)).toThrow();
+    expect(() => zoomToFitRect({ ...rect, heightIn: -3 }, vp)).toThrow();
+    expect(() => zoomToFitRect(rect, { w: 0, h: 100 })).toThrow();
+    expect(() => zoomToFitRect(rect, vp, { minScale: 2, maxScale: 1 })).toThrow();
   });
 });

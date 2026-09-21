@@ -21,14 +21,28 @@ describe("sheet actions in the reducer", () => {
     const id = s.design.sheets[0].id;
     s = reduce(s, { type: "MARK_SAVED", savedRevision: s.designRevision });
     expect(s.dirty).toBe(false);
+    // Grid snap is on by default: off-grid drop points re-seat on the grid.
     s = reduce(s, { type: "MOVE_SHEET", sheetId: id, x: 10, y: 20, coalesce: "move-sheet" });
     expect(s.dirty).toBe(true);
-    expect(s.design.sheets[0].x).toBe(10);
+    expect(s.design.sheets[0].x).toBe(12);
+    expect(s.design.sheets[0].y).toBe(18);
     s = reduce(s, { type: "UPDATE_SHEET_FORMAT", sheetId: id, orientation: "landscape" });
     expect(s.design.sheets[0].orientation).toBe("landscape");
     s = reduce(s, { type: "DELETE_SHEET", sheetId: id });
     expect(s.design.sheets).toHaveLength(0);
     expect(s.selection).toBeNull();
+  });
+
+  it("MOVE_SHEET keeps raw coordinates when snap is disabled", () => {
+    let s = reduce(fresh(), { type: "ADD_SHEET", sizeId: "letter", orientation: "portrait" });
+    const id = s.design.sheets[0].id;
+    s = reduce(s, {
+      type: "UPDATE_SETTINGS",
+      settings: { ...s.design.settings, snapEnabled: false },
+    });
+    s = reduce(s, { type: "MOVE_SHEET", sheetId: id, x: 10, y: 20, coalesce: "move-sheet" });
+    expect(s.design.sheets[0].x).toBe(10);
+    expect(s.design.sheets[0].y).toBe(20);
   });
 
   it("DELETE_SELECTION deletes a selected sheet and clears the selection", () => {
@@ -88,7 +102,8 @@ describe("undo/redo", () => {
     s = reduce(s, { type: "REDO" });
     expect(s.design.sheets).toHaveLength(1);
     s = reduce(s, { type: "REDO" });
-    expect(s.design.sheets[0].x).toBe(10);
+    // Grid snap is on: the move re-seats on the 6″ grid (10 -> 12).
+    expect(s.design.sheets[0].x).toBe(12);
     // Undo once more, then delete instead: redo stack must clear.
     s = reduce(s, { type: "UNDO" });
     s = reduce(s, { type: "DELETE_SHEET", sheetId: id });
@@ -132,7 +147,8 @@ describe("drag coalescing", () => {
     for (let i = 1; i <= 5; i += 1) {
       s = reduce(s, { type: "MOVE_SHEET", sheetId: id, x: i * 10, y: i * 10, coalesce: key });
     }
-    expect(s.design.sheets[0].x).toBe(50);
+    // Grid snap is on: the final drop (50, 50) re-seats to (48, 48).
+    expect(s.design.sheets[0].x).toBe(48);
     // Five dispatches, one stack entry for the drag.
     expect(s.past.length).toBe(pastAfterAdd + 1);
     s = reduce(s, { type: "UNDO" });
@@ -168,5 +184,25 @@ describe("drag coalescing", () => {
     expect(s.past.length).toBe(past0 + 1);
     s = reduce(s, { type: "UNDO" });
     expect(s.design.walls[0].b.x).toBe(10);
+  });
+});
+
+describe("UPDATE_SHEET header/footer in the reducer", () => {
+  it("patches header and footer, marks dirty, and ignores unknown sheet ids", () => {
+    let s = reduce(fresh(), { type: "ADD_SHEET", sizeId: "letter", orientation: "portrait" });
+    const id = s.design.sheets[0].id;
+    s = reduce(s, { type: "MARK_SAVED", savedRevision: s.designRevision });
+    s = reduce(s, {
+      type: "UPDATE_SHEET",
+      sheetId: id,
+      patch: { header: { title: "Site Plan" }, footer: { left: "Drawn by Jason" } },
+    });
+    expect(s.dirty).toBe(true);
+    expect(s.design.sheets[0].header.title).toBe("Site Plan");
+    expect(s.design.sheets[0].footer.left).toBe("Drawn by Jason");
+    // Unknown sheet id: state returned untouched.
+    const before = s;
+    s = reduce(s, { type: "UPDATE_SHEET", sheetId: "missing", patch: { header: { title: "x" } } });
+    expect(s).toBe(before);
   });
 });

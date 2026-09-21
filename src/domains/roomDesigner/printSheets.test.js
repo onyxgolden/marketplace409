@@ -2,8 +2,12 @@
 // region and fit scale once; later edits never silently alter them.
 
 import {
+  SHEET_LOGO_MAX_BYTES,
+  SHEET_PNG_DATA_URL_PREFIX,
   addSheet,
   createEmptyDesign,
+  defaultSheetFooter,
+  defaultSheetHeader,
   deleteSheet,
   designContentBounds,
   computeFitScale,
@@ -11,8 +15,12 @@ import {
   fitScaleLabel,
   moveSheet,
   addWall,
+  patchSheet,
   sheetsOf,
+  sheetFooterOf,
+  sheetHeaderOf,
   sheetPlanBounds,
+  updateDesignSettings,
   updateSheetFormat,
   validateDesign,
 } from "./designerDocument";
@@ -131,7 +139,9 @@ describe("addSheet / moveSheet / deleteSheet / updateSheetFormat", () => {
   });
 
   it("fits the frame around current content with a uniform fit scale", () => {
-    const withSheet = addSheet(designWithWall(), "letter", "portrait");
+    // Snap off: this test pins the exact fit/centering math, not placement.
+    const design = updateDesignSettings(designWithWall(), { snapEnabled: false });
+    const withSheet = addSheet(design, "letter", "portrait");
     const sheet = withSheet.sheets[0];
     expect(sheet.sizeId).toBe("letter");
     expect(sheet.orientation).toBe("portrait");
@@ -149,7 +159,9 @@ describe("addSheet / moveSheet / deleteSheet / updateSheetFormat", () => {
   });
 
   it("an empty design gets a 1:1 paper-size frame centered at the origin", () => {
-    const withSheet = addSheet(createEmptyDesign(), "tabloid", "landscape");
+    // Snap off: pins the exact 1:1 centering math, not placement.
+    const design = updateDesignSettings(createEmptyDesign(), { snapEnabled: false });
+    const withSheet = addSheet(design, "tabloid", "landscape");
     const sheet = withSheet.sheets[0];
     expect(sheet.fitScale).toBe(1);
     expect(sheet.planWidthIn).toBe(17);
@@ -159,13 +171,17 @@ describe("addSheet / moveSheet / deleteSheet / updateSheetFormat", () => {
   });
 
   it("accepts an explicit top-left anchor", () => {
-    const withSheet = addSheet(designWithWall(), "letter", "portrait", { x: 5, y: 7 });
+    // Snap off: pins anchor passthrough, not placement.
+    const design = updateDesignSettings(designWithWall(), { snapEnabled: false });
+    const withSheet = addSheet(design, "letter", "portrait", { x: 5, y: 7 });
     expect(withSheet.sheets[0].x).toBe(5);
     expect(withSheet.sheets[0].y).toBe(7);
   });
 
   it("moveSheet moves only the anchor; bounds and scale stay fixed", () => {
-    const withSheet = addSheet(designWithWall(), "letter", "portrait");
+    // Snap off: pins the move semantics, not placement.
+    const design = updateDesignSettings(designWithWall(), { snapEnabled: false });
+    const withSheet = addSheet(design, "letter", "portrait");
     const before = withSheet.sheets[0];
     const moved = moveSheet(withSheet, before.id, 42, 43);
     const after = findSheet(moved, before.id);
@@ -228,5 +244,157 @@ describe("addSheet / moveSheet / deleteSheet / updateSheetFormat", () => {
     const reloaded = JSON.parse(JSON.stringify(design));
     expect(reloaded.sheets).toEqual(design.sheets);
     expect(sheetPlanBounds(reloaded.sheets[0])).toEqual(sheetPlanBounds(design.sheets[0]));
+  });
+});
+
+describe("sheet grid snapping", () => {
+  // Default design settings: gridIn 6, snapEnabled true.
+  it("addSheet snaps an explicit anchor to the grid", () => {
+    const design = addSheet(createEmptyDesign(), "letter", "portrait", { x: 5, y: 7 });
+    expect(design.sheets[0].x).toBe(6);
+    expect(design.sheets[0].y).toBe(6);
+  });
+
+  it("addSheet snaps the computed anchor on an empty design", () => {
+    const design = addSheet(createEmptyDesign(), "tabloid", "landscape");
+    // Raw 1:1 anchor would be (-8.5, -5.5); grid 6″ re-seats it.
+    expect(design.sheets[0].x).toBe(-6);
+    expect(design.sheets[0].y).toBe(-6);
+  });
+
+  it("moveSheet snaps the anchor to the grid", () => {
+    let design = addSheet(createEmptyDesign(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    design = moveSheet(design, id, 10, 20);
+    expect(findSheet(design, id).x).toBe(12);
+    expect(findSheet(design, id).y).toBe(18);
+  });
+
+  it("already-on-grid anchors are untouched", () => {
+    let design = addSheet(createEmptyDesign(), "letter", "portrait", { x: 12, y: -18 });
+    expect(design.sheets[0].x).toBe(12);
+    expect(design.sheets[0].y).toBe(-18);
+    design = moveSheet(design, design.sheets[0].id, 30, 30);
+    expect(design.sheets[0].x).toBe(30);
+    expect(design.sheets[0].y).toBe(30);
+  });
+
+  it("snapEnabled=false preserves raw placement on add and move", () => {
+    const unsnapped = updateDesignSettings(createEmptyDesign(), { snapEnabled: false });
+    let design = addSheet(unsnapped, "letter", "portrait", { x: 5, y: 7 });
+    expect(design.sheets[0].x).toBe(5);
+    expect(design.sheets[0].y).toBe(7);
+    design = moveSheet(design, design.sheets[0].id, 10, 20);
+    expect(design.sheets[0].x).toBe(10);
+    expect(design.sheets[0].y).toBe(20);
+  });
+
+  it("snapping honors a custom grid spacing", () => {
+    const wide = updateDesignSettings(createEmptyDesign(), { gridIn: 12 });
+    const design = addSheet(wide, "letter", "portrait", { x: 14, y: 14 });
+    expect(design.sheets[0].x).toBe(12);
+    expect(design.sheets[0].y).toBe(12);
+  });
+});
+
+describe("sheet header/footer", () => {
+  const designWithWall = () =>
+    addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 200, y: 100 });
+  const png = (n = 100) => `${SHEET_PNG_DATA_URL_PREFIX}${"A".repeat(n)}`;
+
+  it("gives new sheets empty headers and footers", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    expect(design.sheets[0].header).toEqual(defaultSheetHeader());
+    expect(design.sheets[0].footer).toEqual(defaultSheetFooter());
+  });
+
+  it("reads legacy sheets (no header/footer keys) as empty", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const legacy = { ...design.sheets[0] };
+    delete legacy.header;
+    delete legacy.footer;
+    expect(sheetHeaderOf(legacy)).toEqual(defaultSheetHeader());
+    expect(sheetFooterOf(legacy)).toEqual(defaultSheetFooter());
+  });
+
+  it("patches header labels and footer columns, keeping other fields", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    const patched = patchSheet(design, id, {
+      header: { title: "Site Plan" },
+      footer: { left: "Drawn by Jason", right: "Page 1" },
+    });
+    const sheet = findSheet(patched, id);
+    expect(sheet.header).toEqual({ title: "Site Plan", subtitle: "", logo: null });
+    expect(sheet.footer).toEqual({ left: "Drawn by Jason", center: "", right: "Page 1" });
+    // A second partial patch keeps the first edit's values.
+    const again = patchSheet(patched, id, { header: { subtitle: "Lot 4" } });
+    expect(findSheet(again, id).header).toEqual({
+      title: "Site Plan",
+      subtitle: "Lot 4",
+      logo: null,
+    });
+  });
+
+  it("stores a PNG logo data URL and clears it back to null", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    const withLogo = patchSheet(design, id, { header: { logo: png() } });
+    expect(findSheet(withLogo, id).header.logo).toBe(png());
+    const cleared = patchSheet(withLogo, id, { header: { logo: null } });
+    expect(findSheet(cleared, id).header.logo).toBe(null);
+  });
+
+  it("rejects non-PNG data URLs and remote logo URLs", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    expect(() => patchSheet(design, id, { header: { logo: "data:image/jpeg;base64,AAAA" } })).toThrow(
+      /PNG data URL/,
+    );
+    expect(() => patchSheet(design, id, { header: { logo: "https://example.com/logo.png" } })).toThrow(
+      /PNG data URL/,
+    );
+  });
+
+  it("rejects logos at or over the 1.5 MB budget", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    const tooBig = `${SHEET_PNG_DATA_URL_PREFIX}${"A".repeat(SHEET_LOGO_MAX_BYTES)}`;
+    expect(() => patchSheet(design, id, { header: { logo: tooBig } })).toThrow(/1\.5 MB/);
+    // Just under the budget is accepted.
+    const ok = `${SHEET_PNG_DATA_URL_PREFIX}${"A".repeat(SHEET_LOGO_MAX_BYTES - 100)}`;
+    expect(findSheet(patchSheet(design, id, { header: { logo: ok } }), id).header.logo).toBe(ok);
+  });
+
+  it("rejects non-string labels and unknown patch fields", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    expect(() => patchSheet(design, id, { header: { title: 42 } })).toThrow(/must be a string/);
+    expect(() => patchSheet(design, id, { footer: { center: null } })).not.toThrow();
+    expect(() => patchSheet(design, id, { footer: { center: { text: "x" } } })).toThrow(
+      /must be a string/,
+    );
+    expect(() => patchSheet(design, id, { banner: "hi" })).toThrow(/Unknown sheet patch field/);
+    expect(() => patchSheet(design, id, null)).toThrow(/must be an object/);
+  });
+
+  it("rejects patches for unknown sheets and leaves the design untouched on failure", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    expect(() => patchSheet(design, "nope", { header: { title: "x" } })).toThrow(/Unknown sheet/);
+    const before = JSON.stringify(design.sheets);
+    expect(() => patchSheet(design, design.sheets[0].id, { header: { title: 7 } })).toThrow();
+    expect(JSON.stringify(design.sheets)).toBe(before);
+  });
+
+  it("round-trips header/footer through JSON unchanged", () => {
+    const design = addSheet(designWithWall(), "letter", "portrait");
+    const id = design.sheets[0].id;
+    const patched = patchSheet(design, id, {
+      header: { title: "Site Plan", subtitle: "Lot 4", logo: png() },
+      footer: { left: "A", center: "B", right: "C" },
+    });
+    const reloaded = JSON.parse(JSON.stringify(patched));
+    expect(reloaded.sheets[0].header).toEqual(patched.sheets[0].header);
+    expect(reloaded.sheets[0].footer).toEqual(patched.sheets[0].footer);
   });
 });
