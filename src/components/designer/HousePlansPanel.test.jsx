@@ -229,6 +229,19 @@ describe("HousePlansPanel Browse tab (HP-L2)", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/forge/designer/house-plans/references");
   });
 
+  it("fetches the reference library once even when the Browse tab is reopened", async () => {
+    const fetchMock = mockFetchReferences([]);
+    await renderPanel();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await clickTab("Browse");
+    await flushFetch();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await clickTab("Project");
+    await clickTab("Browse");
+    await flushFetch();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("renders the reference list with factual metadata and official links", async () => {
     mockFetchReferences([fullReference, minimalReference]);
     await renderPanel();

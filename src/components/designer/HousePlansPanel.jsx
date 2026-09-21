@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 
 // HOUSE PLANS (HP-L0) — docked reference panel shell for Room Designer.
@@ -93,28 +93,51 @@ function ReferenceCard({ reference }) {
   );
 }
 
-function BrowseReferences() {
-  const [state, setState] = useState({ kind: "loading" });
+// HP-L2: the reference library loads lazily on the first Browse opening and
+// the loaded result is preserved at panel scope. BrowseReferences mounts and
+// unmounts as the user switches tabs, so keeping this state in the panel
+// (not in the tab component) is what makes "load once" actually hold.
+function useReferenceLibrary() {
+  const [library, setLibrary] = useState({ status: "idle" });
+  const statusRef = useRef("idle");
+  const mountedRef = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const loadLibrary = useCallback(() => {
+    const current = statusRef.current;
+    if (current === "loading" || current === "ready") return;
+    statusRef.current = "loading";
+    setLibrary({ status: "loading" });
     (async () => {
       try {
         const res = await fetch("/api/forge/designer/house-plans/references");
         if (!res.ok) throw new Error(`Load failed (${res.status})`);
         const body = await res.json();
-        if (cancelled) return;
-        setState({ kind: "ready", references: body.references || [] });
+        const next = { status: "ready", references: body.references || [] };
+        statusRef.current = "ready";
+        if (mountedRef.current) setLibrary(next);
       } catch (error) {
-        if (!cancelled) setState({ kind: "error" });
+        statusRef.current = "error";
+        if (mountedRef.current) setLibrary({ status: "error" });
       }
     })();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
-  if (state.kind === "loading") {
+  return { library, loadLibrary };
+}
+
+function BrowseReferences({ library, onFirstOpen }) {
+  useEffect(() => {
+    onFirstOpen();
+  }, [onFirstOpen]);
+
+  if (library.status === "idle" || library.status === "loading") {
     return (
       <EmptyState title="Browse the reference library">
         <p>Loading the reference library…</p>
@@ -122,7 +145,7 @@ function BrowseReferences() {
     );
   }
 
-  if (state.kind === "error") {
+  if (library.status === "error") {
     return (
       <EmptyState title="Browse the reference library">
         <p>Couldn&apos;t load the reference library.</p>
@@ -135,7 +158,7 @@ function BrowseReferences() {
     );
   }
 
-  if (state.references.length === 0) {
+  if (library.references.length === 0) {
     return (
       <EmptyState title="Browse the reference library">
         <p>The reference library is empty for now.</p>
@@ -156,7 +179,7 @@ function BrowseReferences() {
         does not interpret them.
       </p>
       <div className="space-y-2.5">
-        {state.references.map((reference) => (
+        {library.references.map((reference) => (
           <ReferenceCard key={reference.id} reference={reference} />
         ))}
       </div>
@@ -164,7 +187,7 @@ function BrowseReferences() {
   );
 }
 
-function TabContent({ tabId }) {
+function TabContent({ tabId, library, onBrowseOpen }) {
   if (tabId === "project") {
     return (
       <EmptyState title="Project references">
@@ -190,7 +213,7 @@ function TabContent({ tabId }) {
     );
   }
   if (tabId === "browse") {
-    return <BrowseReferences />;
+    return <BrowseReferences library={library} onFirstOpen={onBrowseOpen} />;
   }
   if (tabId === "search") {
     return (
@@ -219,6 +242,7 @@ function TabContent({ tabId }) {
 export default function HousePlansPanel({ onClose }) {
   const [activeTab, setActiveTab] = useState("project");
   const [showFirstUse, setShowFirstUse] = useState(true);
+  const { library, loadLibrary } = useReferenceLibrary();
 
   return (
     <div className="flex h-full flex-col" data-testid="house-plans-panel">
@@ -272,7 +296,7 @@ export default function HousePlansPanel({ onClose }) {
       </div>
 
       <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        <TabContent tabId={activeTab} />
+        <TabContent tabId={activeTab} library={library} onBrowseOpen={loadLibrary} />
       </div>
 
       <div className="border-t border-gray-800 bg-gray-900 px-3 py-2">
