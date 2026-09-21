@@ -14,6 +14,7 @@ import {
   moveFurniture,
   moveFurnitureMany,
   moveOpening,
+  moveOpeningStart,
   moveRoom,
   moveUnderlay,
   moveWallEndpoint,
@@ -221,6 +222,75 @@ describe("designerDocument — openings", () => {
     expect(d.openings[0].widthIn).toBe(30);
     d = deleteOpening(d, id);
     expect(d.openings).toHaveLength(0);
+  });
+
+  it("clamps resized widths to the wall and the structural minimum", () => {
+    let d = wallDesign();
+    const wallId = d.walls[0].id; // 144in wall
+    d = addOpening(d, wallId, { type: "door", offsetIn: 36 }); // width 36
+    const id = d.openings[0].id;
+    d = resizeOpening(d, id, 200);
+    expect(d.openings[0].widthIn).toBeLessThanOrEqual(144 - 2);
+    expect(d.openings[0].offsetIn + d.openings[0].widthIn).toBeLessThanOrEqual(144);
+    d = resizeOpening(d, id, 2);
+    expect(d.openings[0].widthIn).toBe(6); // domain structural backstop
+  });
+
+  it("moveOpeningStart moves the start edge while the end edge stays fixed", () => {
+    let d = wallDesign();
+    const wallId = d.walls[0].id; // 144in wall
+    d = addOpening(d, wallId, { type: "door", offsetIn: 36 }); // 36..72
+    const id = d.openings[0].id;
+    d = moveOpeningStart(d, id, 48);
+    expect(d.openings[0].offsetIn).toBe(48);
+    expect(d.openings[0].widthIn).toBe(24);
+    expect(d.openings[0].offsetIn + d.openings[0].widthIn).toBe(72);
+  });
+
+  it("moveOpeningStart clamps at the wall bounds and never inverts", () => {
+    let d = wallDesign();
+    const wallId = d.walls[0].id; // 144in wall
+    d = addOpening(d, wallId, { type: "door", offsetIn: 36 }); // 36..72
+    const id = d.openings[0].id;
+    // Pushed before the wall start: pins at the 1" clearance.
+    d = moveOpeningStart(d, id, -50);
+    expect(d.openings[0].offsetIn).toBe(1);
+    // Pushed past the end edge: collapses to the structural minimum, not inverted.
+    d = moveOpeningStart(d, id, 200);
+    expect(d.openings[0].widthIn).toBe(6);
+    const o = d.openings[0];
+    expect(o.offsetIn).toBeGreaterThanOrEqual(1);
+    expect(o.offsetIn + o.widthIn).toBeLessThanOrEqual(144);
+  });
+
+  it("moveOpeningStart rejects unknown openings and missing walls", () => {
+    const d = wallDesign();
+    expect(() => moveOpeningStart(d, "ghost", 10)).toThrow(/Unknown opening/);
+    const dangling = {
+      ...d,
+      openings: [{ id: "o1", wallId: "ghost", type: "door", offsetIn: 10, widthIn: 36 }],
+    };
+    expect(() => moveOpeningStart(dangling, "o1", 10)).toThrow(/missing wall/);
+  });
+
+  it("opening moves and resizes never mutate the source design", () => {
+    const deepFreeze = (value) => {
+      if (value && typeof value === "object" && !Object.isFrozen(value)) {
+        Object.freeze(value);
+        for (const v of Object.values(value)) deepFreeze(v);
+      }
+      return value;
+    };
+    let d = wallDesign();
+    const wallId = d.walls[0].id;
+    d = addOpening(d, wallId, { type: "door", offsetIn: 36 });
+    const id = d.openings[0].id;
+    deepFreeze(d);
+    expect(() => moveOpening(d, id, 60)).not.toThrow();
+    expect(() => moveOpeningStart(d, id, 48)).not.toThrow();
+    expect(() => resizeOpening(d, id, 30)).not.toThrow();
+    // The frozen source is untouched.
+    expect(d.openings[0]).toMatchObject({ offsetIn: 36, widthIn: 36 });
   });
 
   it("rejects bad opening types and unknown walls", () => {

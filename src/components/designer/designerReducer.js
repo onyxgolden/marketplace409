@@ -29,6 +29,7 @@ import {
   moveFurniture,
   moveFurnitureMany,
   moveOpening,
+  moveOpeningStart,
   moveOrgChart,
   movePipeVertex,
   moveRoom,
@@ -306,8 +307,18 @@ export function designerReducer(state, action) {
         moveOpening(state.design, action.openingId, action.offsetIn),
         action.coalesce,
       );
+    case "MOVE_OPENING_START":
+      return touch(
+        state,
+        moveOpeningStart(state.design, action.openingId, action.offsetIn),
+        action.coalesce,
+      );
     case "RESIZE_OPENING":
-      return touch(state, resizeOpening(state.design, action.openingId, action.widthIn));
+      return touch(
+        state,
+        resizeOpening(state.design, action.openingId, action.widthIn),
+        action.coalesce,
+      );
     case "DELETE_OBJECT": {
       const target = action.target;
       if (!target) return state;
