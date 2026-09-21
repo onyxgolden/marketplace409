@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildRentalDashboardSummary } from "@/application/rental/buildRentalDashboardSummary";
+import { getRentalSummaryPayload } from "../rentalSummaryClient";
 import {
   buildTodaysPrioritiesWorkflowDefinition,
   buildTodaysPrioritiesEvaluatorResults,
@@ -27,41 +28,24 @@ function generateSessionId() {
   return `rental-todays-priorities-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// /api/rental is a hard requirement -- every needsAttention category depends on it, so its failure
-// still throws and fails the whole session, matching prior behavior exactly.
-function fetchRentalData() {
-  return fetch("/api/rental").then(async (response) => {
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || "Rental summary could not be loaded.");
-    return body;
-  });
-}
-
-// /api/rental/reports is NOT a hard requirement -- only 2 of the 9 needsAttention categories
-// (REPORT_DEPENDENT_STEP_IDS) actually depend on it. Its failure is caught here, never thrown, and
-// reported as a structured { available: false, error } result instead, so a caller can keep the
-// other 7 categories working rather than failing the entire session over an unrelated endpoint.
-function fetchReportsData() {
-  return fetch("/api/rental/reports")
-    .then(async (response) => {
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Rental report could not be loaded.");
-      return { available: true, report: body.report, error: "" };
-    })
-    .catch((reason) => ({ available: false, report: null, error: reason.message }));
-}
-
-// Fetches the same live data source the Overview panel's needs-attention queue already uses, computes the
-// real summary, and evaluates the workflow's fixed step vocabulary against it. Never fabricates a required
-// step that isn't actually present in the fetched needsAttention array.
-function fetchSummaryAndIdentity() {
-  return fetchRentalData().then((rentalBody) => fetchReportsData().then((reportsResult) => ({
-    summary: buildRentalDashboardSummary(rentalBody, reportsResult.report),
+// Fetches the same live data source the Overview panel uses, through the shared client:
+// the mount-time call dedups with the Overview's own fetch into one network pair (with
+// network-blip retries), and { refresh: true } forces a fresh pair for paths that must
+// re-evaluate against current authoritative state. Computes the real summary and evaluates
+// the workflow's fixed step vocabulary against it. Never fabricates a required step that
+// isn't actually present in the fetched needsAttention array.
+//
+// /api/rental/reports stays soft, exactly as before: only 2 of the 9 needsAttention categories
+// depend on it, so its failure is reported as { available: false, error } and the other
+// categories keep working rather than failing the entire session over an unrelated endpoint.
+function fetchSummaryAndIdentity({ refresh = false } = {}) {
+  return getRentalSummaryPayload({ refresh }).then(({ rentalBody, reports }) => ({
+    summary: buildRentalDashboardSummary(rentalBody, reports.report),
     actingUserId: rentalBody.actingUserId || null,
     canonicalOwnerId: rentalBody.canonicalOwnerId || null,
-    reportsAvailable: reportsResult.available,
-    reportsError: reportsResult.error,
-  })));
+    reportsAvailable: reports.available,
+    reportsError: reports.error,
+  }));
 }
 
 export function useTodaysPrioritiesSession() {
@@ -117,7 +101,7 @@ export function useTodaysPrioritiesSession() {
     if (!session || !identity) return Promise.resolve();
     setLoading(true);
     setError("");
-    return fetchSummaryAndIdentity()
+    return fetchSummaryAndIdentity({ refresh: true })
       .then(({ summary: nextSummary, reportsAvailable: nextReportsAvailable, reportsError: nextReportsError }) => {
         setSummary(nextSummary);
         setReportsAvailable(nextReportsAvailable);
@@ -144,7 +128,7 @@ export function useTodaysPrioritiesSession() {
     }
     setLoading(true);
     setError("");
-    return fetchSummaryAndIdentity()
+    return fetchSummaryAndIdentity({ refresh: true })
       .then(({ summary: nextSummary, reportsAvailable: nextReportsAvailable, reportsError: nextReportsError }) => {
         setSummary(nextSummary);
         setReportsAvailable(nextReportsAvailable);

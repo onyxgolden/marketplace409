@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RentalOverviewPanel from "./RentalOverviewPanel";
+import { resetRentalSummaryClient } from "./rentalSummaryClient";
 
 const baseData = { units: [{ id: "u1" }], leases: [{ id: "l1", unit_id: "u1", status: "active" }] };
 
@@ -34,7 +35,7 @@ function card(container, label) {
 
 describe("RentalOverviewPanel five-card dashboard", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); });
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); });
 
   function richFixture() {
     return {
@@ -133,7 +134,7 @@ describe("RentalOverviewPanel five-card dashboard", () => {
 
 describe("RentalOverviewPanel billing status visibility", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); });
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); });
 
   it("visibly shows billing as PAUSED when billingEnabled is absent, with no pause/resume control rendered", () => {
     mounted = mount(<RentalOverviewPanel initialData={baseData} initialReport={null} />);
@@ -164,7 +165,7 @@ describe("RentalOverviewPanel billing status visibility", () => {
 
 describe("RentalOverviewPanel structure and empty state", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); });
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); });
 
   it("uses a real heading hierarchy: one Dashboard heading", () => {
     mounted = mount(<RentalOverviewPanel initialData={baseData} initialReport={null} />);

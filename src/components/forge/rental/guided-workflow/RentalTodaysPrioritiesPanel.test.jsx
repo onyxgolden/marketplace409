@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RentalTodaysPrioritiesPanel from "./RentalTodaysPrioritiesPanel";
+import { resetRentalSummaryClient } from "../rentalSummaryClient";
 
 function rentalBody(overrides = {}) {
   return {
@@ -72,7 +73,7 @@ async function flush() {
 
 describe("RentalTodaysPrioritiesPanel", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); });
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); });
 
   it("shows the highest-priority real attention item first, with a live priority count", async () => {
     const fetch = stubFetch([{
