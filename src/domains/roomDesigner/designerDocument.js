@@ -120,6 +120,10 @@ export function findWall(design, wallId) {
   return (design.walls || []).find((w) => w.id === wallId);
 }
 
+export function findRoom(design, roomId) {
+  return (design.rooms || []).find((r) => r.id === roomId);
+}
+
 /** Add a wall; walls shorter than 1 inch are rejected. */
 export function addWall(design, a, b, { id, material } = {}) {
   assertDesign(design);
@@ -249,6 +253,29 @@ export function deleteRoom(design, roomId) {
     if (findWall(next, wallId)) next = deleteWall(next, wallId);
   }
   return { ...next, rooms: next.rooms.filter((r) => r.id !== roomId) };
+}
+
+/**
+ * Translate a template room and its walls by (dx, dy). The polygon and all
+ * four wall endpoints move together so the room stays consistent; openings
+ * ride along untouched because they are stored as offsets along their walls.
+ */
+export function moveRoom(design, roomId, dx, dy) {
+  assertDesign(design);
+  if (!isFiniteNumber(dx) || !isFiniteNumber(dy)) {
+    throw new Error("Room move delta must be finite numbers.");
+  }
+  const room = findRoom(design, roomId);
+  if (!room) throw new Error(`Unknown room: ${roomId}`);
+  const moved = (p) => ({ x: p.x + dx, y: p.y + dy });
+  const wallIds = new Set(room.wallIds || []);
+  const walls = design.walls.map((w) =>
+    wallIds.has(w.id) ? { ...w, a: moved(w.a), b: moved(w.b) } : w,
+  );
+  const rooms = design.rooms.map((r) =>
+    r.id === roomId ? { ...r, polygon: (r.polygon || []).map(moved) } : r,
+  );
+  return { ...design, walls, rooms };
 }
 
 function clampOpening(wall, type, offsetIn, widthIn) {

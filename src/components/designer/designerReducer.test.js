@@ -452,3 +452,47 @@ describe("designerReducer — background underlay", () => {
     expect(state.design.underlay.opacity).toBe(0.3);
   });
 });
+
+describe("designerReducer — MOVE_ROOM", () => {
+  function stateWithRoom() {
+    let state = createInitialState(createEmptyDesign("Test"));
+    state = designerReducer(state, {
+      type: "ADD_ROOM", templateId: "bedroom", at: { x: 0, y: 0 },
+    });
+    return state;
+  }
+
+  it("moves the room polygon and its walls, and ignores unknown rooms", () => {
+    let state = stateWithRoom();
+    const roomId = state.design.rooms[0].id;
+    state = designerReducer(state, {
+      type: "MOVE_ROOM", roomId, dx: 12, dy: 24, coalesce: `move-room:${roomId}`,
+    });
+    const room = state.design.rooms[0];
+    expect(room.polygon[0]).toEqual({ x: 12, y: 24 });
+    const wall = state.design.walls.find((w) => w.id === room.wallIds[0]);
+    expect(wall.a).toEqual({ x: 12, y: 24 });
+    expect(state.dirty).toBe(true);
+    const unchanged = state;
+    state = designerReducer(state, {
+      type: "MOVE_ROOM", roomId: "room_nope", dx: 1, dy: 1,
+    });
+    expect(state).toBe(unchanged);
+  });
+
+  it("coalesces one room drag into a single undo step", () => {
+    let state = stateWithRoom();
+    const roomId = state.design.rooms[0].id;
+    const pastBefore = state.past.length;
+    const key = `move-room:${roomId}`;
+    state = designerReducer(state, { type: "MOVE_ROOM", roomId, dx: 6, dy: 0, coalesce: key });
+    state = designerReducer(state, { type: "MOVE_ROOM", roomId, dx: 6, dy: 0, coalesce: key });
+    state = designerReducer(state, { type: "MOVE_ROOM", roomId, dx: 6, dy: 0, coalesce: key });
+    expect(state.past.length).toBe(pastBefore + 1);
+    expect(state.design.rooms[0].polygon[0]).toEqual({ x: 18, y: 0 });
+    state = designerReducer(state, { type: "UNDO" });
+    expect(state.design.rooms[0].polygon[0]).toEqual({ x: 0, y: 0 });
+    state = designerReducer(state, { type: "REDO" });
+    expect(state.design.rooms[0].polygon[0]).toEqual({ x: 18, y: 0 });
+  });
+});

@@ -14,6 +14,7 @@ import {
   moveFurniture,
   moveFurnitureMany,
   moveOpening,
+  moveRoom,
   moveUnderlay,
   moveWallEndpoint,
   parseDesign,
@@ -534,5 +535,82 @@ describe("designerDocument — background underlay", () => {
     d = updateUnderlay(d, { locked: true, opacity: 0.7 });
     const restored = parseDesign(serializeDesign(d));
     expect(restored.underlay).toEqual(d.underlay);
+  });
+});
+
+describe("designerDocument — moveRoom", () => {
+  function roomDesign() {
+    let d = createEmptyDesign("Test");
+    d = addRoomFromTemplate(d, "bedroom", { x: 0, y: 0 }); // 144x144 at origin
+    return d;
+  }
+
+  it("translates the polygon and all four walls by the delta", () => {
+    let d = roomDesign();
+    const roomId = d.rooms[0].id;
+    d = moveRoom(d, roomId, 12, 24);
+    const room = d.rooms[0];
+    expect(room.polygon).toEqual([
+      { x: 12, y: 24 },
+      { x: 156, y: 24 },
+      { x: 156, y: 168 },
+      { x: 12, y: 168 },
+    ]);
+    // Bedroom template walls: tl→tr, tr→br, br→bl, bl→tl.
+    const wallsById = Object.fromEntries(d.walls.map((w) => [w.id, w]));
+    expect(room.wallIds).toHaveLength(4);
+    expect(wallsById[room.wallIds[0]].a).toEqual({ x: 12, y: 24 });
+    expect(wallsById[room.wallIds[0]].b).toEqual({ x: 156, y: 24 });
+    expect(wallsById[room.wallIds[1]].a).toEqual({ x: 156, y: 24 });
+    expect(wallsById[room.wallIds[1]].b).toEqual({ x: 156, y: 168 });
+    expect(wallsById[room.wallIds[2]].a).toEqual({ x: 156, y: 168 });
+    expect(wallsById[room.wallIds[2]].b).toEqual({ x: 12, y: 168 });
+    expect(wallsById[room.wallIds[3]].a).toEqual({ x: 12, y: 168 });
+    expect(wallsById[room.wallIds[3]].b).toEqual({ x: 12, y: 24 });
+    // Room area is preserved by a pure translation.
+    expect(totalRoomAreaSqFt(d)).toBe(144);
+  });
+
+  it("keeps openings riding on the moved walls (offsetIn unchanged)", () => {
+    let d = roomDesign();
+    const roomId = d.rooms[0].id;
+    const wallId = d.rooms[0].wallIds[0];
+    d = addOpening(d, wallId, { type: "door", offsetIn: 30, widthIn: 36 });
+    d = moveRoom(d, roomId, 10, 10);
+    const opening = d.openings[0];
+    expect(opening.wallId).toBe(wallId);
+    expect(opening.offsetIn).toBe(30);
+    expect(opening.widthIn).toBe(36);
+    const wall = d.walls.find((w) => w.id === wallId);
+    expect(wall.a).toEqual({ x: 10, y: 10 });
+  });
+
+  it("leaves other rooms and hand-drawn walls untouched", () => {
+    let d = roomDesign();
+    d = addWall(d, { x: 500, y: 500 }, { x: 600, y: 500 });
+    const otherWall = d.walls[d.walls.length - 1];
+    d = addRoomFromTemplate(d, "bathroom", { x: 300, y: 300 });
+    const otherRoomId = d.rooms[1].id;
+    const movedId = d.rooms[0].id;
+    d = moveRoom(d, movedId, 5, 5);
+    expect(d.walls.find((w) => w.id === otherWall.id).a).toEqual({ x: 500, y: 500 });
+    expect(d.rooms[1].polygon[0]).toEqual({ x: 300, y: 300 });
+    expect(d.rooms.find((r) => r.id === otherRoomId)).toBe(d.rooms[1]);
+  });
+
+  it("does not mutate the input design", () => {
+    const d = roomDesign();
+    const roomId = d.rooms[0].id;
+    const next = moveRoom(d, roomId, 12, 24);
+    expect(d.rooms[0].polygon[0]).toEqual({ x: 0, y: 0 });
+    expect(d.walls[0].a).toEqual({ x: 0, y: 0 });
+    expect(next).not.toBe(d);
+  });
+
+  it("rejects unknown rooms and non-finite deltas", () => {
+    const d = roomDesign();
+    expect(() => moveRoom(d, "room_nope", 1, 1)).toThrow(/Unknown room/);
+    expect(() => moveRoom(d, d.rooms[0].id, NaN, 1)).toThrow(/finite/);
+    expect(() => moveRoom(d, d.rooms[0].id, 1, Infinity)).toThrow(/finite/);
   });
 });

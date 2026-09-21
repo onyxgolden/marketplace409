@@ -74,6 +74,24 @@ export function distancePointToSegment(p, a, b) {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
+/** Ray-casting point-in-polygon test (even-odd rule). Points exactly on the
+ * boundary may report either way — pair with an edge-distance check for
+ * hit testing. */
+export function pointInPolygon(p, polygon) {
+  if (!isValidPoint(p) || !Array.isArray(polygon) || polygon.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if (!isValidPoint(a) || !isValidPoint(b)) continue;
+    if ((a.y > p.y) !== (b.y > p.y)) {
+      const xIntersect = ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x;
+      if (p.x < xIntersect) inside = !inside;
+    }
+  }
+  return inside;
+}
+
 /** Closest point on the segment a→b to p, plus the 0..1 parameter t. */
 export function nearestPointOnSegment(p, a, b) {
   const dx = b.x - a.x;
