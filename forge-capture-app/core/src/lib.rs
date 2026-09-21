@@ -17,9 +17,13 @@
 //!   never silent.
 //! - [`stitch`] — the shared stitch/result layer: tile-placement validation
 //!   and coverage computation feeding the result types.
-//! - [`engines`] — the [`engines::AcquisitionEngine`] trait plus the 2a native
-//!   raster engine; DOM-aware and raster-observation scrolling engines are
-//!   defined as 2b stubs so the layering compiles now.
+//! - [`scroll`] — Rung 2b scrolling orchestration: the [`scroll::ScrollDriver`]
+//!   OS boundary, the shared scroll loop ([`scroll::run_scroll`]), scroll
+//!   offset measurement, sticky-chrome detection, tile assembly, and result
+//!   classification. Pure and fully unit-tested.
+//! - [`engines`] — the [`engines::AcquisitionEngine`] trait, the 2a native
+//!   raster engine, and the 2b scrolling engines (DOM-aware and
+//!   raster-observation) built on [`scroll::run_scroll`].
 //! - [`native`] — thin OS boundary: real GDI capture on Windows, an explicit
 //!   error elsewhere.
 
@@ -29,5 +33,6 @@ pub mod engines;
 pub mod native;
 pub mod png;
 pub mod result;
+pub mod scroll;
 pub mod stitch;
 pub mod timestamp;

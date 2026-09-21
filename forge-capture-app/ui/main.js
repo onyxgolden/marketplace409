@@ -33,12 +33,15 @@ async function refreshLists() {
     }
     const windowSel = $("window");
     windowSel.innerHTML = "";
+    const scrollWindowSel = $("scroll-window");
+    scrollWindowSel.innerHTML = "";
     for (const w of windows) {
       const opt = document.createElement("option");
       opt.value = w.window_id;
       const proc = w.process_name ? ` (${w.process_name})` : "";
       opt.textContent = `${w.title || "(untitled)"}${proc}`;
       windowSel.appendChild(opt);
+      scrollWindowSel.appendChild(opt.cloneNode(true));
     }
     $("captures-dir").textContent = dir;
     setStatus(`Ready — ${monitors.length} monitor(s), ${windows.length} window(s).`);
@@ -51,6 +54,95 @@ function onModeChange() {
   const mode = $("mode").value;
   $("monitor-row").hidden = mode === "window";
   $("window-row").hidden = mode !== "window";
+}
+
+function onScrollTargetChange() {
+  const kind = $("scroll-target-kind").value;
+  $("scroll-window-row").hidden = kind !== "window";
+  $("scroll-region-rows").hidden = kind !== "region";
+}
+
+let scrollRunId = null;
+
+function setScrollStatus(text, kind) {
+  const el = $("scroll-status");
+  el.textContent = text;
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+function scrollControlsRunning(running) {
+  $("scroll-btn").disabled = running;
+  $("scroll-stop-btn").hidden = !running;
+}
+
+async function doScrollCapture() {
+  const kind = $("scroll-target-kind").value;
+  const dto = {
+    target: { type: kind },
+    engine: $("scroll-engine").value,
+    direction: $("scroll-direction").value,
+  };
+  if (kind === "window") {
+    dto.target.windowId = $("scroll-window").value || null;
+  } else {
+    dto.target.region = {
+      x: Number($("scroll-x").value) || 0,
+      y: Number($("scroll-y").value) || 0,
+      w: Math.max(1, Number($("scroll-w").value) || 1),
+      h: Math.max(1, Number($("scroll-h").value) || 1),
+    };
+  }
+  try {
+    scrollRunId = await invoke("start_scroll_capture", { dto });
+    scrollControlsRunning(true);
+    setScrollStatus("Scrolling… tiles will appear below as they land.");
+  } catch (e) {
+    setScrollStatus(`Could not start scrolling capture: ${e}`, "error");
+  }
+}
+
+async function doScrollStop() {
+  if (!scrollRunId) return;
+  try {
+    await invoke("stop_scroll_capture", { id: scrollRunId });
+    setScrollStatus("Stopping… the run will report what it captured.");
+  } catch (e) {
+    setScrollStatus(`Stop failed: ${e}`, "error");
+  }
+}
+
+function onScrollProgress(dto) {
+  if (!dto || dto.id !== scrollRunId) return;
+  const expected = dto.tiles_expected ? ` of ~${dto.tiles_expected}` : "";
+  setScrollStatus(`Scrolling… ${dto.tiles_captured}${expected} tiles, ${dto.distance_px}px.`);
+}
+
+function onScrollFinished(result) {
+  if (!result || result.id !== scrollRunId) return;
+  scrollRunId = null;
+  scrollControlsRunning(false);
+  const scroll = result.scroll;
+  const info = scroll
+    ? ` (${scroll.engine}, ${scroll.direction}, ${scroll.tiles_captured} tiles, ${scroll.distance_px}px)`
+    : "";
+  if (result.outcome === "complete" && result.capture) {
+    captureItem(result.capture);
+    setScrollStatus(`Scrolling capture complete${info}.`, "ok");
+    return;
+  }
+  if (result.outcome === "incomplete") {
+    // Honest partial: show the reason and evidence, and still surface the
+    // partial stitch (Copy / Export / Provenance all work on it).
+    if (result.capture) captureItem(result.capture);
+    const evidence = (result.evidence || []).join(" | ");
+    setScrollStatus(
+      `Incomplete${info}: ${result.reason || "stopped early"}. ${evidence}`,
+      "warning"
+    );
+    return;
+  }
+  const evidence = (result.evidence || []).join(" | ");
+  setScrollStatus(`Scrolling capture failed: ${result.reason || "unknown"}. ${evidence}`, "error");
 }
 
 const seenCaptureIds = new Set();
@@ -160,8 +252,13 @@ async function init() {
   $("mode").addEventListener("change", onModeChange);
   $("capture-btn").addEventListener("click", doCapture);
   $("refresh-btn").addEventListener("click", refreshLists);
+  $("scroll-target-kind").addEventListener("change", onScrollTargetChange);
+  $("scroll-btn").addEventListener("click", doScrollCapture);
+  $("scroll-stop-btn").addEventListener("click", doScrollStop);
   onModeChange();
+  onScrollTargetChange();
   await listenCaptureSaved();
+  await listenScrollEvents();
   await refreshLists();
 }
 
@@ -170,20 +267,35 @@ async function init() {
 // event. Vendored minimal listener over the Tauri v2 event IPC — no
 // @tauri-apps/api dependency. Non-fatal if the internals ever change.
 async function listenCaptureSaved() {
+  await listenEvent("capture-saved", (msg) => {
+    if (msg && msg.payload) captureItem(msg.payload);
+  });
+}
+
+// Scrolling-capture progress and final outcome events from the backend
+// worker thread.
+async function listenScrollEvents() {
+  await listenEvent("scroll-progress", (msg) => {
+    if (msg && msg.payload) onScrollProgress(msg.payload);
+  });
+  await listenEvent("scroll-finished", (msg) => {
+    if (msg && msg.payload) onScrollFinished(msg.payload);
+  });
+}
+
+async function listenEvent(event, onMessage) {
   try {
     const internals = window.__TAURI_INTERNALS__;
     if (!internals || typeof internals.Channel !== "function") return;
     const channel = new internals.Channel();
-    channel.onmessage = (msg) => {
-      if (msg && msg.payload) captureItem(msg.payload);
-    };
+    channel.onmessage = onMessage;
     await internals.invoke("plugin:event|listen", {
-      event: "capture-saved",
+      event,
       target: { kind: "Any" },
       handler: channel,
     });
   } catch (e) {
-    /* the session list just won't auto-update for overlay captures */
+    /* the session list just won't auto-update for this event */
   }
 }
 

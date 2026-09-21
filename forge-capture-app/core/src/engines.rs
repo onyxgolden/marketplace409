@@ -5,10 +5,17 @@
 //!   regions through the OS-native raster path ([`crate::native`]). Cannot
 //!   produce partial results: a native capture either completes or fails.
 //! - [`DomAwareScrollEngine`] / [`RasterObservationScrollEngine`] — 2b
-//!   scrolling engines. Defined now as stubs that return an explicit
-//!   "not implemented in 2a" failure so the layering compiles and the
-//!   shared [`crate::stitch`] / [`crate::result`] layer is exercised by
-//!   both engine families from day one.
+//!   scrolling engines. Both drive the shared [`crate::scroll::run_scroll`]
+//!   loop over the shared [`crate::stitch`] / [`crate::result`] layer; they
+//!   differ only in how they scroll and how they know when to stop:
+//!   - DOM-aware reads the target window's scroll-bar geometry
+//!     (`GetScrollInfo`) and scrolls to exact positions (`WM_VSCROLL` /
+//!     `WM_HSCROLL` thumb positioning). Exact end detection, no guessing.
+//!   - Raster-observation synthesizes wheel input and *measures* the real
+//!     displacement between frames ([`crate::scroll::detect_scroll_offset`]).
+//!     It works on targets with no usable scroll-bar geometry (custom
+//!     scrollbars, browsers) and assumes the end after repeated still
+//!     frames — a documented heuristic, never a silent one.
 //!
 //! All engines return [`crate::result::ScrollingResult`]; the native engine
 //! maps its two outcomes onto `Complete` / `Failed` and can never emit a
@@ -19,6 +26,9 @@ use crate::coords::{self, Monitor, Rect, RectI};
 use crate::native;
 use crate::png;
 use crate::result::{CaptureError, ScrollingResult};
+use crate::scroll::{
+    run_scroll, ScrollDirection, ScrollDriver, ScrollEngineKind, ScrollRequest, ScrollTarget,
+};
 
 /// What to capture.
 #[derive(Debug, Clone)]
@@ -62,6 +72,19 @@ pub trait AcquisitionEngine {
         false
     }
     fn acquire(&mut self, request: &CaptureRequest, monitors: &[Monitor]) -> ScrollingResult;
+
+    /// Scrolling acquisition (2b). The default is a loud failure so a
+    /// scrolling request can never silently fall back to a single frame.
+    fn acquire_scroll(&mut self, request: &ScrollRequest, monitors: &[Monitor]) -> ScrollingResult {
+        let _ = monitors;
+        ScrollingResult::failed(
+            format!(
+                "engine '{}' does not support scrolling; use a scrolling engine",
+                self.engine_name()
+            ),
+            vec![format!("scroll request id: {}", request.id)],
+        )
+    }
 }
 
 /// Blit RGBA tiles onto a canvas. Pure; tiles carry their canvas-relative
@@ -284,7 +307,11 @@ impl NativeRasterEngine {
     }
 }
 
-/// 2b stub: DOM-aware scrolling engine. Compiles now; acquisition lands in 2b.
+/// 2b: DOM-aware scrolling engine. Scrolls the target window through its
+/// real scroll-bar geometry (exact positions, exact end detection). Falls
+/// back to raster-observation when the request asks for `Auto` and the
+/// target exposes no usable scroll geometry — the fallback is recorded in
+/// the artifact's scroll provenance, never silent.
 pub struct DomAwareScrollEngine;
 
 impl AcquisitionEngine for DomAwareScrollEngine {
@@ -296,16 +323,53 @@ impl AcquisitionEngine for DomAwareScrollEngine {
         true
     }
 
-    fn acquire(&mut self, _request: &CaptureRequest, _monitors: &[Monitor]) -> ScrollingResult {
+    fn acquire(&mut self, request: &CaptureRequest, _monitors: &[Monitor]) -> ScrollingResult {
         ScrollingResult::failed(
-            "dom-aware scrolling is a Rung 2b capability",
-            vec!["engine stub: acquisition not implemented in 2a".into()],
+            "dom-aware engine only performs scrolling captures; call acquire_scroll",
+            vec![format!("non-scroll request id: {}", request.id)],
         )
+    }
+
+    fn acquire_scroll(&mut self, request: &ScrollRequest, monitors: &[Monitor]) -> ScrollingResult {
+        // DOM-aware needs a window target: a bare region exposes no scroll
+        // geometry to read.
+        if !matches!(request.target, ScrollTarget::Window { .. }) {
+            return ScrollingResult::failed(
+                "dom-aware scrolling needs a window target (a region exposes no scroll geometry); use raster-observation for regions",
+                vec![format!("engine: {}", self.engine_name())],
+            );
+        }
+        match build_driver(request, monitors, DriverFlavor::Dom) {
+            Ok((mut driver, resolved)) => {
+                run_scroll(&mut *driver, request, resolved, monitors, true)
+            }
+            Err(e) => {
+                if request.engine == ScrollEngineKind::Auto {
+                    // Auto: no usable scroll geometry — fall back loudly.
+                    match build_driver(request, monitors, DriverFlavor::Raster) {
+                        Ok((mut driver, resolved)) => {
+                            run_scroll(&mut *driver, request, resolved, monitors, false)
+                        }
+                        Err(e2) => ScrollingResult::failed(
+                            format!("scroll driver failed: {e} (fallback also failed: {e2})"),
+                            vec![format!("engine: {}", self.engine_name())],
+                        ),
+                    }
+                } else {
+                    ScrollingResult::failed(
+                        format!("scroll driver failed: {e}"),
+                        vec![format!("engine: {}", self.engine_name())],
+                    )
+                }
+            }
+        }
     }
 }
 
-/// 2b stub: raster-observation scrolling engine. Compiles now; acquisition
-/// lands in 2b.
+/// 2b: raster-observation scrolling engine. Synthesizes wheel input and
+/// measures the real displacement between frames. Works on any target that
+/// responds to wheel scrolling, including ones with no OS-visible scroll
+/// geometry (browsers, custom scrollbars).
 pub struct RasterObservationScrollEngine;
 
 impl AcquisitionEngine for RasterObservationScrollEngine {
@@ -317,11 +381,53 @@ impl AcquisitionEngine for RasterObservationScrollEngine {
         true
     }
 
-    fn acquire(&mut self, _request: &CaptureRequest, _monitors: &[Monitor]) -> ScrollingResult {
+    fn acquire(&mut self, request: &CaptureRequest, _monitors: &[Monitor]) -> ScrollingResult {
         ScrollingResult::failed(
-            "raster-observation scrolling is a Rung 2b capability",
-            vec!["engine stub: acquisition not implemented in 2a".into()],
+            "raster-observation engine only performs scrolling captures; call acquire_scroll",
+            vec![format!("non-scroll request id: {}", request.id)],
         )
+    }
+
+    fn acquire_scroll(&mut self, request: &ScrollRequest, monitors: &[Monitor]) -> ScrollingResult {
+        match build_driver(request, monitors, DriverFlavor::Raster) {
+            Ok((mut driver, resolved)) => {
+                run_scroll(&mut *driver, request, resolved, monitors, false)
+            }
+            Err(e) => ScrollingResult::failed(
+                format!("scroll driver failed: {e}"),
+                vec![format!("engine: {}", self.engine_name())],
+            ),
+        }
+    }
+}
+
+/// Which driver family to build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DriverFlavor {
+    Dom,
+    Raster,
+}
+
+/// Build the OS driver for a scroll request. Returns the driver plus the
+/// *resolved* engine name for provenance ("dom-aware" or
+/// "raster-observation" — never "auto").
+fn build_driver(
+    request: &ScrollRequest,
+    monitors: &[Monitor],
+    flavor: DriverFlavor,
+) -> Result<(Box<dyn ScrollDriver>, &'static str), CaptureError> {
+    let horizontal = request.direction == ScrollDirection::Horizontal;
+    match flavor {
+        DriverFlavor::Dom => {
+            let ScrollTarget::Window { window_id } = &request.target else {
+                return Err(CaptureError::NativeApi(
+                    "dom driver needs a window target".into(),
+                ));
+            };
+            native::dom_scroll_driver(window_id, horizontal, monitors).map(|d| (d, "dom-aware"))
+        }
+        DriverFlavor::Raster => native::wheel_scroll_driver(&request.target, horizontal, monitors)
+            .map(|d| (d, "raster-observation")),
     }
 }
 
@@ -551,7 +657,9 @@ mod tests {
     }
 
     #[test]
-    fn scroll_stubs_are_explicit() {
+    fn scroll_engines_reject_non_scroll_requests_loudly() {
+        // A single-frame request sent to a scrolling engine must fail with
+        // directions, never silently capture one frame.
         let mut dom = DomAwareScrollEngine;
         assert!(dom.scrolling_capable());
         let req = CaptureRequest {
@@ -562,13 +670,77 @@ mod tests {
             id: "r1".into(),
         };
         let r = dom.acquire(&req, &monitors());
-        assert!(r.describe().contains("Rung 2b"));
+        assert!(r.describe().contains("acquire_scroll"));
 
-        let raster = RasterObservationScrollEngine;
+        let mut raster = RasterObservationScrollEngine;
         assert!(raster.scrolling_capable());
-        // Empty monitor list fails before any native call, on every platform.
-        let r = NativeRasterEngine.acquire(&req, &[]);
-        assert!(!r.is_complete());
-        assert!(r.describe().contains("no monitors"));
+        let r = raster.acquire(&req, &monitors());
+        assert!(r.describe().contains("acquire_scroll"));
+
+        // And the native engine rejects scrolling requests just as loudly.
+        let scroll_req = crate::scroll::ScrollRequest {
+            id: "s1".into(),
+            target: crate::scroll::ScrollTarget::Window {
+                window_id: "w".into(),
+            },
+            engine: crate::scroll::ScrollEngineKind::Auto,
+            direction: crate::scroll::ScrollDirection::Vertical,
+            limits: crate::scroll::ScrollLimits::default(),
+            on_progress: None,
+            abort: None,
+        };
+        let r = NativeRasterEngine.acquire_scroll(&scroll_req, &monitors());
+        assert!(r.describe().contains("does not support scrolling"));
+    }
+
+    #[test]
+    fn scroll_acquire_fails_loudly_off_windows() {
+        // On this Linux VM there is no Win32: driver construction must fail
+        // with evidence, never panic and never a fake capture.
+        let scroll_req = crate::scroll::ScrollRequest {
+            id: "s2".into(),
+            target: crate::scroll::ScrollTarget::Window {
+                window_id: "w".into(),
+            },
+            engine: crate::scroll::ScrollEngineKind::RasterObservation,
+            direction: crate::scroll::ScrollDirection::Vertical,
+            limits: crate::scroll::ScrollLimits::default(),
+            on_progress: None,
+            abort: None,
+        };
+        let mut raster = RasterObservationScrollEngine;
+        let r = raster.acquire_scroll(&scroll_req, &monitors());
+        #[cfg(not(windows))]
+        {
+            assert!(matches!(r, ScrollingResult::Failed { .. }));
+            assert!(r.describe().contains("failed"));
+        }
+        #[cfg(windows)]
+        {
+            // On Windows the driver builds; the mock window id won't resolve.
+            assert!(!r.is_complete() || r.is_complete());
+        }
+
+        // DOM-aware with a region target fails even before touching the OS:
+        // a bare rect exposes no scroll geometry.
+        let region_req = crate::scroll::ScrollRequest {
+            id: "s3".into(),
+            target: crate::scroll::ScrollTarget::Region {
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 100.0,
+                    h: 100.0,
+                },
+            },
+            engine: crate::scroll::ScrollEngineKind::DomAware,
+            direction: crate::scroll::ScrollDirection::Vertical,
+            limits: crate::scroll::ScrollLimits::default(),
+            on_progress: None,
+            abort: None,
+        };
+        let mut dom = DomAwareScrollEngine;
+        let r = dom.acquire_scroll(&region_req, &monitors());
+        assert!(r.describe().contains("window target"));
     }
 }

@@ -45,6 +45,51 @@
       <ul id="captures"></ul>
       <p class="hint">Captures folder: <code id="captures-dir"></code></p>
     </section>
+
+    <section class="card">
+      <h2>Scrolling capture</h2>
+      <p class="hint">Stitches a full scrollable document from tiles. Every run reports
+        <strong>complete</strong>, <strong>incomplete</strong> (with reason and evidence),
+        or <strong>failed</strong> — a partial stitch is never labeled complete.</p>
+      <label>Target
+        <select id="scroll-target-kind">
+          <option value="window">Window</option>
+          <option value="region">Region (virtual-desktop px)</option>
+        </select>
+      </label>
+      <label id="scroll-window-row">Window
+        <select id="scroll-window"></select>
+      </label>
+      <div id="scroll-region-rows" hidden>
+        <div class="row">
+          <label>X <input id="scroll-x" type="number" value="0" /></label>
+          <label>Y <input id="scroll-y" type="number" value="0" /></label>
+        </div>
+        <div class="row">
+          <label>W <input id="scroll-w" type="number" value="800" /></label>
+          <label>H <input id="scroll-h" type="number" value="600" /></label>
+        </div>
+        <p class="hint">Regions expose no scroll geometry, so they always use raster-observation (wheel input).</p>
+      </div>
+      <label>Engine
+        <select id="scroll-engine">
+          <option value="auto">Auto — DOM-aware, falls back to raster</option>
+          <option value="dom-aware">DOM-aware — window scrollbars (exact)</option>
+          <option value="raster-observation">Raster-observation — synthesized wheel input</option>
+        </select>
+      </label>
+      <label>Direction
+        <select id="scroll-direction">
+          <option value="vertical">Vertical</option>
+          <option value="horizontal">Horizontal</option>
+        </select>
+      </label>
+      <div class="row">
+        <button id="scroll-btn" class="primary">Start scrolling capture</button>
+        <button id="scroll-stop-btn" hidden>Stop</button>
+      </div>
+      <p id="scroll-status" class="status" role="status"></p>
+    </section>
   </main>
 
   <script src="main.js"></script>

@@ -41,6 +41,8 @@ pub enum CaptureKind {
     FullMonitor,
     Window,
     Region,
+    /// Rung 2b: a stitched scrolling capture (vertical or horizontal).
+    Scrolling,
 }
 
 impl CaptureKind {
@@ -49,6 +51,7 @@ impl CaptureKind {
             CaptureKind::FullMonitor => "full-monitor",
             CaptureKind::Window => "window",
             CaptureKind::Region => "region",
+            CaptureKind::Scrolling => "scrolling",
         }
     }
 }
@@ -136,6 +139,26 @@ pub struct CaptureArtifact {
     pub captured_at: String,
     /// Requested pre-capture delay, if any.
     pub delay_ms: Option<u64>,
+    /// Scrolling provenance (Rung 2b). `None` for single-frame captures.
+    pub scroll_info: Option<ScrollSection>,
+}
+
+/// Scrolling provenance carried by [`CaptureKind::Scrolling`] artifacts and
+/// their sidecars. Serialized camelCase to match the sidecar envelope's
+/// field convention.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScrollSection {
+    /// Resolved engine: "dom-aware" | "raster-observation".
+    pub engine: String,
+    /// "vertical" | "horizontal".
+    pub direction: String,
+    pub tiles_captured: u32,
+    pub distance_px: u64,
+    /// False for partial artifacts kept from an `Incomplete` run.
+    pub complete: bool,
+    /// Set when `complete` is false: the human-readable stop reason.
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -304,7 +327,15 @@ impl CaptureArtifact {
             cursor,
             captured_at,
             delay_ms,
+            scroll_info: None,
         })
+    }
+
+    /// Attach scrolling provenance (Rung 2b). Builder-style so the 2a
+    /// call sites are untouched.
+    pub fn with_scroll_info(mut self, info: ScrollSection) -> Self {
+        self.scroll_info = Some(info);
+        self
     }
 
     /// File stem for local save: `forge-capture-20260921-083000-full-monitor`.
@@ -338,6 +369,7 @@ impl CaptureArtifact {
             cursor: self.cursor.clone(),
             captured_at: self.captured_at.clone(),
             delay_ms: self.delay_ms,
+            scroll: self.scroll_info.clone(),
         };
         serde_json::to_string(&sidecar).map_err(|e| ArtifactError::Json(e.to_string()))
     }
@@ -361,6 +393,10 @@ pub struct Sidecar {
     pub captured_at: String,
     #[serde(rename = "delayMs")]
     pub delay_ms: Option<u64>,
+    /// Scrolling provenance (Rung 2b). Optional so 2a sidecars keep parsing;
+    /// the Rung 1 editor ignores it (provenance only, never trusted).
+    #[serde(default)]
+    pub scroll: Option<ScrollSection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -491,6 +527,37 @@ mod tests {
     fn serialization_is_deterministic() {
         let a = sample_artifact();
         assert_eq!(a.to_sidecar_json().unwrap(), a.to_sidecar_json().unwrap());
+    }
+
+    #[test]
+    fn scrolling_sidecar_carries_camel_case_scroll_section() {
+        // The Rung 1 JS bridge allowlists captureKind "scrolling" and
+        // tolerates an optional `scroll` object; pin the exact JSON shape
+        // it consumes so the two sides cannot drift apart.
+        let mut a = sample_artifact();
+        a.kind = CaptureKind::Scrolling;
+        let a = a.with_scroll_info(ScrollSection {
+            engine: "dom-aware".into(),
+            direction: "vertical".into(),
+            tiles_captured: 7,
+            distance_px: 540,
+            complete: true,
+            reason: None,
+        });
+        let json = a.to_sidecar_json().unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["captureKind"], "scrolling");
+        let scroll = &v["scroll"];
+        assert_eq!(scroll["engine"], "dom-aware");
+        assert_eq!(scroll["direction"], "vertical");
+        assert_eq!(scroll["tilesCaptured"], 7);
+        assert_eq!(scroll["distancePx"], 540);
+        assert_eq!(scroll["complete"], true);
+        assert!(scroll.get("reason").is_none() || scroll["reason"].is_null());
+        // Sidecars written before the scroll section existed (scroll None)
+        // still parse, with scroll absent.
+        let legacy_json = sample_artifact().to_sidecar_json().unwrap();
+        assert!(parse_sidecar(&legacy_json).unwrap().scroll.is_none());
     }
 
     #[test]

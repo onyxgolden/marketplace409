@@ -16,15 +16,22 @@
 )]
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use forge_capture_core::artifact::CaptureArtifact;
 use forge_capture_core::coords::{Monitor, Rect};
 use forge_capture_core::engines::{
-    AcquisitionEngine, CaptureMode, CaptureRequest, NativeRasterEngine,
+    AcquisitionEngine, CaptureMode, CaptureRequest, DomAwareScrollEngine, NativeRasterEngine,
+    RasterObservationScrollEngine,
 };
 use forge_capture_core::native;
 use forge_capture_core::result::ScrollingResult;
+use forge_capture_core::scroll::{
+    AbortFlag, ProgressCallback, ScrollDirection, ScrollEngineKind, ScrollLimits, ScrollRequest,
+    ScrollTarget,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
 
@@ -56,6 +63,9 @@ struct AppState {
     /// File stems already handed out (in-memory part of stem uniqueness;
     /// the on-disk check in `unique_stem` covers previous runs).
     used_stems: Mutex<HashSet<String>>,
+    /// Cooperative abort flags for in-flight scrolling captures, keyed by
+    /// the run id handed to `start_scroll_capture`.
+    scroll_aborts: Mutex<HashMap<String, AbortFlag>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +139,66 @@ struct ArtifactRefDto {
 struct OverlayContextDto {
     origin_virtual: (i32, i32),
     dpr: f64,
+}
+
+// ---------------------------------------------------------------------------
+// Scrolling capture DTOs (Rung 2b)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct ScrollTargetDto {
+    /// "window" | "region"
+    #[serde(rename = "type")]
+    kind: String,
+    window_id: Option<String>,
+    /// Virtual-desktop physical px, for kind == "region".
+    region: Option<RegionDto>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ScrollCaptureDto {
+    target: ScrollTargetDto,
+    /// "auto" | "dom-aware" | "raster-observation"
+    engine: String,
+    /// "vertical" | "horizontal"
+    direction: String,
+    max_distance_px: Option<u64>,
+    max_tiles: Option<u32>,
+    settle_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ScrollProgressDto {
+    id: String,
+    tiles_captured: u32,
+    distance_px: u64,
+    tiles_expected: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ScrollInfoDto {
+    engine: String,
+    direction: String,
+    tiles_captured: u32,
+    distance_px: u64,
+    complete: bool,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ScrollResultDto {
+    id: String,
+    /// "complete" | "incomplete" | "failed"
+    outcome: String,
+    /// Present for "complete", and for "incomplete" when at least one tile
+    /// landed (the partial stitch, saved like any capture).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capture: Option<ArtifactRefDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    evidence: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scroll: Option<ScrollInfoDto>,
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +387,47 @@ fn wrap_delayed(
     }
 }
 
+/// Persist an artifact to the captures dir and the in-memory store under
+/// `key`, returning the ref the UI uses for copy/export/provenance.
+fn store_artifact(
+    state: &State<AppState>,
+    key: String,
+    artifact: CaptureArtifact,
+) -> Result<ArtifactRefDto, String> {
+    let dir = captures_dir()?;
+    let stem = unique_stem(
+        state,
+        &dir,
+        &artifact.file_stem(),
+        artifact.raster_mime.extension(),
+    );
+    let png_name = format!("{stem}.{}", artifact.raster_mime.extension());
+    let sidecar_name = format!("{stem}.forge.json");
+    let sidecar_json = artifact.to_sidecar_json().map_err(err)?;
+    let png_path = dir.join(&png_name);
+    let sidecar_path = dir.join(&sidecar_name);
+    std::fs::write(&png_path, &artifact.raster_bytes)
+        .map_err(|e| format!("cannot write PNG: {e}"))?;
+    std::fs::write(&sidecar_path, sidecar_json.as_bytes())
+        .map_err(|e| format!("cannot write sidecar: {e}"))?;
+    let saved = ArtifactRefDto {
+        id: key.clone(),
+        kind: artifact.kind.as_str().to_string(),
+        width: artifact.raster_width,
+        height: artifact.raster_height,
+        png_path: png_path.to_string_lossy().into_owned(),
+        sidecar_path: sidecar_path.to_string_lossy().into_owned(),
+    };
+    state.captures.lock().unwrap().insert(
+        key,
+        StoredCapture {
+            png_bytes: artifact.raster_bytes,
+            sidecar_json,
+        },
+    );
+    Ok(saved)
+}
+
 #[tauri::command]
 fn capture(
     dto: CaptureRequestDto,
@@ -336,40 +447,7 @@ fn capture(
     let mut engine = NativeRasterEngine;
     match engine.acquire(&request, &monitors) {
         ScrollingResult::Complete { artifact } => {
-            let dir = captures_dir()?;
-            let stem = unique_stem(
-                &state,
-                &dir,
-                &artifact.file_stem(),
-                artifact.raster_mime.extension(),
-            );
-            let png_name = format!("{stem}.{}", artifact.raster_mime.extension());
-            let sidecar_name = format!("{stem}.forge.json");
-            let sidecar_json = artifact.to_sidecar_json().map_err(err)?;
-            let png_path = dir.join(&png_name);
-            let sidecar_path = dir.join(&sidecar_name);
-            std::fs::write(&png_path, &artifact.raster_bytes)
-                .map_err(|e| format!("cannot write PNG: {e}"))?;
-            std::fs::write(&sidecar_path, sidecar_json.as_bytes())
-                .map_err(|e| format!("cannot write sidecar: {e}"))?;
-            let kind = artifact.kind.as_str().to_string();
-            let width = artifact.raster_width;
-            let height = artifact.raster_height;
-            state.captures.lock().unwrap().insert(
-                id.clone(),
-                StoredCapture {
-                    png_bytes: artifact.raster_bytes,
-                    sidecar_json,
-                },
-            );
-            let saved = ArtifactRefDto {
-                id,
-                kind,
-                width,
-                height,
-                png_path: png_path.to_string_lossy().into_owned(),
-                sidecar_path: sidecar_path.to_string_lossy().into_owned(),
-            };
+            let saved = store_artifact(&state, id, artifact)?;
             // Notify the main window (region captures originate from the
             // overlay window, which has already closed itself).
             let _ = app.emit("capture-saved", saved.clone());
@@ -513,6 +591,256 @@ fn cancel_region_pick(app: tauri::AppHandle, state: State<AppState>) -> Result<(
 }
 
 // ---------------------------------------------------------------------------
+// Scrolling capture commands (Rung 2b)
+// ---------------------------------------------------------------------------
+
+fn scroll_info_dto(
+    info: &Option<forge_capture_core::artifact::ScrollSection>,
+) -> Option<ScrollInfoDto> {
+    info.as_ref().map(|s| ScrollInfoDto {
+        engine: s.engine.clone(),
+        direction: s.direction.clone(),
+        tiles_captured: s.tiles_captured,
+        distance_px: s.distance_px,
+        complete: s.complete,
+        reason: s.reason.clone(),
+    })
+}
+
+/// Start a scrolling capture in the background. Returns the run id
+/// immediately; per-tile progress arrives as `scroll-progress` events and
+/// the final outcome as a `scroll-finished` event carrying a
+/// [`ScrollResultDto`]. `stop_scroll_capture` cancels cooperatively between
+/// tiles — the run then reports `incomplete` with reason `UserAborted`,
+/// never a silent partial.
+#[tauri::command]
+fn start_scroll_capture(
+    dto: ScrollCaptureDto,
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<String, String> {
+    let target = match dto.target.kind.as_str() {
+        "window" => {
+            let window_id = dto
+                .target
+                .window_id
+                .clone()
+                .ok_or("window_id is required for a window scroll target")?;
+            ScrollTarget::Window { window_id }
+        }
+        "region" => {
+            let r = dto
+                .target
+                .region
+                .as_ref()
+                .ok_or("region is required for a region scroll target")?;
+            // Regions expose no scroll geometry: the DOM-aware engine
+            // rejects them loudly, so force raster-observation here.
+            ScrollTarget::Region {
+                rect: Rect {
+                    x: r.x,
+                    y: r.y,
+                    w: r.w,
+                    h: r.h,
+                }
+                .normalize(),
+            }
+        }
+        other => return Err(format!("unknown scroll target: {other}")),
+    };
+    let mut engine_kind = ScrollEngineKind::parse(&dto.engine)?;
+    if matches!(target, ScrollTarget::Region { .. })
+        && matches!(engine_kind, ScrollEngineKind::DomAware)
+    {
+        // A bare rect exposes no scroll geometry; choosing it explicitly is
+        // a caller error, not something to silently reinterpret.
+        return Err(
+            "dom-aware scrolling needs a window target (a region exposes no scroll geometry); use auto or raster-observation for regions".to_string(),
+        );
+    }
+    if matches!(target, ScrollTarget::Region { .. }) {
+        engine_kind = ScrollEngineKind::RasterObservation;
+    }
+    let direction = ScrollDirection::parse(&dto.direction)?;
+    let defaults = ScrollLimits::default();
+    let limits = ScrollLimits {
+        max_distance_px: dto.max_distance_px.unwrap_or(defaults.max_distance_px),
+        max_tiles: dto.max_tiles.unwrap_or(defaults.max_tiles),
+        still_limit: defaults.still_limit,
+        settle_ms: dto.settle_ms.unwrap_or(defaults.settle_ms),
+    };
+    if limits.max_tiles == 0 {
+        return Err("max_tiles must be at least 1".to_string());
+    }
+
+    let id = next_id(&state);
+    let abort: AbortFlag = Arc::new(AtomicBool::new(false));
+    state
+        .scroll_aborts
+        .lock()
+        .unwrap()
+        .insert(id.clone(), abort.clone());
+
+    let progress_app = app.clone();
+    let progress_id = id.clone();
+    let return_id = id.clone();
+    let on_progress: ProgressCallback = Arc::new(move |p| {
+        let _ = progress_app.emit(
+            "scroll-progress",
+            ScrollProgressDto {
+                id: progress_id.clone(),
+                tiles_captured: p.tiles_captured,
+                distance_px: p.distance_px,
+                tiles_expected: p.tiles_expected,
+            },
+        );
+    });
+
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let finish = |dto: ScrollResultDto| {
+            let _ = app.emit("scroll-finished", dto);
+            state.scroll_aborts.lock().unwrap().remove(&id);
+        };
+        let monitors = match current_monitors() {
+            Ok(m) => m,
+            Err(e) => {
+                finish(ScrollResultDto {
+                    id: id.clone(),
+                    outcome: "failed".to_string(),
+                    capture: None,
+                    reason: Some("could not list monitors".to_string()),
+                    evidence: vec![e],
+                    scroll: None,
+                });
+                return;
+            }
+        };
+        let request = ScrollRequest {
+            id: id.clone(),
+            target,
+            engine: engine_kind,
+            direction,
+            limits,
+            on_progress: Some(on_progress),
+            abort: Some(abort),
+        };
+        // Auto resolves inside DomAwareScrollEngine::acquire_scroll, which
+        // falls back to the raster engine when no scroll geometry exists.
+        let result = match engine_kind {
+            ScrollEngineKind::RasterObservation => {
+                RasterObservationScrollEngine.acquire_scroll(&request, &monitors)
+            }
+            ScrollEngineKind::DomAware | ScrollEngineKind::Auto => {
+                DomAwareScrollEngine.acquire_scroll(&request, &monitors)
+            }
+        };
+        finish(scroll_result_dto(&state, &id, result));
+    });
+
+    Ok(return_id)
+}
+
+/// Cooperatively stop an in-flight scrolling capture. Returns true when a
+/// run with that id was still registered. The run reports `incomplete`
+/// (UserAborted) with whatever tiles already landed.
+#[tauri::command]
+fn stop_scroll_capture(id: String, state: State<AppState>) -> Result<bool, String> {
+    let found = state
+        .scroll_aborts
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(|flag| {
+            flag.store(true, Ordering::Relaxed);
+            true
+        })
+        .unwrap_or(false);
+    Ok(found)
+}
+
+fn scroll_result_dto(
+    state: &State<AppState>,
+    id: &str,
+    result: ScrollingResult,
+) -> ScrollResultDto {
+    match result {
+        ScrollingResult::Complete { artifact } => {
+            let scroll = scroll_info_dto(&artifact.scroll_info);
+            match store_artifact(state, id.to_string(), artifact) {
+                Ok(saved) => ScrollResultDto {
+                    id: id.to_string(),
+                    outcome: "complete".to_string(),
+                    capture: Some(saved),
+                    reason: None,
+                    evidence: Vec::new(),
+                    scroll,
+                },
+                Err(e) => ScrollResultDto {
+                    id: id.to_string(),
+                    outcome: "failed".to_string(),
+                    capture: None,
+                    reason: Some("scrolling capture succeeded but saving failed".to_string()),
+                    evidence: vec![e],
+                    scroll,
+                },
+            }
+        }
+        ScrollingResult::Incomplete {
+            partial_artifact,
+            completed,
+            missing,
+            reason,
+        } => {
+            let reason_str = reason.to_string();
+            let mut evidence = vec![
+                reason_str.clone(),
+                format!(
+                    "{} tiles captured, {} regions missing",
+                    completed.len(),
+                    missing.len()
+                ),
+            ];
+            for m in &missing {
+                evidence.push(format!(
+                    "missing {}x{} at ({},{}) after {} attempts: {}",
+                    m.rect.w, m.rect.h, m.rect.x, m.rect.y, m.attempts, m.last_error
+                ));
+            }
+            let (capture, scroll) = match partial_artifact {
+                Some(partial) => {
+                    let scroll = scroll_info_dto(&partial.scroll_info);
+                    match store_artifact(state, format!("{id}-partial"), partial) {
+                        Ok(saved) => (Some(saved), scroll),
+                        Err(e) => {
+                            evidence.push(format!("partial stitch could not be saved: {e}"));
+                            (None, scroll)
+                        }
+                    }
+                }
+                None => (None, None),
+            };
+            ScrollResultDto {
+                id: id.to_string(),
+                outcome: "incomplete".to_string(),
+                capture,
+                reason: Some(reason_str),
+                evidence,
+                scroll,
+            }
+        }
+        ScrollingResult::Failed { reason, evidence } => ScrollResultDto {
+            id: id.to_string(),
+            outcome: "failed".to_string(),
+            capture: None,
+            reason: Some(reason),
+            evidence,
+            scroll: None,
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Startup
 // ---------------------------------------------------------------------------
 
@@ -539,6 +867,7 @@ fn main() {
             pending_overlay: Mutex::new(None),
             id_counter: Mutex::new(0),
             used_stems: Mutex::new(HashSet::new()),
+            scroll_aborts: Mutex::new(HashMap::new()),
         })
         .invoke_handler(tauri::generate_handler![
             app_version,
@@ -552,6 +881,8 @@ fn main() {
             begin_region_pick,
             overlay_context,
             cancel_region_pick,
+            start_scroll_capture,
+            stop_scroll_capture,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run FORGE Capture");

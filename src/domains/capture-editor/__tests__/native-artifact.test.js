@@ -84,10 +84,30 @@ describe("parseNativeSidecar", () => {
   });
 
   it("accepts all native capture kinds", () => {
-    for (const captureKind of ["full-monitor", "window", "region"]) {
+    for (const captureKind of ["full-monitor", "window", "region", "scrolling"]) {
       const { sidecarJson } = makeSidecar({ sidecar: { captureKind } });
       expect(parseNativeSidecar(sidecarJson).captureKind).toBe(captureKind);
     }
+  });
+
+  it("tolerates the optional scrolling provenance section", () => {
+    const scroll = {
+      engine: "dom-aware",
+      direction: "vertical",
+      tilesCaptured: 7,
+      distancePx: 540,
+      complete: true,
+      reason: null,
+    };
+    const { sidecarJson } = makeSidecar({
+      sidecar: { captureKind: "scrolling", scroll },
+    });
+    expect(parseNativeSidecar(sidecarJson).scroll).toEqual(scroll);
+  });
+
+  it("treats a missing scrolling provenance section as null", () => {
+    const { sidecarJson } = makeSidecar({ sidecar: { captureKind: "scrolling" } });
+    expect(parseNativeSidecar(sidecarJson).scroll).toBeNull();
   });
 
   it("keeps delay as metadata, not a capture kind", () => {

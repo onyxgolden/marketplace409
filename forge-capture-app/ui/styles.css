@@ -61,6 +61,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .status { min-height: 1.2em; font-size: 0.85rem; color: var(--muted); }
 .status.error { color: #e57373; }
 .status.ok { color: #81c784; }
+.status.warning { color: #ffb74d; }
 .hint { color: var(--muted); font-size: 0.8rem; }
 code { font-size: 0.8em; }
 #captures { list-style: none; padding: 0; margin: 0; }
