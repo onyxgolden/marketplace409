@@ -13,6 +13,7 @@ import {
   Lock,
   LockOpen,
   MousePointer2,
+  Network,
   RotateCw,
   Ruler,
   Save,
@@ -27,6 +28,7 @@ import PlanCanvas from "./PlanCanvas";
 import HousePlansPanel from "./HousePlansPanel";
 import { isHousePlansEnabled } from "@/lib/housePlans/housePlansFlags";
 import { createSaveScheduler } from "./saveScheduler";
+import OrgChartPanel from "./OrgChartPanel";
 import { createInitialState, designerReducer } from "./designerReducer";
 import { catalogByCategory, getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
@@ -59,6 +61,7 @@ const TOOL_DEFS = [
   { id: "furniture", label: "Furniture", icon: Sofa, hint: "Pick a piece, then click the plan to place it" },
   { id: "pipe", label: "Pipe", icon: Spline, hint: "Click to add pipe vertices · double-click or Enter to finish · Esc cancels" },
   { id: "piping", label: "Piping", icon: Shapes, hint: "Pick a valve, fitting, or equipment symbol, then click the plan to place it" },
+  { id: "orgchart", label: "Org chart", icon: Network, hint: "Click the plan to place an org chart, then add people and reporting lines" },
   { id: "erase", label: "Erase", icon: Eraser, hint: "Click anything to delete it" },
   { id: "pan", label: "Pan", icon: Hand, hint: "Drag to pan · scroll to zoom (or hold Space anytime)" },
   { id: "calibrate", label: "Calibrate", icon: Ruler, hint: "Set the background image scale: click two points on it, then enter the real distance", needsUnderlay: true },
@@ -282,6 +285,12 @@ function RightPanel({ state, dispatch, summary }) {
   // Phase 2: piping mode — run defaults, symbol palette, ortho + layers.
   if (tool === "pipe" || tool === "piping") {
     return <PipingPanel state={state} dispatch={dispatch} />;
+  }
+
+  // Phase 3: people org charts — tool panel while placing, person editor
+  // once a chart is selected.
+  if (tool === "orgchart" || selection?.kind === "orgchart") {
+    return <OrgChartPanel state={state} dispatch={dispatch} />;
   }
 
   // Visio-style arrange: shift-click 2+ furniture pieces on the plan.
