@@ -69,3 +69,59 @@ export {
 export { resolveCanvasDrop } from "./chartInteractions.js";
 
 export { seedChartFromTemplate } from "./chartSeeds.js";
+
+export {
+  IMPORT_MODES,
+  ORG_TARGETS,
+  WORKFLOW_TARGETS,
+  REQUIRED_TARGETS,
+  ImportError,
+  assertImportMode,
+  assertTableHasData,
+  missingRequiredTargets,
+} from "./import/chartImportTypes.js";
+
+export {
+  parseCsv,
+  parseXlsx,
+  normalizeWorkbookSheets,
+} from "./import/spreadsheetParser.js";
+
+export {
+  detectHeaders,
+  produceCandidates,
+  normalizeHeader,
+} from "./import/headerDetector.js";
+
+export {
+  mapOrgRows,
+  mapOrgRowsChunked,
+} from "./import/orgImportMapper.js";
+
+export {
+  mapWorkflowRows,
+  mapWorkflowRowsChunked,
+} from "./import/workflowImportMapper.js";
+
+export {
+  validateDraftDocument,
+} from "./import/importValidator.js";
+
+export {
+  buildImportPreview,
+} from "./import/importPreviewBuilder.js";
+
+export {
+  targetsForMode,
+  isKnownImportMode,
+  validateConfirmedMappings,
+} from "./import/importMapping.js";
+
+export {
+  runOrgImportPipeline,
+  runOrgImportPipelineAsync,
+  commitOrgImport,
+  runWorkflowImportPipeline,
+  runWorkflowImportPipelineAsync,
+  commitWorkflowImport,
+} from "./import/importPipeline.js";
