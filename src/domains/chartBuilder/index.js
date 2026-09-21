@@ -48,3 +48,24 @@ export {
   getChartTemplate,
   listChartTemplatesByType,
 } from "./chartTemplates.js";
+
+export {
+  CHART_BACKGROUND_CATEGORIES,
+  CHART_BACKGROUNDS,
+  DEFAULT_CHART_BACKGROUND,
+  getChartBackground,
+  isValidChartBackgroundId,
+  listChartBackgroundsByCategory,
+} from "./chartBackground.js";
+
+export {
+  LAYOUT_NODE_ORG,
+  LAYOUT_NODE_WORKFLOW,
+  DEFAULT_LAYOUT_GAPS,
+  layoutChart,
+  contentBounds,
+} from "./chartLayout.js";
+
+export { resolveCanvasDrop } from "./chartInteractions.js";
+
+export { seedChartFromTemplate } from "./chartSeeds.js";
