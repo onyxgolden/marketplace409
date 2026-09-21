@@ -1221,6 +1221,13 @@ fn engine_provenance(
     if requested == resolved_engine {
         return (Some(requested.to_string()), None);
     }
+    // Auto is a delegation, not a demand: resolving Auto to the DOM-aware
+    // engine is a legitimate resolution, never a fallback, so no reason is
+    // recorded. (Auto -> raster-observation still records below: that path
+    // is only taken when the target exposed no usable scroll geometry.)
+    if req.requested_engine == ScrollEngineKind::Auto && resolved_engine == "dom-aware" {
+        return (Some(requested.to_string()), None);
+    }
     let why = match &req.target {
         ScrollTarget::Window { .. } => "the window exposes no usable scroll geometry",
         ScrollTarget::Region { .. } => "a region target exposes no scroll geometry",
@@ -1902,6 +1909,13 @@ mod tests {
         let (_, fallback) = engine_provenance(&req, "raster-observation");
         let reason = fallback.expect("auto->raster fallback must be recorded");
         assert!(reason.contains("no usable scroll geometry"), "{reason}");
+        // Auto resolving to dom-aware is a legitimate resolution, not a
+        // fallback: no reason is recorded.
+        let mut req = test_request("t-prov4", ScrollEngineKind::Auto);
+        req.requested_engine = ScrollEngineKind::Auto;
+        let (requested, fallback) = engine_provenance(&req, "dom-aware");
+        assert_eq!(requested.as_deref(), Some("auto"));
+        assert_eq!(fallback, None);
     }
 
     #[test]
