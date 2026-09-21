@@ -72,6 +72,26 @@ describe("designerReducer — org charts", () => {
     expect(state.design.orgCharts[0].nodes).toHaveLength(1);
   });
 
+  it("lets UPDATE_PERSON clear a name to empty (transient editing state)", () => {
+    // Regression: deleting the last character of a person's name used to throw
+    // inside updatePerson; the reducer swallowed the error and the controlled
+    // input snapped back, so the final character could never be removed.
+    let state = stateWithChart();
+    const chartId = state.design.orgCharts[0].id;
+    const rootId = state.design.orgCharts[0].nodes[0].id;
+    state = designerReducer(state, { type: "UPDATE_PERSON", chartId, personId: rootId, fields: { name: "N" } });
+    expect(state.design.orgCharts[0].nodes[0].name).toBe("N");
+    state = designerReducer(state, { type: "UPDATE_PERSON", chartId, personId: rootId, fields: { name: "" } });
+    expect(state.design.orgCharts[0].nodes[0].name).toBe("");
+    state = designerReducer(state, {
+      type: "UPDATE_PERSON",
+      chartId,
+      personId: rootId,
+      fields: { name: "Jason Morgan" },
+    });
+    expect(state.design.orgCharts[0].nodes[0].name).toBe("Jason Morgan");
+  });
+
   it("fails soft on invalid person edits instead of throwing", () => {
     let state = stateWithChart();
     const chartId = state.design.orgCharts[0].id;

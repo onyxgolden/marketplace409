@@ -689,9 +689,11 @@ export function updatePerson(design, chartId, personId, fields = {}) {
       changed = true;
       const next = { ...p };
       if (fields.name !== undefined) {
-        const cleanName = cleanText(fields.name, 80);
-        if (!cleanName) throw new Error("Person name is required.");
-        next.name = cleanName;
+        // Empty is allowed as a transient editing state: clearing the name
+        // field must not reject the keystroke (the reducer would swallow the
+        // error and the input would snap back, making the last character
+        // uneditable). addPerson still requires a non-empty name.
+        next.name = cleanText(fields.name, 80) || "";
       }
       if (fields.title !== undefined) next.title = cleanText(fields.title, 80) || "";
       if (fields.department !== undefined) next.department = cleanText(fields.department, 60) || "";
