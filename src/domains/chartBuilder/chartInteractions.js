@@ -4,8 +4,10 @@
 //
 // resolveCanvasDrop(doc, { nodeId, position, dropTargetId }):
 //   - org document + a drop target that is a different node -> attempt
-//     REPARENT_NODE through the reducer, which rejects cycles. On success the
-//     caller re-runs auto-layout (returned as reparented: true).
+//     REPARENT_NODE through the reducer, which rejects cycles. A rejected
+//     reparent returns the ORIGINAL document state unchanged (the node's
+//     position must not move); the rejection reason comes back as
+//     reparentError and the caller surfaces it as an error notice only.
 //   - otherwise -> MOVE_NODE to the dropped position.
 // Returns { state, error, reparented, reparentError } where error is the
 // MOVE_NODE outcome and reparentError carries a rejected reparent reason.
@@ -31,16 +33,12 @@ export function resolveCanvasDrop(doc, { nodeId, position, dropTargetId } = {}) 
         reparentError: null,
       };
     }
-    // Rejected (unknown node, self-parent, or cycle): keep the document
-    // otherwise intact and just move the node to the drop point.
-    const moved = chartReducer(doc, {
-      type: "MOVE_NODE",
-      id: nodeId,
-      position,
-    });
+    // Rejected (unknown node, self-parent, or cycle): return the original
+    // document untouched. The node's position must be unchanged after a
+    // rejected drop — the caller surfaces reparentError as a notice only.
     return {
-      state: moved.state,
-      error: moved.error,
+      state: doc,
+      error: null,
       reparented: false,
       reparentError: reparent.error,
     };

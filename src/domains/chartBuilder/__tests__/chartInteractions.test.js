@@ -64,10 +64,51 @@ describe("canvas drop resolution", () => {
     expect(nodeSupervisor(result.state, "ceo")).toBe(null);
     expect(nodeSupervisor(result.state, "vp")?.id).toBe("ceo");
     expect(result.state.edges).toHaveLength(2);
-    // The drag position still applied (the canvas shows where it was dropped).
+    // The node's position is unchanged after a rejected drop: the original
+    // document is returned untouched, not a moved copy.
+    expect(result.state).toBe(doc);
     expect(
       result.state.nodes.find((n) => n.id === "ceo").position
-    ).toEqual({ x: 10, y: 20 });
+    ).toEqual(doc.nodes.find((n) => n.id === "ceo").position);
+  });
+
+  it("rejected reparent (cycle) leaves the document byte-identical and reports the error", () => {
+    const doc = orgDoc();
+    const before = JSON.stringify(doc);
+    const result = resolveCanvasDrop(doc, {
+      nodeId: "ceo",
+      position: { x: 999, y: -42 },
+      dropTargetId: "vp",
+    });
+    expect(result.reparented).toBe(false);
+    expect(result.reparentError).toBeTruthy();
+    expect(result.error).toBe(null);
+    // Byte-identical: same reference, same serialized content — the drop
+    // position must NOT be applied.
+    expect(result.state).toBe(doc);
+    expect(JSON.stringify(result.state)).toBe(before);
+    expect(
+      result.state.nodes.find((n) => n.id === "ceo").position
+    ).toEqual(doc.nodes.find((n) => n.id === "ceo").position);
+  });
+
+  it("successful reparent preserves coordinates of all nodes", () => {
+    const doc = orgDoc();
+    const positions = Object.fromEntries(
+      doc.nodes.map((n) => [n.id, { ...n.position }])
+    );
+    const result = resolveCanvasDrop(doc, {
+      nodeId: "mgr",
+      position: { x: 400, y: 300 },
+      dropTargetId: "ceo",
+    });
+    expect(result.reparented).toBe(true);
+    expect(result.reparentError).toBe(null);
+    expect(nodeSupervisor(result.state, "mgr")?.id).toBe("ceo");
+    // No auto-layout re-stamp on drop: every node keeps its coordinates.
+    for (const node of result.state.nodes) {
+      expect(node.position).toEqual(positions[node.id]);
+    }
   });
 
   it("rejects dropping a node onto itself as a reparent", () => {

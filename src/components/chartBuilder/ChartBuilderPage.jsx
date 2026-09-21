@@ -121,12 +121,16 @@ export default function ChartBuilderPage() {
       return;
     }
     if (result.reparented) {
-      // Re-run auto-layout so the tree is tidy after the move.
-      commitState(stampLayoutPositions(result.state, template), "reparent");
+      // Preserve the user's arrangement: auto-layout stays an explicit user
+      // action (the auto-layout button) and never a side effect of
+      // reparenting.
+      commitState(result.state, "reparent");
       setNotice({ text: "Moved under the new supervisor.", kind: "info" });
-    } else {
+    } else if (result.state !== current) {
       commitState(result.state, "move-node");
     }
+    // A rejected reparent leaves the document untouched: notice only, no
+    // history entry, no position change.
   }
 
   function autoLayout() {
