@@ -4,26 +4,38 @@
 
 import {
   addOpening,
+  addPipeRun,
   addRoomFromTemplate,
   addWall,
   calibrateUnderlay,
   createEmptyDesign,
   deleteFurniture,
   deleteOpening,
+  deletePipeRun,
   deleteRoom,
+  deleteSymbol,
   deleteWall,
+  findPipeRun,
+  findSymbolInstance,
   moveFurniture,
   moveFurnitureMany,
   moveOpening,
+  movePipeVertex,
+  moveSymbol,
   moveUnderlay,
   moveWallEndpoint,
   placeFurniture,
+  placeSymbol,
   removeUnderlay,
   renameDesign,
   resizeOpening,
   rotateFurniture,
+  rotateSymbol,
   setFurnitureUnitCost,
+  setPipeFields,
   setRoomFinish,
+  setSymbolLayer,
+  setSymbolTag,
   setUnderlay,
   setWallMaterial,
   updateDesignSettings,
@@ -31,6 +43,8 @@ import {
 } from "@/domains/roomDesigner/designerDocument";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
+import { PIPE_DIAMETERS_IN, PIPE_LAYERS } from "@/domains/roomDesigner/pipingGeometry";
+import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 
 export const TOOLS = Object.freeze([
   "select",
@@ -39,6 +53,8 @@ export const TOOLS = Object.freeze([
   "door",
   "window",
   "furniture",
+  "pipe",
+  "piping",
   "erase",
   "pan",
   "calibrate",
@@ -46,11 +62,16 @@ export const TOOLS = Object.freeze([
 
 export function createInitialState(design) {
   return {
-    design: design || createEmptyDesign(),
+    design: withPipeDefaults(design || createEmptyDesign()),
     tool: "select",
     pendingCatalogId: null,
     pendingRoomTemplate: "bedroom",
-    selection: null, // { kind: "wall"|"opening"|"furniture"|"room", id }
+    // Phase 2: piping mode — defaults for new pipe runs.
+    pendingPipe: { diameterIn: 2, material: "Carbon steel", service: "Process", layer: "auto" },
+    pendingSymbol: null, // { domain, symbolId } for the piping-symbol tool
+    orthoSnap: true, // orthogonal (90°) vertex snapping for pipe runs
+    layerVisibility: { piping: true, equipment: true, annotations: true },
+    selection: null, // { kind: "wall"|"opening"|"furniture"|"room"|"pipe"|"symbol", id }
     multiSelection: [], // shift-clicked furniture: [{ kind: "furniture", id }]
     calibration: null, // scale-calibration clicks: { a: point, b?: point }
     view: "2d",
@@ -60,6 +81,11 @@ export function createInitialState(design) {
     // still current -- edits made while a save was in flight stay dirty.
     designRevision: 0,
   };
+}
+
+/** Designs saved before piping existed lack the new arrays; default them. */
+function withPipeDefaults(design) {
+  return { pipes: [], symbols: [], ...design };
 }
 
 function touch(state, design) {
@@ -115,6 +141,32 @@ export function designerReducer(state, action) {
       return { ...state, pendingCatalogId: action.catalogId, tool: "furniture" };
     case "SET_PENDING_ROOM":
       return { ...state, pendingRoomTemplate: action.templateId, tool: "room" };
+    case "SET_PENDING_PIPE": {
+      if (action.pipe?.diameterIn && !PIPE_DIAMETERS_IN.includes(action.pipe.diameterIn)) {
+        return state;
+      }
+      return { ...state, pendingPipe: { ...state.pendingPipe, ...action.pipe }, tool: "pipe" };
+    }
+    case "SET_PENDING_SYMBOL": {
+      if (!findSymbol(action.domain, action.symbolId)) return state;
+      return {
+        ...state,
+        pendingSymbol: { domain: action.domain, symbolId: action.symbolId },
+        tool: "piping",
+      };
+    }
+    case "TOGGLE_ORTHO_SNAP":
+      return { ...state, orthoSnap: !state.orthoSnap };
+    case "TOGGLE_LAYER": {
+      if (!PIPE_LAYERS.includes(action.layer)) return state;
+      return {
+        ...state,
+        layerVisibility: {
+          ...state.layerVisibility,
+          [action.layer]: state.layerVisibility[action.layer] === false,
+        },
+      };
+    }
     case "SET_VIEW":
       return { ...state, view: action.view === "3d" ? "3d" : "2d" };
     case "SELECT":
@@ -169,6 +221,8 @@ export function designerReducer(state, action) {
       else if (target.kind === "opening") design = deleteOpening(design, target.id);
       else if (target.kind === "furniture") design = deleteFurniture(design, target.id);
       else if (target.kind === "room") design = deleteRoom(design, target.id);
+      else if (target.kind === "pipe") design = deletePipeRun(design, target.id);
+      else if (target.kind === "symbol") design = deleteSymbol(design, target.id);
       return { ...touch(state, design), selection: null, multiSelection: pruneMulti(design, state.multiSelection) };
     }
     case "DELETE_SELECTION": {
@@ -180,6 +234,8 @@ export function designerReducer(state, action) {
         else if (sel.kind === "opening") design = deleteOpening(design, sel.id);
         else if (sel.kind === "furniture") design = deleteFurniture(design, sel.id);
         else if (sel.kind === "room") design = deleteRoom(design, sel.id);
+        else if (sel.kind === "pipe") design = deletePipeRun(design, sel.id);
+        else if (sel.kind === "symbol") design = deleteSymbol(design, sel.id);
       }
       for (const m of state.multiSelection) {
         if (design.furniture.some((f) => f.id === m.id)) design = deleteFurniture(design, m.id);
@@ -207,6 +263,48 @@ export function designerReducer(state, action) {
       if (pieces.length < 3) return state;
       return touch(state, moveFurnitureMany(state.design, distributeFurniture(pieces)));
     }
+    // ---- Phase 2: piping mode ----
+    case "ADD_PIPE_RUN": {
+      const layer = state.pendingPipe.layer === "auto" ? "piping" : state.pendingPipe.layer;
+      const design = addPipeRun(state.design, action.points, { ...state.pendingPipe, layer });
+      const run = design.pipes[design.pipes.length - 1];
+      return { ...touch(state, design), selection: { kind: "pipe", id: run.id } };
+    }
+    case "SET_PIPE_FIELDS":
+      if (!findPipeRun(state.design, action.pipeId)) return state;
+      return touch(state, setPipeFields(state.design, action.pipeId, action.fields));
+    case "MOVE_PIPE_VERTEX":
+      if (!findPipeRun(state.design, action.pipeId)) return state;
+      return touch(
+        state,
+        movePipeVertex(state.design, action.pipeId, action.index, action.point),
+      );
+    case "PLACE_SYMBOL": {
+      const pending = state.pendingSymbol;
+      if (!pending) return state;
+      const design = placeSymbol(
+        state.design,
+        action.domain || pending.domain || "piping",
+        action.symbolId || pending.symbolId,
+        action.x,
+        action.y,
+        { layer: state.pendingPipe.layer === "auto" ? undefined : state.pendingPipe.layer },
+      );
+      const inst = design.symbols[design.symbols.length - 1];
+      return { ...touch(state, design), selection: { kind: "symbol", id: inst.id } };
+    }
+    case "MOVE_SYMBOL":
+      if (!findSymbolInstance(state.design, action.symbolId)) return state;
+      return touch(state, moveSymbol(state.design, action.symbolId, action.x, action.y));
+    case "ROTATE_SYMBOL":
+      if (!findSymbolInstance(state.design, action.symbolId)) return state;
+      return touch(state, rotateSymbol(state.design, action.symbolId, action.rotationDeg));
+    case "SET_SYMBOL_TAG":
+      if (!findSymbolInstance(state.design, action.symbolId)) return state;
+      return touch(state, setSymbolTag(state.design, action.symbolId, action.tag));
+    case "SET_SYMBOL_LAYER":
+      if (!findSymbolInstance(state.design, action.symbolId)) return state;
+      return touch(state, setSymbolLayer(state.design, action.symbolId, action.layer));
     case "SET_WALL_MATERIAL":
       return touch(state, setWallMaterial(state.design, action.wallId, action.material));
     case "SET_ROOM_FINISH":

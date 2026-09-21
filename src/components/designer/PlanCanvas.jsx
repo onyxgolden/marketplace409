@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
+import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import {
   DEFAULT_GRID_IN,
   GRID_SPACING_OPTIONS,
@@ -17,6 +18,11 @@ import {
   underlayContainsPoint,
   wallLength,
 } from "@/domains/roomDesigner/designerGeometry";
+import {
+  applyOrthoSnap,
+  longestPipeSegment,
+  pipeRunLengthIn,
+} from "@/domains/roomDesigner/pipingGeometry";
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { renderSymbol2D } from "./symbolDrawRoutines";
 
@@ -28,14 +34,35 @@ const HIT_TOLERANCE_PX = 10;
  * SVG 2D floor-plan editor. All plan math is inches; the component maps
  * plan <-> screen with a pan/zoom transform kept in local state.
  */
-export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, dispatch }) {
+export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, orthoSnap, layerVisibility, dispatch }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
   const [view, setView] = useState({ scale: 1.6, ox: 60, oy: 60 });
   const [drawPreview, setDrawPreview] = useState(null); // {a, b} plan inches while drawing a wall
+  const [pipePreview, setPipePreview] = useState(null); // [points] plan inches while drawing a pipe run
+  const [hoverPoint, setHoverPoint] = useState(null); // rubber-band cursor point for the pipe tool
   const [drag, setDrag] = useState(null); // active drag descriptor
   const [spaceDown, setSpaceDown] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
+
+  // Leaving the pipe tool abandons the in-progress run. React's sanctioned
+  // "adjust state during render" pattern (no effect) so we don't set state
+  // inside an effect body.
+  const [prevTool, setPrevTool] = useState(tool);
+  if (prevTool !== tool) {
+    setPrevTool(tool);
+    if (tool !== "pipe") {
+      setPipePreview(null);
+      setHoverPoint(null);
+    }
+  }
+
+  // Discipline layers (Visio-style seed): pipes and piping symbols carry a
+  // layer; hidden layers are skipped in rendering and hit-testing.
+  const layerVisible = useCallback(
+    (layer) => (layerVisibility || {})[layer] !== false,
+    [layerVisibility],
+  );
 
   // Track the visible canvas size so the rulers can track pan/zoom.
   useEffect(() => {
@@ -87,6 +114,18 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   );
 
   // ---- hit testing (plan inches) ----
+  // Point-in-rotated-rectangle test shared by furniture and symbol hits.
+  const pointInFootprint = useCallback((plan, x, y, widthIn, depthIn, rotationDeg) => {
+    const corners = rotatedFootprintCorners({ x, y, widthIn, depthIn, rotationDeg });
+    for (let k = 0; k < 4; k += 1) {
+      const p1 = corners[k];
+      const p2 = corners[(k + 1) % 4];
+      const cross = (p2.x - p1.x) * (plan.y - p1.y) - (p2.y - p1.y) * (plan.x - p1.x);
+      if (cross < 0) return false;
+    }
+    return true;
+  }, []);
+
   const hitTest = useCallback(
     (plan) => {
       const tolIn = HIT_TOLERANCE_PX / view.scale;
@@ -95,18 +134,30 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         const f = design.furniture[i];
         const entry = getCatalogEntry(f.catalogId);
         if (!entry) continue;
-        const corners = rotatedFootprintCorners({
-          x: f.x, y: f.y, widthIn: entry.widthIn, depthIn: entry.depthIn, rotationDeg: f.rotationDeg,
-        });
-        // point-in-convex-quad via half-plane signs
-        let inside = true;
-        for (let k = 0; k < 4; k += 1) {
-          const p1 = corners[k];
-          const p2 = corners[(k + 1) % 4];
-          const cross = (p2.x - p1.x) * (plan.y - p1.y) - (p2.y - p1.y) * (plan.x - p1.x);
-          if (cross < 0) { inside = false; break; }
+        if (pointInFootprint(plan, f.x, f.y, entry.widthIn, entry.depthIn, f.rotationDeg)) {
+          return { kind: "furniture", id: f.id };
         }
-        if (inside) return { kind: "furniture", id: f.id };
+      }
+      // piping symbols (hidden layers are skipped)
+      for (let i = (design.symbols || []).length - 1; i >= 0; i -= 1) {
+        const s = design.symbols[i];
+        if (!layerVisible(s.layer)) continue;
+        const symbol = findSymbol(s.domain, s.symbolId);
+        if (!symbol) continue;
+        if (pointInFootprint(plan, s.x, s.y, symbol.widthIn, symbol.depthIn, s.rotationDeg)) {
+          return { kind: "symbol", id: s.id };
+        }
+      }
+      // pipe runs
+      for (let i = (design.pipes || []).length - 1; i >= 0; i -= 1) {
+        const run = design.pipes[i];
+        if (!layerVisible(run.layer)) continue;
+        const pts = run.points || [];
+        for (let k = 1; k < pts.length; k += 1) {
+          if (distancePointToSegment(plan, pts[k - 1], pts[k]) < tolIn + 4) {
+            return { kind: "pipe", id: run.id };
+          }
+        }
       }
       // openings (gaps on walls)
       for (const wall of design.walls) {
@@ -141,10 +192,27 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       }
       return null;
     },
-    [design, view.scale],
+    [design, view.scale, layerVisible, pointInFootprint],
   );
 
   // ---- pointer handlers ----
+  // Commit the in-progress pipe run (double-click / Enter). Near-duplicate
+  // consecutive vertices are collapsed by the document operation.
+  const commitPipeRun = useCallback(() => {
+    if (!pipePreview || pipePreview.length < 2) {
+      setPipePreview(null);
+      setHoverPoint(null);
+      return;
+    }
+    try {
+      dispatch({ type: "ADD_PIPE_RUN", points: pipePreview });
+    } catch {
+      // too short / invalid — drop it silently like short walls
+    }
+    setPipePreview(null);
+    setHoverPoint(null);
+  }, [pipePreview, dispatch]);
+
   const onPointerDown = (e) => {
     if (e.button === 1 || tool === "pan" || spaceDown) {
       setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
@@ -197,6 +265,25 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       dispatch({ type: "PLACE_FURNITURE", catalogId: pendingCatalogId, x: point.x, y: point.y });
       return;
     }
+    // Phase 2: piping mode — click to append polyline vertices (grid
+    // snapped, then orthogonally locked to the previous vertex when the
+    // ortho option is on). Double-click or Enter commits the run.
+    if (tool === "pipe") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      setPipePreview((prev) => {
+        const next = prev ? [...prev] : [];
+        const last = next[next.length - 1];
+        const snapped = last && orthoSnap ? applyOrthoSnap(last, point) : point;
+        return [...next, snapped];
+      });
+      return;
+    }
+    if (tool === "piping") {
+      if (!pendingSymbol) return;
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      dispatch({ type: "PLACE_SYMBOL", x: point.x, y: point.y });
+      return;
+    }
     if (tool === "erase") {
       const hit = hitTest(plan);
       if (hit) dispatch({ type: "DELETE_OBJECT", target: hit });
@@ -237,6 +324,26 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       setDrag({ kind: "move-furniture", id: hit.id, moved: false });
       return;
     }
+    // Phase 2: piping symbol — click to select, drag to move.
+    if (hit?.kind === "symbol") {
+      dispatch({ type: "SELECT", selection: hit });
+      setDrag({ kind: "move-symbol", id: hit.id, moved: false });
+      return;
+    }
+    // Phase 2: pipe vertex handles — drag a vertex of the selected run.
+    if (selection?.kind === "pipe") {
+      const run = (design.pipes || []).find((p) => p.id === selection.id);
+      if (run) {
+        const tolIn = HIT_TOLERANCE_PX / view.scale + 2;
+        const index = (run.points || []).findIndex(
+          (v) => Math.hypot(plan.x - v.x, plan.y - v.y) < tolIn,
+        );
+        if (index >= 0) {
+          setDrag({ kind: "move-pipe-vertex", pipeId: run.id, index });
+          return;
+        }
+      }
+    }
     // Background underlay: drag to reposition when unlocked. The image sits
     // beneath everything, so plan objects take precedence in hit-testing.
     if (design.underlay && !design.underlay.locked && underlayContainsPoint(design.underlay, plan)) {
@@ -253,6 +360,15 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   const onPointerMove = (e) => {
     const screen = eventPoint(e);
+    // Pipe tool rubber band: track the cursor even without a drag so the
+    // in-progress run previews the next segment and its length.
+    if (tool === "pipe" && !drag) {
+      const plan = toPlan(screen);
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      const last = pipePreview?.[pipePreview.length - 1];
+      setHoverPoint(last && orthoSnap ? applyOrthoSnap(last, point) : point);
+      return;
+    }
     if (!drag) return;
     if (drag.kind === "pan") {
       setView((v) => ({ ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) }));
@@ -280,6 +396,16 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (drag.kind === "move-furniture") {
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
       dispatch({ type: "MOVE_FURNITURE", furnitureId: drag.id, x: point.x, y: point.y });
+      setDrag({ ...drag, moved: true });
+    }
+    // Phase 2: piping mode drags.
+    if (drag.kind === "move-pipe-vertex") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      dispatch({ type: "MOVE_PIPE_VERTEX", pipeId: drag.pipeId, index: drag.index, point });
+    }
+    if (drag.kind === "move-symbol") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      dispatch({ type: "MOVE_SYMBOL", symbolId: drag.id, x: point.x, y: point.y });
       setDrag({ ...drag, moved: true });
     }
     if (drag.kind === "move-underlay") {
@@ -318,6 +444,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const onDoubleClick = (e) => {
+    // Phase 2: double-click finishes the in-progress pipe run.
+    if (tool === "pipe") {
+      commitPipeRun();
+      return;
+    }
     if (tool !== "select") return;
     const plan = toPlan(eventPoint(e));
     const hit = hitTest(plan);
@@ -325,6 +456,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const piece = design.furniture.find((f) => f.id === hit.id);
       if (piece) {
         dispatch({ type: "ROTATE_FURNITURE", furnitureId: hit.id, rotationDeg: piece.rotationDeg + 45 });
+      }
+    }
+    if (hit?.kind === "symbol") {
+      const inst = (design.symbols || []).find((s) => s.id === hit.id);
+      if (inst) {
+        dispatch({ type: "ROTATE_SYMBOL", symbolId: hit.id, rotationDeg: inst.rotationDeg + 45 });
       }
     }
   };
@@ -335,9 +472,19 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       if ((e.key === "Delete" || e.key === "Backspace") && tool === "select") {
         dispatch({ type: "DELETE_SELECTION" });
       }
+      // Enter commits the in-progress pipe run (not while typing in a field).
+      if (e.key === "Enter" && tool === "pipe") {
+        const tag = e.target?.tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          e.preventDefault();
+          commitPipeRun();
+        }
+      }
       if (e.key === "Escape") {
         dispatch({ type: "CLEAR_SELECTION" });
         setDrawPreview(null);
+        setPipePreview(null);
+        setHoverPoint(null);
         setDrag(null);
       }
     };
@@ -350,7 +497,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [tool, dispatch]);
+  }, [tool, dispatch, commitPipeRun]);
 
   // ---- rendering ----
   const thicknessPx = Math.max(3, design.settings.wallThicknessIn * view.scale);
@@ -512,9 +659,94 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     highlighted: selection?.kind === "room" && selection?.id === room.id,
   });
 
+  // ---- Phase 2: piping mode ----
+  // Pipe run: polyline with width from the nominal diameter, plus a
+  // dimension label (length + diameter) on its longest segment. Selected
+  // runs show draggable vertex handles.
+  const renderPipe = (run) => {
+    if (!layerVisible(run.layer)) return null;
+    const isSelected = selection?.kind === "pipe" && selection?.id === run.id;
+    const pts = (run.points || []).map(toScreen).map((p) => `${p.x},${p.y}`).join(" ");
+    const widthPx = Math.max(2.5, (run.diameterIn || 2) * view.scale * 0.6);
+    const seg = longestPipeSegment(run.points);
+    let label = null;
+    if (seg && seg.length >= 1) {
+      const a = toScreen(seg.a);
+      const b = toScreen(seg.b);
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      let angle = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+      if (angle > 90) angle -= 180;
+      if (angle < -90) angle += 180;
+      label = (
+        <text
+          x={mid.x} y={mid.y - 8} textAnchor="middle" fontSize={11} fontWeight={600}
+          fill="#e0f2fe" transform={`rotate(${angle.toFixed(1)} ${mid.x} ${mid.y})`}
+        >
+          {feetInchesLabel(seg.length)} ⌀{run.diameterIn}″
+        </text>
+      );
+    }
+    return (
+      <g key={run.id}>
+        <polyline
+          points={pts}
+          fill="none"
+          stroke={isSelected ? "#f59e0b" : "#7dd3fc"}
+          strokeWidth={widthPx}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity={0.9}
+        />
+        {label}
+        {isSelected &&
+          (run.points || []).map((v, i) => {
+            const s = toScreen(v);
+            return (
+              <circle key={i} cx={s.x} cy={s.y} r={6} fill="#f59e0b" stroke="#fff" strokeWidth={1.5} />
+            );
+          })}
+      </g>
+    );
+  };
+
+  const renderPipingSymbol = (inst) => {
+    if (!layerVisible(inst.layer)) return null;
+    const isSelected = selection?.kind === "symbol" && selection?.id === inst.id;
+    return renderSymbol2D(inst.domain, inst.symbolId, inst, {
+      toScreen,
+      scale: view.scale,
+      highlighted: isSelected,
+    });
+  };
+
+  // In-progress pipe run: committed vertices, rubber band to the cursor,
+  // and the running centerline length.
+  const renderPipePreview = () => {
+    if (tool !== "pipe" || !pipePreview || pipePreview.length === 0) return null;
+    const all = hoverPoint ? [...pipePreview, hoverPoint] : pipePreview;
+    const pts = all.map(toScreen).map((p) => `${p.x},${p.y}`).join(" ");
+    const end = toScreen(all[all.length - 1]);
+    return (
+      <g pointerEvents="none">
+        <polyline
+          points={pts} fill="none" stroke="#38bdf8" strokeWidth={3}
+          strokeDasharray="10 6" strokeLinecap="round"
+        />
+        {pipePreview.map((v, i) => {
+          const s = toScreen(v);
+          return <circle key={i} cx={s.x} cy={s.y} r={4} fill="#38bdf8" />;
+        })}
+        <text x={end.x} y={end.y - 12} textAnchor="middle" fontSize={13} fontWeight={600} fill="#38bdf8">
+          {feetInchesLabel(pipeRunLengthIn(all))} · double-click or Enter to finish
+        </text>
+      </g>
+    );
+  };
+
   const cursorForTool = {
     select: "default", wall: "crosshair", room: "copy", door: "crosshair",
-    window: "crosshair", furniture: "copy", erase: "not-allowed", pan: spaceDown ? "grabbing" : "grab",
+    window: "crosshair", furniture: "copy", pipe: "crosshair", piping: "copy",
+    erase: "not-allowed", pan: spaceDown ? "grabbing" : "grab",
     calibrate: "crosshair",
   }[tool] || "default";
 
@@ -570,7 +802,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     );
   };
 
-  const isEmpty = design.walls.length === 0 && design.rooms.length === 0;
+  const isEmpty = design.walls.length === 0 && design.rooms.length === 0
+    && (design.pipes || []).length === 0 && (design.symbols || []).length === 0;
 
   // ---- Background underlay: drawn beneath the grid and the plan,
   // scaling/panning with the canvas transform ----
@@ -644,7 +877,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           transform={`translate(${view.ox % majorPx} ${view.oy % majorPx})`} />
         {design.rooms.map(renderRoom)}
         {design.walls.map(renderWall)}
+        {(design.pipes || []).map(renderPipe)}
         {design.furniture.map(renderFurniture)}
+        {(design.symbols || []).map(renderPipingSymbol)}
+        {renderPipePreview()}
         {renderCalibrationMarkers()}
         {drawPreview && (() => {
           const a = toScreen(drawPreview.a);

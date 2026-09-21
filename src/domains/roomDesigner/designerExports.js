@@ -7,6 +7,7 @@
 
 import { polygonArea } from "./designerGeometry";
 import { totalRoomAreaSqFt, totalWallLengthIn } from "./designerDocument";
+import { pipeLengthByDiameter, pipeRunLengthIn } from "./pipingGeometry";
 
 /**
  * Estimating summary of a design, safe to hand to the scheduling or cost
@@ -26,6 +27,20 @@ export function summarizeDesignForEstimating(design) {
     type: opening.type,
     widthIn: opening.widthIn,
   }));
+  // Piping (Phase 2): runs with lengths derived from geometry, grouped by
+  // nominal diameter for material takeoffs — plain data, no editor state.
+  const pipeRuns = (design.pipes || []).map((run) => ({
+    id: run.id,
+    diameterIn: run.diameterIn,
+    material: run.material || null,
+    service: run.service || null,
+    layer: run.layer,
+    lengthIn: Math.round(pipeRunLengthIn(run.points) * 100) / 100,
+  }));
+  const pipeLengthByDiameterIn = {};
+  for (const [diameter, lengthIn] of Object.entries(pipeLengthByDiameter(design.pipes))) {
+    pipeLengthByDiameterIn[diameter] = Math.round(lengthIn * 100) / 100;
+  }
   return {
     designName: design.name,
     version: design.version,
@@ -41,5 +56,9 @@ export function summarizeDesignForEstimating(design) {
     doorCount: openings.filter((o) => o.type === "door").length,
     windowCount: openings.filter((o) => o.type === "window").length,
     furnitureCount: (design.furniture || []).length,
+    pipeRuns,
+    pipeRunCount: pipeRuns.length,
+    pipeLengthByDiameterIn,
+    pipingSymbolCount: (design.symbols || []).length,
   };
 }
