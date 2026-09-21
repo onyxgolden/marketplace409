@@ -75,6 +75,11 @@ export const FORGE_APPLICATIONS =
       label: "Members",
       shortLabel: "M",
     }),
+    Object.freeze({
+      href: "/forge/capture",
+      label: "Capture",
+      shortLabel: "Cp",
+    }),
   ]);
 
 export const PROMOTED_PREFIXES = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer"];
