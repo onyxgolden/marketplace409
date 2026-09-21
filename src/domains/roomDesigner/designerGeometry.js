@@ -496,3 +496,81 @@ export function rotatedFootprintCorners({ x, y, widthIn, depthIn, rotationDeg = 
     rotatePoint({ x: x - hw, y: y + hd }, origin, rotationDeg),
   ];
 }
+
+/**
+ * Placement-ghost geometry: where the mouse-following preview shows before
+ * the user commits a placement. Pure functions — the ghost lives in
+ * component-local preview state and never touches the design document, so
+ * cursor tracking can never write to the design or the undo stack.
+ */
+
+/**
+ * Corners of a room-template footprint dropped at `at` (the top-left
+ * corner in inches, exactly like addRoomFromTemplate). Throws on an
+ * invalid template or origin so the ghost can only preview a room that
+ * could actually be placed.
+ */
+export function ghostRoomPolygon(template, at) {
+  const { widthIn, depthIn } = template || {};
+  if (
+    !isFiniteNumber(widthIn) ||
+    widthIn <= 0 ||
+    !isFiniteNumber(depthIn) ||
+    depthIn <= 0
+  ) {
+    throw new Error("Ghost room needs a template with positive widthIn/depthIn.");
+  }
+  if (!isValidPoint(at)) {
+    throw new Error("Ghost room origin must be a valid point.");
+  }
+  return [
+    { x: at.x, y: at.y },
+    { x: at.x + widthIn, y: at.y },
+    { x: at.x + widthIn, y: at.y + depthIn },
+    { x: at.x, y: at.y + depthIn },
+  ];
+}
+
+/**
+ * Wall and gap endpoints for an opening (door/window) ghost: finds the
+ * nearest wall within tolIn of the cursor and lays the opening out at the
+ * offset — snapped to the grid when snapOffset is true, mirroring the
+ * ADD_OPENING commit path. Returns null when no wall is near the cursor.
+ * The width is the type's placement default; the ghost shows the span the
+ * click would cut.
+ */
+export function ghostOpeningSpan(
+  walls,
+  plan,
+  { widthIn, gridIn = DEFAULT_GRID_IN, snapOffset = true, tolIn = 16 } = {},
+) {
+  if (!isFiniteNumber(widthIn) || widthIn <= 0) {
+    throw new Error("Ghost opening needs a positive widthIn.");
+  }
+  if (!isValidPoint(plan)) return null;
+  let best = null;
+  let bestD = tolIn;
+  for (const wall of walls || []) {
+    const d = distancePointToSegment(plan, wall.a, wall.b);
+    if (d < bestD) {
+      bestD = d;
+      best = wall;
+    }
+  }
+  if (!best) return null;
+  const length = wallLength(best);
+  if (length === 0) return null;
+  const rawOffset = offsetAlongWall(plan, best);
+  const offsetIn = snapOffset ? snapScalar(rawOffset, gridIn) : rawOffset;
+  const dir = wallDirection(best);
+  return {
+    wallId: best.id,
+    offsetIn,
+    widthIn,
+    g1: { x: best.a.x + dir.x * offsetIn, y: best.a.y + dir.y * offsetIn },
+    g2: {
+      x: best.a.x + dir.x * (offsetIn + widthIn),
+      y: best.a.y + dir.y * (offsetIn + widthIn),
+    },
+  };
+}

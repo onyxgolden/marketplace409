@@ -10,6 +10,8 @@ import {
   dimensionGeometry,
   distancePointToSegment,
   feetInchesLabel,
+  ghostOpeningSpan,
+  ghostRoomPolygon,
   gridSpacingLabel,
   offsetAlongWall,
   pointInPolygon,
@@ -32,7 +34,9 @@ import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgCha
 import {
   FURNITURE_MAX_SIZE_IN,
   FURNITURE_MIN_SIZE_IN,
+  OPENING_DEFAULTS,
   fitScaleLabel,
+  getRoomTemplate,
   pieceSize,
   sheetPlanBounds,
 } from "@/domains/roomDesigner/designerDocument";
@@ -60,6 +64,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const [drawPreview, setDrawPreview] = useState(null); // {kind: "wall"|"wall-rect", a, b} plan inches while drawing
   const [pipePreview, setPipePreview] = useState(null); // [points] plan inches while drawing a pipe run
   const [hoverPoint, setHoverPoint] = useState(null); // rubber-band cursor point for the pipe tool
+  const [ghost, setGhost] = useState(null); // placement ghost preview (component-local only; never dispatched)
   const [drag, setDrag] = useState(null); // active drag descriptor
   const [spaceDown, setSpaceDown] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
@@ -70,6 +75,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const [prevTool, setPrevTool] = useState(tool);
   if (prevTool !== tool) {
     setPrevTool(tool);
+    setGhost(null);
     if (tool !== "pipe") {
       setPipePreview(null);
       setHoverPoint(null);
@@ -266,6 +272,76 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   );
 
   // ---- pointer handlers ----
+  // Mouse-following placement ghost: a semi-transparent preview of the
+  // object the active tool would place at the cursor, snapped exactly like
+  // the click-commit path. Preview-only state — never dispatched, so
+  // cursor tracking can never write to the design document or the undo
+  // stack. Walls draw their segment preview during the drag instead, so
+  // the ghost only marks the snapped anchor where the wall would start.
+  const computeGhost = (screen) => {
+    const plan = toPlan(screen);
+    if (tool === "room") {
+      const template = getRoomTemplate(pendingRoomTemplate);
+      if (!template) return null;
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      return {
+        kind: "room",
+        label: template.label,
+        widthIn: template.widthIn,
+        depthIn: template.depthIn,
+        polygon: ghostRoomPolygon(template, point),
+      };
+    }
+    if (tool === "door" || tool === "window") {
+      const span = ghostOpeningSpan(design.walls, plan, {
+        widthIn: OPENING_DEFAULTS[tool].widthIn,
+        gridIn,
+        snapOffset: snapEnabled,
+        tolIn: HIT_TOLERANCE_PX / view.scale + 6,
+      });
+      if (!span) return null;
+      return { kind: "opening", type: tool, ...span };
+    }
+    if (tool === "furniture") {
+      if (!pendingCatalogId) return null;
+      const entry = getCatalogEntry(pendingCatalogId);
+      if (!entry) return null;
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      return {
+        kind: "footprint",
+        label: entry.label,
+        x: point.x,
+        y: point.y,
+        widthIn: entry.widthIn,
+        depthIn: entry.depthIn,
+        rotationDeg: 0,
+      };
+    }
+    if (tool === "piping") {
+      if (!pendingSymbol) return null;
+      const symbol = findSymbol(pendingSymbol.domain, pendingSymbol.symbolId);
+      if (!symbol) return null;
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      return {
+        kind: "footprint",
+        label: symbol.label,
+        x: point.x,
+        y: point.y,
+        widthIn: symbol.widthIn,
+        depthIn: symbol.depthIn,
+        rotationDeg: 0,
+      };
+    }
+    if (tool === "orgchart") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      return { kind: "orgchart", x: point.x, y: point.y };
+    }
+    if (tool === "wall" || tool === "wallrect") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapRadiusIn: 9 });
+      return { kind: "anchor", x: point.x, y: point.y };
+    }
+    return null;
+  };
   // Commit the in-progress pipe run (double-click / Enter). Near-duplicate
   // consecutive vertices are collapsed by the document operation.
   const commitPipeRun = useCallback(() => {
@@ -542,7 +618,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       setHoverPoint(last && orthoSnap ? applyOrthoSnap(last, point) : point);
       return;
     }
-    if (!drag) return;
+    // Placement ghost follows the mouse while a placement tool is active.
+    if (!drag) {
+      setGhost(computeGhost(screen));
+      return;
+    }
     if (drag.kind === "pan") {
       setView((v) => ({ ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) }));
       return;
@@ -782,6 +862,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         setDrawPreview(null);
         setPipePreview(null);
         setHoverPoint(null);
+        setGhost(null);
         setDrag(null);
       }
     };
@@ -1155,6 +1236,86 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       </g>
     );
   };
+  // Placement ghost: semi-transparent preview of what the active tool
+  // would place at the cursor. Renders on the preview layer only
+  // (pointerEvents="none") — it is never committed to the design document.
+  const GHOST = "#a78bfa";
+  const renderGhost = () => {
+    if (!ghost || drag) return null;
+    if (ghost.kind === "room") {
+      const pts = ghost.polygon.map(toScreen).map((p) => `${p.x},${p.y}`).join(" ");
+      const c = toScreen({
+        x: (ghost.polygon[0].x + ghost.polygon[2].x) / 2,
+        y: (ghost.polygon[0].y + ghost.polygon[2].y) / 2,
+      });
+      return (
+        <g pointerEvents="none" data-testid="placement-ghost">
+          <polygon points={pts} fill={GHOST} fillOpacity={0.22}
+            stroke={GHOST} strokeWidth={2} strokeDasharray="8 5" />
+          <text x={c.x} y={c.y} textAnchor="middle" fontSize={13} fontWeight={600} fill={GHOST}>
+            {ghost.label} · {feetInchesLabel(ghost.widthIn)} × {feetInchesLabel(ghost.depthIn)}
+          </text>
+        </g>
+      );
+    }
+    if (ghost.kind === "opening") {
+      const g1 = toScreen(ghost.g1);
+      const g2 = toScreen(ghost.g2);
+      return (
+        <g pointerEvents="none" data-testid="placement-ghost">
+          <line x1={g1.x} y1={g1.y} x2={g2.x} y2={g2.y}
+            stroke={GHOST} strokeWidth={thicknessPx} strokeLinecap="butt"
+            strokeDasharray="8 5" opacity={0.55} />
+          <text x={(g1.x + g2.x) / 2} y={(g1.y + g2.y) / 2 - 12}
+            textAnchor="middle" fontSize={13} fontWeight={600} fill={GHOST}>
+            {ghost.type} · {feetInchesLabel(ghost.widthIn)}
+          </text>
+        </g>
+      );
+    }
+    if (ghost.kind === "footprint") {
+      const pts = rotatedFootprintCorners(ghost).map(toScreen).map((p) => `${p.x},${p.y}`).join(" ");
+      const c = toScreen(ghost);
+      return (
+        <g pointerEvents="none" data-testid="placement-ghost">
+          <polygon points={pts} fill={GHOST} fillOpacity={0.22}
+            stroke={GHOST} strokeWidth={2} strokeDasharray="8 5" />
+          <text x={c.x} y={c.y} textAnchor="middle" fontSize={13} fontWeight={600} fill={GHOST}>
+            {ghost.label}
+          </text>
+        </g>
+      );
+    }
+    if (ghost.kind === "orgchart") {
+      // New charts anchor top-center, like the hit test and renderer.
+      const w = ORG_CHART_METRICS.boxWidthIn;
+      const h = ORG_CHART_METRICS.boxHeightIn;
+      const tl = toScreen({ x: ghost.x - w / 2, y: ghost.y });
+      return (
+        <g pointerEvents="none" data-testid="placement-ghost">
+          <rect x={tl.x} y={tl.y} width={w * view.scale} height={h * view.scale}
+            fill={GHOST} fillOpacity={0.22}
+            stroke={GHOST} strokeWidth={2} strokeDasharray="8 5" />
+          <text x={tl.x + (w * view.scale) / 2} y={tl.y + (h * view.scale) / 2}
+            textAnchor="middle" fontSize={13} fontWeight={600} fill={GHOST}>
+            Org chart
+          </text>
+        </g>
+      );
+    }
+    if (ghost.kind === "anchor") {
+      const s = toScreen(ghost);
+      return (
+        <g pointerEvents="none" data-testid="placement-ghost">
+          <circle cx={s.x} cy={s.y} r={7} fill="none"
+            stroke={GHOST} strokeWidth={2} strokeDasharray="4 3" />
+          <line x1={s.x - 12} y1={s.y} x2={s.x + 12} y2={s.y} stroke={GHOST} strokeWidth={1.5} />
+          <line x1={s.x} y1={s.y - 12} x2={s.x} y2={s.y + 12} stroke={GHOST} strokeWidth={1.5} />
+        </g>
+      );
+    }
+    return null;
+  };
   const cursorForTool = {
     select: "default", wall: "crosshair", wallrect: "crosshair", room: "copy", door: "crosshair",
     window: "crosshair", furniture: "copy", pipe: "crosshair", piping: "copy",
@@ -1276,7 +1437,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={() => { setDrag(null); setDrawPreview(null); }}
+        onPointerLeave={() => { setDrag(null); setDrawPreview(null); setGhost(null); }}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}
       >
@@ -1298,6 +1459,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {(design.orgCharts || []).map(renderOrgChart)}
         {(design.sheets || []).map(renderSheet)}
         {renderPipePreview()}
+        {renderGhost()}
         {renderResizeHandles()}
         {renderOpeningResizeHandles()}
         {renderCalibrationMarkers()}

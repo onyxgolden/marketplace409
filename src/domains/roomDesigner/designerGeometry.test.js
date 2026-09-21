@@ -11,6 +11,8 @@ import {
   distributeFurniture,
   feetInchesLabel,
   footprintXBounds,
+  ghostOpeningSpan,
+  ghostRoomPolygon,
   gridSpacingLabel,
   isValidPoint,
   nearestPointOnSegment,
@@ -538,5 +540,76 @@ describe("pointInPolygon", () => {
     expect(pointInPolygon({ x: 50, y: 50 }, null)).toBe(false);
     expect(pointInPolygon(null, square)).toBe(false);
     expect(pointInPolygon({ x: NaN, y: 50 }, square)).toBe(false);
+  });
+});
+
+describe("ghostRoomPolygon", () => {
+  it("returns the template footprint corners at the origin", () => {
+    expect(ghostRoomPolygon({ widthIn: 144, depthIn: 96 }, { x: 60, y: 60 })).toEqual([
+      { x: 60, y: 60 },
+      { x: 204, y: 60 },
+      { x: 204, y: 156 },
+      { x: 60, y: 156 },
+    ]);
+  });
+
+  it("matches the addRoomFromTemplate footprint contract", () => {
+    const poly = ghostRoomPolygon({ widthIn: 120, depthIn: 144 }, { x: 0, y: 0 });
+    expect(poly).toHaveLength(4);
+    expect(poly[2]).toEqual({ x: 120, y: 144 });
+  });
+
+  it("throws on an invalid template or origin", () => {
+    expect(() => ghostRoomPolygon({ widthIn: 0, depthIn: 96 }, { x: 0, y: 0 })).toThrow();
+    expect(() => ghostRoomPolygon({ widthIn: 144 }, { x: 0, y: 0 })).toThrow();
+    expect(() => ghostRoomPolygon(null, { x: 0, y: 0 })).toThrow();
+    expect(() => ghostRoomPolygon({ widthIn: 144, depthIn: 96 }, null)).toThrow();
+    expect(() => ghostRoomPolygon({ widthIn: 144, depthIn: 96 }, { x: NaN, y: 0 })).toThrow();
+  });
+});
+
+describe("ghostOpeningSpan", () => {
+  const walls = [
+    { id: "w1", a: { x: 0, y: 0 }, b: { x: 240, y: 0 } },
+    { id: "w2", a: { x: 0, y: 100 }, b: { x: 0, y: 220 } },
+  ];
+
+  it("lays the span on the nearest wall with the snapped offset", () => {
+    const span = ghostOpeningSpan(walls, { x: 61, y: 3 }, { widthIn: 36, gridIn: 6 });
+    expect(span.wallId).toBe("w1");
+    expect(span.offsetIn).toBe(60); // raw 61 snaps to the 6" grid
+    expect(span.widthIn).toBe(36);
+    expect(span.g1).toEqual({ x: 60, y: 0 });
+    expect(span.g2).toEqual({ x: 96, y: 0 });
+  });
+
+  it("picks the nearer wall when two are in range", () => {
+    const span = ghostOpeningSpan(walls, { x: 2, y: 150 }, { widthIn: 48, gridIn: 6 });
+    expect(span.wallId).toBe("w2");
+    // Offset 50 from wall.a snaps to 48 on the 6" grid.
+    expect(span.g1).toEqual({ x: 0, y: 148 });
+    expect(span.g2).toEqual({ x: 0, y: 196 });
+  });
+
+  it("keeps the raw offset when snapping is off", () => {
+    const span = ghostOpeningSpan(walls, { x: 61, y: 3 }, { widthIn: 36, gridIn: 6, snapOffset: false });
+    expect(span.offsetIn).toBe(61);
+    expect(span.g1.x).toBe(61);
+    expect(span.g2.x).toBe(97);
+  });
+
+  it("returns null when no wall is within tolerance", () => {
+    expect(ghostOpeningSpan(walls, { x: 400, y: 400 }, { widthIn: 36 })).toBeNull();
+    expect(ghostOpeningSpan(walls, null, { widthIn: 36 })).toBeNull();
+  });
+
+  it("returns null for a degenerate wall", () => {
+    const degenerate = [{ id: "w0", a: { x: 10, y: 10 }, b: { x: 10, y: 10 } }];
+    expect(ghostOpeningSpan(degenerate, { x: 10, y: 12 }, { widthIn: 36 })).toBeNull();
+  });
+
+  it("throws on a non-positive width", () => {
+    expect(() => ghostOpeningSpan(walls, { x: 61, y: 3 }, { widthIn: 0 })).toThrow();
+    expect(() => ghostOpeningSpan(walls, { x: 61, y: 3 }, {})).toThrow();
   });
 });
