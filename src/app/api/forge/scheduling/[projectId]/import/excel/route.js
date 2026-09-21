@@ -1,4 +1,3 @@
-import ExcelJS from "exceljs";
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { ACTIVITY_COLUMNS, READ_ONLY_IMPORT_COLUMNS } from "@/domains/scheduling/schedulingExcelExport";
@@ -31,6 +30,12 @@ export async function POST(request, { params }) {
     const bytes = await request.arrayBuffer();
     if (!bytes || bytes.byteLength === 0) return NextResponse.json({ error: "No file was uploaded." }, { status: 400 });
 
+    // exceljs stays out of this function's initial bundle: it is
+    // code-split into a lazily-loaded chunk and fetched on first import.
+    // (import() results are cached by the module system, so concurrent
+    // imports share one load.)
+    const exceljsModule = await import("exceljs");
+    const ExcelJS = exceljsModule.default ?? exceljsModule;
     const workbook = new ExcelJS.Workbook();
     try {
       await workbook.xlsx.load(Buffer.from(bytes));
