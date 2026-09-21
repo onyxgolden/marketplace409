@@ -97,7 +97,15 @@ describe("org chart document — people", () => {
     let { design: d, chartId, rootId } = chartWithTeam();
     d = updatePerson(d, chartId, rootId, { title: "CEO", department: "" });
     expect(findPerson(findOrgChart(d, chartId), rootId)).toMatchObject({ title: "CEO", department: "" });
-    expect(() => updatePerson(d, chartId, rootId, { name: "" })).toThrow("Person name is required");
+    // Clearing the name is allowed as a transient editing state (the panel
+    // input must stay editable while the user clears/retypes); adding a
+    // nameless person is still rejected (see "requires a name" above).
+    d = updatePerson(d, chartId, rootId, { name: "" });
+    expect(findPerson(findOrgChart(d, chartId), rootId).name).toBe("");
+    d = updatePerson(d, chartId, rootId, { name: "   " });
+    expect(findPerson(findOrgChart(d, chartId), rootId).name).toBe("");
+    d = updatePerson(d, chartId, rootId, { name: "Jason Morgan" });
+    expect(findPerson(findOrgChart(d, chartId), rootId).name).toBe("Jason Morgan");
     expect(() => updatePerson(d, chartId, "ghost", { name: "X" })).toThrow("Unknown person");
   });
 
