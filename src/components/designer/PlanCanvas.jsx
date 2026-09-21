@@ -13,6 +13,7 @@ import {
   gridSpacingLabel,
   offsetAlongWall,
   rotatedFootprintCorners,
+  rotatePoint,
   snapPoint,
   snapScalar,
   underlayContainsPoint,
@@ -26,6 +27,11 @@ import {
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
 import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
+import {
+  FURNITURE_MAX_SIZE_IN,
+  FURNITURE_MIN_SIZE_IN,
+  pieceSize,
+} from "@/domains/roomDesigner/designerDocument";
 
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 12;
@@ -135,7 +141,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         const f = design.furniture[i];
         const entry = getCatalogEntry(f.catalogId);
         if (!entry) continue;
-        if (pointInFootprint(plan, f.x, f.y, entry.widthIn, entry.depthIn, f.rotationDeg)) {
+        const { widthIn, depthIn } = pieceSize(f);
+        if (pointInFootprint(plan, f.x, f.y, widthIn, depthIn, f.rotationDeg)) {
           return { kind: "furniture", id: f.id };
         }
       }
@@ -342,6 +349,21 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         }
       }
     }
+    // corner resize handles on the selected furniture piece (centered resize)
+    if (selection?.kind === "furniture") {
+      const piece = design.furniture.find((f) => f.id === selection.id);
+      if (piece) {
+        const { widthIn, depthIn } = pieceSize(piece);
+        const corners = rotatedFootprintCorners({
+          x: piece.x, y: piece.y, widthIn, depthIn, rotationDeg: piece.rotationDeg,
+        });
+        const tolIn = HIT_TOLERANCE_PX / view.scale;
+        if (corners.some((c) => Math.hypot(plan.x - c.x, plan.y - c.y) < tolIn)) {
+          setDrag({ kind: "resize-furniture", id: piece.id });
+          return;
+        }
+      }
+    }
     const hit = hitTest(plan);
     if (hit?.kind === "furniture") {
       dispatch({ type: "SELECT", selection: hit });
@@ -444,6 +466,35 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
       dispatch({ type: "MOVE_ORG_CHART", chartId: drag.id, x: point.x, y: point.y });
       setDrag({ ...drag, moved: true });
+    }
+    if (drag.kind === "resize-furniture") {
+      const piece = design.furniture.find((f) => f.id === drag.id);
+      if (piece) {
+        // plan point -> piece-local frame (un-rotate), then centered resize:
+        // half-width / half-depth are the local |x| / |y| from the center.
+        const local = rotatePoint(plan, { x: piece.x, y: piece.y }, -(piece.rotationDeg || 0));
+        let widthIn = 2 * Math.abs(local.x - piece.x);
+        let depthIn = 2 * Math.abs(local.y - piece.y);
+        if (getCatalogEntry(piece.catalogId)?.symbol === "circle") {
+          // round pieces stay round: both axes follow the larger drag
+          const s = Math.max(widthIn, depthIn);
+          widthIn = s;
+          depthIn = s;
+        }
+        // A try/catch around dispatch() can't catch a reducer throw, so guard
+        // the footprint bounds here: out-of-range drags are ignored until the
+        // pointer returns inside 1"–480". The domain still validates as the
+        // backstop for every other dispatch path.
+        if (
+          widthIn < FURNITURE_MIN_SIZE_IN ||
+          widthIn > FURNITURE_MAX_SIZE_IN ||
+          depthIn < FURNITURE_MIN_SIZE_IN ||
+          depthIn > FURNITURE_MAX_SIZE_IN
+        ) {
+          return;
+        }
+        dispatch({ type: "RESIZE_FURNITURE", furnitureId: piece.id, widthIn, depthIn });
+      }
     }
     if (drag.kind === "move-underlay") {
       // Raw position (no snap) so the image can be aligned to its own features.
@@ -792,6 +843,27 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     );
   };
 
+  // Corner resize handles on the selected furniture piece (screen-space
+  // squares; hit-testing happens in plan space in onPointerDown).
+  const renderResizeHandles = () => {
+    if (selection?.kind !== "furniture") return null;
+    const piece = design.furniture.find((f) => f.id === selection.id);
+    if (!piece) return null;
+    const { widthIn, depthIn } = pieceSize(piece);
+    const corners = rotatedFootprintCorners({
+      x: piece.x, y: piece.y, widthIn, depthIn, rotationDeg: piece.rotationDeg,
+    }).map(toScreen);
+    const s = 10;
+    return (
+      <g key={`handles-${piece.id}`} pointerEvents="none">
+        {corners.map((c, i) => (
+          <rect key={i} x={c.x - s / 2} y={c.y - s / 2} width={s} height={s}
+            fill="#f59e0b" stroke="#ffffff" strokeWidth={1.5} />
+        ))}
+      </g>
+    );
+  };
+
   const cursorForTool = {
     select: "default", wall: "crosshair", room: "copy", door: "crosshair",
     window: "crosshair", furniture: "copy", pipe: "crosshair", piping: "copy",
@@ -909,7 +981,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       <svg
         ref={svgRef}
         className="h-full w-full touch-none select-none"
-        style={{ cursor: drag?.kind ? "grabbing" : cursorForTool }}
+        style={{ cursor: drag?.kind === "resize-furniture" ? "nwse-resize" : drag?.kind ? "grabbing" : cursorForTool }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -933,6 +1005,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {(design.symbols || []).map(renderPipingSymbol)}
         {(design.orgCharts || []).map(renderOrgChart)}
         {renderPipePreview()}
+        {renderResizeHandles()}
         {renderCalibrationMarkers()}
         {drawPreview && (() => {
           const a = toScreen(drawPreview.a);

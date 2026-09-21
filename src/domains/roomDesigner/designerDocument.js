@@ -286,6 +286,67 @@ export function rotateFurniture(design, furnitureId, rotationDeg) {
   return { ...design, furniture };
 }
 
+/** Furniture footprint bounds in inches: 1" min (still selectable), 40 ft max. */
+export const FURNITURE_MIN_SIZE_IN = 1;
+export const FURNITURE_MAX_SIZE_IN = 480;
+
+/**
+ * Effective footprint of a placed piece: per-piece size overrides (set by
+ * RESIZE_FURNITURE) or the catalog nominal size when none are stored.
+ * Old documents without overrides resolve straight to catalog. Pure.
+ */
+export function pieceSize(piece) {
+  const entry = piece ? getCatalogEntry(piece.catalogId) : null;
+  return {
+    widthIn: piece?.widthIn ?? entry?.widthIn ?? 0,
+    depthIn: piece?.depthIn ?? entry?.depthIn ?? 0,
+  };
+}
+
+function cleanSizeIn(value, label) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) throw new Error(`${label} must be a number.`);
+  if (n < FURNITURE_MIN_SIZE_IN || n > FURNITURE_MAX_SIZE_IN) {
+    throw new Error(
+      `${label} must be between ${FURNITURE_MIN_SIZE_IN} and ${FURNITURE_MAX_SIZE_IN} inches.`,
+    );
+  }
+  return Math.round(n * 2) / 2; // half-inch resolution keeps plans clean
+}
+
+/** Resize a placed furniture piece; stores width/depth overrides in inches.
+ * Round catalog pieces stay round: both axes follow the larger dimension. */
+export function resizeFurniture(design, furnitureId, widthIn, depthIn) {
+  assertDesign(design);
+  const piece = design.furniture.find((f) => f.id === furnitureId);
+  if (!piece) throw new Error(`Unknown furniture: ${furnitureId}`);
+  let w = cleanSizeIn(widthIn, "Width");
+  let d = cleanSizeIn(depthIn, "Depth");
+  if (getCatalogEntry(piece.catalogId)?.symbol === "circle") {
+    const s = Math.max(w, d);
+    w = s;
+    d = s;
+  }
+  const furniture = design.furniture.map((f) =>
+    f.id === furnitureId ? { ...f, widthIn: w, depthIn: d } : f,
+  );
+  return { ...design, furniture };
+}
+
+/** Drop a piece's size overrides, restoring the catalog nominal size. */
+export function resetFurnitureSize(design, furnitureId) {
+  assertDesign(design);
+  let changed = false;
+  const furniture = design.furniture.map((f) => {
+    if (f.id !== furnitureId) return f;
+    changed = true;
+    const { widthIn: _w, depthIn: _d, ...rest } = f;
+    return rest;
+  });
+  if (!changed) throw new Error(`Unknown furniture: ${furnitureId}`);
+  return { ...design, furniture };
+}
+
 export function deleteFurniture(design, furnitureId) {
   assertDesign(design);
   return { ...design, furniture: design.furniture.filter((f) => f.id !== furnitureId) };

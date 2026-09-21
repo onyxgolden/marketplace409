@@ -12,6 +12,7 @@
 // to PlanCanvas.jsx, designerReducer.js, or designerDocument.js.
 
 import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
+import { pieceSize } from "@/domains/roomDesigner/designerDocument";
 import { polygonArea } from "@/domains/roomDesigner/designerGeometry";
 import { ORG_CHART_METRICS, departmentColor, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 
@@ -34,8 +35,11 @@ function selectionStroke(highlighted, normal) {
  */
 export function drawFurnitureSymbol({ symbol, instance, toScreen, scale, highlighted }) {
   const c = toScreen({ x: instance.x, y: instance.y });
-  const w = symbol.widthIn * scale;
-  const h = symbol.depthIn * scale;
+  // Placed pieces may carry per-piece size overrides (see RESIZE_FURNITURE);
+  // fall back to the catalog nominal size otherwise.
+  const { widthIn, depthIn } = pieceSize(instance);
+  const w = widthIn * scale;
+  const h = depthIn * scale;
   const stroke = selectionStroke(highlighted, "#374151");
   return (
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>

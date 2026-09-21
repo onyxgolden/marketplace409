@@ -32,7 +32,7 @@ import OrgChartPanel from "./OrgChartPanel";
 import { createInitialState, designerReducer } from "./designerReducer";
 import { catalogByCategory, getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
-import { ROOM_TEMPLATES } from "@/domains/roomDesigner/designerDocument";
+import { ROOM_TEMPLATES, pieceSize } from "@/domains/roomDesigner/designerDocument";
 import { feetInchesLabel, parseDimensionInput, wallLength } from "@/domains/roomDesigner/designerGeometry";
 import {
   PIPE_DIAMETERS_IN,
@@ -835,9 +835,50 @@ function SelectionPanel({ state, dispatch }) {
     const piece = design.furniture.find((f) => f.id === selection.id);
     const entry = piece && getCatalogEntry(piece.catalogId);
     if (!piece || !entry) return null;
+    const size = pieceSize(piece);
+    const resized = piece.widthIn !== undefined || piece.depthIn !== undefined;
+    const applySize = (widthIn, depthIn) => {
+      if (widthIn >= 1 && widthIn <= 480 && depthIn >= 1 && depthIn <= 480) {
+        dispatch({ type: "RESIZE_FURNITURE", furnitureId: piece.id, widthIn, depthIn });
+      }
+    };
     return (
       <PanelShell title={entry.label} onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
-        <Row label="Size" value={`${entry.widthIn}″ × ${entry.depthIn}″`} />
+        <Row label="Size" value={`${size.widthIn}″ × ${size.depthIn}″`} />
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block text-xs text-gray-400">
+            Width (″)
+            <input
+              type="number"
+              min={1}
+              max={480}
+              step={0.5}
+              value={size.widthIn}
+              onChange={(e) => applySize(Number(e.target.value), size.depthIn)}
+              className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white"
+            />
+          </label>
+          <label className="block text-xs text-gray-400">
+            Depth (″)
+            <input
+              type="number"
+              min={1}
+              max={480}
+              step={0.5}
+              value={size.depthIn}
+              onChange={(e) => applySize(size.widthIn, Number(e.target.value))}
+              className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white"
+            />
+          </label>
+        </div>
+        {resized && (
+          <button
+            onClick={() => dispatch({ type: "RESET_FURNITURE_SIZE", furnitureId: piece.id })}
+            className="mt-1 rounded bg-gray-800 px-2 py-1 text-xs text-gray-300 hover:bg-gray-700"
+          >
+            Reset to catalog size ({entry.widthIn}″ × {entry.depthIn}″)
+          </button>
+        )}
         <label className="block text-xs text-gray-400">
           Unit cost ($)
           <input
@@ -860,7 +901,7 @@ function SelectionPanel({ state, dispatch }) {
         >
           <RotateCw size={13} /> Rotate 45°
         </button>
-        <p className="mt-2 text-[11px] text-gray-500">Tip: double-click the piece on the plan to rotate it too.</p>
+        <p className="mt-2 text-[11px] text-gray-500">Tip: double-click the piece on the plan to rotate it too, or drag its corner handles to resize.</p>
       </PanelShell>
     );
   }
