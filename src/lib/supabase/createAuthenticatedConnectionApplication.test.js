@@ -158,6 +158,58 @@ describe("createAuthenticatedConnectionApplication", () => {
     expect(result.effectiveOwnerId).toBe("owner-1");
   });
 
+  it("shares one Stripe client across concurrent first-use factory calls", async () => {
+    // The singleton promise must be cached before the first construction
+    // finishes -- otherwise two simultaneous first Stripe operations would
+    // each build their own SDK client. A fresh module instance is needed
+    // because the singleton persists per module.
+    vi.resetModules();
+    const { createAuthenticatedConnectionApplication: freshHelper } =
+      await import("./createAuthenticatedConnectionApplication");
+
+    const supabaseClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: "owner-1" } },
+          error: null,
+        }),
+      },
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(function eq() {
+            return this;
+          }),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: null,
+            error: null,
+          }),
+        })),
+      })),
+    };
+    mocks.createClient.mockResolvedValue(supabaseClient);
+    mocks.createConnectionPlatformSuite.mockResolvedValue({});
+
+    const fakeStripe = {
+      financialConnections: { sessions: { create: vi.fn() } },
+    };
+    mocks.createStripeBillingProvider.mockReturnValue({
+      stripe: fakeStripe,
+    });
+
+    const result = await freshHelper();
+    await result.getConnectionPlatformSuite();
+    const [suiteArgs] =
+      mocks.createConnectionPlatformSuite.mock.calls.at(-1);
+
+    const [first, second] = await Promise.all([
+      suiteArgs.stripeClientFactory(),
+      suiteArgs.stripeClientFactory(),
+    ]);
+    expect(first).toBe(fakeStripe);
+    expect(second).toBe(fakeStripe);
+    expect(mocks.createStripeBillingProvider).toHaveBeenCalledTimes(1);
+  });
+
   it("resolves effectiveOwnerId to the workspace owner when acting as an active co-owner, not the actor's own id", async () => {
     const user = { id: "co-owner-uuid" };
 

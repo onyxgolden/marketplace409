@@ -213,10 +213,26 @@ function stripeReachability(entryFiles, options) {
 // static bundles. Checked against the STATIC graph: a dynamic import() edge
 // would only ever execute inside a Stripe adapter method, never on these
 // routes, but the static bundle is what Vercel ships per function.
-const PLAID_ROUTE_ENTRIES = [
-  path.join(srcRoot, "app/api/plaid/exchange-token/route.ts"),
-  path.join(srcRoot, "app/api/plaid/link-token/route.ts"),
-];
+//
+// Derived from the filesystem (not hardcoded) so a future /api/plaid/*
+// route cannot silently escape this guard: any route.ts/route.js added
+// under src/app/api/plaid/ is automatically covered.
+function discoverRouteEntries(dir) {
+  const entries = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      entries.push(...discoverRouteEntries(full));
+    } else if (/^route\.(js|ts|jsx|tsx)$/.test(entry.name)) {
+      entries.push(full);
+    }
+  }
+  return entries;
+}
+
+const PLAID_ROUTE_ENTRIES = discoverRouteEntries(
+  path.join(srcRoot, "app/api/plaid"),
+);
 
 describe("serverless bundle isolation (stripe)", () => {
   it("the financial application graph never reaches the stripe package", () => {
@@ -251,6 +267,10 @@ describe("serverless bundle isolation (stripe)", () => {
   });
 
   it("the plaid-only routes' static graph never reaches the stripe package", () => {
+    // Non-vacuous: fails loudly if the filesystem derivation above ever
+    // stops covering a real route (e.g. a renamed directory), instead of
+    // silently passing on an empty entry list.
+    expect(PLAID_ROUTE_ENTRIES.length).toBeGreaterThan(0);
     expect(
       stripeReachability(PLAID_ROUTE_ENTRIES, { includeDynamic: false }),
     ).toEqual({

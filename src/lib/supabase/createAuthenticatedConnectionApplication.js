@@ -20,16 +20,27 @@ import * as plaidSdk from "plaid";
 // per function instance, no matter how many times the factory runs. The
 // provider is constructed on first use only, so this helper stays as safe
 // to import and construct unconfigured as before.
-let cachedStripeClient;
+//
+// The in-flight promise is cached rather than the resolved client, so two
+// simultaneous first Stripe operations share one construction instead of
+// racing to build two clients. If initialization fails, the cached
+// rejection is dropped so the next call retries instead of permanently
+// failing on a warm instance.
+let cachedStripeClientPromise;
 
 async function resolveStripeBillingClient() {
-  if (cachedStripeClient === undefined) {
-    const { createStripeBillingProvider } = await import(
+  if (cachedStripeClientPromise === undefined) {
+    cachedStripeClientPromise = import(
       "@/infrastructure/billing/StripeBillingProvider"
+    ).then(
+      ({ createStripeBillingProvider }) =>
+        createStripeBillingProvider().stripe,
     );
-    cachedStripeClient = createStripeBillingProvider().stripe;
+    cachedStripeClientPromise.catch(() => {
+      cachedStripeClientPromise = undefined;
+    });
   }
-  return cachedStripeClient;
+  return cachedStripeClientPromise;
 }
 
 import {
