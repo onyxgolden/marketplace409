@@ -1,4 +1,3 @@
-import ExcelJS from "exceljs";
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { ACTIVITY_COLUMNS, buildActivityRows } from "@/domains/scheduling/schedulingExcelExport";
@@ -32,6 +31,12 @@ export async function GET(request, { params }) {
 
     const rows = buildActivityRows({ ganttBlocks: cpmBlocks, dependencies, lanesById });
 
+    // exceljs stays out of this function's initial bundle: it is
+    // code-split into a lazily-loaded chunk and fetched on first export.
+    // (import() results are cached by the module system, so concurrent
+    // exports share one load.)
+    const exceljsModule = await import("exceljs");
+    const ExcelJS = exceljsModule.default ?? exceljsModule;
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Activities");
     worksheet.columns = ACTIVITY_COLUMNS.map((column) => ({ header: column.header, key: column.key, width: 18 }));

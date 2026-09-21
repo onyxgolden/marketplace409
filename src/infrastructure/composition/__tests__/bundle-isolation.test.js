@@ -301,3 +301,120 @@ describe("serverless bundle isolation (stripe)", () => {
     );
   });
 });
+
+// Slice 3: exceljs was the last statically-imported heavy SDK (the two
+// scheduling excel routes). @google-cloud/vision and unpdf were already
+// lazy -- dynamic import() inside GoogleCloudVisionOCRAdapter and the
+// extract*Text wrappers -- so these guards lock that property in: a future
+// static import must fail loudly instead of silently re-bloating every
+// route that touches OCR or PDF text extraction.
+const EXCEL_ROUTE_ENTRIES = [
+  path.join(
+    srcRoot,
+    "app/api/forge/scheduling/[projectId]/export/excel/route.js",
+  ),
+  path.join(
+    srcRoot,
+    "app/api/forge/scheduling/[projectId]/import/excel/route.js",
+  ),
+];
+
+// Statically imports both lazy wrappers (vision adapter + native pdf text)
+// but must never statically reach the heavy packages themselves.
+const OCR_WRAPPER_USER_ENTRY = path.join(
+  srcRoot,
+  "app/api/rental/documents/route.js",
+);
+
+const isExceljs = (spec) =>
+  spec === "exceljs" || spec.startsWith("exceljs/");
+const isVision = (spec) =>
+  spec === "@google-cloud/vision" ||
+  spec.startsWith("@google-cloud/vision/");
+const isUnpdf = (spec) => spec === "unpdf" || spec.startsWith("unpdf/");
+
+function packageReachability(entryFiles, matchSpec, options) {
+  const { bareSpecifiers, visited } = walkModuleGraph(entryFiles, options);
+  return {
+    hits: [...bareSpecifiers].filter(matchSpec),
+    visitedCount: visited.size,
+  };
+}
+
+describe("serverless bundle isolation (slice 3: exceljs/vision/unpdf)", () => {
+  it("the excel routes' static graphs never reach the exceljs package", () => {
+    expect(
+      packageReachability(EXCEL_ROUTE_ENTRIES, isExceljs, {
+        includeDynamic: false,
+      }),
+    ).toEqual({
+      hits: [],
+      visitedCount: expect.any(Number),
+    });
+  });
+
+  it("the excel routes still reach exceljs through a dynamic import (non-vacuous control)", () => {
+    // The lazy edge must keep existing: each route loads exceljs via
+    // import() only when the handler actually runs. Full graph
+    // (static + dynamic) reaches exceljs...
+    const full = packageReachability(EXCEL_ROUTE_ENTRIES, isExceljs);
+    expect(full.hits).toContain("exceljs");
+    // ...while the static graph does not (see the guard above), and each
+    // route source carries exactly one dynamic import of exceljs and no
+    // static one.
+    for (const entry of EXCEL_ROUTE_ENTRIES) {
+      const source = fs.readFileSync(entry, "utf8");
+      expect(source.match(/import\(\s*["']exceljs["']\s*\)/g) ?? []).toHaveLength(
+        1,
+      );
+      expect(source).not.toMatch(
+        /^\s*import\s+[^'"]*from\s+["']exceljs["']/m,
+      );
+    }
+  });
+
+  it("no route's static graph reaches the vision or unpdf packages", () => {
+    // Both packages were already lazy before slice 3; this locks it in
+    // across all 142 routes so a future static import can't silently
+    // re-bloat OCR/PDF routes.
+    const routes = discoverRouteEntries(path.join(srcRoot, "app/api"));
+    expect(routes.length).toBeGreaterThan(0);
+    const visionHitters = [];
+    const unpdfHitters = [];
+    for (const route of routes) {
+      const { bareSpecifiers } = walkModuleGraph([route], {
+        includeDynamic: false,
+      });
+      const specs = [...bareSpecifiers];
+      if (specs.some(isVision)) {
+        visionHitters.push(path.relative(srcRoot, route));
+      }
+      if (specs.some(isUnpdf)) {
+        unpdfHitters.push(path.relative(srcRoot, route));
+      }
+    }
+    expect({ visionHitters, unpdfHitters }).toEqual({
+      visionHitters: [],
+      unpdfHitters: [],
+    });
+  });
+
+  it("the ocr wrapper user still reaches vision and unpdf dynamically (non-vacuous control)", () => {
+    // /api/rental/documents statically imports both lazy wrappers; the
+    // heavy packages must stay behind their dynamic import() edges.
+    const fullVision = packageReachability([OCR_WRAPPER_USER_ENTRY], isVision);
+    const fullUnpdf = packageReachability([OCR_WRAPPER_USER_ENTRY], isUnpdf);
+    expect(fullVision.hits).toContain("@google-cloud/vision");
+    expect(fullUnpdf.hits).toContain("unpdf");
+    expect(
+      packageReachability([OCR_WRAPPER_USER_ENTRY], isVision, {
+        includeDynamic: false,
+      }).hits,
+    ).toEqual([]);
+    expect(
+      packageReachability([OCR_WRAPPER_USER_ENTRY], isUnpdf, {
+        includeDynamic: false,
+      }).hits,
+    ).toEqual([]);
+  });
+});
