@@ -21,6 +21,7 @@
     "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.106.2",
     "exceljs": "^4.4.0",
+    "gifenc": "^1.0.3",
     "lucide-react": "^1.31.0",
     "next": "16.3.0",
     "plaid": "^43.0.0",
@@ -29,7 +30,8 @@
     "react-plaid-link": "^4.1.1",
     "stripe": "^22.5.0",
     "three": "^0.186.0",
-    "unpdf": "^1.8.0"
+    "unpdf": "^1.8.0",
+    "utif": "^3.1.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

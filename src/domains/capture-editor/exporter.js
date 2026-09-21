@@ -14,13 +14,44 @@ export class ExportError extends Error {
   }
 }
 
-// Rung 1 exports PNG only: lossless, so redaction proofs are pixel-exact and
-// the artifact never carries compression ambiguity around blurred regions.
-export const EXPORT_FORMATS = Object.freeze(["png"]);
+// Export formats, Snagit-style: every still-image type the tool can write.
+// PNG/JPEG/WebP encode natively in the browser via canvas.toBlob; GIF/TIFF/BMP
+// are pixel-encoded from RGBA bytes in pixelEncoders.js (no native encoder).
+export const EXPORT_FORMATS = Object.freeze(["png", "jpeg", "webp", "gif", "tiff", "bmp"]);
+
+const FORMAT_META = Object.freeze({
+  png: { mime: "image/png", extension: "png", label: "PNG" },
+  jpeg: { mime: "image/jpeg", extension: "jpg", label: "JPEG" },
+  webp: { mime: "image/webp", extension: "webp", label: "WebP" },
+  gif: { mime: "image/gif", extension: "gif", label: "GIF" },
+  tiff: { mime: "image/tiff", extension: "tif", label: "TIFF" },
+  bmp: { mime: "image/bmp", extension: "bmp", label: "BMP" },
+});
+
+// Formats the browser encodes natively via canvas.toBlob. The rest need
+// raw RGBA pixels (see pixelEncoders.js).
+export const NATIVE_BLOB_FORMATS = Object.freeze(["png", "jpeg", "webp"]);
+
+function metaFor(format) {
+  const meta = FORMAT_META[format];
+  if (!meta) throw new ExportError(`unsupported export format: ${format}`);
+  return meta;
+}
 
 export function exportMimeForFormat(format) {
-  if (format === "png") return "image/png";
-  throw new ExportError(`unsupported export format: ${format}`);
+  return metaFor(format).mime;
+}
+
+export function exportExtensionForFormat(format) {
+  return metaFor(format).extension;
+}
+
+export function exportLabelForFormat(format) {
+  return metaFor(format).label;
+}
+
+export function isNativeBlobFormat(format) {
+  return NATIVE_BLOB_FORMATS.includes(format);
 }
 
 function fail(message) {

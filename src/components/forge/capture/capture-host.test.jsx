@@ -41,9 +41,13 @@ describe("CaptureEditorHost", () => {
     ]);
   });
 
-  it("shows the core controls: undo, redo, save, export, fit", () => {
+  it("shows the core controls: undo, redo, save, export format, export, fit", () => {
     const html = markup();
-    for (const label of ["Undo", "Redo", "Save", "Export PNG", "Fit", "Open image"]) {
+    for (const label of ["Undo", "Redo", "Save", "Export", "Fit", "Open image"]) {
+      expect(html).toContain(label);
+    }
+    // Snagit-style format picker offers every supported still-image type.
+    for (const label of ["PNG", "JPEG", "WebP", "GIF", "TIFF", "BMP"]) {
       expect(html).toContain(label);
     }
     // Selection-dependent controls (Lock/Delete/z-order) appear only when an

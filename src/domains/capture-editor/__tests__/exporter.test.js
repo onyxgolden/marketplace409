@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { EXPORT_FORMATS, ExportError, flattenDocument } from "../exporter.js";
+import {
+  EXPORT_FORMATS,
+  ExportError,
+  exportExtensionForFormat,
+  exportLabelForFormat,
+  exportMimeForFormat,
+  flattenDocument,
+  isNativeBlobFormat,
+} from "../exporter.js";
 import { addAnnotation, createDocument } from "../document.js";
 import { createAnnotation } from "../annotations.js";
 import { FakeCanvas, fillCanvasSolid, pixelAt } from "./fake-canvas.js";
@@ -36,8 +44,8 @@ function solidRectAnnotation(id, type, geometry, color) {
 }
 
 describe("flattenDocument", () => {
-  it("exports only PNG and reports its shape", async () => {
-    expect(EXPORT_FORMATS).toEqual(["png"]);
+  it("defaults to PNG and reports its shape", async () => {
+    expect(EXPORT_FORMATS).toEqual(["png", "jpeg", "webp", "gif", "tiff", "bmp"]);
     const artifact = await flattenDocument({
       doc: makeDoc(),
       sourceImage: makeSource(48, 32),
@@ -86,8 +94,16 @@ describe("flattenDocument", () => {
 
   it("rejects unsupported formats", async () => {
     await expect(
-      flattenDocument({ doc: makeDoc(), sourceImage: makeSource(48, 32), createCanvas, encodeRaster, format: "jpeg" }),
+      flattenDocument({ doc: makeDoc(), sourceImage: makeSource(48, 32), createCanvas, encodeRaster, format: "pdf" }),
     ).rejects.toThrow(ExportError);
+  });
+
+  it("carries the requested format and mime through the artifact", async () => {
+    const artifact = await flattenDocument({
+      doc: makeDoc(), sourceImage: makeSource(48, 32), createCanvas, encodeRaster, format: "jpeg",
+    });
+    expect(artifact.format).toBe("jpeg");
+    expect(artifact.mime).toBe("image/jpeg");
   });
 
   it("fails closed when required inputs are missing", async () => {
@@ -168,5 +184,36 @@ describe("flattenDocument", () => {
     expect(p).toEqual([0, 0, 0, 0]); // sanity: helper canvas starts transparent
     const i = (6 * 48 + 6) * 4;
     expect([a.bytes[i], a.bytes[i + 1], a.bytes[i + 2], a.bytes[i + 3]]).toEqual([255, 0, 0, 255]);
+  });
+});
+
+describe("export format registry", () => {
+  it("maps every format to a mime type, extension, and label", () => {
+    expect(exportMimeForFormat("png")).toBe("image/png");
+    expect(exportMimeForFormat("jpeg")).toBe("image/jpeg");
+    expect(exportMimeForFormat("webp")).toBe("image/webp");
+    expect(exportMimeForFormat("gif")).toBe("image/gif");
+    expect(exportMimeForFormat("tiff")).toBe("image/tiff");
+    expect(exportMimeForFormat("bmp")).toBe("image/bmp");
+    expect(exportExtensionForFormat("jpeg")).toBe("jpg");
+    expect(exportExtensionForFormat("tiff")).toBe("tif");
+    expect(exportExtensionForFormat("png")).toBe("png");
+    expect(exportLabelForFormat("webp")).toBe("WebP");
+    expect(exportLabelForFormat("gif")).toBe("GIF");
+  });
+
+  it("rejects unknown formats in every lookup", () => {
+    expect(() => exportMimeForFormat("pdf")).toThrow(ExportError);
+    expect(() => exportExtensionForFormat("pdf")).toThrow(ExportError);
+    expect(() => exportLabelForFormat("pdf")).toThrow(ExportError);
+  });
+
+  it("marks only canvas-native formats for the toBlob path", () => {
+    expect(isNativeBlobFormat("png")).toBe(true);
+    expect(isNativeBlobFormat("jpeg")).toBe(true);
+    expect(isNativeBlobFormat("webp")).toBe(true);
+    expect(isNativeBlobFormat("gif")).toBe(false);
+    expect(isNativeBlobFormat("tiff")).toBe(false);
+    expect(isNativeBlobFormat("bmp")).toBe(false);
   });
 });
