@@ -143,6 +143,18 @@ export default function ColumnMappingStep({ rawTable, mode, onConfirm, onBack })
               {gate.ambiguousUnresolved.join(", ")}.
             </p>
           )}
+          {gate.duplicateTargetClaims.length > 0 && (
+            <p>
+              Mapped twice — one target per column:{" "}
+              {gate.duplicateTargetClaims
+                .map(
+                  (claim) =>
+                    `${targetLabel(claim.target)} (${claim.headers.join(" + ")})`
+                )
+                .join("; ")}
+              .
+            </p>
+          )}
         </div>
       )}
 

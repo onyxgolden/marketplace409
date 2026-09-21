@@ -25,11 +25,14 @@ export function isKnownImportMode(mode) {
 /**
  * Gate the wizard's "continue to preview" action.
  *
- * Returns { complete, missing, ambiguousUnresolved }:
+ * Returns { complete, missing, ambiguousUnresolved, duplicateTargetClaims }:
  * - missing: required targets with no confirmed mapping (blocks continue).
  * - ambiguousUnresolved: ambiguous header texts the user has not explicitly
  *   chosen a target for (blocks continue — even "leave unmapped" must be an
  *   explicit choice).
+ * - duplicateTargetClaims: canonical targets claimed by more than one
+ *   header (blocks continue — the mapper's last-wins Map must never pick
+ *   silently).
  *
  * @param {"org"|"workflow"} mode
  * @param {import("./chartImportTypes.js").HeaderAnalysis} headerAnalysis
@@ -43,9 +46,27 @@ export function validateConfirmedMappings(mode, headerAnalysis, confirmedMapping
   const ambiguousUnresolved = candidates
     .filter((c) => c && c.ambiguous && !decided.has(c.index))
     .map((c) => c.header);
+  const headersByTarget = new Map();
+  for (const m of confirmed) {
+    if (!m || typeof m.target !== "string" || typeof m.headerIndex !== "number") continue;
+    if (!headersByTarget.has(m.target)) headersByTarget.set(m.target, []);
+    headersByTarget.get(m.target).push(m.headerIndex);
+  }
+  const headerName = (index) => candidates.find((c) => c && c.index === index)?.header ?? `#${index}`;
+  const duplicateTargetClaims = [...headersByTarget.entries()]
+    .filter(([, indexes]) => indexes.length > 1)
+    .map(([target, headerIndexes]) => ({
+      target,
+      headerIndexes,
+      headers: headerIndexes.map(headerName),
+    }));
   return {
-    complete: missing.length === 0 && ambiguousUnresolved.length === 0,
+    complete:
+      missing.length === 0 &&
+      ambiguousUnresolved.length === 0 &&
+      duplicateTargetClaims.length === 0,
     missing,
     ambiguousUnresolved,
+    duplicateTargetClaims,
   };
 }

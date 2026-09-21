@@ -79,6 +79,22 @@ export function missingRequiredTargets(mode, confirmedMappings) {
 }
 
 /**
+ * Guard the pipeline entry point: a file with headers but zero data rows
+ * is not an empty file (that is "empty-file"), it is a file with nothing to
+ * import. Fail loudly instead of building a cryptic empty preview.
+ *
+ * @param {import("./chartImportTypes.js").RawTable} rawTable
+ */
+export function assertTableHasData(rawTable) {
+  if (!rawTable || !Array.isArray(rawTable.rows) || rawTable.rows.length === 0) {
+    throw new ImportError(
+      "no-data-rows",
+      "The file has headers but no data rows. There is nothing to import."
+    );
+  }
+}
+
+/**
  * Error thrown for every import-pipeline failure: unreadable files, empty
  * input, malformed workbooks, contract violations. Failures are always
  * explicit — the pipeline never silently drops data.

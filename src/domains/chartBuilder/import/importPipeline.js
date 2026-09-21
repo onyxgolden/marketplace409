@@ -16,9 +16,9 @@ import {
 } from "../chartDocument.js";
 import { DEFAULT_CHART_BACKGROUND } from "../chartBackground.js";
 import { layoutChart } from "../chartLayout.js";
-import { ImportError } from "./chartImportTypes.js";
-import { mapOrgRows } from "./orgImportMapper.js";
-import { mapWorkflowRows } from "./workflowImportMapper.js";
+import { ImportError, assertTableHasData } from "./chartImportTypes.js";
+import { mapOrgRows, mapOrgRowsChunked } from "./orgImportMapper.js";
+import { mapWorkflowRows, mapWorkflowRowsChunked } from "./workflowImportMapper.js";
 import { validateDraftDocument } from "./importValidator.js";
 import { buildImportPreview } from "./importPreviewBuilder.js";
 
@@ -79,7 +79,24 @@ function commitValidatedImport(pipelineResult) {
  * @returns {{ draft:{nodes,edges,rowIssues,nodeSources}, draftDoc:object, validation:{valid,issues}, preview:import("./chartImportTypes.js").ImportPreview }}
  */
 export function runOrgImportPipeline(rawTable, confirmedMappings) {
+  assertTableHasData(rawTable);
   const draft = mapOrgRows(rawTable, confirmedMappings);
+  return runImportPipeline("org", draft);
+}
+
+/**
+ * Chunked async variant of the org pipeline for large files: mapping runs
+ * in bounded chunks with event-loop yields so the UI stays responsive.
+ * Validation and preview stay synchronous (they are fast relative to the
+ * mapping pass). Progress: { phase, processed, total }.
+ *
+ * @param {import("./chartImportTypes.js").RawTable} rawTable
+ * @param {Array<{headerIndex:number,target:string}>} confirmedMappings
+ * @param {{ chunkSize?: number, onProgress?: (p:{phase:string,processed:number,total:number})=>void }} batchOptions
+ */
+export async function runOrgImportPipelineAsync(rawTable, confirmedMappings, batchOptions = {}) {
+  assertTableHasData(rawTable);
+  const draft = await mapOrgRowsChunked(rawTable, confirmedMappings, batchOptions);
   return runImportPipeline("org", draft);
 }
 
@@ -106,7 +123,18 @@ export function commitOrgImport(pipelineResult) {
  * @returns {{ draft:{nodes,edges,rowIssues,nodeSources}, draftDoc:object, validation:{valid,issues}, preview:import("./chartImportTypes.js").ImportPreview }}
  */
 export function runWorkflowImportPipeline(rawTable, confirmedMappings) {
+  assertTableHasData(rawTable);
   const draft = mapWorkflowRows(rawTable, confirmedMappings);
+  return runImportPipeline("workflow", draft);
+}
+
+/**
+ * Chunked async variant of the workflow pipeline for large files — same
+ * contract as runOrgImportPipelineAsync.
+ */
+export async function runWorkflowImportPipelineAsync(rawTable, confirmedMappings, batchOptions = {}) {
+  assertTableHasData(rawTable);
+  const draft = await mapWorkflowRowsChunked(rawTable, confirmedMappings, batchOptions);
   return runImportPipeline("workflow", draft);
 }
 

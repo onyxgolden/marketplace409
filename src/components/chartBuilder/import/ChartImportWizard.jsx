@@ -21,13 +21,15 @@
 // the whole run: the mapping targets, mapper, validator, and commit path
 // all dispatch on it.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   commitOrgImport,
   commitWorkflowImport,
   ImportError,
   runOrgImportPipeline,
+  runOrgImportPipelineAsync,
   runWorkflowImportPipeline,
+  runWorkflowImportPipelineAsync,
 } from "@/domains/chartBuilder";
 import ImportFileStep from "./ImportFileStep.jsx";
 import SheetPicker from "./SheetPicker.jsx";
@@ -35,11 +37,20 @@ import ColumnMappingStep from "./ColumnMappingStep.jsx";
 import ImportPreviewStep from "./ImportPreviewStep.jsx";
 
 const STEPS = ["file", "sheet", "mapping", "preview", "done"];
+// Tables bigger than this use the chunked async pipeline (with event-loop
+// yields and a progress readout) instead of the synchronous one.
+const CHUNKED_PIPELINE_ROWS = 10000;
 
 function runPipeline(mode, table, confirmed) {
   return mode === "workflow"
     ? runWorkflowImportPipeline(table, confirmed)
     : runOrgImportPipeline(table, confirmed);
+}
+
+async function runPipelineAsync(mode, table, confirmed, onProgress) {
+  return mode === "workflow"
+    ? runWorkflowImportPipelineAsync(table, confirmed, { onProgress })
+    : runOrgImportPipelineAsync(table, confirmed, { onProgress });
 }
 
 function commitPipeline(mode, pipeline) {
@@ -49,12 +60,21 @@ function commitPipeline(mode, pipeline) {
 }
 
 export default function ChartImportWizard({ mode = "org", onComplete, onCancel }) {
+  const rootRef = useRef(null);
   const [importMode, setImportMode] = useState(mode);
   const [step, setStep] = useState("file");
   const [tables, setTables] = useState(null);
   const [tableIndex, setTableIndex] = useState(0);
   const [pipeline, setPipeline] = useState(null);
   const [commitError, setCommitError] = useState(null);
+  const [building, setBuilding] = useState(false);
+  const [buildProgress, setBuildProgress] = useState(null);
+
+  // Keyboard focus lands on the wizard when it opens so keyboard users
+  // start inside the dialog instead of behind it.
+  useEffect(() => {
+    rootRef.current?.focus();
+  }, []);
 
   const activeTable = tables ? tables[tableIndex] : null;
 
@@ -77,11 +97,35 @@ export default function ChartImportWizard({ mode = "org", onComplete, onCancel }
     setStep(parsed.length > 1 ? "sheet" : "mapping");
   }
 
-  function handleConfirmMapping(confirmed) {
+  async function handleConfirmMapping(confirmed) {
+    setCommitError(null);
+    const large = (activeTable?.rows.length ?? 0) > CHUNKED_PIPELINE_ROWS;
+    if (!large) {
+      try {
+        const result = runPipeline(importMode, activeTable, confirmed);
+        setPipeline(result);
+        setStep("preview");
+      } catch (err) {
+        setCommitError(
+          err instanceof ImportError
+            ? err.message
+            : "The preview could not be generated. Check the mapping and try again."
+        );
+      }
+      return;
+    }
+    // Large tables: chunked pipeline with event-loop yields and a progress
+    // readout so the page never locks up without feedback.
+    setBuilding(true);
+    setBuildProgress(null);
     try {
-      const result = runPipeline(importMode, activeTable, confirmed);
+      const result = await runPipelineAsync(
+        importMode,
+        activeTable,
+        confirmed,
+        (progress) => setBuildProgress(progress)
+      );
       setPipeline(result);
-      setCommitError(null);
       setStep("preview");
     } catch (err) {
       setCommitError(
@@ -89,6 +133,9 @@ export default function ChartImportWizard({ mode = "org", onComplete, onCancel }
           ? err.message
           : "The preview could not be generated. Check the mapping and try again."
       );
+    } finally {
+      setBuilding(false);
+      setBuildProgress(null);
     }
   }
 
@@ -109,7 +156,7 @@ export default function ChartImportWizard({ mode = "org", onComplete, onCancel }
   const stepIndex = STEPS.indexOf(step);
 
   return (
-    <div>
+    <div ref={rootRef} tabIndex={-1} className="outline-none">
       {/* Stepper */}
       <ol className="mb-5 flex items-center gap-1 text-xs font-medium" aria-label="Import progress">
         {["File", "Sheet", "Mapping", "Preview"].map((label, i) => {
@@ -180,13 +227,23 @@ export default function ChartImportWizard({ mode = "org", onComplete, onCancel }
       )}
 
       {step === "mapping" && activeTable && (
-        <ColumnMappingStep
-          key={`${importMode}-${tableIndex}`}
-          rawTable={activeTable}
-          mode={importMode}
-          onConfirm={handleConfirmMapping}
-          onBack={() => setStep(tables.length > 1 ? "sheet" : "file")}
-        />
+        <>
+          {building && (
+            <p className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800" role="status">
+              Building preview…
+              {buildProgress && (
+                <> {buildProgress.phase}: {buildProgress.processed.toLocaleString()} / {buildProgress.total.toLocaleString()} rows</>
+              )}
+            </p>
+          )}
+          <ColumnMappingStep
+            key={`${importMode}-${tableIndex}`}
+            rawTable={activeTable}
+            mode={importMode}
+            onConfirm={handleConfirmMapping}
+            onBack={() => setStep(tables.length > 1 ? "sheet" : "file")}
+          />
+        </>
       )}
 
       {step === "preview" && pipeline && (

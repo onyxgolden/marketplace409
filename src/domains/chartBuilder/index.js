@@ -77,6 +77,7 @@ export {
   REQUIRED_TARGETS,
   ImportError,
   assertImportMode,
+  assertTableHasData,
   missingRequiredTargets,
 } from "./import/chartImportTypes.js";
 
@@ -94,10 +95,12 @@ export {
 
 export {
   mapOrgRows,
+  mapOrgRowsChunked,
 } from "./import/orgImportMapper.js";
 
 export {
   mapWorkflowRows,
+  mapWorkflowRowsChunked,
 } from "./import/workflowImportMapper.js";
 
 export {
@@ -116,7 +119,9 @@ export {
 
 export {
   runOrgImportPipeline,
+  runOrgImportPipelineAsync,
   commitOrgImport,
   runWorkflowImportPipeline,
+  runWorkflowImportPipelineAsync,
   commitWorkflowImport,
 } from "./import/importPipeline.js";
