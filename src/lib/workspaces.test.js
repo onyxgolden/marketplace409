@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { WORKSPACES, findActiveWorkspace, isWorkspaceActive } from "./workspaces";
 
 describe("WORKSPACES", () => {
-  it("lists Marketplace, Rentals, Forge, Scheduling, Designer, then Dev, in that order", () => {
-    expect(WORKSPACES.map((w) => w.id)).toEqual(["marketplace", "rentals", "forge", "scheduling", "designer", "dev"]);
+  it("lists Marketplace, Rentals, Private Financing, Reservations, Forge, Scheduling, Designer, then Dev, in that order", () => {
+    expect(WORKSPACES.map((w) => w.id)).toEqual(["marketplace", "rentals", "private-financing", "reservations", "forge", "scheduling", "designer", "dev"]);
   });
 
   it("is frozen, and gives every workspace an id, name, href, iconName, and description", () => {
@@ -26,10 +26,13 @@ describe("isWorkspaceActive", () => {
     expect(isWorkspaceActive("/forge/property/123", forge)).toBe(true);
   });
 
-  it("does not match Forge on subtrees promoted to their own workspace (rental, developer, scheduling, designer)", () => {
+  it("does not match Forge on subtrees promoted to their own workspace (rental, private-financing, reservations, developer, scheduling, designer)", () => {
     const forge = WORKSPACES.find((w) => w.id === "forge");
     expect(isWorkspaceActive("/forge/rental", forge)).toBe(false);
     expect(isWorkspaceActive("/forge/rental/portal", forge)).toBe(false);
+    expect(isWorkspaceActive("/forge/private-financing", forge)).toBe(false);
+    expect(isWorkspaceActive("/forge/private-financing/portal", forge)).toBe(false);
+    expect(isWorkspaceActive("/forge/reservations", forge)).toBe(false);
     expect(isWorkspaceActive("/forge/developer", forge)).toBe(false);
     expect(isWorkspaceActive("/forge/scheduling", forge)).toBe(false);
     expect(isWorkspaceActive("/forge/scheduling/schedule_project_1", forge)).toBe(false);
@@ -66,6 +69,12 @@ describe("findActiveWorkspace", () => {
 
   it("finds Designer for a designer route, not Forge", () => {
     expect(findActiveWorkspace("/forge/designer/design_1")?.id).toBe("designer");
+  });
+
+  it("finds Private Financing and Reservations for their promoted routes, not Forge", () => {
+    expect(findActiveWorkspace("/forge/private-financing")?.id).toBe("private-financing");
+    expect(findActiveWorkspace("/forge/private-financing/portal")?.id).toBe("private-financing");
+    expect(findActiveWorkspace("/forge/reservations")?.id).toBe("reservations");
   });
 
   it("finds Forge for an ordinary Forge route", () => {

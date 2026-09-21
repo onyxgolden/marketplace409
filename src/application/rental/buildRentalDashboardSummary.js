@@ -78,6 +78,10 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
     .reduce((sum, payment) => sum + paymentNetCents(payment), 0);
 
   const overdueBalanceCents = Number(report?.summary?.overdueBalanceCents || 0);
+  // Authoritative open-charge balance: the rent roll's per-charge balanceCents summed
+  // server-side (open charges only, never original charge amounts). Drives the Dashboard's
+  // "Outstanding balances" card.
+  const openBalanceCents = Number(report?.summary?.openBalanceCents || 0);
   const externallyManagedCents = Number(report?.summary?.externallyManagedCents || 0);
   const externallyManagedChargeCount = Number(report?.summary?.externallyManagedChargeCount || 0);
   const readinessIssueCount = missingInsurance.length + missingDeposits.length + missingMoveInInspections.length;
@@ -172,6 +176,7 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
     // FORGE-collectible only — an externally-managed (Rentec-authoritative) charge is a real
     // obligation but must never inflate this figure. See externallyManagedCents below.
     overdueBalanceCents,
+    openBalanceCents,
     externallyManagedCents,
     externallyManagedChargeCount,
     openMaintenance: openMaintenanceItems.length,

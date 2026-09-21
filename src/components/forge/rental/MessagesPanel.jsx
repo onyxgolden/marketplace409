@@ -61,8 +61,9 @@ export default function MessagesPanel() {
   if (!entries) return <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><p role="status" className="text-sm text-slate-500">Loading messages…</p></section>;
 
   return <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-    <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700">Messages</p>
+    <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700">Owner inbox</p>
     <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950">Tenant and borrower conversations</h2>
+    <p className="mt-2 text-sm text-slate-500">One list across both messaging domains: rental tenants and private-financing borrowers. Each thread still resolves through its own domain-scoped API.</p>
     <div className="mt-6 grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
       <ol className="divide-y rounded-xl border">
         {entries.length === 0 ? <li className="p-4 text-sm text-slate-500">No conversations yet.</li> : entries.map((entry) => (

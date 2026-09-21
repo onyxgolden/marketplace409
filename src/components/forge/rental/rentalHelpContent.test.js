@@ -7,13 +7,9 @@ import {
   getRentalFunctionHelp,
 } from "./rentalHelpContent";
 
-const EXPECTED_FUNCTION_IDS = [
-  "overview", "setup", "tenants", "leases",
-  "charges", "reconciliation", "rentec-payment-import", "rentec-financial-history-import",
-  "financial-setup", "deposits", "reports", "maintenance", "inspections", "insurance",
-  "documents", "communications", "lease-lifecycle", "lease-preparation", "autopay",
-  "animals", "support", "rentec-migration", "rentec-files",
-];
+import { RENTAL_FUNCTIONS } from "./RentalApplicationShell.jsx";
+
+const EXPECTED_FUNCTION_IDS = RENTAL_FUNCTIONS.map(({ id }) => id);
 
 describe("rentalHelpContent", () => {
   it("covers every Rental Manager destination exactly once", () => {

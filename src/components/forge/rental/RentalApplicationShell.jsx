@@ -6,7 +6,6 @@ import { useSidebarHiddenItems } from "@/components/forge/workspace/useSidebarHi
 import SidebarCustomizePopover from "@/components/forge/workspace/SidebarCustomizePopover";
 import RentalContextualSurface from "./RentalContextualSurface";
 import RentalOverviewPanel from "./RentalOverviewPanel"; import RentalSetupPanel from "./RentalSetupPanel"; import RentalTenantPanel from "./RentalTenantPanel"; import RentalLeasePanel from "./RentalLeasePanel"; import RentalPaymentsPanel from "./RentalPaymentsPanel"; import RentalInsurancePanel from "./RentalInsurancePanel"; import RentalMaintenancePanel from "./RentalMaintenancePanel"; import RentalDocumentsPanel from "./RentalDocumentsPanel"; import RentalCommunicationsPanel from "./RentalCommunicationsPanel"; import MessagesPanel from "./MessagesPanel"; import RentalReconciliationPanel from "./RentalReconciliationPanel"; import RentalReportsPanel from "./RentalReportsPanel"; import RentalDepositsPanel from "./RentalDepositsPanel"; import RentalInspectionsPanel from "./RentalInspectionsPanel"; import RentalLeaseLifecyclePanel from "./RentalLeaseLifecyclePanel"; import RentalLeasePreparationPanel from "./RentalLeasePreparationPanel"; import RentalAutopayPanel from "./RentalAutopayPanel"; import RentalAnimalsPanel from "./RentalAnimalsPanel"; import RentalSupportPanel from "./RentalSupportPanel";
-import PrivateFinancingAccountsPanel from "./PrivateFinancingAccountsPanel";
 import RentecMigrationPanel from "./RentecMigrationPanel";
 import RentecFileInventoryPanel from "./RentecFileInventoryPanel";
 import RentecPaymentImportPanel from "./RentecPaymentImportPanel";
@@ -16,48 +15,86 @@ import RentalHelpModal from "./RentalHelpModal";
 import RentalTodaysPrioritiesPanel from "./guided-workflow/RentalTodaysPrioritiesPanel";
 import RentalFirstTenantReadinessPanel from "./guided-workflow/RentalFirstTenantReadinessPanel";
 import RentalLeaseRenewalPanel from "./guided-workflow/RentalLeaseRenewalPanel";
-import { RV_RESERVATIONS_NAV_GROUP, buildRvReservationsSurface } from "./rvReservationsNavigation";
-import { PORTFOLIO_SUB_CATEGORIES } from "./portfolioSubCategories";
 
+// Eight-section Rental Manager information architecture (owner-approved 2026-09-21).
+// Every surviving function id is byte-identical to the pre-simplification registry, so
+// buildRentalSurface, stored activeFunctionId values, sidebar hide-prefs (key
+// "rental-manager"), and RentalContextualSurface record-scoping keep working untouched.
+// Retired ids ("guide", "private-financing", and the RV trio) resolve through
+// resolveActiveFunction's fallback to the first entry -- "overview" -- below.
 export const RENTAL_NAVIGATION = Object.freeze([
-  Object.freeze({ label: "Overview", items: Object.freeze([{ id: "overview", label: "Summary" }, { id: "guide", label: "Today's Priorities" }, { id: "readiness", label: "Prepare a Tenant" }, { id: "renewal", label: "Renew a Lease" }]) }),
-  Object.freeze({ label: "Portfolio", subCategories: PORTFOLIO_SUB_CATEGORIES }),
-  RV_RESERVATIONS_NAV_GROUP,
-  Object.freeze({ label: "Money", items: Object.freeze([{ id: "charges", label: "Rent & Payments" }, { id: "reconciliation", label: "Reconciliation" }, { id: "rentec-payment-import", label: "Rentec Payment Import" }, { id: "rentec-financial-history-import", label: "Rentec Financial History Import" }, { id: "financial-setup", label: "Financial Setup" }, { id: "deposits", label: "Deposits" }, { id: "reports", label: "Reports" }, { id: "private-financing", label: "Private Financing" }]) }),
-  Object.freeze({ label: "Operations", items: Object.freeze([{ id: "maintenance", label: "Maintenance" }, { id: "inspections", label: "Inspections" }, { id: "insurance", label: "Insurance" }, { id: "documents", label: "Documents" }, { id: "communications", label: "Communications" }, { id: "messages", label: "Messages" }]) }),
-  Object.freeze({ label: "Controls", items: Object.freeze([{ id: "lease-lifecycle", label: "Lease Changes" }, { id: "lease-preparation", label: "Lease Editor" }, { id: "autopay", label: "Autopay" }, { id: "animals", label: "Animals" }, { id: "support", label: "Support" }, { id: "rentec-migration", label: "Rentec Migration" }, { id: "rentec-files", label: "Rentec Files" }]) }),
+  Object.freeze({ label: "Dashboard", items: Object.freeze([{ id: "overview", label: "Dashboard" }]) }),
+  Object.freeze({ label: "Properties", items: Object.freeze([{ id: "setup", label: "Properties" }, { id: "insurance", label: "Insurance" }]) }),
+  Object.freeze({
+    label: "Tenants",
+    items: Object.freeze([
+      { id: "tenants", label: "Tenants" },
+      { id: "leases", label: "Leases" },
+      { id: "lease-lifecycle", label: "Lease Changes" },
+      { id: "lease-preparation", label: "Lease Editor" },
+      { id: "readiness", label: "Prepare a Tenant" },
+      { id: "renewal", label: "Renew a Lease" },
+      { id: "communications", label: "Communications" },
+      // Intentionally the combined owner inbox: this surface deliberately merges rental and
+      // private-financing conversations (see MessagesPanel). It must NOT be silently relabeled
+      // as tenant-only messaging while Private Financing has no messaging surface of its own.
+      { id: "messages", label: "Owner Inbox" },
+      { id: "animals", label: "Animals" },
+    ]),
+  }),
+  Object.freeze({ label: "Transactions", items: Object.freeze([{ id: "charges", label: "Rent & Payments" }, { id: "deposits", label: "Deposits" }, { id: "reconciliation", label: "Reconciliation" }]) }),
+  Object.freeze({ label: "Maintenance", items: Object.freeze([{ id: "maintenance", label: "Maintenance" }, { id: "inspections", label: "Inspections" }]) }),
+  Object.freeze({ label: "Documents", items: Object.freeze([{ id: "documents", label: "Documents" }]) }),
+  Object.freeze({ label: "Reports", items: Object.freeze([{ id: "reports", label: "Reports" }]) }),
+  Object.freeze({
+    label: "Settings",
+    items: Object.freeze([
+      { id: "financial-setup", label: "Financial Setup" },
+      { id: "autopay", label: "Autopay" },
+      { id: "support", label: "Support" },
+      { id: "rentec-migration", label: "Rentec Migration" },
+      { id: "rentec-files", label: "Rentec Files" },
+      { id: "rentec-payment-import", label: "Rentec Payment Import" },
+      { id: "rentec-financial-history-import", label: "Rentec Financial History Import" },
+    ]),
+  }),
 ]);
-function itemsForGroup(group) {
-  return group.items ?? group.subCategories.flatMap((subCategory) => subCategory.items);
+export const RENTAL_FUNCTIONS = Object.freeze(RENTAL_NAVIGATION.flatMap((group) => group.items));
+
+// Maps a `?section=` URL value to a rental function id so external entry points (notably the
+// /forge/property compatibility redirect) can deep-link a section instead of dumping the user
+// on the Dashboard default. Accepts a function id directly ("maintenance") or a section label
+// ("properties" -> the section's first item, "setup"). Returns null when nothing matches, and
+// the caller falls back to "overview" -- which resolveActiveFunction also guarantees for any
+// retired id, since "overview" remains the first RENTAL_FUNCTIONS entry.
+export function resolveRentalSectionParam(value) {
+  const slug = String(value || "").trim().toLowerCase();
+  if (!slug) return null;
+  const byId = RENTAL_FUNCTIONS.find((item) => item.id === slug);
+  if (byId) return byId.id;
+  const group = RENTAL_NAVIGATION.find((entry) => entry.label.toLowerCase() === slug);
+  return group?.items[0]?.id ?? null;
 }
-export const RENTAL_FUNCTIONS = Object.freeze(RENTAL_NAVIGATION.flatMap(itemsForGroup));
 
 // Every item that may be hidden via the sidebar's Customize control, grouped by the section label
-// shown in that checklist -- everything except Overview, which every user needs as a landing view
+// shown in that checklist -- everything except Dashboard, which every user needs as a landing view
 // and is therefore never offered as hideable in the first place.
 const SIDEBAR_KEY = "rental-manager";
 export const HIDEABLE_SIDEBAR_SECTIONS = Object.freeze(
   RENTAL_NAVIGATION
-    .filter((group) => group.label !== "Overview")
-    .map((group) => group.subCategories
-      ? group.subCategories
-          .filter((subCategory) => subCategory.items.length > 0)
-          .map((subCategory) => Object.freeze({ sectionLabel: `${group.label} — ${subCategory.label}`, items: subCategory.items }))
-      : [Object.freeze({ sectionLabel: group.label, items: group.items })])
-    .flat(),
+    .filter((group) => group.label !== "Dashboard")
+    .map((group) => Object.freeze({ sectionLabel: group.label, items: group.items })),
 );
 
-// Overview is never filterable, even defensively against a corrupted/stale hidden-ids value --
+// Dashboard is never filterable, even defensively against a corrupted/stale hidden-ids value --
 // every user needs a landing view regardless of what's stored server-side.
 function isItemHidden(group, itemId, hiddenItemIds) {
-  return group.label !== "Overview" && hiddenItemIds.has(itemId);
+  return group.label !== "Dashboard" && hiddenItemIds.has(itemId);
 }
 
 export function buildRentalSurface(id, { onNavigate, recordContext = null } = {}) {
   if(recordContext&&["charges","maintenance","inspections","documents","communications"].includes(id))return <RentalContextualSurface surfaceId={id} recordContext={recordContext}/>;
-  const rvSurface = buildRvReservationsSurface(id);
-  if (rvSurface) return rvSurface;
-  const surfaces = { guide: <RentalTodaysPrioritiesPanel onNavigate={onNavigate} />, readiness: <RentalFirstTenantReadinessPanel onNavigate={onNavigate} />, renewal: <RentalLeaseRenewalPanel onNavigate={onNavigate} />, setup: <RentalSetupPanel onNavigate={onNavigate} />, tenants: <RentalTenantPanel onNavigate={onNavigate} recordContext={recordContext} />, leases: <RentalLeasePanel recordContext={recordContext} />, "rentec-migration": <RentecMigrationPanel />, "rentec-files": <RentecFileInventoryPanel />, charges: <RentalPaymentsPanel recordContext={recordContext} />, insurance: <RentalInsurancePanel />, maintenance: <RentalMaintenancePanel recordContext={recordContext} />, documents: <RentalDocumentsPanel recordContext={recordContext} />, communications: <RentalCommunicationsPanel recordContext={recordContext} />, messages: <MessagesPanel />, reconciliation: <RentalReconciliationPanel />, "rentec-payment-import": <RentecPaymentImportPanel onNavigate={onNavigate} />, "rentec-financial-history-import": <RentecFinancialHistoryImportPanel />, reports: <RentalReportsPanel />, "financial-setup": <PropertyFinancialSetupPanel recordContext={recordContext} />, deposits: <RentalDepositsPanel />, inspections: <RentalInspectionsPanel recordContext={recordContext} />, "lease-lifecycle": <RentalLeaseLifecyclePanel />, "lease-preparation": <RentalLeasePreparationPanel />, autopay: <RentalAutopayPanel />, animals: <RentalAnimalsPanel />, support: <RentalSupportPanel />, "private-financing": <PrivateFinancingAccountsPanel /> };
+  const surfaces = { guide: <RentalTodaysPrioritiesPanel onNavigate={onNavigate} />, readiness: <RentalFirstTenantReadinessPanel onNavigate={onNavigate} />, renewal: <RentalLeaseRenewalPanel onNavigate={onNavigate} />, setup: <RentalSetupPanel onNavigate={onNavigate} />, tenants: <RentalTenantPanel onNavigate={onNavigate} recordContext={recordContext} />, leases: <RentalLeasePanel recordContext={recordContext} />, "rentec-migration": <RentecMigrationPanel />, "rentec-files": <RentecFileInventoryPanel />, charges: <RentalPaymentsPanel recordContext={recordContext} />, insurance: <RentalInsurancePanel />, maintenance: <RentalMaintenancePanel recordContext={recordContext} />, documents: <RentalDocumentsPanel recordContext={recordContext} />, communications: <RentalCommunicationsPanel recordContext={recordContext} />, messages: <MessagesPanel />, reconciliation: <RentalReconciliationPanel />, "rentec-payment-import": <RentecPaymentImportPanel onNavigate={onNavigate} />, "rentec-financial-history-import": <RentecFinancialHistoryImportPanel />, reports: <RentalReportsPanel />, "financial-setup": <PropertyFinancialSetupPanel recordContext={recordContext} />, deposits: <RentalDepositsPanel />, inspections: <RentalInspectionsPanel recordContext={recordContext} />, "lease-lifecycle": <RentalLeaseLifecyclePanel />, "lease-preparation": <RentalLeasePreparationPanel />, autopay: <RentalAutopayPanel />, animals: <RentalAnimalsPanel />, support: <RentalSupportPanel /> };
   return surfaces[id] || <RentalOverviewPanel onNavigate={onNavigate} />;
 }
 
@@ -86,7 +123,7 @@ export default function RentalApplicationShell({ activeFunctionId, activeRecordC
       </div>
     </header>
     <div className="mx-auto grid max-w-[1800px] grid-cols-1 gap-5 p-4 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-6 lg:p-8">
-      <label className="lg:hidden"><span className="sr-only">Rental function</span><select value={activeId} onChange={(event) => onFunctionChange?.(event.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 p-3 font-bold text-slate-950 dark:text-slate-100">{RENTAL_NAVIGATION.flatMap((group) => group.subCategories ? group.subCategories.map((subCategory) => ({ key: `${group.label}::${subCategory.label}`, label: `${group.label} — ${subCategory.label}`, items: subCategory.items.filter((item) => !isItemHidden(group, item.id, sidebarPrefs.hiddenItemIds)) })).filter((entry) => entry.items.length > 0) : [{ key: group.label, label: group.label, items: group.items.filter((item) => !isItemHidden(group, item.id, sidebarPrefs.hiddenItemIds)) }].filter((entry) => entry.items.length > 0)).map((entry) => <optgroup key={entry.key} label={entry.label}>{entry.items.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>)}</select></label>
+      <label className="lg:hidden"><span className="sr-only">Rental function</span><select value={activeId} onChange={(event) => onFunctionChange?.(event.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 p-3 font-bold text-slate-950 dark:text-slate-100">{RENTAL_NAVIGATION.map((group) => ({ key: group.label, label: group.label, items: group.items.filter((item) => !isItemHidden(group, item.id, sidebarPrefs.hiddenItemIds)) })).filter((entry) => entry.items.length > 0).map((entry) => <optgroup key={entry.key} label={entry.label}>{entry.items.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>)}</select></label>
       <RentalNavSidebar activeId={activeId} onFunctionChange={onFunctionChange} sidebarPrefs={sidebarPrefs} />
       <main data-active-function-surface={activeId} data-record-context={activeRecordContext?.recordId || undefined} className="min-w-0">{activeRecordContext?<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950 px-4 py-3" role="status"><p className="text-sm font-bold text-sky-950 dark:text-sky-100">Working with {activeRecordContext.recordType === "tenant" ? "tenant" : "property"}: {activeRecordContext.recordLabel}</p><button type="button" onClick={()=>onFunctionChange?.(activeRecordContext.recordType === "tenant" ? "tenants" : "setup")} className="text-sm font-black text-sky-800 dark:text-sky-300 underline">Back to record</button></div>:null}{buildRentalSurface(activeId, { onNavigate: onFunctionChange, recordContext: activeRecordContext })}</main>
     </div>
@@ -95,28 +132,13 @@ export default function RentalApplicationShell({ activeFunctionId, activeRecordC
 }
 
 const NAV_COLLAPSE_STORAGE_KEY = "forge-rental-nav-sidebar-collapsed";
-// A sub-category's collapse key is namespaced under its parent group label so it can never collide
-// with a top-level group of the same name.
-function subCategoryKey(group, subCategory) {
-  return `${group.label}::${subCategory.label}`;
-}
-// Nav starts quiet: every group (and every sub-category within a group that has them) collapses by
-// default except the one holding the active destination. This only affects initial visual weight —
-// every destination in RENTAL_NAVIGATION stays reachable via its group/sub-category header, and an
-// explicit user toggle is persisted and always wins over this default on the next load.
+// Nav starts quiet: every group collapses by default except the one holding the active
+// destination. This only affects initial visual weight -- every destination in
+// RENTAL_NAVIGATION stays reachable via its group header, and an explicit user toggle is
+// persisted and always wins over this default on the next load. Stale collapse keys from
+// retired groups are harmless: unknown keys simply never match a group.
 function defaultCollapsedGroups(activeId) {
-  const collapsed = [];
-  for (const group of RENTAL_NAVIGATION) {
-    if (group.subCategories) {
-      for (const subCategory of group.subCategories) {
-        if (!subCategory.items.some((item) => item.id === activeId)) collapsed.push(subCategoryKey(group, subCategory));
-      }
-      if (!itemsForGroup(group).some((item) => item.id === activeId)) collapsed.push(group.label);
-    } else if (!group.items.some((item) => item.id === activeId)) {
-      collapsed.push(group.label);
-    }
-  }
-  return collapsed;
+  return RENTAL_NAVIGATION.filter((group) => !group.items.some((item) => item.id === activeId)).map((group) => group.label);
 }
 function loadStoredCollapsedNavGroups() {
   if (typeof window === "undefined") return null;
@@ -190,34 +212,9 @@ function RentalNavSidebar({ activeId, onFunctionChange, sidebarPrefs }) {
       </div>
       <nav aria-label="Rental Manager functions" className="space-y-3">
         {RENTAL_NAVIGATION.map((group) => {
-          if (!group.subCategories) {
-            const items = visibleItems(group, group.items, hiddenItemIds);
-            if (group.items.length > 0 && items.length === 0) return null;
-            const containsActive = items.some((item) => item.id === activeId);
-            const open = !collapsed.includes(group.label) || containsActive;
-            return (
-              <div key={group.label}>
-                <NavGroupToggle
-                  label={group.label}
-                  open={open}
-                  onToggle={() => toggleKey(group.label)}
-                  className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-slate-500 hover:text-slate-950 dark:text-slate-500 dark:hover:text-white"
-                />
-                {open && (
-                  <div className="mt-0.5 space-y-0.5">
-                    {items.map((item) => (
-                      <NavFunctionButton key={item.id} item={item} activeId={activeId} onFunctionChange={onFunctionChange} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          }
-          const visibleSubCategories = group.subCategories
-            .map((subCategory) => ({ subCategory, items: visibleItems(group, subCategory.items, hiddenItemIds) }))
-            .filter(({ subCategory, items }) => subCategory.items.length === 0 || items.length > 0);
-          if (visibleSubCategories.length === 0) return null;
-          const containsActive = visibleSubCategories.some(({ items }) => items.some((item) => item.id === activeId));
+          const items = visibleItems(group, group.items, hiddenItemIds);
+          if (group.items.length > 0 && items.length === 0) return null;
+          const containsActive = items.some((item) => item.id === activeId);
           const open = !collapsed.includes(group.label) || containsActive;
           return (
             <div key={group.label}>
@@ -229,32 +226,9 @@ function RentalNavSidebar({ activeId, onFunctionChange, sidebarPrefs }) {
               />
               {open && (
                 <div className="mt-0.5 space-y-0.5">
-                  {visibleSubCategories.map(({ subCategory, items }) => {
-                    const key = subCategoryKey(group, subCategory);
-                    const subContainsActive = items.some((item) => item.id === activeId);
-                    const subOpen = !collapsed.includes(key) || subContainsActive;
-                    return (
-                      <div key={key} className="pl-2">
-                        <NavGroupToggle
-                          label={subCategory.label}
-                          open={subOpen}
-                          onToggle={() => toggleKey(key)}
-                          className="flex w-full items-center justify-between rounded-lg px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-slate-400 hover:text-slate-950 dark:text-slate-500 dark:hover:text-white"
-                        />
-                        {subOpen && (
-                          <div className="mt-0.5 space-y-0.5">
-                            {subCategory.items.length === 0 ? (
-                              <p className="px-3 py-1 text-xs italic text-slate-400 dark:text-slate-500">No {subCategory.label.toLowerCase()} tools yet</p>
-                            ) : (
-                              items.map((item) => (
-                                <NavFunctionButton key={item.id} item={item} activeId={activeId} onFunctionChange={onFunctionChange} />
-                              ))
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {items.map((item) => (
+                    <NavFunctionButton key={item.id} item={item} activeId={activeId} onFunctionChange={onFunctionChange} />
+                  ))}
                 </div>
               )}
             </div>

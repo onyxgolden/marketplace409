@@ -10,12 +10,14 @@ import {
   DraftingCompass,
   GanttChart,
   Hammer,
+  Landmark,
   LayoutGrid,
   Menu,
   Moon,
   Settings,
   Store,
   Sun,
+  Tent,
   UserRound,
   X,
 } from "lucide-react";
@@ -24,7 +26,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { WORKSPACES, isWorkspaceActive } from "@/lib/workspaces";
 
-const WORKSPACE_ICONS = { Store, Building2, Hammer, GanttChart, DraftingCompass, Code2 };
+const WORKSPACE_ICONS = { Store, Building2, Hammer, GanttChart, DraftingCompass, Code2, Landmark, Tent };
 
 // Named export so ForgeApplicationRail can render the identical
 // cross-workspace switcher above its own Forge-internal sub-nav, instead

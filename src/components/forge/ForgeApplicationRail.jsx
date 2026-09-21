@@ -82,7 +82,7 @@ export const FORGE_APPLICATIONS =
     }),
   ]);
 
-export const PROMOTED_PREFIXES = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer"];
+export const PROMOTED_PREFIXES = ["/forge/rental", "/forge/developer", "/forge/scheduling", "/forge/designer", "/forge/private-financing", "/forge/reservations"];
 
 export function isPromotedSubtree(pathname) {
   return PROMOTED_PREFIXES.some(
@@ -189,8 +189,9 @@ export default function ForgeApplicationRail({
     setMobileOpen,
   ] = useState(false);
 
-  // /forge/rental, /forge/developer, /forge/scheduling, and /forge/designer
-  // are their own promoted workspaces now — their nested layouts already
+  // /forge/rental, /forge/developer, /forge/scheduling, /forge/designer,
+  // /forge/private-financing, and /forge/reservations are their own promoted
+  // workspaces now — their nested layouts already
   // supply WorkspaceShell, so this rail must not wrap them in Forge's own
   // chrome as well.
   if (isPromotedSubtree(pathname)) {

@@ -5,48 +5,26 @@ import {
   vi,
 } from "vitest";
 
-import {
-  renderToStaticMarkup,
-} from "react-dom/server";
-
 vi.mock(
-  "@/components/forge/property/PropertyApplicationShell",
+  "next/navigation",
   () => ({
-    default: function MockPropertyApplicationShell({
-      activeFunctionId,
-    }) {
-      return (
-        <section
-          data-property-application
-          data-active-function={
-            activeFunctionId
-          }
-        />
-      );
-    },
+    redirect: vi.fn((url) => {
+      throw new Error(`REDIRECT:${url}`);
+    }),
   }),
 );
 
-import PropertyPage from "./page.js";
+import { redirect } from "next/navigation";
+import PropertyPage from "./page";
 
 describe(
   "/forge/property",
   () => {
     it(
-      "opens the focused Property application on valuations",
+      "redirects the retired route to the Rental Properties section, preserving the bookmark",
       () => {
-        const markup =
-          renderToStaticMarkup(
-            <PropertyPage />,
-          );
-
-        expect(markup).toContain(
-          "data-property-application",
-        );
-
-        expect(markup).toContain(
-          'data-active-function="valuations"',
-        );
+        expect(() => PropertyPage()).toThrow("REDIRECT:/forge/rental?section=properties");
+        expect(redirect).toHaveBeenCalledWith("/forge/rental?section=properties");
       },
     );
   },
