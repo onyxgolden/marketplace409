@@ -104,6 +104,8 @@ export {
   printChart,
 } from "./chartPrintExport.js";
 
+export { buildConnectAction } from "./chartConnect.js";
+
 export {
   IMPORT_MODES,
   ORG_TARGETS,

@@ -59,6 +59,9 @@ export default function ChartCanvas({
   gridPreference,
   onSelect,
   onDrop,
+  connectArmed,
+  connectSourceId,
+  onConnectNode,
 }) {
   const svgRef = useRef(null);
   const dragRef = useRef(null);
@@ -99,6 +102,26 @@ export default function ChartCanvas({
   function positionOf(node) {
     if (preview && preview.id === node.id) return { x: preview.x, y: preview.y };
     return { x: node.position.x + offsetX, y: node.position.y + offsetY };
+  }
+
+  function handleBackgroundPointerDown() {
+    // In connect mode a background click cancels; otherwise it deselects.
+    // onConnectNode(null) is the cancel signal (documented on the prop).
+    if (connectArmed) {
+      onConnectNode?.(null);
+    } else {
+      onSelect(null);
+    }
+  }
+
+  function handleNodePointerDown(event, node) {
+    if (connectArmed) {
+      // Connect mode: clicks draw lines, never drag or select.
+      event.stopPropagation();
+      onConnectNode?.(node.id);
+      return;
+    }
+    handlePointerDown(event, node);
   }
 
   function handlePointerDown(event, node) {
@@ -171,7 +194,7 @@ export default function ChartCanvas({
           width={canvasW}
           height={canvasH}
           className="absolute inset-0 touch-none select-none"
-          onPointerDown={() => onSelect(null)}
+          onPointerDown={handleBackgroundPointerDown}
         >
           <defs>
             <marker
@@ -235,8 +258,8 @@ export default function ChartCanvas({
                 key={node.id}
                 data-node-id={node.id}
                 transform={`translate(${pos.x}, ${pos.y})`}
-                className="cursor-grab active:cursor-grabbing"
-                onPointerDown={(event) => handlePointerDown(event, node)}
+                className={connectArmed ? "cursor-crosshair" : "cursor-grab active:cursor-grabbing"}
+                onPointerDown={(event) => handleNodePointerDown(event, node)}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerCancel={() => {
@@ -244,6 +267,20 @@ export default function ChartCanvas({
                   setPreview(null);
                 }}
               >
+                {node.id === connectSourceId && (
+                  <rect
+                    x={-7}
+                    y={-7}
+                    width={size.w + 14}
+                    height={size.h + 14}
+                    rx={15}
+                    fill="none"
+                    stroke="#2563eb"
+                    strokeWidth={2.5}
+                    strokeDasharray="7 5"
+                    pointerEvents="none"
+                  />
+                )}
                 <rect
                   width={size.w}
                   height={size.h}
