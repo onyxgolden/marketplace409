@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PINNED_TOOL_IDS, orderToolbarTools } from "./designerToolbar";
+import { PINNED_TOOL_IDS, groupToolsByCategory, orderToolbarTools } from "./designerToolbar";
 
 // Mirrors the real TOOL_DEFS declaration order in DesignerScreen.jsx:
 // select first, erase/pan buried near the end, wallrect added later.
@@ -81,6 +81,67 @@ describe("orderToolbarTools", () => {
   it("does not mutate the input array", () => {
     const input = [...currentOrder];
     orderToolbarTools(input);
+    expect(input.map((t) => t.id)).toEqual(currentOrder.map((t) => t.id));
+  });
+});
+
+describe("groupToolsByCategory", () => {
+  it("keeps select, erase and pan pinned first, in order", () => {
+    const { pinned } = groupToolsByCategory(currentOrder);
+    expect(pinned.map((t) => t.id)).toEqual(["select", "erase", "pan"]);
+  });
+
+  it("groups house stuff under House in declared order", () => {
+    const { categories } = groupToolsByCategory(currentOrder);
+    const house = categories.find((c) => c.id === "house");
+    expect(house.label).toBe("House");
+    expect(house.tools.map((t) => t.id)).toEqual([
+      "wall",
+      "wallrect",
+      "room",
+      "door",
+      "window",
+      "furniture",
+    ]);
+  });
+
+  it("groups piping under Mechanical and plan tools under Plan", () => {
+    const { categories } = groupToolsByCategory(currentOrder);
+    const byId = new Map(categories.map((c) => [c.id, c]));
+    expect(byId.get("mechanical").tools.map((t) => t.id)).toEqual(["pipe", "piping"]);
+    expect(byId.get("plan").tools.map((t) => t.id)).toEqual(["orgchart", "calibrate"]);
+  });
+
+  it("hides the Process category until process tools exist", () => {
+    const { categories } = groupToolsByCategory(currentOrder);
+    expect(categories.some((c) => c.id === "process")).toBe(false);
+    const withProcess = [...currentOrder, tool("process-pump")];
+    // process-pump is not in any category yet, so it lands ungrouped, not under Process
+    const grouped = groupToolsByCategory(withProcess);
+    expect(grouped.ungrouped.map((t) => t.id)).toEqual(["process-pump"]);
+    expect(grouped.categories.some((c) => c.id === "process")).toBe(false);
+  });
+
+  it("never drops a tool: uncategorized tools land in ungrouped", () => {
+    const withNew = [tool("laser-measure"), ...currentOrder];
+    const { pinned, categories, ungrouped } = groupToolsByCategory(withNew);
+    const seen = [
+      ...pinned,
+      ...categories.flatMap((c) => c.tools),
+      ...ungrouped,
+    ].map((t) => t.id);
+    expect(seen).toHaveLength(withNew.length);
+    expect(ungrouped.map((t) => t.id)).toEqual(["laser-measure"]);
+  });
+
+  it("categories follow the declared House, Mechanical, Plan order", () => {
+    const { categories } = groupToolsByCategory(currentOrder);
+    expect(categories.map((c) => c.id)).toEqual(["house", "mechanical", "plan"]);
+  });
+
+  it("does not mutate the input array", () => {
+    const input = [...currentOrder];
+    groupToolsByCategory(input);
     expect(input.map((t) => t.id)).toEqual(currentOrder.map((t) => t.id));
   });
 });

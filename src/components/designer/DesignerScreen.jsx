@@ -50,7 +50,8 @@ import {
   pipeRunLengthIn,
 } from "@/domains/roomDesigner/pipingGeometry";
 import { summarizeDesignForEstimating } from "@/domains/roomDesigner/designerExports";
-import { orderToolbarTools } from "@/domains/roomDesigner/designerToolbar";
+import { groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
+import ToolPalette from "./ToolPalette";
 
 const DesignerViewport3D = dynamic(() => import("./DesignerViewport3D"), {
   ssr: false,
@@ -77,9 +78,9 @@ const TOOL_DEFS = [
   { id: "calibrate", label: "Calibrate", icon: Ruler, hint: "Set the background image scale: click two points on it, then enter the real distance", needsUnderlay: true },
 ];
 
-// Select, Erase and Pan are pinned as the first three palette entries, in
-// that order, regardless of where they (or future tools) sit in TOOL_DEFS.
-const ORDERED_TOOL_DEFS = orderToolbarTools(TOOL_DEFS);
+// Pinned tools first, then Visio-style collapsible categories
+// (House, Mechanical, Process, Plan) in the left tool palette.
+const GROUPED_TOOL_DEFS = groupToolsByCategory(TOOL_DEFS);
 
 export default function DesignerScreen({ projectId, initialName }) {
   const [state, dispatch] = useReducer(designerReducer, undefined, () => createInitialState());
@@ -261,28 +262,13 @@ export default function DesignerScreen({ projectId, initialName }) {
       )}
 
       <div className="flex min-h-0 flex-1">
-        {/* tool palette */}
-        <nav className="flex w-24 flex-col gap-1 border-r border-gray-800 bg-gray-900 p-2" aria-label="Tools">
-          {ORDERED_TOOL_DEFS.map((t) => {
-            const Icon = t.icon;
-            const active = tool === t.id;
-            const disabled = t.needsUnderlay && !design.underlay;
-            return (
-              <button
-                key={t.id}
-                onClick={() => dispatch({ type: "SET_TOOL", tool: t.id })}
-                title={disabled ? "Import a background image first" : t.hint}
-                disabled={disabled}
-                className={`flex flex-col items-center gap-1 rounded px-1 py-2 text-xs ${
-                  active ? "bg-emerald-600 text-white" : "text-gray-300 hover:bg-gray-800"
-                } ${disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
-              >
-                <Icon size={20} />
-                {t.label}
-              </button>
-            );
-          })}
-        </nav>
+        {/* tool palette: pinned tools, then collapsible Visio-style categories */}
+        <ToolPalette
+          grouped={GROUPED_TOOL_DEFS}
+          activeToolId={tool}
+          hasUnderlay={Boolean(design.underlay)}
+          onSelect={(toolId) => dispatch({ type: "SET_TOOL", tool: toolId })}
+        />
 
         {/* canvas */}
         <main className="relative min-w-0 flex-1">
