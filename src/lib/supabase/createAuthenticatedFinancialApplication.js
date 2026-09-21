@@ -4,7 +4,7 @@ import {
 
 import {
   createFinancialApplicationSuite,
-} from "@/infrastructure/composition";
+} from "@/infrastructure/composition/createFinancialApplicationSuite.js";
 
 import {
   createClient,

@@ -15,6 +15,7 @@ import type {
 
 import type {
   PlaidAdapterClient,
+  PlaidSdk,
 } from "./plaid.client";
 
 import {
@@ -41,6 +42,7 @@ import {
 export function createPlaidAdapter({
   credentialVaultService,
   plaidClient,
+  plaidSdk,
 }: {
   credentialVaultService?: {
     retrieveCredential(
@@ -49,9 +51,16 @@ export function createPlaidAdapter({
     ): Promise<string | null>;
   };
   plaidClient?: PlaidAdapterClient;
+  /**
+   * Injected Plaid SDK module. Required only when a Plaid operation is
+   * actually performed without an injected plaidClient; keeping it
+   * injectable (instead of statically imported) keeps the ~17MB plaid
+   * package out of serverless functions that never call Plaid.
+   */
+  plaidSdk?: PlaidSdk;
 } = {}): PlaidAdapter {
   const resolvePlaidClient = () =>
-    plaidClient ?? createPlaidClient();
+    plaidClient ?? createPlaidClient(undefined, plaidSdk);
 
   const resolvePlaidAccessToken = async (
     context?: ConnectionProviderImportContext,

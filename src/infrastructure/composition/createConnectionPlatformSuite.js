@@ -127,6 +127,9 @@ const plaidProvider =
   createPlaidAdapter({
     credentialVaultService,
     plaidClient: deps.plaidClient,
+    // Injected (never statically imported) so functions that build this
+    // suite without performing Plaid operations skip the ~17MB plaid SDK.
+    plaidSdk: deps.plaidSdk,
   });
 
 // stripeClient is intentionally NOT resolved here (would construct a Stripe SDK client, or throw
