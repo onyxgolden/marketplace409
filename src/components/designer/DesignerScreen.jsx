@@ -69,7 +69,7 @@ const TOOL_DEFS = [
   { id: "room", label: "Room", icon: Home, hint: "Click to drop a pre-shaped room" },
   { id: "door", label: "Door", icon: DoorOpen, hint: "Click a wall to cut a door opening" },
   { id: "window", label: "Window", icon: Box, hint: "Click a wall to cut a window opening" },
-  { id: "furniture", label: "Furniture", icon: Sofa, hint: "Pick a piece, then click the plan to place it" },
+  { id: "furniture", label: "Furniture", icon: Sofa, hint: "Pick a piece, then click the plan to place it", leftPalette: false },
   { id: "pipe", label: "Pipe", icon: Spline, hint: "Click to add pipe vertices · double-click or Enter to finish · Esc cancels" },
   { id: "piping", label: "Piping", icon: Shapes, hint: "Pick a valve, fitting, or equipment symbol, then click the plan to place it" },
   { id: "orgchart", label: "Org chart", icon: Network, hint: "Click the plan to place an org chart, then add people and reporting lines" },

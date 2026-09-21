@@ -2,11 +2,13 @@
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import ToolPalette, { COLLAPSED_STORAGE_KEY } from "./ToolPalette";
+import ToolPalette, { COLLAPSED_STORAGE_KEY, FAVORITE_STORAGE_KEY } from "./ToolPalette";
 import { groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
 
 // Mirror the real TOOL_DEFS ids from DesignerScreen.jsx. Icons are stubs;
 // the palette only needs id/label/hint/needsUnderlay for these tests.
+// Furniture stays in the right panel (leftPalette: false), so it never
+// appears in the left palette.
 const tool = (id, extra = {}) => ({ id, label: id, icon: () => null, hint: "", ...extra });
 const TOOL_DEFS = [
   "select",
@@ -22,7 +24,11 @@ const TOOL_DEFS = [
   "erase",
   "pan",
   "calibrate",
-].map((id) => (id === "calibrate" ? tool(id, { needsUnderlay: true }) : tool(id)));
+].map((id) => {
+  if (id === "calibrate") return tool(id, { needsUnderlay: true });
+  if (id === "furniture") return tool(id, { leftPalette: false });
+  return tool(id);
+});
 
 const grouped = () => groupToolsByCategory(TOOL_DEFS);
 
@@ -31,7 +37,15 @@ const queryCategoryHeader = (container, label) =>
 
 const queryToolButton = (container, id) =>
   Array.from(container.querySelectorAll("button")).find(
-    (b) => !b.hasAttribute("aria-expanded") && b.textContent.trim() === id
+    (b) => !b.hasAttribute("aria-expanded") && !b.hasAttribute("aria-pressed") && b.textContent.trim() === id
+  );
+
+const queryFavoriteToggle = (container, id) =>
+  container.querySelector(`button[aria-label$="${id} to favorites"], button[aria-label$="${id} from favorites"]`);
+
+const queryPinnedToolButtons = (container) =>
+  Array.from(container.querySelectorAll("nav > div.group")).slice(0, 3).map(
+    (wrapper) => wrapper.querySelector("button")
   );
 
 describe("ToolPalette (collapsible Visio-style categories)", () => {
@@ -69,8 +83,80 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
 
   it("keeps Select, Erase and Pan pinned above the categories", async () => {
     await renderPalette();
-    const buttons = Array.from(container.querySelectorAll("nav > button"));
+    const buttons = queryPinnedToolButtons(container);
     expect(buttons.map((b) => b.textContent.trim())).toEqual(["select", "erase", "pan"]);
+  });
+
+  it("does not render furniture in the left palette (it stays in the right panel)", async () => {
+    await renderPalette();
+    expect(queryToolButton(container, "furniture")).toBeUndefined();
+    // No button anywhere in the palette mentions furniture.
+    const labels = Array.from(container.querySelectorAll("button")).map((b) =>
+      b.textContent.trim()
+    );
+    expect(labels).not.toContain("furniture");
+  });
+
+  it("hides the Favorites category until a tool is starred", async () => {
+    await renderPalette();
+    expect(queryCategoryHeader(container, "Favorites")).toBeNull();
+  });
+
+  it("starring a tool creates a Favorites category above the stencil groups", async () => {
+    await renderPalette();
+    await act(async () => {
+      queryFavoriteToggle(container, "wall").click();
+    });
+    const favoritesHeader = queryCategoryHeader(container, "Favorites");
+    expect(favoritesHeader).not.toBeNull();
+    expect(favoritesHeader.getAttribute("aria-expanded")).toBe("true");
+    // Favorites renders before House in the nav.
+    const headers = Array.from(
+      container.querySelectorAll('button[aria-label$="tools"]')
+    ).map((b) => b.getAttribute("aria-label"));
+    expect(headers[0]).toMatch(/Favorites/);
+    expect(headers[1]).toMatch(/House/);
+    // The starred tool appears in Favorites and still in its home category.
+    expect(window.localStorage.getItem(FAVORITE_STORAGE_KEY)).toContain('"wall"');
+  });
+
+  it("un-starring the last favorite removes the Favorites category", async () => {
+    await renderPalette();
+    await act(async () => {
+      queryFavoriteToggle(container, "pipe").click();
+    });
+    expect(queryCategoryHeader(container, "Favorites")).not.toBeNull();
+    await act(async () => {
+      queryFavoriteToggle(container, "pipe").click();
+    });
+    expect(queryCategoryHeader(container, "Favorites")).toBeNull();
+    expect(window.localStorage.getItem(FAVORITE_STORAGE_KEY)).toBe("[]");
+  });
+
+  it("star toggle does not select the tool", async () => {
+    const onSelect = vi.fn();
+    await renderPalette({ onSelect });
+    await act(async () => {
+      queryFavoriteToggle(container, "wall").click();
+    });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("restores favorites across remounts and ignores stale ids", async () => {
+    window.localStorage.setItem(FAVORITE_STORAGE_KEY, JSON.stringify(["wall", "gone-tool"]));
+    await renderPalette();
+    const favoritesHeader = queryCategoryHeader(container, "Favorites");
+    expect(favoritesHeader).not.toBeNull();
+    // Only the still-existing tool renders in Favorites.
+    const favoritesSection = favoritesHeader.parentElement;
+    expect(favoritesSection.textContent).toContain("wall");
+    expect(favoritesSection.textContent).not.toContain("gone-tool");
+  });
+
+  it("falls back to no favorites when stored data is corrupt", async () => {
+    window.localStorage.setItem(FAVORITE_STORAGE_KEY, "not-json{{{");
+    await renderPalette();
+    expect(queryCategoryHeader(container, "Favorites")).toBeNull();
   });
 
   it("renders House, Mechanical and Plan categories expanded by default", async () => {

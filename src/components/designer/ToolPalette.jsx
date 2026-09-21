@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Star } from "lucide-react";
 
 /** localStorage key scoping collapsed tool-category state to the designer palette. */
 export const COLLAPSED_STORAGE_KEY = "forge-designer.tool-categories.collapsed.v1";
+
+/** localStorage key for the user's favorite tool ids (left palette). */
+export const FAVORITE_STORAGE_KEY = "forge-designer.favorite-tools.v1";
 
 /**
  * Lazily read the collapsed-by-category map ({ [categoryId]: true }).
@@ -23,31 +26,65 @@ function readCollapsedByCategory() {
   }
 }
 
-function ToolButton({ tool, active, disabled, onSelect }) {
+/** Lazily read the favorite tool id list; corrupt data falls back to []. */
+function readFavoriteToolIds() {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(FAVORITE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return [...new Set(parsed.filter((id) => typeof id === "string"))];
+  } catch {
+    return [];
+  }
+}
+
+function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavorite }) {
   const Icon = tool.icon;
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(tool.id)}
-      title={disabled ? "Import a background image first" : tool.hint}
-      disabled={disabled}
-      className={`flex w-full flex-col items-center gap-1 rounded px-1 py-2 text-xs ${
-        active ? "bg-emerald-600 text-white" : "text-gray-300 hover:bg-gray-800"
-      } ${disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
-    >
-      <Icon size={20} aria-hidden="true" />
-      {tool.label}
-    </button>
+    <div className="group relative">
+      <button
+        type="button"
+        onClick={() => onSelect(tool.id)}
+        title={disabled ? "Import a background image first" : tool.hint}
+        disabled={disabled}
+        className={`flex w-full flex-col items-center gap-1 rounded px-1 py-2 text-xs ${
+          active ? "bg-emerald-600 text-white" : "text-gray-300 hover:bg-gray-800"
+        } ${disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
+      >
+        <Icon size={20} aria-hidden="true" />
+        {tool.label}
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleFavorite(tool.id);
+        }}
+        aria-pressed={favorite}
+        aria-label={`${favorite ? "Remove" : "Add"} ${tool.label} ${favorite ? "from" : "to"} favorites`}
+        title={favorite ? "Remove from favorites" : "Add to favorites"}
+        className={`absolute right-1 top-1 rounded p-0.5 ${
+          favorite ? "text-amber-400" : "text-gray-600 opacity-0 hover:text-amber-400 focus:opacity-100 group-hover:opacity-100"
+        }`}
+      >
+        <Star size={12} aria-hidden="true" fill={favorite ? "currentColor" : "none"} />
+      </button>
+    </div>
   );
 }
 
 /**
- * Left tool palette: pinned tools (Select, Erase, Pan) stay on top, then
- * Visio-style collapsible stencil categories (House, Mechanical, Process,
- * Plan). Collapse state persists across reloads.
+ * Left tool palette: pinned tools (Select, Erase, Pan) stay on top, then a
+ * Favorites category (hidden until the user stars a tool), then Visio-style
+ * collapsible stencil categories (House, Mechanical, Process, Plan, plus any
+ * runtime-registered categories such as Custom). Collapse state and
+ * favorites persist across reloads.
  */
 export default function ToolPalette({ grouped, activeToolId, hasUnderlay, onSelect }) {
   const [collapsedByCategory, setCollapsedByCategory] = useState(readCollapsedByCategory);
+  const [favoriteIds, setFavoriteIds] = useState(readFavoriteToolIds);
 
   // Persist on every change so the expand/collapse layout survives reloads.
   useEffect(() => {
@@ -58,8 +95,41 @@ export default function ToolPalette({ grouped, activeToolId, hasUnderlay, onSele
     }
   }, [collapsedByCategory]);
 
+  // Persist favorites on every change.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(FAVORITE_STORAGE_KEY, JSON.stringify(favoriteIds));
+    } catch {
+      // Storage may be unavailable (private mode, quota); favorites still work in-memory.
+    }
+  }, [favoriteIds]);
+
   const toggleCategory = (categoryId) =>
     setCollapsedByCategory((prev) => ({ ...prev, [categoryId]: !prev[categoryId] }));
+
+  const toggleFavorite = (toolId) =>
+    setFavoriteIds((prev) =>
+      prev.includes(toolId) ? prev.filter((id) => id !== toolId) : [...prev, toolId]
+    );
+
+  // All visible tools by id, in display order (pinned, categories, ungrouped).
+  const toolById = new Map();
+  const allTools = [
+    ...grouped.pinned,
+    ...grouped.categories.flatMap((category) => category.tools),
+    ...grouped.ungrouped,
+  ];
+  allTools.forEach((tool) => {
+    if (!toolById.has(tool.id)) toolById.set(tool.id, tool);
+  });
+
+  // Favorites render as a category above the stencil groups, in palette
+  // display order, ignoring stale ids that no longer exist.
+  const favoriteTools = allTools.filter((tool) => favoriteIds.includes(tool.id));
+  const categories =
+    favoriteTools.length > 0
+      ? [{ id: "favorites", label: "Favorites", tools: favoriteTools }, ...grouped.categories]
+      : grouped.categories;
 
   const renderTool = (tool) => (
     <ToolButton
@@ -67,7 +137,9 @@ export default function ToolPalette({ grouped, activeToolId, hasUnderlay, onSele
       tool={tool}
       active={activeToolId === tool.id}
       disabled={tool.needsUnderlay && !hasUnderlay}
+      favorite={favoriteIds.includes(tool.id)}
       onSelect={onSelect}
+      onToggleFavorite={toggleFavorite}
     />
   );
 
@@ -77,7 +149,7 @@ export default function ToolPalette({ grouped, activeToolId, hasUnderlay, onSele
       aria-label="Tools"
     >
       {grouped.pinned.map(renderTool)}
-      {grouped.categories.map((category) => {
+      {categories.map((category) => {
         const collapsed = Boolean(collapsedByCategory[category.id]);
         const Chevron = collapsed ? ChevronRight : ChevronDown;
         return (
