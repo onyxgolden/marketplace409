@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState, designerReducer } from "./designerReducer";
+import { createSaveScheduler } from "./saveScheduler";
 import { createEmptyDesign } from "@/domains/roomDesigner/designerDocument";
 import { footprintXBounds } from "@/domains/roomDesigner/designerGeometry";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
@@ -104,6 +105,73 @@ describe("designerReducer", () => {
     state = designerReducer(state, { type: "RENAME", name: "Edit" });
     state = designerReducer(state, { type: "MARK_SAVED" });
     expect(state.dirty).toBe(true);
+  });
+
+  it("serializes overlapping saves so a stale revision never overwrites a newer one", async () => {
+    const schedule = createSaveScheduler();
+    let state = createInitialState(createEmptyDesign("Test"));
+    const dispatch = (action) => { state = designerReducer(state, action); };
+    // Drive the document to revision 5.
+    for (let i = 1; i <= 5; i++) dispatch({ type: "RENAME", name: `Edit ${i}` });
+    expect(state.designRevision).toBe(5);
+    expect(state.dirty).toBe(true);
+
+    // Mock server: each PUT stays in flight until the test releases it, and
+    // the "database" records writes in completion order.
+    const putBodies = [];
+    const putGates = [];
+    const persistedRevisions = [];
+    const mockPut = async (body) => {
+      putBodies.push(body);
+      const gate = {};
+      gate.promise = new Promise((resolve) => { gate.release = resolve; });
+      putGates.push(gate);
+      await gate.promise;
+      persistedRevisions.push(body.designRevision);
+    };
+
+    // Same wiring as DesignerScreen: snapshot the freshest state at send
+    // time, then mark saved with the snapshotted revision.
+    const save = () => schedule(async () => {
+      const snapshot = state;
+      await mockPut({ designRevision: snapshot.designRevision });
+      dispatch({ type: "MARK_SAVED", savedRevision: snapshot.designRevision });
+    });
+
+    // Save rev 5 begins; its PUT stays in flight. (The scheduled task starts
+    // on a microtask, so flush before asserting it began.)
+    const first = save();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(putBodies).toHaveLength(1);
+
+    // Edit → rev 6, then a second save is requested while the first is in flight.
+    dispatch({ type: "RENAME", name: "Edit 6" });
+    expect(state.designRevision).toBe(6);
+    const second = save();
+
+    // Serialized: the second PUT must not start while the first is in
+    // flight, so the slow first PUT can never land after (and overwrite) rev 6.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(putBodies).toHaveLength(1);
+
+    // The rev-5 PUT completes; the edit that landed in flight must stay dirty.
+    putGates[0].release();
+    await first;
+    expect(state.dirty).toBe(true);
+    expect(persistedRevisions).toEqual([5]);
+
+    // The queued save now runs and snapshots the freshest revision (6).
+    await new Promise((r) => setTimeout(r, 0));
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[1].designRevision).toBe(6);
+
+    // Rev 6 persists; dirty clears only now, and the final persisted
+    // document is rev 6 — rev 5 never lands after rev 6.
+    putGates[1].release();
+    await second;
+    expect(state.dirty).toBe(false);
+    expect(persistedRevisions).toEqual([5, 6]);
+    expect(persistedRevisions[persistedRevisions.length - 1]).toBe(6);
   });
 
   it("toggles 2d/3d view", () => {    const state = createInitialState();

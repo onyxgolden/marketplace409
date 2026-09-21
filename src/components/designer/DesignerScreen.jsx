@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   Box,
   DoorOpen,
@@ -21,6 +21,7 @@ import {
   Upload,
 } from "lucide-react";
 import PlanCanvas from "./PlanCanvas";
+import { createSaveScheduler } from "./saveScheduler";
 import { createInitialState, designerReducer } from "./designerReducer";
 import { catalogByCategory, getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { ROOM_TEMPLATES } from "@/domains/roomDesigner/designerDocument";
@@ -54,6 +55,15 @@ export default function DesignerScreen({ projectId, initialName }) {
   const [status, setStatus] = useState({ kind: "loading", message: "Loading design…" });
   const [saving, setSaving] = useState(false);
 
+  // Latest snapshots for saves: a queued save must capture the document and
+  // name at the moment it actually sends, not when save() was invoked.
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
+  const nameRef = useRef(name);
+  useEffect(() => { nameRef.current = name; }, [name]);
+  const saveSchedulerRef = useRef(null);
+  if (saveSchedulerRef.current === null) saveSchedulerRef.current = createSaveScheduler();
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -72,30 +82,34 @@ export default function DesignerScreen({ projectId, initialName }) {
     return () => { cancelled = true; };
   }, [projectId]);
 
-  const save = useCallback(async () => {
-    // Capture the exact document state AND its revision identity up front:
-    // edits made while this PUT is in flight bump the revision, so a stale
-    // completion cannot clear a newer dirty state (MARK_SAVED checks this).
-    const designToSave = state.design;
-    const savedRevision = state.designRevision;
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/forge/designer/${projectId}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, design: designToSave }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || `Save failed (${res.status})`);
-      dispatch({ type: "MARK_SAVED", savedRevision });
-      setStatus({ kind: "saved", message: "Saved." });
-      setTimeout(() => setStatus((s) => (s.kind === "saved" ? { kind: "ready" } : s)), 2500);
-    } catch (error) {
-      setStatus({ kind: "error", message: error.message });
-    } finally {
-      setSaving(false);
-    }
-  }, [projectId, name, state.design, state.designRevision]);
+  const save = useCallback(() => {
+    // Serialize saves: only one PUT may be in flight at a time, so a slow
+    // earlier save can never persist a stale revision over a newer one. A
+    // save requested while another is in flight waits its turn and snapshots
+    // the latest document and revision when it starts; the revision-guarded
+    // MARK_SAVED below still clears dirty only for the revision that was
+    // actually persisted.
+    return saveSchedulerRef.current(async () => {
+      const { design: designToSave, designRevision: savedRevision } = stateRef.current;
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/forge/designer/${projectId}`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: nameRef.current, design: designToSave }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `Save failed (${res.status})`);
+        dispatch({ type: "MARK_SAVED", savedRevision });
+        setStatus({ kind: "saved", message: "Saved." });
+        setTimeout(() => setStatus((s) => (s.kind === "saved" ? { kind: "ready" } : s)), 2500);
+      } catch (error) {
+        setStatus({ kind: "error", message: error.message });
+      } finally {
+        setSaving(false);
+      }
+    });
+  }, [projectId]);
 
   useEffect(() => {
     const onKey = (e) => {
