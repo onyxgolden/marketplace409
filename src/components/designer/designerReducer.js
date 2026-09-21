@@ -58,6 +58,7 @@ import {
   updateSheetFormat,
   updateUnderlay,
 } from "@/domains/roomDesigner/designerDocument";
+import { applyImportResult } from "@/domains/roomDesigner/importers/vsdx/visioMapper";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { PIPE_DIAMETERS_IN, PIPE_LAYERS } from "@/domains/roomDesigner/pipingGeometry";
@@ -106,9 +107,9 @@ export function createInitialState(design) {
   };
 }
 
-/** Designs saved before piping/org-charts/sheets existed lack the new arrays; default them. */
+/** Designs saved before piping/org-charts/sheets/annotations existed lack the new arrays; default them. */
 function withPipeDefaults(design) {
-  return { pipes: [], symbols: [], orgCharts: [], sheets: [], ...design };
+  return { pipes: [], symbols: [], orgCharts: [], sheets: [], annotations: [], ...design };
 }
 
 /**
@@ -543,6 +544,11 @@ export function designerReducer(state, action) {
       return action.savedRevision === state.designRevision
         ? { ...state, dirty: false }
         : state;
+    case "IMPORT_VSDX_RESULT":
+      // Atomic VSDX import: the prepared result is merged in ONE pure step
+      // and ONE undo touch, so the import is a single undoable unit and a
+      // failed prepare can never leave a half-applied design behind.
+      return touch(state, applyImportResult(withPipeDefaults(state.design), action.importResult));
     default:
       return state;
   }
