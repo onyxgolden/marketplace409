@@ -34,7 +34,7 @@ export function visibleInspectorTabs(isOwner) {
 
 function InspectorPanel({ activeTab, onCollapse, isOwner, board, projectId,
   onAddCalendar, onRemoveCalendar, onSetDefaultCalendar, onAddBlackout, onRemoveBlackout,
-  onResourcesChanged, onCostAccountsChanged }) {
+  onResourcesChanged, onCostAccountsChanged, onBaselineCaptured }) {
   switch (activeTab) {
     case "help":
       return <SchedulingHelpPanel onClose={onCollapse} />;
@@ -54,7 +54,7 @@ function InspectorPanel({ activeTab, onCollapse, isOwner, board, projectId,
           onRemoveBlackout={onRemoveBlackout} />
       );
     case "baselines":
-      return <SchedulingBaselinesPanel projectId={projectId} isOwner={isOwner} blocks={board.blocks} onClose={onCollapse} />;
+      return <SchedulingBaselinesPanel projectId={projectId} isOwner={isOwner} blocks={board.blocks} onClose={onCollapse} onBaselineCaptured={onBaselineCaptured} />;
     case "resources":
       return <SchedulingResourcesPanel isOwner={isOwner} onClose={onCollapse} onChanged={onResourcesChanged} templateId={board.templateId} />;
     case "cost-accounts":

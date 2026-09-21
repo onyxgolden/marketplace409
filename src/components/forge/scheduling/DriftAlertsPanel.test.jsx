@@ -110,4 +110,33 @@ describe("DriftAlertsPanel", () => {
     await flush();
     expect(mounted.container.querySelector('[role="alert"]').textContent).toContain("boom");
   });
+
+  it("ignores a stale threshold response that arrives after the newer one", async () => {
+    const resolvers = [];
+    fetchMock.mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve); }));
+    const reportFor = (threshold, count) => ({
+      ok: true,
+      json: () => Promise.resolve({
+        ...REPORT,
+        thresholdDays: threshold,
+        summary: { ...REPORT.summary, driftedCount: count, majorCount: count },
+      }),
+    });
+    mounted = mount(<DriftAlertsPanel projectId="p1" />);
+    await act(async () => { await Promise.resolve(); });
+    expect(resolvers).toHaveLength(1); // threshold=2 request in flight
+    const select = mounted.container.querySelector("#drift-threshold");
+    await act(async () => {
+      select.value = "5";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(resolvers).toHaveLength(2); // threshold=5 request in flight
+    // The newer (5d) response arrives first...
+    await act(async () => { resolvers[1](reportFor(5, 9)); });
+    expect(mounted.container.textContent).toContain("9 drifted");
+    // ...then the stale 2d response arrives last and must not overwrite it.
+    await act(async () => { resolvers[0](reportFor(2, 1)); });
+    expect(mounted.container.textContent).toContain("9 drifted");
+    expect(mounted.container.textContent).not.toContain("1 drifted (1 major)");
+  });
 });

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import SchedulingInspector, { visibleInspectorTabs } from "./SchedulingInspector";
 import { usePersistedBoard } from "./usePersistedBoard";
@@ -147,6 +147,10 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
     if (!response.ok) {
       console.error("Unable to update progress for", taskCode);
       setProgressOverrides((current) => ({ ...current, [taskCode]: previous }));
+    } else {
+      // Progress (percent complete / actual dates) feeds the drift report's
+      // completed-item exclusion and actual-date preference -- refresh the badge.
+      refreshDriftBadge();
     }
   }
   async function loadResources() {
@@ -169,14 +173,19 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   useEffect(() => { loadCostAccounts(); }, [isOwner]);
 
   // Baseline drift badge: read-only count of drifted activities (major count for
-  // the badge color), fetched once per project. Drift is computed from dates/
-  // CPM/baselines, which non-owners can already see, so this fetch is not owner-
-  // gated. A null badge means "not loaded yet" -- never render a stale count.
+  // the badge color). Drift is computed from dates/CPM/baselines, which non-owners
+  // can already see, so this fetch is not owner-gated. A null badge means "not
+  // loaded yet" -- never render a stale count.
   const [driftBadge, setDriftBadge] = useState(null);
-  async function loadDriftBadge() {
+  // Monotonic request id: a slow response for a previous project or an earlier
+  // refresh can never overwrite the current project's badge.
+  const driftRequestSeq = useRef(0);
+  const loadDriftBadge = useCallback(async (targetProjectId) => {
+    const seq = ++driftRequestSeq.current;
     try {
-      const response = await fetch(`/api/forge/scheduling/${projectId}/drift`);
+      const response = await fetch(`/api/forge/scheduling/${targetProjectId}/drift`);
       const result = await response.json().catch(() => ({}));
+      if (driftRequestSeq.current !== seq) return;
       if (!response.ok || !result.success) {
         setDriftBadge(null);
         return;
@@ -186,11 +195,26 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
         major: result.summary?.majorCount ?? 0,
       });
     } catch {
-      setDriftBadge(null);
+      if (driftRequestSeq.current === seq) setDriftBadge(null);
     }
-  }
-  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-  useEffect(() => { if (projectId) loadDriftBadge(); else setDriftBadge(null); }, [projectId]);
+  }, [setDriftBadge]);
+  const refreshDriftBadge = useCallback(() => {
+    if (projectId) loadDriftBadge(projectId);
+  }, [projectId, loadDriftBadge]);
+  useEffect(() => {
+    // Clear immediately on project switch so the old project's count is never
+    // shown while the new project's badge loads. Synchronous clear is
+    // intentional here -- a deferred clear would flash the stale count.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (projectId) { setDriftBadge(null); loadDriftBadge(projectId); }
+    else setDriftBadge(null);
+  }, [projectId, loadDriftBadge]);
+  // Refresh the badge after the autosave persists a schedule change (date moves,
+  // dependency links, deletes) -- the badge must not go stale until the next
+  // page reload.
+  useEffect(() => {
+    if (saveStatus === "Saved") refreshDriftBadge();
+  }, [saveStatus, refreshDriftBadge]);
 
   function handleUndo() {
     setHistory((h) => {
@@ -999,6 +1023,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
         {inspectorTab && (
           <SchedulingInspector activeTab={inspectorTab} onSelectTab={setInspectorTab} onCollapse={() => setInspectorTab(null)}
             isOwner={isOwner} board={board} projectId={projectId} driftBadge={driftBadge}
+            onBaselineCaptured={refreshDriftBadge}
             onAddCalendar={(input) => commitBoard((current) => addCalendar(current, input))}
             onRemoveCalendar={(calendarId) => commitBoard((current) => removeCalendar(current, calendarId))}
             onSetDefaultCalendar={(calendarId) => commitBoard((current) => setDefaultCalendar(current, calendarId))}

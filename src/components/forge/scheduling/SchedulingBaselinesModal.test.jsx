@@ -86,6 +86,45 @@ describe("SchedulingBaselinesModal", () => {
     expect(mounted.container.textContent).toContain("Kickoff plan");
   });
 
+  it("notifies onBaselineCaptured only after a successful capture", async () => {
+    const onBaselineCaptured = vi.fn();
+    global.fetch
+      .mockReturnValueOnce(jsonResponse({ success: true, baselines: [] }))
+      .mockReturnValueOnce(jsonResponse({ success: true, baselineId: "baseline_new" }))
+      .mockReturnValueOnce(jsonResponse({ success: true, baselines: [] }));
+    mounted = mount(<SchedulingBaselinesModal projectId="p1" isOwner blocks={BLOCKS} onClose={() => {}} onBaselineCaptured={onBaselineCaptured} />);
+    await flush();
+
+    const input = mounted.container.querySelector("input");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    await act(async () => { setter.call(input, "Post-fix plan"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+
+    const captureButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Capture baseline");
+    await act(async () => { captureButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(mounted.container.textContent).toContain("Baseline captured.");
+    expect(onBaselineCaptured).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not notify onBaselineCaptured when the capture fails", async () => {
+    const onBaselineCaptured = vi.fn();
+    global.fetch
+      .mockReturnValueOnce(jsonResponse({ success: true, baselines: [] }))
+      .mockReturnValueOnce(jsonResponse({ error: "boom" }, false));
+    mounted = mount(<SchedulingBaselinesModal projectId="p1" isOwner blocks={BLOCKS} onClose={() => {}} onBaselineCaptured={onBaselineCaptured} />);
+    await flush();
+
+    const input = mounted.container.querySelector("input");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    await act(async () => { setter.call(input, "Bad plan"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+
+    const captureButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Capture baseline");
+    await act(async () => { captureButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush(); });
+
+    expect(mounted.container.textContent).toContain("boom");
+    expect(onBaselineCaptured).not.toHaveBeenCalled();
+  });
+
   it("loads and displays variance for a selected baseline, including added-since-baseline blocks", async () => {
     global.fetch
       .mockReturnValueOnce(jsonResponse({ success: true, baselines: [{ id: "baseline_1", name: "Approved plan", createdAt: "2026-01-01T00:00:00.000Z" }] }))

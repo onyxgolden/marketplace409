@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const THRESHOLD_OPTIONS = [1, 2, 3, 5, 7];
 
@@ -29,8 +29,14 @@ export function DriftAlertsPanel({ projectId, onClose }) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  // Monotonic request id: only the latest request for the current
+  // {projectId, threshold} may update state, so a slow earlier response can
+  // never overwrite a newer report (e.g. user switches 2d -> 5d and the 2d
+  // response arrives last).
+  const requestSeq = useRef(0);
 
   const load = useCallback(async (threshold) => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setError(null);
     try {
@@ -39,12 +45,14 @@ export function DriftAlertsPanel({ projectId, onClose }) {
       );
       const body = await response.json();
       if (!response.ok) throw new Error(body?.error || "Drift could not be computed right now.");
-      setReport(body);
+      if (requestSeq.current === seq) setReport(body);
     } catch (err) {
-      setError(err.message);
-      setReport(null);
+      if (requestSeq.current === seq) {
+        setError(err.message);
+        setReport(null);
+      }
     } finally {
-      setLoading(false);
+      if (requestSeq.current === seq) setLoading(false);
     }
   }, [projectId]);
 

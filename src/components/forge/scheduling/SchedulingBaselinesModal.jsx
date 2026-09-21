@@ -23,7 +23,7 @@ function varianceToneClass(days) {
 // identifier a baseline snapshot and the live board are guaranteed to share.
 // The panel content, shared by the legacy centered modal below and the docked
 // inspector rail. In the rail, onClose collapses the rail.
-export function SchedulingBaselinesPanel({ projectId, isOwner, blocks, onClose }) {
+export function SchedulingBaselinesPanel({ projectId, isOwner, blocks, onClose, onBaselineCaptured }) {
   const [baselines, setBaselines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [captureName, setCaptureName] = useState("");
@@ -62,6 +62,9 @@ export function SchedulingBaselinesPanel({ projectId, isOwner, blocks, onClose }
     setCaptureName("");
     setMessage("Baseline captured.");
     await loadBaselines();
+    // Notify the parent (the drift badge lives there) only after a successful
+    // capture -- the drift report is computed against the new baseline now.
+    if (onBaselineCaptured) onBaselineCaptured();
   }
 
   async function selectBaseline(baselineId) {
