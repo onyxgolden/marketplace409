@@ -112,3 +112,14 @@ export {
   browserImageCapabilities,
   browserStorageAdapter,
 } from "./hosts.js";
+
+export {
+  NATIVE_ARTIFACT_KIND,
+  NATIVE_ARTIFACT_SCHEMA_VERSION,
+  NativeArtifactError,
+  crc32Ieee,
+  parseNativeSidecar,
+  verifyNativeArtifact,
+  importNativeCapture,
+  createProjectFromNativeCapture,
+} from "./native-artifact.js";

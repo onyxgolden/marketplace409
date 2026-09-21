@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FORGE Capture</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>FORGE Capture <span id="version" class="version"></span></h1>
+    <p class="subtitle">Local-first screen capture. No account, no upload — files stay on this machine.</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Capture</h2>
+      <label>Mode
+        <select id="mode">
+          <option value="full-monitor">Full monitor</option>
+          <option value="window">Window</option>
+          <option value="region-overlay">Region (drag on screen)</option>
+        </select>
+      </label>
+      <label id="monitor-row">Monitor
+        <select id="monitor"></select>
+      </label>
+      <label id="window-row" hidden>Window
+        <select id="window"></select>
+      </label>
+      <label>Delay (seconds)
+        <input id="delay" type="number" min="0" max="60" value="0" />
+      </label>
+      <label class="inline"><input id="cursor" type="checkbox" checked /> Include cursor</label>
+      <div class="row">
+        <button id="capture-btn" class="primary">Capture</button>
+        <button id="refresh-btn" title="Reload monitor and window lists">Refresh</button>
+      </div>
+      <p id="status" class="status" role="status"></p>
+    </section>
+
+    <section class="card">
+      <h2>Session captures</h2>
+      <p class="hint">Every capture is saved automatically under the captures folder as PNG + a <code>.forge.json</code> sidecar.</p>
+      <ul id="captures"></ul>
+      <p class="hint">Captures folder: <code id="captures-dir"></code></p>
+    </section>
+  </main>
+
+  <script src="main.js"></script>
+</body>
+</html>
