@@ -87,7 +87,8 @@ export {
 
 export { drawAnnotation, renderDocument } from "./renderer.js";
 
-export { ExportError, EXPORT_FORMATS, exportMimeForFormat, flattenDocument } from "./exporter.js";
+export { ExportError, EXPORT_FORMATS, NATIVE_BLOB_FORMATS, exportMimeForFormat, exportExtensionForFormat, exportLabelForFormat, isNativeBlobFormat, flattenDocument } from "./exporter.js";
+export { encodeGif, encodeTiff, encodeBmp } from "./pixelEncoders.js";
 
 export {
   StorageError,

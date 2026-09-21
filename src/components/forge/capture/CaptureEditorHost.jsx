@@ -24,9 +24,17 @@ import {
   createViewport,
   decodeSourceImage,
   emptyHistory,
+  encodeBmp,
+  encodeGif,
+  encodeTiff,
+  EXPORT_FORMATS,
+  exportExtensionForFormat,
+  exportLabelForFormat,
+  exportMimeForFormat,
   fileSource,
   fitViewport,
   flattenDocument,
+  isNativeBlobFormat,
   geometryBounds,
   getAnnotation,
   hitTest,
@@ -187,6 +195,8 @@ export default function CaptureEditorHost() {
   const [prevSelectionId, setPrevSelectionId] = useState(null);
   const [textValue, setTextValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [exportFormat, setExportFormat] = useState("png");
+  const [exportQuality, setExportQuality] = useState(0.92); // JPEG/WebP only
 
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
@@ -693,27 +703,42 @@ export default function CaptureEditorHost() {
     setBusy(true);
     try {
       const caps = services.caps;
+      const format = exportFormat;
+      const quality = exportQuality;
       const artifact = await flattenDocument({
         doc: s.doc,
         sourceImage: image,
+        format,
         createCanvas: caps.createCanvas,
-        encodeRaster: async ({ canvas }) => {
-          const blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
-          if (!blob) throw new Error("toBlob returned null");
-          return new Uint8Array(await blob.arrayBuffer());
+        encodeRaster: async ({ canvas, width, height }) => {
+          if (isNativeBlobFormat(format)) {
+            // PNG/JPEG/WebP: the browser's own encoder. Quality applies to
+            // the lossy formats; PNG ignores it.
+            const blob = await new Promise((resolve) =>
+              canvas.toBlob((b) => resolve(b), exportMimeForFormat(format), format === "png" ? undefined : quality),
+            );
+            if (!blob) throw new Error("toBlob returned null");
+            return new Uint8Array(await blob.arrayBuffer());
+          }
+          // GIF/TIFF/BMP: pixel encoders from raw RGBA bytes.
+          const ctx = canvas.getContext("2d");
+          const { data } = ctx.getImageData(0, 0, width, height);
+          if (format === "gif") return encodeGif(data, width, height);
+          if (format === "tiff") return encodeTiff(data, width, height);
+          return encodeBmp(data, width, height);
         },
       });
       const url = URL.createObjectURL(new Blob([artifact.bytes], { type: artifact.mime }));
       const link = document.createElement("a");
       link.href = url;
-      link.download = `forge-capture-${s.doc.id}.png`;
+      link.download = `forge-capture-${s.doc.id}.${exportExtensionForFormat(format)}`;
       document.body.appendChild(link);
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
       setNotice({
         kind: "ok",
-        text: `Exported flattened PNG at ${artifact.width}×${artifact.height}. Blur/blackout are baked into pixels — the file carries no editable layers.`,
+        text: `Exported ${exportLabelForFormat(format)} at ${artifact.width}×${artifact.height}. Blur/blackout are baked into pixels — the file carries no editable layers.`,
       });
     } catch (e) {
       setNotice({ kind: "error", text: `Export failed: ${e.message}` });
@@ -775,8 +800,38 @@ export default function CaptureEditorHost() {
           <button type="button" className="rounded border border-gray-300 px-3 py-2 text-sm disabled:opacity-40" onClick={onSave} disabled={!doc || busy}>
             Save
           </button>
+          <label className="flex items-center gap-1 text-sm text-gray-600">
+            Format
+            <select
+              value={exportFormat}
+              onChange={(e) => setExportFormat(e.target.value)}
+              disabled={!doc || busy}
+              aria-label="Export format"
+              className="rounded border border-gray-300 px-2 py-2 text-sm"
+            >
+              {EXPORT_FORMATS.map((f) => (
+                <option key={f} value={f}>{exportLabelForFormat(f)}</option>
+              ))}
+            </select>
+          </label>
+          {(exportFormat === "jpeg" || exportFormat === "webp") && (
+            <label className="flex items-center gap-1 text-sm text-gray-600" title="Export quality">
+              Quality
+              <input
+                type="range"
+                min={0.5}
+                max={1}
+                step={0.01}
+                value={exportQuality}
+                onChange={(e) => setExportQuality(Number(e.target.value))}
+                disabled={!doc || busy}
+                aria-label="Export quality"
+                className="w-24"
+              />
+            </label>
+          )}
           <button type="button" className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-40" onClick={onExport} disabled={!doc || busy}>
-            {busy ? "Working…" : "Export PNG"}
+            {busy ? "Working…" : "Export"}
           </button>
         </div>
       </div>

@@ -544,7 +544,7 @@ function LayerToggles({ state, dispatch }) {
   );
 }
 
-// Background underlay: import a PNG/JPG plot plan as a trace-over image,
+// Background underlay: import a PNG/JPG/WebP/GIF/TIFF/BMP plot plan as a trace-over image,
 // with opacity, lock, scale calibration, and removal. Stored in the design
 // document as a data URL (Phase 1); a Supabase Storage migration is the
 // follow-up if images get large.
@@ -556,7 +556,7 @@ function UnderlaySection({ design, dispatch }) {
     setImportError(null);
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      setImportError("Please choose a PNG or JPG image.");
+      setImportError("Please choose an image file (PNG, JPG, WebP, GIF, TIFF, or BMP).");
       return;
     }
     const reader = new FileReader();
@@ -592,7 +592,7 @@ function UnderlaySection({ design, dispatch }) {
             Import background
             <input
               type="file"
-              accept="image/png,image/jpeg"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/tiff,image/bmp"
               className="hidden"
               onChange={(e) => onFile(e.target.files?.[0])}
             />
