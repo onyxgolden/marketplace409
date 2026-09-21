@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import SchedulingInspector, { visibleInspectorTabs } from "./SchedulingInspector";
 import { usePersistedBoard } from "./usePersistedBoard";
@@ -25,6 +25,7 @@ function isTypingTarget(el) {
 // the owner gating so non-owners never see the owner-only tabs.
 const DATA_TAB_LABELS = {
   ask: "Ask",
+  drift: "Drift",
   calendars: "Calendars",
   baselines: "Baselines",
   resources: "Resources",
@@ -146,6 +147,10 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
     if (!response.ok) {
       console.error("Unable to update progress for", taskCode);
       setProgressOverrides((current) => ({ ...current, [taskCode]: previous }));
+    } else {
+      // Progress (percent complete / actual dates) feeds the drift report's
+      // completed-item exclusion and actual-date preference -- refresh the badge.
+      refreshDriftBadge();
     }
   }
   async function loadResources() {
@@ -166,6 +171,50 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   }
   // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
   useEffect(() => { loadCostAccounts(); }, [isOwner]);
+
+  // Baseline drift badge: read-only count of drifted activities (major count for
+  // the badge color). Drift is computed from dates/CPM/baselines, which non-owners
+  // can already see, so this fetch is not owner-gated. A null badge means "not
+  // loaded yet" -- never render a stale count.
+  const [driftBadge, setDriftBadge] = useState(null);
+  // Monotonic request id: a slow response for a previous project or an earlier
+  // refresh can never overwrite the current project's badge.
+  const driftRequestSeq = useRef(0);
+  const loadDriftBadge = useCallback(async (targetProjectId) => {
+    const seq = ++driftRequestSeq.current;
+    try {
+      const response = await fetch(`/api/forge/scheduling/${targetProjectId}/drift`);
+      const result = await response.json().catch(() => ({}));
+      if (driftRequestSeq.current !== seq) return;
+      if (!response.ok || !result.success) {
+        setDriftBadge(null);
+        return;
+      }
+      setDriftBadge({
+        total: result.summary?.driftedCount ?? 0,
+        major: result.summary?.majorCount ?? 0,
+      });
+    } catch {
+      if (driftRequestSeq.current === seq) setDriftBadge(null);
+    }
+  }, [setDriftBadge]);
+  const refreshDriftBadge = useCallback(() => {
+    if (projectId) loadDriftBadge(projectId);
+  }, [projectId, loadDriftBadge]);
+  useEffect(() => {
+    // Clear immediately on project switch so the old project's count is never
+    // shown while the new project's badge loads. Synchronous clear is
+    // intentional here -- a deferred clear would flash the stale count.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (projectId) { setDriftBadge(null); loadDriftBadge(projectId); }
+    else setDriftBadge(null);
+  }, [projectId, loadDriftBadge]);
+  // Refresh the badge after the autosave persists a schedule change (date moves,
+  // dependency links, deletes) -- the badge must not go stale until the next
+  // page reload.
+  useEffect(() => {
+    if (saveStatus === "Saved") refreshDriftBadge();
+  }, [saveStatus, refreshDriftBadge]);
 
   function handleUndo() {
     setHistory((h) => {
@@ -758,8 +807,14 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
         {visibleInspectorTabs(isOwner).filter((tab) => tab.id !== "help").map((tab) => (
           <button key={tab.id} type="button" onClick={() => setInspectorTab(tab.id)}
             aria-pressed={inspectorTab === tab.id} title={`Open ${DATA_TAB_LABELS[tab.id]} in the inspector`}
-            className={`rounded border px-2 py-1 text-xs font-bold ${inspectorTab === tab.id ? "border-amber-400 bg-amber-500 text-slate-950" : "border-slate-700 hover:bg-slate-800"}`}>
+            className={`flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-bold ${inspectorTab === tab.id ? "border-amber-400 bg-amber-500 text-slate-950" : "border-slate-700 hover:bg-slate-800"}`}>
             {DATA_TAB_LABELS[tab.id]}
+            {tab.id === "drift" && driftBadge && driftBadge.total > 0 && (
+              <span aria-label={`${driftBadge.total} drifted activities`}
+                className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${driftBadge.major > 0 ? "bg-red-600 text-white" : "bg-slate-600 text-white"}`}>
+                {driftBadge.total}
+              </span>
+            )}
           </button>
         ))}
         <button type="button" onClick={() => setInspectorTab("help")} title="Help & keyboard shortcuts"
@@ -967,7 +1022,8 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
             the remaining width beside it; collapsing it gives the timeline full width. */}
         {inspectorTab && (
           <SchedulingInspector activeTab={inspectorTab} onSelectTab={setInspectorTab} onCollapse={() => setInspectorTab(null)}
-            isOwner={isOwner} board={board} projectId={projectId}
+            isOwner={isOwner} board={board} projectId={projectId} driftBadge={driftBadge}
+            onBaselineCaptured={refreshDriftBadge}
             onAddCalendar={(input) => commitBoard((current) => addCalendar(current, input))}
             onRemoveCalendar={(calendarId) => commitBoard((current) => removeCalendar(current, calendarId))}
             onSetDefaultCalendar={(calendarId) => commitBoard((current) => setDefaultCalendar(current, calendarId))}

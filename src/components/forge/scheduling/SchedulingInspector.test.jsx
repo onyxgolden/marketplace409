@@ -12,10 +12,10 @@ function renderInspector(overrides = {}) {
 }
 
 describe("SchedulingInspector", () => {
-  it("declares nine tabs", () => {
-    expect(INSPECTOR_TABS).toHaveLength(9);
+  it("declares ten tabs", () => {
+    expect(INSPECTOR_TABS).toHaveLength(10);
     expect(INSPECTOR_TABS.map((tab) => tab.id)).toEqual(
-      ["help", "ask", "calendars", "baselines", "resources", "cost-accounts", "costs", "evm-dcma", "leveling"]
+      ["help", "ask", "drift", "calendars", "baselines", "resources", "cost-accounts", "costs", "evm-dcma", "leveling"]
     );
   });
 
@@ -29,6 +29,8 @@ describe("SchedulingInspector", () => {
   it("hides owner-only tabs from non-owners", () => {
     const markup = renderInspector({ isOwner: false });
     expect(markup).toContain('id="scheduling-inspector-tab-help"');
+    expect(markup).toContain('id="scheduling-inspector-tab-ask"');
+    expect(markup).toContain('id="scheduling-inspector-tab-drift"');
     expect(markup).toContain('id="scheduling-inspector-tab-calendars"');
     expect(markup).toContain('id="scheduling-inspector-tab-baselines"');
     expect(markup).not.toContain('id="scheduling-inspector-tab-resources"');
@@ -39,8 +41,19 @@ describe("SchedulingInspector", () => {
   });
 
   it("visibleInspectorTabs filters by ownership", () => {
-    expect(visibleInspectorTabs(true)).toHaveLength(9);
-    expect(visibleInspectorTabs(false).map((tab) => tab.id)).toEqual(["help", "ask", "calendars", "baselines"]);
+    expect(visibleInspectorTabs(true)).toHaveLength(10);
+    expect(visibleInspectorTabs(false).map((tab) => tab.id)).toEqual(["help", "ask", "drift", "calendars", "baselines"]);
+  });
+
+  it("shows the drift badge on the Drift tab when drifted activities exist", () => {
+    const markup = renderInspector({ driftBadge: { total: 3, major: 1 } });
+    expect(markup).toContain('aria-label="3 drifted activities"');
+    expect(markup).toContain(">3</span>");
+  });
+
+  it("hides the drift badge when nothing drifted or the badge is not loaded", () => {
+    expect(renderInspector({ driftBadge: { total: 0, major: 0 } })).not.toContain("drifted activities");
+    expect(renderInspector({})).not.toContain("drifted activities");
   });
 
   it("renders the active tab's panel and no other panel", () => {
