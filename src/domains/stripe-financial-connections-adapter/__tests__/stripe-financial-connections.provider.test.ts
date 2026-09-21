@@ -302,3 +302,49 @@ describe("reportHealth", () => {
     expect(retired.connectionId).toBe("connection_2");
   });
 });
+
+describe("stripe client injection (bundle isolation)", () => {
+  it("uses the injected stripeClientFactory when no stripeClient is provided", async () => {
+    const factoryClient = fakeStripeClient();
+    factoryClient.customers.create.mockResolvedValue({ id: "cus_factory_1" });
+    factoryClient.financialConnections.sessions.create.mockResolvedValue({ id: "fcsess_f", client_secret: "secret_f" });
+    const stripeClientFactory = vi.fn(() => factoryClient);
+
+    const adapter = createStripeFinancialConnectionsAdapter({
+      credentialVaultService: fakeVault(),
+      stripeClientFactory,
+    });
+    const result = await adapter.createFinancialConnectionsSession({ ownerId: "owner_1" });
+
+    expect(stripeClientFactory).toHaveBeenCalled();
+    expect(result).toEqual({ sessionId: "fcsess_f", clientSecret: "secret_f" });
+    expect(factoryClient.financialConnections.sessions.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefers an explicitly injected stripeClient over the factory", async () => {
+    const directClient = fakeStripeClient();
+    directClient.customers.create.mockResolvedValue({ id: "cus_direct_1" });
+    directClient.financialConnections.sessions.create.mockResolvedValue({ id: "fcsess_d", client_secret: "secret_d" });
+    const stripeClientFactory = vi.fn(() => fakeStripeClient());
+
+    const adapter = createStripeFinancialConnectionsAdapter({
+      credentialVaultService: fakeVault(),
+      stripeClient: directClient,
+      stripeClientFactory,
+    });
+    await adapter.createFinancialConnectionsSession({ ownerId: "owner_1" });
+
+    expect(stripeClientFactory).not.toHaveBeenCalled();
+    expect(directClient.financialConnections.sessions.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws a clear configuration error when neither stripeClient nor stripeClientFactory is provided", async () => {
+    const adapter = createStripeFinancialConnectionsAdapter({
+      credentialVaultService: fakeVault(),
+    });
+
+    await expect(
+      adapter.createFinancialConnectionsSession({ ownerId: "owner_1" }),
+    ).rejects.toThrow(/Stripe is not configured/);
+  });
+});

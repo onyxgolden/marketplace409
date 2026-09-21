@@ -9,10 +9,15 @@ import {
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
   createConnectionPlatformSuite: vi.fn(),
+  createStripeBillingProvider: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: mocks.createClient,
+}));
+
+vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({
+  createStripeBillingProvider: mocks.createStripeBillingProvider,
 }));
 
 vi.mock("@/infrastructure/composition", () => ({
@@ -106,6 +111,7 @@ describe("createAuthenticatedConnectionApplication", () => {
       ownerId: "owner-1",
       currentOwnerId: expect.any(Function),
       plaidSdk: expect.any(Object),
+      stripeClientFactory: expect.any(Function),
       connectionRepositoryStorage:
         "supabase",
       credentialReferenceRepositoryStorage:
@@ -125,11 +131,83 @@ describe("createAuthenticatedConnectionApplication", () => {
       PlaidEnvironments: expect.any(Object),
     });
 
+    // The injected Stripe factory must resolve to StripeBillingProvider's
+    // configured SDK instance -- every Stripe Financial Connections entry
+    // point depends on this wiring. The factory is async and lazy (dynamic
+    // import inside) so the stripe package stays out of every route's
+    // static bundle and this helper stays safe to construct unconfigured.
+    const fakeStripe = {
+      financialConnections: { sessions: { create: vi.fn() } },
+      customers: { create: vi.fn() },
+    };
+    mocks.createStripeBillingProvider.mockReturnValue({ stripe: fakeStripe });
+    const stripeClient = await suiteArgs.stripeClientFactory();
+    expect(mocks.createStripeBillingProvider).toHaveBeenCalled();
+    expect(stripeClient).toBe(fakeStripe);
+
+    // The factory memoizes: repeated calls reuse the one configured SDK
+    // instance instead of constructing a second Stripe client per call.
+    const stripeClientAgain = await suiteArgs.stripeClientFactory();
+    expect(stripeClientAgain).toBe(fakeStripe);
+    expect(mocks.createStripeBillingProvider).toHaveBeenCalledTimes(1);
+
     await expect(
       result.currentOwnerId(),
     ).resolves.toBe("owner-1");
 
     expect(result.effectiveOwnerId).toBe("owner-1");
+  });
+
+  it("shares one Stripe client across concurrent first-use factory calls", async () => {
+    // The singleton promise must be cached before the first construction
+    // finishes -- otherwise two simultaneous first Stripe operations would
+    // each build their own SDK client. A fresh module instance is needed
+    // because the singleton persists per module.
+    vi.resetModules();
+    const { createAuthenticatedConnectionApplication: freshHelper } =
+      await import("./createAuthenticatedConnectionApplication");
+
+    const supabaseClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: "owner-1" } },
+          error: null,
+        }),
+      },
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(function eq() {
+            return this;
+          }),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: null,
+            error: null,
+          }),
+        })),
+      })),
+    };
+    mocks.createClient.mockResolvedValue(supabaseClient);
+    mocks.createConnectionPlatformSuite.mockResolvedValue({});
+
+    const fakeStripe = {
+      financialConnections: { sessions: { create: vi.fn() } },
+    };
+    mocks.createStripeBillingProvider.mockReturnValue({
+      stripe: fakeStripe,
+    });
+
+    const result = await freshHelper();
+    await result.getConnectionPlatformSuite();
+    const [suiteArgs] =
+      mocks.createConnectionPlatformSuite.mock.calls.at(-1);
+
+    const [first, second] = await Promise.all([
+      suiteArgs.stripeClientFactory(),
+      suiteArgs.stripeClientFactory(),
+    ]);
+    expect(first).toBe(fakeStripe);
+    expect(second).toBe(fakeStripe);
+    expect(mocks.createStripeBillingProvider).toHaveBeenCalledTimes(1);
   });
 
   it("resolves effectiveOwnerId to the workspace owner when acting as an active co-owner, not the actor's own id", async () => {

@@ -17,8 +17,6 @@ import type {
   StripeFinancialConnectionsClient,
 } from "./stripe-financial-connections.client";
 
-import type Stripe from "stripe";
-
 import {
   createFinancialConnectionsSession,
   createStripeCustomerForOwner,
@@ -65,12 +63,33 @@ function providerResult(
 export function createStripeFinancialConnectionsAdapter({
   credentialVaultService,
   stripeClient,
+  stripeClientFactory,
 }: {
   credentialVaultService?: {
     retrieveCredential(ownerId: string, vaultReference: string): Promise<string | null>;
     storeCredential(input: { ownerId: string; vaultReference: string; secret: string }): Promise<unknown>;
   };
   stripeClient?: StripeFinancialConnectionsClient;
+  /**
+   * Injected factory for the configured Stripe SDK client. Keeping it
+   * injectable (instead of importing StripeBillingProvider, statically or
+   * dynamically) keeps the ~9.9MB stripe package out of serverless functions
+   * that construct the connection platform suite without ever performing a
+   * Stripe operation. Only the connection entry points (which perform real
+   * Stripe Financial Connections operations) provide the factory -- it must
+   * reuse the one configured Stripe SDK instance rather than constructing a
+   * second one (see the client module's header comment). The factory may be
+   * async: the connection helper loads StripeBillingProvider through a
+   * dynamic import() so the stripe package stays out of every route's static
+   * bundle, including the /api/plaid/* routes the helper also backs.
+   * The compile-time contract test in
+   * __tests__/stripe-financial-connections.client.test.ts proves a real
+   * Stripe instance satisfies StripeFinancialConnectionsClient, so no cast
+   * is needed at the injection site.
+   */
+  stripeClientFactory?: () =>
+    | StripeFinancialConnectionsClient
+    | Promise<StripeFinancialConnectionsClient>;
 } = {}): StripeFinancialConnectionsAdapter {
   // Lazy, mirroring PlaidAdapter's own resolvePlaidClient -- resolveStripeClient() is only ever
   // called from inside a method that's actually being invoked, never at adapter-construction
@@ -78,18 +97,14 @@ export function createStripeFinancialConnectionsAdapter({
   // unconditionally (alongside Plaid's) even in contexts (most existing tests) that never
   // configure Stripe env vars at all -- eagerly resolving a client here would make every one of
   // those call sites start failing for a reason that has nothing to do with what they're testing.
-  // Reuses StripeBillingProvider's already-configured SDK instance rather than constructing a
-  // second one -- see the client module's own header comment.
   const resolveStripeClient = async (): Promise<StripeFinancialConnectionsClient> => {
     if (stripeClient) return stripeClient;
-    const { createStripeBillingProvider } = await import("@/infrastructure/billing/StripeBillingProvider");
-    // StripeBillingProvider.js is plain untyped JS (no checkJs), so `.stripe` is inferred `any` --
-    // an `any` would satisfy StripeFinancialConnectionsClient with zero real type-checking,
-    // silently defeating the whole point of typing that interface against the real SDK (item 1).
-    // Casting through the real `Stripe` type FIRST forces this assignment to actually be checked
-    // structurally: if a future stripe SDK upgrade changes a method signature this interface
-    // relies on, this line (not a runtime surprise inside the adapter) is where it breaks.
-    return createStripeBillingProvider().stripe as Stripe;
+    if (stripeClientFactory) return stripeClientFactory();
+    throw new Error(
+      "Stripe is not configured. Provide a stripeClient or stripeClientFactory " +
+      "to createStripeFinancialConnectionsAdapter (via the stripeClientFactory " +
+      "option on createConnectionPlatformSuite).",
+    );
   };
 
   const requireCredentialVaultService = () => {

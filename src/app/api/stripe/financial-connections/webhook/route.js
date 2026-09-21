@@ -276,6 +276,10 @@ export async function POST(request) {
 
     const connectionPlatformSuite = await createConnectionPlatformSuite({
       supabaseClient: supabase,
+      // Reuses the webhook's already-constructed billing provider instance
+      // (never a second Stripe client) -- keeps the ~9.9MB stripe SDK
+      // reachable here exactly as before the lazy-injection change.
+      stripeClientFactory: () => stripeBillingProvider.stripe,
       // The resolved canonical workspace owner id (never the acting user -- there is no "acting
       // user" at all on this service-role webhook path, only the owner resolveOwningConnection
       // already looked up above) -- forwarded to FinancialEventImportService by
