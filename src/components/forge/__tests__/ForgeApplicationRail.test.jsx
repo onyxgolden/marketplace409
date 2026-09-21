@@ -46,6 +46,7 @@ describe(
           "Results",
           "Import",
           "Members",
+          "Capture",
         ]);
 
         expect(
