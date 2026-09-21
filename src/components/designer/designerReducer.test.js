@@ -42,6 +42,15 @@ describe("designerReducer", () => {
     expect(designerReducer(state, { type: "SET_TOOL", tool: "laser" }).tool).toBe("select");
   });
 
+  it("selects the wall-rect tool (regression: toolbar button must activate it)", () => {
+    // PR #273 added the Wall rect toolbar button but forgot the reducer's
+    // TOOLS whitelist, so clicking it silently kept the previous tool.
+    const state = createInitialState();
+    const next = designerReducer(state, { type: "SET_TOOL", tool: "wallrect" });
+    expect(next.tool).toBe("wallrect");
+    expect(next.selection).toBeNull();
+  });
+
   it("drops a room template at a point", () => {
     let state = createInitialState();
     state = designerReducer(state, {
