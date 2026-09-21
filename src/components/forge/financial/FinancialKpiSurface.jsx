@@ -2,7 +2,7 @@ import ForgeDashboardCard from "@/components/forge/ForgeDashboardCard";
 
 const surfaceVariants = Object.freeze({
   workspace:
-    "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4",
+    "grid grid-cols-2 gap-4 md:grid-cols-2 xl:grid-cols-4",
   embedded:
     "grid grid-cols-1 gap-3 sm:grid-cols-2",
 });

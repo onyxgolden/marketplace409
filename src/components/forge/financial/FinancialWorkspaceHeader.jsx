@@ -6,7 +6,7 @@ const headerVariants = Object.freeze({
   workspace: {
     container: "space-y-6",
     hero: "rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm lg:p-8 dark:border-slate-800 dark:bg-slate-900",
-    title: "mt-3 text-4xl font-black tracking-tight text-slate-950 dark:text-slate-50",
+    title: "mt-3 text-3xl font-black tracking-tight text-slate-950 dark:text-slate-50 lg:text-4xl",
   },
   embedded: {
     container: "space-y-4",

@@ -67,6 +67,20 @@ describe(
     );
 
     it(
+      "keeps the 44px touch target mobile-only so desktop keeps its exact height",
+      () => {
+        const markup =
+          renderProperty();
+
+        const summaryClass =
+          markup.match(/<summary class="([^"]*)"/)[1];
+
+        expect(summaryClass).toContain("min-h-[44px]");
+        expect(summaryClass).toContain("lg:min-h-0");
+      },
+    );
+
+    it(
       "places supporting activity inside expandable details",
       () => {
         const markup =

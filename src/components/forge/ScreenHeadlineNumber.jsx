@@ -20,7 +20,7 @@ export default function ScreenHeadlineNumber({
   href = null,
   testId = null,
 }) {
-  const numberClass = `text-5xl font-black ${TONE_NUMBER[tone] ?? TONE_NUMBER.neutral}`;
+  const numberClass = `text-4xl font-black lg:text-5xl ${TONE_NUMBER[tone] ?? TONE_NUMBER.neutral}`;
   const content = (
     <>
       <div className={numberClass} data-testid={testId}>

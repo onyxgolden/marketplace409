@@ -4,24 +4,37 @@ import { RotateCcw, X } from "lucide-react";
 // `sections` is an array of { sectionLabel, items } -- pass a null/omitted sectionLabel for a flat,
 // ungrouped list (e.g. ApplicationShell's own flat `functions` prop, which has no sub-categories to
 // label). Grouped callers (Rental Manager) pass a real sectionLabel per group/sub-category.
-export default function SidebarCustomizePopover({ sections, sidebarPrefs, onClose }) {
+// `inline` renders the same controls as a plain full-width block instead of the absolutely
+// positioned popover card -- used inside ApplicationShell's mobile "More" bottom sheet.
+export default function SidebarCustomizePopover({ sections, sidebarPrefs, onClose, inline = false }) {
   const { hiddenItemIds, saving, error, toggleItem, showAll } = sidebarPrefs;
+  // Inline mode lives inside the More sheet's own role="dialog", so it must not render a nested
+  // dialog role and "sidebar" is wrong copy in a bottom-sheet context.
+  const heading = inline ? "Customize navigation" : "Customize sidebar";
   return (
     <div
-      role="dialog"
-      aria-label="Customize sidebar"
-      className="absolute left-0 top-full z-20 mt-1 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-700 dark:bg-slate-900"
+      role={inline ? "group" : "dialog"}
+      aria-label={heading}
+      className={
+        inline
+          ? "w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
+          : "absolute left-0 top-full z-20 mt-1 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-700 dark:bg-slate-900"
+      }
     >
       <div className="mb-2 flex items-center justify-between">
-        <p className="text-xs font-black uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">Customize sidebar</p>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close customize sidebar"
-          className="rounded p-0.5 text-slate-400 hover:text-slate-950 dark:hover:text-white"
-        >
-          <X aria-hidden="true" className="h-4 w-4" />
-        </button>
+        <p className="text-xs font-black uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">{heading}</p>
+        {/* Inline mode has no close button: the More sheet already has its own close X, and this
+            one dismissed the entire sheet. */}
+        {!inline && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close customize sidebar"
+            className="rounded p-0.5 text-slate-400 hover:text-slate-950 dark:hover:text-white"
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
+        )}
       </div>
       <button
         type="button"

@@ -43,7 +43,7 @@ export default function FinancialPositionSnapshot({
             position read model.
           </p>
 
-          <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800">
+          <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
             <table className="w-full border-collapse text-left">
               <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
                 <tr>

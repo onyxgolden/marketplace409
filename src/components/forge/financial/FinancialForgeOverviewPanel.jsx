@@ -282,7 +282,7 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
               data-scope-option={option.scope}
               aria-pressed={scope === option.scope}
               onClick={() => setScope(option.scope)}
-              className={`rounded-full px-4 py-1.5 text-xs font-black transition motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 ${
+              className={`min-h-[44px] rounded-full px-4 py-1.5 text-xs font-black transition motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 lg:min-h-0 ${
                 scope === option.scope
                   ? goldControlClassName
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
@@ -308,7 +308,7 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
             data-donut-period-option={option.type}
             aria-pressed={donutPeriodType === option.type}
             onClick={() => setDonutPeriodType(option.type)}
-            className={`rounded-full px-3 py-1.5 text-xs font-black transition motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 ${
+            className={`min-h-[44px] rounded-full px-3 py-1.5 text-xs font-black transition motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 lg:min-h-0 ${
               donutPeriodType === option.type
                 ? goldControlClassName
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
@@ -356,7 +356,7 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-2">
         <div className="rounded-xl bg-emerald-50 p-4 dark:bg-emerald-950/30">
           <p className="text-xs font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Income (selected period)</p>
           <p className="mt-1 text-xl font-black tabular-nums text-emerald-900 dark:text-emerald-200">{money.format(performance.totals.incomeCents / 100)}</p>
@@ -375,7 +375,7 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
             data-period-option={option.type}
             aria-pressed={periodType === option.type}
             onClick={() => setPeriodType(option.type)}
-            className={`rounded-full px-3 py-1.5 text-xs font-black transition motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 ${
+            className={`min-h-[44px] rounded-full px-3 py-1.5 text-xs font-black transition motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 lg:min-h-0 ${
               periodType === option.type
                 ? goldControlClassName
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
@@ -413,7 +413,7 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
       <div className="mt-8 grid gap-6 xl:grid-cols-2">
         <div>
           <h4 className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Expense categories</h4>
-          <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
+          <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
             <table className="w-full border-collapse text-left text-sm">
               <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                 <tr>
@@ -469,7 +469,7 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             Net of imported transactions for this period — not a live bank balance.
           </p>
-          <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
+          <div className="mt-3 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
             <table className="w-full border-collapse text-left text-sm">
               <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                 <tr>

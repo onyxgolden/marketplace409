@@ -93,7 +93,7 @@ function LoanScenario({ scenario, canRemove, onChange, onCopy, onRemove }) {
         <div className="flex gap-2"><button type="button" onClick={onCopy} className="rounded-lg border px-3 py-1.5 text-sm font-bold dark:border-slate-600">Copy</button>{canRemove ? <button type="button" onClick={onRemove} className="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-bold text-red-700 dark:border-red-800 dark:text-red-300">Remove</button> : null}</div>
       </div>
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Loan type"><select aria-label="Loan type" value={scenario.type} onChange={set("type")} className={inputClass}>{LOAN_TYPES.map((type) => <option key={type}>{type}</option>)}</select></Field>
         <Field label="Principal ($)"><input aria-label="Principal" type="number" min="0.01" step="100" value={scenario.principal} onChange={set("principal")} className={inputClass} /></Field>
         <Field label="Annual interest rate (%)"><input aria-label="Annual interest rate" type="number" min="0" step="0.01" value={scenario.annualRate} onChange={set("annualRate")} className={inputClass} /></Field>
@@ -114,7 +114,7 @@ function LoanScenario({ scenario, canRemove, onChange, onCopy, onRemove }) {
 function LoanResults({ baseline, accelerated, comparison }) {
   return (
     <div className="mt-6">
-      <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <Fact label="Required payment" value={dollars(accelerated.requiredPaymentCents)} />
         <Fact label="Estimated payoff" value={accelerated.payoffDate} />
         <Fact label="Payments" value={accelerated.paymentCount} />
