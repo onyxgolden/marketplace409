@@ -5,6 +5,10 @@ export {
   CHART_SCHEMA_VERSION,
   CHART_TYPES,
   NODE_SHAPES,
+  NODE_CARD_STYLES,
+  NODE_TEXT_SIZES,
+  NODE_TEXT_ALIGNS,
+  NODE_STYLE_DEFAULTS,
   ORG_EDGE_TYPES,
   WORKFLOW_EDGE_TYPES,
   EDGE_TYPE_GUIDE,
@@ -15,6 +19,13 @@ export {
   getNode,
   getEdge,
   withParts,
+  resolveNodeStyle,
+  styleTextMetrics,
+  resolveCardPaint,
+  resolveDocSettings,
+  resolveEdgeWidth,
+  LINE_WIDTHS,
+  DEFAULT_CONNECTOR_WIDTH,
 } from "./chartDocument.js";
 
 export {

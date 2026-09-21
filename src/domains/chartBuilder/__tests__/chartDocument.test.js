@@ -44,7 +44,7 @@ describe("createNode", () => {
 describe("createEdge", () => {
   it("creates a supervisor edge", () => {
     const e = createEdge({ id: "e1", from: "a", to: "b", type: "supervisor" });
-    expect(e).toEqual({ id: "e1", from: "a", to: "b", label: "", type: "supervisor" });
+    expect(e).toEqual({ id: "e1", from: "a", to: "b", label: "", type: "supervisor", style: {} });
   });
 
   it("rejects self edges", () => {

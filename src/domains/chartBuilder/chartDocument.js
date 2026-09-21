@@ -23,6 +23,37 @@ export const NODE_SHAPES = Object.freeze([
   "pill",
 ]);
 
+// Node style model (slice 4 — "color, style, text, options"). Every key is
+// optional; missing keys resolve to NODE_STYLE_DEFAULTS. Unknown keys are
+// preserved verbatim (same pattern as node `fields`) so custom tooling never
+// loses data it wrote.
+export const NODE_CARD_STYLES = Object.freeze(["tint", "white", "outline"]);
+export const NODE_TEXT_SIZES = Object.freeze(["sm", "md", "lg"]);
+export const NODE_TEXT_ALIGNS = Object.freeze(["left", "center"]);
+
+export const NODE_STYLE_DEFAULTS = Object.freeze({
+  color: "#1f6feb",
+  card: "white",
+  textSize: "md",
+  bold: false,
+  align: "left",
+  borderWidth: 1,
+});
+
+// Allowed line-thickness values for node borders, edge overrides, and the
+// document connector default. Integer steps only.
+export const LINE_WIDTHS = Object.freeze([1, 2, 3, 4]);
+
+// What the canvas edge <path> rendered before line thickness was user
+// controllable; the document default resolves to this.
+export const DEFAULT_CONNECTOR_WIDTH = 2;
+
+function assertLineWidth(value, what) {
+  if (!Number.isInteger(value) || !LINE_WIDTHS.includes(value)) {
+    throw new ChartError(`${what} must be one of ${LINE_WIDTHS.join(", ")}`);
+  }
+}
+
 export const ORG_EDGE_TYPES = Object.freeze(["supervisor"]);
 export const WORKFLOW_EDGE_TYPES = Object.freeze([
   "sequence",
@@ -98,6 +129,21 @@ function normalizeStyle(style) {
   if (style.color !== undefined && typeof style.color !== "string") {
     throw new ChartError("node style.color must be a string");
   }
+  if (style.card !== undefined && !NODE_CARD_STYLES.includes(style.card)) {
+    throw new ChartError(`node style.card must be one of ${NODE_CARD_STYLES.join(", ")}`);
+  }
+  if (style.textSize !== undefined && !NODE_TEXT_SIZES.includes(style.textSize)) {
+    throw new ChartError(`node style.textSize must be one of ${NODE_TEXT_SIZES.join(", ")}`);
+  }
+  if (style.bold !== undefined && typeof style.bold !== "boolean") {
+    throw new ChartError("node style.bold must be a boolean");
+  }
+  if (style.align !== undefined && !NODE_TEXT_ALIGNS.includes(style.align)) {
+    throw new ChartError(`node style.align must be one of ${NODE_TEXT_ALIGNS.join(", ")}`);
+  }
+  if (style.borderWidth !== undefined) {
+    assertLineWidth(style.borderWidth, "node style.borderWidth");
+  }
   return Object.freeze({ ...style });
 }
 
@@ -125,6 +171,66 @@ export function createNode({
 }
 
 // ---------------------------------------------------------------------------
+// Style resolution (pure view-model helpers; shared by canvas and exporters)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a node's style object to concrete values, applying
+ * NODE_STYLE_DEFAULTS for every missing key. Lenient by design: rendering
+ * never throws on a style the validator would have rejected at write time.
+ */
+export function resolveNodeStyle(style) {
+  const s = style ?? {};
+  return {
+    color:
+      typeof s.color === "string" && s.color.length > 0
+        ? s.color
+        : NODE_STYLE_DEFAULTS.color,
+    card: NODE_CARD_STYLES.includes(s.card) ? s.card : NODE_STYLE_DEFAULTS.card,
+    textSize: NODE_TEXT_SIZES.includes(s.textSize)
+      ? s.textSize
+      : NODE_STYLE_DEFAULTS.textSize,
+    bold: s.bold === true,
+    align: NODE_TEXT_ALIGNS.includes(s.align) ? s.align : NODE_STYLE_DEFAULTS.align,
+    borderWidth: LINE_WIDTHS.includes(s.borderWidth)
+      ? s.borderWidth
+      : NODE_STYLE_DEFAULTS.borderWidth,
+  };
+}
+
+const TEXT_METRICS = {
+  sm: { name: 11, subtitle: 10, meta: 9, nameLimit: 30, subtitleLimit: 34, metaLimit: 38 },
+  md: { name: 13, subtitle: 11, meta: 10, nameLimit: 26, subtitleLimit: 30, metaLimit: 34 },
+  lg: { name: 16, subtitle: 12, meta: 11, nameLimit: 20, subtitleLimit: 24, metaLimit: 28 },
+};
+
+/**
+ * Font sizes and truncation limits for a text size. Larger text truncates
+ * shorter so it stays inside the fixed-size card (node box size never
+ * changes with text size).
+ */
+export function styleTextMetrics(textSize) {
+  return TEXT_METRICS[NODE_TEXT_SIZES.includes(textSize) ? textSize : "md"];
+}
+
+/**
+ * Card fill/border paint for a style. `tint` fills the card with the accent
+ * at ~10% alpha; `outline` keeps the white fill with an accent border;
+ * `white` is the classic card. Border thickness is owned by
+ * style.borderWidth (resolved separately) — never by the card treatment.
+ * Selection styling stays in the UI.
+ */
+export function resolveCardPaint(style) {
+  const s = resolveNodeStyle(style);
+  const accent = s.color;
+  if (s.card === "tint") {
+    const fill = /^#[0-9a-f]{6}$/i.test(accent) ? `${accent}1a` : "#ffffff";
+    return { fill, stroke: accent };
+  }
+  return { fill: "#ffffff", stroke: accent };
+}
+
+// ---------------------------------------------------------------------------
 // Edges
 // ---------------------------------------------------------------------------
 
@@ -133,7 +239,16 @@ export const EDGE_TYPE_GUIDE = Object.freeze({
   workflow: WORKFLOW_EDGE_TYPES,
 });
 
-export function createEdge({ id, from, to, label = "", type } = {}) {
+function normalizeEdgeStyle(style) {
+  if (style === undefined || style === null) return Object.freeze({});
+  assertPlainObject(style, "edge style");
+  if (style.width !== undefined) {
+    assertLineWidth(style.width, "edge style.width");
+  }
+  return Object.freeze({ ...style });
+}
+
+export function createEdge({ id, from, to, label = "", type, style } = {}) {
   assertNonEmptyString(id, "edge id");
   assertNonEmptyString(from, "edge from");
   assertNonEmptyString(to, "edge to");
@@ -146,7 +261,49 @@ export function createEdge({ id, from, to, label = "", type } = {}) {
   if (type !== undefined && typeof type !== "string") {
     throw new ChartError("edge type must be a string");
   }
-  return Object.freeze({ id, from, to, label, type: type ?? "" });
+  return Object.freeze({ id, from, to, label, type: type ?? "", style: normalizeEdgeStyle(style) });
+}
+
+// ---------------------------------------------------------------------------
+// Document settings (canvas-level defaults, e.g. connector line thickness)
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalize document settings. Unknown keys are preserved verbatim (same
+ * pattern as node style) so future settings never break old documents.
+ */
+function normalizeSettings(settings) {
+  if (settings === undefined || settings === null) return Object.freeze({});
+  assertPlainObject(settings, "document settings");
+  if (settings.connectorWidth !== undefined) {
+    assertLineWidth(settings.connectorWidth, "settings.connectorWidth");
+  }
+  return Object.freeze({ ...settings });
+}
+
+/**
+ * Resolve document settings to concrete values, applying defaults for
+ * missing keys. Lenient: never throws on values the validator rejected at
+ * write time.
+ */
+export function resolveDocSettings(settings) {
+  const s = settings ?? {};
+  return {
+    ...s,
+    connectorWidth: LINE_WIDTHS.includes(s.connectorWidth)
+      ? s.connectorWidth
+      : DEFAULT_CONNECTOR_WIDTH,
+  };
+}
+
+/**
+ * Resolve the rendered width of a connector: per-edge override wins, then
+ * the document default, then today's canvas width.
+ */
+export function resolveEdgeWidth(edge, settings) {
+  const override = edge?.style?.width;
+  if (LINE_WIDTHS.includes(override)) return override;
+  return resolveDocSettings(settings).connectorWidth;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +374,7 @@ export function createChartDocument({
   edges = [],
   metadata,
   background,
+  settings,
   createdAt,
 } = {}) {
   assertNonEmptyString(id, "document id");
@@ -232,6 +390,7 @@ export function createChartDocument({
     edges: normalizeEdges(edges),
     metadata: normalizeMetadata(metadata),
     background: normalizeBackground(background),
+    settings: normalizeSettings(settings),
     createdAt: now,
     updatedAt: now,
   });
@@ -248,7 +407,7 @@ export function getEdge(doc, id) {
 // Returns a new document with bumped updatedAt; structural helpers live in
 // chartReducer.js, but shared "replace parts" logic is kept here so both can
 // use it.
-export function withParts(doc, { nodes, edges, metadata, background } = {}) {
+export function withParts(doc, { nodes, edges, metadata, background, settings } = {}) {
   return Object.freeze({
     ...doc,
     nodes: nodes !== undefined ? Object.freeze([...nodes]) : doc.nodes,
@@ -256,6 +415,7 @@ export function withParts(doc, { nodes, edges, metadata, background } = {}) {
     metadata: metadata !== undefined ? normalizeMetadata(metadata) : doc.metadata,
     background:
       background !== undefined ? normalizeBackground(background) : doc.background,
+    settings: settings !== undefined ? normalizeSettings(settings) : doc.settings,
     updatedAt: new Date().toISOString(),
   });
 }

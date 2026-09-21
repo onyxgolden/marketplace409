@@ -15,9 +15,15 @@ import {
   layoutChart,
   LAYOUT_NODE_ORG,
   LAYOUT_NODE_WORKFLOW,
+  LINE_WIDTHS,
+  NODE_CARD_STYLES,
+  NODE_TEXT_ALIGNS,
+  NODE_TEXT_SIZES,
   nodeSupervisor,
   redoChart,
   resolveCanvasDrop,
+  resolveDocSettings,
+  resolveNodeStyle,
   seedChartFromTemplate,
   undoChart,
   validateOrgDocument,
@@ -352,6 +358,20 @@ export default function ChartBuilderPage() {
           onNotice={setNotice}
         />
         <div className="ml-auto flex items-center gap-2">
+          <span className="text-[11px] font-medium text-slate-500">Connector</span>
+          <Segmented
+            ariaLabel="Connector thickness"
+            value={resolveDocSettings(doc.settings).connectorWidth}
+            onPick={(w) =>
+              commitState(
+                withParts(doc, {
+                  settings: { ...doc.settings, connectorWidth: w },
+                }),
+                "connector-width"
+              )
+            }
+            options={LINE_WIDTHS.map((v) => ({ value: v, label: String(v) }))}
+          />
           {errorCount > 0 && (
             <span className="rounded-full bg-red-600 px-2.5 py-1 text-xs font-semibold text-white">
               {errorCount} error{errorCount === 1 ? "" : "s"}
@@ -488,8 +508,48 @@ function ToolbarButton({ children, onClick, disabled, active }) {
 const fieldClass =
   "mt-1 block w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200";
 
+const STYLE_SWATCHES = [
+  "#1f6feb",
+  "#0ea5e9",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#ec4899",
+  "#475569",
+];
+
+function Segmented({ options, value, onPick, ariaLabel }) {
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      className="mt-1 flex overflow-hidden rounded-lg border border-slate-300"
+    >
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          aria-pressed={opt.value === value}
+          onClick={() => onPick(opt.value)}
+          className={`flex-1 px-2 py-1.5 text-xs font-medium ${
+            opt.value === value
+              ? "bg-blue-600 text-white"
+              : "bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function NodeInspector({ doc, node, supervisorId, onPatch, onReparent, onDelete }) {
   const isOrg = doc.type === "org";
+  const style = resolveNodeStyle(node.style);
+  const patchStyle = (key, value) =>
+    onPatch({ style: { ...node.style, [key]: value } });
   return (
     <div>
       <h2 className="text-sm font-semibold text-slate-900">Edit node</h2>
@@ -557,6 +617,79 @@ function NodeInspector({ doc, node, supervisorId, onPatch, onReparent, onDelete 
           </label>
         </>
       )}
+      <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        Style
+      </h3>
+      <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Accent color">
+        {STYLE_SWATCHES.map((c) => (
+          <button
+            key={c}
+            type="button"
+            title={c}
+            aria-label={`Accent color ${c}`}
+            aria-pressed={style.color.toLowerCase() === c.toLowerCase()}
+            onClick={() => patchStyle("color", c)}
+            className={`h-7 w-7 rounded-full ${
+              style.color.toLowerCase() === c.toLowerCase()
+                ? "ring-2 ring-slate-900 ring-offset-2"
+                : "ring-1 ring-slate-300 hover:ring-2 hover:ring-slate-400"
+            }`}
+            style={{ backgroundColor: c }}
+          />
+        ))}
+      </div>
+      <div className="mt-2 text-xs font-medium text-slate-600">Card</div>
+      <Segmented
+        ariaLabel="Card style"
+        value={style.card}
+        onPick={(v) => patchStyle("card", v)}
+        options={NODE_CARD_STYLES.map((v) => ({
+          value: v,
+          label: v === "tint" ? "Tint" : v === "white" ? "White" : "Outline",
+        }))}
+      />
+      <div className="mt-2 text-xs font-medium text-slate-600">Border</div>
+      <Segmented
+        ariaLabel="Border thickness"
+        value={style.borderWidth}
+        onPick={(v) => patchStyle("borderWidth", v)}
+        options={LINE_WIDTHS.map((v) => ({ value: v, label: String(v) }))}
+      />
+      <div className="mt-2 text-xs font-medium text-slate-600">Text size</div>
+      <Segmented
+        ariaLabel="Text size"
+        value={style.textSize}
+        onPick={(v) => patchStyle("textSize", v)}
+        options={NODE_TEXT_SIZES.map((v) => ({
+          value: v,
+          label: v === "sm" ? "S" : v === "md" ? "M" : "L",
+        }))}
+      />
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          aria-pressed={style.bold}
+          onClick={() => patchStyle("bold", !style.bold)}
+          className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-bold ${
+            style.bold
+              ? "border-blue-600 bg-blue-600 text-white"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          B
+        </button>
+        <div className="flex-[2]">
+          <Segmented
+            ariaLabel="Text alignment"
+            value={style.align}
+            onPick={(v) => patchStyle("align", v)}
+            options={NODE_TEXT_ALIGNS.map((v) => ({
+              value: v,
+              label: v === "left" ? "Left" : "Center",
+            }))}
+          />
+        </div>
+      </div>
       <button
         type="button"
         onClick={onDelete}

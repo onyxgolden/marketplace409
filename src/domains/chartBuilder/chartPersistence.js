@@ -71,6 +71,7 @@ function pickEdgeFields(edge) {
     to: edge.to,
     label: edge.label ?? "",
     type: edge.type ?? "",
+    style: edge.style ?? {},
   };
 }
 
@@ -110,6 +111,7 @@ export function serializeChartDocument(chartDocument, options = {}) {
       nodes: (chartDocument.nodes ?? []).map(pickNodeFields),
       edges: (chartDocument.edges ?? []).map(pickEdgeFields),
       background: chartDocument.background ?? DEFAULT_CHART_BACKGROUND,
+      settings: chartDocument.settings ?? {},
     }),
     metadata: {
       templateId,
@@ -184,6 +186,7 @@ export function validatePersistedChartDocument(envelope) {
       nodes: content.nodes,
       edges: content.edges,
       background: content.background ?? DEFAULT_CHART_BACKGROUND,
+      settings: content.settings,
       metadata: { templateId: envelope.metadata?.templateId ?? null },
       createdAt: envelope.metadata?.createdAt ?? undefined,
     });
@@ -284,6 +287,7 @@ export function deserializeChartDocument(envelope) {
     nodes: content.nodes,
     edges: content.edges,
     background: content.background,
+    settings: content.settings,
     metadata: { templateId: metadata.templateId ?? null },
     createdAt: metadata.createdAt ?? undefined,
   });
