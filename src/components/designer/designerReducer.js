@@ -9,6 +9,7 @@ import {
   addPipeRun,
   addRoomFromTemplate,
   addWall,
+  addWallRect,
   calibrateUnderlay,
   createEmptyDesign,
   deleteFurniture,
@@ -203,6 +204,8 @@ export function designerReducer(state, action) {
       return touch(state, updateDesignSettings(state.design, action.settings));
     case "ADD_WALL":
       return touch(state, addWall(state.design, action.a, action.b));
+    case "ADD_WALL_RECT":
+      return touch(state, addWallRect(state.design, action.a, action.b));
     case "MOVE_WALL_ENDPOINT":
       return touch(
         state,

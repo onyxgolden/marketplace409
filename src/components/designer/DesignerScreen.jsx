@@ -21,6 +21,7 @@ import {
   Sofa,
   Spline,
   Square,
+  SquareDashed,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -55,6 +56,7 @@ const DesignerViewport3D = dynamic(() => import("./DesignerViewport3D"), {
 const TOOL_DEFS = [
   { id: "select", label: "Select", icon: MousePointer2, hint: "Click to select · drag endpoints & furniture · double-click furniture to rotate" },
   { id: "wall", label: "Wall", icon: Square, hint: "Drag on the plan to draw a wall (snaps to the grid)" },
+  { id: "wallrect", label: "Wall rect", icon: SquareDashed, hint: "Drag on the plan to draw a rectangular wall outline (snaps to the grid)" },
   { id: "room", label: "Room", icon: Home, hint: "Click to drop a pre-shaped room" },
   { id: "door", label: "Door", icon: DoorOpen, hint: "Click a wall to cut a door opening" },
   { id: "window", label: "Window", icon: Box, hint: "Click a wall to cut a window opening" },

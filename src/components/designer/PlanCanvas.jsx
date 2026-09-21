@@ -45,7 +45,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
   const [view, setView] = useState({ scale: 1.6, ox: 60, oy: 60 });
-  const [drawPreview, setDrawPreview] = useState(null); // {a, b} plan inches while drawing a wall
+  const [drawPreview, setDrawPreview] = useState(null); // {kind: "wall"|"wall-rect", a, b} plan inches while drawing
   const [pipePreview, setPipePreview] = useState(null); // [points] plan inches while drawing a pipe run
   const [hoverPoint, setHoverPoint] = useState(null); // rubber-band cursor point for the pipe tool
   const [drag, setDrag] = useState(null); // active drag descriptor
@@ -254,7 +254,14 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const exclude = new Set();
       const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapRadiusIn: 9 });
       setDrag({ kind: "draw-wall", a: point, exclude });
-      setDrawPreview({ a: point, b: point });
+      setDrawPreview({ kind: "wall", a: point, b: point });
+      return;
+    }
+    if (tool === "wallrect") {
+      const exclude = new Set();
+      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapRadiusIn: 9 });
+      setDrag({ kind: "draw-wall-rect", a: point, exclude });
+      setDrawPreview({ kind: "wall-rect", a: point, b: point });
       return;
     }
     if (tool === "room") {
@@ -433,7 +440,16 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         snapTargets: snapTargetsExcluding(drag.exclude),
         snapRadiusIn: 9,
       });
-      setDrawPreview({ a: drag.a, b: point });
+      setDrawPreview({ kind: "wall", a: drag.a, b: point });
+      return;
+    }
+    if (drag.kind === "draw-wall-rect") {
+      const { point } = snapPoint(plan, {
+        ...snapOptions,
+        snapTargets: snapTargetsExcluding(drag.exclude),
+        snapRadiusIn: 9,
+      });
+      setDrawPreview({ kind: "wall-rect", a: drag.a, b: point });
       return;
     }
     if (drag.kind === "wall-endpoint") {
@@ -510,6 +526,17 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           dispatch({ type: "ADD_WALL", a: drawPreview.a, b: drawPreview.b });
         } catch {
           // too short — ignore
+        }
+      }
+    }
+    if (drag?.kind === "draw-wall-rect" && drawPreview) {
+      const width = Math.abs(drawPreview.b.x - drawPreview.a.x);
+      const height = Math.abs(drawPreview.b.y - drawPreview.a.y);
+      if (width >= 1 && height >= 1) {
+        try {
+          dispatch({ type: "ADD_WALL_RECT", a: drawPreview.a, b: drawPreview.b });
+        } catch {
+          // too small — ignore
         }
       }
     }
@@ -1016,6 +1043,25 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {drawPreview && (() => {
           const a = toScreen(drawPreview.a);
           const b = toScreen(drawPreview.b);
+          if (drawPreview.kind === "wall-rect") {
+            const x = Math.min(a.x, b.x);
+            const y = Math.min(a.y, b.y);
+            const w = Math.abs(b.x - a.x);
+            const h = Math.abs(b.y - a.y);
+            const widthIn = Math.abs(drawPreview.b.x - drawPreview.a.x);
+            const heightIn = Math.abs(drawPreview.b.y - drawPreview.a.y);
+            return (
+              <g>
+                <rect x={x} y={y} width={w} height={h} fill="none" stroke="#34d399" strokeWidth={thicknessPx} strokeDasharray="10 6" />
+                <text x={(a.x + b.x) / 2} y={y - 12} textAnchor="middle" fontSize={13} fontWeight={600} fill="#34d399">
+                  {feetInchesLabel(widthIn)}
+                </text>
+                <text x={x + w + 12} y={(a.y + b.y) / 2} textAnchor="start" fontSize={13} fontWeight={600} fill="#34d399">
+                  {feetInchesLabel(heightIn)}
+                </text>
+              </g>
+            );
+          }
           return (
             <g>
               <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#34d399" strokeWidth={thicknessPx} strokeLinecap="round" strokeDasharray="10 6" />

@@ -117,6 +117,49 @@ export function addWall(design, a, b, { id, material } = {}) {
   return { ...design, walls: [...design.walls, wall] };
 }
 
+/**
+ * The four closed-rectangle segments for corners a and b (any drag direction).
+ * Pure geometry: segment 4 ends where segment 1 begins, with no zero-length
+ * segments, so the outline is exact regardless of drag direction.
+ */
+export function wallRectSegments(a, b) {
+  if (!isValidPoint(a) || !isValidPoint(b)) {
+    throw new Error("Rectangle corners must be valid points.");
+  }
+  const c1 = { x: a.x, y: a.y };
+  const c2 = { x: b.x, y: b.y };
+  const c3 = { x: b.x, y: a.y };
+  const c4 = { x: a.x, y: b.y };
+  return [
+    { a: c1, b: c3 },
+    { a: c3, b: c2 },
+    { a: c2, b: c4 },
+    { a: c4, b: c1 },
+  ];
+}
+
+/**
+ * Add a rectangular wall outline in one atomic operation: validate first,
+ * then build all four walls and return the new design once (all-four-or-none).
+ * Rectangles under 1 inch on either side are rejected.
+ */
+export function addWallRect(design, a, b, { material } = {}) {
+  assertDesign(design);
+  const segments = wallRectSegments(a, b);
+  const width = Math.abs(b.x - a.x);
+  const height = Math.abs(b.y - a.y);
+  if (width < 1 || height < 1) {
+    throw new Error("Rectangle is too small (each side must be at least 1 inch).");
+  }
+  const cleanMaterial = cleanText(material);
+  const walls = segments.map((seg) => {
+    const wall = { id: nextId("wall"), a: clonePoint(seg.a), b: clonePoint(seg.b) };
+    if (cleanMaterial) wall.material = cleanMaterial;
+    return wall;
+  });
+  return { ...design, walls: [...design.walls, ...walls] };
+}
+
 /** Drag a wall endpoint to a new point (resize). */
 export function moveWallEndpoint(design, wallId, end, point) {
   assertDesign(design);
