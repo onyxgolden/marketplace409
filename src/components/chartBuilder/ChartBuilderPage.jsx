@@ -27,6 +27,7 @@ import {
 import TemplatePicker from "./TemplatePicker.jsx";
 import BackgroundPicker from "./BackgroundPicker.jsx";
 import ChartCanvas from "./ChartCanvas.jsx";
+import ChartImportWizard from "./import/ChartImportWizard.jsx";
 import {
   getGridPreference,
   GRID_PREFERENCES,
@@ -48,6 +49,7 @@ export default function ChartBuilderPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(true);
   const [bgOpen, setBgOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [gridPref, setGridPref] = useState(() => getGridPreference());
   const [notice, setNotice] = useNotice();
   const histRef = useRef(hist);
@@ -193,14 +195,64 @@ export default function ChartBuilderPage() {
     setSelectedId(null);
   }
 
+  function handleImportComplete(doc) {
+    // The wizard returns a layout-stamped document; hand it to the existing
+    // canvas state exactly like a new template chart. Undo returns to the
+    // previous chart — the import is one history entry.
+    commitState(doc, "import");
+    setSelectedId(null);
+    setImportOpen(false);
+    setPickerOpen(false);
+    setNotice({
+      text: `Imported ${doc.nodes.length} ${doc.type === "org" ? "people" : "steps"} from the spreadsheet.`,
+      kind: "info",
+    });
+  }
+
+  function importWizardModal() {
+    if (!importOpen) return null;
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/60 p-4 sm:p-8"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Import chart from spreadsheet"
+      >
+        <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
+          <div className="mb-4 flex items-center justify-between">
+            <h1 className="text-lg font-bold text-slate-900">Import chart</h1>
+            <button
+              type="button"
+              onClick={() => setImportOpen(false)}
+              className="rounded-lg px-2 py-1 text-sm font-medium text-slate-500 hover:bg-slate-100"
+              aria-label="Close import wizard"
+            >
+              ✕
+            </button>
+          </div>
+          <ChartImportWizard
+            mode="org"
+            onComplete={handleImportComplete}
+            onCancel={() => setImportOpen(false)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (!doc || pickerOpen) {
     return (
       <div className="min-h-screen bg-slate-100">
-        {doc && !pickerOpen ? null : (
-          <div className="border-b border-slate-200 bg-white px-6 py-3">
-            <span className="text-lg font-bold text-slate-900">Chart Builder</span>
-          </div>
-        )}
+        <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
+          <span className="text-lg font-bold text-slate-900">Chart Builder</span>
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            Import from spreadsheet
+          </button>
+        </div>
         {doc && (
           <div className="border-b border-slate-200 bg-white px-6 py-2">
             <button
@@ -213,6 +265,7 @@ export default function ChartBuilderPage() {
           </div>
         )}
         <TemplatePicker onPick={pickTemplate} />
+        {importWizardModal()}
       </div>
     );
   }
@@ -232,6 +285,7 @@ export default function ChartBuilderPage() {
         )}
         <div className="mx-1 h-6 w-px bg-slate-700" />
         <ToolbarButton onClick={() => setPickerOpen(true)}>New</ToolbarButton>
+        <ToolbarButton onClick={() => setImportOpen(true)}>Import</ToolbarButton>
         <ToolbarButton onClick={doUndo} disabled={!canUndoChart(hist)}>Undo</ToolbarButton>
         <ToolbarButton onClick={doRedo} disabled={!canRedoChart(hist)}>Redo</ToolbarButton>
         <div className="mx-1 h-6 w-px bg-slate-700" />
@@ -385,6 +439,9 @@ export default function ChartBuilderPage() {
           {notice.text}
         </div>
       )}
+
+      {/* Import wizard modal */}
+      {importWizardModal()}
     </div>
   );
 }

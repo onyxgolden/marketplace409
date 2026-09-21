@@ -69,3 +69,48 @@ export {
 export { resolveCanvasDrop } from "./chartInteractions.js";
 
 export { seedChartFromTemplate } from "./chartSeeds.js";
+
+export {
+  IMPORT_MODES,
+  ORG_TARGETS,
+  WORKFLOW_TARGETS,
+  REQUIRED_TARGETS,
+  ImportError,
+  assertImportMode,
+  missingRequiredTargets,
+} from "./import/chartImportTypes.js";
+
+export {
+  parseCsv,
+  parseXlsx,
+  normalizeWorkbookSheets,
+} from "./import/spreadsheetParser.js";
+
+export {
+  detectHeaders,
+  produceCandidates,
+  normalizeHeader,
+} from "./import/headerDetector.js";
+
+export {
+  mapOrgRows,
+} from "./import/orgImportMapper.js";
+
+export {
+  validateDraftDocument,
+} from "./import/importValidator.js";
+
+export {
+  buildImportPreview,
+} from "./import/importPreviewBuilder.js";
+
+export {
+  targetsForMode,
+  isKnownImportMode,
+  validateConfirmedMappings,
+} from "./import/importMapping.js";
+
+export {
+  runOrgImportPipeline,
+  commitOrgImport,
+} from "./import/importPipeline.js";
