@@ -57,7 +57,8 @@ It never claims universal support: every run reports **complete**,
 - **Raster-observation engine** (window or region targets): synthesizes
   wheel input (`SendInput`, `Shift`+wheel for horizontal) parked over the
   target center, then measures the real pixel displacement between frames
-  with a phase-correlation-free block matcher. Works on targets with no
+  with a row-luminance SAD (sum-of-absolute-differences) comparison over
+  candidate vertical shifts. Works on targets with no
   OS-visible scrollbar (browsers, Electron apps, custom scrollbars) —
   anything that actually responds to wheel input.
 - **Auto** tries DOM-aware first and falls back to raster-observation when

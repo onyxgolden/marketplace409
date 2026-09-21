@@ -182,7 +182,11 @@ pub type AbortFlag = Arc<AtomicBool>;
 pub struct ScrollRequest {
     pub id: String,
     pub target: ScrollTarget,
+    /// Engine actually driving the run ("auto" is resolved before this).
     pub engine: ScrollEngineKind,
+    /// What the caller asked for, before any auto resolution. Recorded in
+    /// the sidecar so a fallback is never silent.
+    pub requested_engine: ScrollEngineKind,
     pub direction: ScrollDirection,
     pub limits: ScrollLimits,
     pub on_progress: Option<ProgressCallback>,
@@ -517,16 +521,21 @@ fn complete_single_tile(
         timestamp::now_utc_iso8601(),
         None,
     ) {
-        Ok(a) => ScrollingResult::Complete {
-            artifact: a.with_scroll_info(ScrollSection {
-                engine: engine_name.to_string(),
-                direction: dir.as_str().to_string(),
-                tiles_captured: 1,
-                distance_px: 0,
-                complete: true,
-                reason: None,
-            }),
-        },
+        Ok(a) => {
+            let (requested_engine, fallback_reason) = engine_provenance(req, engine_name);
+            ScrollingResult::Complete {
+                artifact: a.with_scroll_info(ScrollSection {
+                    engine: engine_name.to_string(),
+                    requested_engine,
+                    fallback_reason,
+                    direction: dir.as_str().to_string(),
+                    tiles_captured: 1,
+                    distance_px: 0,
+                    complete: true,
+                    reason: None,
+                }),
+            }
+        }
         Err(e) => ScrollingResult::failed(
             "scrolling artifact failed validation",
             vec![format!("artifact: {e}")],
@@ -538,6 +547,7 @@ fn complete_single_tile(
 #[allow(clippy::too_many_arguments)]
 fn finish_incomplete(
     req: &ScrollRequest,
+    monitors: &[Monitor],
     tiles: &[RawTile],
     completed: Vec<CapturedRegion>,
     missing: Vec<MissingRegion>,
@@ -552,6 +562,10 @@ fn finish_incomplete(
             png::encode_rgba(w, h, &rgba)
                 .ok()
                 .and_then(|png_bytes| {
+                    // Partial artifacts carry the same target provenance as
+                    // complete ones — never anonymous.
+                    let scale = monitor_scale_for_target(req, monitors);
+                    let (window, monitor) = target_provenance(req, monitors);
                     CaptureArtifact::new(
                         format!("{}-partial", req.id),
                         CaptureKind::Scrolling,
@@ -559,9 +573,9 @@ fn finish_incomplete(
                         RasterMime::Png,
                         w,
                         h,
-                        None,
-                        None,
-                        1.0,
+                        monitor,
+                        window,
+                        scale,
                         CursorState {
                             captured: false,
                             position_physical: None,
@@ -572,8 +586,11 @@ fn finish_incomplete(
                     .ok()
                 })
                 .map(|a| {
+                    let (requested_engine, fallback_reason) = engine_provenance(req, engine_name);
                     a.with_scroll_info(ScrollSection {
                         engine: engine_name.to_string(),
+                        requested_engine,
+                        fallback_reason,
                         direction: dir.as_str().to_string(),
                         tiles_captured: tiles.len() as u32,
                         distance_px: tiles.last().map(|t| t.axis_pos.max(0) as u64).unwrap_or(0),
@@ -763,6 +780,7 @@ pub fn run_scroll(
             });
             return finish_incomplete(
                 req,
+                monitors,
                 &tiles,
                 completed,
                 missing,
@@ -786,6 +804,7 @@ pub fn run_scroll(
             evidence.push(format!("stopped: {limit}"));
             return finish_incomplete(
                 req,
+                monitors,
                 &tiles,
                 completed,
                 missing,
@@ -808,6 +827,7 @@ pub fn run_scroll(
             });
             return finish_incomplete(
                 req,
+                monitors,
                 &tiles,
                 completed,
                 missing,
@@ -829,6 +849,7 @@ pub fn run_scroll(
             });
             return finish_incomplete(
                 req,
+                monitors,
                 &tiles,
                 completed,
                 missing,
@@ -879,6 +900,7 @@ pub fn run_scroll(
             });
             return finish_incomplete(
                 req,
+                monitors,
                 &tiles,
                 completed,
                 missing,
@@ -913,6 +935,7 @@ pub fn run_scroll(
                     });
                     return finish_incomplete(
                         req,
+                        monitors,
                         &tiles,
                         completed,
                         missing,
@@ -950,6 +973,7 @@ pub fn run_scroll(
                         if tile_failures >= 2 {
                             return finish_incomplete(
                                 req,
+                                monitors,
                                 &tiles,
                                 completed,
                                 missing,
@@ -1094,14 +1118,19 @@ pub fn run_scroll(
         timestamp::now_utc_iso8601(),
         None,
     ) {
-        Ok(a) => a.with_scroll_info(ScrollSection {
-            engine: engine_name.to_string(),
-            direction: dir.as_str().to_string(),
-            tiles_captured: tiles.len() as u32,
-            distance_px: axis_pos.max(0) as u64,
-            complete: true,
-            reason: None,
-        }),
+        Ok(a) => {
+            let (requested_engine, fallback_reason) = engine_provenance(req, engine_name);
+            a.with_scroll_info(ScrollSection {
+                engine: engine_name.to_string(),
+                requested_engine,
+                fallback_reason,
+                direction: dir.as_str().to_string(),
+                tiles_captured: tiles.len() as u32,
+                distance_px: axis_pos.max(0) as u64,
+                complete: true,
+                reason: None,
+            })
+        }
         Err(e) => {
             evidence.push(format!("artifact: {e}"));
             return ScrollingResult::failed("scrolling artifact failed validation", evidence);
@@ -1111,9 +1140,25 @@ pub fn run_scroll(
 }
 
 /// Best-effort monitor scale for provenance: the monitor containing the
-/// target's center, else 1.0.
+/// target's center, else 1.0. Window targets resolve the window rect first,
+/// so window scrolling captures write the same scale provenance as normal
+/// captures on non-100% DPI monitors.
 fn monitor_scale_for_target(req: &ScrollRequest, monitors: &[Monitor]) -> f64 {
-    target_center(req)
+    let center: Option<(i64, i64)> = match &req.target {
+        ScrollTarget::Region { rect } => Some((
+            rect.x as i64 + rect.w as i64 / 2,
+            rect.y as i64 + rect.h as i64 / 2,
+        )),
+        ScrollTarget::Window { window_id } => crate::native::find_window(window_id, monitors)
+            .ok()
+            .map(|i| {
+                (
+                    i.rect_virtual.x + i.rect_virtual.w as i64 / 2,
+                    i.rect_virtual.y + i.rect_virtual.h as i64 / 2,
+                )
+            }),
+    };
+    center
         .and_then(|(x, y)| {
             monitors.iter().find(|m| {
                 let (ox, oy) = m.origin_virtual;
@@ -1126,16 +1171,6 @@ fn monitor_scale_for_target(req: &ScrollRequest, monitors: &[Monitor]) -> f64 {
         })
         .map(|m| m.scale)
         .unwrap_or(1.0)
-}
-
-fn target_center(req: &ScrollRequest) -> Option<(i64, i64)> {
-    match &req.target {
-        ScrollTarget::Region { rect } => Some((
-            rect.x as i64 + rect.w as i64 / 2,
-            rect.y as i64 + rect.h as i64 / 2,
-        )),
-        ScrollTarget::Window { .. } => None,
-    }
 }
 
 fn target_provenance(
@@ -1172,6 +1207,30 @@ fn target_provenance(
         }
         ScrollTarget::Region { .. } => (None, None),
     }
+}
+
+/// Sidecar engine provenance: what the caller requested, and — when the
+/// resolved engine differs — why. Auto's fallback to raster-observation is
+/// never silent: `scroll.requestedEngine` keeps the request and
+/// `scroll.fallbackReason` explains the resolution.
+fn engine_provenance(
+    req: &ScrollRequest,
+    resolved_engine: &str,
+) -> (Option<String>, Option<String>) {
+    let requested = req.requested_engine.as_str();
+    if requested == resolved_engine {
+        return (Some(requested.to_string()), None);
+    }
+    let why = match &req.target {
+        ScrollTarget::Window { .. } => "the window exposes no usable scroll geometry",
+        ScrollTarget::Region { .. } => "a region target exposes no scroll geometry",
+    };
+    (
+        Some(requested.to_string()),
+        Some(format!(
+            "requested engine '{requested}' resolved to '{resolved_engine}': {why}"
+        )),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1423,6 +1482,7 @@ fn test_request(id: &str, engine: ScrollEngineKind) -> ScrollRequest {
             window_id: "mock".to_string(),
         },
         engine,
+        requested_engine: engine,
         direction: ScrollDirection::Vertical,
         limits: ScrollLimits {
             max_distance_px: 1 << 20,
@@ -1755,5 +1815,143 @@ mod tests {
         assert!(ScrollDirection::parse("diagonal").is_err());
         assert_eq!(ScrollEngineKind::parse("auto"), Ok(ScrollEngineKind::Auto));
         assert!(ScrollEngineKind::parse("telepathy").is_err());
+    }
+
+    // --- Review fixes (PR #288): provenance --------------------------------
+
+    fn two_monitors() -> Vec<Monitor> {
+        vec![
+            Monitor {
+                id: "m0".into(),
+                name: "d0".into(),
+                origin_virtual: (0, 0),
+                size_logical: (800, 600),
+                scale: 1.0,
+            },
+            Monitor {
+                id: "m1".into(),
+                name: "d1".into(),
+                origin_virtual: (800, 0),
+                size_logical: (800, 600),
+                scale: 2.0,
+            },
+        ]
+    }
+
+    fn region_request(id: &str, x: f64, y: f64, w: f64, h: f64) -> ScrollRequest {
+        let mut r = test_request(id, ScrollEngineKind::RasterObservation);
+        r.target = ScrollTarget::Region {
+            rect: Rect { x, y, w, h },
+        };
+        r
+    }
+
+    #[test]
+    fn monitor_scale_resolves_region_center() {
+        // Region centered on the 2.0-scale monitor reports 2.0, not 1.0.
+        let monitors = two_monitors();
+        let req = region_request("t-scale", 900.0, 100.0, 200.0, 200.0);
+        assert_eq!(monitor_scale_for_target(&req, &monitors), 2.0);
+        // Region centered on the 1.0 monitor reports 1.0.
+        let req = region_request("t-scale1", 100.0, 100.0, 200.0, 200.0);
+        assert_eq!(monitor_scale_for_target(&req, &monitors), 1.0);
+    }
+
+    #[test]
+    fn monitor_scale_window_target_never_panics() {
+        // Off-Windows there is no Win32 window lookup; the provenance falls
+        // back to 1.0 instead of erroring. On Windows the rect resolves and
+        // the containing monitor's scale wins — both must not panic.
+        let monitors = two_monitors();
+        let req = test_request("t-wscale", ScrollEngineKind::DomAware);
+        let s = monitor_scale_for_target(&req, &monitors);
+        #[cfg(not(windows))]
+        assert_eq!(s, 1.0);
+        #[cfg(windows)]
+        assert!(s == 1.0 || s == 2.0);
+    }
+
+    #[test]
+    fn engine_provenance_records_fallback_loudly() {
+        // Explicit engine: requested == resolved, no fallback reason.
+        let req = test_request("t-prov", ScrollEngineKind::RasterObservation);
+        let (requested, fallback) = engine_provenance(&req, "raster-observation");
+        assert_eq!(requested.as_deref(), Some("raster-observation"));
+        assert_eq!(fallback, None);
+        // Auto + region forced to raster-observation: the fallback is named.
+        let mut req = region_request("t-prov2", 0.0, 0.0, 100.0, 100.0);
+        req.requested_engine = ScrollEngineKind::Auto;
+        let (requested, fallback) = engine_provenance(&req, "raster-observation");
+        assert_eq!(requested.as_deref(), Some("auto"));
+        let reason = fallback.expect("auto->raster fallback must be recorded");
+        assert!(
+            reason.contains("'auto'"),
+            "reason names the request: {reason}"
+        );
+        assert!(
+            reason.contains("raster-observation"),
+            "reason names the resolution: {reason}"
+        );
+        assert!(
+            reason.contains("region target"),
+            "reason explains why: {reason}"
+        );
+        // Auto + window falling back: the window-geometry reason is used.
+        let mut req = test_request("t-prov3", ScrollEngineKind::Auto);
+        req.requested_engine = ScrollEngineKind::Auto;
+        let (_, fallback) = engine_provenance(&req, "raster-observation");
+        let reason = fallback.expect("auto->raster fallback must be recorded");
+        assert!(reason.contains("no usable scroll geometry"), "{reason}");
+    }
+
+    #[test]
+    fn incomplete_partial_artifact_carries_target_provenance() {
+        // Abort a region run after two tiles land; the partial artifact must
+        // carry the same provenance as a complete one — real scale, no
+        // anonymous None/None/1.0 — and the auto fallback must be recorded
+        // in its scroll section.
+        let monitors = two_monitors();
+        let mut driver = MockScrollDriver::new(32, 100, 900, 0, 0);
+        let abort: AbortFlag = Arc::new(AtomicBool::new(false));
+        let abort2 = abort.clone();
+        // Region centered at (1000, 200): inside the 2.0-scale monitor.
+        let mut req = region_request("t-partial", 900.0, 100.0, 200.0, 200.0);
+        req.requested_engine = ScrollEngineKind::Auto;
+        req.on_progress = Some(Arc::new(move |p: ScrollProgress| {
+            if p.tiles_captured >= 2 {
+                abort2.store(true, Ordering::Relaxed);
+            }
+        }));
+        req.abort = Some(abort);
+        let result = run_scroll(&mut driver, &req, "raster-observation", &monitors, false);
+        match result {
+            ScrollingResult::Incomplete {
+                partial_artifact,
+                reason,
+                ..
+            } => {
+                assert!(matches!(reason, ScrollIncompleteReason::UserAborted));
+                let artifact = partial_artifact.expect("two tiles landed: partial kept");
+                // Region targets bind no monitor (same as complete path) but
+                // the scale comes from the target's monitor, not 1.0.
+                assert_eq!(artifact.monitor, None);
+                assert_eq!(artifact.window, None);
+                assert_eq!(artifact.scale, 2.0);
+                let scroll = artifact.scroll_info.expect("scroll section present");
+                assert_eq!(scroll.engine, "raster-observation");
+                assert_eq!(scroll.requested_engine.as_deref(), Some("auto"));
+                assert!(
+                    scroll
+                        .fallback_reason
+                        .as_deref()
+                        .unwrap()
+                        .contains("region target"),
+                    "fallback recorded: {:?}",
+                    scroll.fallback_reason
+                );
+                assert!(!scroll.complete);
+            }
+            other => panic!("expected Incomplete, got {}", other.describe()),
+        }
     }
 }

@@ -151,6 +151,15 @@ pub struct CaptureArtifact {
 pub struct ScrollSection {
     /// Resolved engine: "dom-aware" | "raster-observation".
     pub engine: String,
+    /// Engine the caller requested ("auto" | "dom-aware" |
+    /// "raster-observation"), before any auto resolution. Absent on sidecars
+    /// written before requested-engine tracking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_engine: Option<String>,
+    /// Set when the resolved engine differs from the requested one: why the
+    /// fallback happened. Absent when requested == resolved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
     /// "vertical" | "horizontal".
     pub direction: String,
     pub tiles_captured: u32,
@@ -538,6 +547,8 @@ mod tests {
         a.kind = CaptureKind::Scrolling;
         let a = a.with_scroll_info(ScrollSection {
             engine: "dom-aware".into(),
+            requested_engine: Some("auto".into()),
+            fallback_reason: None,
             direction: "vertical".into(),
             tiles_captured: 7,
             distance_px: 540,
@@ -549,6 +560,8 @@ mod tests {
         assert_eq!(v["captureKind"], "scrolling");
         let scroll = &v["scroll"];
         assert_eq!(scroll["engine"], "dom-aware");
+        assert_eq!(scroll["requestedEngine"], "auto");
+        assert!(scroll.get("fallbackReason").is_none());
         assert_eq!(scroll["direction"], "vertical");
         assert_eq!(scroll["tilesCaptured"], 7);
         assert_eq!(scroll["distancePx"], 540);
@@ -558,6 +571,47 @@ mod tests {
         // still parse, with scroll absent.
         let legacy_json = sample_artifact().to_sidecar_json().unwrap();
         assert!(parse_sidecar(&legacy_json).unwrap().scroll.is_none());
+        // A fallback is recorded verbatim, and sidecars that predate the
+        // new optional fields still parse (requested_engine/fallback_reason
+        // default to None).
+        let mut b = sample_artifact();
+        b.kind = CaptureKind::Scrolling;
+        let b = b.with_scroll_info(ScrollSection {
+            engine: "raster-observation".into(),
+            requested_engine: Some("auto".into()),
+            fallback_reason: Some("requested engine 'auto' resolved to 'raster-observation': a region target exposes no scroll geometry".into()),
+            direction: "vertical".into(),
+            tiles_captured: 3,
+            distance_px: 120,
+            complete: false,
+            reason: Some("max tiles (3)".into()),
+        });
+        let bj = b.to_sidecar_json().unwrap();
+        let bv: serde_json::Value = serde_json::from_str(&bj).unwrap();
+        assert_eq!(bv["scroll"]["fallbackReason"], "requested engine 'auto' resolved to 'raster-observation': a region target exposes no scroll geometry");
+        let back = parse_sidecar(&bj).unwrap();
+        let s = back.scroll.expect("scroll section round-trips");
+        assert_eq!(s.requested_engine.as_deref(), Some("auto"));
+        assert!(s
+            .fallback_reason
+            .as_deref()
+            .unwrap()
+            .contains("region target"));
+        // Pre-tracking sidecar JSON (no requestedEngine/fallbackReason keys)
+        // parses with both fields None.
+        let mut old_v: serde_json::Value = serde_json::from_str(&bj).unwrap();
+        old_v["scroll"]
+            .as_object_mut()
+            .unwrap()
+            .remove("requestedEngine");
+        old_v["scroll"]
+            .as_object_mut()
+            .unwrap()
+            .remove("fallbackReason");
+        let old = parse_sidecar(&old_v.to_string()).unwrap();
+        let os = old.scroll.expect("old scroll section parses");
+        assert_eq!(os.requested_engine, None);
+        assert_eq!(os.fallback_reason, None);
     }
 
     #[test]

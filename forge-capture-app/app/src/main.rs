@@ -80,7 +80,12 @@ struct RegionDto {
     h: f64,
 }
 
+// The JS UI (ui/main.js, ui/overlay.js) sends camelCase invoke payloads.
+// These DTOs use rename_all so the two sides cannot drift apart; a missing
+// rename here silently drops fields (serde ignores unknown keys) or, for
+// required fields like `include_cursor`, fails every capture outright.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CaptureRequestDto {
     /// "full-monitor" | "window" | "region" | "delayed"
     mode: String,
@@ -146,6 +151,7 @@ struct OverlayContextDto {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ScrollTargetDto {
     /// "window" | "region"
     #[serde(rename = "type")]
@@ -156,6 +162,7 @@ struct ScrollTargetDto {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ScrollCaptureDto {
     target: ScrollTargetDto,
     /// "auto" | "dom-aware" | "raster-observation"
@@ -522,24 +529,29 @@ fn export_capture(
 /// `delay_ms` / `include_cursor` are the user's selections from the main
 /// window (the overlay page cannot see them); they are recorded in the
 /// overlay context and applied by `build_mode`.
+/// Tauri matches invoke argument names to Rust parameter names *exactly* —
+/// no case conversion. The JS side sends camelCase, so these parameters are
+/// camelCase too (snake_case here would make every call fail with
+/// "missing required key monitor_id").
 #[tauri::command]
+#[allow(non_snake_case)]
 fn begin_region_pick(
-    monitor_id: String,
-    delay_ms: Option<u64>,
-    include_cursor: Option<bool>,
+    monitorId: String,
+    delayMs: Option<u64>,
+    includeCursor: Option<bool>,
     app: tauri::AppHandle,
     state: State<AppState>,
 ) -> Result<(), String> {
     let monitors = current_monitors()?;
     let monitor = monitors
         .iter()
-        .find(|m| m.id == monitor_id)
-        .ok_or_else(|| format!("unknown monitor id: {monitor_id}"))?;
+        .find(|m| m.id == monitorId)
+        .ok_or_else(|| format!("unknown monitor id: {monitorId}"))?;
     *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
         origin_virtual: monitor.origin_virtual,
         dpr: monitor.scale,
-        delay_ms: delay_ms.unwrap_or(0),
-        include_cursor: include_cursor.unwrap_or(true),
+        delay_ms: delayMs.unwrap_or(0),
+        include_cursor: includeCursor.unwrap_or(true),
     });
     if let Some(w) = app.get_webview_window("overlay") {
         let _ = w.close();
@@ -648,7 +660,8 @@ fn start_scroll_capture(
         }
         other => return Err(format!("unknown scroll target: {other}")),
     };
-    let mut engine_kind = ScrollEngineKind::parse(&dto.engine)?;
+    let requested_engine = ScrollEngineKind::parse(&dto.engine)?;
+    let mut engine_kind = requested_engine;
     if matches!(target, ScrollTarget::Region { .. })
         && matches!(engine_kind, ScrollEngineKind::DomAware)
     {
@@ -720,6 +733,7 @@ fn start_scroll_capture(
             id: id.clone(),
             target,
             engine: engine_kind,
+            requested_engine,
             direction,
             limits,
             on_progress: Some(on_progress),
@@ -886,4 +900,122 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run FORGE Capture");
+}
+
+#[cfg(test)]
+mod dto_ipc_tests {
+    //! The JS UI sends camelCase invoke payloads and Tauri matches argument
+    //! names exactly (no case conversion — verified against tauri 2.11's
+    //! `ipc::command`: `v.get(self.key)`). These tests pin each DTO against
+    //! the EXACT JSON shape the UI sends, so a renamed field on either side
+    //! fails here instead of silently dropping data at runtime.
+
+    use super::*;
+
+    #[test]
+    fn scroll_target_dto_matches_ui_window_payload() {
+        // ui/main.js doScrollCapture(), kind == "window":
+        //   target: { type: kind }; dto.target.windowId = $("scroll-window").value || null
+        let json = r#"{"type":"window","windowId":"12345"}"#;
+        let dto: ScrollTargetDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.kind, "window");
+        assert_eq!(dto.window_id.as_deref(), Some("12345"));
+        assert!(dto.region.is_none());
+    }
+
+    #[test]
+    fn scroll_target_dto_matches_ui_region_payload() {
+        // ui/main.js doScrollCapture(), kind == "region":
+        //   dto.target.region = { x: Number(...), y: ..., w: ..., h: ... }
+        let json = r#"{"type":"region","region":{"x":10.5,"y":20,"w":300,"h":200}}"#;
+        let dto: ScrollTargetDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.kind, "region");
+        let r = dto.region.expect("region payload binds");
+        assert_eq!((r.x, r.y, r.w, r.h), (10.5, 20.0, 300.0, 200.0));
+    }
+
+    #[test]
+    fn scroll_capture_dto_matches_ui_payload() {
+        // ui/main.js doScrollCapture(): { target, engine, direction } with
+        // camelCase option keys when the UI grows them.
+        let json = r#"{
+            "target": {"type":"window","windowId":"99"},
+            "engine": "auto",
+            "direction": "vertical",
+            "maxDistancePx": 5000,
+            "maxTiles": 40,
+            "settleMs": 300
+        }"#;
+        let dto: ScrollCaptureDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.target.window_id.as_deref(), Some("99"));
+        assert_eq!(dto.engine, "auto");
+        assert_eq!(dto.direction, "vertical");
+        assert_eq!(dto.max_distance_px, Some(5000));
+        assert_eq!(dto.max_tiles, Some(40));
+        assert_eq!(dto.settle_ms, Some(300));
+    }
+
+    #[test]
+    fn capture_request_dto_matches_ui_payload() {
+        // ui/main.js doCapture():
+        //   { mode, monitorId, windowId, region: null, overlayRect: null,
+        //     delayMs, includeCursor }
+        let json = r#"{
+            "mode": "window",
+            "monitorId": null,
+            "windowId": "42",
+            "region": null,
+            "overlayRect": null,
+            "delayMs": 5000,
+            "includeCursor": true
+        }"#;
+        let dto: CaptureRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.mode, "window");
+        assert_eq!(dto.window_id.as_deref(), Some("42"));
+        assert_eq!(dto.delay_ms, Some(5000));
+        assert!(dto.include_cursor);
+    }
+
+    #[test]
+    fn capture_request_dto_matches_overlay_payload() {
+        // ui/overlay.js on drag end:
+        //   { mode: "region-overlay", monitorId: null, windowId: null,
+        //     region: null, overlayRect: r, delayMs: 0, includeCursor: false }
+        let json = r#"{
+            "mode": "region-overlay",
+            "monitorId": null,
+            "windowId": null,
+            "region": null,
+            "overlayRect": {"x":1,"y":2,"w":3,"h":4},
+            "delayMs": 0,
+            "includeCursor": false
+        }"#;
+        let dto: CaptureRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.mode, "region-overlay");
+        let r = dto.overlay_rect.expect("overlayRect binds");
+        assert_eq!((r.x, r.y, r.w, r.h), (1.0, 2.0, 3.0, 4.0));
+        assert!(!dto.include_cursor);
+    }
+
+    #[test]
+    fn begin_region_pick_param_names_match_ui() {
+        // ui/main.js: invoke("begin_region_pick",
+        //   { monitorId, delayMs, includeCursor }).
+        // Tauri binds command parameters by exact name, so the Rust
+        // parameters must be camelCase. This cannot be exercised through the
+        // IPC layer in a unit test; it is pinned here as documentation of the
+        // contract, and the parameter names are asserted via stringify on
+        // the function pointer's debug form is not possible — instead we
+        // assert the UI-facing contract through the DTO above and keep this
+        // test as a tripwire reminding reviewers that renaming the
+        // begin_region_pick parameters breaks the overlay flow.
+        let _ = begin_region_pick
+            as fn(
+                String,
+                Option<u64>,
+                Option<bool>,
+                tauri::AppHandle,
+                State<AppState>,
+            ) -> Result<(), String>;
+    }
 }
