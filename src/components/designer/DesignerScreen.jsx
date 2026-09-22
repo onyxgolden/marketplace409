@@ -7,6 +7,7 @@ import {
   BookOpen,
   Box,
   DoorOpen,
+  Download,
   Eraser,
   Hand,
   Home,
@@ -94,6 +95,7 @@ import {
 } from "@/domains/roomDesigner/homeSections";
 import ElevationSvg from "./ElevationSvg";
 import ElevationPrintOverlay from "./ElevationPrintOverlay";
+import DxfExportDialog from "./DxfExportDialog";
 import { groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
 import ToolPalette from "./ToolPalette";
 
@@ -147,6 +149,8 @@ export default function DesignerScreen({ projectId, initialName }) {
   // HOME DESIGNER slice 5: elevation print overlay state.
   const [elevationOpen, setElevationOpen] = useState(false);
   const [elevationView, setElevationView] = useState(null);
+  // HOME DESIGNER slice 6: DXF export dialog state.
+  const [dxfOpen, setDxfOpen] = useState(false);
 
   // Latest snapshots for saves: a queued save must capture the document and
   // name at the moment it actually sends, not when save() was invoked.
@@ -483,6 +487,14 @@ export default function DesignerScreen({ projectId, initialName }) {
             <Printer size={15} /> Print
           </button>
           <button
+            onClick={() => setDxfOpen(true)}
+            disabled={!project}
+            title="Export the plan as DXF (CAD)…"
+            className="flex items-center gap-1 rounded bg-gray-800 px-3 py-1 text-sm font-semibold text-gray-200 hover:bg-gray-700 disabled:opacity-40"
+          >
+            <Download size={15} /> DXF
+          </button>
+          <button
             onClick={save}
             disabled={saving}
             className="flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
@@ -593,6 +605,15 @@ export default function DesignerScreen({ projectId, initialName }) {
         <ElevationPrintOverlay
           elevation={elevationView}
           onClose={() => setElevationOpen(false)}
+        />
+      )}
+      {/* HOME DESIGNER slice 6: the DXF export dialog. */}
+      {dxfOpen && project && (
+        <DxfExportDialog
+          project={project}
+          design={design}
+          currentLevelId={project.currentLevelId}
+          onClose={() => setDxfOpen(false)}
         />
       )}
     </div>
