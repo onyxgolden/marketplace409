@@ -298,6 +298,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         gridIn,
         snapOffset: snapEnabled,
         tolIn: HIT_TOLERANCE_PX / view.scale + 6,
+        type: tool,
       });
       if (!span) return null;
       return { kind: "opening", type: tool, ...span };

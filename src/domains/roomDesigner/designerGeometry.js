@@ -532,17 +532,33 @@ export function ghostRoomPolygon(template, at) {
 }
 
 /**
+ * Opening placement normalization shared by the ADD_OPENING commit path and
+ * the ghost preview: the opening must fit the wall with a 1" margin at each
+ * end, and the width stays within [6", wallLength - 2"]. Returns the
+ * normalized { type, offsetIn, widthIn } the commit would write, so the
+ * preview can show exactly what the click will place.
+ */
+export function clampOpening(wall, type, offsetIn, widthIn) {
+  const length = wallLength(wall);
+  const width = Math.min(Math.max(widthIn, 6), Math.max(length - 2, 6));
+  const offset = Math.min(Math.max(offsetIn, 1), Math.max(length - width - 1, 1));
+  return { type, offsetIn: offset, widthIn: width };
+}
+
+/**
  * Wall and gap endpoints for an opening (door/window) ghost: finds the
  * nearest wall within tolIn of the cursor and lays the opening out at the
  * offset — snapped to the grid when snapOffset is true, mirroring the
- * ADD_OPENING commit path. Returns null when no wall is near the cursor.
+ * ADD_OPENING commit path. The span is normalized with the same
+ * clampOpening the commit applies, so the ghost shows exactly what the
+ * click would cut. Returns null when no wall is near the cursor.
  * The width is the type's placement default; the ghost shows the span the
  * click would cut.
  */
 export function ghostOpeningSpan(
   walls,
   plan,
-  { widthIn, gridIn = DEFAULT_GRID_IN, snapOffset = true, tolIn = 16 } = {},
+  { widthIn, gridIn = DEFAULT_GRID_IN, snapOffset = true, tolIn = 16, type = "door" } = {},
 ) {
   if (!isFiniteNumber(widthIn) || widthIn <= 0) {
     throw new Error("Ghost opening needs a positive widthIn.");
@@ -561,16 +577,19 @@ export function ghostOpeningSpan(
   const length = wallLength(best);
   if (length === 0) return null;
   const rawOffset = offsetAlongWall(plan, best);
-  const offsetIn = snapOffset ? snapScalar(rawOffset, gridIn) : rawOffset;
+  const snapped = snapOffset ? snapScalar(rawOffset, gridIn) : rawOffset;
+  // The ghost must show exactly what the click would commit: normalize with
+  // the same clampOpening the ADD_OPENING path applies.
+  const { offsetIn, widthIn: clampedWidth } = clampOpening(best, type, snapped, widthIn);
   const dir = wallDirection(best);
   return {
     wallId: best.id,
     offsetIn,
-    widthIn,
+    widthIn: clampedWidth,
     g1: { x: best.a.x + dir.x * offsetIn, y: best.a.y + dir.y * offsetIn },
     g2: {
-      x: best.a.x + dir.x * (offsetIn + widthIn),
-      y: best.a.y + dir.y * (offsetIn + widthIn),
+      x: best.a.x + dir.x * (offsetIn + clampedWidth),
+      y: best.a.y + dir.y * (offsetIn + clampedWidth),
     },
   };
 }

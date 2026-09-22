@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { addOpening, createEmptyDesign } from "./designerDocument";
 import {
   ALIGN_MODES,
   GRID_SPACING_OPTIONS,
@@ -596,6 +597,42 @@ describe("ghostOpeningSpan", () => {
     expect(span.offsetIn).toBe(61);
     expect(span.g1.x).toBe(61);
     expect(span.g2.x).toBe(97);
+  });
+
+  it("clamps the preview at the wall end, matching the commit", () => {
+    // 240" wall, 36" opening, cursor near the far end: the commit path keeps
+    // a 1" margin, so the legal span runs 203"–239". The ghost must show
+    // exactly that, not a span hanging past the wall end.
+    const span = ghostOpeningSpan(walls, { x: 230, y: 3 }, { widthIn: 36, gridIn: 6, type: "door" });
+    expect(span.wallId).toBe("w1");
+    expect(span.offsetIn).toBe(203);
+    expect(span.widthIn).toBe(36);
+    expect(span.g1).toEqual({ x: 203, y: 0 });
+    expect(span.g2).toEqual({ x: 239, y: 0 });
+  });
+
+  it("clamps the preview width on a wall shorter than the default", () => {
+    const short = [{ id: "w3", a: { x: 0, y: 0 }, b: { x: 30, y: 0 } }];
+    // Commit shrinks the 36" default to 28" (30 - 2) and keeps the 1" margin.
+    const span = ghostOpeningSpan(short, { x: 15, y: 3 }, { widthIn: 36, gridIn: 6, type: "window" });
+    expect(span.offsetIn).toBe(1);
+    expect(span.widthIn).toBe(28);
+    expect(span.g1).toEqual({ x: 1, y: 0 });
+    expect(span.g2).toEqual({ x: 29, y: 0 });
+  });
+
+  it("agrees with the addOpening commit at every cursor position", () => {
+    // The ghost contract: what you see is what the click places. The click
+    // path snaps the raw offset to the grid first, then addOpening clamps.
+    const design = { ...createEmptyDesign(), walls };
+    for (let x = 0; x <= 240; x += 7) {
+      const span = ghostOpeningSpan(walls, { x, y: 3 }, { widthIn: 36, gridIn: 6, type: "door" });
+      const snapped = Math.round(x / 6) * 6;
+      const next = addOpening(design, "w1", { type: "door", offsetIn: snapped, widthIn: 36 });
+      const placed = next.openings[0];
+      expect(span.offsetIn).toBe(placed.offsetIn);
+      expect(span.widthIn).toBe(placed.widthIn);
+    }
   });
 
   it("returns null when no wall is within tolerance", () => {

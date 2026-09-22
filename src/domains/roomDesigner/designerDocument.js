@@ -36,6 +36,7 @@ import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartL
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {
   calibrateUnderlayScale,
+  clampOpening,
   DEFAULT_GRID_IN,
   DEFAULT_UNDERLAY_OPACITY,
   DEFAULT_UNDERLAY_WIDTH_IN,
@@ -276,13 +277,6 @@ export function moveRoom(design, roomId, dx, dy) {
     r.id === roomId ? { ...r, polygon: (r.polygon || []).map(moved) } : r,
   );
   return { ...design, walls, rooms };
-}
-
-function clampOpening(wall, type, offsetIn, widthIn) {
-  const length = wallLength(wall);
-  const width = Math.min(Math.max(widthIn, 6), Math.max(length - 2, 6));
-  const offset = Math.min(Math.max(offsetIn, 1), Math.max(length - width - 1, 1));
-  return { type, offsetIn: offset, widthIn: width };
 }
 
 /** Cut a door/window opening into a wall at an offset from wall.a. */
