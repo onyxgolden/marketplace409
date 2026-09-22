@@ -14,10 +14,14 @@
 // - netRoomAreaSqFt: gross minus the wall footprint (wall length x
 //   thickness). An approximation: shared walls are counted once per wall,
 //   so treat it as a planning number, not a surveyed area.
-// - wallSurfaceAreaSqFt: total wall length x wall height, ONE face.
-//   Double it for both faces.
+// - wallSurfaceAreaSqFt: total wall length x wall height MINUS opening areas,
+//   ONE face. Double it for both faces. Opening heights are NOT stored in the
+//   geometry domain, so documented type defaults apply (see
+//   OPENING_HEIGHT_DEFAULT_IN) — always reported in the assumptions metadata.
 // - netWallLengthIn: gross wall length minus opening widths (openings are
 //   cut out of walls; they can never add length).
+// - assumptions: every defaulted construction parameter, so the UI can say
+//   so instead of presenting invented values as measured.
 
 import { feetInchesLabel } from "./designerGeometry";
 import { summarizeDesignForEstimating } from "./designerExports";
@@ -28,6 +32,16 @@ const M_PER_IN = 0.0254;
 const SQM_PER_SQFT = 0.09290304;
 
 const KNOWN_UNITS = Object.freeze(["in", "ft", "m"]);
+
+// Opening heights are NOT stored in the geometry domain — an opening carries
+// only its width and offset along the wall (see OPENING_DEFAULTS in
+// designerDocument.js). Net wall surface needs an area, so these documented
+// type defaults apply. They are always reported in the assumptions metadata
+// returned by measureLevelDesign; nothing here is silently invented.
+const OPENING_HEIGHT_DEFAULT_IN = Object.freeze({
+  door: 80, // standard 6'8" interior door
+  window: 48, // planning default — real window heights vary
+});
 
 /** Normalize a project units value to one of "in" | "ft" | "m". */
 export function normalizeUnits(units) {
@@ -90,9 +104,11 @@ function sumLevelSummaries(summaries) {
     doorCount: 0,
     windowCount: 0,
     totalOpeningWidthIn: 0,
+    totalOpeningAreaSqFt: 0,
     pipeRunCount: 0,
     totalPipeLengthIn: 0,
   };
+  const assumptionSet = new Set();
   for (const s of summaries) {
     totals.roomCount += s.roomCount;
     totals.grossRoomAreaSqFt += s.grossRoomAreaSqFt;
@@ -105,8 +121,10 @@ function sumLevelSummaries(summaries) {
     totals.doorCount += s.doorCount;
     totals.windowCount += s.windowCount;
     totals.totalOpeningWidthIn += s.totalOpeningWidthIn;
+    totals.totalOpeningAreaSqFt += s.totalOpeningAreaSqFt || 0;
     totals.pipeRunCount += s.pipeRunCount;
     totals.totalPipeLengthIn += s.totalPipeLengthIn;
+    for (const a of s.assumptions || []) assumptionSet.add(a);
   }
   return {
     roomCount: totals.roomCount,
@@ -120,8 +138,10 @@ function sumLevelSummaries(summaries) {
     doorCount: totals.doorCount,
     windowCount: totals.windowCount,
     totalOpeningWidthIn: round2(totals.totalOpeningWidthIn),
+    totalOpeningAreaSqFt: round2(totals.totalOpeningAreaSqFt),
     pipeRunCount: totals.pipeRunCount,
     totalPipeLengthIn: round2(totals.totalPipeLengthIn),
+    assumptions: [...assumptionSet],
   };
 }
 
@@ -129,6 +149,12 @@ function sumLevelSummaries(summaries) {
  * Quantities for one level's design. Returns null when the design's
  * geometry cannot be measured — the project boundary converts that to
  * { ok: false } instead of throwing.
+ *
+ * Construction parameters (wall height, wall thickness) are reported with
+ * their source: "design" when the document's settings specify them,
+ * "default" when the fallback applies. Defaulted values are listed in
+ * `assumptions` so the UI can say so — quantities never present invented
+ * values as measured.
  */
 export function measureLevelDesign(design) {
   let summary;
@@ -137,15 +163,46 @@ export function measureLevelDesign(design) {
   } catch {
     return null;
   }
-  const wallHeightIn = summary.wallHeightIn > 0 ? summary.wallHeightIn : 108;
-  const wallThicknessIn = summary.wallThicknessIn > 0 ? summary.wallThicknessIn : 4.5;
-  const totalOpeningWidthIn = (summary.openings || []).reduce(
+  const settings = (design && design.settings) || {};
+  const settingsWallHeightIn = Number(settings.wallHeightIn);
+  const settingsWallThicknessIn = Number(settings.wallThicknessIn);
+  const wallHeightIn = settingsWallHeightIn > 0 ? settingsWallHeightIn : 108;
+  const wallThicknessIn = settingsWallThicknessIn > 0 ? settingsWallThicknessIn : 4.5;
+  const wallHeightSource = settingsWallHeightIn > 0 ? "design" : "default";
+  const wallThicknessSource = settingsWallThicknessIn > 0 ? "design" : "default";
+
+  const openings = summary.openings || [];
+  const totalOpeningWidthIn = openings.reduce(
     (acc, o) => acc + (Number(o.widthIn) > 0 ? Number(o.widthIn) : 0),
     0,
   );
+  let openingHeightsDefaulted = false;
+  const totalOpeningAreaSqFt = openings.reduce((acc, o) => {
+    const w = Number(o.widthIn) > 0 ? Number(o.widthIn) : 0;
+    let h = Number(o.heightIn);
+    if (!(h > 0)) {
+      // Geometry does not store opening heights — documented default.
+      h = o.type === "door" ? OPENING_HEIGHT_DEFAULT_IN.door : OPENING_HEIGHT_DEFAULT_IN.window;
+      if (w > 0) openingHeightsDefaulted = true;
+    }
+    return acc + (w * h) / 144;
+  }, 0);
+
+  const assumptions = [];
+  if (wallHeightSource === "default") {
+    assumptions.push("Default wall height 9 ft (not set in design)");
+  }
+  if (wallThicknessSource === "default") {
+    assumptions.push("Default wall thickness 4.5 in (not set in design)");
+  }
+  if (openingHeightsDefaulted) {
+    assumptions.push("Opening heights defaulted (doors 80\u2033, windows 48\u2033)");
+  }
+
   const grossRoomAreaSqFt = summary.totalRoomAreaSqFt;
   const wallFootprintSqFt = (summary.totalWallLengthIn * wallThicknessIn) / 144;
   const netWallLengthIn = summary.totalWallLengthIn - totalOpeningWidthIn;
+  const grossWallSurfaceSqFt = (summary.totalWallLengthIn * wallHeightIn) / 144;
   const totalPipeLengthIn = (summary.pipeRuns || []).reduce(
     (acc, run) => acc + (Number(run.lengthIn) > 0 ? Number(run.lengthIn) : 0),
     0,
@@ -159,15 +216,20 @@ export function measureLevelDesign(design) {
     wallCount: summary.wallCount,
     totalWallLengthIn: round2(summary.totalWallLengthIn),
     netWallLengthIn: round2(Math.max(0, netWallLengthIn)),
-    wallSurfaceAreaSqFt: round2((summary.totalWallLengthIn * wallHeightIn) / 144),
+    // Net of openings — this is the quantity later estimating consumes.
+    wallSurfaceAreaSqFt: round2(Math.max(0, grossWallSurfaceSqFt - totalOpeningAreaSqFt)),
     wallHeightIn,
+    wallHeightSource,
     wallThicknessIn,
+    wallThicknessSource,
     openingCount: summary.openingCount,
     doorCount: summary.doorCount,
     windowCount: summary.windowCount,
     totalOpeningWidthIn: round2(totalOpeningWidthIn),
+    totalOpeningAreaSqFt: round2(totalOpeningAreaSqFt),
     pipeRunCount: summary.pipeRunCount,
     totalPipeLengthIn: round2(totalPipeLengthIn),
+    assumptions,
   };
 }
 

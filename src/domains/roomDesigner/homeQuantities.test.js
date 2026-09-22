@@ -17,9 +17,11 @@ import {
 } from "./homeProject";
 import {
   addOpening,
+  addPipeRun,
   addRoomFromTemplate,
   createEmptyDesign,
   resetDesignerIds,
+  updateDesignSettings,
 } from "./designerDocument";
 import "./pipingCatalog";
 
@@ -193,5 +195,63 @@ describe("homeQuantities — measureHomeProject", () => {
     const result = measureHomeProject(p);
     expect(result.ok).toBe(false);
     expect(result.error).toContain("level_1");
+  });
+});
+
+describe("homeQuantities — review fixes (PR #308)", () => {
+  it("deducts opening areas from net wall surface", () => {
+    let d = bedroomDesign();
+    d = addOpening(d, d.walls[0].id, { type: "door", offsetIn: 36 }); // 36" x 80" = 20 sq ft
+    const m = measureLevelDesign(d);
+    expect(m.totalOpeningAreaSqFt).toBe(20);
+    // gross one-face surface: 576 * 108 / 144 = 432; minus 20 = 412
+    expect(m.wallSurfaceAreaSqFt).toBe(412);
+  });
+
+  it("deducts window areas with the documented window default height", () => {
+    let d = bedroomDesign();
+    d = addOpening(d, d.walls[0].id, { type: "window", offsetIn: 36, widthIn: 48 }); // 48" x 48" = 16 sq ft
+    const m = measureLevelDesign(d);
+    expect(m.totalOpeningAreaSqFt).toBe(16);
+    expect(m.wallSurfaceAreaSqFt).toBe(416); // 432 - 16
+    expect(m.assumptions).toContain("Opening heights defaulted (doors 80″, windows 48″)");
+  });
+
+  it("flags defaulted wall height/thickness as assumptions, not silent values", () => {
+    const noSettings = { ...createEmptyDesign(), settings: undefined };
+    const m = measureLevelDesign(noSettings);
+    expect(m.wallHeightIn).toBe(108);
+    expect(m.wallHeightSource).toBe("default");
+    expect(m.wallThicknessSource).toBe("default");
+    expect(m.assumptions).toContain("Default wall height 9 ft (not set in design)");
+    expect(m.assumptions).toContain("Default wall thickness 4.5 in (not set in design)");
+  });
+
+  it("records design settings as the value source when present", () => {
+    const d = updateDesignSettings(bedroomDesign(), { wallHeightIn: 120, wallThicknessIn: 6 });
+    const m = measureLevelDesign(d);
+    expect(m.wallHeightIn).toBe(120);
+    expect(m.wallHeightSource).toBe("design");
+    expect(m.wallThicknessSource).toBe("design");
+    expect(m.assumptions).toEqual([]);
+    expect(m.wallSurfaceAreaSqFt).toBe(480); // 576 * 120 / 144, no openings
+  });
+
+  it("reports pipe run totals from geometry", () => {
+    let d = createEmptyDesign();
+    d = addPipeRun(d, [{ x: 0, y: 0 }, { x: 144, y: 0 }], { diameterIn: 2 });
+    const m = measureLevelDesign(d);
+    expect(m.pipeRunCount).toBe(1);
+    expect(m.totalPipeLengthIn).toBe(144);
+  });
+
+  it("merges assumptions across levels in project totals", () => {
+    let p = createHomeProject("Assumptions");
+    const firstId = p.levels[0].id;
+    const noSettings = { ...bedroomDesign(), settings: undefined };
+    p = updateLevelDesign(p, firstId, () => noSettings);
+    const result = measureHomeProject(p);
+    expect(result.ok).toBe(true);
+    expect(result.totals.assumptions).toContain("Default wall height 9 ft (not set in design)");
   });
 });

@@ -1182,7 +1182,8 @@ function summarizeVsdxImport(prepared) {
 // readout derived purely from Room Designer geometry (never pixels, never
 // invented prices). The edited (possibly unsaved) design is swapped into the
 // current level so the numbers reflect what is on screen. A damaged project
-// renders a status line, never a crash.
+// renders a status line, never a crash. Defaulted construction parameters
+// are surfaced as an assumptions line — never presented as measured.
 
 function buildMeasurementView(project, design) {
   if (project) {
@@ -1246,6 +1247,11 @@ export function MeasurementsSection({ project, design }) {
         From plan geometry; net floor area subtracts wall footprints (a planning
         number, not a survey). Quantities only — no pricing.
       </p>
+      {t.assumptions && t.assumptions.length > 0 && (
+        <p className="mt-1 text-[11px] leading-relaxed text-amber-200/70">
+          Assumptions: {t.assumptions.join("; ")}.
+        </p>
+      )}
     </div>
   );
 }

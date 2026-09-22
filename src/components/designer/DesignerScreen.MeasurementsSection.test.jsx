@@ -110,4 +110,17 @@ describe("MeasurementsSection", () => {
     const text = renderSection({ project: null, design: null });
     expect(text).toBe("");
   });
+
+  it("surfaces assumption notes when construction defaults are used", () => {
+    const noSettings = { ...createEmptyDesign(), settings: undefined };
+    const text = renderSection({ project: null, design: noSettings });
+    expect(text).toContain("Assumptions");
+    expect(text).toContain("9 ft");
+  });
+
+  it("shows no assumption note when the design specifies its parameters", () => {
+    const project = twoLevelProject();
+    const text = renderSection({ project, design: project.levels[0].design });
+    expect(text).not.toContain("Assumptions");
+  });
 });
