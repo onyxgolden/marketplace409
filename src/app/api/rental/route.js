@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
+import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
 import { createRentalUnit } from "@/domains/rental-unit";
 import { createRentalTenant } from "@/domains/rental-tenant";
 import { createRentalLease } from "@/domains/rental-lease";
@@ -9,6 +10,18 @@ import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history
 function badRequest(message) { return NextResponse.json({ error: message }, { status: 400 }); }
 function now() { return new Date().toISOString(); }
 function id(prefix, supplied) { return supplied?.trim() || `${prefix}_${crypto.randomUUID()}`; }
+
+// A read_only workspace member is blocked outright on lease/schedule writes: the role name
+// promises no writes, so the write must not happen even though scoping alone would only
+// divert it into the actor's own fallback workspace. Non-members (no membership row) keep
+// the scoping behavior -- their writes land under their own id and can never touch this
+// workspace. See getActiveWorkspaceRole.js for why the lookup is by actor, not by owner.
+async function readOnlyWriteBlocked(authenticated) {
+  return (await getActiveWorkspaceRole({
+    supabaseClient: authenticated.supabaseClient,
+    actorUserId: authenticated.user.id,
+  })) === "read_only";
+}
 
 async function withPhotoUrls(supabaseClient, records) {
   return Promise.all(records.map(async (record) => {
@@ -277,20 +290,22 @@ export async function POST(request) {
         return NextResponse.json({ success: true });
       }
       case "save-lease": {
+        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot edit leases." }, { status: 403 });
         const input = body.lease;
         if (!input || typeof input !== "object") return badRequest("lease is required.");
         const lease = createRentalLease({ ...input, id: id("rental_lease", input.id), status: input.status ?? "draft",
           endDate: input.endDate ?? null, documentEvidenceId: input.documentEvidenceId ?? null,
           activatedAt: input.activatedAt ?? null, endedAt: input.endedAt ?? null,
           createdAt: input.createdAt || timestamp, updatedAt: timestamp, notes: input.notes ?? null });
-        return NextResponse.json({ success: true, lease: await application.saveLease(lease, user.id) });
+        return NextResponse.json({ success: true, lease: await application.saveLease(lease, effectiveOwnerId) });
       }
       case "save-schedule": {
+        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot edit rent schedules." }, { status: 403 });
         const input = body.schedule;
         if (!input || typeof input !== "object") return badRequest("schedule is required.");
         const schedule = createRentSchedule({ ...input, id: id("rent_schedule", input.id), status: input.status ?? "draft",
           effectiveEndDate: input.effectiveEndDate ?? null, createdAt: input.createdAt || timestamp, updatedAt: timestamp });
-        return NextResponse.json({ success: true, schedule: await application.saveSchedule(schedule, user.id) });
+        return NextResponse.json({ success: true, schedule: await application.saveSchedule(schedule, effectiveOwnerId) });
       }
       case "cancel-lease": {
         if (typeof body.leaseId !== "string" || body.leaseId.trim() === "") return badRequest("leaseId is required.");
