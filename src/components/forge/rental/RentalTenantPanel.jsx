@@ -1,8 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import RentalRecordActions, { labelRentalRecordContext } from "./RentalRecordActions";
 import RentalPhotoUpload from "./RentalPhotoUpload";
+import TenantPaymentHistory, { TENANT_LEDGER_OPEN_EVENT } from "./TenantPaymentHistory";
+import { useCardContextMenu, CardContextMenu } from "./CardContextMenu";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 
 export function propertyLabelForTenant(tenant, leases, leaseMemberships, units) {
@@ -49,6 +51,10 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   const [showCreate, setShowCreate] = useState(openCreateTenant || initialTenants.length === 0);
   const [selectedId, setSelectedId] = useState(initialTenants[0]?.id || null);
   const [working, setWorking] = useState(false);
+  const { menu: contextMenu, onContextMenu, close: closeContextMenu } = useCardContextMenu();
+  const openFullLedger = useCallback((tenant) => {
+    window.dispatchEvent(new CustomEvent(TENANT_LEDGER_OPEN_EVENT, { detail: { tenantId: tenant?.id } }));
+  }, []);
   const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, tenants, "display_name"));
   async function loadTenants(preferredId = null) {
     const response = await fetch("/api/rental");
@@ -147,9 +153,13 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
           ? <span className="text-slate-500 dark:text-slate-400">—</span>
           : <strong className={balanceCents > 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}>{money.format(balanceCents / 100)}</strong>; } },
       ]}>
-      {(() => { const selected = tenants.find((item) => item.id === selectedId) || tenants[0]; const household=tenantHouseholdForSelection(selected,tenants,leases,leaseMemberships,units); const tenant=household.primaryTenant; const context={recordType:"tenant",recordId:tenant?.id}; return tenant && <div data-rental-tenant-detail>
+      {(() => { const selected = tenants.find((item) => item.id === selectedId) || tenants[0]; const household=tenantHouseholdForSelection(selected,tenants,leases,leaseMemberships,units); const tenant=household.primaryTenant; const context={recordType:"tenant",recordId:tenant?.id}; return tenant && <div data-rental-tenant-detail
+        onContextMenu={(event) => onContextMenu(event, [{ label: "Open full payment history", onSelect: () => openFullLedger(tenant) }])}
+        title="Right-click to open the full payment history">
+        <CardContextMenu menu={contextMenu} onClose={closeContextMenu} />
         <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Tenant household</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{household.unit?.label || "No active property"}</h3></div><RentalRecordActions label="Tenant actions" summaryClassName="cursor-pointer list-none rounded-xl bg-red-600 px-4 py-2 text-sm font-black text-white transition hover:bg-red-700" actions={[{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Messaging",onSelect:()=>onNavigate?.("communications",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)}]}/></div>
         <LeaseSummary lease={household.lease} unit={household.unit}/>
+        <TenantPaymentHistory key={tenant.id} tenantId={tenant.id} tenantName={tenant.display_name} />
         <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={loadTenants}/>
         {!leaseMemberships.some((item) => item.tenant_id === tenant.id) && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="text-sm font-bold text-red-900 dark:text-red-200">This tenant is not assigned to any lease.</p><button type="button" disabled={working} onClick={() => deleteUnusedTenant(tenant)} className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Delete unused duplicate</button></div>}
         <div className="mt-6 space-y-4"><h3 className="text-xl font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={loadTenants} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>

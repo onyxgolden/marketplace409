@@ -29,7 +29,8 @@ describe("RentalSetupPanel tenant action", () => {
     expect(container.querySelector("[data-rental-record-browser]")).toBeNull();
     await act(async () => container.querySelector("form").requestSubmit());
     expect(globalThis.confirm).toHaveBeenCalledWith(expect.stringContaining("This creates a separate record"));
-    expect(fetch).toHaveBeenCalledTimes(1);
+    // The property card also fetches its own expense history — count only the panel's data load.
+    expect(fetch.mock.calls.filter(([url]) => url === "/api/rental")).toHaveLength(1);
   });
 
   it("requires the exact archived unit name before requesting permanent deletion", async () => {
@@ -40,7 +41,8 @@ describe("RentalSetupPanel tenant action", () => {
     await act(async () => { root.render(<RentalSetupPanel initialUnits={archived} />); await Promise.resolve(); await Promise.resolve(); });
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent.includes("Permanently delete")).click());
     expect(globalThis.prompt).toHaveBeenCalledWith(expect.stringContaining("cannot be undone"));
-    expect(fetch).toHaveBeenCalledTimes(1);
+    // The property card also fetches its own expense history — count only the panel's data load.
+    expect(fetch.mock.calls.filter(([url]) => url === "/api/rental")).toHaveLength(1);
     expect(container.textContent).toContain("name did not match");
   });
 });

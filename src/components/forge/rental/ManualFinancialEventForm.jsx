@@ -13,9 +13,9 @@ const emptyForm = () => ({
   paymentMethod: "cash",
 });
 
-export default function ManualFinancialEventForm({ availableProperties, onSaved }) {
+export default function ManualFinancialEventForm({ availableProperties, initialPropertyId, onSaved }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(() => ({ ...emptyForm(), propertyId: initialPropertyId || "" }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -36,7 +36,7 @@ export default function ManualFinancialEventForm({ availableProperties, onSaved 
       const body = await response.json();
       if (!response.ok) throw new Error(body.error);
       setSuccessMessage("Entry saved.");
-      setForm(emptyForm());
+      setForm({ ...emptyForm(), propertyId: initialPropertyId || "" });
       onSaved?.();
     } catch (reason) {
       setError(reason.message);
