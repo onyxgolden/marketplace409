@@ -17,7 +17,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createLoginSafetyServiceClient } from "@/lib/supabase/createLoginSafetyServiceClient";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
 import { createLocationActionToken, locationActionTokenExpiry } from "@/lib/auth/loginSafetyTokens";
-import { buildNewSignInAlertEmail } from "@/lib/auth/loginSafetyEmail";
+import { buildNewSignInAlertEmail, verifyLocationUrl } from "@/lib/auth/loginSafetyEmail";
 
 export const runtime = "nodejs";
 
@@ -135,8 +135,8 @@ export async function POST(request) {
     city,
     occurredAt: new Date(),
     userAgent,
-    approveUrl: `${origin}/auth/verify-location?token=${approve.token}&action=approve`,
-    denyUrl: `${origin}/auth/verify-location?token=${deny.token}&action=deny`,
+    approveUrl: verifyLocationUrl(origin, approve.token, "approve"),
+    denyUrl: verifyLocationUrl(origin, deny.token, "deny"),
     resetUrl: `${origin}/auth/reset-password`,
   });
   try {

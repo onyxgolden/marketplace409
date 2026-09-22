@@ -47,10 +47,19 @@ export function formatSignInTime(occurredAt) {
   }).format(date);
 }
 
+// Absolute one-tap verify link for a new-sign-in alert email. This must
+// point at the real API endpoint /api/auth/verify-location (the route renders
+// its own HTML confirmation page, so no separate UI page is needed). Do not
+// point these at /auth/verify-location -- no such page exists.
+export function verifyLocationUrl(origin, token, action) {
+  const base = (typeof origin === "string" ? origin : "").replace(/\/$/, "");
+  return `${base}/api/auth/verify-location?token=${token}&action=${action}`;
+}
+
 // Builds the Resend message shape { id, senderName, senderEmail, recipient,
-// subject, bodyText }. approveUrl/denyUrl are absolute links to
-// /auth/verify-location?token=...&action=...; resetUrl points at the
-// password-reset page for the deny path.
+// subject, bodyText }. approveUrl/denyUrl are absolute links built with
+// verifyLocationUrl() above; resetUrl points at the password-reset page for
+// the deny path.
 export function buildNewSignInAlertEmail({
   id,
   senderName,

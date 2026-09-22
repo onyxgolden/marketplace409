@@ -5,6 +5,7 @@ import {
   deviceHintFromUserAgent,
   formatSignInTime,
   locationLabel,
+  verifyLocationUrl,
 } from "./loginSafetyEmail.js";
 
 describe("locationLabel", () => {
@@ -48,6 +49,22 @@ describe("formatSignInTime", () => {
 
   it("handles invalid input", () => {
     expect(formatSignInTime("not-a-date")).toBe("Unknown time");
+  });
+});
+
+describe("verifyLocationUrl", () => {
+  it("points at the real API endpoint with token and action", () => {
+    expect(verifyLocationUrl("https://409marketplace.online", "abc123", "approve")).toBe(
+      "https://409marketplace.online/api/auth/verify-location?token=abc123&action=approve"
+    );
+    expect(verifyLocationUrl("https://409marketplace.online/", "def456", "deny")).toBe(
+      "https://409marketplace.online/api/auth/verify-location?token=def456&action=deny"
+    );
+  });
+
+  it("never builds a /auth/verify-location UI path (no such page exists)", () => {
+    const url = verifyLocationUrl("https://409marketplace.online", "t", "approve");
+    expect(url).not.toMatch(/online\/auth\/verify-location/);
   });
 });
 

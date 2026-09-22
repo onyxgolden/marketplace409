@@ -181,7 +181,9 @@ describe("POST /api/auth/record-login", () => {
     expect(message.senderEmail).toBe("security@409marketplace.online");
     expect(message.bodyText).toContain("action=approve");
     expect(message.bodyText).toContain("action=deny");
-    expect(message.bodyText).toContain("https://409marketplace.online/auth/verify-location?token=");
+    // One-tap links must hit the real API endpoint, not a UI page.
+    expect(message.bodyText).toContain("https://409marketplace.online/api/auth/verify-location?token=");
+    expect(message.bodyText).not.toContain("online/auth/verify-location?token=");
     expect(message.bodyText).toContain("Austin, US");
   });
 

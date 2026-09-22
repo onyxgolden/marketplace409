@@ -59,9 +59,10 @@ function deniedPage(resetUrl) {
   );
 }
 
-// approve -> location recognized; deny -> location flagged. Both are simple
-// status transitions on the known_login_locations baseline; nothing is
-// blocked or revoked in this slice.
+// approve -> location recognized; deny -> location flagged AND the exact
+// sign-in event flagged suspicious. Both are simple status transitions on the
+// known_login_locations baseline; nothing is blocked or revoked in this
+// slice.
 function statusForAction(action) {
   return action === "approve" ? "approved" : "denied";
 }
@@ -84,6 +85,12 @@ export async function GET(request) {
   // Defense-in-depth on top of the indexed hash lookup.
   if (!tokenHashEquals(tokenHash, row.token_hash)) return invalidPage();
   if (row.used_at || new Date(row.expires_at).getTime() <= Date.now()) return invalidPage();
+
+  // The token is bound to its action at mint time: an approve token can never
+  // be replayed with action=deny (or vice versa). Reject BEFORE consuming so
+  // the mismatched link burns nothing -- the owner can still use the correct
+  // link from the same email.
+  if (row.action !== action) return invalidPage();
 
   // Consume BEFORE applying the action (replay protection). Conditional on
   // used_at IS NULL so exactly one of two concurrent requests wins.
@@ -127,6 +134,21 @@ export async function GET(request) {
   }
 
   if (action === "approve") return approvedPage();
+
+  // "Wasn't me": flag the EXACT sign-in event that triggered the alert, not
+  // just the location. The token row carries the login_history id from the
+  // original event. A flag-update failure is logged but never blocks the
+  // response -- alert-only, same as the email send path.
+  if (row.login_history_id) {
+    const flagged = await service
+      .from("login_history")
+      .update({ flagged_suspicious: true })
+      .eq("id", row.login_history_id);
+    if (flagged.error) {
+      console.error("Login safety event flag failed", flagged.error);
+    }
+  }
+
   const origin = (process.env.NEXT_PUBLIC_SITE_URL || "https://409marketplace.online").replace(/\/$/, "");
   return deniedPage(`${origin}/auth/reset-password`);
 }

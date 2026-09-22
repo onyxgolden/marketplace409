@@ -61,6 +61,20 @@ function fakeServiceDb({ tokenRow, consumeResult, locationUpdateResult, location
           },
         };
       }
+      if (table === "login_history") {
+        return {
+          update: (patch) => {
+            order.push("flag");
+            calls.push({ kind: "historyFlag", patch });
+            return {
+              eq: (col, val) => {
+                calls.push({ kind: "historyFlagEq", col, val });
+                return Promise.resolve({ data: [{ id: val }], error: null });
+              },
+            };
+          },
+        };
+      }
       throw new Error(`unexpected table ${table}`);
     },
   };
@@ -191,5 +205,68 @@ describe("GET /api/auth/verify-location", () => {
     expect(insert.row.user_id).toBe("user-real-1111");
     expect(insert.row.country).toBeNull();
     expect(insert.row.city).toBeNull();
+  });
+
+  it("rejects an action that does not match the token's bound action", async () => {
+    // Approve token presented with action=deny must NOT flip anything, and
+    // must NOT consume the token (the owner can still use the correct link).
+    const service = fakeServiceDb({
+      tokenRow: validTokenRow({ action: "approve" }),
+      consumeResult: { data: [{ id: "token-row-1" }], error: null },
+      locationUpdateResult: { data: [{ id: "loc-1" }], error: null },
+      locationInsertResult: { error: null },
+    });
+    mockCreateServiceClient.mockReturnValue(service);
+
+    const res = await GET(getRequest(RAW_TOKEN, "deny"));
+    expect(await res.text()).toContain("invalid or expired");
+    expect(service.calls.some((c) => c.kind === "tokenUpdate")).toBe(false);
+    expect(service.order).not.toContain("apply");
+
+    // And the mirror case: deny token with action=approve.
+    const service2 = fakeServiceDb({
+      tokenRow: validTokenRow({ action: "deny" }),
+      consumeResult: { data: [{ id: "token-row-1" }], error: null },
+      locationUpdateResult: { data: [{ id: "loc-1" }], error: null },
+      locationInsertResult: { error: null },
+    });
+    mockCreateServiceClient.mockReturnValue(service2);
+
+    const res2 = await GET(getRequest(RAW_TOKEN, "approve"));
+    expect(await res2.text()).toContain("invalid or expired");
+    expect(service2.order).not.toContain("apply");
+  });
+
+  it("flags the exact login_history row on deny, and never on approve", async () => {
+    const denyService = fakeServiceDb({
+      tokenRow: validTokenRow({ action: "deny", login_history_id: "login-exact-1" }),
+      consumeResult: { data: [{ id: "token-row-1" }], error: null },
+      locationUpdateResult: { data: [{ id: "loc-1" }], error: null },
+      locationInsertResult: { error: null },
+    });
+    mockCreateServiceClient.mockReturnValue(denyService);
+
+    const denyRes = await GET(getRequest(RAW_TOKEN, "deny"));
+    expect(await denyRes.text()).toContain("Your security preference has been updated.");
+
+    const flag = denyService.calls.find((c) => c.kind === "historyFlag");
+    expect(flag.patch).toEqual({ flagged_suspicious: true });
+    const flagEq = denyService.calls.find((c) => c.kind === "historyFlagEq");
+    expect(flagEq.col).toBe("id");
+    expect(flagEq.val).toBe("login-exact-1");
+    // Flag happens after the location status apply (consume -> apply -> flag).
+    expect(denyService.order).toEqual(["consume", "apply", "flag"]);
+
+    const approveService = fakeServiceDb({
+      tokenRow: validTokenRow({ action: "approve", login_history_id: "login-exact-2" }),
+      consumeResult: { data: [{ id: "token-row-1" }], error: null },
+      locationUpdateResult: { data: [{ id: "loc-1" }], error: null },
+      locationInsertResult: { error: null },
+    });
+    mockCreateServiceClient.mockReturnValue(approveService);
+
+    const approveRes = await GET(getRequest(RAW_TOKEN, "approve"));
+    expect(await approveRes.text()).toContain("Your security preference has been updated.");
+    expect(approveService.calls.some((c) => c.kind === "historyFlag")).toBe(false);
   });
 });
