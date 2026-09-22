@@ -39,6 +39,14 @@ import { createSaveScheduler } from "./saveScheduler";
 import OrgChartPanel from "./OrgChartPanel";
 import FurnitureCatalogPanel from "./FurnitureCatalogPanel";
 import { createInitialState, designerReducer } from "./designerReducer";
+// HOME DESIGNER slice 1: the screen edits the current level of a HomeProject.
+// Persistence still stores the plain per-level design document, so no API or
+// database changes are needed for the project envelope.
+import {
+  ensureHomeProject,
+  getCurrentDesign,
+  updateLevelDesign,
+} from "@/domains/roomDesigner/homeProject";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import { ROOM_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds } from "@/domains/roomDesigner/designerDocument";
@@ -104,6 +112,10 @@ export default function DesignerScreen({ projectId, initialName }) {
   // name at the moment it actually sends, not when save() was invoked.
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
+  // HOME DESIGNER slice 1: the in-memory HomeProject. The designer keeps
+  // editing a single room-designer document (the current level); the project
+  // envelope is synced on save. No extra levels exist yet (slice 2).
+  const projectRef = useRef(null);
   const nameRef = useRef(name);
   useEffect(() => { nameRef.current = name; }, [name]);
   const saveSchedulerRef = useRef(null);
@@ -117,7 +129,12 @@ export default function DesignerScreen({ projectId, initialName }) {
         if (!res.ok) throw new Error(`Load failed (${res.status})`);
         const body = await res.json();
         if (cancelled) return;
-        dispatch({ type: "LOAD_DESIGN", design: body.project.design });
+        // Legacy single designs migrate transparently into a one-level
+        // project ("Level 1 Floor Plan"); the reducer keeps editing the
+        // current level's document exactly as before.
+        const project = ensureHomeProject(body.project.design, body.project.name);
+        projectRef.current = project;
+        dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(project) });
         setName(body.project.name);
         setStatus({ kind: "ready" });
       } catch (error) {
@@ -138,10 +155,25 @@ export default function DesignerScreen({ projectId, initialName }) {
       const { design: designToSave, designRevision: savedRevision } = stateRef.current;
       setSaving(true);
       try {
+        // Sync the edited document back into the project envelope; the API
+        // keeps receiving the plain per-level design, unchanged from before.
+        // Inside try/catch so an (unexpected) invalid design surfaces as a
+        // save error, never an unhandled rejection.
+        const project = projectRef.current;
+        let designPayload = designToSave;
+        if (project) {
+          const updated = updateLevelDesign(
+            project,
+            project.currentLevelId,
+            () => designToSave,
+          );
+          projectRef.current = updated;
+          designPayload = getCurrentDesign(updated);
+        }
         const res = await fetch(`/api/forge/designer/${projectId}`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name: nameRef.current, design: designToSave }),
+          body: JSON.stringify({ name: nameRef.current, design: designPayload }),
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `Save failed (${res.status})`);
