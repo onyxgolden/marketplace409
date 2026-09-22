@@ -510,4 +510,39 @@ describe("Rental Manager route", () => {
   it("creates a work order and its first event atomically",async()=>{const rpc=vi.fn(async()=>({data:{id:"work_1",status:"assigned"},error:null}));const{createAuthenticatedRentalManagerApplication}=await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({application,user:{id:"owner_1"},supabaseClient:{rpc}});const response=await POST(request({operation:"create-maintenance-work-order",workOrder:{requestId:"request_1",contractorId:"contractor_1",scopeOfWork:"Repair kitchen leak",estimatedCostCents:22500}}));expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("create_rental_maintenance_work_order",expect.objectContaining({p_owner_id:"owner_1",p_work_order:expect.objectContaining({requestId:"request_1",estimatedCostCents:22500})}));});
   it("saves an immutable lease-preparation version",async()=>{const rpc=vi.fn(async()=>({data:{preparationId:"prep_1",versionNumber:2},error:null}));const{createAuthenticatedRentalManagerApplication}=await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({application,user:{id:"owner_1"},supabaseClient:{rpc}});const response=await POST(request({operation:"save-lease-preparation-version",preparation:{leaseId:"lease_1",title:"Lease preparation",changeSummary:"Updated pet terms",terms:{pets:"One approved dog"}}}));expect(response.status).toBe(200);expect(rpc).toHaveBeenCalledWith("save_rental_lease_preparation_version",expect.objectContaining({p_owner_id:"owner_1",p_lease_id:"lease_1",p_terms:{pets:"One approved dog"}}));});
   it("requires explicit confirmation to approve a lease-preparation version",async()=>{expect((await POST(request({operation:"approve-lease-preparation-version",preparationId:"prep_1",versionNumber:1,ownerApprovalConfirmed:false}))).status).toBe(400);});
+  it("save-lease lets an active co-owner edit a lease under the canonical owner id", async () => {
+    application.saveLease.mockResolvedValueOnce({ id: "rental_lease_1" });
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "brandy_co_owner" },
+      effectiveOwnerId: "jason_owner", supabaseClient: { from: vi.fn(() => emptyTenantQuery) } });
+    const response = await POST(request({ operation: "save-lease", lease: { propertyId: "property_1", unitId: "unit_1",
+      tenantIds: ["tenant_1"], startDate: "2026-09-01", monthlyRentCents: 150000, currencyCode: "USD", rentDueDay: 1 } }));
+    expect(response.status).toBe(200);
+    expect(application.saveLease).toHaveBeenCalledWith(expect.objectContaining({ unitId: "unit_1" }), "jason_owner");
+    expect(application.saveLease).not.toHaveBeenCalledWith(expect.anything(), "brandy_co_owner");
+  });
+  it("save-lease blocks a read_only member from editing the workspace owner's lease", async () => {
+    application.saveLease.mockResolvedValueOnce({ id: "rental_lease_1" });
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    // resolveEffectiveOwnerId falls back to the actor's own id for non-co-owner roles,
+    // so the lease save can never be scoped to the canonical owner's workspace.
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "staff_read_only" },
+      effectiveOwnerId: "staff_read_only", supabaseClient: { from: vi.fn(() => emptyTenantQuery) } });
+    const response = await POST(request({ operation: "save-lease", lease: { propertyId: "property_1", unitId: "unit_1",
+      tenantIds: ["tenant_1"], startDate: "2026-09-01", monthlyRentCents: 150000, currencyCode: "USD", rentDueDay: 1 } }));
+    expect(response.status).toBe(200);
+    expect(application.saveLease).toHaveBeenCalledWith(expect.anything(), "staff_read_only");
+    expect(application.saveLease).not.toHaveBeenCalledWith(expect.anything(), "jason_owner");
+  });
+  it("save-lease blocks a non-member user from editing the workspace owner's lease", async () => {
+    application.saveLease.mockResolvedValueOnce({ id: "rental_lease_1" });
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "stranger" },
+      effectiveOwnerId: "stranger", supabaseClient: { from: vi.fn(() => emptyTenantQuery) } });
+    const response = await POST(request({ operation: "save-lease", lease: { propertyId: "property_1", unitId: "unit_1",
+      tenantIds: ["tenant_1"], startDate: "2026-09-01", monthlyRentCents: 150000, currencyCode: "USD", rentDueDay: 1 } }));
+    expect(response.status).toBe(200);
+    expect(application.saveLease).toHaveBeenCalledWith(expect.anything(), "stranger");
+    expect(application.saveLease).not.toHaveBeenCalledWith(expect.anything(), "jason_owner");
+  });
 });

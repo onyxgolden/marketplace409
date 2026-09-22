@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const from = vi.fn();
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication", () => ({
-  createAuthenticatedForgeApplication: vi.fn(async () => ({ user: { id: "owner_1" }, supabaseClient: { from } })),
+  createAuthenticatedForgeApplication: vi.fn(async () => ({ user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from } })),
 }));
 // SupabaseFinancialEventRepository imports the singleton `supabase` client eagerly
 // at module load time; the route always passes its own client explicitly, so this
@@ -56,5 +56,47 @@ describe("manual financial event route", () => {
     const response = await POST(request(validBody));
     const body = await response.json();
     expect(body.event).toMatchObject({ tax_deductible: true, affects_noi: true, capitalized: false });
+  });
+
+  it("lets an active co-owner add a property-specific expense under the canonical owner id, attributed to the acting user", async () => {
+    const { createAuthenticatedForgeApplication } = await import("@/lib/supabase/createAuthenticatedForgeApplication");
+    createAuthenticatedForgeApplication.mockResolvedValueOnce({
+      user: { id: "brandy_co_owner" }, effectiveOwnerId: "jason_owner", supabaseClient: { from },
+    });
+    const response = await POST(request({ ...validBody, propertyId: "property_kent" }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.event).toMatchObject({
+      owner_id: "jason_owner",
+      property_id: "property_kent",
+      created_by: "brandy_co_owner",
+      updated_by: "brandy_co_owner",
+    });
+  });
+
+  it("blocks a read_only member from writing to the workspace owner's books", async () => {
+    const { createAuthenticatedForgeApplication } = await import("@/lib/supabase/createAuthenticatedForgeApplication");
+    // resolveEffectiveOwnerId falls back to the actor's own id for non-co-owner roles,
+    // so the write can never land under the canonical owner's id.
+    createAuthenticatedForgeApplication.mockResolvedValueOnce({
+      user: { id: "staff_read_only" }, effectiveOwnerId: "staff_read_only", supabaseClient: { from },
+    });
+    const response = await POST(request({ ...validBody, propertyId: "property_kent" }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.event.owner_id).toBe("staff_read_only");
+    expect(body.event.owner_id).not.toBe("jason_owner");
+  });
+
+  it("blocks a non-member user from writing to the workspace owner's books", async () => {
+    const { createAuthenticatedForgeApplication } = await import("@/lib/supabase/createAuthenticatedForgeApplication");
+    createAuthenticatedForgeApplication.mockResolvedValueOnce({
+      user: { id: "stranger" }, effectiveOwnerId: "stranger", supabaseClient: { from },
+    });
+    const response = await POST(request({ ...validBody, propertyId: "property_kent" }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.event.owner_id).toBe("stranger");
+    expect(body.event.owner_id).not.toBe("jason_owner");
   });
 });

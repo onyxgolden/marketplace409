@@ -283,14 +283,14 @@ export async function POST(request) {
           endDate: input.endDate ?? null, documentEvidenceId: input.documentEvidenceId ?? null,
           activatedAt: input.activatedAt ?? null, endedAt: input.endedAt ?? null,
           createdAt: input.createdAt || timestamp, updatedAt: timestamp, notes: input.notes ?? null });
-        return NextResponse.json({ success: true, lease: await application.saveLease(lease, user.id) });
+        return NextResponse.json({ success: true, lease: await application.saveLease(lease, effectiveOwnerId) });
       }
       case "save-schedule": {
         const input = body.schedule;
         if (!input || typeof input !== "object") return badRequest("schedule is required.");
         const schedule = createRentSchedule({ ...input, id: id("rent_schedule", input.id), status: input.status ?? "draft",
           effectiveEndDate: input.effectiveEndDate ?? null, createdAt: input.createdAt || timestamp, updatedAt: timestamp });
-        return NextResponse.json({ success: true, schedule: await application.saveSchedule(schedule, user.id) });
+        return NextResponse.json({ success: true, schedule: await application.saveSchedule(schedule, effectiveOwnerId) });
       }
       case "cancel-lease": {
         if (typeof body.leaseId !== "string" || body.leaseId.trim() === "") return badRequest("leaseId is required.");

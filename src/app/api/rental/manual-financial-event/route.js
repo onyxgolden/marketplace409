@@ -16,7 +16,11 @@ export async function POST(request) {
     const repository = new SupabaseFinancialEventRepository({ supabaseClient: a.supabaseClient });
     const [saved] = await repository.saveMany([
       {
-        owner_id: a.user.id,
+        // Canonical workspace owner — never the acting user. resolveEffectiveOwnerId()
+        // (via createAuthenticatedForgeApplication) returns the primary owner's id for an
+        // active co-owner, so a co-owner's expense lands in the shared workspace books
+        // instead of being orphaned under their own id.
+        owner_id: a.effectiveOwnerId,
         property_id: body.propertyId ? String(body.propertyId) : null,
         event_date: body.eventDate,
         description: String(body.description).trim(),
