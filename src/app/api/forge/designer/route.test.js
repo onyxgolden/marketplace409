@@ -78,8 +78,12 @@ describe("POST /api/forge/designer", () => {
     const record = db.insert.mock.calls[0][0];
     expect(record.owner_id).toBe("user_1");
     expect(record.project_name).toBe("Master bath");
-    expect(record.design.version).toBe(1);
-    expect(record.design.walls).toEqual([]);
+    // HOME DESIGNER slice 2: new projects are a one-level HomeProject
+    // envelope, not a bare room-designer document.
+    expect(Array.isArray(record.design.levels)).toBe(true);
+    expect(record.design.levels).toHaveLength(1);
+    expect(record.design.levels[0].design.walls).toEqual([]);
+    expect(record.design.currentLevelId).toBe(record.design.levels[0].id);
   });
 
   it("falls back to 'Untitled design' with no name", async () => {

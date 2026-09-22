@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
-import { createEmptyDesign } from "@/domains/roomDesigner/designerDocument";
+// HOME DESIGNER slice 2: new projects are born as a HomeProject envelope so
+// multi-level works from creation. Legacy rows keep loading untouched.
+import { createHomeProject } from "@/domains/roomDesigner/homeProject";
 
 function ownerIdOf(authenticated) {
   return authenticated.effectiveOwnerId || authenticated.user.id;
@@ -42,7 +44,7 @@ export async function POST(request) {
       typeof body.name === "string" && body.name.trim()
         ? body.name.trim().slice(0, 120)
         : "Untitled design";
-    const design = createEmptyDesign(name);
+    const design = createHomeProject(name);
     const id = `design_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const { error } = await authenticated.supabaseClient
       .from("designer_projects")

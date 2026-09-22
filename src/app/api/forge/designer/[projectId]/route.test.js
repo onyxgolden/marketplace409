@@ -4,6 +4,7 @@ vi.mock("@/lib/supabase/createAuthenticatedForgeApplication", () => ({
 }));
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { createEmptyDesign, addWall } from "@/domains/roomDesigner/designerDocument";
+import { addLevel, createHomeProject } from "@/domains/roomDesigner/homeProject";
 import { DELETE, GET, PUT } from "./route";
 
 function authed(client) {
@@ -72,6 +73,34 @@ describe("PUT /api/forge/designer/[projectId]", () => {
     const record = db.query.update.mock.calls[0][0];
     expect(record.design.walls).toHaveLength(1);
     expect(record.project_name).toBe("Kitchen");
+  });
+
+  // HOME DESIGNER slice 2: the persisted `design` column holds the full
+  // HomeProject envelope — levels[], currentLevelId, building metadata.
+  it("saves a HomeProject envelope with multiple levels", async () => {
+    let project = createHomeProject("Two-story");
+    project = addLevel(project, "Second floor");
+    const db = updateClient([{ id: "design_1" }]);
+    createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
+    const response = await PUT(putRequest({ name: "Two-story", design: project }), { params });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ success: true, id: "design_1" });
+    const record = db.query.update.mock.calls[0][0];
+    expect(record.design.levels).toHaveLength(2);
+    expect(record.design.levels[1].name).toBe("Second floor");
+    expect(record.design.currentLevelId).toBe(project.levels[0].id);
+    expect(record.project_name).toBe("Two-story");
+  });
+
+  it("rejects a structurally invalid envelope with 400", async () => {
+    const db = updateClient([{ id: "design_1" }]);
+    createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
+    const response = await PUT(
+      putRequest({ design: { version: 1, levels: [] } }),
+      { params },
+    );
+    expect(response.status).toBe(400);
+    expect(db.query.update).not.toHaveBeenCalled();
   });
 
   it("rejects a structurally invalid document with 400", async () => {
