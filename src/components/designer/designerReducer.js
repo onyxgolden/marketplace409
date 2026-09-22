@@ -21,6 +21,7 @@ import {
   deleteSheet,
   deleteSymbol,
   deleteWall,
+  findWall,
   findOrgChart,
   findPipeRun,
   findRoom,
@@ -28,6 +29,7 @@ import {
   findSymbolInstance,
   moveFurniture,
   moveFurnitureMany,
+  moveDesignObjects,
   moveOpening,
   moveOpeningStart,
   moveOrgChart,
@@ -57,6 +59,7 @@ import {
   setSymbolTag,
   setUnderlay,
   setWallMaterial,
+  sheetsOf,
   updateDesignSettings,
   updatePerson,
   updateSheetFormat,
@@ -82,6 +85,20 @@ export const TOOLS = Object.freeze([
   "erase",
   "pan",
   "calibrate",
+]);
+
+// Object kinds that Ctrl/Cmd+click can toggle into the cross-type selection
+// group (and that group drag can move). The background underlay is
+// deliberately excluded: it is not a plan object.
+export const GROUP_SELECTABLE_KINDS = new Set([
+  "furniture",
+  "wall",
+  "opening",
+  "room",
+  "pipe",
+  "symbol",
+  "orgchart",
+  "sheet",
 ]);
 
 export function createInitialState(design) {
@@ -149,10 +166,39 @@ function touch(state, design, coalesceKey) {
   };
 }
 
-/** Drop multi-selection entries whose furniture no longer exists. */
+/** True when a selection target still exists in the design. */
+function targetExists(design, target) {
+  if (!target) return false;
+  const arr = {
+    wall: design.walls,
+    opening: design.openings,
+    furniture: design.furniture,
+    room: design.rooms,
+    pipe: design.pipes,
+    symbol: design.symbols,
+    orgchart: design.orgCharts,
+    sheet: sheetsOf(design),
+  }[target.kind];
+  return (arr || []).some((x) => x.id === target.id);
+}
+
+/** Delete any selectable object kind from the design. */
+function deleteTarget(design, target) {
+  if (!target) return design;
+  if (target.kind === "wall") return deleteWall(design, target.id);
+  if (target.kind === "opening") return deleteOpening(design, target.id);
+  if (target.kind === "furniture") return deleteFurniture(design, target.id);
+  if (target.kind === "room") return deleteRoom(design, target.id);
+  if (target.kind === "pipe") return deletePipeRun(design, target.id);
+  if (target.kind === "symbol") return deleteSymbol(design, target.id);
+  if (target.kind === "orgchart") return deleteOrgChart(design, target.id);
+  if (target.kind === "sheet") return deleteSheet(design, target.id);
+  return design;
+}
+
+/** Drop multi-selection entries whose object no longer exists. */
 function pruneMulti(design, multiSelection) {
-  const ids = new Set((design.furniture || []).map((f) => f.id));
-  return (multiSelection || []).filter((m) => ids.has(m.id));
+  return (multiSelection || []).filter((m) => targetExists(design, m));
 }
 
 /** Furniture pieces currently multi-selected, with their rotated footprint dims. */
@@ -266,6 +312,32 @@ export function designerReducer(state, action) {
     }
     case "CLEAR_SELECTION":
       return { ...state, selection: null, multiSelection: [] };
+    case "TOGGLE_GROUP_SELECT": {
+      // Ctrl/Cmd+click: toggle any plan object in or out of the cross-type
+      // selection group without clearing the rest. Toggling an object in
+      // folds the previous single selection into the group; toggling one
+      // out removes just it.
+      const target = action.target;
+      if (!target || !GROUP_SELECTABLE_KINDS.has(target.kind)) return state;
+      const key = (m) => `${m.kind}:${m.id}`;
+      const inGroup =
+        (state.selection && key(state.selection) === key(target)) ||
+        state.multiSelection.some((m) => key(m) === key(target));
+      if (inGroup) {
+        return {
+          ...state,
+          selection:
+            state.selection && key(state.selection) === key(target) ? null : state.selection,
+          multiSelection: state.multiSelection.filter((m) => key(m) !== key(target)),
+        };
+      }
+      const multiSelection = [...state.multiSelection];
+      if (state.selection && !multiSelection.some((m) => key(m) === key(state.selection))) {
+        multiSelection.push(state.selection);
+      }
+      multiSelection.push({ kind: target.kind, id: target.id });
+      return { ...state, selection: null, multiSelection };
+    }
     case "RENAME":
       return touch(state, renameDesign(state.design, action.name));
     case "UPDATE_SETTINGS":
@@ -322,33 +394,16 @@ export function designerReducer(state, action) {
     case "DELETE_OBJECT": {
       const target = action.target;
       if (!target) return state;
-      let design = state.design;
-      if (target.kind === "wall") design = deleteWall(design, target.id);
-      else if (target.kind === "opening") design = deleteOpening(design, target.id);
-      else if (target.kind === "furniture") design = deleteFurniture(design, target.id);
-      else if (target.kind === "room") design = deleteRoom(design, target.id);
-      else if (target.kind === "pipe") design = deletePipeRun(design, target.id);
-      else if (target.kind === "symbol") design = deleteSymbol(design, target.id);
-      else if (target.kind === "orgchart") design = deleteOrgChart(design, target.id);
-      else if (target.kind === "sheet") design = deleteSheet(design, target.id);
+      const design = deleteTarget(state.design, target);
       return { ...touch(state, design), selection: null, multiSelection: pruneMulti(design, state.multiSelection) };
     }
     case "DELETE_SELECTION": {
       const sel = state.selection;
       if (!sel && state.multiSelection.length === 0) return state;
       let design = state.design;
-      if (sel) {
-        if (sel.kind === "wall") design = deleteWall(design, sel.id);
-        else if (sel.kind === "opening") design = deleteOpening(design, sel.id);
-        else if (sel.kind === "furniture") design = deleteFurniture(design, sel.id);
-        else if (sel.kind === "room") design = deleteRoom(design, sel.id);
-        else if (sel.kind === "pipe") design = deletePipeRun(design, sel.id);
-        else if (sel.kind === "symbol") design = deleteSymbol(design, sel.id);
-        else if (sel.kind === "orgchart") design = deleteOrgChart(design, sel.id);
-        else if (sel.kind === "sheet") design = deleteSheet(design, sel.id);
-      }
+      if (sel) design = deleteTarget(design, sel);
       for (const m of state.multiSelection) {
-        if (design.furniture.some((f) => f.id === m.id)) design = deleteFurniture(design, m.id);
+        if (targetExists(design, m)) design = deleteTarget(design, m);
       }
       return { ...touch(state, design), selection: null, multiSelection: [] };
     }
@@ -365,6 +420,17 @@ export function designerReducer(state, action) {
         moveFurniture(state.design, action.furnitureId, action.x, action.y),
         action.coalesce,
       );
+    case "MOVE_SELECTION_GROUP": {
+      // Group drag: one call moves every member, so the whole gesture is a
+      // single undo entry (the pointermove handler passes one coalesce key
+      // per gesture).
+      if (!action.moves || action.moves.length === 0) return state;
+      return touch(
+        state,
+        moveDesignObjects(state.design, action.moves),
+        action.coalesce,
+      );
+    }
     case "ROTATE_FURNITURE":
       return touch(state, rotateFurniture(state.design, action.furnitureId, action.rotationDeg));
     case "RESIZE_FURNITURE":

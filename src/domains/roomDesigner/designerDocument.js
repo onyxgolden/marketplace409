@@ -198,9 +198,26 @@ export function moveWallEndpoint(design, wallId, end, point) {
   return { ...design, walls };
 }
 
-/** Delete a wall and any openings cut into it. */
-export function deleteWall(design, wallId) {
+/**
+ * Translate a whole wall by (dx, dy). Openings ride along untouched because
+ * they are stored as offsets along the wall. Backs group drag of walls;
+ * shared corners are not re-joined (same semantics as endpoint drags).
+ */
+export function moveWall(design, wallId, dx, dy) {
   assertDesign(design);
+  if (!isFiniteNumber(dx) || !isFiniteNumber(dy)) {
+    throw new Error("Wall move delta must be finite numbers.");
+  }
+  const wall = findWall(design, wallId);
+  if (!wall) throw new Error(`Unknown wall: ${wallId}`);
+  if (dx === 0 && dy === 0) return design;
+  let next = moveWallEndpoint(design, wallId, "a", { x: wall.a.x + dx, y: wall.a.y + dy });
+  next = moveWallEndpoint(next, wallId, "b", { x: wall.b.x + dx, y: wall.b.y + dy });
+  return next;
+}
+
+/** Delete a wall and any openings cut into it. */
+export function deleteWall(design, wallId) {  assertDesign(design);
   return {
     ...design,
     walls: design.walls.filter((w) => w.id !== wallId),
@@ -546,6 +563,135 @@ export function setPipeFields(design, pipeId, fields = {}) {
   });
   if (!changed) throw new Error(`Unknown pipe run: ${pipeId}`);
   return { ...design, pipes };
+}
+
+/**
+ * Translate a whole pipe run by (dx, dy). Backs group drag of pipe runs.
+ */
+export function movePipeRun(design, pipeId, dx, dy) {
+  assertDesign(design);
+  if (!isFiniteNumber(dx) || !isFiniteNumber(dy)) {
+    throw new Error("Pipe move delta must be finite numbers.");
+  }
+  const run = findPipeRun(design, pipeId);
+  if (!run) throw new Error(`Unknown pipe run: ${pipeId}`);
+  if (dx === 0 && dy === 0) return design;
+  const moved = (p) => ({ x: p.x + dx, y: p.y + dy });
+  return {
+    ...design,
+    pipes: (design.pipes || []).map((r) =>
+      r.id === pipeId ? { ...r, points: (r.points || []).map(moved) } : r,
+    ),
+  };
+}
+
+/**
+ * Effective members of a group drag. Walls carried by a selected room are
+ * skipped (the room move already translates them), and openings on a wall
+ * that moves with the group are skipped (they ride the wall through their
+ * along-wall offset). `group` is [{ kind, id }, ...].
+ */
+export function groupDragMembers(design, group) {
+  assertDesign(design);
+  const list = group || [];
+  const rooms = new Map((design.rooms || []).map((r) => [r.id, r]));
+  const roomCarriedWalls = new Set();
+  for (const m of list) {
+    if (m.kind !== "room") continue;
+    for (const wid of rooms.get(m.id)?.wallIds || []) roomCarriedWalls.add(wid);
+  }
+  const movingWalls = new Set(roomCarriedWalls);
+  for (const m of list) {
+    if (m.kind === "wall") movingWalls.add(m.id);
+  }
+  const openings = new Map((design.openings || []).map((o) => [o.id, o]));
+  return list.filter((m) => {
+    if (m.kind === "wall") return !roomCarriedWalls.has(m.id);
+    if (m.kind === "opening") {
+      const o = openings.get(m.id);
+      return !(o && movingWalls.has(o.wallId));
+    }
+    return true;
+  });
+}
+
+/**
+ * Translate every member of a selection group by its (dx, dy). One call
+ * moves the whole group, so the reducer records a single undo entry and
+ * relative offsets between members are preserved. Walls are collected and
+ * applied once (a wall shared by two selected rooms still moves only
+ * once); openings slide along their wall by the delta's projection onto
+ * the wall axis so they stay glued to it.
+ */
+export function moveDesignObjects(design, moves) {
+  assertDesign(design);
+  if (!Array.isArray(moves)) throw new Error("Group moves must be an array.");
+  const byId = (arr, id) => (arr || []).find((x) => x.id === id);
+  // Walls move at most once even when several selected rooms share one.
+  const wallDelta = new Map();
+  const addWallDelta = (wallId, dx, dy) => {
+    const prev = wallDelta.get(wallId);
+    wallDelta.set(wallId, prev ? { dx: prev.dx + dx, dy: prev.dy + dy } : { dx, dy });
+  };
+  let next = design;
+  for (const m of moves) {
+    const { kind, id } = m;
+    const dx = m.dx || 0;
+    const dy = m.dy || 0;
+    if (!isFiniteNumber(dx) || !isFiniteNumber(dy)) {
+      throw new Error("Group move delta must be finite numbers.");
+    }
+    if (dx === 0 && dy === 0) continue;
+    if (kind === "wall") {
+      if (!findWall(next, id)) throw new Error(`Unknown wall: ${id}`);
+      addWallDelta(id, dx, dy);
+    } else if (kind === "room") {
+      const room = byId(next.rooms, id);
+      if (!room) throw new Error(`Unknown room: ${id}`);
+      for (const wid of room.wallIds || []) addWallDelta(wid, dx, dy);
+      const moved = (p) => ({ x: p.x + dx, y: p.y + dy });
+      next = {
+        ...next,
+        rooms: next.rooms.map((r) =>
+          r.id === id ? { ...r, polygon: (r.polygon || []).map(moved) } : r,
+        ),
+      };
+    } else if (kind === "furniture") {
+      const f = byId(next.furniture, id);
+      if (!f) throw new Error(`Unknown furniture: ${id}`);
+      next = moveFurniture(next, id, f.x + dx, f.y + dy);
+    } else if (kind === "symbol") {
+      const s = findSymbolInstance(next, id);
+      if (!s) throw new Error(`Unknown symbol instance: ${id}`);
+      next = moveSymbol(next, id, s.x + dx, s.y + dy);
+    } else if (kind === "orgchart") {
+      const c = findOrgChart(next, id);
+      if (!c) throw new Error(`Unknown org chart: ${id}`);
+      next = moveOrgChart(next, id, c.x + dx, c.y + dy);
+    } else if (kind === "sheet") {
+      const sh = findSheet(next, id);
+      if (!sh) throw new Error(`Unknown sheet: ${id}`);
+      next = moveSheet(next, id, sh.x + dx, sh.y + dy);
+    } else if (kind === "pipe") {
+      next = movePipeRun(next, id, dx, dy);
+    } else if (kind === "opening") {
+      const o = byId(next.openings, id);
+      const wall = o && findWall(next, o.wallId);
+      if (!o || !wall) throw new Error(`Unknown opening: ${id}`);
+      const len = wallLength(wall);
+      const dir =
+        len > 0
+          ? { x: (wall.b.x - wall.a.x) / len, y: (wall.b.y - wall.a.y) / len }
+          : { x: 1, y: 0 };
+      next = moveOpening(next, id, o.offsetIn + dx * dir.x + dy * dir.y);
+    } else {
+      throw new Error(`Cannot group-move selection of kind: ${kind}`);
+    }
+  }
+  for (const [wallId, d] of wallDelta) {
+    next = moveWall(next, wallId, d.dx, d.dy);
+  }
+  return next;
 }
 
 /** Drag one vertex of a pipe run to a new point. */

@@ -352,8 +352,9 @@ function RightPanel({ state, dispatch, summary, onPrint, onZoomToSheet }) {
     return <OrgChartPanel state={state} dispatch={dispatch} />;
   }
 
-  // Visio-style arrange: shift-click 2+ furniture pieces on the plan.
-  if (multiSelection.length >= 2) {
+  // Visio-style arrange: 2+ furniture pieces in the group (shift-click, or
+  // ctrl/cmd-click alongside other kinds — arrange only acts on furniture).
+  if (multiSelection.filter((m) => m.kind === "furniture").length >= 2) {
     return <ArrangePanel state={state} dispatch={dispatch} />;
   }
 
@@ -1296,7 +1297,8 @@ function CalibrationPanel({ state, dispatch }) {
 
 function ArrangePanel({ state, dispatch }) {
   const { multiSelection } = state;
-  const count = multiSelection.length;
+  // Arrange acts on furniture only; other grouped kinds are ignored here.
+  const count = multiSelection.filter((m) => m.kind === "furniture").length;
   const btn = "rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700 disabled:opacity-40";
   return (
     <div>
@@ -1310,7 +1312,7 @@ function ArrangePanel({ state, dispatch }) {
         </button>
       </div>
       <p className="mb-2 text-[11px] text-gray-500">
-        Shift-click furniture on the plan to add or remove pieces.
+        Ctrl/Cmd-click any object on the plan to add or remove it (Shift-click still toggles furniture).
       </p>
       <div className="mb-2 grid grid-cols-3 gap-1">
         <button className={btn} onClick={() => dispatch({ type: "ALIGN_FURNITURE", mode: "left" })}>

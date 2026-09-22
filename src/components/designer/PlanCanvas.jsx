@@ -37,9 +37,11 @@ import {
   OPENING_DEFAULTS,
   fitScaleLabel,
   getRoomTemplate,
+  groupDragMembers,
   pieceSize,
   sheetPlanBounds,
 } from "@/domains/roomDesigner/designerDocument";
+import { GROUP_SELECTABLE_KINDS } from "./designerReducer";
 import { getSheetSize } from "@/domains/roomDesigner/sheetCatalog";
 
 const MIN_SCALE = 0.35;
@@ -67,6 +69,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const [ghost, setGhost] = useState(null); // placement ghost preview (component-local only; never dispatched)
   const [drag, setDrag] = useState(null); // active drag descriptor
   const [spaceDown, setSpaceDown] = useState(false);
+  // Monotonic id so each group-drag gesture gets its own undo coalesce key.
+  const gestureRef = useRef(0);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
 
   // Leaving the pipe tool abandons the in-progress run. React's sanctioned
@@ -272,6 +276,24 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   );
 
   // ---- pointer handlers ----
+  // Full cross-type selection group: the single selection (if any) plus the
+  // ctrl/cmd/shift multi-selection, de-duplicated.
+  const selectionGroup = () => {
+    const group = [];
+    const seen = new Set();
+    for (const m of [selection, ...(multiSelection || [])]) {
+      if (!m) continue;
+      const k = `${m.kind}:${m.id}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      group.push({ kind: m.kind, id: m.id });
+    }
+    return group;
+  };
+  // Selection highlight for any kind, single or in the group.
+  const isSel = (kind, id) =>
+    (selection?.kind === kind && selection?.id === id) ||
+    (multiSelection || []).some((m) => m.kind === kind && m.id === id);
   // Mouse-following placement ghost: a semi-transparent preview of the
   // object the active tool would place at the cursor, snapped exactly like
   // the click-commit path. Preview-only state — never dispatched, so
@@ -461,6 +483,34 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       }
       return;
     }
+    // Ctrl+click (Win/Linux) / Cmd+click (Mac) toggles any plan object in
+    // or out of the cross-type selection group without clearing the rest.
+    // Toggling an object in starts a group drag immediately, so the whole
+    // group follows the pointer; a click without movement is a no-op.
+    if (e.ctrlKey || e.metaKey) {
+      const hit = hitTest(plan);
+      if (!hit) {
+        dispatch({ type: "CLEAR_SELECTION" });
+        return;
+      }
+      // The background underlay is not a plan object: leave the selection alone.
+      if (!GROUP_SELECTABLE_KINDS.has(hit.kind)) return;
+      const group = selectionGroup();
+      const already = group.some((m) => m.kind === hit.kind && m.id === hit.id);
+      dispatch({ type: "TOGGLE_GROUP_SELECT", target: hit });
+      if (!already) {
+        const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+        gestureRef.current += 1;
+        setDrag({
+          kind: "move-group",
+          members: groupDragMembers(design, [...group, hit]),
+          last: point,
+          gestureId: gestureRef.current,
+          moved: false,
+        });
+      }
+      return;
+    }
     // endpoint handles first
     if (selection?.kind === "wall") {
       const wall = design.walls.find((w) => w.id === selection.id);
@@ -520,6 +570,27 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       }
     }
     const hit = hitTest(plan);
+    // Pressing a member of an existing multi-selection drags the whole
+    // group: the selection is kept, members keep their relative offsets,
+    // and the move lands as a single undo entry. A lone selected object
+    // keeps its existing single-object drag below.
+    const group = selectionGroup();
+    if (
+      hit &&
+      group.length > 1 &&
+      group.some((m) => m.kind === hit.kind && m.id === hit.id)
+    ) {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      gestureRef.current += 1;
+      setDrag({
+        kind: "move-group",
+        members: groupDragMembers(design, group),
+        last: point,
+        gestureId: gestureRef.current,
+        moved: false,
+      });
+      return;
+    }
     if (hit?.kind === "furniture") {
       dispatch({ type: "SELECT", selection: hit });
       setDrag({ kind: "move-furniture", id: hit.id, moved: false });
@@ -740,6 +811,23 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       }
       setDrag({ ...drag, last: anchor, moved: true });
     }
+    // Group drag — every member translates by the snapped pointer delta, so
+    // relative offsets are preserved. One coalesced action per gesture, so
+    // the whole group move is a single undo entry.
+    if (drag.kind === "move-group") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      const dx = point.x - drag.last.x;
+      const dy = point.y - drag.last.y;
+      if (dx !== 0 || dy !== 0) {
+        dispatch({
+          type: "MOVE_SELECTION_GROUP",
+          moves: drag.members.map((m) => ({ ...m, dx, dy })),
+          coalesce: `move-selection-group:${drag.gestureId}`,
+        });
+        setDrag({ ...drag, last: point, moved: true });
+      }
+      return;
+    }
     if (drag.kind === "resize-furniture") {
       const piece = design.furniture.find((f) => f.id === drag.id);
       if (piece) {
@@ -892,7 +980,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   }
 
   const renderWall = (wall) => {
-    const isSelected = selection?.kind === "wall" && selection?.id === wall.id;
+    const isSelected = isSel("wall", wall.id);
     const segments = splitWallByOpenings(wall, design.openings, {
       wallHeightIn: design.settings.wallHeightIn,
     });
@@ -964,7 +1052,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     return design.openings
       .filter((o) => o.wallId === wall.id)
       .map((o) => {
-        const isSelected = selection?.kind === "opening" && selection?.id === o.id;
+        const isSelected = isSel("opening", o.id);
         const g1 = { x: wall.a.x + dir.x * o.offsetIn, y: wall.a.y + dir.y * o.offsetIn };
         const g2 = { x: wall.a.x + dir.x * (o.offsetIn + o.widthIn), y: wall.a.y + dir.y * (o.offsetIn + o.widthIn) };
         const s1 = toScreen(g1);
@@ -1023,7 +1111,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // Furniture and rooms render through the domain-extensible symbol
   // registry: new symbol domains draw with zero canvas changes.
   const renderFurniture = (piece) => {
-    const isSelected = selection?.kind === "furniture" && selection?.id === piece.id;
+    const isSelected = isSel("furniture", piece.id);
     const isMulti = (multiSelection || []).some((m) => m.id === piece.id);
     return renderSymbol2D("furniture", piece.catalogId, piece, {
       toScreen,
@@ -1035,7 +1123,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const renderRoom = (room) => renderSymbol2D("rooms", null, room, {
     toScreen,
     scale: view.scale,
-    highlighted: selection?.kind === "room" && selection?.id === room.id,
+    highlighted: isSel("room", room.id),
   });
 
   // ---- Phase 2: piping mode ----
@@ -1044,7 +1132,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // runs show draggable vertex handles.
   const renderPipe = (run) => {
     if (!layerVisible(run.layer)) return null;
-    const isSelected = selection?.kind === "pipe" && selection?.id === run.id;
+    const isSelected = isSel("pipe", run.id);
     const pts = (run.points || []).map(toScreen).map((p) => `${p.x},${p.y}`).join(" ");
     const widthPx = Math.max(2.5, (run.diameterIn || 2) * view.scale * 0.6);
     const seg = longestPipeSegment(run.points);
@@ -1090,7 +1178,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   const renderPipingSymbol = (inst) => {
     if (!layerVisible(inst.layer)) return null;
-    const isSelected = selection?.kind === "symbol" && selection?.id === inst.id;
+    const isSelected = isSel("symbol", inst.id);
     return renderSymbol2D(inst.domain, inst.symbolId, inst, {
       toScreen,
       scale: view.scale,
@@ -1101,7 +1189,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // Phase 3: org chart — people hierarchy diagram. The tree layout derives
   // from the chart's nodes at render time (see drawOrgChart).
   const renderOrgChart = (chart) => {
-    const isSelected = selection?.kind === "orgchart" && selection?.id === chart.id;
+    const isSelected = isSel("orgchart", chart.id);
     return drawOrgChart({
       chart,
       toScreen,
@@ -1115,7 +1203,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // pointerEvents="none": hit-testing is done manually in plan space so the
   // frame never swallows clicks meant for content inside it.
   const renderSheet = (sheet) => {
-    const isSelected = selection?.kind === "sheet" && selection?.id === sheet.id;
+    const isSelected = isSel("sheet", sheet.id);
     const b = sheetPlanBounds(sheet);
     const tl = toScreen({ x: b.x, y: b.y });
     const w = b.widthIn * view.scale;
