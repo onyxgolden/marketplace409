@@ -36,6 +36,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
+mod session_store;
+
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
@@ -897,6 +899,128 @@ fn get_sidecar(id: String, state: State<AppState>) -> Result<String, String> {
         .ok_or_else(|| format!("unknown capture id: {id}"))
 }
 
+/// Rung 5 — payload for the "Save to FORGE" upload. Returns the stored
+/// raster bytes (base64) plus the sidecar's MIME type so the UI can build the
+/// multipart POST. Screenshots produced by this app are PNG/JPEG/WebP; the
+/// server allowlist is PNG/JPEG/WebM, so a WebP screenshot is reported with
+/// its real MIME and the server answers 400 with a clear message.
+#[derive(Debug, Serialize)]
+struct CaptureUploadPayloadDto {
+    bytes_b64: String,
+    mime: String,
+}
+
+#[tauri::command]
+fn get_capture_upload_payload(
+    id: String,
+    state: State<AppState>,
+) -> Result<CaptureUploadPayloadDto, String> {
+    const UPLOAD_CAP_BYTES: usize = 25 * 1024 * 1024;
+    let (bytes, sidecar_json) = {
+        let captures = state.captures.lock().unwrap();
+        let stored = captures
+            .get(&id)
+            .ok_or_else(|| format!("unknown capture id: {id}"))?;
+        (stored.png_bytes.clone(), stored.sidecar_json.clone())
+    };
+    if bytes.len() > UPLOAD_CAP_BYTES {
+        return Err("Capture exceeds the 25 MB FORGE upload cap.".to_string());
+    }
+    let mime = sidecar_raster_mime(&sidecar_json)?;
+    Ok(CaptureUploadPayloadDto {
+        bytes_b64: base64_encode(&bytes),
+        mime,
+    })
+}
+
+/// Reads `raster.mime` out of the capture sidecar envelope.
+fn sidecar_raster_mime(sidecar_json: &str) -> Result<String, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(sidecar_json).map_err(|e| format!("sidecar is not JSON: {e}"))?;
+    value
+        .get("raster")
+        .and_then(|r| r.get("mime"))
+        .and_then(|m| m.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "sidecar has no raster.mime".to_string())
+}
+
+/// Dependency-free base64 encoder (standard alphabet, padded). Used for the
+/// upload payload; no base64 crate is in the dependency tree.
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[((n >> 18) & 63) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// Rung 5 — copies plain text (e.g. the "Open in FORGE" library link) to the
+/// system clipboard. Windows only; other hosts fail closed.
+#[tauri::command]
+fn copy_text_to_clipboard(text: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        copy_text_to_clipboard_windows(&text)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = text;
+        Err("Text clipboard copy is only implemented on Windows.".to_string())
+    }
+}
+
+#[cfg(windows)]
+fn copy_text_to_clipboard_windows(text: &str) -> Result<(), String> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows::Win32::System::Ole::CF_UNICODETEXT;
+
+    unsafe {
+        // UTF-16 with null terminator, as CF_UNICODETEXT requires.
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let bytes = wide.len() * 2;
+
+        OpenClipboard(None).map_err(|e| format!("Could not open the clipboard: {e}"))?;
+        let result = (|| -> Result<(), String> {
+            EmptyClipboard().map_err(|e| format!("Could not empty the clipboard: {e}"))?;
+            let hmem = GlobalAlloc(GMEM_MOVEABLE, bytes)
+                .map_err(|e| format!("Could not allocate clipboard memory: {e}"))?;
+            let ptr = GlobalLock(hmem);
+            if ptr.is_null() {
+                return Err("Could not lock clipboard memory.".to_string());
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr as *mut u16, wide.len());
+            GlobalUnlock(hmem).map_err(|e| format!("Could not unlock clipboard memory: {e}"))?;
+            // On success the system owns hmem — it must NOT be freed here.
+            SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(hmem.0)))
+                .map_err(|e| format!("Could not set clipboard text: {e}"))?;
+            Ok(())
+        })();
+        let _ = CloseClipboard();
+        result
+    }
+}
+
 /// Export a capture to a user-chosen location (Save dialog). Writes the PNG
 /// plus its `.forge.json` sidecar next to it. Purely local file copy.
 #[tauri::command]
@@ -1374,6 +1498,11 @@ fn main() {
             append_media_chunk,
             finish_media_upload,
             cancel_media_upload,
+            session_store::forge_session_get,
+            session_store::forge_session_set,
+            session_store::forge_session_clear,
+            get_capture_upload_payload,
+            copy_text_to_clipboard,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run FORGE Capture");
@@ -1617,5 +1746,30 @@ mod dto_ipc_tests {
         assert!(sniff_media_ok(b"GIF87a....", "gif"));
         assert!(!sniff_media_ok(b"GIF89a....", "webm"));
         assert!(!sniff_media_ok(&[], "webm"));
+    }
+
+    #[test]
+    fn base64_encode_matches_known_vectors() {
+        // RFC 4648 test vectors, including all padding shapes.
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+        // Binary edge bytes round-trip through the full alphabet.
+        let all: Vec<u8> = (0u8..=255u8).collect();
+        let encoded = base64_encode(&all);
+        assert_eq!(encoded.len(), 344);
+        assert!(encoded.ends_with("=="));
+    }
+
+    #[test]
+    fn sidecar_raster_mime_reads_the_envelope() {
+        let sidecar = r#"{"kind":"forge-capture-artifact","raster":{"mime":"image/png"}}"#;
+        assert_eq!(sidecar_raster_mime(sidecar).unwrap(), "image/png");
+        assert!(sidecar_raster_mime(r#"{"raster":{}}"#).is_err());
+        assert!(sidecar_raster_mime("not json").is_err());
     }
 }

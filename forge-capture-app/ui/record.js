@@ -948,7 +948,33 @@ export function renderRecordControls(container, deps = {}) {
         renderList();
         setStatus(`Removed ${rec.name} from this list. The file stays on disk at ${rec.path}.`, "");
       };
-      const actions = el("div", { class: "actions" }, gifOne, trimOne, forget);
+      // Rung 5 — opt-in "Save to FORGE" for recordings. Fail closed: with no
+      // stored session the button offers sign-in and never uploads.
+      const saveOne = el("button", { "data-forge-save": "1" }, "Save to FORGE");
+      saveOne.onclick = () => {
+        if (!window.ForgeSaveUI) {
+          setStatus("Save to FORGE is unavailable in this build.", "error");
+          return;
+        }
+        void window.ForgeSaveUI.saveToForge({
+          button: saveOne,
+          actions,
+          setStatusFn: setStatus,
+          getPayload: async () => {
+            if (!rec.forgeCaptureId) rec.forgeCaptureId = window.ForgeUpload.newCaptureId();
+            return {
+              bytes: rec.bytes,
+              mime: rec.mime,
+              kind: "recording",
+              title: rec.name || `recording — ${rec.width}x${rec.height}`,
+              width: rec.width,
+              height: rec.height,
+              captureId: rec.forgeCaptureId,
+            };
+          },
+        });
+      };
+      const actions = el("div", { class: "actions" }, gifOne, trimOne, saveOne, forget);
       listEl.append(el("li", {}, el("label", { class: "inline" }, chk, " combine"), title, meta, actions));
     }
   }

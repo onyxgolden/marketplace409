@@ -196,10 +196,91 @@ function captureItem(ref) {
     }
   };
 
-  actions.append(copyBtn, exportBtn, metaBtn);
+  // Rung 5 — opt-in "Save to FORGE". Fail closed: with no stored session the
+  // button offers sign-in and never uploads.
+  const saveBtn = document.createElement("button");
+  saveBtn.textContent = "Save to FORGE";
+  saveBtn.setAttribute("data-forge-save", "1");
+  saveBtn.onclick = () => void window.ForgeSaveUI.saveToForge({
+    button: saveBtn,
+    actions,
+    setStatusFn: setStatus,
+    getPayload: async () => {
+      const payload = await invoke("get_capture_upload_payload", { id: ref.id });
+      const bin = atob(payload.bytes_b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      if (!ref.forgeCaptureId) ref.forgeCaptureId = window.ForgeUpload.newCaptureId();
+      return {
+        bytes,
+        mime: payload.mime,
+        kind: "screenshot",
+        title: `${ref.kind} — ${ref.width}x${ref.height}`,
+        width: ref.width,
+        height: ref.height,
+        captureId: ref.forgeCaptureId,
+      };
+    },
+  });
+
+  actions.append(copyBtn, exportBtn, metaBtn, saveBtn);
   li.append(title, meta, actions);
   $("captures").prepend(li);
 }
+
+/// Rung 5 — shared "Save to FORGE" driver for screenshots (main.js) and
+/// recordings (record.js). Exposed on window for the record.js module.
+async function saveToForge({ button, actions, setStatusFn, getPayload }) {
+  const F = window.ForgeUpload;
+  if (!F) {
+    setStatusFn("Save to FORGE is unavailable in this build.", "error");
+    return;
+  }
+  const baseUrl = F.resolveBaseUrl();
+  await F.runForgeSave({
+    invoke,
+    baseUrl,
+    button,
+    setStatus: setStatusFn,
+    getPayload,
+    afterSave: (result) => {
+      // The web library view ships in a later rung; until then the button
+      // copies the deep link instead of navigating anywhere.
+      const linkBtn = document.createElement("button");
+      linkBtn.textContent = "Copy link";
+      linkBtn.onclick = async () => {
+        try {
+          await invoke("copy_text_to_clipboard", { text: F.libraryLink(baseUrl, result.id) });
+          setStatusFn("Library link copied — the web library view ships in a later rung.", "ok");
+        } catch (e) {
+          setStatusFn(`Copy failed: ${e}`, "error");
+        }
+      };
+      actions.append(linkBtn);
+    },
+  });
+}
+
+/// Rung 5 — probes the OS credential store once at startup so every
+/// Save-to-FORGE button shows the honest label up front ("Sign in to FORGE"
+/// when there is no session). Never uploads.
+async function probeForgeSaveButtons() {
+  const F = window.ForgeUpload;
+  if (!F) return;
+  let signedIn = false;
+  try {
+    signedIn = !!(await F.getUsableSession({ invoke, baseUrl: F.resolveBaseUrl() }));
+  } catch {
+    /* fail closed: the sign-in label stays */
+  }
+  document.querySelectorAll("button[data-forge-save]").forEach((b) => {
+    if (b.textContent !== "Saved ✓") {
+      b.textContent = signedIn ? "Save to FORGE" : "Sign in to FORGE";
+    }
+  });
+}
+
+window.ForgeSaveUI = { saveToForge, probeForgeSaveButtons };
 
 async function doCapture() {
   const mode = $("mode").value;
@@ -260,6 +341,8 @@ async function init() {
   await listenCaptureSaved();
   await listenScrollEvents();
   await refreshLists();
+  // Rung 5: label every Save-to-FORGE button honestly up front.
+  void probeForgeSaveButtons();
 }
 
 // Region captures originate from the overlay window (which closes itself
