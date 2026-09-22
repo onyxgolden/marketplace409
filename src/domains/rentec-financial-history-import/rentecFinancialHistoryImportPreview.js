@@ -1,7 +1,11 @@
 // Read-only classifier for the Rentec financial-history resume import. Reuses Financial FORGE's
-// own category classification (src/domains/knowledge) rather than reinventing it, and reuses the
-// same property-slug canonicalization the original historical CSV import used
-// (src/domains/property/property-id.ts) so newly-imported rows line up with what's already there.
+// own category classification (src/domains/knowledge) rather than reinventing it.
+//
+// Property identity across the legacy CSV import and the Rentec API import is resolved through
+// the explicit alias map (canonicalPropertySlug in src/domains/property/propertyAliases.js),
+// NOT by the raw label canonicalization alone: the two pipelines' source property labels differ
+// ("1900 W. DECKER" vs "1900 WEST DECKER"), so the same house produced different slugs and the
+// 2026-08-24 import duplicated ~996 legacy rows. evidenceKey canonicalizes before keying.
 //
 // Every Rentec transaction/split is classified into exactly one bucket:
 //   - alreadyRepresented - an exact re-run match (same source_record_id under our own
@@ -35,6 +39,7 @@
 // keeps a rerun deterministic before anything is actually imported (after import, the own-id check
 // above takes over and grouping order stops mattering for that row).
 import { PropertyId } from "@/domains/property/property-id";
+import { canonicalPropertySlug } from "@/domains/property/propertyAliases";
 import { CATEGORY_MAP } from "@/domains/knowledge/category-map";
 import { categoryNormalizer } from "@/domains/knowledge/category-normalizer";
 
@@ -60,7 +65,13 @@ function resolvePropertySlug(rentecPropertyId, propertyLabelById) {
 }
 
 function evidenceKey({ propertySlug, transactionDate, absAmountCents, transactionKind, normalizedCategory }) {
-  return [propertySlug || UNASSIGNED_PROPERTY_KEY, transactionDate, absAmountCents, transactionKind, normalizedCategory].join("|");
+  // The raw label canonicalization (PropertyId.fromSourceName) is NOT sufficient across
+  // pipelines: the legacy CSV import and the Rentec API import used different source property
+  // labels ("605 DEWITT" vs "605 SOUTH DEWITT"), so the same house produced different slugs.
+  // Evidence matching therefore keys on the canonical slug via the explicit alias map
+  // (canonicalPropertySlug) — without this, legacy rows never match and their API twins get
+  // imported as duplicates (the 2026-08-24 run's ~996-row failure).
+  return [canonicalPropertySlug(propertySlug) || UNASSIGNED_PROPERTY_KEY, transactionDate, absAmountCents, transactionKind, normalizedCategory].join("|");
 }
 
 function isActiveEvent(event) {

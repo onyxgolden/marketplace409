@@ -222,3 +222,22 @@ describe("buildRentalFinancialPerformance — UTC-safe keys", () => {
     expect(result.series.map((p) => p.key)).toEqual(["2025-08", "2025-09", "2025-10", "2025-11", "2025-12", "2026-01"]);
   });
 });
+
+describe("buildRentalFinancialPerformance — duplicate deactivation", () => {
+  it("never counts a status='inactive' retired duplicate alongside its surviving legacy twin", () => {
+    // Duplicate disposition (per the 2026-09-21 Rentec audit): the proven duplicate rentec_api
+    // row is soft-deactivated with status='inactive'; the legacy rentec row survives. The
+    // portfolio chart must count the transaction exactly once — the inactive row contributes
+    // nothing, so this test fails if isSafeRentalEvent ever stops excluding inactive rows.
+    const events = [
+      event({ event_date: "2020-01-06", amount: "476.80", transaction_kind: "expense", source_system: "rentec", status: "active" }),
+      event({ event_date: "2020-01-06", amount: "476.80", transaction_kind: "expense", source_system: "rentec_api", status: "inactive" }),
+      event({ event_date: "2020-01-20", amount: "1783.55", transaction_kind: "income", source_system: "rentec", status: "active" }),
+      event({ event_date: "2020-01-20", amount: "1783.55", transaction_kind: "income", source_system: "rentec_api", status: "inactive" }),
+    ];
+    const result = buildRentalFinancialPerformance(events, { today: "2020-02-01", period: { type: "sixMonths" } });
+    const january = result.series.find((point) => point.key === "2020-01");
+    expect(january.expensesCents).toBe(47680);
+    expect(january.collectedCents).toBe(178355);
+  });
+});

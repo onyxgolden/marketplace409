@@ -1,3 +1,4 @@
+import { canonicalPropertySlug } from "@/domains/property/propertyAliases";
 const LINE_MAP={
   rental_income:{line:"3",label:"Rents received"},cam_income:{line:"3",label:"Rents received"},
   advertising:{line:"5",label:"Advertising"},
@@ -16,8 +17,9 @@ const LINE_MAP={
 };
 export function buildScheduleEAssistant({events=[]},{taxYear,propertyId=""}={}){
   const year=Number(taxYear);
+  const canonicalFilter=canonicalPropertySlug(propertyId);
   const scoped=events.filter(event=>event.status!=="inactive"&&event.status!=="deleted"&&event.is_deleted!==true&&event.transaction_kind!=="asset_purchase"
-    &&Number(String(event.event_date).slice(0,4))===year&&(!propertyId||(event.property_id||"unassigned")===propertyId));
+    &&Number(String(event.event_date).slice(0,4))===year&&(!canonicalFilter||(canonicalPropertySlug(event.property_id)||"unassigned")===canonicalFilter));
   const lineTotals=new Map();
   for(const event of scoped){
     const mapping=LINE_MAP[event.normalized_category]||{line:"19",label:"Other"};

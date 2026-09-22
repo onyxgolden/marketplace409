@@ -356,3 +356,67 @@ describe("buildRentecFinancialHistoryImportPreview", () => {
     }
   });
 });
+
+describe("property alias resolution in evidence matching", () => {
+  // The legacy CSV import labeled this house "605 DEWITT" (-> "605-dewitt"); the Rentec API
+  // labels it "605 SOUTH DEWITT" (-> "605-south-dewitt"). Evidence matching must canonicalize
+  // through the alias map, or the API twin is misclassified safeMissing and imported twice.
+  const dewittLabels = new Map([["523395", "605 SOUTH DEWITT"]]);
+
+  function legacyDewittEvent(overrides = {}) {
+    return {
+      id: "evt-dewitt-1",
+      property_id: "605-dewitt",
+      event_date: "2020-01-06",
+      description: "Mortgage Interest",
+      amount: -476.8,
+      transaction_kind: "expense",
+      normalized_category: "mortgage_interest",
+      source_system: "rentec",
+      source_record_id: "rentec-2020-01-06-70-expense",
+      status: "active",
+      is_deleted: false,
+      ...overrides,
+    };
+  }
+
+  function apiDewittRow(overrides = {}) {
+    return {
+      transactionId: "523395",
+      splitId: "split7",
+      propertyId: "523395",
+      renterId: null,
+      amountCents: -47680,
+      transactionDate: "2020-01-06",
+      categoryId: "12",
+      categoryName: "Mortgage Interest",
+      bankId: null,
+      rentecOwnerId: "77",
+      vendorId: null,
+      checkNum: null,
+      pmtType: "check",
+      notes: null,
+      ...overrides,
+    };
+  }
+
+  it("matches a legacy CSV row across the property-slug alias boundary as already represented", () => {
+    const preview = buildRentecFinancialHistoryImportPreview({
+      rentecTransactions: [apiDewittRow()],
+      existingFinancialEvents: [legacyDewittEvent()],
+      propertyLabelById: dewittLabels,
+    });
+    expect(preview.classificationCounts).toMatchObject({ alreadyRepresented: 1, safeMissing: 0 });
+    expect(preview.items[0].classification).toBe("alreadyRepresented");
+    expect(preview.items[0].financialEventRow).toBeUndefined();
+  });
+
+  it("still classifies a genuinely new API transaction as safe missing when no legacy evidence matches", () => {
+    const preview = buildRentecFinancialHistoryImportPreview({
+      rentecTransactions: [apiDewittRow({ transactionDate: "2020-02-06" })],
+      existingFinancialEvents: [legacyDewittEvent()],
+      propertyLabelById: dewittLabels,
+    });
+    expect(preview.classificationCounts).toMatchObject({ alreadyRepresented: 0, safeMissing: 1 });
+  });
+});
