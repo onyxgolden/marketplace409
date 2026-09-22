@@ -125,6 +125,20 @@ pub fn copy_rgba_to_clipboard(width: u32, height: u32, rgba: &[u8]) -> Result<()
     win::copy_rgba_to_clipboard(width, height, rgba)
 }
 
+/// Current cursor hotspot position in virtual-desktop physical pixels, for
+/// the Rung 4 recording compositor's cursor overlay.
+#[cfg(not(windows))]
+pub fn cursor_pos() -> Result<(i32, i32), CaptureError> {
+    Err(CaptureError::NativeApi(
+        "cursor position requires Windows 11".into(),
+    ))
+}
+
+#[cfg(windows)]
+pub fn cursor_pos() -> Result<(i32, i32), CaptureError> {
+    win::cursor_pos()
+}
+
 /// Build the DOM-aware scroll driver for a window: reads the window's real
 /// scroll-bar geometry and scrolls to exact positions. Fails when the
 /// window exposes no usable scroll geometry — the caller falls back to the
@@ -329,6 +343,21 @@ mod win {
             } else {
                 (0, 0)
             }
+        }
+    }
+
+    /// Current cursor hotspot position in virtual-desktop physical pixels.
+    /// Used by the Rung 4 recording compositor to draw cursor overlays.
+    pub(super) fn cursor_pos() -> Result<(i32, i32), CaptureError> {
+        unsafe {
+            let mut ci = CURSORINFO {
+                cbSize: std::mem::size_of::<CURSORINFO>() as u32,
+                ..Default::default()
+            };
+            if GetCursorInfo(&mut ci).is_err() {
+                return Err(last_error("GetCursorInfo"));
+            }
+            Ok((ci.ptScreenPos.x, ci.ptScreenPos.y))
         }
     }
 
@@ -968,6 +997,14 @@ mod tests {
         let mut px = vec![1u8, 2, 3, 0, 9];
         bgra_to_rgba_force_opaque(&mut px);
         assert_eq!(px, vec![3u8, 2, 1, 255, 9]);
+    }
+
+    #[test]
+    fn cursor_pos_is_unavailable_off_windows() {
+        // On Windows this returns the live cursor position; on other
+        // platforms it must fail loudly rather than return a fake (0, 0).
+        #[cfg(not(windows))]
+        assert!(cursor_pos().is_err());
     }
 
     #[test]
