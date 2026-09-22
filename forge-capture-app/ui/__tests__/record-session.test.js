@@ -164,6 +164,68 @@ describe("RecordingSession lifecycle", () => {
   });
 });
 
+describe("RecordingSession stop idempotency and failure cleanup", () => {
+  it("stop-during-stop joins the in-flight stop promise instead of returning null", async () => {
+    const s = new RecordingSession(deps());
+    await s.start({ mode: "monitor", cursorMode: "none", format: "webm" });
+    const p1 = s.stop();
+    expect(s.state).toBe("stopping");
+    const p2 = s.stop();
+    // The second caller gets the same in-flight promise, not null.
+    expect(p2).toBeInstanceOf(Promise);
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toBe(r2);
+    expect(r1.byteLength).toBe(300);
+    expect(s.state).toBe("stopped");
+    // A stop after completion is still null.
+    expect(await s.stop()).toBe(null);
+  });
+
+  it("recorder error auto-stops the session instead of leaving it recording", async () => {
+    let recorderInstance = null;
+    const FailingRecorder = makeRecorder();
+    const CapturingRecorder = class extends FailingRecorder {
+      constructor(...args) {
+        super(...args);
+        recorderInstance = this;
+      }
+    };
+    const s = new RecordingSession(deps({ Recorder: CapturingRecorder }));
+    const errors = [];
+    s.on("error", (e) => errors.push(e));
+    await s.start({ mode: "monitor", cursorMode: "none", format: "webm" });
+    expect(s.state).toBe("recording");
+    // Simulate the encoder failing mid-recording.
+    recorderInstance.onerror({ error: new Error("encoder blew up") });
+    expect(errors.length).toBe(1);
+    expect(errors[0].code).toBe("recorder-error");
+    const result = await s.stopPromise;
+    expect(s.state).toBe("stopped");
+    expect(result).not.toBe(null);
+  });
+
+  it("destroy-path cleanup stops tracks, recorder, and timers", async () => {
+    const stream = fakeStream();
+    const s = new RecordingSession(deps({ mediaDevices: { getDisplayMedia: async () => stream } }));
+    await s.start({ mode: "monitor", cursorMode: "none", format: "webm", maxDurationMs: 60000 });
+    expect(s.stopTimer).not.toBe(0);
+    const recorder = s.recorder;
+    // This is exactly what renderRecordControls().destroy() does with the session.
+    void s.stop();
+    const result = await s.stopPromise;
+    expect(s.state).toBe("stopped");
+    expect(result).not.toBe(null);
+    // Tracks released.
+    expect(stream.__video.stop).toHaveBeenCalled();
+    // Encoder shut down.
+    expect(recorder.state).toBe("inactive");
+    // Timers cleared.
+    expect(s.cursorTimer).toBe(0);
+    expect(s.stopTimer).toBe(0);
+    expect(s.compositor).toBe(null);
+  });
+});
+
 describe("format helpers", () => {
   it("formatBytes uses human units", () => {
     expect(formatBytes(0)).toBe("0 B");

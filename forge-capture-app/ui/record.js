@@ -206,6 +206,7 @@ export class RecordingSession {
     this.monitors = monitors;
     this.state = "idle";
     this.listeners = { tick: [], warning: [], ended: [], error: [] };
+    this.stopPromise = null; // in-flight stop(), shared by concurrent callers
     this.reset();
   }
 
@@ -225,6 +226,7 @@ export class RecordingSession {
     this.trackInfo = null;
     this.softWarned = false;
     this.maxDurationMs = 0;
+    this.stopPromise = null;
   }
 
   on(event, fn) {
@@ -381,6 +383,8 @@ export class RecordingSession {
     };
     recorder.onerror = (e) => {
       this.emit("error", new RecordingError("recorder-error", `encoder error: ${(e && e.error && e.error.message) || "unknown"}`));
+      // A failed encoder must never leave an active recording session behind.
+      void this.stop();
     };
     videoTrack.onended = () => {
       if (this.state === "recording") {
@@ -437,8 +441,21 @@ export class RecordingSession {
   }
 
   async stop() {
+    // Idempotent: a second caller while a stop is in flight joins the same
+    // promise instead of getting null or starting a second teardown.
+    if (this.state === "stopping") return this.stopPromise;
     if (this.state !== "recording") return null;
     this.state = "stopping";
+    this.stopPromise = this.finishStop();
+    try {
+      return await this.stopPromise;
+    } finally {
+      this.stopPromise = null;
+    }
+  }
+
+  // Internal: the actual teardown. Only runs via stop().
+  async finishStop() {
     if (this.cursorTimer) {
       clearInterval(this.cursorTimer);
       this.cursorTimer = 0;
