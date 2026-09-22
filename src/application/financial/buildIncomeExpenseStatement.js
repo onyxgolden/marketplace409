@@ -1,3 +1,4 @@
+import { canonicalPropertySlug } from "@/domains/property/propertyAliases";
 const SIGNS={income:1,expense:-1};
 function addTotals(target,event,amount){
   const sign=SIGNS[event.transaction_kind]??0;
@@ -8,10 +9,11 @@ function addTotals(target,event,amount){
 }
 const emptyTotals=()=>({income:0,expenses:0,net:0,noi:0});
 export function buildIncomeExpenseStatement({events=[]},{startDate="",endDate="",propertyId=""}={}){
+  const canonicalFilter=canonicalPropertySlug(propertyId);
   const activeAll=events.filter(event=>event.status!=="inactive"&&event.status!=="deleted"&&event.is_deleted!==true);
-  const propertyIds=Object.freeze([...new Set(activeAll.map(event=>event.property_id||"unassigned"))].sort());
+  const propertyIds=Object.freeze([...new Set(activeAll.map(event=>canonicalPropertySlug(event.property_id)||"unassigned"))].sort());
   const active=activeAll.filter(event=>event.transaction_kind!=="asset_purchase");
-  const scoped=active.filter(event=>(!propertyId||(event.property_id||"unassigned")===propertyId)&&(!startDate||event.event_date>=startDate)&&(!endDate||event.event_date<=endDate));
+  const scoped=active.filter(event=>(!canonicalFilter||(canonicalPropertySlug(event.property_id)||"unassigned")===canonicalFilter)&&(!startDate||event.event_date>=startDate)&&(!endDate||event.event_date<=endDate));
   const summary=emptyTotals();
   const categoryTotals=new Map();const propertyTotals=new Map();
   for(const event of scoped){
@@ -20,7 +22,7 @@ export function buildIncomeExpenseStatement({events=[]},{startDate="",endDate=""
     const category=event.normalized_category||"other";
     if(!categoryTotals.has(category))categoryTotals.set(category,emptyTotals());
     addTotals(categoryTotals.get(category),event,amount);
-    const property=event.property_id||"unassigned";
+    const property=canonicalPropertySlug(event.property_id)||"unassigned";
     if(!propertyTotals.has(property))propertyTotals.set(property,emptyTotals());
     addTotals(propertyTotals.get(property),event,amount);
   }

@@ -1,21 +1,24 @@
+import { canonicalPropertySlug } from "@/domains/property/propertyAliases";
+
 const activeExpense = (event) => event.transaction_kind === "expense"
   && event.status !== "inactive" && event.status !== "deleted" && event.is_deleted !== true;
 
 export function buildBusinessExpenseReport({ events = [] }, { scope = "all", propertyId = "", category = "", startDate = "", endDate = "" } = {}) {
+  const canonicalFilter = canonicalPropertySlug(propertyId);
   const active = events.filter(activeExpense);
-  const availableProperties = Object.freeze([...new Set(active.map((event) => event.property_id).filter(Boolean))].sort());
+  const availableProperties = Object.freeze([...new Set(active.map((event) => canonicalPropertySlug(event.property_id)).filter(Boolean))].sort());
   const availableCategories = Object.freeze([...new Set(active.map((event) => event.normalized_category || "other"))].sort());
   const rows = active.filter((event) => {
     if (scope === "portfolio" && event.property_id) return false;
     if (scope === "property" && !event.property_id) return false;
-    if (propertyId && event.property_id !== propertyId) return false;
+    if (canonicalFilter && canonicalPropertySlug(event.property_id) !== canonicalFilter) return false;
     if (category && (event.normalized_category || "other") !== category) return false;
     if (startDate && event.event_date < startDate) return false;
     if (endDate && event.event_date > endDate) return false;
     return true;
   }).map((event) => Object.freeze({
     id: event.id, date: event.event_date, description: event.description,
-    category: event.normalized_category || "other", propertyId: event.property_id || "unassigned",
+    category: event.normalized_category || "other", propertyId: canonicalPropertySlug(event.property_id) || "unassigned",
     amount: Math.abs(Number(event.amount)),
   })).sort((a, b) => a.date > b.date ? -1 : a.date < b.date ? 1 : String(a.id).localeCompare(String(b.id)));
   const categoryTotals = new Map();

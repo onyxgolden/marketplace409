@@ -17,10 +17,16 @@
 //                              src/domains/rentec-financial-history-import/), which fills gaps the
 //                              CSV bulk import didn't cover by reading the same Rentec account
 //                              directly via its API. Same platform-scoping justification as
-//                              "rentec" above, and mutually exclusive with it by construction: the
-//                              importer only ever writes rows it first verified aren't already
-//                              represented by a "rentec" row, so there is no double-counting risk
-//                              in summing both sources together.
+//                              "rentec" above. Duplicate protection between the two sources relies
+//                              on the unique (owner_id, source_system, source_record_id) index plus
+//                              the importer's evidence reconciliation — NOT on mutual exclusivity by
+//                              construction: the 2026-08-24 API run duplicated ~996 legacy rows
+//                              because evidence matching compared raw property slugs that differ
+//                              across pipelines; property identity must be canonicalized through
+//                              canonicalPropertySlug (src/domains/property/propertyAliases.js)
+//                              before evidence comparison. Proven duplicates are retired with
+//                              status='inactive', which isSafeRentalEvent already excludes, and a
+//                              regression test pins that behavior.
 //   - "forge_rental_payment"— posted automatically (DB trigger) from every succeeded
 //                              rental_payments row, already scoped via rental_leases.property_id.
 //                              Income only.
