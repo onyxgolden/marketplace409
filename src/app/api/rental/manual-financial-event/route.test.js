@@ -23,9 +23,22 @@ function request(body) {
 }
 
 describe("manual financial event route", () => {
+  // The route checks the actor's active workspace_members role before writing; null means
+  // no membership row (primary owner or non-member).
+  let memberRole = null;
+  function workspaceMembersQuery() {
+    const query = {
+      select: vi.fn(() => query),
+      eq: vi.fn(() => query),
+      maybeSingle: vi.fn(async () => ({ data: memberRole ? { role: memberRole } : null, error: null })),
+    };
+    return query;
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
-    from.mockImplementation(() => ({
+    memberRole = null;
+    from.mockImplementation((table) => table === "workspace_members" ? workspaceMembersQuery() : ({
       upsert: (rows) => ({
         select: async () => ({ data: rows.map((row, index) => ({ id: `financial_event_${index}`, ...row })), error: null }),
       }),
@@ -46,10 +59,11 @@ describe("manual financial event route", () => {
     expect(body.event.metadata).toEqual({ payment_method: "cash" });
   });
 
-  it("rejects an invalid entry without touching the database", async () => {
+  it("rejects an invalid entry without writing it", async () => {
     const response = await POST(request({ ...validBody, amount: -5 }));
     expect(response.status).toBe(400);
-    expect(from).not.toHaveBeenCalled();
+    // The role gate still runs (workspace_members lookup), but no financial_events write happens.
+    expect(from).not.toHaveBeenCalledWith("financial_events");
   });
 
   it("defaults tax_deductible to true for expenses and affects_noi to true", async () => {
@@ -59,6 +73,7 @@ describe("manual financial event route", () => {
   });
 
   it("lets an active co-owner add a property-specific expense under the canonical owner id, attributed to the acting user", async () => {
+    memberRole = "co_owner";
     const { createAuthenticatedForgeApplication } = await import("@/lib/supabase/createAuthenticatedForgeApplication");
     createAuthenticatedForgeApplication.mockResolvedValueOnce({
       user: { id: "brandy_co_owner" }, effectiveOwnerId: "jason_owner", supabaseClient: { from },
@@ -74,21 +89,23 @@ describe("manual financial event route", () => {
     });
   });
 
-  it("blocks a read_only member from writing to the workspace owner's books", async () => {
+  it("rejects a read_only member's write with 403 instead of diverting it into their own workspace", async () => {
+    memberRole = "read_only";
     const { createAuthenticatedForgeApplication } = await import("@/lib/supabase/createAuthenticatedForgeApplication");
-    // resolveEffectiveOwnerId falls back to the actor's own id for non-co-owner roles,
-    // so the write can never land under the canonical owner's id.
+    // resolveEffectiveOwnerId falls back to the actor's own id for non-co-owner roles, so
+    // scoping alone would have allowed this write into the actor's own fallback workspace.
+    // The 403 comes from the membership role lookup, not from owner scoping.
     createAuthenticatedForgeApplication.mockResolvedValueOnce({
       user: { id: "staff_read_only" }, effectiveOwnerId: "staff_read_only", supabaseClient: { from },
     });
     const response = await POST(request({ ...validBody, propertyId: "property_kent" }));
     const body = await response.json();
-    expect(response.status).toBe(200);
-    expect(body.event.owner_id).toBe("staff_read_only");
-    expect(body.event.owner_id).not.toBe("jason_owner");
+    expect(response.status).toBe(403);
+    expect(body.error).toMatch(/read-only/i);
+    expect(from).not.toHaveBeenCalledWith("financial_events");
   });
 
-  it("blocks a non-member user from writing to the workspace owner's books", async () => {
+  it("scopes a non-member's write to their own workspace, never the workspace owner's books", async () => {
     const { createAuthenticatedForgeApplication } = await import("@/lib/supabase/createAuthenticatedForgeApplication");
     createAuthenticatedForgeApplication.mockResolvedValueOnce({
       user: { id: "stranger" }, effectiveOwnerId: "stranger", supabaseClient: { from },

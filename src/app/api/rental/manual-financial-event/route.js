@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
+import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
 import { validateManualFinancialEvent } from "@/application/financial/validateManualFinancialEvent";
 import { SupabaseFinancialEventRepository } from "@/domains/financial-event/SupabaseFinancialEventRepository";
 
@@ -7,6 +8,14 @@ export async function POST(request) {
   try {
     const a = await createAuthenticatedForgeApplication();
     if (a.response) return a.response;
+
+    // A read_only workspace member is blocked outright: the role name promises no writes,
+    // so the write must not happen even though scoping alone would only divert it into the
+    // actor's own fallback workspace. Non-members (no membership row) keep the scoping
+    // behavior -- their writes land under their own id and can never touch this workspace.
+    if ((await getActiveWorkspaceRole({ supabaseClient: a.supabaseClient, actorUserId: a.user.id })) === "read_only") {
+      return NextResponse.json({ error: "Read-only members cannot add manual entries." }, { status: 403 });
+    }
 
     const body = await request.json();
     const { valid, errors } = validateManualFinancialEvent(body);
