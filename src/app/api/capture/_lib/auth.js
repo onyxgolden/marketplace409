@@ -24,10 +24,15 @@ export async function guardCaptureRequest(request) {
   const token = bearerToken(request);
   if (token) {
     // Validate the JWT against the Auth server; getUser(jwt) does not trust
-    // the token's claims without verification.
+    // the token's claims without verification. The client below is created
+    // with the user's own JWT as its Authorization header so every data-plane
+    // call (storage, table reads/writes) runs as that user and RLS
+    // (owner_id = auth.uid()::text) applies — without this, requests would
+    // go out with the anon key alone and RLS would deny them.
     const supabaseClient = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL,
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+      { global: { headers: { Authorization: `Bearer ${token}` } } },
     );
     const { data, error } = await supabaseClient.auth.getUser(token);
     if (error || !data?.user?.id) {

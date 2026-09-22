@@ -31,6 +31,11 @@ describe("guardCaptureRequest", () => {
     expect(result.user.id).toBe("user_1");
     expect(client.auth.getUser).toHaveBeenCalledWith(VALID_TOKEN);
     expect(createAuthenticatedForgeApplication).not.toHaveBeenCalled();
+    // The user's JWT must ride on every data-plane request so RLS applies.
+    const createCall = createClient.mock.calls[0];
+    expect(createCall[2]).toEqual({
+      global: { headers: { Authorization: `Bearer ${VALID_TOKEN}` } },
+    });
   });
 
   it("rejects an invalid Bearer token with 401 without touching cookies", async () => {
