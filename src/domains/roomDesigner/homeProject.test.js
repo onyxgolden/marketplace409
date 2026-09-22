@@ -106,6 +106,16 @@ describe("projectFromDesign / ensureHomeProject", () => {
     const corrupt = { version: HOME_PROJECT_VERSION, levels: [] };
     expect(() => ensureHomeProject(corrupt, "x")).toThrow("Stored project is invalid");
   });
+
+  it("ensureHomeProject opens an empty project for null/undefined designs instead of throwing", () => {
+    for (const value of [null, undefined]) {
+      const project = ensureHomeProject(value, "Recovered");
+      expect(isHomeProject(project)).toBe(true);
+      expect(project.name).toBe("Recovered");
+      expect(project.levels).toHaveLength(1);
+      expect(validateHomeProject(project)).toEqual([]);
+    }
+  });
 });
 
 describe("levels", () => {
@@ -130,6 +140,20 @@ describe("levels", () => {
     let project = createHomeProject("A");
     project = addLevel(project, "   ");
     expect(project.levels[1].name).toBe("Level 2");
+  });
+
+  it("addLevel never reuses an id after a reload resets the id counter", () => {
+    let project = createHomeProject("Reload");
+    project = addLevel(project, "Level 2");
+    project = addLevel(project, "Level 3");
+    const json = serializeHomeProject(project);
+    resetHomeProjectIds(); // simulate a page reload: the module counter restarts at 0
+    const restored = parseHomeProject(json);
+    const updated = addLevel(restored, "Level 4");
+    const ids = updated.levels.map((l) => l.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(updated.levels[3].id).toBe("level_4");
+    expect(validateHomeProject(updated)).toEqual([]);
   });
 
   it("throws on unknown level ids", () => {

@@ -72,13 +72,19 @@ function normalizeBuilding(building) {
   return out;
 }
 
-function makeLevel(name, design) {
+function makeLevel(name, design, takenIds) {
   const problems = validateDesign(design);
   if (problems.length > 0) {
     throw new Error(`Level design is invalid: ${problems[0]}`);
   }
+  // Level ids must stay unique even if the module counter was reset (e.g.
+  // after a page reload + parseHomeProject). Skip ids already in use.
+  let id = nextLevelId();
+  while (takenIds && takenIds.has(id)) {
+    id = nextLevelId();
+  }
   return {
-    id: nextLevelId(),
+    id,
     name: String(name),
     design,
   };
@@ -173,6 +179,11 @@ export function isHomeProject(value) {
  * single design document and always return a valid HomeProject.
  */
 export function ensureHomeProject(value, name) {
+  // Load-boundary leniency: a stored project with a null/missing design must
+  // never crash the screen — open an empty project instead.
+  if (value === null || value === undefined) {
+    return createHomeProject(name);
+  }
   if (isHomeProject(value)) {
     const problems = validateHomeProject(value);
     if (problems.length > 0) {
@@ -210,7 +221,8 @@ export function addLevel(project, name) {
   assertProject(project);
   const levelName =
     typeof name === "string" && name.trim() !== "" ? name : defaultLevelName(project);
-  const level = makeLevel(levelName, createEmptyDesign(levelName));
+  const takenIds = new Set(project.levels.map((l) => l.id));
+  const level = makeLevel(levelName, createEmptyDesign(levelName), takenIds);
   return touch(project, { levels: [...project.levels, level] });
 }
 
