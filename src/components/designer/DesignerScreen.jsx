@@ -14,6 +14,7 @@ import {
   LockOpen,
   MousePointer2,
   Network,
+  Plus,
   Printer,
   Redo2,
   RotateCw,
@@ -28,6 +29,7 @@ import {
   Type,
   Undo2,
   Upload,
+  X,
   ZoomIn,
 } from "lucide-react";
 import PlanCanvas from "./PlanCanvas";
@@ -39,17 +41,24 @@ import { createSaveScheduler } from "./saveScheduler";
 import OrgChartPanel from "./OrgChartPanel";
 import FurnitureCatalogPanel from "./FurnitureCatalogPanel";
 import { createInitialState, designerReducer } from "./designerReducer";
-// HOME DESIGNER slice 1: the screen edits the current level of a HomeProject.
-// Persistence still stores the plain per-level design document, so no API or
-// database changes are needed for the project envelope.
+// HOME DESIGNER slice 2: the screen edits the current level of a HomeProject.
+// The full envelope (levels[], currentLevelId, building metadata) persists
+// to designer_projects.design — see the slice 2 API. Legacy rows wrap
+// transparently on load; the switcher below manages levels.
 import {
+  addLevel,
   ensureHomeProject,
   getCurrentDesign,
+  getLevel,
+  removeLevel,
+  renameLevel,
+  renameProject,
+  setCurrentLevel,
   updateLevelDesign,
 } from "@/domains/roomDesigner/homeProject";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
-import { ROOM_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds } from "@/domains/roomDesigner/designerDocument";
+import { ROOM_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds, validateDesign } from "@/domains/roomDesigner/designerDocument";
 import { SHEET_CATALOG, SHEET_ORIENTATIONS, sheetSizeLabel } from "@/domains/roomDesigner/sheetCatalog";
 import { feetInchesLabel, parseDimensionInput, wallLength } from "@/domains/roomDesigner/designerGeometry";
 import {
@@ -112,10 +121,18 @@ export default function DesignerScreen({ projectId, initialName }) {
   // name at the moment it actually sends, not when save() was invoked.
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
-  // HOME DESIGNER slice 1: the in-memory HomeProject. The designer keeps
-  // editing a single room-designer document (the current level); the project
-  // envelope is synced on save. No extra levels exist yet (slice 2).
+  // HOME DESIGNER slice 2: the in-memory HomeProject. The designer edits the
+  // current level's document; `project` state mirrors projectRef so the
+  // level switcher re-renders on add/rename/switch/delete.
   const projectRef = useRef(null);
+  const [project, setProject] = useState(null);
+  const syncProject = (next) => {
+    projectRef.current = next;
+    setProject(next);
+  };
+  // Level tab UI state: which tab is being renamed / armed for delete.
+  const [renamingLevelId, setRenamingLevelId] = useState(null);
+  const [confirmDeleteLevelId, setConfirmDeleteLevelId] = useState(null);
   const nameRef = useRef(name);
   useEffect(() => { nameRef.current = name; }, [name]);
   const saveSchedulerRef = useRef(null);
@@ -133,7 +150,7 @@ export default function DesignerScreen({ projectId, initialName }) {
         // project ("Level 1 Floor Plan"); the reducer keeps editing the
         // current level's document exactly as before.
         const project = ensureHomeProject(body.project.design, body.project.name);
-        projectRef.current = project;
+        syncProject(project);
         dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(project) });
         setName(body.project.name);
         setStatus({ kind: "ready" });
@@ -143,6 +160,86 @@ export default function DesignerScreen({ projectId, initialName }) {
     })();
     return () => { cancelled = true; };
   }, [projectId]);
+
+  // --- Level switcher (HOME DESIGNER slice 2) ---------------------------
+  // Every handler syncs the currently edited document back into the envelope
+  // first, so no level's edits are lost when switching/adding/removing.
+  // All wrapped in try/catch: a corrupt level surfaces as a status error,
+  // never an unhandled rejection or a crashed screen.
+  const syncCurrentDocInto = (proj) =>
+    updateLevelDesign(proj, proj.currentLevelId, () => stateRef.current.design);
+
+  const switchLevel = (levelId) => {
+    const current = projectRef.current;
+    if (!current || current.currentLevelId === levelId) return;
+    try {
+      const synced = syncCurrentDocInto(current);
+      const target = getLevel(synced, levelId);
+      const problems = validateDesign(target.design);
+      if (problems.length > 0) {
+        throw new Error(`Level "${target.name}" is damaged (${problems[0]}). It was not opened.`);
+      }
+      const switched = setCurrentLevel(synced, levelId);
+      syncProject(switched);
+      setConfirmDeleteLevelId(null);
+      setRenamingLevelId(null);
+      dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(switched) });
+    } catch (error) {
+      setStatus({ kind: "error", message: error.message });
+    }
+  };
+
+  const addLevelUi = () => {
+    const current = projectRef.current;
+    if (!current) return;
+    try {
+      const synced = syncCurrentDocInto(current);
+      const added = addLevel(synced);
+      const newId = added.levels[added.levels.length - 1].id;
+      const switched = setCurrentLevel(added, newId);
+      syncProject(switched);
+      dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(switched) });
+      dispatch({ type: "TOUCH" }); // the new empty level must persist on next save
+    } catch (error) {
+      setStatus({ kind: "error", message: error.message });
+    }
+  };
+
+  const commitLevelRename = (levelId, rawName) => {
+    setRenamingLevelId(null);
+    const name = (rawName || "").trim();
+    const current = projectRef.current;
+    if (!current || name === "") return;
+    const level = current.levels.find((l) => l.id === levelId);
+    if (!level || level.name === name) return;
+    try {
+      syncProject(renameLevel(current, levelId, name));
+      dispatch({ type: "TOUCH" });
+    } catch (error) {
+      setStatus({ kind: "error", message: error.message });
+    }
+  };
+
+  const deleteLevelUi = (levelId) => {
+    if (confirmDeleteLevelId !== levelId) {
+      // First click arms the delete; the second confirms. A level holding
+      // geometry is never one click away from disappearing.
+      setConfirmDeleteLevelId(levelId);
+      return;
+    }
+    const current = projectRef.current;
+    if (!current) return;
+    try {
+      const synced = syncCurrentDocInto(current);
+      const removed = removeLevel(synced, levelId);
+      syncProject(removed);
+      setConfirmDeleteLevelId(null);
+      dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(removed) });
+      dispatch({ type: "TOUCH" });
+    } catch (error) {
+      setStatus({ kind: "error", message: error.message });
+    }
+  };
 
   const save = useCallback(() => {
     // Serialize saves: only one PUT may be in flight at a time, so a slow
@@ -155,8 +252,8 @@ export default function DesignerScreen({ projectId, initialName }) {
       const { design: designToSave, designRevision: savedRevision } = stateRef.current;
       setSaving(true);
       try {
-        // Sync the edited document back into the project envelope; the API
-        // keeps receiving the plain per-level design, unchanged from before.
+        // Sync the edited document back into the project envelope, then
+        // persist the whole envelope (levels[], currentLevelId, building).
         // Inside try/catch so an (unexpected) invalid design surfaces as a
         // save error, never an unhandled rejection.
         const project = projectRef.current;
@@ -167,8 +264,16 @@ export default function DesignerScreen({ projectId, initialName }) {
             project.currentLevelId,
             () => designToSave,
           );
-          projectRef.current = updated;
-          designPayload = getCurrentDesign(updated);
+          // Keep the envelope name in step with the header input; a blank
+          // header keeps the existing project name (renameProject rejects
+          // blanks, and the API falls back to design.name anyway).
+          const headerName = (nameRef.current || "").trim();
+          const renamed =
+            headerName !== "" && headerName !== updated.name
+              ? renameProject(updated, headerName)
+              : updated;
+          syncProject(renamed);
+          designPayload = renamed;
         }
         const res = await fetch(`/api/forge/designer/${projectId}`, {
           method: "PUT",
@@ -291,6 +396,79 @@ export default function DesignerScreen({ projectId, initialName }) {
           </button>
         </div>
       </header>
+
+      {/* HOME DESIGNER slice 2: level switcher. One slim tab bar — no extra
+          toolbars, no competing coordinate systems. Double-click a tab to
+          rename; the × needs two clicks so geometry is never one click away
+          from disappearing. */}
+      {project && (
+        <div className="flex items-center gap-1 border-b border-gray-800 bg-gray-900 px-4 py-1.5" role="tablist" aria-label="Levels">
+          <span className="mr-1 select-none text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+            Levels
+          </span>
+          {project.levels.map((level) => {
+            const active = level.id === project.currentLevelId;
+            const renaming = renamingLevelId === level.id;
+            const armed = confirmDeleteLevelId === level.id;
+            return (
+              <div
+                key={level.id}
+                role="tab"
+                aria-selected={active}
+                className={`flex items-center rounded ${
+                  active ? "bg-emerald-700" : "bg-gray-800 hover:bg-gray-700"
+                }`}
+              >
+                {renaming ? (
+                  <input
+                    autoFocus
+                    defaultValue={level.name}
+                    aria-label="Level name"
+                    className="w-28 rounded bg-gray-950 px-2 py-1 text-sm text-white outline-none"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitLevelRename(level.id, e.target.value);
+                      else if (e.key === "Escape") setRenamingLevelId(null);
+                    }}
+                    onBlur={(e) => commitLevelRename(level.id, e.target.value)}
+                  />
+                ) : (
+                  <button
+                    onClick={() => switchLevel(level.id)}
+                    onDoubleClick={() => setRenamingLevelId(level.id)}
+                    title="Switch level · double-click to rename"
+                    className={`px-3 py-1 text-sm font-medium ${
+                      active ? "text-white" : "text-gray-300"
+                    }`}
+                  >
+                    {level.name}
+                  </button>
+                )}
+                {!renaming && project.levels.length > 1 && (
+                  <button
+                    onClick={() => deleteLevelUi(level.id)}
+                    title={armed ? "Click again to delete this level" : "Delete level"}
+                    aria-label={armed ? `Confirm delete ${level.name}` : `Delete ${level.name}`}
+                    className={`mr-1 rounded px-1.5 py-0.5 text-xs font-semibold ${
+                      armed
+                        ? "bg-red-600 text-white"
+                        : "text-gray-500 hover:bg-gray-700 hover:text-red-300"
+                    }`}
+                  >
+                    {armed ? "Sure?" : <X size={12} />}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          <button
+            onClick={addLevelUi}
+            title="Add a level"
+            className="flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-sm text-gray-300 hover:bg-gray-700"
+          >
+            <Plus size={14} /> Add level
+          </button>
+        </div>
+      )}
       {status.kind === "error" && (
         <div className="bg-red-900/60 px-4 py-2 text-sm text-red-200">{status.message}</div>
       )}
