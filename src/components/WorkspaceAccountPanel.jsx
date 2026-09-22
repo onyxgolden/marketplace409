@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { signOutSafely } from "@/lib/auth/signOutSafely.js";
 import { useCredentialAuth } from "@/lib/auth/useCredentialAuth.js";
+import { useLoginSafety } from "@/lib/auth/useLoginSafety.js";
 
 const panelClassName =
   "mb-8 w-full max-w-4xl rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900";
@@ -25,6 +26,10 @@ export default function WorkspaceAccountPanel({ initialUser = undefined }) {
   const [supabase] = useState(() => createClient());
   const [user, setUser] = useState(initialUser);
   const [signingOut, setSigningOut] = useState(false);
+
+  // Reports each SIGNED_IN event to /api/auth/record-login once per session
+  // for new-location alerting. Alert-only: never blocks or delays the login.
+  useLoginSafety(supabase);
 
   useEffect(() => {
     let active = true;
