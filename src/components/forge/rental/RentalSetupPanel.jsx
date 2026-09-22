@@ -1,8 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import RentalRecordActions, { labelRentalRecordContext } from "./RentalRecordActions";
 import RentalPhotoUpload from "./RentalPhotoUpload";
+import PropertyExpenseHistory, { PROPERTY_EXPENSES_OPEN_EVENT } from "./PropertyExpenseHistory";
+import { useCardContextMenu, CardContextMenu } from "./CardContextMenu";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 
 async function submit(operation, key, value) {
@@ -43,6 +45,10 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   const [working, setWorking] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [archiveCandidateId, setArchiveCandidateId] = useState(null);
+  const { menu: contextMenu, onContextMenu, close: closeContextMenu } = useCardContextMenu();
+  const openFullExpenses = useCallback((unit) => {
+    window.dispatchEvent(new CustomEvent(PROPERTY_EXPENSES_OPEN_EVENT, { detail: { propertyId: unit?.property_id } }));
+  }, []);
   const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, units, "label"));
   async function loadUnits() {
     const response = await fetch("/api/rental"); const result = await response.json();
@@ -115,11 +121,15 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
         {(() => {
           const unit = units.find((item) => item.id === selectedId) || units.find((item) => item.status !== "inactive");
           const context = { recordType: "unit", recordId: unit?.id, propertyId: unit?.property_id };
-          return unit && <div data-rental-unit-detail>
+          return unit && <div data-rental-unit-detail
+            onContextMenu={(event) => onContextMenu(event, [{ label: "Open full expenses ledger", onSelect: () => openFullExpenses(unit) }])}
+            title="Right-click to open the full expenses ledger">
+            <CardContextMenu menu={contextMenu} onClose={closeContextMenu} />
             <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Selected unit</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{unit.label}</h3></div>
               <RentalRecordActions label="Property actions" summaryClassName="cursor-pointer list-none rounded-xl bg-red-600 px-4 py-2 text-sm font-black text-white transition hover:bg-red-700" actions={[{label:"Edit property details",onSelect:()=>{setArchiveCandidateId(null);setEditingId(unit.id);}},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Financial setup",onSelect:()=>onNavigate?.("financial-setup",context)},{label:"Work orders",onSelect:()=>onNavigate?.("maintenance",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)},{label:"Archive duplicate / inactive property",onSelect:()=>{setEditingId(null);setArchiveCandidateId(unit.id);}}]}/>
             </div>
             <div className="mt-4"><RentalPhotoUpload entityType="unit" entityId={unit.id} photoUrl={unit.photo_url} onUploaded={loadUnits} /></div>
+            <PropertyExpenseHistory key={unit.id} propertyId={unit.property_id} propertyLabel={unit.label} />
             {archiveCandidateId === unit.id ? <div className="mt-5 rounded-xl border border-red-300 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="font-black text-red-900 dark:text-red-200">Archive {unit.label}?</p><p className="mt-2 text-sm text-red-800 dark:text-red-300">This removes the property/unit from active lists but preserves its financial, lease, and audit history. A property with an active lease cannot be archived.</p><div className="mt-3 flex gap-2"><button type="button" disabled={working} onClick={() => archiveUnit(unit)} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white">Confirm archive</button><button type="button" onClick={() => setArchiveCandidateId(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold dark:border-slate-600 dark:text-slate-300">Cancel</button></div></div>
               : editingId===unit.id ? <UnitEditForm unit={unit} working={working} onCancel={()=>setEditingId(null)} onSave={saveUnit}/>
               : <dl className="mt-5 grid gap-4 sm:grid-cols-2"><Detail label="Property" value={unit.property_id} /><Detail label="Status" value={unit.status || "Not set"} /><Detail label="Bedrooms" value={unit.bedrooms ?? "Not recorded"} /><Detail label="Bathrooms" value={unit.bathrooms ?? "Not recorded"} /><Detail label="Square feet" value={unit.square_feet ?? "Not recorded"} /><Detail label="Notes" value={unit.notes || "No notes"} /></dl>}

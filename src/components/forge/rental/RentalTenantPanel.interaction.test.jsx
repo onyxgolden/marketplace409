@@ -36,10 +36,17 @@ describe("RentalTenantPanel tenant selection", () => {
 
   it("opens the newly saved tenant and shows an unmistakable success message", async () => {
     const paula = { id: "tenant_3", display_name: "Paula Welch", displayName: "Paula Welch", email: "paula@example.com" };
-    const fetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ tenants, leases: [], leaseMemberships: [], units: [], openCharges: [] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ tenant: paula }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ tenants: [...tenants, paula], leases: [], leaseMemberships: [], units: [], openCharges: [] }) });
+    let savedTenants = tenants;
+    const emptyHistory = { ledger: { entries: [], last3: [], unassigned: [], totals: { chargedCents: 0, paidCents: 0, refundedCents: 0 }, balanceCents: 0 }, deposits: { entries: [], heldCents: 0, requiredCents: 0 } };
+    const fetch = vi.fn(async (url, options) => {
+      // URL-routed: the tenant card also fetches its payment history on mount.
+      if (String(url).includes("tenant-ledger")) return { ok: true, json: async () => emptyHistory };
+      if (options?.method === "POST") {
+        savedTenants = [...tenants, paula];
+        return { ok: true, json: async () => ({ tenant: paula }) };
+      }
+      return { ok: true, json: async () => ({ tenants: savedTenants, leases: [], leaseMemberships: [], units: [], openCharges: [] }) };
+    });
     vi.stubGlobal("fetch", fetch);
     container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
     await act(async () => root.render(<RentalTenantPanel initialTenants={tenants} />));
