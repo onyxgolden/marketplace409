@@ -23,7 +23,7 @@ import {
   isHomeProject,
   renameProject,
   serializeHomeProject,
-  setCurrentLevel,
+  switchLevel,
   updateLevelDesign,
   validateHomeProject,
 } from "./homeProject";
@@ -83,9 +83,8 @@ describe("DesignerScreen save wiring", () => {
 //   save:   updated = updateLevelDesign(project, project.currentLevelId, () => edited)
 //           renamed = renameProject(updated, headerName)            (when changed)
 //           PUT body = JSON.stringify({ name, design: <envelope> })
-//   switch: synced = updateLevelDesign(project, currentLevelId, () => editedDoc)
-//           switched = setCurrentLevel(synced, targetId)
-//           dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(switched) })
+//   switch: ({ project: switched, design } = switchLevel(project, editedDoc, targetId))
+//           dispatch({ type: "LOAD_DESIGN", design })
 describe("DesignerScreen slice 2 wiring", () => {
   it("saves the envelope with every level intact after editing the current level", () => {
     let project = createHomeProject("Two-story");
@@ -126,17 +125,15 @@ describe("DesignerScreen slice 2 wiring", () => {
 
     // Draw on level 1, then switch to level 2 exactly as the screen does.
     const editedL1 = addWall(getCurrentDesign(project), { x: 0, y: 0 }, { x: 60, y: 0 });
-    const synced = updateLevelDesign(project, project.currentLevelId, () => editedL1);
-    const switched = setCurrentLevel(synced, secondId);
-    expect(getCurrentDesign(switched).walls).toHaveLength(0);
+    const first = switchLevel(project, editedL1, secondId);
+    expect(first.design.walls).toHaveLength(0);
 
     // Draw on level 2, switch back: level 1's wall must still be there.
-    const editedL2 = addWall(getCurrentDesign(switched), { x: 0, y: 0 }, { x: 30, y: 0 });
-    const synced2 = updateLevelDesign(switched, switched.currentLevelId, () => editedL2);
-    const back = setCurrentLevel(synced2, project.currentLevelId);
-    expect(getLevel(back, project.currentLevelId).design.walls).toHaveLength(1);
-    expect(getLevel(back, secondId).design.walls).toHaveLength(1);
-    expect(validateHomeProject(back)).toEqual([]);
+    const editedL2 = addWall(first.design, { x: 0, y: 0 }, { x: 30, y: 0 });
+    const back = switchLevel(first.project, editedL2, project.currentLevelId);
+    expect(getLevel(back.project, project.currentLevelId).design.walls).toHaveLength(1);
+    expect(getLevel(back.project, secondId).design.walls).toHaveLength(1);
+    expect(validateHomeProject(back.project)).toEqual([]);
   });
 
   it("the header rename lands on the envelope name, not just the request", () => {
