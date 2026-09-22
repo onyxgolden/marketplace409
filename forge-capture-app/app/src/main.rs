@@ -81,6 +81,16 @@ struct AppState {
 /// One in-flight chunked media upload. The webview holds the encoded bytes
 /// (it produced them with the platform MediaRecorder); the backend only
 /// reassembles and writes them.
+///
+/// Operational note: despite the chunked transport, the backend assembles
+/// the full payload in memory (`received`) and writes it in one go —
+/// chunked IPC → in-memory assembly → single disk write, NOT a streaming
+/// disk write. An upload approaching the 2 GiB hard cap therefore implies up
+/// to ~2 GiB of resident backend memory. The UI enforces a 1 GiB hard
+/// in-memory limit before upload, so uploads from our own UI cannot
+/// realistically approach that bound; the 2 GiB cap here is a
+/// defense-in-depth ceiling, and a streaming-to-temp-file redesign is the
+/// documented follow-up if uploads ever need to grow past it.
 struct MediaUpload {
     expected_bytes: u64,
     mime: String,
@@ -422,14 +432,21 @@ fn sanitize_stem(hint: Option<&str>) -> String {
 /// MediaRecorder pick (WebM-first) or the GIF exporter; the extension must
 /// agree with it.
 fn media_extension(mime: &str, suggested: Option<&str>) -> Result<String, String> {
-    let from_mime = if mime.starts_with("video/webm") {
-        "webm"
-    } else if mime.starts_with("video/mp4") {
-        "mp4"
-    } else if mime == "image/gif" {
-        "gif"
-    } else {
-        return Err(format!("unsupported media mime for upload: {mime}"));
+    // Exact match on the base MIME (parameters stripped, lowercased). A
+    // starts_with check would wrongly accept "video/webm-evil" or
+    // "video/mp4garbage". The original full mime is still stored on the
+    // upload and in the sidecar — only the allowlist decision uses the base.
+    let base = mime
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let from_mime = match base.as_str() {
+        "video/webm" => "webm",
+        "video/mp4" => "mp4",
+        "image/gif" => "gif",
+        _ => return Err(format!("unsupported media mime for upload: {mime}")),
     };
     if let Some(s) = suggested {
         let s = s.trim_start_matches('.').to_ascii_lowercase();
@@ -442,11 +459,112 @@ fn media_extension(mime: &str, suggested: Option<&str>) -> Result<String, String
     Ok(from_mime.to_string())
 }
 
+/// Read an EBML element ID at `pos`. IDs are 1-4 bytes; the length-marker
+/// bit is part of the value. Returns (id, bytes_consumed), or None on
+/// truncation / malformed width.
+fn ebml_read_id(bytes: &[u8], pos: usize) -> Option<(u64, usize)> {
+    let first = *bytes.get(pos)?;
+    let width = (first.leading_zeros() + 1) as usize;
+    if width == 0 || width > 4 || pos + width > bytes.len() {
+        return None;
+    }
+    let mut id: u64 = 0;
+    for i in 0..width {
+        id = (id << 8) | bytes[pos + i] as u64;
+    }
+    Some((id, width))
+}
+
+/// Read an EBML data-size vint at `pos`. Sizes are 1-8 bytes; the
+/// length-marker bit is NOT part of the value. Returns (size, bytes_consumed)
+/// where size is None for the all-ones "unknown size" marker used by
+/// streaming writers. Returns None on truncation / malformed width.
+fn ebml_read_size(bytes: &[u8], pos: usize) -> Option<(Option<u64>, usize)> {
+    let first = *bytes.get(pos)?;
+    let width = (first.leading_zeros() + 1) as usize;
+    if width == 0 || width > 8 || pos + width > bytes.len() {
+        return None;
+    }
+    let mask: u8 = if width >= 8 { 0 } else { 0xFFu8 >> width };
+    let mut size: u64 = (first & mask) as u64;
+    for i in 1..width {
+        size = (size << 8) | bytes[pos + i] as u64;
+    }
+    let all_ones: u64 = if width >= 8 {
+        u64::MAX
+    } else {
+        (1u64 << (7 * width)) - 1
+    };
+    if size == all_ones {
+        return Some((None, width));
+    }
+    Some((Some(size), width))
+}
+
+/// Confirm the bytes open with an EBML header whose DocType is exactly
+/// "webm". The header is walked child-by-child, bounded to a small cap —
+/// real EBML headers are tens of bytes, never kilobytes. Any truncation,
+/// unknown size, or DocType mismatch fails closed (false). This is a
+/// signature sanity check, not full media validation: the bytes are never
+/// decoded by a native parser in Rust, they are only ever written to disk.
+fn webm_doctype_ok(bytes: &[u8]) -> bool {
+    const EBML_HEADER_ID: u64 = 0x1A45DFA3;
+    const DOCTYPE_ID: u64 = 0x4282;
+    const MAX_HEADER_WALK: u64 = 4096;
+    let (id, id_len) = match ebml_read_id(bytes, 0) {
+        Some(v) => v,
+        None => return false,
+    };
+    if id != EBML_HEADER_ID {
+        return false;
+    }
+    let (size, size_len) = match ebml_read_size(bytes, id_len) {
+        Some(v) => v,
+        None => return false,
+    };
+    let header_len = match size {
+        Some(n) if n <= MAX_HEADER_WALK => n,
+        _ => return false, // unknown or absurd header size: fail closed
+    };
+    let mut pos = id_len + size_len;
+    let end = match (pos as u64).checked_add(header_len) {
+        Some(e) if e <= bytes.len() as u64 => e as usize,
+        _ => return false,
+    };
+    while pos < end {
+        let (child_id, child_id_len) = match ebml_read_id(bytes, pos) {
+            Some(v) => v,
+            None => return false,
+        };
+        let (child_size, child_size_len) = match ebml_read_size(bytes, pos + child_id_len) {
+            Some(v) => v,
+            None => return false,
+        };
+        let data_start = pos + child_id_len + child_size_len;
+        let child_len = match child_size {
+            Some(n) => n as usize,
+            None => return false, // unknown-size child in a bounded buffer: fail closed
+        };
+        let data_end = match data_start.checked_add(child_len) {
+            Some(e) if e <= end => e,
+            _ => return false,
+        };
+        if child_id == DOCTYPE_ID {
+            return &bytes[data_start..data_end] == b"webm";
+        }
+        pos = data_end; // always advances: child_id_len >= 1
+    }
+    false
+}
+
 fn sniff_media_ok(bytes: &[u8], extension: &str) -> bool {
     match extension {
-        // EBML header ID
-        "webm" => bytes.len() >= 4 && bytes[0..4] == [0x1A, 0x45, 0xDF, 0xA3],
-        // 'ftyp' at offset 4
+        // WebM: EBML header declaring DocType "webm" (Matroska shares the
+        // EBML magic but declares a different DocType, so bare magic would
+        // overclaim).
+        "webm" => webm_doctype_ok(bytes),
+        // 'ftyp' at offset 4: ISO BMFF-family signature sanity check, not
+        // full MP4 validation.
         "mp4" => bytes.len() >= 8 && bytes[4..8] == [0x66, 0x74, 0x79, 0x70],
         // GIF87a / GIF89a
         "gif" => bytes.len() >= 6 && (bytes[0..6] == *b"GIF87a" || bytes[0..6] == *b"GIF89a"),
@@ -533,22 +651,24 @@ fn finish_media_upload(id: String, state: State<AppState>) -> Result<MediaUpload
     }
     if !sniff_media_ok(&upload.received, &upload.extension) {
         return Err(format!(
-            "uploaded bytes are not a valid .{} stream — refusing to write",
+            "uploaded bytes failed the .{} media signature check — refusing to write",
             upload.extension
         ));
     }
     let dir = captures_dir()?;
     let final_path = dir.join(format!("{}.{}", upload.stem, upload.extension));
-    // Write to a temp name first, then atomically rename: a crash mid-write
-    // can never leave a partial file under the final name. The `.part`
-    // suffix marks any orphan left by a hard crash as clearly incomplete.
-    let temp_path = dir.join(format!("{}.{}.part", upload.stem, id));
-    std::fs::write(&temp_path, &upload.received)
-        .map_err(|e| format!("cannot write media temp file: {e}"))?;
-    if let Err(e) = std::fs::rename(&temp_path, &final_path) {
-        let _ = std::fs::remove_file(&temp_path); // best effort — no orphan
-        return Err(format!("cannot finalize media file: {e}"));
-    }
+    // Two-phase finalize. Both payloads are written to temp names first and
+    // only exposed via rename afterwards, so a crash mid-write can never
+    // leave a partial file under a final name. The invariant this upholds:
+    // a finalized media file ALWAYS has its .forge.json sidecar. If the
+    // sidecar rename fails after the media rename succeeded, the media file
+    // is removed again (best effort) rather than leaving a sidecar-less
+    // finalized capture — and the upload was already removed from state, so
+    // a failed finish can never be silently "half done". Any `.part` file
+    // left behind by a hard crash is clearly incomplete and never treated
+    // as a capture.
+    let media_temp = dir.join(format!("{}.{}.part", upload.stem, id));
+    let sidecar_temp = dir.join(format!("{}.{}.forge.json.part", upload.stem, id));
     // Provenance sidecar, mirroring the still-capture convention: every
     // file the app writes gets a `.forge.json` next to it.
     let sidecar_path = dir.join(format!("{}.forge.json", upload.stem));
@@ -559,8 +679,26 @@ fn finish_media_upload(id: String, state: State<AppState>) -> Result<MediaUpload
         serde_json::to_string(&forge_capture_core::timestamp::now_utc_iso8601())
             .unwrap_or_else(|_| "\"\"".to_string()),
     );
-    std::fs::write(&sidecar_path, sidecar.as_bytes())
-        .map_err(|e| format!("cannot write sidecar: {e}"))?;
+    std::fs::write(&sidecar_temp, sidecar.as_bytes())
+        .map_err(|e| format!("cannot write sidecar temp file: {e}"))?;
+    if let Err(e) = std::fs::write(&media_temp, &upload.received) {
+        let _ = std::fs::remove_file(&sidecar_temp); // best effort — no orphan
+        return Err(format!("cannot write media temp file: {e}"));
+    }
+    if let Err(e) = std::fs::rename(&media_temp, &final_path) {
+        let _ = std::fs::remove_file(&media_temp); // best effort — no orphan
+        let _ = std::fs::remove_file(&sidecar_temp);
+        return Err(format!("cannot finalize media file: {e}"));
+    }
+    if let Err(e) = std::fs::rename(&sidecar_temp, &sidecar_path) {
+        // Media is already finalized at this point; leaving it without its
+        // sidecar would break the every-file-has-a-sidecar invariant, so
+        // roll the media file back instead of reporting a "successful"
+        // capture that violates it.
+        let _ = std::fs::remove_file(&final_path);
+        let _ = std::fs::remove_file(&sidecar_temp);
+        return Err(format!("cannot finalize sidecar: {e}"));
+    }
     Ok(MediaUploadResultDto {
         path: final_path.to_string_lossy().into_owned(),
         bytes_written: upload.received.len() as u64,
@@ -1418,7 +1556,9 @@ mod dto_ipc_tests {
             media_extension("video/webm;codecs=vp9", None).unwrap(),
             "webm"
         );
+        // Parameters and case are normalized for the allowlist decision.
         assert_eq!(media_extension("video/webm", None).unwrap(), "webm");
+        assert_eq!(media_extension("VIDEO/WEBM", None).unwrap(), "webm");
         assert_eq!(media_extension("video/mp4", None).unwrap(), "mp4");
         assert_eq!(media_extension("image/gif", Some("gif")).unwrap(), "gif");
         assert_eq!(media_extension("image/gif", None).unwrap(), "gif");
@@ -1428,6 +1568,10 @@ mod dto_ipc_tests {
     fn media_extension_rejects_mismatch_and_unknown() {
         assert!(media_extension("video/x-matroska", None).is_err());
         assert!(media_extension("application/octet-stream", None).is_err());
+        // Prefix traps: a starts_with allowlist would accept these.
+        assert!(media_extension("video/webm-evil", None).is_err());
+        assert!(media_extension("video/webmanything", None).is_err());
+        assert!(media_extension("video/mp4garbage", None).is_err());
         // Suggested extension must agree with the mime, not override it.
         assert!(media_extension("video/webm", Some("mp4")).is_err());
         assert!(media_extension("video/webm", Some("exe")).is_err());
@@ -1447,13 +1591,28 @@ mod dto_ipc_tests {
 
     #[test]
     fn sniff_media_ok_recognizes_magic_bytes() {
-        assert!(sniff_media_ok(&[0x1A, 0x45, 0xDF, 0xA3, 0x00], "webm"));
+        // Minimal WebM EBML header: [1A 45 DF A3][87 size=7][42 82][84 size=4]["webm"]
+        let webm_header: Vec<u8> = vec![
+            0x1A, 0x45, 0xDF, 0xA3, 0x87, 0x42, 0x82, 0x84, b'w', b'e', b'b', b'm',
+        ];
+        assert!(sniff_media_ok(&webm_header, "webm"));
+        // Bare EBML magic without a DocType proves EBML, not WebM — must fail.
+        assert!(!sniff_media_ok(&[0x1A, 0x45, 0xDF, 0xA3, 0x00], "webm"));
         assert!(!sniff_media_ok(&[0x00, 0x00, 0x00, 0x20], "webm"));
+        // Matroska shares the EBML magic but declares a different DocType.
+        let mkv_header: Vec<u8> = vec![
+            0x1A, 0x45, 0xDF, 0xA3, 0x8B, 0x42, 0x82, 0x88, b'm', b'a', b't', b'r', b'o', b's',
+            b'k', b'a',
+        ];
+        assert!(!sniff_media_ok(&mkv_header, "webm"));
+        // Truncated header and unknown-size header fail closed.
+        assert!(!sniff_media_ok(&[0x1A, 0x45, 0xDF, 0xA3], "webm"));
+        assert!(!sniff_media_ok(&[0x1A, 0x45, 0xDF, 0xA3, 0xFF], "webm"));
         assert!(sniff_media_ok(
             &[0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70],
             "mp4"
         ));
-        assert!(!sniff_media_ok(&[0x1A, 0x45, 0xDF, 0xA3], "mp4"));
+        assert!(!sniff_media_ok(&webm_header, "mp4"));
         assert!(sniff_media_ok(b"GIF89a....", "gif"));
         assert!(sniff_media_ok(b"GIF87a....", "gif"));
         assert!(!sniff_media_ok(b"GIF89a....", "webm"));
