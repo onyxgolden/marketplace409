@@ -4,6 +4,7 @@ import Header from "@/components/Header";
 import { createClient } from "@/lib/supabase/client";
 import { signOutSafely } from "@/lib/auth/signOutSafely.js";
 import { useCredentialAuth } from "@/lib/auth/useCredentialAuth.js";
+import { useLoginSafety } from "@/lib/auth/useLoginSafety.js";
 import { useEffect, useState } from "react";
 
 const supabase = createClient();
@@ -40,6 +41,10 @@ export default function AuthPage() {
     authAction, setAuthAction, authActionPending,
     signIn, signUp, resetPassword: resetPasswordViaHook,
   } = useCredentialAuth({ supabase, emailRedirectTo: () => buildAuthRedirect(invitedEmail) });
+
+  // Reports each SIGNED_IN event to /api/auth/record-login once per session
+  // for new-location alerting. Alert-only: never blocks or delays the login.
+  useLoginSafety(supabase);
 
   useEffect(() => {
     const invited = currentParams().get("email")?.trim() || null;
