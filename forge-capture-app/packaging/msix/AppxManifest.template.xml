@@ -10,7 +10,7 @@
   placeholders below are fine for local test packaging only.
 
   Tauri v2 does not emit MSIX, so this manifest wraps the raw Win32 exe
-  produced by `cargo tauri build --no-bundle` (see README.md). The package
+  produced by `cargo tauri build` with bundling disabled (see README.md). The package
   is uploaded UNSIGNED — Partner Center signs Store submissions itself.
 -->
 <Package
@@ -28,7 +28,7 @@
   <Properties>
     <DisplayName>FORGE Capture</DisplayName>
     <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
-    <Logo>Assets\StoreLogo.png</Logo>
+    <Logo>Assets\Square150x150Logo.png</Logo>
   </Properties>
 
   <Resources>

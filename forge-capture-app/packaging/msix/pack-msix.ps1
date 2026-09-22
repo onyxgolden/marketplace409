@@ -113,7 +113,8 @@ function Write-Logo($w, $h, $name, [switch]$Wide) {
     $bmp.Save((Join-Path $AssetsDir $name), [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()
 }
-Write-Logo 50 50 "StoreLogo.png"
+# The package <Logo> references Square150x150Logo.png directly — no separate
+# StoreLogo asset, so there is nothing undersized for validation to reject.
 Write-Logo 44 44 "Square44x44Logo.png"
 Write-Logo 71 71 "Square71x71Logo.png"
 Write-Logo 150 150 "Square150x150Logo.png"
@@ -149,6 +150,19 @@ Write-Host "Unsigned MSIX: $MsixPath" -ForegroundColor Green
 if ($SelfSign) {
     Write-Host ""
     Write-Host "SELF-SIGN IS FOR LOCAL TESTING ONLY. Never upload this package to the Store." -ForegroundColor Red
+    if ($Publisher -notmatch '^CN=') {
+        throw "Self-sign requires -Publisher to be a certificate subject (e.g. 'CN=FORGE-Capture-Test'). Got: '$Publisher'"
+    }
+    # The install fails with a publisher mismatch when the certificate
+    # subject and the manifest's Publisher identity differ, even though
+    # signing itself succeeds — verify against the staged manifest so a
+    # mismatch fails here with a clear message instead of at install time.
+    $stagedManifest = [xml](Get-Content (Join-Path $StageDir "AppxManifest.xml") -Raw)
+    $manifestPublisher = $stagedManifest.Package.Identity.Publisher
+    if ($manifestPublisher -ne $Publisher) {
+        throw "Manifest publisher '$manifestPublisher' does not match the self-sign certificate subject '$Publisher'. These must match or the package will not install."
+    }
+    Write-Host "Publisher (manifest + certificate): $Publisher" -ForegroundColor Cyan
     $cert = New-SelfSignedCertificate -Type Custom -Subject $Publisher `
         -KeyUsage DigitalSignature -FriendlyName "FORGE Capture (test only)" `
         -CertStoreLocation "Cert:\CurrentUser\My" `

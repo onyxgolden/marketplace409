@@ -37,9 +37,9 @@ Tauri guide: `learn.microsoft.com/windows/apps/dev-tools/winapp-cli/guides/tauri
 ```
 
 Output: `out\FORGECapture_0.2.0.0_x64.msix` — **unsigned**. Upload it
-as-is in a Partner Center submission; Microsoft signs it after
-certification. There is deliberately no certificate handling for the
-Store path: nothing to buy, nothing to store in-repo.
+as-is in a Partner Center submission; Partner Center handles signing as
+part of the Store certification flow. There is deliberately no certificate
+handling for the Store path: nothing to buy, nothing to store in-repo.
 
 Local install test (optional):
 
