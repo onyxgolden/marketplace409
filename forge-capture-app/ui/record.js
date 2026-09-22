@@ -735,7 +735,7 @@ export function renderRecordControls(container, deps = {}) {
   const combineBtn = el("button", { id: "rec-combine" }, "Combine selected");
   section.append(
     el("h3", {}, "Saved recordings"),
-    el("p", { class: "hint" }, "Tick two or more to join them end to end (same format only)."),
+    el("p", { class: "hint" }, "Tick two or more to join them end to end (same format only). Joining preserves clip order, not frame-perfect continuity."),
     listEl,
     el("div", { class: "row" }, combineBtn),
   );
