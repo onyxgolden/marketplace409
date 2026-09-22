@@ -87,6 +87,13 @@ import {
   unitCostLabel,
 } from "@/domains/roomDesigner/homeEstimate";
 import ProposalPrintOverlay from "./ProposalPrintOverlay";
+import {
+  ELEVATION_DIRECTIONS,
+  buildElevation,
+  buildStackedElevation,
+} from "@/domains/roomDesigner/homeSections";
+import ElevationSvg from "./ElevationSvg";
+import ElevationPrintOverlay from "./ElevationPrintOverlay";
 import { groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
 import ToolPalette from "./ToolPalette";
 
@@ -137,6 +144,9 @@ export default function DesignerScreen({ projectId, initialName }) {
   // HOME DESIGNER slice 4: proposal print overlay state.
   const [proposalOpen, setProposalOpen] = useState(false);
   const [proposalEstimate, setProposalEstimate] = useState(null);
+  // HOME DESIGNER slice 5: elevation print overlay state.
+  const [elevationOpen, setElevationOpen] = useState(false);
+  const [elevationView, setElevationView] = useState(null);
 
   // Latest snapshots for saves: a queued save must capture the document and
   // name at the moment it actually sends, not when save() was invoked.
@@ -352,6 +362,32 @@ export default function DesignerScreen({ projectId, initialName }) {
     openProposal(result);
   };
 
+  // HOME DESIGNER slice 5: elevation printing follows the same print the
+  // live on-screen view contract as the proposal — the sheet always matches
+  // what the designer is showing.
+  const openElevation = (elevation) => {
+    setElevationView(elevation);
+    setElevationOpen(true);
+  };
+
+  // "Save and print" for elevations: persist first, then rebuild the view
+  // from the saved project plus the on-screen design.
+  const saveAndPrintElevation = async (direction, scope) => {
+    await save();
+    const current = projectRef.current;
+    if (!current) return;
+    const build = scope === "stacked" ? buildStackedElevation : buildElevation;
+    const result = build(current, {
+      direction,
+      editedDesign: stateRef.current.design,
+    });
+    if (!result.ok) {
+      setStatus({ kind: "error", message: result.error });
+      return;
+    }
+    openElevation(result);
+  };
+
   useEffect(() => {
     const isField = (el) =>
       el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT");
@@ -523,7 +559,7 @@ export default function DesignerScreen({ projectId, initialName }) {
 
         {/* right panel */}
         <aside className="w-72 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3">
-          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} />
         </aside>
 
         {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
@@ -552,11 +588,18 @@ export default function DesignerScreen({ projectId, initialName }) {
           onClose={() => setProposalOpen(false)}
         />
       )}
+      {/* HOME DESIGNER slice 5: the printable elevation sheet. */}
+      {elevationOpen && elevationView && (
+        <ElevationPrintOverlay
+          elevation={elevationView}
+          onClose={() => setElevationOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
-function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint }) {
+function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation }) {
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate } = state;
 
   // Scale calibration for the background underlay (Visio trace-over workflow).
@@ -645,6 +688,15 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
         onSetUnitCost={onSetUnitCost}
         onPrintProposal={onPrintProposal}
         onSaveAndPrint={onSaveAndPrint}
+      />
+      {/* HOME DESIGNER slice 5: read-only orthographic elevations — the
+          remodel seen vertically, derived from the same plan geometry. */}
+      <ElevationSection
+        project={project}
+        design={design}
+        dirty={state.dirty}
+        onPrintElevation={onPrintElevation}
+        onSaveAndPrintElevation={onSaveAndPrintElevation}
       />
       <LayerToggles state={state} dispatch={dispatch} />
       <SheetsSection
@@ -1495,6 +1547,167 @@ export function EstimateSection({
                   onSaveAndPrint();
                 }}
                 className="rounded bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+              >
+                Save and print
+              </button>
+              <button
+                onClick={() => setShowDirtyWarning(false)}
+                className="rounded bg-gray-700 px-3 py-2 text-sm text-gray-200 hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// HOME DESIGNER slice 5: read-only orthographic elevations of the plan
+// geometry. The viewer builds the elevation from the on-screen design
+// (projectWithEditedDesign, like Measurements and Estimate) and renders it
+// as SVG; printing goes through the shared ElevationPrintOverlay flow. The
+// viewer is deliberately named "Elevations" — true cut-through sections are
+// a later slice, and the UI should not imply a capability that does not
+// exist yet.
+export function ElevationSection({
+  project,
+  design,
+  dirty,
+  onPrintElevation,
+  onSaveAndPrintElevation,
+}) {
+  const [direction, setDirection] = useState("N");
+  const [scope, setScope] = useState("level");
+  const [showDirtyWarning, setShowDirtyWarning] = useState(false);
+  if (!project) return null;
+  const build = scope === "stacked" ? buildStackedElevation : buildElevation;
+  const elevation = build(projectWithEditedDesign(project, design), {
+    direction,
+  });
+  if (!elevation.ok) {
+    return (
+      <div className="mb-4">
+        <h2 className="mb-2 text-sm font-semibold text-white">Elevations</h2>
+        <p className="rounded bg-red-900/40 px-2 py-1 text-xs text-red-200">
+          Elevation unavailable: {elevation.error}
+        </p>
+      </div>
+    );
+  }
+  const requestPrint = () => {
+    if (dirty) {
+      setShowDirtyWarning(true);
+      return;
+    }
+    onPrintElevation(elevation);
+  };
+  const wallCount = elevation.levels.reduce((n, l) => n + l.wallCount, 0);
+  const multiLevel = project.levels && project.levels.length > 1;
+  return (
+    <div className="mb-4">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-white">Elevations</h2>
+        <button
+          onClick={requestPrint}
+          className="rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-500"
+        >
+          Print elevation
+        </button>
+      </div>
+      <p className="mb-2 text-[11px] text-gray-500">
+        Read-only orthographic views from plan geometry. Sections (coming
+        later).
+      </p>
+      <div className="mb-2 flex flex-wrap gap-1" role="group" aria-label="Elevation direction">
+        {ELEVATION_DIRECTIONS.map((d) => (
+          <button
+            key={d}
+            onClick={() => setDirection(d)}
+            aria-pressed={direction === d}
+            className={`rounded px-2 py-1 text-xs font-semibold ${
+              direction === d
+                ? "bg-emerald-700 text-white"
+                : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+            }`}
+          >
+            {d}
+          </button>
+        ))}
+        {multiLevel && (
+          <>
+            <span className="mx-1 self-center text-[11px] text-gray-600">·</span>
+            <button
+              onClick={() => setScope("level")}
+              aria-pressed={scope === "level"}
+              className={`rounded px-2 py-1 text-xs font-semibold ${
+                scope === "level"
+                  ? "bg-emerald-700 text-white"
+                  : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+              }`}
+            >
+              Current level
+            </button>
+            <button
+              onClick={() => setScope("stacked")}
+              aria-pressed={scope === "stacked"}
+              className={`rounded px-2 py-1 text-xs font-semibold ${
+                scope === "stacked"
+                  ? "bg-emerald-700 text-white"
+                  : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+              }`}
+            >
+              All levels stacked
+            </button>
+          </>
+        )}
+      </div>
+      {wallCount === 0 ? (
+        <p className="rounded bg-gray-800/60 px-2 py-2 text-xs leading-relaxed text-gray-400">
+          Draw walls on the plan to see an elevation.
+        </p>
+      ) : (
+        <div className="rounded bg-gray-950/60 px-1 py-2">
+          <ElevationSvg elevation={elevation} dark={true} id="panel" />
+        </div>
+      )}
+      {elevation.assumptions && elevation.assumptions.length > 0 && (
+        <p className="mt-1 text-[11px] leading-relaxed text-amber-200/70">
+          <span className="rounded bg-amber-900/50 px-1 py-0.5 font-semibold text-amber-200">
+            Partial view
+          </span>{" "}
+          Assumptions: {elevation.assumptions.join("; ")}.
+        </p>
+      )}
+      {showDirtyWarning && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="alertdialog"
+          aria-label="Unsaved changes"
+        >
+          <div className="w-full max-w-sm rounded-lg bg-gray-800 p-4 shadow-xl">
+            <h3 className="mb-2 text-sm font-semibold text-white">Unsaved changes</h3>
+            <p className="mb-4 text-xs leading-relaxed text-gray-300">
+              This elevation sheet uses current unsaved changes. Save first if
+              you want the sheet tied to the saved project.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => {
+                  setShowDirtyWarning(false);
+                  onPrintElevation(elevation);
+                }}
+                className="rounded bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"
+              >
+                Print current version
+              </button>
+              <button
+                onClick={() => {
+                  setShowDirtyWarning(false);
+                  onSaveAndPrintElevation(direction, scope);
+                }}
+                className="rounded bg-emerald-600 px-3 py-2 text-sm text-gray-200 hover:bg-gray-600"
               >
                 Save and print
               </button>
