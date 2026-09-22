@@ -148,6 +148,21 @@ describe("designerReducer", () => {
     expect(state.dirty).toBe(true);
   });
 
+  // HOME DESIGNER slice 2: TOUCH marks the project dirty when the envelope
+  // (levels/names) changes outside the edited document, and bumps the
+  // revision so a save in flight cannot swallow it.
+  it("TOUCH marks dirty and bumps the revision without touching the design", () => {
+    let state = stateWithWall();
+    state = designerReducer(state, { type: "MARK_SAVED", savedRevision: state.designRevision });
+    expect(state.dirty).toBe(false);
+    const wallsBefore = state.design.walls;
+    const revisionBefore = state.designRevision;
+    state = designerReducer(state, { type: "TOUCH" });
+    expect(state.dirty).toBe(true);
+    expect(state.designRevision).toBe(revisionBefore + 1);
+    expect(state.design.walls).toBe(wallsBefore);
+  });
+
   it("serializes overlapping saves so a stale revision never overwrites a newer one", async () => {
     const schedule = createSaveScheduler();
     let state = createInitialState(createEmptyDesign("Test"));

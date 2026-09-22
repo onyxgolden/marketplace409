@@ -15,9 +15,15 @@
 import { describe, expect, it } from "vitest";
 import { addWall, createEmptyDesign } from "./designerDocument";
 import {
+  addLevel,
+  createHomeProject,
   ensureHomeProject,
   getCurrentDesign,
+  getLevel,
   isHomeProject,
+  renameProject,
+  serializeHomeProject,
+  setCurrentLevel,
   updateLevelDesign,
   validateHomeProject,
 } from "./homeProject";
@@ -67,5 +73,95 @@ describe("DesignerScreen save wiring", () => {
     // The envelope never leaks into the persisted payload.
     expect(putBody.design.levels).toBeUndefined();
     expect(validateHomeProject(updated)).toEqual([]);
+  });
+});
+
+// HOME DESIGNER slice 2: the screen persists the whole HomeProject envelope
+// (levels[], currentLevelId, building metadata). Exact sequence replayed:
+//   load:   project = ensureHomeProject(body.project.design, body.project.name)
+//           dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(project) })
+//   save:   updated = updateLevelDesign(project, project.currentLevelId, () => edited)
+//           renamed = renameProject(updated, headerName)            (when changed)
+//           PUT body = JSON.stringify({ name, design: <envelope> })
+//   switch: synced = updateLevelDesign(project, currentLevelId, () => editedDoc)
+//           switched = setCurrentLevel(synced, targetId)
+//           dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(switched) })
+describe("DesignerScreen slice 2 wiring", () => {
+  it("saves the envelope with every level intact after editing the current level", () => {
+    let project = createHomeProject("Two-story");
+    project = addLevel(project, "Second floor");
+    const secondId = project.levels[1].id;
+
+    // User draws on level 1, then the screen syncs and saves the envelope.
+    const edited = addWall(getCurrentDesign(project), { x: 0, y: 0 }, { x: 60, y: 0 });
+    const updated = updateLevelDesign(project, project.currentLevelId, () => edited);
+    const putBody = JSON.parse(JSON.stringify({ name: "Two-story", design: updated }));
+
+    expect(putBody.design.levels).toHaveLength(2);
+    expect(putBody.design.levels[0].design.walls).toHaveLength(1);
+    expect(putBody.design.levels[1].design.walls).toHaveLength(0);
+    expect(putBody.design.levels[1].id).toBe(secondId);
+    expect(putBody.design.currentLevelId).toBe(updated.currentLevelId);
+    expect(validateHomeProject(updated)).toEqual([]);
+  });
+
+  it("a legacy payload saves back as a one-level envelope", () => {
+    const legacy = addWall(createEmptyDesign("Shop"), { x: 0, y: 0 }, { x: 60, y: 0 });
+    const project = ensureHomeProject(legacy, "Shop project");
+    const edited = addWall(getCurrentDesign(project), { x: 60, y: 0 }, { x: 60, y: 40 });
+    const updated = updateLevelDesign(project, project.currentLevelId, () => edited);
+    const putBody = JSON.parse(JSON.stringify({ name: "Shop project", design: updated }));
+
+    // Legacy rows upgrade to the envelope on first save — no migration needed.
+    expect(isHomeProject(putBody.design)).toBe(true);
+    expect(putBody.design.levels).toHaveLength(1);
+    expect(putBody.design.levels[0].design.walls).toHaveLength(2);
+    expect(putBody.design.currentLevelId).toBe(putBody.design.levels[0].id);
+  });
+
+  it("switching levels keeps each level's edits", () => {
+    let project = createHomeProject("Two-story");
+    project = addLevel(project, "Second floor");
+    const secondId = project.levels[1].id;
+
+    // Draw on level 1, then switch to level 2 exactly as the screen does.
+    const editedL1 = addWall(getCurrentDesign(project), { x: 0, y: 0 }, { x: 60, y: 0 });
+    const synced = updateLevelDesign(project, project.currentLevelId, () => editedL1);
+    const switched = setCurrentLevel(synced, secondId);
+    expect(getCurrentDesign(switched).walls).toHaveLength(0);
+
+    // Draw on level 2, switch back: level 1's wall must still be there.
+    const editedL2 = addWall(getCurrentDesign(switched), { x: 0, y: 0 }, { x: 30, y: 0 });
+    const synced2 = updateLevelDesign(switched, switched.currentLevelId, () => editedL2);
+    const back = setCurrentLevel(synced2, project.currentLevelId);
+    expect(getLevel(back, project.currentLevelId).design.walls).toHaveLength(1);
+    expect(getLevel(back, secondId).design.walls).toHaveLength(1);
+    expect(validateHomeProject(back)).toEqual([]);
+  });
+
+  it("the header rename lands on the envelope name, not just the request", () => {
+    const project = ensureHomeProject(createEmptyDesign("Old"), "Old");
+    const updated = updateLevelDesign(project, project.currentLevelId, (d) => d);
+    const renamed = renameProject(updated, "New name");
+    const putBody = JSON.parse(JSON.stringify({ name: "New name", design: renamed }));
+    expect(putBody.design.name).toBe("New name");
+    expect(putBody.name).toBe("New name");
+  });
+
+  it("the sync path rejects a corrupt document before it can enter the envelope", () => {
+    const project = ensureHomeProject(createEmptyDesign("Shop"), "Shop");
+    expect(() =>
+      updateLevelDesign(project, project.currentLevelId, () => ({ version: 999 })),
+    ).toThrow(/invalid/i);
+  });
+
+  it("an envelope payload with two levels loads both levels for the switcher", () => {
+    let stored = createHomeProject("Two-story");
+    stored = addLevel(stored, "Second floor");
+    const persisted = JSON.parse(serializeHomeProject(stored));
+    const project = ensureHomeProject(persisted, "Two-story");
+    expect(project.levels.map((l) => l.name)).toEqual(["Level 1", "Second floor"]);
+    expect(project.currentLevelId).toBe(stored.currentLevelId);
+    expect(validateHomeProject(project)).toEqual([]);
   });
 });
