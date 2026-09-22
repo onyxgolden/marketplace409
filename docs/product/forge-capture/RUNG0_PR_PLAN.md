@@ -48,6 +48,27 @@ Each PR: focused tests + `vitest run` + `npx eslint` + `npx next build` + `git d
 Migrations (Rung 5 tables) ship in-PR but are **never applied without Jason's explicit
 approval**, per standing rules. Nothing merges without architecture review.
 
+## 2a. Amendment (2026-09-22): Print Screen takeover + MSIX packaging
+
+**Approved by Jason 2026-09-22 — build now (tokens only).** This slice
+complements Rung 6 entry wiring; it does not change any rung's scope.
+
+- **Print Screen system-default takeover:** the Tauri shell registers
+  `PrintScreen` as a global shortcut so pressing it brings up FORGE Capture,
+  replacing the Snipping Tool invocation. Registration is best-effort and
+  degrades gracefully (log + status flag, never a startup failure) because
+  the OS or another capture tool may already hold the key.
+- **Microsoft Store (MSIX) packaging scaffolding:** manifest template +
+  `pack-msix.ps1` (raw exe → `makeappx` → unsigned `.msix`) under
+  `forge-capture-app/packaging/msix/`, plus
+  `docs/product/forge-capture/MSIX_STORE_CHECKLIST.md` with the exact
+  remaining manual steps. Tauri v2 does not emit MSIX natively, so the
+  package is assembled from the `--no-bundle` exe; Partner Center re-signs
+  Store submissions, so no certificate is bought or stored in-repo.
+- **Explicitly later (Jason's action):** Partner Center developer account
+  (~$19 one-time), app-name reservation (Identity Name / Publisher), the
+  submission itself, and any real-device install testing.
+
 ## 3. Per-rung risk estimates
 
 | Rung | Risk | Main risks |

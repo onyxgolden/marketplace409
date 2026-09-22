@@ -34,6 +34,7 @@ use forge_capture_core::scroll::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 // ---------------------------------------------------------------------------
 // App state
@@ -66,6 +67,10 @@ struct AppState {
     /// Cooperative abort flags for in-flight scrolling captures, keyed by
     /// the run id handed to `start_scroll_capture`.
     scroll_aborts: Mutex<HashMap<String, AbortFlag>>,
+    /// Whether the Print Screen global-shortcut takeover registered
+    /// successfully at startup. Set once in `setup`; read by the
+    /// `printscreen_takeover_active` command so the UI can show the status.
+    printscreen_active: AtomicBool,
 }
 
 // ---------------------------------------------------------------------------
@@ -855,6 +860,56 @@ fn scroll_result_dto(
 }
 
 // ---------------------------------------------------------------------------
+// Print Screen system-default takeover
+// ---------------------------------------------------------------------------
+
+/// Bring the main Capture window forward: unminimize, show, focus.
+/// Failures are logged, never fatal — a stuck window must not break the
+/// hotkey path.
+fn focus_capture_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        if let Err(e) = w.set_focus() {
+            eprintln!("[capture] could not focus capture window: {e}");
+        }
+    }
+}
+
+/// Register Print Screen as the global capture shortcut (best effort).
+///
+/// Returns true when the OS accepted the registration. A failure is
+/// *expected* on machines where the OS already reserves the key (Windows 11
+/// maps Print Screen to screen snipping via an Accessibility setting) or
+/// where another capture tool holds it — it is logged loudly and never
+/// fails startup. The accelerator string and the launch-not-shutter action
+/// are owned by [`forge_capture_core::hotkey`].
+fn register_printscreen_shortcut(app: &tauri::AppHandle) -> bool {
+    use tauri_plugin_global_shortcut::ShortcutState;
+    let outcome = app
+        .global_shortcut()
+        .on_shortcut(
+            forge_capture_core::hotkey::PRINTSCREEN_ACCELERATOR,
+            |app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    focus_capture_window(app);
+                }
+            },
+        )
+        .map_err(|e| e.to_string());
+    let status = forge_capture_core::hotkey::status_from_registration(outcome);
+    eprintln!("[capture] {}", status.describe());
+    status.active()
+}
+
+/// Whether the Print Screen takeover is active in this session. The UI can
+/// surface this so the user knows if the OS kept the key for itself.
+#[tauri::command]
+fn printscreen_takeover_active(state: State<AppState>) -> bool {
+    state.printscreen_active.load(Ordering::Relaxed)
+}
+
+// ---------------------------------------------------------------------------
 // Startup
 // ---------------------------------------------------------------------------
 
@@ -876,12 +931,24 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState {
             captures: Mutex::new(HashMap::new()),
             pending_overlay: Mutex::new(None),
             id_counter: Mutex::new(0),
             used_stems: Mutex::new(HashSet::new()),
             scroll_aborts: Mutex::new(HashMap::new()),
+            printscreen_active: AtomicBool::new(false),
+        })
+        .setup(|app| {
+            // Best-effort Print Screen takeover: register the global
+            // shortcut and record whether the OS accepted it. A rejection
+            // never fails startup (see register_printscreen_shortcut).
+            let active = register_printscreen_shortcut(app.handle());
+            app.state::<AppState>()
+                .printscreen_active
+                .store(active, Ordering::Relaxed);
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             app_version,
@@ -897,6 +964,7 @@ fn main() {
             cancel_region_pick,
             start_scroll_capture,
             stop_scroll_capture,
+            printscreen_takeover_active,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run FORGE Capture");

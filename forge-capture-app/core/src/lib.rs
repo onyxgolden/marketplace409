@@ -26,10 +26,14 @@
 //!   raster-observation) built on [`scroll::run_scroll`].
 //! - [`native`] — thin OS boundary: real GDI capture on Windows, an explicit
 //!   error elsewhere.
+//! - [`hotkey`] — Print Screen takeover contract: the accelerator string,
+//!   the launch-not-shutter action, and the graceful-degradation status
+//!   mapping. Pure logic; the Tauri shell performs the OS registration.
 
 pub mod artifact;
 pub mod coords;
 pub mod engines;
+pub mod hotkey;
 pub mod native;
 pub mod png;
 pub mod result;

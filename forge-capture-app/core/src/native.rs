@@ -377,8 +377,10 @@ mod win {
                 position_physical: None,
             };
             if blt_ok && include_cursor {
-                let mut ci = CURSORINFO::default();
-                ci.cbSize = std::mem::size_of::<CURSORINFO>() as u32;
+                let mut ci = CURSORINFO {
+                    cbSize: std::mem::size_of::<CURSORINFO>() as u32,
+                    ..Default::default()
+                };
                 if GetCursorInfo(&mut ci).is_ok() && ci.flags.0 & CURSOR_SHOWING.0 != 0 {
                     // ptScreenPos is the cursor *hotspot*: subtract it so the
                     // hotspot lands on the reported position instead of the
@@ -580,13 +582,15 @@ mod win {
                 let _ = GlobalFree(Some(hmem));
                 return Err(last_error("GlobalLock"));
             }
-            let mut bmi = BITMAPINFOHEADER::default();
-            bmi.biSize = header_size as u32;
-            bmi.biWidth = width as i32;
-            bmi.biHeight = height as i32; // bottom-up
-            bmi.biPlanes = 1;
-            bmi.biBitCount = 32;
-            bmi.biCompression = BI_RGB.0;
+            let bmi = BITMAPINFOHEADER {
+                biSize: header_size as u32,
+                biWidth: width as i32,
+                biHeight: height as i32, // bottom-up
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            };
             std::ptr::copy_nonoverlapping(&bmi as *const _ as *const u8, ptr, header_size);
             // Flip rows and swizzle RGBA→BGRA.
             let dst = std::slice::from_raw_parts_mut(ptr.add(header_size), pixels);
@@ -595,7 +599,11 @@ mod win {
                 let src_row = &rgba[row * stride..(row + 1) * stride];
                 let dst_row = &mut dst
                     [(height as usize - 1 - row) * stride..(height as usize - row) * stride];
-                for (s, d) in src_row.chunks_exact(4).zip(dst_row.chunks_exact_mut(4)) {
+                // Strides are multiples of 4 by construction; the remainders
+                // are empty and ignored.
+                let (src_chunks, _) = src_row.as_chunks::<4>();
+                let (dst_chunks, _) = dst_row.as_chunks_mut::<4>();
+                for (s, d) in src_chunks.iter().zip(dst_chunks.iter_mut()) {
                     d[0] = s[2];
                     d[1] = s[1];
                     d[2] = s[0];

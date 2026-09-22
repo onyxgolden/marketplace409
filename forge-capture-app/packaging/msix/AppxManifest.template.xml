@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FORGE Capture — MSIX package manifest TEMPLATE.
+
+  Tokens ({{LIKE_THIS}}) are filled in by pack-msix.ps1 from its
+  parameters. Never hand-edit a generated copy; edit this template.
+
+  Identity Name / Publisher / PublisherDisplayName MUST match the values
+  Partner Center issues when the app name is reserved. Until then the
+  placeholders below are fine for local test packaging only.
+
+  Tauri v2 does not emit MSIX, so this manifest wraps the raw Win32 exe
+  produced by `cargo tauri build --no-bundle` (see README.md). The package
+  is uploaded UNSIGNED — Partner Center signs Store submissions itself.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10">
+
+  <Identity
+    Name="{{IDENTITY_NAME}}"
+    Publisher="{{PUBLISHER}}"
+    Version="{{VERSION}}"
+    ProcessorArchitecture="{{ARCH}}" />
+
+  <Properties>
+    <DisplayName>FORGE Capture</DisplayName>
+    <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Capabilities>
+    <!-- Full-trust desktop bridge: FORGE Capture is a Win32 app (global
+         hotkeys, GDI capture, clipboard). No UWP-only sandboxing. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+  <Applications>
+    <Application
+      Id="FORGECapture"
+      Executable="forge-capture-app.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="FORGE Capture"
+        Description="Local-first screen capture: full monitor, window, region, and scrolling capture with no account and no upload."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile
+          Wide310x150Logo="Assets\Wide310x150Logo.png"
+          Square71x71Logo="Assets\Square71x71Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+</Package>
