@@ -261,6 +261,43 @@ export function setCurrentLevel(project, levelId) {
 }
 
 /**
+ * Atomic level switch — the ONLY sanctioned path for moving currentLevelId
+ * while the editor holds unsaved edits.
+ *
+ * The screen keeps two sources of truth: the HomeProject envelope and the
+ * reducer's edited document. A switch must never read the "current" level
+ * from one and the "current" design from the other and silently disagree
+ * about which level is being edited. This function takes all three inputs
+ * explicitly — the envelope, the design the editor is showing, and the
+ * target id — and performs the order that matters:
+ *
+ *   1. validate the target level (a damaged target is refused, nothing moves)
+ *   2. sync the editor's design back into the level being left
+ *   3. move currentLevelId
+ *
+ * Returns { project, design }: the new envelope and the target level's
+ * design, ready for LOAD_DESIGN. Throws on an unknown target id or a
+ * damaged target design; a throw leaves the input project untouched.
+ * Every operation is pure: the input project is never mutated.
+ */
+export function switchLevel(project, currentDesign, targetId) {
+  assertProject(project);
+  if (project.currentLevelId === targetId) {
+    return { project, design: currentDesign };
+  }
+  const target = getLevel(project, targetId); // throws on unknown id
+  const problems = validateDesign(target.design);
+  if (problems.length > 0) {
+    throw new Error(
+      `Level "${target.name}" is damaged (${problems[0]}). It was not opened.`,
+    );
+  }
+  const synced = updateLevelDesign(project, project.currentLevelId, () => currentDesign);
+  const switched = setCurrentLevel(synced, targetId);
+  return { project: switched, design: getCurrentDesign(switched) };
+}
+
+/**
  * Apply a room-designer document operation to one level's design.
  * updater receives the level's design and must return a valid design;
  * every other level is untouched.

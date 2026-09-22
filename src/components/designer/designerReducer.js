@@ -179,6 +179,18 @@ export function designerReducer(state, action) {
   switch (action.type) {
     case "LOAD_DESIGN":
       return { ...createInitialState(action.design), view: state.view };
+    // HOME DESIGNER slice 2: the project envelope (levels, names) changed
+    // outside the edited document — mark dirty and bump the revision so the
+    // next save persists the envelope and MARK_SAVED stays revision-guarded.
+    //
+    // NOTE: TOUCH intentionally does NOT append to the undo history (past).
+    // Level management (add/rename/delete) are project-metadata operations,
+    // not canvas edits — they are NOT undoable. The level switcher tab bar
+    // ("Levels" label tooltip) tells the user this. Do not "fix" this by
+    // pushing envelope snapshots onto past: past holds room-designer
+    // documents, not envelopes, and mixing them would corrupt undo/redo.
+    case "TOUCH":
+      return { ...state, dirty: true, designRevision: state.designRevision + 1 };
     case "UNDO": {
       const past = state.past || [];
       if (past.length === 0) return state;
