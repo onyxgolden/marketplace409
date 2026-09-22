@@ -16,6 +16,13 @@
 //       address: "", city: "",        // compliance determination
 //       state: "", zip: "", notes: "",
 //     },
+//     estimate: {                     // slice 4: remodel estimating.
+//       version: 1,                   // unit costs in INTEGER CENTS —
+//       unitCostsCents: {             // never float dollars. Only priced
+//         flooring: 250,             // assemblies appear; everything else
+//       },                           // is pending by absence.
+//       updatedAt: "2026-09-22T…Z",
+//     },
 //     createdAt: "2026-09-22T…Z",
 //     updatedAt: "2026-09-22T…Z",
 //   }
@@ -33,6 +40,11 @@ import {
   DESIGN_VERSION,
   validateDesign,
 } from "./designerDocument";
+// Slice 4: the estimate envelope (unit costs in integer cents) normalizes
+// through homeEstimate. This import is runtime-only (used inside function
+// bodies), so the homeEstimate -> homeQuantities -> homeProject chain stays
+// safe: no module reads another's bindings at evaluation time.
+import { ESTIMATE_VERSION, normalizeEstimate } from "./homeEstimate";
 
 export const HOME_PROJECT_VERSION = 1;
 
@@ -141,6 +153,10 @@ export function createHomeProject(name, options = {}) {
     levels: [makeLevel(levelName, createEmptyDesign(levelName))],
     currentLevelId: null,
     building: normalizeBuilding(opts.building),
+    // Slice 4: every project carries an (initially empty) estimate envelope.
+    // Unit costs are user-entered and priced by absence — nothing is priced
+    // until the user types a cost.
+    estimate: normalizeEstimate(undefined),
     createdAt: stamp,
     updatedAt: stamp,
   };
@@ -396,6 +412,10 @@ export function parseHomeProject(json) {
     name: typeof parsed.name === "string" ? parsed.name : "Untitled project",
     units: typeof parsed.units === "string" && parsed.units ? parsed.units : "in",
     building: normalizeBuilding(parsed.building),
+    // Slice 4: fail-closed estimate normalization — unknown assembly ids,
+    // non-finite/negative costs are dropped; legacy rows get an empty
+    // envelope. ESTIMATE_VERSION is pinned by the domain, not the payload.
+    estimate: normalizeEstimate(parsed.estimate),
     createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : nowIso(),
     updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : nowIso(),
   };

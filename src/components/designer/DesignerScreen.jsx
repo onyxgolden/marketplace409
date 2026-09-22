@@ -76,6 +76,17 @@ import {
   measureLevelDesign,
   projectWithEditedDesign,
 } from "@/domains/roomDesigner/homeQuantities";
+// HOME DESIGNER slice 4: remodel estimating — pure geometry -> quantities ->
+// assemblies -> estimates. Unit costs are user-entered, stored as integer
+// cents in the project envelope; nothing here invents prices.
+import {
+  estimateProject,
+  formatUSD,
+  parseUnitCostInput,
+  setUnitCost,
+  unitCostLabel,
+} from "@/domains/roomDesigner/homeEstimate";
+import ProposalPrintOverlay from "./ProposalPrintOverlay";
 import { groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
 import ToolPalette from "./ToolPalette";
 
@@ -123,6 +134,9 @@ export default function DesignerScreen({ projectId, initialName }) {
     setPrintSheetId(sheetId || null);
     setPrintOpen(true);
   };
+  // HOME DESIGNER slice 4: proposal print overlay state.
+  const [proposalOpen, setProposalOpen] = useState(false);
+  const [proposalEstimate, setProposalEstimate] = useState(null);
 
   // Latest snapshots for saves: a queued save must capture the document and
   // name at the moment it actually sends, not when save() was invoked.
@@ -305,6 +319,39 @@ export default function DesignerScreen({ projectId, initialName }) {
     });
   }, [projectId]);
 
+  // --- Remodel estimating (HOME DESIGNER slice 4) -----------------------
+  // Unit-cost edits are project-metadata ops — NOT undoable (same documented
+  // rule as level management). TOUCH marks the project dirty so the cost
+  // persists through the existing save flow.
+  const commitUnitCost = (assemblyId, centsOrNull) => {
+    const current = projectRef.current;
+    if (!current) return;
+    try {
+      syncProject(setUnitCost(current, assemblyId, centsOrNull));
+      dispatch({ type: "TOUCH" });
+    } catch (error) {
+      setStatus({ kind: "error", message: error.message });
+    }
+  };
+
+  const openProposal = (estimate) => {
+    setProposalEstimate(estimate);
+    setProposalOpen(true);
+  };
+
+  // "Save and print": persist first, then print the freshly saved state.
+  const saveAndPrintProposal = async () => {
+    await save();
+    const current = projectRef.current;
+    if (!current) return;
+    const result = estimateProject(current, stateRef.current.design);
+    if (!result.ok) {
+      setStatus({ kind: "error", message: result.error });
+      return;
+    }
+    openProposal(result);
+  };
+
   useEffect(() => {
     const isField = (el) =>
       el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT");
@@ -476,7 +523,7 @@ export default function DesignerScreen({ projectId, initialName }) {
 
         {/* right panel */}
         <aside className="w-72 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3">
-          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} />
         </aside>
 
         {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
@@ -498,11 +545,18 @@ export default function DesignerScreen({ projectId, initialName }) {
           onClose={() => setPrintOpen(false)}
         />
       )}
+      {/* HOME DESIGNER slice 4: the printable remodel proposal. */}
+      {proposalOpen && proposalEstimate && (
+        <ProposalPrintOverlay
+          estimate={proposalEstimate}
+          onClose={() => setProposalOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
-function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet }) {
+function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint }) {
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate } = state;
 
   // Scale calibration for the background underlay (Visio trace-over workflow).
@@ -582,6 +636,16 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet 
       {/* HOME DESIGNER slice 3: construction intelligence — project-wide
           measurements derived from geometry. */}
       <MeasurementsSection project={project} design={design} />
+      {/* HOME DESIGNER slice 4: remodel estimating — quantities x your unit
+          costs, then a printable proposal. */}
+      <EstimateSection
+        project={project}
+        design={design}
+        dirty={state.dirty}
+        onSetUnitCost={onSetUnitCost}
+        onPrintProposal={onPrintProposal}
+        onSaveAndPrint={onSaveAndPrint}
+      />
       <LayerToggles state={state} dispatch={dispatch} />
       <SheetsSection
         design={design}
@@ -1251,6 +1315,198 @@ export function MeasurementsSection({ project, design }) {
         <p className="mt-1 text-[11px] leading-relaxed text-amber-200/70">
           Assumptions: {t.assumptions.join("; ")}.
         </p>
+      )}
+    </div>
+  );
+}
+
+// HOME DESIGNER slice 4: remodel estimating. One row per assembly — live
+// geometry quantity, a unit-cost $ input, and the extended cost. Costs are
+// user-entered only and stored as integer cents in the project envelope;
+// nothing here invents prices. Unit-cost edits are project-metadata ops and
+// are NOT undoable (same documented rule as level management in slice 2).
+// The proposal prints the live on-screen estimate; when the project is dirty
+// the print button first shows the unsaved-changes warning (print current /
+// save and print / cancel) — printing is never blocked, the state is just
+// made visible.
+
+function estimateQuantityLabel(item, units) {
+  if (item.unit === "each") return String(item.quantity);
+  if (item.unit === "linft") return formatLength(item.quantity * 12, units);
+  return formatArea(item.quantity, units);
+}
+
+function AssemblyCostRow({ item, units, onCommit }) {
+  const inputRef = useRef(null);
+  const [error, setError] = useState(null);
+  const committed =
+    item.unitCostCents === null ? "" : (item.unitCostCents / 100).toFixed(2);
+  const commit = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    const parsed = parseUnitCostInput(el.value);
+    if (parsed.invalid) {
+      // Invalid input is never committed — revert to the stored value.
+      setError("Enter a non-negative cost, or clear the field.");
+      el.value = committed;
+      return;
+    }
+    setError(null);
+    onCommit(item.assemblyId, parsed.clear ? null : parsed.cents);
+  };
+  return (
+    <div className="py-1">
+      <div className="flex items-center gap-2 text-xs">
+        <span className="min-w-0 flex-1 truncate text-gray-200" title={item.name}>
+          {item.name}
+        </span>
+        <span className="w-24 shrink-0 text-right text-gray-400">
+          {estimateQuantityLabel(item, units)}
+        </span>
+        <span className="flex w-24 shrink-0 items-center gap-1">
+          <span className="text-gray-500">$</span>
+          <input
+            key={`${item.assemblyId}:${item.unitCostCents === null ? "pending" : item.unitCostCents}`}
+            ref={inputRef}
+            defaultValue={committed}
+            inputMode="decimal"
+            aria-label={`Unit cost for ${item.name} (${unitCostLabel(item.unit)})`}
+            placeholder="0.00"
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+            className="w-full rounded bg-gray-800 px-1.5 py-0.5 text-right text-white placeholder:text-gray-600"
+          />
+        </span>
+        <span className="w-20 shrink-0 text-right text-gray-200">
+          {item.extendedCents === null ? (
+            <span className="text-gray-600">—</span>
+          ) : (
+            formatUSD(item.extendedCents)
+          )}
+        </span>
+      </div>
+      <div className="text-[10px] text-gray-600">{unitCostLabel(item.unit)}</div>
+      {error && <p className="text-[11px] text-red-300">{error}</p>}
+    </div>
+  );
+}
+
+export function EstimateSection({
+  project,
+  design,
+  dirty,
+  onSetUnitCost,
+  onPrintProposal,
+  onSaveAndPrint,
+}) {
+  const [showDirtyWarning, setShowDirtyWarning] = useState(false);
+  if (!project) return null;
+  const estimate = estimateProject(projectWithEditedDesign(project, design));
+  if (!estimate.ok) {
+    return (
+      <div className="mb-4">
+        <h2 className="mb-2 text-sm font-semibold text-white">Estimate</h2>
+        <p className="rounded bg-red-900/40 px-2 py-1 text-xs text-red-200">
+          Estimate unavailable: {estimate.error}
+        </p>
+      </div>
+    );
+  }
+  const requestPrint = () => {
+    if (dirty) {
+      setShowDirtyWarning(true);
+      return;
+    }
+    onPrintProposal(estimate);
+  };
+  return (
+    <div className="mb-4">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-white">Estimate</h2>
+        <button
+          onClick={requestPrint}
+          className="rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-500"
+        >
+          Print proposal
+        </button>
+      </div>
+      {estimate.pricedCount === 0 ? (
+        <p className="rounded bg-gray-800/60 px-2 py-2 text-xs leading-relaxed text-gray-400">
+          Enter your unit costs to price this estimate. Nothing here is priced
+          until you type a cost — no placeholder prices.
+        </p>
+      ) : (
+        <p className="mb-1 text-[11px] text-gray-500">
+          {estimate.pendingCount} of {estimate.items.length} items to be priced
+        </p>
+      )}
+      <div className="divide-y divide-gray-800">
+        {estimate.items.map((item) => (
+          <AssemblyCostRow
+            key={item.assemblyId}
+            item={item}
+            units={estimate.units}
+            onCommit={onSetUnitCost}
+          />
+        ))}
+      </div>
+      {estimate.pricedCount > 0 && (
+        <div className="flex justify-between border-t border-gray-700 pt-1 text-xs font-semibold text-white">
+          <span>Subtotal</span>
+          <span>{formatUSD(estimate.subtotalCents)}</span>
+        </div>
+      )}
+      <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
+        From plan geometry; costs are yours — quantities update live as the
+        plan changes.
+      </p>
+      {estimate.assumptions && estimate.assumptions.length > 0 && (
+        <p className="mt-1 text-[11px] leading-relaxed text-amber-200/70">
+          Assumptions: {estimate.assumptions.join("; ")}.
+        </p>
+      )}
+      {showDirtyWarning && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="alertdialog"
+          aria-label="Unsaved changes"
+        >
+          <div className="w-full max-w-sm rounded-lg bg-gray-800 p-4 shadow-xl">
+            <h3 className="mb-2 text-sm font-semibold text-white">Unsaved changes</h3>
+            <p className="mb-4 text-xs leading-relaxed text-gray-300">
+              This proposal uses current unsaved changes. Save first if you want
+              the proposal tied to the saved project.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => {
+                  setShowDirtyWarning(false);
+                  onPrintProposal(estimate);
+                }}
+                className="rounded bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"
+              >
+                Print current version
+              </button>
+              <button
+                onClick={() => {
+                  setShowDirtyWarning(false);
+                  onSaveAndPrint();
+                }}
+                className="rounded bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+              >
+                Save and print
+              </button>
+              <button
+                onClick={() => setShowDirtyWarning(false)}
+                className="rounded bg-gray-700 px-3 py-2 text-sm text-gray-200 hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
