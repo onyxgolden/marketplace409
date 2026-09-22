@@ -7,6 +7,7 @@ import {
   measureHomeProject,
   measureLevelDesign,
   normalizeUnits,
+  projectWithEditedDesign,
 } from "./homeQuantities";
 import {
   addLevel,
@@ -107,6 +108,35 @@ describe("homeQuantities — measureLevelDesign", () => {
   it("returns null instead of throwing on a damaged design", () => {
     expect(measureLevelDesign(null)).toBeNull();
     expect(measureLevelDesign({ version: 999, walls: [] })).toBeNull();
+  });
+});
+
+describe("homeQuantities — projectWithEditedDesign", () => {
+  it("swaps the edited design into the current level only", () => {
+    let p = createHomeProject("Edit test");
+    const firstId = p.levels[0].id;
+    p = addLevel(p, "Level 2");
+    const edited = addRoomFromTemplate(createEmptyDesign(), "bedroom", { x: 0, y: 0 });
+    const effective = projectWithEditedDesign(p, edited);
+    expect(effective.levels[0].design).toBe(edited);
+    expect(effective.levels[0].id).toBe(firstId);
+    // the other level keeps its (empty) design
+    expect(effective.levels[1].design.rooms).toEqual([]);
+    // the input project is untouched
+    expect(p.levels[0].design.rooms).toEqual([]);
+  });
+
+  it("returns null when there is nothing to measure", () => {
+    expect(projectWithEditedDesign(null, createEmptyDesign())).toBeNull();
+    expect(projectWithEditedDesign(createHomeProject("x"), null)).toBeNull();
+  });
+
+  it("reflects unsaved edits in the measurement", () => {
+    let p = createHomeProject("Unsaved");
+    const edited = bedroomDesign();
+    const result = measureHomeProject(projectWithEditedDesign(p, edited));
+    expect(result.ok).toBe(true);
+    expect(result.totals.grossRoomAreaSqFt).toBe(144);
   });
 });
 

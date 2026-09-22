@@ -69,6 +69,13 @@ import {
   pipeRunLengthIn,
 } from "@/domains/roomDesigner/pipingGeometry";
 import { summarizeDesignForEstimating } from "@/domains/roomDesigner/designerExports";
+import {
+  formatArea,
+  formatLength,
+  measureHomeProject,
+  measureLevelDesign,
+  projectWithEditedDesign,
+} from "@/domains/roomDesigner/homeQuantities";
 import { groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
 import ToolPalette from "./ToolPalette";
 
@@ -469,7 +476,7 @@ export default function DesignerScreen({ projectId, initialName }) {
 
         {/* right panel */}
         <aside className="w-72 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3">
-          <RightPanel state={state} dispatch={dispatch} summary={summary} onPrint={openPrint} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} />
         </aside>
 
         {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
@@ -495,7 +502,7 @@ export default function DesignerScreen({ projectId, initialName }) {
   );
 }
 
-function RightPanel({ state, dispatch, summary, onPrint, onZoomToSheet }) {
+function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet }) {
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate } = state;
 
   // Scale calibration for the background underlay (Visio trace-over workflow).
@@ -572,6 +579,9 @@ function RightPanel({ state, dispatch, summary, onPrint, onZoomToSheet }) {
         ))}
         <div className="flex justify-between"><dt>Piping symbols</dt><dd>{summary.pipingSymbolCount}</dd></div>
       </dl>
+      {/* HOME DESIGNER slice 3: construction intelligence — project-wide
+          measurements derived from geometry. */}
+      <MeasurementsSection project={project} design={design} />
       <LayerToggles state={state} dispatch={dispatch} />
       <SheetsSection
         design={design}
@@ -1168,6 +1178,78 @@ function summarizeVsdxImport(prepared) {
 // machine. Extracted as exported pieces so the two-click delete contract is
 // unit-testable without mounting the whole screen.
 //
+// HOME DESIGNER slice 3: construction intelligence. A read-only measurements
+// readout derived purely from Room Designer geometry (never pixels, never
+// invented prices). The edited (possibly unsaved) design is swapped into the
+// current level so the numbers reflect what is on screen. A damaged project
+// renders a status line, never a crash.
+
+function buildMeasurementView(project, design) {
+  if (project) {
+    const measured = measureHomeProject(projectWithEditedDesign(project, design));
+    if (!measured.ok) return { error: measured.error };
+    return {
+      units: measured.units,
+      totals: measured.totals,
+      levels: measured.levels,
+      levelCount: measured.levelCount,
+      multi: true,
+    };
+  }
+  if (design) {
+    const level = measureLevelDesign(design);
+    if (!level) return { error: "The current design could not be measured." };
+    return { units: "in", totals: level, levels: null, levelCount: 1, multi: false };
+  }
+  return null;
+}
+
+export function MeasurementsSection({ project, design }) {
+  const view = buildMeasurementView(project, design);
+  if (!view) return null;
+  if (view.error) {
+    return (
+      <div className="mb-4">
+        <h2 className="mb-2 text-sm font-semibold text-white">Measurements</h2>
+        <p className="rounded bg-red-900/40 px-2 py-1 text-xs text-red-200">
+          Measurements unavailable: {view.error}
+        </p>
+      </div>
+    );
+  }
+  const t = view.totals;
+  const units = view.units;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  return (
+    <div className="mb-4">
+      <h2 className="mb-2 text-sm font-semibold text-white">
+        Measurements{view.multi ? ` · ${view.levelCount} levels` : ""}
+      </h2>
+      <dl className="mb-2 space-y-1 text-xs text-gray-300">
+        <div className="flex justify-between"><dt>Floor area (gross)</dt><dd>{formatArea(t.grossRoomAreaSqFt, units)}</dd></div>
+        <div className="flex justify-between"><dt>Floor area (net)</dt><dd>{formatArea(t.netRoomAreaSqFt, units)}</dd></div>
+        <div className="flex justify-between"><dt>Wall length</dt><dd>{formatLength(t.totalWallLengthIn, units)}</dd></div>
+        <div className="flex justify-between"><dt>Wall length (net of openings)</dt><dd>{formatLength(t.netWallLengthIn, units)}</dd></div>
+        <div className="flex justify-between"><dt>Wall surface (one face)</dt><dd>{formatArea(t.wallSurfaceAreaSqFt, units)}</dd></div>
+        <div className="flex justify-between"><dt>Openings</dt><dd>{plural(t.doorCount, "door")} / {plural(t.windowCount, "window")}</dd></div>
+      </dl>
+      {view.multi &&
+        view.levels.map((level) => (
+          <div key={level.id} className="flex justify-between py-0.5 text-xs text-gray-400">
+            <span className="truncate pr-2">{level.name}</span>
+            <span className="whitespace-nowrap">
+              {formatArea(level.grossRoomAreaSqFt, units)} · {formatLength(level.totalWallLengthIn, units)}
+            </span>
+          </div>
+        ))}
+      <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
+        From plan geometry; net floor area subtracts wall footprints (a planning
+        number, not a survey). Quantities only — no pricing.
+      </p>
+    </div>
+  );
+}
+
 // Delete contract (enforced by levelDeleteClick, rendered by LevelTabBar):
 // - The first click on a level's × only ARMS that level (shows "Sure?").
 //   Nothing is deleted.

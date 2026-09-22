@@ -172,6 +172,22 @@ export function measureLevelDesign(design) {
 }
 
 /**
+ * The project with the editor's current (possibly unsaved) design swapped
+ * into the current level, so measurements reflect what is on screen rather
+ * than what was last saved. Pure; returns null when there is nothing to
+ * measure. Validation is left to measureHomeProject.
+ */
+export function projectWithEditedDesign(project, design) {
+  if (!project || !design || !Array.isArray(project.levels)) return null;
+  return {
+    ...project,
+    levels: project.levels.map((level) =>
+      level.id === project.currentLevelId ? { ...level, design } : level,
+    ),
+  };
+}
+
+/**
  * Quantities for a whole HomeProject: per-level measurements plus project
  * totals. Never throws — corrupt input returns { ok: false, error }.
  */
