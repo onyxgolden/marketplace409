@@ -97,6 +97,25 @@ describe("buildPropertyExpenseLedger", () => {
     expect(ledger.entries[0].id).toBe("contractor:rental_contractor_payment_9");
   });
 
+  it("does not collapse explicitly linked records with mismatched amounts", () => {
+    const ledger = buildPropertyExpenseLedger(baseInput({
+      financialEvents: [manualEvent({
+        id: "evt_mismatch", amount: 5000.0, source_record_id: "rental_contractor_payment_1", metadata: {},
+      })],
+      contractorPayments: [contractorPayment({ amount_cents: 50000 })],
+    }));
+    // Both records stay: a $5,000 event linked to a $500 contractor payment must never
+    // be silently collapsed in the read model.
+    expect(ledger.entries).toHaveLength(2);
+    const eventEntry = ledger.entries.find((e) => e.sourceId === "evt_mismatch");
+    expect(eventEntry.possibleDuplicate).toBe(true);
+    expect(eventEntry.notes).toMatch(/Possible linked mismatch/i);
+    const contractorEntry = ledger.entries.find((e) => e.sourceId === "rental_contractor_payment_1");
+    expect(contractorEntry.possibleDuplicate).toBe(true);
+    expect(contractorEntry.alsoRecordedAs).toHaveLength(0);
+    expect(ledger.suppressedDuplicateCount).toBe(0);
+  });
+
   it("flags ambiguous same-amount same-day pairs instead of guessing", () => {
     const ledger = buildPropertyExpenseLedger(baseInput({
       financialEvents: [manualEvent({ id: "evt_amb" })],

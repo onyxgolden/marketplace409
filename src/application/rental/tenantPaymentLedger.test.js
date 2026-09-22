@@ -56,6 +56,19 @@ describe("buildTenantPaymentLedger", () => {
     expect(labels.c3).toBe("Late fee");
   });
 
+  it("failed payments appear but do not reduce tenant balance", () => {
+    const ledger = buildTenantPaymentLedger(baseInput({
+      charges: [charge({ amount_cents: 100000 })],
+      payments: [payment({ status: "failed", amount_cents: 100000 })],
+    }));
+    const pay = ledger.entries.find((e) => e.kind === "payment");
+    expect(pay).toBeTruthy();
+    expect(pay.status).toBe("failed");
+    expect(pay.balanceEffectCents).toBe(0);
+    expect(ledger.totals.paidCents).toBe(0);
+    expect(ledger.balanceCents).toBe(100000);
+  });
+
   it("gives failed payments their status and zero balance effect", () => {
     const ledger = buildTenantPaymentLedger(baseInput({
       charges: [charge()],

@@ -104,13 +104,19 @@ export function buildPropertyExpenseLedger({
     if (!eventPropertyMatches(event, propertyId, unitId)) continue;
     const linkedContractorId = contractorPaymentIdOf(event);
     const linked = linkedContractorId ? contractorEntryById.get(linkedContractorId) : null;
-    if (linked) {
+    // An explicit link alone is not enough to collapse: the amounts must agree too, or
+    // the link may be wrong (e.g. a $5,000 event linked to a $500 contractor payment)
+    // and collapsing would silently destroy one of the two records in the read model.
+    const amountsMatch = linked ? Math.abs(toEventCents(event.amount)) === linked.amountCents : false;
+    if (linked && amountsMatch) {
       suppressedEventIds.add(event.id);
       if (!linked.alsoRecordedAs.includes(SOURCE_LABELS[event.source_system] || event.source_system)) {
         linked.alsoRecordedAs.push(SOURCE_LABELS[event.source_system] || event.source_system);
       }
       continue;
     }
+    const linkedMismatch = Boolean(linked) && !amountsMatch;
+    if (linkedMismatch) linked.possibleDuplicate = true;
     eventEntries.push({
       id: `event:${event.id}`,
       sourceId: event.id,
@@ -123,9 +129,9 @@ export function buildPropertyExpenseLedger({
       method: event.metadata?.payment_method || null,
       status: event.status || "active",
       reference: event.source_record_id || null,
-      notes: null,
+      notes: linkedMismatch ? "Possible linked mismatch — review source records" : null,
       alsoRecordedAs: [],
-      possibleDuplicate: false,
+      possibleDuplicate: linkedMismatch,
     });
   }
 

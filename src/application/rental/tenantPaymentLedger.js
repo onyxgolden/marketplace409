@@ -25,9 +25,17 @@ const CHARGE_LABELS = {
   late_fee: "Late fee",
 };
 
-// Payment statuses that moved money (or credibly attempted to). Anything else is shown
-// with its status and contributes nothing to the balance.
-const MONEY_IN_STATUSES = new Set(["succeeded", "partially_refunded", "refunded"]);
+// Payment statuses with a direct balance effect: money the tenant actually paid in.
+// Failed/cancelled/processing/etc. payments stay visible in the ledger with their
+// status, but contribute nothing to the balance.
+function paymentHasBalanceEffect(payment) {
+  return ["succeeded", "paid", "settled"].includes(payment.status);
+}
+// A partially/fully refunded payment is a completed payment whose returned portion is
+// modeled as a separate compensating refund entry — the payment entry keeps its
+// balance effect so the two net to amount − refunded and the tenant is never
+// double-charged. The refund entry itself is added below.
+const REFUNDED_PAYMENT_STATUSES = new Set(["partially_refunded", "refunded"]);
 const FINALITY_RANK = {
   succeeded: 6, partially_refunded: 5, refunded: 4, disputed: 3,
   processing: 2, created: 1, requires_action: 1, requires_payment_method: 1,
@@ -127,7 +135,7 @@ export function buildTenantPaymentLedger({
     const status = payment.status || "unknown";
     const amountCents = signedCents(payment.amount_cents);
     const refundedCents = signedCents(payment.refunded_amount_cents);
-    const movedMoney = MONEY_IN_STATUSES.has(status);
+    const movedMoney = paymentHasBalanceEffect(payment) || REFUNDED_PAYMENT_STATUSES.has(status);
     const settlement = settlementByPaymentId.get(payment.id) || null;
     const entry = {
       id: `payment:${payment.id}`,
@@ -233,7 +241,7 @@ export function buildTenantPaymentLedger({
 
   const totals = entries.reduce((sum, entry) => {
     if (entry.kind === "charge") sum.chargedCents += entry.amountCents;
-    if (entry.kind === "payment") sum.paidCents += (MONEY_IN_STATUSES.has(entry.status) ? entry.amountCents : 0);
+    if (entry.kind === "payment") sum.paidCents += (paymentHasBalanceEffect(entry) || REFUNDED_PAYMENT_STATUSES.has(entry.status) ? entry.amountCents : 0);
     if (entry.kind === "refund") sum.refundedCents += entry.amountCents;
     return sum;
   }, { chargedCents: 0, paidCents: 0, refundedCents: 0 });
