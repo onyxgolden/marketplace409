@@ -179,11 +179,16 @@ struct BeginMediaUploadDto {
     name_hint: Option<String>,
 }
 
-/// ui/record.js uploadBytes(): { upload_id, bytes }
+/// ui/record.js uploadBytes(): { upload_id, offset, bytes }
+/// `offset` is the byte offset this chunk starts at; the backend requires
+/// chunks to arrive in order with no gaps or duplicates (offset must equal
+/// the bytes received so far), so a buggy or hostile caller cannot
+/// assemble a malformed file out of reordered chunks.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppendMediaChunkDto {
     upload_id: String,
+    offset: u64,
     bytes: Vec<u8>,
 }
 
@@ -480,12 +485,26 @@ fn begin_media_upload(dto: BeginMediaUploadDto, state: State<AppState>) -> Resul
     Ok(id)
 }
 
+/// Pure sequencing check for `append_media_chunk`: the chunk must start
+/// exactly where the received bytes end — no gaps, no re-sends, no
+/// reordering. Kept as a free function so it is unit-testable without
+/// Tauri state.
+fn check_chunk_offset(received_len: u64, offset: u64) -> Result<(), String> {
+    if offset != received_len {
+        return Err(format!(
+            "chunk offset {offset} does not match received bytes {received_len} — chunks must arrive in order with no gaps or duplicates"
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn append_media_chunk(dto: AppendMediaChunkDto, state: State<AppState>) -> Result<u64, String> {
     let mut uploads = state.media_uploads.lock().unwrap();
     let upload = uploads
         .get_mut(&dto.upload_id)
         .ok_or_else(|| format!("unknown upload id: {}", dto.upload_id))?;
+    check_chunk_offset(upload.received.len() as u64, dto.offset)?;
     let new_len = upload.received.len() as u64 + dto.bytes.len() as u64;
     if new_len > upload.expected_bytes {
         return Err(format!(
@@ -519,8 +538,17 @@ fn finish_media_upload(id: String, state: State<AppState>) -> Result<MediaUpload
         ));
     }
     let dir = captures_dir()?;
-    let path = dir.join(format!("{}.{}", upload.stem, upload.extension));
-    std::fs::write(&path, &upload.received).map_err(|e| format!("cannot write media file: {e}"))?;
+    let final_path = dir.join(format!("{}.{}", upload.stem, upload.extension));
+    // Write to a temp name first, then atomically rename: a crash mid-write
+    // can never leave a partial file under the final name. The `.part`
+    // suffix marks any orphan left by a hard crash as clearly incomplete.
+    let temp_path = dir.join(format!("{}.{}.part", upload.stem, id));
+    std::fs::write(&temp_path, &upload.received)
+        .map_err(|e| format!("cannot write media temp file: {e}"))?;
+    if let Err(e) = std::fs::rename(&temp_path, &final_path) {
+        let _ = std::fs::remove_file(&temp_path); // best effort — no orphan
+        return Err(format!("cannot finalize media file: {e}"));
+    }
     // Provenance sidecar, mirroring the still-capture convention: every
     // file the app writes gets a `.forge.json` next to it.
     let sidecar_path = dir.join(format!("{}.forge.json", upload.stem));
@@ -534,7 +562,7 @@ fn finish_media_upload(id: String, state: State<AppState>) -> Result<MediaUpload
     std::fs::write(&sidecar_path, sidecar.as_bytes())
         .map_err(|e| format!("cannot write sidecar: {e}"))?;
     Ok(MediaUploadResultDto {
-        path: path.to_string_lossy().into_owned(),
+        path: final_path.to_string_lossy().into_owned(),
         bytes_written: upload.received.len() as u64,
         mime: upload.mime,
     })
@@ -1363,12 +1391,25 @@ mod dto_ipc_tests {
 
     #[test]
     fn append_media_chunk_dto_matches_ui_payload() {
-        // ui/record.js uploadBytes(): { upload_id, bytes } where bytes is a
-        // plain JSON number array (Tauri has no binary IPC for number arrays).
-        let json = r#"{"upload_id": "upl-123-1", "bytes": [26, 69, 223, 163]}"#;
+        // ui/record.js uploadBytes(): { upload_id, offset, bytes } where
+        // bytes is a plain JSON number array (Tauri has no binary IPC for
+        // number arrays).
+        let json = r#"{"upload_id": "upl-123-1", "offset": 1048576, "bytes": [26, 69, 223, 163]}"#;
         let dto: AppendMediaChunkDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.upload_id, "upl-123-1");
+        assert_eq!(dto.offset, 1048576);
         assert_eq!(dto.bytes, vec![26u8, 69, 223, 163]);
+    }
+
+    #[test]
+    fn check_chunk_offset_accepts_sequential_chunks_only() {
+        assert!(check_chunk_offset(0, 0).is_ok());
+        assert!(check_chunk_offset(1048576, 1048576).is_ok());
+        // Gap: caller skipped ahead.
+        assert!(check_chunk_offset(0, 1048576).is_err());
+        // Duplicate / reordered: offset behind the received cursor.
+        assert!(check_chunk_offset(1048576, 0).is_err());
+        assert!(check_chunk_offset(2097152, 1048576).is_err());
     }
 
     #[test]

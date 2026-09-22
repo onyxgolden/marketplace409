@@ -306,6 +306,73 @@ describe("combineWebm", () => {
     expect(() => combineWebm([])).toThrow(RecordingError);
     expect(() => combineWebm([seg([], 1000)])).toThrow(/no clusters/);
   });
+
+  it("refuses MP4 — concatenation is not valid for MP4", () => {
+    const mp4seg = (times, durationMs) => ({ bytes: webmFile(times), durationMs, mime: "video/mp4" });
+    expect(() => combineWebm([mp4seg([0], 1000), mp4seg([0], 1000)])).toThrow(/WebM recordings only/);
+  });
+});
+
+// --- adversarial WebM fixtures -------------------------------------------------
+// ChatGPT architecture review: prove the EBML manipulation is truly
+// cluster-safe. trim/combine always operate on the fully concatenated byte
+// stream (timeslice chunks are joined by the browser before parsing), so a
+// "cluster split across chunks" can only appear as truncation or a malformed
+// element — both must fail loudly, never silently corrupt.
+
+describe("adversarial WebM input", () => {
+  it("survives an arbitrary timeslice-style split: chunk boundaries do not matter", () => {
+    const file = webmFile([0, 1000, 2000]);
+    for (const cut of [7, 100, file.length - 5]) {
+      const rejoined = concat(file.subarray(0, cut), file.subarray(cut));
+      expect(clusterTimesOf(rejoined)).toEqual([0, 1000, 2000]);
+    }
+  });
+
+  it("throws on a truncated cluster (interrupted recording)", () => {
+    const file = webmFile([0, 1000, 2000]);
+    const cut = file.subarray(0, file.length - 10); // sever the last cluster mid-payload
+    expect(() => trimWebm(cut, 0, 3000)).toThrow(RecordingError);
+    expect(() => combineWebm([{ bytes: cut, durationMs: 3000, mime: "video/webm" }])).toThrow(
+      RecordingError,
+    );
+  });
+
+  it("throws on a cluster with no Timestamp element", () => {
+    const noTs = elem(ID_CLUSTER, elem(ID_SIMPLE_BLOCK, new Uint8Array([0x81, 0x00, 0x00])));
+    expect(() => clusterTimestamp(noTs)).toThrow(/no Timestamp/);
+  });
+
+  it("throws on a malformed element size inside the segment", () => {
+    const ebml = elem(ID_EBML, elem([0x42, 0x82], new Uint8Array(0)));
+    const bad = concat(
+      new Uint8Array(ID_CLUSTER),
+      new Uint8Array([0x81]), // declares 1 payload byte...
+      new Uint8Array([]), // ...but the segment ends here
+    );
+    const segment = concat(new Uint8Array(ID_SEGMENT), new Uint8Array([0xff]), bad);
+    expect(() => splitWebmSegment(concat(ebml, segment))).toThrow(RecordingError);
+  });
+
+  it("throws on an unknown-size cluster instead of swallowing later clusters", () => {
+    const ebml = elem(ID_EBML, elem([0x42, 0x82], new Uint8Array(0)));
+    const unknownCluster = concat(
+      new Uint8Array(ID_CLUSTER),
+      new Uint8Array([0xff]), // unknown size
+      elem(ID_TIMESTAMP, sint(0, 2)),
+    );
+    const segment = concat(
+      new Uint8Array(ID_SEGMENT),
+      new Uint8Array([0xff]),
+      concat(elem(ID_INFO, new Uint8Array(0)), unknownCluster, cluster(1000)),
+    );
+    expect(() => splitWebmSegment(concat(ebml, segment))).toThrow(/unknown size/);
+  });
+
+  it("throws on a cluster Timestamp outside the sane width range", () => {
+    const wide = elem(ID_CLUSTER, elem(ID_TIMESTAMP, sint(1, 7))); // 7-byte timestamp
+    expect(() => clusterTimestamp(wide)).toThrow(/outside the sane range/);
+  });
 });
 
 // --- GIF ---------------------------------------------------------------------

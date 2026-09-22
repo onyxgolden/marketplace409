@@ -502,7 +502,7 @@ async function uploadBytes(invoke, { bytes, mime, suggestedExtension = null, nam
     for (let off = 0; off < bytes.length; off += MEDIA_UPLOAD_CHUNK_BYTES) {
       const chunk = bytes.subarray(off, off + MEDIA_UPLOAD_CHUNK_BYTES);
       await invoke("append_media_chunk", {
-        dto: { upload_id: uploadId, bytes: Array.from(chunk) },
+        dto: { upload_id: uploadId, offset: off, bytes: Array.from(chunk) },
       });
       if (onProgress) onProgress(Math.min(bytes.length, off + chunk.length), bytes.length);
     }
@@ -1049,6 +1049,13 @@ export function renderRecordControls(container, deps = {}) {
       .filter(Boolean);
     if (checked.length < 2) {
       setStatus("Tick at least two recordings to combine them.", "error");
+      return;
+    }
+    if (!checked[0].mime.startsWith("video/webm")) {
+      setStatus(
+        `Combine supports WebM recordings only — ${checked[0].mime} cannot be joined by concatenation. Record in WebM to combine clips.`,
+        "error",
+      );
       return;
     }
     setBusy(true);

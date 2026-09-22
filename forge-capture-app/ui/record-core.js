@@ -243,6 +243,12 @@ export function splitWebmSegment(bytes) {
     const id = readEbmlId(bytes, p);
     const size = readEbmlSize(bytes, p + id.length);
     const dataStart = p + id.length + size.length;
+    // An unknown-size Cluster would swallow every cluster after it; refuse
+    // instead of silently dropping data. (Segment-level unknown size is
+    // normal — MediaRecorder emits it.)
+    if (id.value === EBML_ID_CLUSTER && size.value === -1) {
+      throw new RecordingError("bad-webm", "cluster with unknown size — cannot split safely");
+    }
     const dataEnd = size.value === -1 ? segEnd : dataStart + size.value;
     if (dataEnd > segEnd) throw new RecordingError("bad-webm", "element runs past the end of the Segment");
     if (id.value === EBML_ID_CLUSTER) {
@@ -358,17 +364,27 @@ export function trimWebm(fullBytes, startMs, endMs) {
 }
 
 /**
- * Join recordings end to end.
+ * Join WebM recordings end to end.
  * segments: [{ bytes: Uint8Array, durationMs: number, mime: string }]
  * Every segment must share the exact recording mime (same container +
  * codec); later segments' cluster timestamps are offset by the cumulative
  * durations of the earlier ones. The header comes from the first segment.
+ *
+ * WebM-only by design: concatenating MP4 blobs is not valid (it needs
+ * moov/sample-table surgery), so combine refuses anything that is not
+ * video/webm* rather than producing a silently broken file.
  */
 export function combineWebm(segments) {
   if (!Array.isArray(segments) || segments.length === 0) {
     throw new RecordingError("invalid-combine", "nothing to combine");
   }
   const mime = segments[0].mime;
+  if (!mime.startsWith("video/webm")) {
+    throw new RecordingError(
+      "invalid-combine",
+      `combine supports WebM recordings only — ${mime} cannot be joined by concatenation`,
+    );
+  }
   segments.forEach((s, i) => {
     if (s.mime !== mime) {
       throw new RecordingError(
