@@ -49,11 +49,11 @@ import {
   addLevel,
   ensureHomeProject,
   getCurrentDesign,
-  getLevel,
   removeLevel,
   renameLevel,
   renameProject,
   setCurrentLevel,
+  switchLevel,
   updateLevelDesign,
 } from "@/domains/roomDesigner/homeProject";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
@@ -166,24 +166,28 @@ export default function DesignerScreen({ projectId, initialName }) {
   // first, so no level's edits are lost when switching/adding/removing.
   // All wrapped in try/catch: a corrupt level surfaces as a status error,
   // never an unhandled rejection or a crashed screen.
+  //
+  // The switch itself is centralized in the domain function
+  // switchLevel(project, currentDesign, targetId): the screen keeps two
+  // sources of truth (the envelope in projectRef, the edited document in
+  // the reducer), and the domain function takes all three inputs explicitly
+  // so the "sync-before-switch" order can never drift apart across handlers.
   const syncCurrentDocInto = (proj) =>
     updateLevelDesign(proj, proj.currentLevelId, () => stateRef.current.design);
 
-  const switchLevel = (levelId) => {
+  const requestLevelSwitch = (levelId) => {
     const current = projectRef.current;
     if (!current || current.currentLevelId === levelId) return;
     try {
-      const synced = syncCurrentDocInto(current);
-      const target = getLevel(synced, levelId);
-      const problems = validateDesign(target.design);
-      if (problems.length > 0) {
-        throw new Error(`Level "${target.name}" is damaged (${problems[0]}). It was not opened.`);
-      }
-      const switched = setCurrentLevel(synced, levelId);
+      const { project: switched, design } = switchLevel(
+        current,
+        stateRef.current.design,
+        levelId,
+      );
       syncProject(switched);
       setConfirmDeleteLevelId(null);
       setRenamingLevelId(null);
-      dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(switched) });
+      dispatch({ type: "LOAD_DESIGN", design });
     } catch (error) {
       setStatus({ kind: "error", message: error.message });
     }
@@ -221,10 +225,11 @@ export default function DesignerScreen({ projectId, initialName }) {
   };
 
   const deleteLevelUi = (levelId) => {
-    if (confirmDeleteLevelId !== levelId) {
-      // First click arms the delete; the second confirms. A level holding
-      // geometry is never one click away from disappearing.
-      setConfirmDeleteLevelId(levelId);
+    const decision = levelDeleteClick(confirmDeleteLevelId, levelId);
+    if (decision.armed) {
+      // First click arms the delete on THIS level only; nothing is deleted.
+      // The second click must land on the same armed level to confirm.
+      setConfirmDeleteLevelId(decision.armed);
       return;
     }
     const current = projectRef.current;
@@ -400,74 +405,21 @@ export default function DesignerScreen({ projectId, initialName }) {
       {/* HOME DESIGNER slice 2: level switcher. One slim tab bar — no extra
           toolbars, no competing coordinate systems. Double-click a tab to
           rename; the × needs two clicks so geometry is never one click away
-          from disappearing. */}
+          from disappearing. Level management (add/rename/delete) is project
+          metadata and is NOT undoable — see the TOUCH reducer note and the
+          "Levels" label tooltip. */}
       {project && (
-        <div className="flex items-center gap-1 border-b border-gray-800 bg-gray-900 px-4 py-1.5" role="tablist" aria-label="Levels">
-          <span className="mr-1 select-none text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-            Levels
-          </span>
-          {project.levels.map((level) => {
-            const active = level.id === project.currentLevelId;
-            const renaming = renamingLevelId === level.id;
-            const armed = confirmDeleteLevelId === level.id;
-            return (
-              <div
-                key={level.id}
-                role="tab"
-                aria-selected={active}
-                className={`flex items-center rounded ${
-                  active ? "bg-emerald-700" : "bg-gray-800 hover:bg-gray-700"
-                }`}
-              >
-                {renaming ? (
-                  <input
-                    autoFocus
-                    defaultValue={level.name}
-                    aria-label="Level name"
-                    className="w-28 rounded bg-gray-950 px-2 py-1 text-sm text-white outline-none"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commitLevelRename(level.id, e.target.value);
-                      else if (e.key === "Escape") setRenamingLevelId(null);
-                    }}
-                    onBlur={(e) => commitLevelRename(level.id, e.target.value)}
-                  />
-                ) : (
-                  <button
-                    onClick={() => switchLevel(level.id)}
-                    onDoubleClick={() => setRenamingLevelId(level.id)}
-                    title="Switch level · double-click to rename"
-                    className={`px-3 py-1 text-sm font-medium ${
-                      active ? "text-white" : "text-gray-300"
-                    }`}
-                  >
-                    {level.name}
-                  </button>
-                )}
-                {!renaming && project.levels.length > 1 && (
-                  <button
-                    onClick={() => deleteLevelUi(level.id)}
-                    title={armed ? "Click again to delete this level" : "Delete level"}
-                    aria-label={armed ? `Confirm delete ${level.name}` : `Delete ${level.name}`}
-                    className={`mr-1 rounded px-1.5 py-0.5 text-xs font-semibold ${
-                      armed
-                        ? "bg-red-600 text-white"
-                        : "text-gray-500 hover:bg-gray-700 hover:text-red-300"
-                    }`}
-                  >
-                    {armed ? "Sure?" : <X size={12} />}
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          <button
-            onClick={addLevelUi}
-            title="Add a level"
-            className="flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-sm text-gray-300 hover:bg-gray-700"
-          >
-            <Plus size={14} /> Add level
-          </button>
-        </div>
+        <LevelTabBar
+          project={project}
+          renamingLevelId={renamingLevelId}
+          confirmDeleteLevelId={confirmDeleteLevelId}
+          onSwitchLevel={requestLevelSwitch}
+          onAddLevel={addLevelUi}
+          onStartRename={setRenamingLevelId}
+          onCommitRename={commitLevelRename}
+          onCancelRename={() => setRenamingLevelId(null)}
+          onDeleteLevel={deleteLevelUi}
+        />
       )}
       {status.kind === "error" && (
         <div className="bg-red-900/60 px-4 py-2 text-sm text-red-200">{status.message}</div>
@@ -1210,6 +1162,116 @@ function summarizeVsdxImport(prepared) {
   const c = prepared.counts;
   const semantic = c.mapped - c.annotationShapes;
   return `Imported ${prepared.shapeCount} shapes from page '${prepared.page.name}': ${semantic} mapped, ${c.annotationShapes} as annotations, ${c.skipped} skipped.`;
+}
+
+// HOME DESIGNER slice 2: level switcher tab bar + delete-confirm state
+// machine. Extracted as exported pieces so the two-click delete contract is
+// unit-testable without mounting the whole screen.
+//
+// Delete contract (enforced by levelDeleteClick, rendered by LevelTabBar):
+// - The first click on a level's × only ARMS that level (shows "Sure?").
+//   Nothing is deleted.
+// - Only a second click on the SAME armed level deletes it.
+// - Clicking × on a different level re-arms that level instead — the armed
+//   level can never be deleted by clicking elsewhere.
+// - The × is hidden entirely when one level remains (last level can't go).
+//
+// Level management (add/rename/delete) are project-metadata operations,
+// not canvas edits — they bypass the undo history (see the TOUCH reducer)
+// and are intentionally NOT undoable. The "Levels" label tooltip says so.
+
+/**
+ * Pure two-click delete state machine.
+ * @returns {{ armed: string } | { delete: string }}
+ */
+export function levelDeleteClick(confirmDeleteLevelId, levelId) {
+  return confirmDeleteLevelId === levelId
+    ? { delete: levelId }
+    : { armed: levelId };
+}
+
+export function LevelTabBar({
+  project,
+  renamingLevelId,
+  confirmDeleteLevelId,
+  onSwitchLevel,
+  onAddLevel,
+  onStartRename,
+  onCommitRename,
+  onCancelRename,
+  onDeleteLevel,
+}) {
+  return (
+    <div className="flex items-center gap-1 border-b border-gray-800 bg-gray-900 px-4 py-1.5" role="tablist" aria-label="Levels">
+      <span
+        className="mr-1 select-none text-[11px] font-semibold uppercase tracking-wide text-gray-500"
+        title="Level management (add / rename / delete) is project metadata and is not undoable"
+      >
+        Levels
+      </span>
+      {project.levels.map((level) => {
+        const active = level.id === project.currentLevelId;
+        const renaming = renamingLevelId === level.id;
+        const armed = confirmDeleteLevelId === level.id;
+        return (
+          <div
+            key={level.id}
+            role="tab"
+            aria-selected={active}
+            className={`flex items-center rounded ${
+              active ? "bg-emerald-700" : "bg-gray-800 hover:bg-gray-700"
+            }`}
+          >
+            {renaming ? (
+              <input
+                autoFocus
+                defaultValue={level.name}
+                aria-label="Level name"
+                className="w-28 rounded bg-gray-950 px-2 py-1 text-sm text-white outline-none"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") onCommitRename(level.id, e.target.value);
+                  else if (e.key === "Escape") onCancelRename();
+                }}
+                onBlur={(e) => onCommitRename(level.id, e.target.value)}
+              />
+            ) : (
+              <button
+                onClick={() => onSwitchLevel(level.id)}
+                onDoubleClick={() => onStartRename(level.id)}
+                title="Switch level · double-click to rename"
+                className={`px-3 py-1 text-sm font-medium ${
+                  active ? "text-white" : "text-gray-300"
+                }`}
+              >
+                {level.name}
+              </button>
+            )}
+            {!renaming && project.levels.length > 1 && (
+              <button
+                onClick={() => onDeleteLevel(level.id)}
+                title={armed ? "Click again to delete this level" : "Delete level"}
+                aria-label={armed ? `Confirm delete ${level.name}` : `Delete ${level.name}`}
+                className={`mr-1 rounded px-1.5 py-0.5 text-xs font-semibold ${
+                  armed
+                    ? "bg-red-600 text-white"
+                    : "text-gray-500 hover:bg-gray-700 hover:text-red-300"
+                }`}
+              >
+                {armed ? "Sure?" : <X size={12} />}
+              </button>
+            )}
+          </div>
+        );
+      })}
+      <button
+        onClick={onAddLevel}
+        title="Add a level"
+        className="flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-sm text-gray-300 hover:bg-gray-700"
+      >
+        <Plus size={14} /> Add level
+      </button>
+    </div>
+  );
 }
 
 export function VsdxImportSection({ dispatch }) {
