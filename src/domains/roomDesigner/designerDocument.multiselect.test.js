@@ -200,17 +200,23 @@ describe("designerDocument — moveDesignObjects (group drag)", () => {
     d = addWall(d, { x: 0, y: 0 }, { x: 100, y: 0 }, { id: "shared" });
     d = addRoomFromTemplate(d, "bedroom", { x: 200, y: 200 });
     const roomA = d.rooms[0].id;
-    // Simulate a second room sharing the wall id (hand-built adjacency).
-    const roomB = `room_shared`;
+    // Both rooms genuinely reference the shared wall, so a group drag
+    // contributes its delta twice — the wall must still move exactly once.
     d = {
       ...d,
-      rooms: [...d.rooms, { id: roomB, label: "Extra", wallIds: ["shared"], polygon: [] }],
+      rooms: [
+        { ...d.rooms[0], wallIds: [...(d.rooms[0].wallIds || []), "shared"] },
+        { id: `room_shared`, label: "Extra", wallIds: ["shared"], polygon: [] },
+      ],
     };
+    const roomB = `room_shared`;
     d = moveDesignObjects(d, [
       { kind: "room", id: roomA, dx: 10, dy: 0 },
       { kind: "room", id: roomB, dx: 10, dy: 0 },
     ]);
+    // Not (20, 0): the shared wall translates once per gesture.
     expect(d.walls.find((w) => w.id === "shared").a).toEqual({ x: 10, y: 0 });
+    expect(d.walls.find((w) => w.id === "shared").b).toEqual({ x: 110, y: 0 });
   });
 
   it("rejects unknown members, unknown kinds, and non-finite deltas", () => {

@@ -146,12 +146,13 @@ describe("PlanCanvas ctrl/cmd multi-select", () => {
     ).toBe(false);
   });
 
-  it("ctrl+click on empty canvas clears the selection", () => {
+  it("ctrl+click on empty canvas leaves the selection unchanged", () => {
     const d = groupDesign();
     renderCanvas(d, { multiSelection: [{ kind: "furniture", id: d.furniture[0].id }] });
     pointer(svg, "pointerdown", { x: 500, y: 500 }, { ctrlKey: true });
     pointer(svg, "pointerup", { x: 500, y: 500 }, { ctrlKey: true });
-    expect(dispatch).toHaveBeenCalledWith({ type: "CLEAR_SELECTION" });
+    // A modifier click is a toggle gesture, not a clear gesture.
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("pressing a group member drags the whole group as one coalesced move", () => {

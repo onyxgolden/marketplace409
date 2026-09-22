@@ -489,10 +489,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // group follows the pointer; a click without movement is a no-op.
     if (e.ctrlKey || e.metaKey) {
       const hit = hitTest(plan);
-      if (!hit) {
-        dispatch({ type: "CLEAR_SELECTION" });
-        return;
-      }
+      // A modifier click is a toggle gesture, not a clear gesture: clicking
+      // empty canvas leaves the current selection unchanged.
+      if (!hit) return;
       // The background underlay is not a plan object: leave the selection alone.
       if (!GROUP_SELECTABLE_KINDS.has(hit.kind)) return;
       const group = selectionGroup();

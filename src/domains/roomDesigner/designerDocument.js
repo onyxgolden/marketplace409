@@ -627,11 +627,12 @@ export function moveDesignObjects(design, moves) {
   assertDesign(design);
   if (!Array.isArray(moves)) throw new Error("Group moves must be an array.");
   const byId = (arr, id) => (arr || []).find((x) => x.id === id);
-  // Walls move at most once even when several selected rooms share one.
+  // Walls move at most once even when several selected rooms share one:
+  // first owning translation wins, later references add nothing. (A group
+  // drag moves every member by the same (dx, dy), so dedup is exact.)
   const wallDelta = new Map();
   const addWallDelta = (wallId, dx, dy) => {
-    const prev = wallDelta.get(wallId);
-    wallDelta.set(wallId, prev ? { dx: prev.dx + dx, dy: prev.dy + dy } : { dx, dy });
+    if (!wallDelta.has(wallId)) wallDelta.set(wallId, { dx, dy });
   };
   let next = design;
   for (const m of moves) {
