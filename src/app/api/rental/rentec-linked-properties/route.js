@@ -10,7 +10,9 @@ export async function GET() {
   const authenticated = await createAuthenticatedForgeApplication();
   if (authenticated.response) return authenticated.response;
   try {
-    const ownerId = authenticated.user.id;
+    // Read model: an active co-owner sees the canonical owner's Rentec-linked properties,
+    // not their own fallback workspace's.
+    const ownerId = authenticated.effectiveOwnerId;
     const { data, error } = await authenticated.supabaseClient
       .from("rental_units")
       .select("id, label, property_id")

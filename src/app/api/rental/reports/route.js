@@ -88,7 +88,9 @@ async function loadCoreReport(a, url, reportKey) {
 // freshly-recorded property (e.g. via the Financial setup workflow) invisible to every report
 // here even though the underlying financial_events rows existed and were correct.
 async function loadFinancialEvents(a) {
-  const events = await fetchAllOwnerFinancialEvents(a.supabaseClient, a.user.id, {
+  // Read model: reports show the canonical owner's rows. For an active co-owner, a.user.id is
+  // their own id (the fallback workspace), so the read must go through effectiveOwnerId.
+  const events = await fetchAllOwnerFinancialEvents(a.supabaseClient, a.effectiveOwnerId, {
     columns: "id,event_date,description,amount,transaction_kind,normalized_category,property_id,status,is_deleted,business_scope",
   });
   return events.filter((event) => event.business_scope !== "personal");
