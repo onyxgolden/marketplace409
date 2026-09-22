@@ -91,7 +91,10 @@ export async function GET() {
       // PostgREST's default page size (1000 rows), which for an owner with more financial_events
       // history than that (this owner has 5,600+) would truncate to only the oldest rows when
       // ordered by event_date ascending, making recent years vanish from the chart entirely.
-      fetchAllOwnerFinancialEvents(authenticated.supabaseClient, authenticated.user.id, {
+      // Read model: a co-owner reads the canonical owner's rows, never their own fallback
+      // workspace. financial_events is explicitly owner-scoped here (not just via RLS) for the
+      // Portfolio performance chart.
+      fetchAllOwnerFinancialEvents(authenticated.supabaseClient, authenticated.effectiveOwnerId, {
         columns: "event_date, amount, transaction_kind, source_system, status, is_deleted, business_scope",
       }).then((data) => ({ data, error: null })).catch((caught) => ({ data: null, error: caught })),
       authenticated.supabaseClient.from("rental_conversations").select("id, tenant_id, last_message_at, last_message_body, last_message_sender_type, owner_last_read_at, tenant_last_read_at").order("last_message_at",{ascending:false}),
@@ -122,8 +125,9 @@ export async function GET() {
     // Owner-level master pause: FORGE may collect only when this is enabled AND the individual
     // schedule is cut over — this flag alone never activates a single lease. Production defaults
     // every owner to absent (paused), so the row may not exist yet.
+    // Owner-level master pause: a co-owner reads the canonical owner's setting, not their own row.
     const { data: billingSettingsRow, error: billingSettingsError } = await authenticated.supabaseClient
-      .from("rental_billing_settings").select("billing_enabled").eq("owner_id", authenticated.user.id).maybeSingle();
+      .from("rental_billing_settings").select("billing_enabled").eq("owner_id", authenticated.effectiveOwnerId).maybeSingle();
     if (billingSettingsError) throw billingSettingsError;
     const billingEnabled = billingSettingsRow?.billing_enabled === true;
 

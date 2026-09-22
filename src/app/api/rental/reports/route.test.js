@@ -1,5 +1,5 @@
 import{beforeEach,describe,expect,it,vi}from"vitest";const from=vi.fn();
-vi.mock("@/lib/supabase/createAuthenticatedForgeApplication",()=>({createAuthenticatedForgeApplication:vi.fn(async()=>({user:{id:"owner_1"},supabaseClient:{from}}))}));
+vi.mock("@/lib/supabase/createAuthenticatedForgeApplication",()=>({createAuthenticatedForgeApplication:vi.fn(async()=>({user:{id:"owner_1"},effectiveOwnerId:"owner_1",supabaseClient:{from}}))}));
 vi.mock("@/infrastructure/billing/StripeBillingProvider",()=>({createStripeBillingProvider:vi.fn(()=>({mode:"test"}))}));
 import{GET}from"./route.js";
 import{excludeOffModeStripePayments}from"./route.js";
@@ -112,4 +112,15 @@ describe("excludeOffModeStripePayments",()=>{
     const payments=[{id:"offline1",provider:"offline"},{id:"stripe_test",provider:"stripe",provider_mode:"test"}];
     expect(excludeOffModeStripePayments(payments,"live").map(p=>p.id)).toEqual(["offline1"]);
   });
+});
+
+it("loads financial events under the canonical owner id for an active co-owner",async()=>{
+  const eqCalls=[];
+  const chain={select:vi.fn(()=>chain),eq:vi.fn((...args)=>{eqCalls.push(args);return chain;}),range:vi.fn(()=>Promise.resolve({data:[],error:null}))};
+  const {createAuthenticatedForgeApplication}=await import("@/lib/supabase/createAuthenticatedForgeApplication");
+  createAuthenticatedForgeApplication.mockResolvedValueOnce({user:{id:"brandy_co_owner"},effectiveOwnerId:"jason_owner",supabaseClient:{from:()=>chain}});
+  const response=await GET(new Request("https://example.test/api/rental/reports?report=account-ledger"));
+  expect(response.status).toBe(200);
+  expect(eqCalls).toContainEqual(["owner_id","jason_owner"]);
+  expect(eqCalls).not.toContainEqual(["owner_id","brandy_co_owner"]);
 });

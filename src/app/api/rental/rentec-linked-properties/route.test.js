@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const authenticated = { user: { id: "owner_1" }, supabaseClient: {} };
+const authenticated = { user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: {} };
 const unauthenticatedResponse = { response: new Response(JSON.stringify({ error: "Authenticated owner id is required." }), { status: 401 }) };
 const createAuthenticatedForgeApplication = vi.fn(async () => authenticated);
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication", () => ({ createAuthenticatedForgeApplication: (...args) => createAuthenticatedForgeApplication(...args) }));
@@ -76,3 +76,15 @@ describe("rentec linked properties route", () => {
     expect(body.properties[0].label).toBe("1218 Wagner St");
   });
 });
+
+  it("scopes the query to the canonical owner id for an active co-owner", async () => {
+    const table = chain([]);
+    createAuthenticatedForgeApplication.mockResolvedValueOnce({
+      user: { id: "brandy_co_owner" },
+      effectiveOwnerId: "jason_owner",
+      supabaseClient: { from: () => table },
+    });
+    await GET();
+    expect(table.select().__calls.eq).toContainEqual(["owner_id", "jason_owner"]);
+    expect(table.select().__calls.eq).not.toContainEqual(["owner_id", "brandy_co_owner"]);
+  });

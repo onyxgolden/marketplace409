@@ -571,3 +571,38 @@ describe("Rental Manager route", () => {
     expect(application.saveLease).not.toHaveBeenCalledWith(expect.anything(), "jason_owner");
   });
 });
+
+describe("Rental Manager GET — canonical owner read scoping", () => {
+  function recordingClient() {
+    const recorders = {};
+    const from = vi.fn((table) => {
+      const calls = { eq: [] };
+      recorders[table] = calls;
+      const node = new Proxy({}, {
+        get(_target, prop) {
+          if (prop === "then") return (resolve) => resolve({ data: [], error: null });
+          return (...args) => { if (prop === "eq") calls.eq.push(args); return node; };
+        },
+      });
+      return node;
+    });
+    return { from, recorders };
+  }
+
+  it("reads financial events and billing settings under the canonical owner id for a co-owner", async () => {
+    const { from, recorders } = recordingClient();
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({
+      application,
+      user: { id: "brandy_co_owner" },
+      effectiveOwnerId: "jason_owner",
+      supabaseClient: { from },
+    });
+    const response = await GET();
+    expect(response.status).toBe(200);
+    expect(recorders["financial_events"].eq).toContainEqual(["owner_id", "jason_owner"]);
+    expect(recorders["financial_events"].eq).not.toContainEqual(["owner_id", "brandy_co_owner"]);
+    expect(recorders["rental_billing_settings"].eq).toContainEqual(["owner_id", "jason_owner"]);
+    expect(recorders["rental_billing_settings"].eq).not.toContainEqual(["owner_id", "brandy_co_owner"]);
+  });
+});
