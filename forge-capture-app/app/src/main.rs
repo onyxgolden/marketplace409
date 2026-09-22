@@ -71,6 +71,22 @@ struct AppState {
     /// successfully at startup. Set once in `setup`; read by the
     /// `printscreen_takeover_active` command so the UI can show the status.
     printscreen_active: AtomicBool,
+    /// In-flight chunked media uploads (Rung 4 screen recordings), keyed by
+    /// the upload id handed to `begin_media_upload`. Entries are removed by
+    /// `finish_media_upload` / `cancel_media_upload`; abandoned uploads die
+    /// with the process (no persistence, no expiry thread in Rung 4).
+    media_uploads: Mutex<HashMap<String, MediaUpload>>,
+}
+
+/// One in-flight chunked media upload. The webview holds the encoded bytes
+/// (it produced them with the platform MediaRecorder); the backend only
+/// reassembles and writes them.
+struct MediaUpload {
+    expected_bytes: u64,
+    mime: String,
+    extension: String,
+    stem: String,
+    received: Vec<u8>,
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +159,40 @@ struct ArtifactRefDto {
     height: u32,
     png_path: String,
     sidecar_path: String,
+}
+
+/// Cursor hotspot position for the Rung 4 recording compositor, in
+/// virtual-desktop physical pixels.
+#[derive(Debug, Serialize, Clone)]
+struct CursorPosDto {
+    x: i32,
+    y: i32,
+}
+
+/// ui/record.js uploadBytes(): { total_bytes, mime, suggested_extension, name_hint }
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BeginMediaUploadDto {
+    total_bytes: u64,
+    mime: String,
+    suggested_extension: Option<String>,
+    name_hint: Option<String>,
+}
+
+/// ui/record.js uploadBytes(): { upload_id, bytes }
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppendMediaChunkDto {
+    upload_id: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MediaUploadResultDto {
+    path: String,
+    bytes_written: u64,
+    mime: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -308,6 +358,193 @@ fn list_windows() -> Result<Vec<WindowDto>, String> {
 #[tauri::command]
 fn captures_dir_path() -> Result<String, String> {
     captures_dir().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Current cursor hotspot position (virtual-desktop physical pixels) for the
+/// Rung 4 recording compositor's cursor overlay.
+#[tauri::command]
+fn get_cursor_pos() -> Result<CursorPosDto, String> {
+    let (x, y) = native::cursor_pos().map_err(err)?;
+    Ok(CursorPosDto { x, y })
+}
+
+// ---------------------------------------------------------------------------
+// Rung 4 chunked media upload: the webview produces recording bytes with the
+// platform MediaRecorder and streams them to the backend in ~1 MiB JSON
+// chunks; the backend reassembles, sniffs, and writes one local file.
+// ---------------------------------------------------------------------------
+
+/// Hard cap per upload: 2 GiB. The UI stops recordings at 1 GiB in memory;
+/// this is the backstop against a lying or buggy chunk count.
+const MAX_MEDIA_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+fn next_upload_id(state: &State<AppState>) -> String {
+    let mut counter = state.id_counter.lock().unwrap();
+    *counter += 1;
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("upl-{millis}-{counter}")
+}
+
+/// Keep a filename stem to safe characters: letters, digits, dash,
+/// underscore. Falls back to "recording".
+fn sanitize_stem(hint: Option<&str>) -> String {
+    let cleaned: String = hint
+        .unwrap_or("")
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else if c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches('-').to_string();
+    let cut: String = trimmed.chars().take(40).collect();
+    if cut.is_empty() {
+        "recording".to_string()
+    } else {
+        cut
+    }
+}
+
+/// The only media this command will write. The mime comes from the UI's
+/// MediaRecorder pick (WebM-first) or the GIF exporter; the extension must
+/// agree with it.
+fn media_extension(mime: &str, suggested: Option<&str>) -> Result<String, String> {
+    let from_mime = if mime.starts_with("video/webm") {
+        "webm"
+    } else if mime.starts_with("video/mp4") {
+        "mp4"
+    } else if mime == "image/gif" {
+        "gif"
+    } else {
+        return Err(format!("unsupported media mime for upload: {mime}"));
+    };
+    if let Some(s) = suggested {
+        let s = s.trim_start_matches('.').to_ascii_lowercase();
+        if s != from_mime {
+            return Err(format!(
+                "suggested extension .{s} does not match mime {mime} (expected .{from_mime})"
+            ));
+        }
+    }
+    Ok(from_mime.to_string())
+}
+
+fn sniff_media_ok(bytes: &[u8], extension: &str) -> bool {
+    match extension {
+        // EBML header ID
+        "webm" => bytes.len() >= 4 && bytes[0..4] == [0x1A, 0x45, 0xDF, 0xA3],
+        // 'ftyp' at offset 4
+        "mp4" => bytes.len() >= 8 && bytes[4..8] == [0x66, 0x74, 0x79, 0x70],
+        // GIF87a / GIF89a
+        "gif" => bytes.len() >= 6 && (bytes[0..6] == *b"GIF87a" || bytes[0..6] == *b"GIF89a"),
+        _ => false,
+    }
+}
+
+#[tauri::command]
+fn begin_media_upload(dto: BeginMediaUploadDto, state: State<AppState>) -> Result<String, String> {
+    if dto.total_bytes == 0 || dto.total_bytes > MAX_MEDIA_UPLOAD_BYTES {
+        return Err(format!(
+            "total_bytes {} is outside the allowed 1..{} range",
+            dto.total_bytes, MAX_MEDIA_UPLOAD_BYTES
+        ));
+    }
+    let extension = media_extension(&dto.mime, dto.suggested_extension.as_deref())?;
+    let dir = captures_dir()?;
+    let stem = unique_stem(
+        &state,
+        &dir,
+        &sanitize_stem(dto.name_hint.as_deref()),
+        &extension,
+    );
+    let id = next_upload_id(&state);
+    let mut uploads = state.media_uploads.lock().unwrap();
+    uploads.insert(
+        id.clone(),
+        MediaUpload {
+            expected_bytes: dto.total_bytes,
+            mime: dto.mime,
+            extension,
+            stem,
+            received: Vec::new(),
+        },
+    );
+    Ok(id)
+}
+
+#[tauri::command]
+fn append_media_chunk(dto: AppendMediaChunkDto, state: State<AppState>) -> Result<u64, String> {
+    let mut uploads = state.media_uploads.lock().unwrap();
+    let upload = uploads
+        .get_mut(&dto.upload_id)
+        .ok_or_else(|| format!("unknown upload id: {}", dto.upload_id))?;
+    let new_len = upload.received.len() as u64 + dto.bytes.len() as u64;
+    if new_len > upload.expected_bytes {
+        return Err(format!(
+            "upload would exceed declared total: {} > {}",
+            new_len, upload.expected_bytes
+        ));
+    }
+    upload.received.extend_from_slice(&dto.bytes);
+    Ok(upload.received.len() as u64)
+}
+
+#[tauri::command]
+fn finish_media_upload(id: String, state: State<AppState>) -> Result<MediaUploadResultDto, String> {
+    let upload = {
+        let mut uploads = state.media_uploads.lock().unwrap();
+        uploads
+            .remove(&id)
+            .ok_or_else(|| format!("unknown upload id: {id}"))?
+    };
+    if upload.received.len() as u64 != upload.expected_bytes {
+        return Err(format!(
+            "incomplete upload: got {} of {} declared bytes",
+            upload.received.len(),
+            upload.expected_bytes
+        ));
+    }
+    if !sniff_media_ok(&upload.received, &upload.extension) {
+        return Err(format!(
+            "uploaded bytes are not a valid .{} stream — refusing to write",
+            upload.extension
+        ));
+    }
+    let dir = captures_dir()?;
+    let path = dir.join(format!("{}.{}", upload.stem, upload.extension));
+    std::fs::write(&path, &upload.received).map_err(|e| format!("cannot write media file: {e}"))?;
+    // Provenance sidecar, mirroring the still-capture convention: every
+    // file the app writes gets a `.forge.json` next to it.
+    let sidecar_path = dir.join(format!("{}.forge.json", upload.stem));
+    let sidecar = format!(
+        "{{\n  \"schemaVersion\": 1,\n  \"kind\": \"recording\",\n  \"mime\": {},\n  \"byteLength\": {},\n  \"createdAt\": {}\n}}\n",
+        serde_json::to_string(&upload.mime).unwrap_or_else(|_| "\"\"".to_string()),
+        upload.received.len(),
+        serde_json::to_string(&forge_capture_core::timestamp::now_utc_iso8601())
+            .unwrap_or_else(|_| "\"\"".to_string()),
+    );
+    std::fs::write(&sidecar_path, sidecar.as_bytes())
+        .map_err(|e| format!("cannot write sidecar: {e}"))?;
+    Ok(MediaUploadResultDto {
+        path: path.to_string_lossy().into_owned(),
+        bytes_written: upload.received.len() as u64,
+        mime: upload.mime,
+    })
+}
+
+#[tauri::command]
+fn cancel_media_upload(id: String, state: State<AppState>) -> Result<(), String> {
+    let mut uploads = state.media_uploads.lock().unwrap();
+    uploads.remove(&id);
+    Ok(())
 }
 
 fn build_mode(
@@ -939,6 +1176,7 @@ fn main() {
             used_stems: Mutex::new(HashSet::new()),
             scroll_aborts: Mutex::new(HashMap::new()),
             printscreen_active: AtomicBool::new(false),
+            media_uploads: Mutex::new(HashMap::new()),
         })
         .setup(|app| {
             // Best-effort Print Screen takeover: register the global
@@ -965,6 +1203,11 @@ fn main() {
             start_scroll_capture,
             stop_scroll_capture,
             printscreen_takeover_active,
+            get_cursor_pos,
+            begin_media_upload,
+            append_media_chunk,
+            finish_media_upload,
+            cancel_media_upload,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run FORGE Capture");
@@ -1085,5 +1328,94 @@ mod dto_ipc_tests {
                 tauri::AppHandle,
                 State<AppState>,
             ) -> Result<(), String>;
+    }
+
+    #[test]
+    fn begin_media_upload_dto_matches_ui_payload() {
+        // ui/record.js uploadBytes():
+        //   { total_bytes, mime, suggested_extension, name_hint }
+        let json = r#"{
+            "total_bytes": 1048576,
+            "mime": "video/webm;codecs=vp9",
+            "suggested_extension": null,
+            "name_hint": "recording"
+        }"#;
+        let dto: BeginMediaUploadDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.total_bytes, 1048576);
+        assert_eq!(dto.mime, "video/webm;codecs=vp9");
+        assert!(dto.suggested_extension.is_none());
+        assert_eq!(dto.name_hint.as_deref(), Some("recording"));
+    }
+
+    #[test]
+    fn begin_media_upload_gif_dto_matches_ui_payload() {
+        // ui/record.js onExportGif(): mime image/gif + suggestedExtension "gif".
+        let json = r#"{
+            "total_bytes": 2048,
+            "mime": "image/gif",
+            "suggested_extension": "gif",
+            "name_hint": "recording-clip"
+        }"#;
+        let dto: BeginMediaUploadDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.mime, "image/gif");
+        assert_eq!(dto.suggested_extension.as_deref(), Some("gif"));
+    }
+
+    #[test]
+    fn append_media_chunk_dto_matches_ui_payload() {
+        // ui/record.js uploadBytes(): { upload_id, bytes } where bytes is a
+        // plain JSON number array (Tauri has no binary IPC for number arrays).
+        let json = r#"{"upload_id": "upl-123-1", "bytes": [26, 69, 223, 163]}"#;
+        let dto: AppendMediaChunkDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.upload_id, "upl-123-1");
+        assert_eq!(dto.bytes, vec![26u8, 69, 223, 163]);
+    }
+
+    #[test]
+    fn media_extension_accepts_supported_pairs() {
+        assert_eq!(
+            media_extension("video/webm;codecs=vp9", None).unwrap(),
+            "webm"
+        );
+        assert_eq!(media_extension("video/webm", None).unwrap(), "webm");
+        assert_eq!(media_extension("video/mp4", None).unwrap(), "mp4");
+        assert_eq!(media_extension("image/gif", Some("gif")).unwrap(), "gif");
+        assert_eq!(media_extension("image/gif", None).unwrap(), "gif");
+    }
+
+    #[test]
+    fn media_extension_rejects_mismatch_and_unknown() {
+        assert!(media_extension("video/x-matroska", None).is_err());
+        assert!(media_extension("application/octet-stream", None).is_err());
+        // Suggested extension must agree with the mime, not override it.
+        assert!(media_extension("video/webm", Some("mp4")).is_err());
+        assert!(media_extension("video/webm", Some("exe")).is_err());
+    }
+
+    #[test]
+    fn sanitize_stem_keeps_safe_characters() {
+        assert_eq!(
+            sanitize_stem(Some("recording-trimmed")),
+            "recording-trimmed"
+        );
+        assert_eq!(sanitize_stem(Some("../../evil")), "evil");
+        assert_eq!(sanitize_stem(Some("Clip 1 (final)")), "clip-1--final");
+        assert_eq!(sanitize_stem(None), "recording");
+        assert_eq!(sanitize_stem(Some("!!!")), "recording");
+    }
+
+    #[test]
+    fn sniff_media_ok_recognizes_magic_bytes() {
+        assert!(sniff_media_ok(&[0x1A, 0x45, 0xDF, 0xA3, 0x00], "webm"));
+        assert!(!sniff_media_ok(&[0x00, 0x00, 0x00, 0x20], "webm"));
+        assert!(sniff_media_ok(
+            &[0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70],
+            "mp4"
+        ));
+        assert!(!sniff_media_ok(&[0x1A, 0x45, 0xDF, 0xA3], "mp4"));
+        assert!(sniff_media_ok(b"GIF89a....", "gif"));
+        assert!(sniff_media_ok(b"GIF87a....", "gif"));
+        assert!(!sniff_media_ok(b"GIF89a....", "webm"));
+        assert!(!sniff_media_ok(&[], "webm"));
     }
 }
