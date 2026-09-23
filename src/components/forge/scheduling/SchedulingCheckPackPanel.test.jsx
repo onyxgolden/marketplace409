@@ -46,6 +46,14 @@ const BOARD = {
 
 const EMPTY_BOARD = { blocks: [], dependencies: [], cpm: { byTaskCode: {} }, wbs: { activities: [] } };
 
+function deepFreeze(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const key of Object.keys(value)) deepFreeze(value[key]);
+  }
+  return value;
+}
+
 describe("SchedulingChecksPanel", () => {
   it("renders the six check buttons with an overall summary", () => {
     const mounted = mount(<SchedulingChecksPanel board={BOARD} onClose={() => {}} />);
@@ -111,5 +119,25 @@ describe("SchedulingChecksPanel", () => {
     } finally {
       unmount(mounted);
     }
+  });
+
+  it("never mutates the board: a deep-frozen fixture survives mounting and check switching", () => {
+    // The component immutability contract: mounting the panel and selecting
+    // checks is presentation state only. Any write to the board would throw
+    // against the frozen fixture (strict-mode assignment) or show up in the
+    // post-interaction snapshot.
+    const frozenBoard = deepFreeze(JSON.parse(JSON.stringify(BOARD)));
+    const snapshot = JSON.parse(JSON.stringify(frozenBoard));
+    expect(() => {
+      const mounted = mount(<SchedulingChecksPanel board={frozenBoard} onClose={() => {}} />);
+      try {
+        for (const checkId of ["broken_activities", "gapped_activities", "start_in_future", "finish_in_future", "uncoded", "negative_float"]) {
+          click(mounted.container.querySelector(`[data-scheduling-check="${checkId}"]`));
+        }
+      } finally {
+        unmount(mounted);
+      }
+    }).not.toThrow();
+    expect(JSON.parse(JSON.stringify(frozenBoard))).toEqual(snapshot);
   });
 });

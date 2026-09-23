@@ -9,12 +9,10 @@
 // CONTRACT BOUNDARY (architecture verdict, item 3): this module is the only place
 // that turns schedule data into quality flags. The UI layer (SchedulingChecksPanel)
 // consumes the flags this module produces and never recalculates quality itself.
-// Where a DCMA function yields per-activity answers, this module consumes them
-// directly (dcmaInvalidDates -> start/finish-in-future task codes); where a DCMA
-// function only returns aggregates, the per-activity predicate here uses that
-// function's exact predicate, and schedulingCheckPack.test.js pins the agreement
-// between the two (flagged counts reproduce the DCMA aggregates on the same
-// fixture).
+// The check pack mirrors the DCMA predicates (see schedulingEvmDcma.js) and
+// validates agreement through contract tests: start/finish-in-future consume
+// dcmaInvalidDates' per-activity task codes directly, and the remaining checks'
+// flagged counts are pinned against the DCMA aggregates on the same fixture.
 //
 // SLICE-4 CONTRACT (architecture verdict, item 5): each check result carries a
 // deterministic step id (`check_<id>`), a named action (`review_<id>`), summary
@@ -104,9 +102,11 @@ function isInProgress(progress) {
   return percent > 0 && percent < 100 && progress.actualFinish == null;
 }
 
-// Per-activity flag predicates. Broken/negative-float use the DCMA functions'
-// exact predicates (see schedulingEvmDcma.js); start/finish-in-future are split
-// out of dcmaInvalidDates' per-activity task codes.
+// Per-activity flag predicates. These mirror the DCMA predicates (see
+// schedulingEvmDcma.js) rather than importing per-activity DCMA functions;
+// start/finish-in-future are split out of dcmaInvalidDates' per-activity task
+// codes. Agreement with the DCMA functions is validated through contract tests
+// in schedulingCheckPack.test.js, not by sharing predicate code.
 function flagBroken(block, predecessors, successors) {
   if (MILESTONE_LIKE.has(block.blockType)) return false;
   return predecessors.size === 0 && successors.size === 0;
@@ -134,8 +134,21 @@ function displayValue(value) {
 //   cpmByTaskCode: { [taskCode]: { earlyStart, earlyFinish, totalFloatDays, percentComplete, actualStart, actualFinish } }
 //   wbsActivities: [{ code, wbsId }]
 //   dataDate:      ISO date string used as the status/data date
+// Last-resort data date only. Production callers pass the board's canonical
+// data date (see SchedulingCheckPackPanel). This fallback exists for direct
+// domain callers/tests that omit it; it intentionally uses the browser's local
+// calendar date -- never new Date().toISOString().slice(0,10), which drifts a
+// calendar day in nonzero UTC offsets. (Mirrors todayISO() in
+// schedulingBoardState.js, the existing schedule-model convention.)
+function localTodayISO() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+    .toISOString()
+    .slice(0, 10);
+}
+
 export function runCheckPack({ blocks = [], dependencies = [], cpmByTaskCode = {}, wbsActivities = [], dataDate }) {
-  const effectiveDataDate = dataDate ?? new Date().toISOString().slice(0, 10);
+  const effectiveDataDate = dataDate ?? localTodayISO();
 
   const predecessorsById = new Map();
   const successorsById = new Map();
