@@ -32,6 +32,11 @@ import { findSymbol } from "./symbolRegistry";
 // and validateDesign resolve it in every context that loads the document
 // model (app, API routes, tests).
 import "./pipingCatalog";
+// Side-effect imports: register the object-library symbol sets
+// (buildingElements, siteOutdoor, mepFixtures) the same way.
+import "./buildingElementsCatalog";
+import "./siteOutdoorCatalog";
+import "./mepFixturesCatalog";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {
