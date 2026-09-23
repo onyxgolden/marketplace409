@@ -9,6 +9,7 @@ import { SchedulingEvmDcmaPanel } from "./SchedulingEvmDcmaModal";
 import { SchedulingLevelingPanel } from "./SchedulingLevelingModal";
 import { AskSchedulePanel } from "./AskSchedulePanel";
 import { DriftAlertsPanel } from "./DriftAlertsPanel";
+import { SchedulingChecksPanel } from "./SchedulingCheckPackPanel";
 
 // The docked inspector rail: one fixed-width right-side panel with a tab per
 // scheduling workspace (previously eight separate centered modals). The board
@@ -19,6 +20,7 @@ export const INSPECTOR_TABS = [
   { id: "help", label: "Help" },
   { id: "ask", label: "Ask" },
   { id: "drift", label: "Drift" },
+  { id: "checks", label: "Checks" },
   { id: "calendars", label: "Calendars" },
   { id: "baselines", label: "Baselines" },
   { id: "resources", label: "Resources", ownerOnly: true },
@@ -46,6 +48,11 @@ function InspectorPanel({ activeTab, onCollapse, isOwner, board, projectId,
       // Same read-only convention as Ask: drift is computed from dates/CPM, so
       // non-owners see it too.
       return <DriftAlertsPanel projectId={projectId} onClose={onCollapse} />;
+    case "checks":
+      // Same read-only convention as Drift: the check pack is computed from
+      // dates/CPM/dependencies, so non-owners see it too. Pure client-side --
+      // no fetch, no writes.
+      return <SchedulingChecksPanel board={board} onClose={onCollapse} />;
     case "calendars":
       return (
         <SchedulingCalendarsPanel board={board} onClose={onCollapse}

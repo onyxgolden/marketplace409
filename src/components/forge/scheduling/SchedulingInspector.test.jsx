@@ -12,10 +12,10 @@ function renderInspector(overrides = {}) {
 }
 
 describe("SchedulingInspector", () => {
-  it("declares ten tabs", () => {
-    expect(INSPECTOR_TABS).toHaveLength(10);
+  it("declares eleven tabs", () => {
+    expect(INSPECTOR_TABS).toHaveLength(11);
     expect(INSPECTOR_TABS.map((tab) => tab.id)).toEqual(
-      ["help", "ask", "drift", "calendars", "baselines", "resources", "cost-accounts", "costs", "evm-dcma", "leveling"]
+      ["help", "ask", "drift", "checks", "calendars", "baselines", "resources", "cost-accounts", "costs", "evm-dcma", "leveling"]
     );
   });
 
@@ -41,8 +41,8 @@ describe("SchedulingInspector", () => {
   });
 
   it("visibleInspectorTabs filters by ownership", () => {
-    expect(visibleInspectorTabs(true)).toHaveLength(10);
-    expect(visibleInspectorTabs(false).map((tab) => tab.id)).toEqual(["help", "ask", "drift", "calendars", "baselines"]);
+    expect(visibleInspectorTabs(true)).toHaveLength(11);
+    expect(visibleInspectorTabs(false).map((tab) => tab.id)).toEqual(["help", "ask", "drift", "checks", "calendars", "baselines"]);
   });
 
   it("shows the drift badge on the Drift tab when drifted activities exist", () => {
