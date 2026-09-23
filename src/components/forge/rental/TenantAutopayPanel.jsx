@@ -3,20 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Elements } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 import TenantAutopayBankSetupForm from "./TenantAutopayBankSetupForm";
+import ChargeDayPicker, { ordinalDayOfMonth, dayOfMonth } from "./ChargeDayPicker";
 
 const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 // Stashed before bank confirmation so activation can resume if the bank's own login flow
 // takes the tenant away from the portal and Stripe redirects back afterwards.
 const SETUP_STORAGE_KEY = "forge-autopay-bank-setup";
-
-// Charge day is a recurring day-of-month (1-28, every month has the day),
-// not a one-time calendar date.
-function ordinalDayOfMonth(day) {
-  const n = Number(day);
-  const suffix = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return n + (suffix[(v - 20) % 10] || suffix[v] || suffix[0]);
-}
 
 function isValidPublishableKey(key) {
   return typeof key === "string" && /^pk_(test|live)_/.test(key);
@@ -36,6 +28,23 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
   // Bank-link in progress: { enrollmentId, setupIntentId, clientSecret, connectedAccountId }
   const [setup, setSetup] = useState(null);
   const [stripeLoadFailed, setStripeLoadFailed] = useState(false);
+  const [chargeDay, setChargeDay] = useState(1);
+  // Controlled so the due-day suggestion below can follow the chosen lease.
+  // Null until the tenant picks: falls back to the first rental (covers the
+  // async portal load, which arrives after first render).
+  const [leaseId, setLeaseId] = useState(null);
+  const effectiveLeaseId = leaseId ?? (rentals || [])[0]?.lease?.id ?? "";
+  // Suggested charge day: the day-of-month of the next open rent charge for the
+  // selected lease — the tenant's actual rent due day, already loaded by the
+  // portal. Null when there are no open rent charges or the day is outside the
+  // 1-28 charge-day range (the picker ignores it then).
+  const selectedRental = (rentals || []).find((r) => r.lease?.id === effectiveLeaseId);
+  const suggestedDay = (() => {
+    const openRent = (selectedRental?.charges || [])
+      .filter((c) => (c.chargeType || "rent") === "rent" && !["paid", "void"].includes(c.status) && c.dueDate)
+      .sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0));
+    return dayOfMonth(openRent[0]?.dueDate);
+  })();
   const current = (rentals || []).flatMap((r) => r.autopayEnrollments || [])
     .find((e) => ["setup_required", "active", "paused"].includes(e.status));
   const needsBankLink = current?.status === "setup_required" && current?.paymentMethodType === "us_bank_account";
@@ -160,7 +169,8 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
           consentConfirmed: f.get("consentConfirmed") === "on" });
       }}>
       <label className="text-sm font-bold">Lease
-        <select name="leaseId" required className="mt-1 w-full rounded-xl border p-3 font-normal">
+        <select name="leaseId" required value={effectiveLeaseId} onChange={(event) => setLeaseId(event.target.value)}
+          className="mt-1 w-full rounded-xl border p-3 font-normal">
           {(rentals || []).map((r) => <option key={r.lease.id} value={r.lease.id}>{r.unit?.label || "Rental home"}</option>)}
         </select>
       </label>
@@ -172,8 +182,8 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
       </label>
       <div className="grid grid-cols-2 gap-3">
         <label className="text-sm font-bold">Charge day (day of the month)
-          <input name="chargeDay" type="number" min="1" max="28" defaultValue="1" className="mt-1 w-full rounded-xl border p-3 font-normal" />
-          <span className="mt-1 block text-xs font-normal text-slate-600">You&apos;ll be charged on this day each month — e.g. 15 means the 15th of every month. Enter a day from 1 to 28.</span>
+          <ChargeDayPicker value={chargeDay} onChange={setChargeDay} suggestedDay={suggestedDay} />
+          <span className="mt-1 block text-xs font-normal text-slate-600">You&apos;ll be charged on this day each month — e.g. 15 means the 15th of every month. Pick a day from 1 to 28.</span>
         </label>
         <label className="text-sm font-bold">Reminder days before
           <input name="reminderDaysBefore" type="number" min="0" max="14" defaultValue="3" className="mt-1 w-full rounded-xl border p-3 font-normal" />

@@ -120,7 +120,8 @@ export default function PrivateFinancingBorrowerPortal() {
             <p className="mt-6 rounded-xl bg-slate-100 p-4 text-sm">Online payments are not currently active for this account.</p>
           )}
 
-          {summaryAvailable ? <PrivateFinancingBorrowerAutopay accountId={account.id} enrollments={autopayEnrollments} onChanged={loadPortal} /> : null}
+          {summaryAvailable ? <PrivateFinancingBorrowerAutopay accountId={account.id} enrollments={autopayEnrollments}
+            nextDueDate={projection?.seed?.firstProjectedPaymentDate ?? null} onChanged={loadPortal} /> : null}
 
           <h3 className="mt-7 text-lg font-black">Payment history</h3>          <ol className="mt-3 divide-y">
             {events.filter((event) => event.event_type === "payment_posted").map((event) => (

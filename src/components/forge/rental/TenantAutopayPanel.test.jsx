@@ -54,6 +54,13 @@ function buttonByText(container, text) {
   return Array.from(container.querySelectorAll("button")).find((b) => b.textContent === text) || null;
 }
 
+function openChargeDayCalendar(container) {
+  const button = Array.from(container.querySelectorAll("button"))
+    .find((b) => b.getAttribute("aria-haspopup") === "dialog");
+  act(() => button.click());
+  return button;
+}
+
 describe("TenantAutopayPanel bank setup", () => {
   it("offers a bank-link step for a setup_required US bank account enrollment", () => {
     mounted = mount(<TenantAutopayPanel rentals={rentalsWith(bankEnrollment)} onChanged={onChanged} />);
@@ -144,10 +151,13 @@ describe("TenantAutopayPanel charge-day copy", () => {
     expect(mounted.container.textContent).toContain("Charge day (day of the month)");
     expect(mounted.container.textContent).toContain("charged on this day each month");
     expect(mounted.container.textContent).toContain("15 means the 15th of every month");
-    expect(mounted.container.textContent).toContain("Enter a day from 1 to 28.");
-    const input = mounted.container.querySelector('input[name="chargeDay"]');
-    expect(input.getAttribute("min")).toBe("1");
-    expect(input.getAttribute("max")).toBe("28");
+    expect(mounted.container.textContent).toContain("Pick a day from 1 to 28.");
+    const button = Array.from(mounted.container.querySelectorAll("button"))
+      .find((b) => b.getAttribute("aria-haspopup") === "dialog");
+    expect(button.textContent).toContain("the 1st of each month");
+    const hidden = mounted.container.querySelector('input[name="chargeDay"][type="hidden"]');
+    expect(hidden).not.toBeNull();
+    expect(hidden.value).toBe("1");
   });
 
   it("states the recurring charge day as an ordinal in the status line", () => {
@@ -163,5 +173,60 @@ describe("TenantAutopayPanel charge-day copy", () => {
       expect(local.container.textContent).toContain(`charged on the ${ordinal} of each month`);
       unmount(local);
     }
+  });
+});
+
+describe("TenantAutopayPanel charge-day calendar", () => {
+  it("offers only days 1-28 in the calendar and submits the picked day", async () => {
+    mounted = mount(<TenantAutopayPanel rentals={rentalsWith(null)} onChanged={onChanged} />);
+    openChargeDayCalendar(mounted.container);
+    const enabled = Array.from(mounted.container.querySelectorAll('button[aria-label^="Charge on the"]'));
+    expect(enabled).toHaveLength(28);
+    act(() => enabled.find((b) => b.textContent === "15").click());
+    expect(mounted.container.querySelector('input[name="chargeDay"][type="hidden"]').value).toBe("15");
+    const form = mounted.container.querySelector("form");
+    act(() => { form.querySelector('input[name="consentConfirmed"]').click(); });
+    await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await flush();
+    expect(fetchMock).toHaveBeenCalledWith("/api/rental/portal", expect.objectContaining({ method: "POST" }));
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(payload).toEqual({ operation: "request-autopay", leaseId: "lease_1",
+      paymentMethodType: "us_bank_account", chargeDay: 15, reminderDaysBefore: 3, consentConfirmed: true });
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("highlights the rent due day from the lease's open rent charges", () => {
+    const rentals = [{ lease: { id: "lease_1" }, unit: { label: "Unit A" }, autopayEnrollments: [],
+      charges: [{ chargeType: "rent", status: "open", dueDate: "2026-11-15" }] }];
+    mounted = mount(<TenantAutopayPanel rentals={rentals} onChanged={onChanged} />);
+    openChargeDayCalendar(mounted.container);
+    const dueDay = mounted.container.querySelector('[data-due-day="true"]');
+    expect(dueDay).not.toBeNull();
+    expect(dueDay.textContent).toBe("15");
+    expect(mounted.container.textContent).toContain("Your due date is the 15th");
+  });
+
+  it("shows no due-day highlight when there are no open rent charges", () => {
+    mounted = mount(<TenantAutopayPanel rentals={rentalsWith(null)} onChanged={onChanged} />);
+    openChargeDayCalendar(mounted.container);
+    expect(mounted.container.querySelector('[data-due-day="true"]')).toBeNull();
+    expect(mounted.container.textContent).not.toContain("Your due date is the");
+  });
+
+  it("follows the selected lease for the due-day suggestion", () => {
+    const rentals = [
+      { lease: { id: "lease_1" }, unit: { label: "Unit A" }, autopayEnrollments: [],
+        charges: [{ chargeType: "rent", status: "open", dueDate: "2026-11-01" }] },
+      { lease: { id: "lease_2" }, unit: { label: "Unit B" }, autopayEnrollments: [],
+        charges: [{ chargeType: "rent", status: "open", dueDate: "2026-11-15" }] },
+    ];
+    mounted = mount(<TenantAutopayPanel rentals={rentals} onChanged={onChanged} />);
+    const select = mounted.container.querySelector('select[name="leaseId"]');
+    act(() => {
+      select.value = "lease_2";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    openChargeDayCalendar(mounted.container);
+    expect(mounted.container.querySelector('[data-due-day="true"]').textContent).toBe("15");
   });
 });

@@ -3,25 +3,21 @@ import { useMemo, useState } from "react";
 import { Elements } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 import PrivateFinancingAutopaySetupForm from "./PrivateFinancingAutopaySetupForm";
+import ChargeDayPicker, { ordinalDayOfMonth, dayOfMonth } from "./ChargeDayPicker";
 
 const KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
-
-// Charge day is a recurring day-of-month (1-28, every month has the day),
-// not a one-time calendar date.
-function ordinalDayOfMonth(day) {
-  const n = Number(day);
-  const suffix = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return n + (suffix[(v - 20) % 10] || suffix[v] || suffix[0]);
-}
 
 // Borrower-facing autopay controls for one financing account. Mirrors the rental
 // TenantAutopayPanel flow: consent -> Stripe bank-account link + mandate -> active.
 // ACH (US bank account) is the default and only autopay method in this slice.
-export default function PrivateFinancingBorrowerAutopay({ accountId, enrollments = [], onChanged }) {
+// nextDueDate is the portal's already-computed next due date ("YYYY-MM-DD") for
+// this account, when available; its day-of-month is highlighted in the picker as
+// the suggested charge day. No new data is fetched and nothing is invented.
+export default function PrivateFinancingBorrowerAutopay({ accountId, enrollments = [], nextDueDate = null, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [setup, setSetup] = useState(null);
+  const [chargeDay, setChargeDay] = useState(1);
   const current = enrollments.find((e) => ["setup_required", "active", "paused"].includes(e.status)) || null;
   const stripe = useMemo(() => setup && KEY ? loadStripe(KEY, { stripeAccount: setup.connectedAccountId }) : null, [setup]);
 
@@ -118,8 +114,8 @@ export default function PrivateFinancingBorrowerAutopay({ accountId, enrollments
         </label>
         <div className="grid grid-cols-2 gap-3">
           <label className="text-sm font-bold">Charge day (day of the month)
-            <input name="chargeDay" type="number" min="1" max="28" defaultValue="1" required className="mt-1 w-full rounded-xl border p-3 font-normal" />
-            <span className="mt-1 block text-xs font-normal text-slate-600">You&apos;ll be charged on this day each month — e.g. 15 means the 15th of every month. Enter a day from 1 to 28.</span>
+            <ChargeDayPicker value={chargeDay} onChange={setChargeDay} suggestedDay={dayOfMonth(nextDueDate)} />
+            <span className="mt-1 block text-xs font-normal text-slate-600">You&apos;ll be charged on this day each month — e.g. 15 means the 15th of every month. Pick a day from 1 to 28.</span>
           </label>
           <label className="text-sm font-bold">Reminder days before
             <input name="reminderDaysBefore" type="number" min="0" max="14" defaultValue="3" required className="mt-1 w-full rounded-xl border p-3 font-normal" />
