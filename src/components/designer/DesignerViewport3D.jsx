@@ -7,8 +7,9 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import { buildThreeScene } from "@/domains/roomDesigner/designerThreeModel";
 import { furnitureParts } from "@/domains/roomDesigner/designerFurnitureParts";
 import {
-  disposeTextureCaches,
+  acquireTextureCaches,
   plasterTexture,
+  releaseTextureCaches,
   skyTexture,
   woodFloorTexture,
 } from "./designerThreeTextures";
@@ -51,6 +52,7 @@ export default function DesignerViewport3D({ design }) {
 
   useEffect(() => {
     const mount = mountRef.current;
+    acquireTextureCaches();
     if (!mount) return;
 
     const tierName = pickQualityTier();
@@ -262,7 +264,7 @@ export default function DesignerViewport3D({ design }) {
       materialCache.clear();
       envRT?.dispose();
       pmrem?.dispose();
-      disposeTextureCaches();
+      releaseTextureCaches();
       renderer.dispose();
       mount.removeChild(renderer.domElement);
     };

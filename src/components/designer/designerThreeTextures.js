@@ -1,16 +1,38 @@
 // Procedural canvas textures for the Designer 3D view (component layer —
 // DOM-dependent, not unit-tested). Zero image assets, zero licensing risk.
 //
+// Lifetime ownership (final review: safe with multiple viewports alive):
+// - The module cache is reference-counted. Each DesignerViewport3D effect
+//   cycle calls acquireTextureCaches() on setup and releaseTextureCaches()
+//   on teardown. Textures are disposed only when the LAST consumer releases.
+// - Cached textures are immutable after creation. Every repeat variant gets
+//   its own cache entry (key includes quantized repeat), so no call ever
+//   mutates a texture another viewport is using.
+//
 // Per arch review constraints:
 // - color maps set texture.colorSpace = SRGBColorSpace explicitly
 // - wrapS/wrapT = RepeatWrapping with explicit repeat values; never generate
 //   a giant canvas sized to the whole floor (one fixed-size tile, repeated)
 // - generated textures are cached module-wide: never one texture per object
-// - disposeTextureCaches() releases everything (called on viewport unmount)
 
 import * as THREE from "three";
 
 const cache = new Map();
+let consumerCount = 0;
+
+export function acquireTextureCaches() {
+  consumerCount += 1;
+}
+
+function disposeAll() {
+  for (const tex of cache.values()) tex.dispose();
+  cache.clear();
+}
+
+export function releaseTextureCaches() {
+  consumerCount = Math.max(0, consumerCount - 1);
+  if (consumerCount === 0) disposeAll();
+}
 
 function makeCanvas(size) {
   const canvas = document.createElement("canvas");
@@ -92,23 +114,19 @@ function buildSky() {
 }
 
 export function woodFloorTexture(repeatX, repeatY) {
-  const key = "wood";
-  if (!cache.has(key)) cache.set(key, toTexture(buildWoodFloor(), { repeatX: 1, repeatY: 1 }));
-  const tex = cache.get(key);
-  tex.repeat.set(repeatX, repeatY);
-  return tex;
+  const key = repeatKey("wood", repeatX, repeatY);
+  if (!cache.has(key)) cache.set(key, toTexture(buildWoodFloor(), { repeatX, repeatY }));
+  return cache.get(key);
 }
 
 export function plasterTexture(repeatX = 3, repeatY = 1.5) {
-  const key = "plaster";
-  if (!cache.has(key)) cache.set(key, toTexture(buildPlaster(), { repeatX: 1, repeatY: 1 }));
-  const tex = cache.get(key);
-  tex.repeat.set(repeatX, repeatY);
-  return tex;
+  const key = repeatKey("plaster", repeatX, repeatY);
+  if (!cache.has(key)) cache.set(key, toTexture(buildPlaster(), { repeatX, repeatY }));
+  return cache.get(key);
 }
 
 export function skyTexture() {
-  const key = "sky";
+  const key = "sky:1.0000:1.0000";
   if (!cache.has(key)) {
     const tex = toTexture(buildSky());
     tex.wrapS = THREE.ClampToEdgeWrapping;
@@ -118,7 +136,10 @@ export function skyTexture() {
   return cache.get(key);
 }
 
-export function disposeTextureCaches() {
-  for (const tex of cache.values()) tex.dispose();
-  cache.clear();
+// Repeat is baked into the cache key (quantized to 4 decimals): the stored
+// texture is never mutated after creation, so two viewports with different
+// repeat values each get their own immutable texture instead of fighting
+// over one shared object's repeat state.
+function repeatKey(base, repeatX, repeatY) {
+  return `${base}:${Number(repeatX).toFixed(4)}:${Number(repeatY).toFixed(4)}`;
 }
