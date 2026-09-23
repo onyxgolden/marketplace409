@@ -14,6 +14,8 @@ import {
   wallLength,
 } from "./designerGeometry";
 import { findWall, pieceSize } from "./designerDocument";
+import { findSymbol } from "./symbolRegistry";
+import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
 
 export const WINDOW_SILL_IN = 36;
 export const WINDOW_HEADER_IN = 84;
@@ -129,8 +131,202 @@ export function furnitureToBox(piece) {
 }
 
 /**
+ * Stairs: native 3D stair descriptors from the building-elements stair
+ * symbols (stairs-straight / stairs-l / stairs-u), with a legacy fallback
+ * for the sample's pre-symbol stair annotations.
+ *
+ * Pure and serializable: plain JSON, no three.js, camera-independent —
+ * the same contract as furnitureToBox. The renderer owns geometry.
+ *
+ * Local frame (arch review: explicit convention): origin at the stair
+ * footprint center; local +x is the ascent direction of the first run;
+ * local +z is the stair width. Multi-run parts carry their own dir
+ * ("positive-x" | "negative-x" | "positive-z" | "negative-z").
+ *
+ * Descriptor:
+ * { kind:"stairs", id, type, x, z, rotY, axis:"local-x",
+ *   runDirection:"positive-x", widthIn, runIn, riseIn, baseElevationIn,
+ *   validGeometry, warnings[], parts[] }
+ * Run part:
+ * { kind:"run", x0, z0, dx, dz, dir, widthIn, y0, riseIn, steps, treadIn, riserIn }
+ *   (x0,z0) = plan corner where the ascent starts; dx/dz signed extents.
+ * Landing part:
+ * { kind:"landing", x0, z0, dx, dz, y0, thicknessIn } (y0 = top surface).
+ *
+ * baseElevationIn is the slice-2 hook: 0 today (single-level 3D has no
+ * upper slab), the level's elevation when levels stack. warnings is
+ * non-blocking honesty metadata — the renderer still draws unrealistic
+ * geometry, it just doesn't pretend it's valid.
+ */
+
+/** Max riser height (in) used when deriving step counts. */
+export const STAIR_MAX_RISER_IN = 7.75;
+/** Recommended minimum tread depth (in); shallower runs warn, never block. */
+export const STAIR_MIN_TREAD_IN = 10;
+
+const STAIR_SYMBOL_TYPES = Object.freeze({
+  "stairs-straight": "straight",
+  "stairs-l": "l",
+  "stairs-u": "u",
+});
+
+function stairRunPart({ x0, z0, dx, dz, dir, widthIn, y0, riseIn }) {
+  // Run length is along the ascent axis named by dir; the other axis is width.
+  const length = dir === "positive-x" || dir === "negative-x" ? Math.abs(dx) : Math.abs(dz);
+  const steps = Math.max(1, Math.ceil(riseIn / STAIR_MAX_RISER_IN));
+  const treadIn = length / steps;
+  const riserIn = riseIn / steps;
+  return { kind: "run", x0, z0, dx, dz, dir, widthIn, y0, riseIn, steps, treadIn, riserIn };
+}
+
+function stairLandingPart({ x0, z0, dx, dz, y0, thicknessIn = 4 }) {
+  return { kind: "landing", x0, z0, dx, dz, y0, thicknessIn };
+}
+
+function straightStairParts(runIn, widthIn, riseIn) {
+  return [
+    stairRunPart({ x0: -runIn / 2, z0: -widthIn / 2, dx: runIn, dz: widthIn, dir: "positive-x", widthIn, y0: 0, riseIn }),
+  ];
+}
+
+function lStairParts(w, d, riseIn) {
+  const runW = 0.55 * d;
+  const half = riseIn / 2;
+  return [
+    stairRunPart({ x0: -w / 2, z0: -d / 2, dx: 0.625 * w, dz: runW, dir: "positive-x", widthIn: runW, y0: 0, riseIn: half }),
+    stairLandingPart({ x0: w / 8, z0: -d / 2, dx: runW, dz: runW, y0: half }),
+    stairRunPart({ x0: w / 8, z0: -d / 2 + runW, dx: runW, dz: d / 2 - (-d / 2 + runW), dir: "positive-z", widthIn: runW, y0: half, riseIn: half }),
+  ];
+}
+
+function uStairParts(w, d, riseIn) {
+  const runW = 0.325 * d;
+  const half = riseIn / 2;
+  return [
+    stairRunPart({ x0: w / 2, z0: -d / 2, dx: -w, dz: runW, dir: "negative-x", widthIn: runW, y0: 0, riseIn: half }),
+    stairLandingPart({ x0: -w / 2, z0: -d / 2, dx: 2 * runW, dz: 2 * runW, y0: half }),
+    stairRunPart({ x0: -w / 2, z0: d / 2 - runW, dx: w, dz: runW, dir: "positive-x", widthIn: runW, y0: half, riseIn: half }),
+  ];
+}
+
+/** Non-blocking geometry honesty: warn, never refuse to describe. */
+function stairWarnings(parts) {
+  const warnings = [];
+  for (const p of parts) {
+    if (p.kind === "run" && p.treadIn < STAIR_MIN_TREAD_IN) {
+      warnings.push(
+        `Tread depth ${p.treadIn.toFixed(1)}" below recommended minimum ${STAIR_MIN_TREAD_IN}" — drawn as designed, verify against code.`,
+      );
+    }
+  }
+  return warnings;
+}
+
+function legacyStairBoxes(annotations) {
+  const boxes = [];
+  for (const a of annotations || []) {
+    if (a.source !== STAIR_ANNOTATION_SOURCE || a.kind !== "path" || !a.closed) continue;
+    const xs = a.points.map((p) => p.x);
+    const ys = a.points.map((p) => p.y);
+    if (xs.length === 0) continue;
+    boxes.push({
+      id: a.id,
+      x1: Math.min(...xs),
+      y1: Math.min(...ys),
+      x2: Math.max(...xs),
+      y2: Math.max(...ys),
+    });
+  }
+  return boxes;
+}
+
+/**
+ * Legacy stair annotation -> descriptor. Convention (documented): the run
+ * follows the box's long axis, ascending toward increasing plan Y. Only
+ * the Maplewood sample ever carries these annotations; native symbols
+ * always win when both exist.
+ */
+function legacyStairDescriptor(box, riseIn) {
+  const wX = box.x2 - box.x1;
+  const wY = box.y2 - box.y1;
+  const alongY = wY >= wX;
+  const run = alongY ? wY : wX;
+  const width = alongY ? wX : wY;
+  const parts = straightStairParts(run, width, riseIn);
+  const warnings = stairWarnings(parts);
+  return {
+    kind: "stairs",
+    id: `legacy-${box.id}`,
+    type: "straight",
+    x: (box.x1 + box.x2) / 2,
+    z: (box.y1 + box.y2) / 2,
+    rotY: alongY ? -Math.PI / 2 : 0, // local +x -> plan +y, like rotationDeg 90
+    axis: "local-x",
+    runDirection: "positive-x",
+    widthIn: width,
+    runIn: run,
+    riseIn,
+    baseElevationIn: 0,
+    validGeometry: warnings.length === 0,
+    warnings,
+    parts,
+    legacy: true,
+  };
+}
+
+/**
+ * Stair descriptors for a design document. Native stair symbol placements
+ * (priority 1); legacy stair annotations only when no native stair exists
+ * (priority 2, arch review). Returns [] when the design has no stairs.
+ */
+export function stairsDescriptors(design) {
+  if (!design) return [];
+  const riseIn = design.settings?.wallHeightIn ?? 108;
+  const out = [];
+  for (const s of design.symbols || []) {
+    const type = STAIR_SYMBOL_TYPES[s.symbolId];
+    if (!type) continue;
+    const symbol = findSymbol(s.domain, s.symbolId);
+    const run = s.widthIn ?? symbol?.widthIn;
+    const width = s.depthIn ?? symbol?.depthIn;
+    if (!run || !width) continue;
+    const parts =
+      type === "straight"
+        ? straightStairParts(run, width, riseIn)
+        : type === "l"
+          ? lStairParts(run, width, riseIn)
+          : uStairParts(run, width, riseIn);
+    const warnings = stairWarnings(parts);
+    out.push({
+      kind: "stairs",
+      id: s.id,
+      type,
+      x: s.x,
+      z: s.y,
+      // screen-space clockwise degrees -> three.js counter-clockwise radians
+      rotY: (-(s.rotationDeg || 0) * Math.PI) / 180,
+      axis: "local-x",
+      runDirection: "positive-x",
+      widthIn: width,
+      runIn: run,
+      riseIn,
+      baseElevationIn: 0,
+      validGeometry: warnings.length === 0,
+      warnings,
+      parts,
+    });
+  }
+  if (out.length === 0) {
+    for (const box of legacyStairBoxes(design.annotations)) {
+      out.push(legacyStairDescriptor(box, riseIn));
+    }
+  }
+  return out;
+}
+
+/**
  * Full scene descriptor for a design:
- * { walls: [...segments], glass: [...window panes], furniture: [...boxes], floor: {minX,minZ,maxX,maxZ}|null }
+ * { walls: [...segments], glass: [...window panes], furniture: [...boxes], stairs: [...], floor: {minX,minZ,maxX,maxZ}|null }
  */
 export function buildThreeScene(design) {
   if (!design || !Array.isArray(design.walls)) {
@@ -151,6 +347,7 @@ export function buildThreeScene(design) {
   const furniture = (design.furniture || [])
     .map(furnitureToBox)
     .filter(Boolean);
+  const stairs = stairsDescriptors(design);
 
   let floor = null;
   const xs = [];
@@ -172,7 +369,7 @@ export function buildThreeScene(design) {
       maxZ: Math.max(...zs) + pad,
     };
   }
-  return { walls, glass, furniture, floor };
+  return { walls, glass, furniture, stairs, floor };
 }
 
 /** Find the wall whose centerline is nearest to a plan point (for picking). */
