@@ -126,3 +126,41 @@ describe("designerThreeModel — pickWallAt", () => {
     expect(pickWallAt(design, { x: 100, y: 500 })).toBeNull();
   });
 });
+
+describe("designerThreeModel — windowGlassForWall", () => {
+  it("emits a glass pane per window opening between sill and header", () => {
+    let d = createEmptyDesign();
+    d = addWall(d, { x: 0, y: 0 }, { x: 144, y: 0 });
+    d = addOpening(d, d.walls[0].id, { type: "window", offsetIn: 48, widthIn: 48 });
+    const scene = buildThreeScene(d);
+    expect(scene.glass).toHaveLength(1);
+    const g = scene.glass[0];
+    expect(g.a.x).toBeCloseTo(48);
+    expect(g.b.x).toBeCloseTo(96);
+    expect(g.y0In).toBe(36);
+    expect(g.y1In).toBe(84);
+    expect(g.thicknessIn).toBe(4.5);
+    expect(g.openingId).toBe(d.openings[0].id);
+  });
+  it("emits no glass for doors", () => {
+    const { design } = designWithDoor();
+    expect(buildThreeScene(design).glass).toHaveLength(0);
+  });
+  it("emits no glass when the wall is shorter than the sill", () => {
+    let d = createEmptyDesign();
+    d = addWall(d, { x: 0, y: 0 }, { x: 144, y: 0 });
+    d = addOpening(d, d.walls[0].id, { type: "window", offsetIn: 48, widthIn: 48 });
+    d.settings = { ...d.settings, wallHeightIn: 30 };
+    expect(buildThreeScene(d).glass).toHaveLength(0);
+  });
+});
+
+describe("designerThreeModel — furniture catalogId passthrough", () => {
+  it("carries catalogId on furniture descriptors for 3D composition", () => {
+    let d = createEmptyDesign();
+    d = addRoomFromTemplate(d, "bedroom", { x: 0, y: 0 });
+    d = placeFurniture(d, "bed-queen", 72, 72);
+    const scene = buildThreeScene(d);
+    expect(scene.furniture[0].catalogId).toBe("bed-queen");
+  });
+});
