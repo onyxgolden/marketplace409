@@ -57,7 +57,7 @@ export async function GET(request) {
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type")
         .eq("owner_id", effectiveOwnerId).order("due_date", { ascending: true }),
       supabaseClient.from("rental_payments")
-        .select("id, charge_id, lease_id, tenant_id, provider, provider_payment_id, amount_cents, refunded_amount_cents, currency_code, status, payment_method, receipt_reference, received_at, succeeded_at, created_at")
+        .select("id, charge_id, lease_id, tenant_id, provider, provider_payment_id, amount_cents, refunded_amount_cents, currency_code, status, payment_method, receipt_reference, notes, received_at, succeeded_at, created_at")
         .eq("owner_id", effectiveOwnerId).eq("tenant_id", tenant.id).order("created_at", { ascending: true }),
       supabaseClient.from("rental_settlements")
         .select("id, payment_id, status, net_amount_cents, provider_payout_id")
@@ -114,6 +114,30 @@ export async function GET(request) {
       importedPaymentIds,
     });
 
+    // Open charges this tenant can post income against: every charge on one of the
+    // tenant's leases that is neither paid nor void and still has a remaining balance.
+    // Sorted oldest-first so Post Income defaults to the oldest open charge, Rentec-style.
+    const tenantLeaseIds = new Set(
+      (membershipsResult.data || []).filter((m) => m.tenant_id === tenant.id).map((m) => m.lease_id),
+    );
+    const openCharges = (chargesResult.data || [])
+      .filter((charge) => tenantLeaseIds.has(charge.lease_id)
+        && !["paid", "void"].includes(charge.status)
+        && Number(charge.amount_cents || 0) - Number(charge.paid_amount_cents || 0) > 0)
+      .map((charge) => ({
+        id: charge.id,
+        leaseId: charge.lease_id,
+        period: charge.period || null,
+        dueDate: charge.due_date || null,
+        chargeType: charge.charge_type || "rent",
+        amountCents: Number(charge.amount_cents || 0),
+        paidCents: Number(charge.paid_amount_cents || 0),
+        remainingCents: Number(charge.amount_cents || 0) - Number(charge.paid_amount_cents || 0),
+        status: charge.status || "unknown",
+      }))
+      .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || ""))
+        || String(a.id).localeCompare(String(b.id)));
+
     return NextResponse.json({
       success: true,
       actingUserId: authenticated.user.id,
@@ -122,6 +146,7 @@ export async function GET(request) {
       ledger,
       deposits,
       importedHistory,
+      openCharges,
     });
   } catch (error) {
     console.error("Tenant ledger query error", error);

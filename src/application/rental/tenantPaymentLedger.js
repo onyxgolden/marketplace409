@@ -155,6 +155,8 @@ export function buildTenantPaymentLedger({
       unitLabel: context.unitLabel,
       reference: payment.receipt_reference || payment.provider_payment_id || payment.id,
       refundedAmountCents: refundedCents,
+      // Carried for the transaction-detail view (memo line). Additive only.
+      notes: payment.notes || null,
       settlement: settlement ? {
         status: settlement.status,
         netAmountCents: signedCents(settlement.net_amount_cents),

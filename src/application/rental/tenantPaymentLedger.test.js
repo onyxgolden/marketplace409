@@ -225,6 +225,30 @@ describe("buildTenantPaymentLedger", () => {
     const chg = ledger.entries.find((e) => e.kind === "charge");
     expect(chg.period).toBe("2026-08");
   });
+
+  it("nets a partially refunded payment back into the running balance via a compensating refund entry", () => {
+    const ledger = buildTenantPaymentLedger(baseInput({
+      charges: [charge()],
+      payments: [payment({ refunded_amount_cents: 30000 })],
+    }));
+    const pay = ledger.entries.find((e) => e.kind === "payment");
+    const refund = ledger.entries.find((e) => e.kind === "refund");
+    expect(pay.balanceEffectCents).toBe(-150000);
+    expect(refund.balanceEffectCents).toBe(30000);
+    expect(refund.refundOfPaymentId).toBe("pay_1");
+    expect(ledger.entries[ledger.entries.length - 1].balanceAfterCents).toBe(30000);
+    expect(ledger.balanceCents).toBe(30000);
+    expect(ledger.totals).toEqual({ chargedCents: 150000, paidCents: 150000, refundedCents: 30000 });
+  });
+
+  it("carries payment notes through to the entry memo for transaction detail", () => {
+    const ledger = buildTenantPaymentLedger(baseInput({
+      charges: [charge()],
+      payments: [payment({ notes: "Partial August rent, cash" })],
+    }));
+    const pay = ledger.entries.find((e) => e.kind === "payment");
+    expect(pay.notes).toBe("Partial August rent, cash");
+  });
 });
 
 describe("buildTenantDepositHistory", () => {
