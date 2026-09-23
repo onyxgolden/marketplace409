@@ -196,6 +196,14 @@ describe("autopay bank setup operations", () => {
       expect(response.status).toBe(409);
       expect(updateCalls).toHaveLength(0);
     });
+    it("rejects a succeeded intent that produced no debit authorization (mandate)", async () => {
+      retrieveAutopaySetupIntent.mockResolvedValueOnce({ id: "seti_1", status: "succeeded",
+        customerId: "cus_tenant", paymentMethodId: "pm_bank_1", mandateId: null, enrollmentId: "auto_1" });
+      const response = await post({ operation: "complete-autopay-setup",
+        enrollmentId: "auto_1", setupIntentId: "seti_1" });
+      expect(response.status).toBe(409);
+      expect(updateCalls).toHaveLength(0);
+    });
     it("rejects missing identifiers before any Stripe work", async () => {
       const response = await post({ operation: "complete-autopay-setup", enrollmentId: "auto_1" });
       expect(response.status).toBe(400);

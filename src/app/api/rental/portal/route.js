@@ -136,6 +136,8 @@ export async function POST(request) {
         return NextResponse.json({error:"This bank setup does not belong to this tenant."},{status:403});
       if(!intent.paymentMethodId)
         return NextResponse.json({error:"Bank account setup completed without a payment method."},{status:409});
+      if(!intent.mandateId)
+        return NextResponse.json({error:"Bank account setup completed without a debit authorization."},{status:409});
       const timestamp=new Date().toISOString();
       const{data:activated,error:updateError}=await database.from("rental_autopay_enrollments")
         .update({status:"active",provider_customer_id:customer.customer_id,
