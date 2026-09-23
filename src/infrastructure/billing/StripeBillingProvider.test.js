@@ -338,6 +338,63 @@ describe("StripeBillingProvider", () => {
   });
   it("creates an idempotent confirmed off-session payment",async()=>{const{provider,stripeClient}=setup();await provider.createOffSessionPayment({connectedAccountId:"acct_kent"},{paymentId:"pay_1",chargeId:"charge_1",enrollmentId:"auto_1",customerId:"cus_tenant",paymentMethodId:"pm_1",amountCents:125000,currencyCode:"USD"},"autopay:auto_1:charge_1");expect(stripeClient.paymentIntents.create).toHaveBeenCalledWith(expect.objectContaining({off_session:true,confirm:true,payment_method:"pm_1"}),{stripeAccount:"acct_kent",idempotencyKey:"autopay:auto_1:charge_1"});});
 
+  describe("autopay bank setup intents", () => {
+    function setupWithSetupIntents(overrides = {}) {
+      const { provider, stripeClient } = setup();
+      stripeClient.setupIntents = {
+        create: vi.fn(async () => ({ id: "seti_auto_1", client_secret: "seti_auto_1_secret_test", status: "requires_payment_method" })),
+        retrieve: vi.fn(async () => ({
+          id: "seti_auto_1", status: "succeeded", customer: "cus_tenant", payment_method: "pm_bank_1",
+          mandate: "mandate_bank_1", metadata: { forge_autopay_enrollment_id: "auto_1" }, ...overrides,
+        })),
+      };
+      return { provider, stripeClient };
+    }
+    it("creates an ACH-only SetupIntent with online mandate acceptance, scoped to the connected account", async () => {
+      const { provider, stripeClient } = setupWithSetupIntents();
+      const result = await provider.createAutopaySetupIntent({ ownerId: "owner_1", connectedAccountId: "acct_kent" },
+        { customerId: "cus_tenant", enrollmentId: "auto_1", leaseId: "lease_1", tenantId: "tenant_1",
+          ipAddress: "203.0.113.5", userAgent: "test-agent/1.0", idempotencyKey: "autopay-setup:auto_1:abc" });
+      expect(stripeClient.setupIntents.create).toHaveBeenCalledWith({
+        customer: "cus_tenant",
+        payment_method_types: ["us_bank_account"],
+        usage: "off_session",
+        payment_method_options: { us_bank_account: {
+          verification_method: "instant", financial_connections: { permissions: ["payment_method"] } } },
+        mandate_data: { customer_acceptance: { type: "online",
+          online: { ip_address: "203.0.113.5", user_agent: "test-agent/1.0" } } },
+        metadata: { forge_autopay_enrollment_id: "auto_1", forge_lease_id: "lease_1",
+          forge_tenant_id: "tenant_1", forge_owner_id: "owner_1" },
+      }, { stripeAccount: "acct_kent", idempotencyKey: "autopay-setup:auto_1:abc" });
+      expect(result).toEqual(expect.objectContaining({ setupIntentId: "seti_auto_1",
+        clientSecret: "seti_auto_1_secret_test", connectedAccountId: "acct_kent" }));
+    });
+    it("throws when Stripe returns no SetupIntent client secret", async () => {
+      const { provider, stripeClient } = setupWithSetupIntents();
+      stripeClient.setupIntents.create.mockResolvedValueOnce({ id: "seti_auto_1", client_secret: null });
+      await expect(provider.createAutopaySetupIntent({ connectedAccountId: "acct_kent" },
+        { customerId: "cus_tenant", enrollmentId: "auto_1", leaseId: "lease_1", tenantId: "tenant_1",
+          ipAddress: "203.0.113.5", userAgent: "test-agent/1.0", idempotencyKey: "key" }))
+        .rejects.toThrow("SetupIntent client secret");
+    });
+    it("retrieves the setup intent with payment method, mandate, and enrollment binding", async () => {
+      const { provider, stripeClient } = setupWithSetupIntents();
+      const result = await provider.retrieveAutopaySetupIntent({ connectedAccountId: "acct_kent" }, "seti_auto_1");
+      expect(stripeClient.setupIntents.retrieve).toHaveBeenCalledWith("seti_auto_1", {}, { stripeAccount: "acct_kent" });
+      expect(result).toEqual({ id: "seti_auto_1", status: "succeeded", customerId: "cus_tenant",
+        paymentMethodId: "pm_bank_1", mandateId: "mandate_bank_1", enrollmentId: "auto_1" });
+    });
+    it("normalizes expanded Stripe objects on the retrieved setup intent", async () => {
+      const { provider } = setupWithSetupIntents({ customer: { id: "cus_tenant" },
+        payment_method: { id: "pm_bank_1" }, mandate: null, metadata: {} });
+      const result = await provider.retrieveAutopaySetupIntent({ connectedAccountId: "acct_kent" }, "seti_auto_1");
+      expect(result.customerId).toBe("cus_tenant");
+      expect(result.paymentMethodId).toBe("pm_bank_1");
+      expect(result.mandateId).toBeNull();
+      expect(result.enrollmentId).toBeNull();
+    });
+  });
+
   it("retrieves current settlement identifiers from a successful PaymentIntent", async () => {
     const { provider, stripeClient } = setup();
     const result = await provider.retrievePaymentIntentSettlement(
