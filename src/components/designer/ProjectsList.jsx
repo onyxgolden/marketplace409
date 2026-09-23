@@ -1,15 +1,19 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
+import { SAMPLE_PROJECTS } from "@/domains/roomDesigner/sampleProjects";
 
 /** Standalone project list for the room designer. */
 export default function ProjectsList() {
+  const router = useRouter();
   const [projects, setProjects] = useState([]);
   const [status, setStatus] = useState({ kind: "loading" });
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [forking, setForking] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +60,36 @@ export default function ProjectsList() {
     }
   };
 
+  // Fork a sample project: POST a fresh project, then PUT the generated
+  // seed document into it. The seed carries no identity (no projectId, no
+  // owner, no timestamps) — the server assigns a new projectId/owner_id
+  // and row timestamps, so the fork gets its own draft key and revision
+  // history. Nothing here edits the sample itself.
+  const forkSample = async (sample) => {
+    setForking(sample.seedId);
+    try {
+      const seedDocument = sample.build();
+      const postRes = await fetch("/api/forge/designer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: seedDocument.name }),
+      });
+      const postBody = await postRes.json();
+      if (!postRes.ok) throw new Error(postBody.error || `Create failed (${postRes.status})`);
+      const putRes = await fetch(`/api/forge/designer/${postBody.id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: seedDocument.name, design: seedDocument }),
+      });
+      const putBody = await putRes.json().catch(() => ({}));
+      if (!putRes.ok) throw new Error(putBody.error || `Copy failed (${putRes.status})`);
+      router.push(`/forge/designer/${postBody.id}`);
+    } catch (error) {
+      setStatus({ kind: "error", message: error.message });
+      setForking(null);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
       <h1 className="text-2xl font-bold text-white">Room designs</h1>
@@ -84,6 +118,37 @@ export default function ProjectsList() {
       {status.kind === "error" && (
         <div className="mt-4 rounded bg-red-900/60 px-4 py-2 text-sm text-red-200">{status.message}</div>
       )}
+
+      <div className="mt-8">
+        <h2 className="text-lg font-semibold text-white">Sample projects</h2>
+        <p className="mt-1 text-sm text-gray-400">
+          Finished examples to explore — &ldquo;Use this sample&rdquo; creates your own
+          editable copy; the sample itself is never changed.
+        </p>
+        <ul className="mt-4 space-y-2">
+          {SAMPLE_PROJECTS.map((sample) => (
+            <li
+              key={sample.seedId}
+              className="flex items-center gap-3 rounded-lg border border-gray-800 bg-gray-900 px-4 py-3"
+            >
+              <div className="min-w-0 flex-1">
+                <span className="block truncate font-semibold text-white">{sample.name}</span>
+                <span className="block text-xs text-gray-500">
+                  {sample.levels.join(" · ")}
+                </span>
+                <span className="mt-1 block text-sm text-gray-400">{sample.description}</span>
+              </div>
+              <button
+                onClick={() => forkSample(sample)}
+                disabled={forking !== null}
+                className="shrink-0 rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {forking === sample.seedId ? "Copying…" : "Use this sample"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {status.kind === "loading" ? (
         <p className="mt-6 text-sm text-gray-400">Loading designs…</p>
