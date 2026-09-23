@@ -254,8 +254,12 @@ export async function uploadCapture({ baseUrl, session, form, signal, onProgress
   return { id: body.id, signedUrl: body.signedUrl, duplicate: !!body.duplicate };
 }
 
+export function libraryPageUrl(baseUrl) {
+  return `${baseUrl}/forge/capture/library`;
+}
+
 export function libraryLink(baseUrl, captureId) {
-  return `${baseUrl}/forge/capture?capture=${encodeURIComponent(captureId)}`;
+  return `${libraryPageUrl(baseUrl)}?capture=${encodeURIComponent(captureId)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +511,7 @@ if (typeof window !== "undefined") {
     signOut,
     buildUploadForm,
     uploadCapture,
+    libraryPageUrl,
     libraryLink,
     openConnectDialog,
     closeConnectDialog,

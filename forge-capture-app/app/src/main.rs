@@ -971,6 +971,66 @@ fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// Rung 6 — opens the FORGE capture library deep link in the OS default
+/// browser. The URL is allowlisted to the library page (optionally with a
+/// ?capture=<uuid> highlight) so the command can never be repurposed to open
+/// arbitrary sites. Windows only; other hosts fail closed.
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !is_library_url_allowed(&url) {
+        return Err("Refusing to open a URL outside the FORGE capture library.".to_string());
+    }
+    #[cfg(windows)]
+    {
+        // `start "" <url>`: the empty quoted arg is the window title slot,
+        // without it a quoted URL would be misparsed as the title.
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("Could not open the browser: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = url;
+        Err("Opening the library in a browser is only implemented on Windows.".to_string())
+    }
+}
+
+fn is_library_url_allowed(url: &str) -> bool {
+    const LIBRARY_PAGE: &str = "https://www.409marketplace.online/forge/capture/library";
+    const HIGHLIGHT_PREFIX: &str =
+        "https://www.409marketplace.online/forge/capture/library?capture=";
+    if url == LIBRARY_PAGE {
+        return true;
+    }
+    let Some(tail) = url.strip_prefix(HIGHLIGHT_PREFIX) else {
+        return false;
+    };
+    // The desktop always deep-links a capture UUID; nothing else may ride
+    // along in the query string.
+    is_uuid_shape(tail)
+}
+
+fn is_uuid_shape(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    for (i, b) in bytes.iter().enumerate() {
+        let is_hyphen_slot = i == 8 || i == 13 || i == 18 || i == 23;
+        let ok = if is_hyphen_slot {
+            *b == b'-'
+        } else {
+            b.is_ascii_hexdigit()
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
 /// Rung 5 — copies plain text (e.g. the "Open in FORGE" library link) to the
 /// system clipboard. Windows only; other hosts fail closed.
 #[tauri::command]
@@ -1503,6 +1563,7 @@ fn main() {
             session_store::forge_session_clear,
             get_capture_upload_payload,
             copy_text_to_clipboard,
+            open_external_url,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run FORGE Capture");
@@ -1771,5 +1832,33 @@ mod dto_ipc_tests {
         assert_eq!(sidecar_raster_mime(sidecar).unwrap(), "image/png");
         assert!(sidecar_raster_mime(r#"{"raster":{}}"#).is_err());
         assert!(sidecar_raster_mime("not json").is_err());
+    }
+
+    #[test]
+    fn library_url_allowlist_blocks_arbitrary_sites() {
+        // Rung 6 — open_external_url may only open the library page.
+        assert!(is_library_url_allowed(
+            "https://www.409marketplace.online/forge/capture/library"
+        ));
+        assert!(is_library_url_allowed(
+            "https://www.409marketplace.online/forge/capture/library?capture=123e4567-e89b-42d3-a456-426614174000"
+        ));
+        assert!(!is_library_url_allowed(
+            "https://www.409marketplace.online/forge/capture"
+        ));
+        assert!(!is_library_url_allowed(
+            "https://www.409marketplace.online/"
+        ));
+        assert!(!is_library_url_allowed("https://evil.example/"));
+        assert!(!is_library_url_allowed(
+            "http://www.409marketplace.online/forge/capture/library"
+        ));
+        assert!(!is_library_url_allowed("https://www.409marketplace.online/forge/capture/library?capture=x&next=https://evil.example/"));
+        assert!(!is_library_url_allowed(
+            "https://www.409marketplace.online/forge/capture/library?capture=not-a-uuid"
+        ));
+        assert!(!is_library_url_allowed(
+            "https://www.409marketplace.online/forge/capture/library?capture=123e4567-e89b-42d3-a456-426614174000 "
+        ));
     }
 }
