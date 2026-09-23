@@ -7,6 +7,14 @@
 export const DEFAULT_GRID_IN = 6;
 export const DEFAULT_SNAP_RADIUS_IN = 9;
 
+/**
+ * Structural minimum wall length in inches. A wall can never be shorter:
+ * collapse attempts clamp to this length instead of inverting or throwing.
+ * The opening-resize path uses the same clamp-not-throw convention (6"
+ * minimum opening width) so no handle drag can ever throw inside a reducer.
+ */
+export const WALL_MIN_LENGTH_IN = 1;
+
 /** Visio-style grid spacing presets offered in the plan editor (inches). */
 export const GRID_SPACING_OPTIONS = Object.freeze([6, 12]);
 
@@ -61,6 +69,43 @@ export function wallDirection(wall) {
 export function wallNormal(wall) {
   const dir = wallDirection(wall);
   return { x: dir.y, y: -dir.x };
+}
+
+/**
+ * Clamp a wall-endpoint drag target to valid geometry. `end` is the dragged
+ * end ("a" or "b"); the other end is fixed and is never moved.
+ *
+ * The proposed point is projected onto the wall's original axis (the same
+ * scalar-projection primitive the opening-resize path uses). The target is
+ * invalid when it would collapse the wall under WALL_MIN_LENGTH_IN or when
+ * the dragged end crosses to the far side of the fixed end -- the "flip
+ * 180 degrees" motion. Invalid targets are pinned exactly
+ * WALL_MIN_LENGTH_IN from the fixed end along the original direction: the
+ * wall shrinks to the structural minimum, the fixed end never moves, and the
+ * direction vector can never reverse. Valid targets (including legitimate
+ * off-axis resizes) pass through untouched. Non-finite targets throw -- the
+ * same convention as isValidPoint everywhere else -- so NaN can never
+ * poison the document.
+ */
+export function clampWallEndpoint(wall, end, point) {
+  if (end !== "a" && end !== "b") throw new Error("end must be \"a\" or \"b\".");
+  if (!isValidPoint(point)) throw new Error("Target point must be valid.");
+  const fixed = end === "a" ? wall.b : wall.a;
+  if (!isValidPoint(fixed)) throw new Error("Wall has an invalid fixed endpoint.");
+  // Original axis: unit vector from the fixed end toward the dragged end.
+  const dir = wallDirection({ a: fixed, b: end === "a" ? wall.a : wall.b });
+  const dx = point.x - fixed.x;
+  const dy = point.y - fixed.y;
+  const along = dx * dir.x + dy * dir.y;
+  const collapsed = Math.hypot(dx, dy) < WALL_MIN_LENGTH_IN;
+  const flipped = along < 0;
+  if (!collapsed && !flipped) {
+    return { x: point.x, y: point.y };
+  }
+  return {
+    x: fixed.x + dir.x * WALL_MIN_LENGTH_IN,
+    y: fixed.y + dir.y * WALL_MIN_LENGTH_IN,
+  };
 }
 
 /** Distance from point p to the segment a→b, in inches. */
@@ -539,6 +584,11 @@ export function ghostRoomPolygon(template, at) {
  * preview can show exactly what the click will place.
  */
 export function clampOpening(wall, type, offsetIn, widthIn) {
+  // Backstop: non-finite numerics must be rejected here, never silently
+  // clamped into NaN and serialized into the document.
+  if (!isFiniteNumber(offsetIn) || !isFiniteNumber(widthIn)) {
+    throw new Error("Opening offset and width must be finite numbers.");
+  }
   const length = wallLength(wall);
   const width = Math.min(Math.max(widthIn, 6), Math.max(length - 2, 6));
   const offset = Math.min(Math.max(offsetIn, 1), Math.max(length - width - 1, 1));
