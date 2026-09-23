@@ -102,6 +102,29 @@ describe("POST request-autopay", () => {
     expect(noConsent.status).toBe(400);
   });
 
+  it("enforces the 1-28 charge-day range at both boundaries", async () => {
+    mocks.createClient.mockResolvedValue(authDb(USER));
+    mocks.createRentalWebhookClient.mockReturnValue(svcDb());
+    for (const chargeDay of [0, 29, 31, 2.5]) {
+      const response = await POST(post({ operation: "request-autopay", accountId: "acct_1",
+        chargeDay, reminderDaysBefore: 3, consentConfirmed: true }));
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toContain("1 and 28");
+    }
+  });
+
+  it("accepts the maximum charge day of 28", async () => {
+    mocks.createClient.mockResolvedValue(authDb(USER));
+    const created = { ...ENROLLMENT_SETUP, id: "pf_autopay_28", charge_day: 28, reminder_days_before: 3 };
+    mocks.createRentalWebhookClient.mockReturnValue(svcDb({ insertEnrollment: { data: created, error: null } }));
+    const response = await POST(post({ operation: "request-autopay", accountId: "acct_1",
+      chargeDay: 28, reminderDaysBefore: 3, consentConfirmed: true }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.enrollment).toEqual(expect.objectContaining({ chargeDay: 28 }));
+  });
+
   it("rejects when online payments are disabled for the account", async () => {
     mocks.createClient.mockResolvedValue(authDb(USER));
     mocks.createRentalWebhookClient.mockReturnValue(svcDb({ settings: { enabled: false } }));
