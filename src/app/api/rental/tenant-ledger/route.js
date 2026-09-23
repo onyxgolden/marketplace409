@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { buildTenantPaymentLedger, buildTenantDepositHistory } from "@/application/rental/tenantPaymentLedger";
+import { buildImportedRentecHistory } from "@/application/rental/importedRentecHistory";
 
 // Dedicated tenant payment-history read route. The monolith GET /api/rental is intentionally
 // untouched: this route fetches the FULL authoritative record sets a ledger needs (all charge
@@ -23,7 +24,7 @@ export async function GET(request) {
 
     const { data: tenant, error: tenantError } = await supabaseClient
       .from("rental_tenants")
-      .select("id, display_name, email, status")
+      .select("id, display_name, email, status, source_record_id")
       .eq("owner_id", effectiveOwnerId)
       .eq("id", tenantId.trim())
       .maybeSingle();
@@ -32,9 +33,24 @@ export async function GET(request) {
       return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
     }
 
+    // Imported Rentec transactions: read-only accounting evidence for the tenant card.
+    // The migration set source_record_id on Rentec-origin tenants, and the Rentec
+    // financial-history import stores the Rentec renter id in the event metadata —
+    // the join is the migration's own identity linkage, never a guess. Tenants
+    // without a migration renter id skip this fetch entirely.
+    const renterId = tenant.source_record_id ? String(tenant.source_record_id) : null;
+    const importedHistoryQuery = renterId
+      ? supabaseClient.from("financial_events")
+        .select("id, event_date, description, amount, transaction_kind, normalized_category, property_id, source_record_id, metadata, status, is_deleted")
+        .eq("owner_id", effectiveOwnerId)
+        .eq("transaction_kind", "income")
+        .eq("is_deleted", false)
+        .filter("metadata->>rentec_renter_id", "eq", renterId)
+      : Promise.resolve({ data: [], error: null });
+
     const [
       chargesResult, paymentsResult, settlementsResult, leasesResult, membershipsResult,
-      unitsResult, rentecResult, depositsResult, depositTransactionsResult,
+      unitsResult, rentecResult, depositsResult, depositTransactionsResult, importedHistoryResult,
     ] = await Promise.all([
       // All statuses: history must include paid and voided charges, not just open ones.
       supabaseClient.from("rent_charges")
@@ -59,9 +75,10 @@ export async function GET(request) {
         .eq("owner_id", effectiveOwnerId).eq("tenant_id", tenant.id),
       supabaseClient.from("rental_security_deposit_transactions").select("*")
         .eq("owner_id", effectiveOwnerId).order("occurred_at", { ascending: true }),
+      importedHistoryQuery,
     ]);
     const failed = [chargesResult, paymentsResult, settlementsResult, leasesResult, membershipsResult,
-      unitsResult, rentecResult, depositsResult, depositTransactionsResult].find((r) => r.error)?.error;
+      unitsResult, rentecResult, depositsResult, depositTransactionsResult, importedHistoryResult].find((r) => r.error)?.error;
     if (failed) throw failed;
 
     const ledger = buildTenantPaymentLedger({
@@ -80,6 +97,23 @@ export async function GET(request) {
       depositTransactions: depositTransactionsResult.data || [],
     });
 
+    // Dedup set: bare Rentec transaction ids already represented as authoritative
+    // rental_payments via the payment-import flow (provider='rentec_external',
+    // provider_payment_id=<bare transaction id>). Tenant-scoped — the payments query
+    // above is already filtered to this tenant. The builder suppresses an imported
+    // row only on this exact payment-identity tuple; financial_events.source_record_id
+    // is the composite `${transactionId}:${splitId}` and is NOT used for dedup.
+    const importedPaymentIds = new Set(
+      (paymentsResult.data || [])
+        .filter((payment) => payment.provider === "rentec_external" && payment.provider_payment_id)
+        .map((payment) => String(payment.provider_payment_id)),
+    );
+    const importedHistory = buildImportedRentecHistory({
+      renterId,
+      events: importedHistoryResult.data || [],
+      importedPaymentIds,
+    });
+
     return NextResponse.json({
       success: true,
       actingUserId: authenticated.user.id,
@@ -87,6 +121,7 @@ export async function GET(request) {
       tenant,
       ledger,
       deposits,
+      importedHistory,
     });
   } catch (error) {
     console.error("Tenant ledger query error", error);
