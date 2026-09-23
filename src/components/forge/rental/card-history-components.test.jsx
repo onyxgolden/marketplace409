@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import TenantPaymentHistory from "./TenantPaymentHistory";
-import PropertyExpenseHistory from "./PropertyExpenseHistory";
+import PropertyExpenseHistory, { ExpenseEntriesTable, ExpenseHistoryExpanded } from "./PropertyExpenseHistory";
 import { CardContextMenu, useCardContextMenu } from "./CardContextMenu";
 
 describe("TenantPaymentHistory", () => {
@@ -23,6 +23,48 @@ describe("PropertyExpenseHistory", () => {
     // ManualFinancialEventForm's own entry button — visible to co-owners, no role gate.
     expect(html).toContain("Add manual entry");
     expect(html).toContain('aria-label="Expense history for 145 Laxon"');
+    // Right-click affordance for the expanded wide view.
+    expect(html).toContain("Right-click to expand the expense history");
+  });
+
+  it("renders the shared entries table with every column", () => {
+    const entries = [{
+      id: "exp_1", date: "2026-09-01", vendor: "Acme Roofing", category: "repairs",
+      source: "manual", sourceLabel: "Manual entry", method: "bank_transfer",
+      reference: "INV-101", amountCents: 125000,
+    }];
+    const html = renderToStaticMarkup(<ExpenseEntriesTable entries={entries} roomy />);
+    for (const column of ["Date", "Vendor / description", "Category", "Source", "Method", "Reference", "Amount"]) {
+      expect(html).toContain(column);
+    }
+    expect(html).toContain("Acme Roofing");
+    expect(html).toContain("INV-101");
+    expect(html).toContain("$1,250.00");
+  });
+
+  it("renders the expanded dialog with all columns readable and a close affordance", () => {
+    const ledger = {
+      totalCents: 125000,
+      suppressedDuplicateCount: 0,
+      entries: [{
+        id: "exp_1", date: "2026-09-01", vendor: "Acme Roofing", category: "repairs",
+        source: "manual", sourceLabel: "Manual entry", method: "bank_transfer",
+        reference: "INV-101", amountCents: 125000,
+      }],
+    };
+    const html = renderToStaticMarkup(
+      <ExpenseHistoryExpanded ledger={ledger} propertyLabel="145 Laxon" onClose={() => {}} />,
+    );
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-modal="true"');
+    expect(html).toContain("data-expense-history-expanded");
+    expect(html).toContain('aria-label="Expanded expense history for 145 Laxon"');
+    expect(html).toContain("Close");
+    for (const column of ["Date", "Vendor / description", "Category", "Source", "Method", "Reference", "Amount"]) {
+      expect(html).toContain(column);
+    }
+    expect(html).toContain("Acme Roofing");
+    expect(html).toContain("$1,250.00");
   });
 });
 
