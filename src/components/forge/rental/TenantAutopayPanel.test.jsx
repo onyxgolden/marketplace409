@@ -137,3 +137,31 @@ describe("TenantAutopayPanel bank setup", () => {
     expect(buttonByText(mounted.container, "Link bank account")).toBeNull();
   });
 });
+
+describe("TenantAutopayPanel charge-day copy", () => {
+  it("labels the field as a recurring day of the month with the 1-28 range", () => {
+    mounted = mount(<TenantAutopayPanel rentals={rentalsWith(null)} onChanged={onChanged} />);
+    expect(mounted.container.textContent).toContain("Charge day (day of the month)");
+    expect(mounted.container.textContent).toContain("charged on this day each month");
+    expect(mounted.container.textContent).toContain("15 means the 15th of every month");
+    expect(mounted.container.textContent).toContain("Enter a day from 1 to 28.");
+    const input = mounted.container.querySelector('input[name="chargeDay"]');
+    expect(input.getAttribute("min")).toBe("1");
+    expect(input.getAttribute("max")).toBe("28");
+  });
+
+  it("states the recurring charge day as an ordinal in the status line", () => {
+    mounted = mount(<TenantAutopayPanel
+      rentals={rentalsWith({ ...bankEnrollment, chargeDay: 15 })} onChanged={onChanged} />);
+    expect(mounted.container.textContent).toContain("charged on the 15th of each month");
+    expect(mounted.container.textContent).not.toContain("charge day 15");
+  });
+
+  it("renders 1st/2nd/3rd/21st ordinals for edge days", () => {
+    for (const [day, ordinal] of [[1, "1st"], [2, "2nd"], [3, "3rd"], [21, "21st"], [28, "28th"]]) {
+      const local = mount(<TenantAutopayPanel rentals={rentalsWith({ ...bankEnrollment, chargeDay: day })} onChanged={onChanged} />);
+      expect(local.container.textContent).toContain(`charged on the ${ordinal} of each month`);
+      unmount(local);
+    }
+  });
+});

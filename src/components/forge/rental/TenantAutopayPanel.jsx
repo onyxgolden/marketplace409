@@ -9,6 +9,15 @@ const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 // takes the tenant away from the portal and Stripe redirects back afterwards.
 const SETUP_STORAGE_KEY = "forge-autopay-bank-setup";
 
+// Charge day is a recurring day-of-month (1-28, every month has the day),
+// not a one-time calendar date.
+function ordinalDayOfMonth(day) {
+  const n = Number(day);
+  const suffix = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (suffix[(v - 20) % 10] || suffix[v] || suffix[0]);
+}
+
 function isValidPublishableKey(key) {
   return typeof key === "string" && /^pk_(test|live)_/.test(key);
 }
@@ -121,7 +130,7 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
         </Elements>
       </div>
     ) : current ? <>
-      <p className="mt-3 text-sm">Status: <strong>{current.status.replaceAll("_", " ")}</strong> · charge day {current.chargeDay}</p>
+      <p className="mt-3 text-sm">Status: <strong>{current.status.replaceAll("_", " ")}</strong> · charged on the {ordinalDayOfMonth(current.chargeDay)} of each month</p>
       {needsBankLink ? <>
         <p className="mt-2 text-sm text-slate-600">
           Consent is recorded. Link your bank account to activate automatic debits — nothing is charged until the account is linked.
@@ -162,8 +171,9 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
         </select>
       </label>
       <div className="grid grid-cols-2 gap-3">
-        <label className="text-sm font-bold">Charge day
+        <label className="text-sm font-bold">Charge day (day of the month)
           <input name="chargeDay" type="number" min="1" max="28" defaultValue="1" className="mt-1 w-full rounded-xl border p-3 font-normal" />
+          <span className="mt-1 block text-xs font-normal text-slate-600">You&apos;ll be charged on this day each month — e.g. 15 means the 15th of every month. Enter a day from 1 to 28.</span>
         </label>
         <label className="text-sm font-bold">Reminder days before
           <input name="reminderDaysBefore" type="number" min="0" max="14" defaultValue="3" className="mt-1 w-full rounded-xl border p-3 font-normal" />

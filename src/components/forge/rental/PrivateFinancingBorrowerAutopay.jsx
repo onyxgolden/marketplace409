@@ -6,6 +6,15 @@ import PrivateFinancingAutopaySetupForm from "./PrivateFinancingAutopaySetupForm
 
 const KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 
+// Charge day is a recurring day-of-month (1-28, every month has the day),
+// not a one-time calendar date.
+function ordinalDayOfMonth(day) {
+  const n = Number(day);
+  const suffix = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (suffix[(v - 20) % 10] || suffix[v] || suffix[0]);
+}
+
 // Borrower-facing autopay controls for one financing account. Mirrors the rental
 // TenantAutopayPanel flow: consent -> Stripe bank-account link + mandate -> active.
 // ACH (US bank account) is the default and only autopay method in this slice.
@@ -83,7 +92,7 @@ export default function PrivateFinancingBorrowerAutopay({ accountId, enrollments
       </div>
     ) : current ? (
       <>
-        <p className="mt-3 text-sm">Status: <strong>{current.status.replaceAll("_", " ")}</strong> · charge day {current.chargeDay} · bank account (ACH)</p>
+        <p className="mt-3 text-sm">Status: <strong>{current.status.replaceAll("_", " ")}</strong> · charged on the {ordinalDayOfMonth(current.chargeDay)} of each month · bank account (ACH)</p>
         <p className="mt-2 text-sm text-slate-600">
           {current.status === "setup_required"
             ? "No automatic debit can occur yet. Link your bank account below so Stripe can verify it and record your debit authorization."
@@ -108,8 +117,9 @@ export default function PrivateFinancingBorrowerAutopay({ accountId, enrollments
           </select>
         </label>
         <div className="grid grid-cols-2 gap-3">
-          <label className="text-sm font-bold">Charge day
+          <label className="text-sm font-bold">Charge day (day of the month)
             <input name="chargeDay" type="number" min="1" max="28" defaultValue="1" required className="mt-1 w-full rounded-xl border p-3 font-normal" />
+            <span className="mt-1 block text-xs font-normal text-slate-600">You&apos;ll be charged on this day each month — e.g. 15 means the 15th of every month. Enter a day from 1 to 28.</span>
           </label>
           <label className="text-sm font-bold">Reminder days before
             <input name="reminderDaysBefore" type="number" min="0" max="14" defaultValue="3" required className="mt-1 w-full rounded-xl border p-3 font-normal" />
