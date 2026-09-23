@@ -1,6 +1,58 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedTenantPortalApplication } from "@/lib/supabase/createAuthenticatedTenantPortalApplication";
+import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
+import { validatePublishableKeyMode } from "@/infrastructure/billing/stripeMode";
+
+// Server-side IP capture for the ACH mandate's online customer acceptance — what the request
+// actually arrived with, never trusted from the client body (same pattern as sign-lease).
+function serverIpAddress(request) {
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  return (forwardedFor ? forwardedFor.split(",")[0].trim() : null) || request.headers.get("x-real-ip");
+}
+
+// Loads the calling tenant's own setup_required autopay enrollment. Tenant RLS grants SELECT
+// on enrollments but no UPDATE, so the activation write below goes through this explicit
+// owner_id + tenant_id scoping on the service-role client instead of the RLS-scoped one.
+async function loadTenantAutopayEnrollment(database, authUserId, enrollmentId) {
+  const { data: tenant, error: tenantError } = await database.from("rental_tenants").select("*")
+    .eq("auth_user_id", authUserId).maybeSingle();
+  if (tenantError) throw tenantError;
+  if (!tenant) return { tenant: null, enrollment: null };
+  const { data: enrollment, error: enrollmentError } = await database.from("rental_autopay_enrollments").select("*")
+    .eq("owner_id", tenant.owner_id).eq("id", enrollmentId).eq("tenant_id", tenant.id)
+    .eq("status", "setup_required").maybeSingle();
+  if (enrollmentError) throw enrollmentError;
+  return { tenant, enrollment };
+}
+
+async function loadLandlordStripeAccount(database, ownerId, mode) {
+  const { data: account, error } = await database.from("landlord_payment_accounts").select("*")
+    .eq("owner_id", ownerId).eq("provider", "stripe").eq("provider_mode", mode).maybeSingle();
+  if (error) throw error;
+  return account;
+}
+
+// Same load-or-create customer reference pattern as the one-time payment session: the
+// connected account and provider mode scope the customer so a sandbox customer can never be
+// charged against a live connected account, in either direction.
+async function loadOrCreateTenantCustomer(database, provider, account, tenant) {
+  const { data: existing, error: lookupError } = await database.from("billing_customer_references").select("*")
+    .eq("owner_id", tenant.owner_id).eq("tenant_id", tenant.id).eq("provider", "stripe")
+    .eq("provider_mode", provider.mode).maybeSingle();
+  if (lookupError) throw lookupError;
+  if (existing) return existing;
+  const created = await provider.createCustomer(
+    { ownerId: tenant.owner_id, connectedAccountId: account.provider_account_id },
+    { tenantId: tenant.id, email: tenant.email, displayName: tenant.display_name },
+    `billing-customer:${provider.mode}:${tenant.owner_id}:${tenant.id}:stripe`);
+  const { data: saved, error: saveError } = await database.from("billing_customer_references").upsert({
+    owner_id: tenant.owner_id, tenant_id: tenant.id, provider: "stripe", provider_mode: provider.mode,
+    connected_account_id: account.provider_account_id, customer_id: created.customerId,
+  }, { onConflict: "owner_id,tenant_id,provider,provider_mode" }).select("*").single();
+  if (saveError) throw saveError;
+  return saved;
+}
 export async function GET() {
   try {
     const authenticated = await createAuthenticatedTenantPortalApplication();
@@ -34,6 +86,65 @@ export async function POST(request) {
     }
     if(body?.operation==="cancel-autopay"){
       if(!body.enrollmentId)return NextResponse.json({error:"enrollmentId is required."},{status:400});const{data,error}=await authenticated.supabaseClient.rpc("cancel_rental_autopay_enrollment",{p_enrollment_id:body.enrollmentId,p_reason:body.reason||"Cancelled by tenant"});if(error)throw error;return NextResponse.json({success:true,enrollment:data});
+    }
+    if(body?.operation==="create-autopay-setup"){
+      if(typeof body.enrollmentId!=="string"||!body.enrollmentId.trim())return NextResponse.json({error:"enrollmentId is required."},{status:400});
+      const database=createRentalWebhookClient();
+      const provider=createStripeBillingProvider();
+      // Fail before any Stripe work on a publishable-key/mode mismatch — the tenant's browser
+      // would otherwise only discover it when confirming the bank form, after a SetupIntent exists.
+      validatePublishableKeyMode(provider.mode);
+      const{tenant,enrollment}=await loadTenantAutopayEnrollment(database,authenticated.user.id,body.enrollmentId.trim());
+      if(!tenant)return NextResponse.json({error:"No tenant portal access is linked to this account."},{status:403});
+      if(!enrollment)return NextResponse.json({error:"No pending autopay enrollment was found for this tenant."},{status:404});
+      if(enrollment.payment_method_type!=="us_bank_account")return NextResponse.json({error:"Automatic bank setup is only available for US bank account enrollments."},{status:400});
+      const account=await loadLandlordStripeAccount(database,tenant.owner_id,provider.mode);
+      if(!account?.provider_account_id||account.status!=="enabled"||!account.charges_enabled||!account.payouts_enabled)
+        return NextResponse.json({error:"The landlord payment account is not ready."},{status:409});
+      const customer=await loadOrCreateTenantCustomer(database,provider,account,tenant);
+      const setup=await provider.createAutopaySetupIntent(
+        {ownerId:tenant.owner_id,connectedAccountId:account.provider_account_id},
+        {customerId:customer.customer_id,enrollmentId:enrollment.id,leaseId:enrollment.lease_id,tenantId:tenant.id,
+          ipAddress:serverIpAddress(request),userAgent:request.headers.get("user-agent"),
+          idempotencyKey:`autopay-setup:${enrollment.id}:${crypto.randomUUID()}`});
+      return NextResponse.json({success:true,enrollmentId:enrollment.id,setupIntentId:setup.setupIntentId,
+        clientSecret:setup.clientSecret,connectedAccountId:setup.connectedAccountId});
+    }
+    if(body?.operation==="complete-autopay-setup"){
+      if(typeof body.enrollmentId!=="string"||!body.enrollmentId.trim()||typeof body.setupIntentId!=="string"||!body.setupIntentId.trim())
+        return NextResponse.json({error:"enrollmentId and setupIntentId are required."},{status:400});
+      const database=createRentalWebhookClient();
+      const provider=createStripeBillingProvider();
+      const{tenant,enrollment}=await loadTenantAutopayEnrollment(database,authenticated.user.id,body.enrollmentId.trim());
+      if(!tenant)return NextResponse.json({error:"No tenant portal access is linked to this account."},{status:403});
+      if(!enrollment)return NextResponse.json({error:"No pending autopay enrollment was found for this tenant."},{status:404});
+      const account=await loadLandlordStripeAccount(database,tenant.owner_id,provider.mode);
+      if(!account?.provider_account_id||account.status!=="enabled"||!account.charges_enabled)
+        return NextResponse.json({error:"The landlord payment account is not ready."},{status:409});
+      const intent=await provider.retrieveAutopaySetupIntent(
+        {ownerId:tenant.owner_id,connectedAccountId:account.provider_account_id},body.setupIntentId.trim());
+      if(intent.status!=="succeeded")return NextResponse.json({error:"Bank account setup is not complete yet."},{status:409});
+      // Bind the SetupIntent to this exact enrollment and customer: a tenant must not be able
+      // to activate autopay with another tenant's (or another enrollment's) setup intent.
+      if(intent.enrollmentId!==enrollment.id)
+        return NextResponse.json({error:"This bank setup does not belong to this autopay enrollment."},{status:403});
+      const{data:customer,error:customerError}=await database.from("billing_customer_references").select("*")
+        .eq("owner_id",tenant.owner_id).eq("tenant_id",tenant.id).eq("provider","stripe")
+        .eq("provider_mode",provider.mode).maybeSingle();
+      if(customerError)throw customerError;
+      if(!customer||intent.customerId!==customer.customer_id)
+        return NextResponse.json({error:"This bank setup does not belong to this tenant."},{status:403});
+      if(!intent.paymentMethodId)
+        return NextResponse.json({error:"Bank account setup completed without a payment method."},{status:409});
+      const timestamp=new Date().toISOString();
+      const{data:activated,error:updateError}=await database.from("rental_autopay_enrollments")
+        .update({status:"active",provider_customer_id:customer.customer_id,
+          provider_payment_method_id:intent.paymentMethodId,provider_mandate_id:intent.mandateId,
+          activated_at:timestamp,updated_at:timestamp})
+        .eq("owner_id",tenant.owner_id).eq("id",enrollment.id).eq("tenant_id",tenant.id)
+        .eq("status","setup_required").select("*").single();
+      if(updateError)throw updateError;
+      return NextResponse.json({success:true,enrollment:activated});
     }
     if(body?.operation==="acknowledge-inspection"){
       if(typeof body.inspectionId!=="string"||!body.inspectionId.trim())return NextResponse.json({error:"inspectionId is required."},{status:400});

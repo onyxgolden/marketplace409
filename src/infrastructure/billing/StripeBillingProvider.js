@@ -256,6 +256,61 @@ export class StripeBillingProvider {
   async retrieveBalanceTransaction(context,id){const value=await this.stripe.balanceTransactions.retrieve(required(id,"a balance transaction id"),{},{stripeAccount:required(context.connectedAccountId,"a connected account id")});return Object.freeze({id:value.id,grossAmountCents:value.amount,feeAmountCents:value.fee,netAmountCents:value.net,currencyCode:value.currency.toUpperCase(),status:value.status,availableAt:Number.isSafeInteger(value.available_on)?new Date(value.available_on*1000).toISOString():null});}
   async listPayoutBalanceTransactionIds(context,payoutId){const page=await this.stripe.balanceTransactions.list({payout:required(payoutId,"a payout id"),limit:100},{stripeAccount:required(context.connectedAccountId,"a connected account id")});return Object.freeze(page.data.map(item=>item.id));}
   async createOffSessionPayment(context,input,idempotencyKey){const intent=await this.stripe.paymentIntents.create({amount:input.amountCents,currency:input.currencyCode.toLowerCase(),customer:required(input.customerId,"a customer id"),payment_method:required(input.paymentMethodId,"a payment method id"),off_session:true,confirm:true,metadata:{forge_payment_id:input.paymentId,forge_charge_id:input.chargeId,forge_autopay_enrollment_id:input.enrollmentId}},{stripeAccount:required(context.connectedAccountId,"a connected account id"),idempotencyKey:required(idempotencyKey,"an idempotency key")});return Object.freeze({paymentIntentId:intent.id,status:intent.status});}
+
+  // ACH-only autopay activation: collects the tenant's bank account once and stores the
+  // resulting payment method + mandate on the autopay enrollment for recurring off-session
+  // debits. `mandate_data` carries online customer acceptance captured server-side (IP +
+  // user agent come from the request itself, never from the client body) — Stripe requires
+  // this for ACH debit mandates. Scoped to the connected account exactly like the other
+  // billing methods.
+  async createAutopaySetupIntent(context, input) {
+    const intent = await this.stripe.setupIntents.create({
+      customer: required(input.customerId, "a connected-account customer id"),
+      payment_method_types: ["us_bank_account"],
+      usage: "off_session",
+      payment_method_options: {
+        us_bank_account: {
+          verification_method: "instant",
+          financial_connections: { permissions: ["payment_method"] },
+        },
+      },
+      mandate_data: {
+        customer_acceptance: {
+          type: "online",
+          online: {
+            ip_address: required(input.ipAddress, "an ip address"),
+            user_agent: required(input.userAgent, "a user agent"),
+          },
+        },
+      },
+      metadata: {
+        forge_autopay_enrollment_id: required(input.enrollmentId, "an autopay enrollment id"),
+        forge_lease_id: required(input.leaseId, "a lease id"),
+        forge_tenant_id: required(input.tenantId, "a tenant id"),
+        forge_owner_id: context.ownerId,
+      },
+    }, { stripeAccount: required(context.connectedAccountId, "a connected account id"),
+      idempotencyKey: required(input.idempotencyKey, "an idempotency key") });
+    if (!intent.client_secret) throw new Error("Stripe did not return a SetupIntent client secret.");
+    return Object.freeze({ provider: this.provider, connectedAccountId: context.connectedAccountId,
+      setupIntentId: intent.id, clientSecret: intent.client_secret });
+  }
+
+  // Retrieves an autopay SetupIntent for activation verification. The caller must confirm
+  // status === "succeeded" and that the intent's metadata enrollment id matches the
+  // enrollment being activated before storing the payment method.
+  async retrieveAutopaySetupIntent(context, id) {
+    const intent = await this.stripe.setupIntents.retrieve(required(id, "a setup intent id"), {},
+      { stripeAccount: required(context.connectedAccountId, "a connected account id") });
+    return Object.freeze({
+      id: intent.id,
+      status: intent.status,
+      customerId: typeof intent.customer === "string" ? intent.customer : intent.customer?.id || null,
+      paymentMethodId: typeof intent.payment_method === "string" ? intent.payment_method : intent.payment_method?.id || null,
+      mandateId: typeof intent.mandate === "string" ? intent.mandate : intent.mandate?.id || null,
+      enrollmentId: intent.metadata?.forge_autopay_enrollment_id || null,
+    });
+  }
 }
 
 export function createStripeBillingProvider(env = process.env) {
