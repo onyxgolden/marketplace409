@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { FinancialSnapshot } from "../FinancialSnapshot.js";
 import { SupabaseFinancialSnapshotRepository } from "../SupabaseFinancialSnapshotRepository.js";
+import { supabase } from "@/lib/supabase";
 
 const query = {
   upsert: vi.fn(),
@@ -16,6 +17,9 @@ const query = {
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     from: vi.fn(() => query),
+    auth: {
+      getUser: vi.fn(),
+    },
   },
 }));
 
@@ -85,6 +89,11 @@ describe("SupabaseFinancialSnapshotRepository", () => {
     query.order.mockReturnValue(query);
     query.eq.mockReturnValue(query);
     query.limit.mockReturnValue(query);
+    supabase.auth.getUser.mockReset();
+    supabase.auth.getUser.mockResolvedValue({
+      data: { user: { id: "owner-123" } },
+      error: null,
+    });
   });
 
   test("saves immutable financial snapshots", async () => {
@@ -103,6 +112,7 @@ describe("SupabaseFinancialSnapshotRepository", () => {
 
     expect(query.upsert).toHaveBeenCalledWith({
       id: "snapshot-1",
+      owner_id: "owner-123",
       captured_at: "2026-07-04T00:00:00.000Z",
       period_start: "2026-07-01",
       period_end: "2026-07-31",
@@ -123,6 +133,20 @@ describe("SupabaseFinancialSnapshotRepository", () => {
     expect(Object.isFrozen(result)).toBe(true);
     expect(result.id).toBe("snapshot-1");
     expect(result.kpis.equity).toBe(850000);
+  });
+
+  test("refuses to save a snapshot without an authenticated user", async () => {
+    supabase.auth.getUser.mockResolvedValue({
+      data: { user: null },
+      error: null,
+    });
+
+    const repository = new SupabaseFinancialSnapshotRepository();
+
+    await expect(
+      repository.save(makeSnapshot("snapshot-1", "2026-07-04T00:00:00.000Z")),
+    ).rejects.toThrow("Authenticated user is required");
+    expect(query.upsert).not.toHaveBeenCalled();
   });
 
   test("lists snapshots ordered by captured date", async () => {
