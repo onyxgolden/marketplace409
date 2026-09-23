@@ -37,6 +37,7 @@ import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {
   calibrateUnderlayScale,
   clampOpening,
+  clampWallEndpoint,
   DEFAULT_GRID_IN,
   DEFAULT_UNDERLAY_OPACITY,
   DEFAULT_UNDERLAY_WIDTH_IN,
@@ -181,18 +182,26 @@ export function addWallRect(design, a, b, { material } = {}) {
   return { ...design, walls: [...design.walls, ...walls] };
 }
 
-/** Drag a wall endpoint to a new point (resize). */
+/** Drag a wall endpoint to a new point (resize).
+ *
+ * Collapse attempts clamp to the 1" structural minimum instead of throwing:
+ * the dragged end is pinned WALL_MIN_LENGTH_IN from the fixed end along the
+ * wall's original direction, the fixed end never moves, and the direction
+ * vector never reverses. This matches the clamp-not-throw convention used
+ * by moveOpeningStart / resizeOpening / moveOpening, and it keeps the
+ * reducer total -- a handle drag can never throw inside a dispatch and
+ * unmount the designer.
+ */
 export function moveWallEndpoint(design, wallId, end, point) {
   assertDesign(design);
-  if (end !== "a" && end !== "b") throw new Error("end must be \"a\" or \"b\".");
-  if (!isValidPoint(point)) throw new Error("Target point must be valid.");
   let changed = false;
   const walls = design.walls.map((w) => {
     if (w.id !== wallId) return w;
-    const candidate = { ...w, [end]: clonePoint(point) };
-    if (wallLength(candidate) < 1) throw new Error("Wall would collapse under 1 inch.");
+    // clampWallEndpoint validates end + point (throws on invalid input) and
+    // clamps collapse attempts; a valid drag target passes through untouched.
+    const target = clampWallEndpoint(w, end, point);
     changed = true;
-    return candidate;
+    return { ...w, [end]: target };
   });
   if (!changed) throw new Error(`Unknown wall: ${wallId}`);
   return { ...design, walls };

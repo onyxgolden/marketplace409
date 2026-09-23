@@ -39,6 +39,15 @@ import { decodeUnderlayFile, UNDERLAY_ACCEPT, UNDERLAY_ACCEPT_LABEL } from "./un
 import HousePlansPanel from "./HousePlansPanel";
 import { isHousePlansEnabled } from "@/lib/housePlans/housePlansFlags";
 import { createSaveScheduler } from "./saveScheduler";
+import DesignerErrorBoundary from "./DesignerErrorBoundary";
+import {
+  deleteDraft,
+  isNewerDraft,
+  readDraft,
+  readSavedRecord,
+  writeDraft,
+  writeSavedRecord,
+} from "./designerDraft";
 import OrgChartPanel from "./OrgChartPanel";
 import FurnitureCatalogPanel from "./FurnitureCatalogPanel";
 import { createInitialState, designerReducer } from "./designerReducer";
@@ -161,10 +170,12 @@ export default function DesignerScreen({ projectId, initialName }) {
   // level switcher re-renders on add/rename/switch/delete.
   const projectRef = useRef(null);
   const [project, setProject] = useState(null);
-  const syncProject = (next) => {
+  // Stable identity: only touches a ref and a setState, so callbacks and
+  // effects can depend on it without re-running.
+  const syncProject = useCallback((next) => {
     projectRef.current = next;
     setProject(next);
-  };
+  }, []);
   // Level tab UI state: which tab is being renamed / armed for delete.
   const [renamingLevelId, setRenamingLevelId] = useState(null);
   const [confirmDeleteLevelId, setConfirmDeleteLevelId] = useState(null);
@@ -172,6 +183,60 @@ export default function DesignerScreen({ projectId, initialName }) {
   useEffect(() => { nameRef.current = name; }, [name]);
   const saveSchedulerRef = useRef(null);
   if (saveSchedulerRef.current === null) saveSchedulerRef.current = createSaveScheduler();
+  // Crash-resilience autosave: metadata of the last completed localStorage
+  // draft write, shown in the header so it is always visible which work
+  // exists only in this browser.
+  const [draftInfo, setDraftInfo] = useState(null);
+  // Crash recovery offer: { draft, serverProject } when an autosave draft is
+  // newer than the last server save. The user chooses explicitly; nothing
+  // is ever applied silently.
+  const [recovery, setRecovery] = useState(null);
+  // Highest designRevision covered by a completed draft write. beforeunload
+  // warns only when the current revision is NOT covered.
+  const lastDraftedRevisionRef = useRef(-1);
+
+  // Load a server revision into the screen (shared by the normal load
+  // path and by "discard draft" recovery).
+  const loadServerProject = useCallback((serverProject) => {
+    // Legacy single designs migrate transparently into a one-level
+    // project ("Level 1 Floor Plan"); the reducer keeps editing the
+    // current level's document exactly as before.
+    const project = ensureHomeProject(serverProject.design, serverProject.name);
+    syncProject(project);
+    dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(project) });
+    setName(serverProject.name);
+    setStatus({ kind: "ready" });
+  }, [syncProject]);
+
+  // Apply the recovered autosave draft (explicit user choice only).
+  const recoverDraft = () => {
+    if (!recovery) return;
+    const { draft, serverProject } = recovery;
+    const project = ensureHomeProject(
+      draft.envelope,
+      draft.envelope.name || serverProject.name,
+    );
+    syncProject(project);
+    dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(project) });
+    setName(draft.envelope.name || serverProject.name);
+    setRecovery(null);
+    lastDraftedRevisionRef.current = draft.designRevision;
+    setDraftInfo({
+      savedAt: draft.savedAt,
+      designRevision: draft.designRevision,
+      underlayOmitted: !!draft.underlayOmitted,
+    });
+    setStatus({ kind: "ready" });
+  };
+
+  const discardDraftAndLoad = () => {
+    if (!recovery) return;
+    deleteDraft(projectId);
+    const { serverProject } = recovery;
+    setRecovery(null);
+    setDraftInfo(null);
+    loadServerProject(serverProject);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -181,20 +246,24 @@ export default function DesignerScreen({ projectId, initialName }) {
         if (!res.ok) throw new Error(`Load failed (${res.status})`);
         const body = await res.json();
         if (cancelled) return;
-        // Legacy single designs migrate transparently into a one-level
-        // project ("Level 1 Floor Plan"); the reducer keeps editing the
-        // current level's document exactly as before.
-        const project = ensureHomeProject(body.project.design, body.project.name);
-        syncProject(project);
-        dispatch({ type: "LOAD_DESIGN", design: getCurrentDesign(project) });
-        setName(body.project.name);
-        setStatus({ kind: "ready" });
+        // Crash-resilience: recovery authority is REVISION comparison — a
+        // draft newer than the last server save is offered explicitly.
+        // Timestamps are display-only. Incompatible drafts are rejected by
+        // readDraft and fall through to the normal load.
+        const draft = readDraft(projectId);
+        const serverRevision = readSavedRecord(projectId)?.designRevision ?? 0;
+        if (isNewerDraft(draft, serverRevision)) {
+          setRecovery({ draft, serverProject: body.project });
+          setStatus({ kind: "ready" });
+          return;
+        }
+        loadServerProject(body.project);
       } catch (error) {
         if (!cancelled) setStatus({ kind: "error", message: error.message });
       }
     })();
     return () => { cancelled = true; };
-  }, [projectId]);
+  }, [projectId, loadServerProject]);
 
   // --- Level switcher (HOME DESIGNER slice 2) ---------------------------
   // Every handler syncs the currently edited document back into the envelope
@@ -281,6 +350,28 @@ export default function DesignerScreen({ projectId, initialName }) {
     }
   };
 
+  // Build the exact envelope the server PUT persists (levels[],
+  // currentLevelId, building metadata, header name). Shared by the manual
+  // save and the autosave draft so recovery restores byte-identical state.
+  // Pure: reads refs, never mutates.
+  const buildEnvelope = () => {
+    const current = projectRef.current;
+    let payload = stateRef.current.design;
+    if (current) {
+      const updated = updateLevelDesign(
+        current,
+        current.currentLevelId,
+        () => stateRef.current.design,
+      );
+      const headerName = (nameRef.current || "").trim();
+      payload =
+        headerName !== "" && headerName !== updated.name
+          ? renameProject(updated, headerName)
+          : updated;
+    }
+    return payload;
+  };
+
   const save = useCallback(() => {
     // Serialize saves: only one PUT may be in flight at a time, so a slow
     // earlier save can never persist a stale revision over a newer one. A
@@ -323,6 +414,21 @@ export default function DesignerScreen({ projectId, initialName }) {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `Save failed (${res.status})`);
         dispatch({ type: "MARK_SAVED", savedRevision });
+        // Crash-resilience race guard: delete the autosave draft ONLY when
+        // the completed save covered it (savedRevision >= draft revision).
+        // A save of an older revision must never nuke newer browser work.
+        // The saved-record keeps the server's revision for recovery
+        // comparison on the next load.
+        try {
+          const draft = readDraft(projectId);
+          if (!draft || savedRevision >= draft.designRevision) {
+            deleteDraft(projectId);
+            if (draft) setDraftInfo(null);
+          }
+          writeSavedRecord(projectId, savedRevision);
+        } catch {
+          // Draft bookkeeping must never break the save flow.
+        }
         setStatus({ kind: "saved", message: "Saved." });
         setTimeout(() => setStatus((s) => (s.kind === "saved" ? { kind: "ready" } : s)), 2500);
       } catch (error) {
@@ -331,7 +437,8 @@ export default function DesignerScreen({ projectId, initialName }) {
         setSaving(false);
       }
     });
-  }, [projectId]);
+    // syncProject is a stable useCallback; including it keeps save() stable.
+  }, [projectId, syncProject]);
 
   // --- Remodel estimating (HOME DESIGNER slice 4) -----------------------
   // Unit-cost edits are project-metadata ops — NOT undoable (same documented
@@ -417,6 +524,45 @@ export default function DesignerScreen({ projectId, initialName }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [save]);
 
+  // Crash-resilience autosave: ~2s after edits stop, snapshot the envelope
+  // to localStorage. Client-side only — no API, no cost, no migrations.
+  // The draft is the recovery source after a crash or accidental tab close.
+  useEffect(() => {
+    if (!state.dirty || recovery) return undefined;
+    const timer = setTimeout(() => {
+      const { designRevision } = stateRef.current;
+      if (!stateRef.current.dirty) return;
+      try {
+        const envelope = buildEnvelope();
+        const result = writeDraft(projectId, { designRevision, envelope });
+        if (result.ok) {
+          lastDraftedRevisionRef.current = designRevision;
+          setDraftInfo({
+            savedAt: result.savedAt,
+            designRevision,
+            underlayOmitted: result.underlayOmitted,
+          });
+        }
+      } catch {
+        // Autosave must never break the editor.
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [projectId, recovery, state.design, state.designRevision, state.dirty, project, name]);
+
+  // Warn on tab close only when there is work the autosave has not captured
+  // yet. After a completed draft write there is nothing to warn about.
+  useEffect(() => {
+    const onBeforeUnload = (e) => {
+      const current = stateRef.current;
+      if (current.dirty && lastDraftedRevisionRef.current < current.designRevision) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
+
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, orthoSnap, layerVisibility, view, dirty, past, future } = state;
   const summary = summarizeDesignForEstimating(design);
   const activeTool = TOOL_DEFS.find((t) => t.id === tool);
@@ -436,6 +582,15 @@ export default function DesignerScreen({ projectId, initialName }) {
           aria-label="Design name"
         />
         {dirty && <span className="text-xs text-amber-400">● unsaved</span>}
+        {draftInfo && (
+          <span
+            className="text-xs text-gray-500"
+            title="Kept in this browser only — press Ctrl+S to save to the server"
+          >
+            Autosaved locally {new Date(draftInfo.savedAt).toLocaleTimeString()}
+            {draftInfo.underlayOmitted ? " (background image omitted)" : ""}
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-2">
           {housePlansEnabled && (
             <button
@@ -541,6 +696,7 @@ export default function DesignerScreen({ projectId, initialName }) {
 
         {/* canvas */}
         <main className="relative min-w-0 flex-1">
+          <DesignerErrorBoundary projectId={projectId}>
           {status.kind === "loading" ? (
             <div className="flex h-full items-center justify-center text-gray-400">Loading design…</div>
           ) : view === "2d" ? (
@@ -562,6 +718,7 @@ export default function DesignerScreen({ projectId, initialName }) {
           ) : (
             <DesignerViewport3D design={design} />
           )}
+          </DesignerErrorBoundary>
           {activeTool && (
             <div className="absolute left-3 top-3 max-w-md rounded bg-gray-900/85 px-3 py-1.5 text-xs text-gray-300">
               <span className="font-semibold text-white">{activeTool.label}:</span> {activeTool.hint}
@@ -606,6 +763,43 @@ export default function DesignerScreen({ projectId, initialName }) {
           elevation={elevationView}
           onClose={() => setElevationOpen(false)}
         />
+      )}
+      {/* Crash-resilience: autosave recovery offer. Explicit choice only —
+          the draft is never applied silently. */}
+      {recovery && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Recover unsaved work"
+        >
+          <div className="w-full max-w-md rounded-lg bg-gray-900 p-6 shadow-xl">
+            <h2 className="text-lg font-semibold text-white">Unsaved work found</h2>
+            <p className="mt-2 text-sm text-gray-300">
+              This project has autosaved work from{" "}
+              {new Date(recovery.draft.savedAt).toLocaleString()} that was never
+              saved to the server.
+              {recovery.draft.underlayOmitted &&
+                " The background image was omitted from the autosave (browser storage limit)."}
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={discardDraftAndLoad}
+                className="rounded bg-gray-700 px-4 py-2 text-sm font-semibold text-gray-200 hover:bg-gray-600"
+              >
+                Discard and load saved version
+              </button>
+              <button
+                type="button"
+                onClick={recoverDraft}
+                className="rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+              >
+                Recover unsaved work
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {/* HOME DESIGNER slice 6: the DXF export dialog. */}
       {dxfOpen && project && (

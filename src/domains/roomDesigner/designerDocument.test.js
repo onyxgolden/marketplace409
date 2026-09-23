@@ -142,11 +142,20 @@ describe("designerDocument — walls", () => {
     expect(d.walls[0].b).toEqual({ x: 200, y: 0 });
   });
 
-  it("refuses to collapse a wall under 1 inch", () => {
+  it("clamps a wall collapse attempt to the 1-inch structural minimum", () => {
+    // Crash-resilience slice: the "flip 180 degrees" wall-endpoint drag used
+    // to throw inside the reducer ("Wall would collapse under 1 inch") and
+    // unmount the whole designer. Collapse attempts now clamp instead.
     const d = wallDesign();
     const id = d.walls[0].id;
-    expect(() => moveWallEndpoint(d, id, "b", { x: 0.5, y: 0 })).toThrow(/collapse/);
+    const next = moveWallEndpoint(d, id, "b", { x: 0.5, y: 0 });
+    // Pinned exactly 1" from the fixed end along the original direction.
+    expect(next.walls[0].b).toEqual({ x: 1, y: 0 });
+    // The fixed end never moves.
+    expect(next.walls[0].a).toEqual(d.walls[0].a);
     expect(() => moveWallEndpoint(d, "nope", "b", { x: 1, y: 1 })).toThrow(/Unknown wall/);
+    // Invalid targets still throw (reducer-input validation, not a crash).
+    expect(() => moveWallEndpoint(d, id, "b", { x: NaN, y: 0 })).toThrow(/valid/);
   });
 
   it("deletes a wall along with its openings", () => {
