@@ -1,8 +1,9 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ManualFinancialEventForm from "./ManualFinancialEventForm";
 import { useCardContextMenu, CardContextMenu } from "./CardContextMenu";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -108,45 +109,25 @@ export function ExpenseHistoryExpanded({ ledger, propertyLabel, onClose }) {
 // to is co-owner-safe (canonical owner resolution), so co-owners get the same visible,
 // functional control. Right-clicking the card opens the expanded wide view so all columns
 // are readable (Brandy's power-user shortcut pattern).
+//
+// Data layer: stale-while-revalidate. Switching properties serves the cached ledger
+// instantly and refreshes in the background — the old data never blanks out while the
+// new property's expenses load.
 export default function PropertyExpenseHistory({ propertyId, propertyLabel }) {
-  const [ledger, setLedger] = useState(null);
-  const [loading, setLoading] = useState(() => Boolean(propertyId));
-  const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const { menu: contextMenu, onContextMenu, close: closeContextMenu } = useCardContextMenu();
-
-  const load = useCallback(async () => {
-    if (!propertyId) return;
-    setLoading(true);
-    setError("");
-    try {
-      const body = await fetchPropertyExpenses(propertyId);
-      setLedger(body.ledger);
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [propertyId]);
-
-  // Mount fetch: promise-chain style (no synchronous setState in the effect body),
-  // matching the panel components' established pattern.
-  useEffect(() => {
-    if (!propertyId) return undefined;
-    let cancelled = false;
-    fetchPropertyExpenses(propertyId)
-      .then((body) => { if (!cancelled) { setLedger(body.ledger); setError(""); } })
-      .catch((caught) => { if (!cancelled) setError(caught.message); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [propertyId]);
+  const { data: ledger, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    propertyId ? `property-expenses:${propertyId}` : null,
+    () => fetchPropertyExpenses(propertyId).then((body) => body.ledger),
+    { ttlMs: 60_000 },
+  );
 
   // Right-click shortcut: a property card context menu dispatches this to open the full
   // expenses ledger for exactly this property without any re-selection step.
   useEffect(() => {
     const open = (event) => {
       if (event.detail?.propertyId === propertyId) {
-        if (!ledger && !loading && !error) load();
+        if (!ledger && !isRefreshing) refresh();
         requestAnimationFrame(() => {
           document.getElementById(`property-expenses-${propertyId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
         });
@@ -154,7 +135,7 @@ export default function PropertyExpenseHistory({ propertyId, propertyLabel }) {
     };
     window.addEventListener(PROPERTY_EXPENSES_OPEN_EVENT, open);
     return () => window.removeEventListener(PROPERTY_EXPENSES_OPEN_EVENT, open);
-  }, [propertyId, ledger, loading, error, load]);
+  }, [propertyId, ledger, isRefreshing, refresh]);
 
   return (
     <section id={`property-expenses-${propertyId}`} data-property-expense-history aria-label={`Expense history for ${propertyLabel || "property"}`}
@@ -171,14 +152,17 @@ export default function PropertyExpenseHistory({ propertyId, propertyLabel }) {
           <h3 className="mt-1 text-xl font-black text-slate-950 dark:text-white">
             {ledger ? <>{money.format(ledger.totalCents / 100)} <span className="text-sm font-bold text-slate-500 dark:text-slate-400">total · {ledger.entries.length} {ledger.entries.length === 1 ? "expense" : "expenses"}</span></> : "Property expenses"}
           </h3>
+          {isRefreshing && ledger && (
+            <p className="mt-1 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+          )}
         </div>
-        <button type="button" onClick={load} disabled={loading}
+        <button type="button" onClick={refresh} disabled={isRefreshing}
           className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
-          {loading ? "Refreshing…" : "Refresh"}
+          {isRefreshing ? "Refreshing…" : "Refresh"}
         </button>
       </div>
 
-      {loading && !ledger && <p className="mt-4 text-sm font-bold text-slate-500 dark:text-slate-400">Loading expense history…</p>}
+      {isLoading && <p className="mt-4 text-sm font-bold text-slate-500 dark:text-slate-400">Loading expense history…</p>}
       {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
 
       {ledger && (
@@ -201,7 +185,7 @@ export default function PropertyExpenseHistory({ propertyId, propertyLabel }) {
         <ManualFinancialEventForm
           availableProperties={propertyId ? [propertyId] : []}
           initialPropertyId={propertyId}
-          onSaved={load}
+          onSaved={refresh}
         />
       </div>
     </section>
