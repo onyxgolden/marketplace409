@@ -25,7 +25,7 @@ async function fetchTenantLedger(tenantId) {
 // Tenant card payment history: a "last 3 payments" summary card that expands inline into
 // the full chronological ledger — no separate screen, no re-selecting the tenant.
 // Deposits render in their own clearly-labeled section, never as rent.
-export default function TenantPaymentHistory({ tenantId, tenantName }) {
+export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullLedger = null }) {
   const [ledger, setLedger] = useState(null);
   const [deposits, setDeposits] = useState(null);
   const [importedHistory, setImportedHistory] = useState(null);
@@ -85,10 +85,10 @@ export default function TenantPaymentHistory({ tenantId, tenantName }) {
           <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Payment history</p>
           <h3 className="mt-1 text-xl font-black text-slate-950 dark:text-white">Last 3 payments</h3>
         </div>
-        <button type="button" onClick={() => setExpanded((value) => !value)}
+        <button type="button" onClick={() => onOpenFullLedger ? onOpenFullLedger() : setExpanded((value) => !value)}
           className={`rounded-xl px-4 py-2 text-sm font-black transition ${goldControlClassName}`}
           aria-expanded={expanded}>
-          {expanded ? "Hide full ledger" : "View full payment history"}
+          {onOpenFullLedger ? "Open full ledger" : expanded ? "Hide full ledger" : "View full payment history"}
         </button>
       </div>
 
