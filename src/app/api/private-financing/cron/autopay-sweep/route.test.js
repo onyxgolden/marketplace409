@@ -61,15 +61,16 @@ describe("private financing autopay sweep", () => {
     expect(enrollmentQuery.eq).toHaveBeenCalledWith("provider_mode", "test");
   });
 
-  it("counts duplicates as skipped and continues past failures", async () => {
+  it("counts duplicates and already-paid skips as skipped and continues past failures", async () => {
     createStripeBillingProvider.mockReturnValue({ mode: "live" });
     const db = { from: vi.fn(() => chain({ data: [
-      { id: "e1", charge_day: 1 }, { id: "e2", charge_day: 1 }, { id: "e3", charge_day: 1 },
+      { id: "e1", charge_day: 1 }, { id: "e2", charge_day: 1 }, { id: "e3", charge_day: 1 }, { id: "e4", charge_day: 1 },
     ], error: null })) };
     createRentalWebhookClient.mockReturnValue(db);
     executePfAutopayAttempt
       .mockResolvedValueOnce({ httpStatus: 200, body: { success: true } })
       .mockResolvedValueOnce({ httpStatus: 200, body: { success: true, duplicate: true } })
+      .mockResolvedValueOnce({ httpStatus: 200, body: { success: true, skipped: true, reason: "already_paid" } })
       .mockRejectedValueOnce(new Error("boom"));
 
     vi.useFakeTimers();
@@ -78,6 +79,6 @@ describe("private financing autopay sweep", () => {
     vi.useRealTimers();
 
     const body = await response.json();
-    expect(body).toEqual(expect.objectContaining({ success: true, candidates: 3, succeeded: 1, failed: 1, skipped: 1 }));
+    expect(body).toEqual(expect.objectContaining({ success: true, candidates: 4, succeeded: 1, failed: 1, skipped: 2 }));
   });
 });

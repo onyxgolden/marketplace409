@@ -68,4 +68,44 @@ describe("PrivateFinancingBorrowerPayment", () => {
     act(() => mounted.container.querySelector('[data-testid="back-to-balance"]').click());
     expect(onCancel).toHaveBeenCalledOnce();
   });
+
+  describe("autopay disclosure notice", () => {
+    // Sep 10 2026 UTC: charge day 15 still has its run this month; charge day 5 rolled to Oct.
+    function mountWithNotice(props = {}) {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(Date.UTC(2026, 8, 10, 12, 0, 0)));
+      mounted = mount(<PrivateFinancingBorrowerPayment accountId="account_1" regularScheduledPaymentCents={51785}
+        pendingPayment={null} onCancel={vi.fn()} {...props} />);
+    }
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("says autopay will not run when enrolled and the default amount covers the scheduled payment", () => {
+      mountWithNotice({ autopayChargeDay: 15 });
+      expect(mounted.container.textContent)
+        .toContain("This payment covers your Sep 15 payment — your AutoPay won't run for that period.");
+    });
+
+    it("says the payment is in addition to autopay when the entered amount is partial", () => {
+      mountWithNotice({ autopayChargeDay: 15 });
+      const input = mounted.container.querySelector('input[type="number"]');
+      act(() => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(input, "100");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(mounted.container.textContent)
+        .toContain("This payment will be in addition to your Sep 15 AutoPay payment.");
+    });
+
+    it("says the payment is in addition to autopay when the next run is next month", () => {
+      mountWithNotice({ autopayChargeDay: 5 });
+      expect(mounted.container.textContent)
+        .toContain("This payment will be in addition to your Oct 5 AutoPay payment.");
+    });
+
+    it("shows no notice without an active autopay enrollment", () => {
+      mountWithNotice({});
+      expect(mounted.container.querySelector('[role="note"]')).toBeNull();
+    });
+  });
 });

@@ -17,6 +17,29 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   if (existing.error) throw existing.error;
   if (existing.data) return { httpStatus: 200, body: { success: true, duplicate: true, attempt: existing.data } };
 
+  // In-flight payment guard: the tenant portal's manual payment flow refuses to start a
+  // second payment while one is pending for the charge — autopay must honor the same rule.
+  // Without it, a tenant who pays early by ACH (which settles days later, leaving the charge
+  // "due" with paid_amount_cents still at 0) would be charged again in full by the sweep.
+  // Settled early payments need no extra check: the webhook posts them to the charge ledger,
+  // so `remaining` below already debits only what's still unpaid (and a fully-paid charge is
+  // not even eligible above). Scoped to the enrollment's provider_mode like everything else.
+  const inFlight = await db.from("rental_payments").select("id")
+    .eq("owner_id", enrollment.owner_id).eq("charge_id", charge.id)
+    .eq("provider_mode", enrollment.provider_mode)
+    .in("status", ["created", "requires_payment_method", "requires_action", "processing"]).maybeSingle();
+  if (inFlight.error) throw inFlight.error;
+  if (inFlight.data)
+    return { httpStatus: 200, body: { success: true, skipped: true, chargeId: charge.id, reason: "payment_pending" } };
+
+  const remaining = Number(charge.amount_cents) - Number(charge.paid_amount_cents);
+  // Defensive: a zero (or negative) remainder must never reach Stripe as a debit — the
+  // webhook normally flips a fully-paid charge to "paid" (ineligible above), but if the
+  // ledger ever disagrees, skip instead of attempting a $0 charge (which would fail at
+  // Stripe and wrongly count against the enrollment's retry limit).
+  if (remaining <= 0)
+    return { httpStatus: 200, body: { success: true, skipped: true, chargeId: charge.id, reason: "already_paid" } };
+
   // Central collection-authority gate for BOTH callers of this function (the sweep cron and any
   // manual execute endpoint): a schedule that isn't FORGE-collectible as of today must never be
   // auto-charged, even if a charge/enrollment pair otherwise looks eligible.
@@ -45,7 +68,6 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
     .eq("owner_id", enrollment.owner_id).eq("provider", "stripe").eq("provider_mode", enrollment.provider_mode).single();
   if (account.error || !account.data?.provider_account_id) throw account.error || new Error("Stripe account missing");
 
-  const remaining = Number(charge.amount_cents) - Number(charge.paid_amount_cents);
   const paymentId = `rental_payment_${crypto.randomUUID()}`;
   const key = `autopay:${enrollment.id}:${charge.id}`;
   const timestamp = new Date().toISOString();

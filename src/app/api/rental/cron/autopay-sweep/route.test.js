@@ -78,4 +78,18 @@ describe("autopay sweep cron", () => {
     expect(body.succeeded).toBe(0);
     expect(body.failed).toBe(1);
   });
+
+  it("counts an already-paid skip separately from successes and failures", async () => {
+    const enrollments = chain({ data: [{ id: "enrollment_1", owner_id: "owner_1", lease_id: "lease_1" }], error: null });
+    const charges = chain({ data: [{ id: "charge_1", owner_id: "owner_1", lease_id: "lease_1" }], error: null });
+    createRentalWebhookClient.mockReturnValue({ from: vi.fn((table) => (table === "rental_autopay_enrollments" ? enrollments : charges)) });
+    executeAutopayAttempt.mockResolvedValue({ httpStatus: 200, body: { success: true, skipped: true, reason: "payment_pending" } });
+
+    const response = await GET(request({ authorization: "Bearer cron-secret" }));
+    const body = await response.json();
+    expect(body.candidates).toBe(1);
+    expect(body.succeeded).toBe(0);
+    expect(body.failed).toBe(0);
+    expect(body.skipped).toBe(1);
+  });
 });
