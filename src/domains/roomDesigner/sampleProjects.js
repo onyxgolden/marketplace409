@@ -10,17 +10,18 @@
 // timestamps), so the local draft key `forge-designer-draft:<projectId>`
 // can never collide with the sample seed identifier.
 //
-// Stairs: there is no native stair symbol yet, so the stairwell is drawn
-// as an annotation group (closed outline path + tread lines + an UP/DOWN
-// label) tagged with STAIR_ANNOTATION_SOURCE. Future native stair support
-// can find and replace that group; nothing else depends on furniture
-// semantics for the stairs.
+// Stairs: level 1 carries a native stairs-straight symbol sized to the
+// stairwell (the 2D plan and the 3D modeler both render it); level 2 keeps
+// the legacy annotation group marking the stairwell arrival. The legacy
+// annotation group (tagged STAIR_ANNOTATION_SOURCE) is the fallback the 3D
+// modeler reads only when no native stair symbol exists in a design.
 
 import {
   addOpening,
   addWall,
   createEmptyDesign,
   placeFurniture,
+  placeSymbol,
   resetDesignerIds,
 } from "./designerDocument";
 import {
@@ -289,16 +290,35 @@ const F2_ROOMS = [
   ["Full bath", 216, 264, 336, 384],
 ];
 
+/**
+ * Stairs per level: level 1 carries a native stairs-straight symbol sized
+ * to the stairwell (the 3D modeler renders it); level 2 keeps the legacy
+ * annotation group marking the stairwell arrival. rotationDeg 90 maps the
+ * symbol's local +x (ascent) to plan +y, matching the old annotation's
+ * documented ascent direction.
+ */
+function placeLevelStairs(design, floor) {
+  if (floor === 1) {
+    const { x1, y1, x2, y2 } = STAIR_BOX;
+    return placeSymbol(design, "buildingElements", "stairs-straight", (x1 + x2) / 2, (y1 + y2) / 2, {
+      rotationDeg: 90,
+      widthIn: y2 - y1, // run
+      depthIn: x2 - x1, // stair width
+    });
+  }
+  return {
+    ...design,
+    annotations: [...design.annotations, ...stairAnnotations(floor)],
+  };
+}
+
 function buildLevelDesign(name, walls, openings, furniture, rooms, stairFloor) {
   let design = createEmptyDesign(name);
   design = buildWalls(design, walls);
   design = cutOpenings(design, openings);
   design = placeFurnishings(design, furniture);
   design = labelRooms(design, rooms);
-  design = {
-    ...design,
-    annotations: [...design.annotations, ...stairAnnotations(stairFloor)],
-  };
+  design = placeLevelStairs(design, stairFloor);
   return design;
 }
 

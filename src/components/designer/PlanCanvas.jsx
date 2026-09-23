@@ -186,7 +186,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         if (!layerVisible(s.layer)) continue;
         const symbol = findSymbol(s.domain, s.symbolId);
         if (!symbol) continue;
-        if (pointInFootprint(plan, s.x, s.y, symbol.widthIn, symbol.depthIn, s.rotationDeg)) {
+        if (pointInFootprint(plan, s.x, s.y, s.widthIn ?? symbol.widthIn, s.depthIn ?? symbol.depthIn, s.rotationDeg)) {
           return { kind: "symbol", id: s.id };
         }
       }

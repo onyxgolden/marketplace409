@@ -136,31 +136,43 @@ describe("sampleProjects: stair representation", () => {
     );
   }
 
-  it("exists on both floors and is spatially aligned", () => {
+  function nativeStair(level) {
+    return (level.design.symbols || []).find(
+      (s) => s.symbolId === "stairs-straight",
+    );
+  }
+
+  it("level 1 carries a native stair symbol sized to the stairwell", () => {
     const project = build();
-    const [first, second] = project.levels;
-    const g1 = stairGroup(first);
+    const [first] = project.levels;
+    // Legacy annotations are retired on level 1: the native symbol is the
+    // single source of truth for the 2D plan and the 3D model.
+    expect(stairGroup(first)).toHaveLength(0);
+    const stair = nativeStair(first);
+    expect(stair).toBeTruthy();
+    expect(stair.x).toBe((STAIR_BOX.x1 + STAIR_BOX.x2) / 2);
+    expect(stair.y).toBe((STAIR_BOX.y1 + STAIR_BOX.y2) / 2);
+    expect(stair.widthIn).toBe(STAIR_BOX.y2 - STAIR_BOX.y1); // run
+    expect(stair.depthIn).toBe(STAIR_BOX.x2 - STAIR_BOX.x1); // width
+    expect(stair.rotationDeg).toBe(90);
+  });
+
+  it("level 2 keeps the stairwell annotation, aligned to the stairwell", () => {
+    const project = build();
+    const [, second] = project.levels;
+    expect(nativeStair(second)).toBeFalsy();
     const g2 = stairGroup(second);
-    expect(g1.length).toBeGreaterThan(0);
     expect(g2.length).toBeGreaterThan(0);
-    const outline = (group) =>
-      group.find((a) => a.kind === "path" && a.closed);
-    const o1 = outline(g1);
-    const o2 = outline(g2);
-    expect(o1).toBeTruthy();
-    expect(o2).toBeTruthy();
-    // Same footprint on both floors.
-    expect(o1.points).toEqual(o2.points);
-    expect(o1.points).toEqual([
+    const outline = g2.find((a) => a.kind === "path" && a.closed);
+    expect(outline).toBeTruthy();
+    expect(outline.points).toEqual([
       { x: STAIR_BOX.x1, y: STAIR_BOX.y1 },
       { x: STAIR_BOX.x2, y: STAIR_BOX.y1 },
       { x: STAIR_BOX.x2, y: STAIR_BOX.y2 },
       { x: STAIR_BOX.x1, y: STAIR_BOX.y2 },
     ]);
     // Tread lines inside the box.
-    const treads = g1.filter(
-      (a) => a.kind === "path" && !a.closed,
-    );
+    const treads = g2.filter((a) => a.kind === "path" && !a.closed);
     expect(treads.length).toBeGreaterThanOrEqual(5);
     for (const tread of treads) {
       expect(tread.points).toHaveLength(2);
@@ -171,13 +183,11 @@ describe("sampleProjects: stair representation", () => {
     }
   });
 
-  it("labels the run UP on floor 1 and DOWN on floor 2", () => {
+  it("labels the stairwell arrival DOWN on floor 2", () => {
     const project = build();
-    const [first, second] = project.levels;
-    const label = (level) =>
-      stairGroup(level).find((a) => a.kind === "label");
-    expect(label(first).text).toBe("UP");
-    expect(label(second).text).toBe("DOWN");
+    const [, second] = project.levels;
+    const label = stairGroup(second).find((a) => a.kind === "label");
+    expect(label.text).toBe("DOWN");
   });
 });
 

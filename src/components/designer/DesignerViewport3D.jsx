@@ -238,6 +238,134 @@ export default function DesignerViewport3D({ design }) {
       threeScene.add(group);
     }
 
+    // stairs: composed runs + landings from pure descriptors, with railings.
+    // Railing density is a renderer decision per GPU tier (arch review: the
+    // domain describes the stair; graphics settings stay out of it).
+    const stairWood = stdMaterial({ color: "#8f6f4b", roughness: 0.75 });
+    const stairRailMat = stdMaterial({ color: "#6b5138", roughness: 0.7 });
+    const RAIL_HEIGHT_IN = 36;
+    const balusterEveryIn = tierName === "high" ? 8 : tierName === "balanced" ? 12 : 18;
+
+    const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
+    const beamBetween = (group, p1, p2, thickness, mat) => {
+      const dir = v3(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z);
+      const len = dir.length();
+      if (len < 1) return;
+      const mesh = shadowed(new THREE.Mesh(track(new THREE.BoxGeometry(thickness, thickness, len)), mat));
+      mesh.position.set((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, (p1.z + p2.z) / 2);
+      mesh.quaternion.setFromUnitVectors(v3(0, 0, 1), dir.normalize());
+      group.add(mesh);
+    };
+    const postAt = (group, x, yBase, z, height, mat) => {
+      const mesh = shadowed(new THREE.Mesh(track(new THREE.BoxGeometry(2, height, 2)), mat));
+      mesh.position.set(x, yBase + height / 2, z);
+      group.add(mesh);
+    };
+    // Stair-local run frame: (a)->(b) is the ascent in plan; the width
+    // extends along the perpendicular (px,pz). All values in inches.
+    const runFrame = (part) => {
+      const alongX = part.dir === "positive-x" || part.dir === "negative-x";
+      const ax = part.x0;
+      const az = part.z0;
+      const bx = alongX ? part.x0 + part.dx : part.x0;
+      const bz = alongX ? part.z0 : part.z0 + part.dz;
+      return {
+        ax, az, bx, bz,
+        width: Math.abs(alongX ? part.dz : part.dx),
+        px: alongX ? 0 : 1,
+        pz: alongX ? 1 : 0,
+        y0: part.y0,
+        rise: part.riseIn,
+        steps: part.steps,
+        treadIn: part.treadIn,
+        riserIn: part.riserIn,
+      };
+    };
+    const runRect = (f) => {
+      const xs = [f.ax, f.bx, f.ax + f.px * f.width, f.bx + f.px * f.width];
+      const zs = [f.az, f.bz, f.az + f.pz * f.width, f.bz + f.pz * f.width];
+      return { x1: Math.min(...xs), x2: Math.max(...xs), z1: Math.min(...zs), z2: Math.max(...zs) };
+    };
+
+    for (const stair of scene.stairs || []) {
+      const group = new THREE.Group();
+      const yBase = stair.baseElevationIn || 0;
+      const runRects = (stair.parts || []).filter((p) => p.kind === "run").map((p) => runRect(runFrame(p)));
+
+      for (const part of stair.parts || []) {
+        if (part.kind === "run") {
+          const f = runFrame(part);
+          const len = Math.hypot(f.bx - f.ax, f.bz - f.az);
+          if (len < 1 || f.steps < 1) continue;
+          const at = (s, perpOff, y) => ({
+            x: f.ax + ((f.bx - f.ax) * s) / len + f.px * perpOff,
+            z: f.az + ((f.bz - f.az) * s) / len + f.pz * perpOff,
+            y,
+          });
+          // Steps: solid stacked boxes (closed risers).
+          const alongX = Math.abs(f.bx - f.ax) >= Math.abs(f.bz - f.az);
+          for (let i = 0; i < f.steps; i += 1) {
+            const h = (i + 1) * f.riserIn;
+            const c = at((i + 0.5) * f.treadIn, f.width / 2, yBase + f.y0 + h / 2);
+            const mesh = shadowed(
+              new THREE.Mesh(
+                track(new THREE.BoxGeometry(alongX ? f.treadIn : f.width, h, alongX ? f.width : f.treadIn)),
+                stairWood,
+              ),
+            );
+            mesh.position.set(c.x, c.y, c.z);
+            group.add(mesh);
+          }
+          // Railings on both long edges: sloped handrail + balusters.
+          for (const edgeOff of [0, f.width]) {
+            const p1 = at(0, edgeOff, yBase + f.y0 + RAIL_HEIGHT_IN);
+            const p2 = at(len, edgeOff, yBase + f.y0 + f.rise + RAIL_HEIGHT_IN);
+            beamBetween(group, p1, p2, 3, stairRailMat);
+            for (let s = 0; s <= len + 0.01; s += balusterEveryIn) {
+              const b = at(Math.min(s, len), edgeOff, 0);
+              postAt(group, b.x, yBase + f.y0 + (Math.min(s, len) / len) * f.rise, b.z, RAIL_HEIGHT_IN, stairRailMat);
+            }
+          }
+        } else if (part.kind === "landing") {
+          const lx1 = Math.min(part.x0, part.x0 + part.dx);
+          const lx2 = Math.max(part.x0, part.x0 + part.dx);
+          const lz1 = Math.min(part.z0, part.z0 + part.dz);
+          const lz2 = Math.max(part.z0, part.z0 + part.dz);
+          const mesh = shadowed(
+            new THREE.Mesh(track(new THREE.BoxGeometry(lx2 - lx1, part.thicknessIn, lz2 - lz1)), stairWood),
+          );
+          mesh.position.set((lx1 + lx2) / 2, yBase + part.y0 - part.thicknessIn / 2, (lz1 + lz2) / 2);
+          group.add(mesh);
+          // Railing on landing edges no run connects to.
+          const edges = [
+            [{ x: lx1, z: lz1 }, { x: lx2, z: lz1 }],
+            [{ x: lx2, z: lz1 }, { x: lx2, z: lz2 }],
+            [{ x: lx2, z: lz2 }, { x: lx1, z: lz2 }],
+            [{ x: lx1, z: lz2 }, { x: lx1, z: lz1 }],
+          ];
+          for (const [e1, e2] of edges) {
+            const mx = (e1.x + e2.x) / 2;
+            const mz = (e1.z + e2.z) / 2;
+            const touchesRun = runRects.some(
+              (r) => mx > r.x1 - 1 && mx < r.x2 + 1 && mz > r.z1 - 1 && mz < r.z2 + 1,
+            );
+            if (touchesRun) continue;
+            const q1 = { x: e1.x, y: yBase + part.y0 + RAIL_HEIGHT_IN, z: e1.z };
+            const q2 = { x: e2.x, y: yBase + part.y0 + RAIL_HEIGHT_IN, z: e2.z };
+            beamBetween(group, q1, q2, 3, stairRailMat);
+            const edgeLen = Math.hypot(e2.x - e1.x, e2.z - e1.z);
+            for (let s = 0; s <= edgeLen + 0.01; s += balusterEveryIn) {
+              const t = edgeLen < 0.01 ? 0 : s / edgeLen;
+              postAt(group, e1.x + (e2.x - e1.x) * t, yBase + part.y0, e1.z + (e2.z - e1.z) * t, RAIL_HEIGHT_IN, stairRailMat);
+            }
+          }
+        }
+      }
+      group.position.set(stair.x, yBase, stair.z);
+      group.rotation.y = stair.rotY;
+      threeScene.add(group);
+    }
+
     let raf = 0;
     const animate = () => {
       raf = requestAnimationFrame(animate);

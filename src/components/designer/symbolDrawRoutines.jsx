@@ -263,8 +263,10 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
  */
 export function drawBuildingElementSymbol({ symbol, instance, toScreen, scale, highlighted }) {
   const c = toScreen({ x: instance.x, y: instance.y });
-  const hw = (symbol.widthIn * scale) / 2;
-  const hh = (symbol.depthIn * scale) / 2;
+  // Per-instance footprint override (placeSymbol widthIn/depthIn) wins;
+  // otherwise the catalog nominal size.
+  const hw = ((instance.widthIn ?? symbol.widthIn) * scale) / 2;
+  const hh = ((instance.depthIn ?? symbol.depthIn) * scale) / 2;
   const stroke = selectionStroke(highlighted, "#e5e7eb");
   const sw = highlighted ? 3 : 2;
   const fill = symbol.color || "#d6a35c";

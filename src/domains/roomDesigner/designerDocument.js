@@ -597,9 +597,10 @@ export function findSymbolInstance(design, instanceId) {
 /**
  * Place a registered symbol. Layer falls back to the symbol's default
  * layer ("auto"/unknown values included); tag is optional equipment
- * tagging (e.g. "P-101").
+ * tagging (e.g. "P-101"). widthIn/depthIn optionally override the
+ * catalog nominal footprint for this instance only.
  */
-export function placeSymbol(design, domain, symbolId, x, y, { id, rotationDeg = 0, layer, tag } = {}) {
+export function placeSymbol(design, domain, symbolId, x, y, { id, rotationDeg = 0, layer, tag, widthIn, depthIn } = {}) {
   assertDesign(design);
   const symbol = findSymbol(domain, symbolId);
   if (!symbol) throw new Error(`Unknown symbol: ${domain}/${symbolId}`);
@@ -613,6 +614,17 @@ export function placeSymbol(design, domain, symbolId, x, y, { id, rotationDeg = 
     rotationDeg: ((rotationDeg % 360) + 360) % 360,
     layer: PIPE_LAYERS.includes(layer) ? layer : symbol.defaultLayer || "piping",
   };
+  // Optional per-instance footprint override (e.g. a stair sized to its
+  // stairwell instead of the catalog nominal). Falls back to the catalog
+  // entry's widthIn/depthIn everywhere it is not set.
+  if (widthIn !== undefined) {
+    if (!Number.isFinite(widthIn) || widthIn <= 0) throw new Error("Symbol widthIn must be a positive number.");
+    instance.widthIn = widthIn;
+  }
+  if (depthIn !== undefined) {
+    if (!Number.isFinite(depthIn) || depthIn <= 0) throw new Error("Symbol depthIn must be a positive number.");
+    instance.depthIn = depthIn;
+  }
   const cleanTag = cleanText(tag, 40);
   if (cleanTag) instance.tag = cleanTag;
   return { ...design, symbols: [...(design.symbols || []), instance] };
