@@ -242,10 +242,14 @@ export function designerReducer(state, action) {
     }
     case "SET_PENDING_SYMBOL": {
       if (!findSymbol(action.domain, action.symbolId)) return state;
+      // The piping domain keeps its established tool; every other symbol
+      // domain arms the generic "symbol" tool so the object library stays
+      // visible while placing. Placement itself is unchanged
+      // (PLACE_SYMBOL -> design.symbols for any domain).
       return {
         ...state,
         pendingSymbol: { domain: action.domain, symbolId: action.symbolId },
-        tool: "piping",
+        tool: action.domain === "piping" ? "piping" : "symbol",
       };
     }
     case "TOGGLE_ORTHO_SNAP":

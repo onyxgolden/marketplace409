@@ -49,7 +49,7 @@ import {
   writeSavedRecord,
 } from "./designerDraft";
 import OrgChartPanel from "./OrgChartPanel";
-import FurnitureCatalogPanel from "./FurnitureCatalogPanel";
+import ObjectLibraryPanel from "./ObjectLibraryPanel";
 import { createInitialState, designerReducer } from "./designerReducer";
 // HOME DESIGNER slice 2: the screen edits the current level of a HomeProject.
 // The full envelope (levels[], currentLevelId, building metadata) persists
@@ -845,7 +845,7 @@ export default function DesignerScreen({ projectId, initialName }) {
 }
 
 function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation }) {
-  const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate } = state;
+  const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingSymbol } = state;
 
   // Scale calibration for the background underlay (Visio trace-over workflow).
   if (tool === "calibrate") {
@@ -868,8 +868,19 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
     return <ArrangePanel state={state} dispatch={dispatch} />;
   }
 
-  if (tool === "furniture") {
-    return <FurnitureCatalogPanel pendingCatalogId={pendingCatalogId} dispatch={dispatch} />;
+  // Object library: one Domain dropdown -> Category dropdown -> icon grid.
+  // Furniture keeps its existing placement contract (SET_PENDING_CATALOG);
+  // the building/site/MEP symbol domains arm through SET_PENDING_SYMBOL
+  // ("symbol" tool). Room templates and piping keep their own panels.
+  if (tool === "furniture" || tool === "symbol") {
+    return (
+      <ObjectLibraryPanel
+        dispatch={dispatch}
+        pendingCatalogId={pendingCatalogId}
+        pendingSymbol={pendingSymbol}
+        initialDomain={tool === "symbol" ? pendingSymbol?.domain : "furniture"}
+      />
+    );
   }
 
   if (tool === "room") {

@@ -254,10 +254,421 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
   );
 }
 
+/**
+ * Building-element symbol: plan-view doors, windows, stairs, and
+ * structural elements. Glyph-driven (symbol.glyph) like the piping
+ * routine; coordinates are centered on the symbol footprint, hw/hh are
+ * half width/depth in screen px.
+ * ctx: { symbol, instance, toScreen, scale, highlighted }
+ */
+export function drawBuildingElementSymbol({ symbol, instance, toScreen, scale, highlighted }) {
+  const c = toScreen({ x: instance.x, y: instance.y });
+  const hw = (symbol.widthIn * scale) / 2;
+  const hh = (symbol.depthIn * scale) / 2;
+  const stroke = selectionStroke(highlighted, "#e5e7eb");
+  const sw = highlighted ? 3 : 2;
+  const fill = symbol.color || "#d6a35c";
+
+  const glyph = (() => {
+    switch (symbol.glyph) {
+      case "door-single": // opening + leaf + quarter swing arc
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="none" stroke={stroke} strokeWidth={sw} />
+            <line x1={-hw} y1={-hh} x2={-hw} y2={hh} stroke={stroke} strokeWidth={sw + 1} />
+            <path d={`M ${-hw} ${-hh} A ${hw * 2} ${hw * 2} 0 0 1 ${hw} ${-hh}`} fill="none" stroke={stroke} strokeWidth={1.25} strokeDasharray="4 3" opacity={0.8} />
+            <line x1={-hw} y1={-hh} x2={hw} y2={-hh} stroke={fill} strokeWidth={sw} />
+          </g>
+        );
+      case "door-double":
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="none" stroke={stroke} strokeWidth={sw} />
+            <path d={`M ${-hw} ${-hh} A ${hw} ${hw} 0 0 1 0 ${-hh}`} fill="none" stroke={stroke} strokeWidth={1.25} strokeDasharray="4 3" opacity={0.8} />
+            <path d={`M ${hw} ${-hh} A ${hw} ${hw} 0 0 0 0 ${-hh}`} fill="none" stroke={stroke} strokeWidth={1.25} strokeDasharray="4 3" opacity={0.8} />
+            <line x1={-hw} y1={-hh} x2={0} y2={-hh} stroke={fill} strokeWidth={sw} />
+            <line x1={0} y1={-hh} x2={hw} y2={-hh} stroke={fill} strokeWidth={sw} />
+          </g>
+        );
+      case "door-sliding": // two overlapping panels
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="none" stroke={stroke} strokeWidth={sw} />
+            <rect x={-hw} y={-hh} width={hw * 1.15} height={hh * 2} fill={fill} fillOpacity={0.35} stroke={stroke} strokeWidth={1.25} />
+            <rect x={-hw * 0.15} y={-hh} width={hw * 1.15} height={hh * 2} fill={fill} fillOpacity={0.35} stroke={stroke} strokeWidth={1.25} />
+          </g>
+        );
+      case "door-pocket": // opening + dashed pocket in the wall
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="none" stroke={stroke} strokeWidth={sw} />
+            <rect x={hw * 0.1} y={-hh * 1.8} width={hw * 1.7} height={hh * 3.6} fill="none" stroke={stroke} strokeWidth={1.25} strokeDasharray="4 3" opacity={0.8} />
+            <line x1={-hw} y1={-hh} x2={-hw} y2={hh} stroke={fill} strokeWidth={sw} />
+          </g>
+        );
+      case "door-bifold": // zigzag leaves
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="none" stroke={stroke} strokeWidth={sw} />
+            <polyline
+              points={`${-hw},${-hh} ${-hw / 2},${hh} 0,${-hh} ${hw / 2},${hh} ${hw},${-hh}`}
+              fill="none" stroke={fill} strokeWidth={sw} strokeLinejoin="round"
+            />
+          </g>
+        );
+      case "window-single": // frame + one horizontal meeting rail
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.25} stroke={stroke} strokeWidth={sw} />
+            <line x1={-hw} y1={0} x2={hw} y2={0} stroke={stroke} strokeWidth={1.5} />
+          </g>
+        );
+      case "window-double": // frame + meeting rail + sash lines
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.25} stroke={stroke} strokeWidth={sw} />
+            <line x1={-hw} y1={0} x2={hw} y2={0} stroke={stroke} strokeWidth={1.5} />
+            <rect x={-hw + 3} y={-hh + 3} width={hw * 2 - 6} height={hh - 3} fill="none" stroke={stroke} strokeWidth={1} opacity={0.7} />
+            <rect x={-hw + 3} y={3} width={hw * 2 - 6} height={hh - 3} fill="none" stroke={stroke} strokeWidth={1} opacity={0.7} />
+          </g>
+        );
+      case "window-casement": // frame + vertical mullions (side-hinged)
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.25} stroke={stroke} strokeWidth={sw} />
+            <line x1={-hw / 3} y1={-hh} x2={-hw / 3} y2={hh} stroke={stroke} strokeWidth={1.5} />
+            <line x1={hw / 3} y1={-hh} x2={hw / 3} y2={hh} stroke={stroke} strokeWidth={1.5} />
+          </g>
+        );
+      case "window-sliding":
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.25} stroke={stroke} strokeWidth={sw} />
+            <line x1={-hw * 0.1} y1={-hh} x2={-hw * 0.1} y2={hh} stroke={stroke} strokeWidth={1.5} />
+            <line x1={hw * 0.25} y1={-hh} x2={hw * 0.25} y2={hh} stroke={stroke} strokeWidth={1.5} />
+          </g>
+        );
+      case "window-picture": // clean frame, no mullions
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.25} stroke={stroke} strokeWidth={sw + 1} />
+          </g>
+        );
+      case "window-awning": // frame + horizontal lights + top hinge ticks
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.25} stroke={stroke} strokeWidth={sw} />
+            <line x1={-hw} y1={-hh / 3} x2={hw} y2={-hh / 3} stroke={stroke} strokeWidth={1.5} />
+            <line x1={-hw} y1={hh / 3} x2={hw} y2={hh / 3} stroke={stroke} strokeWidth={1.5} />
+            <line x1={-hw} y1={-hh} x2={-hw} y2={-hh - 5} stroke={stroke} strokeWidth={1.5} />
+            <line x1={hw} y1={-hh} x2={hw} y2={-hh - 5} stroke={stroke} strokeWidth={1.5} />
+          </g>
+        );
+      case "stairs-straight": {
+        const treads = Math.max(3, Math.min(9, Math.round(hw / 7)));
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.2} stroke={stroke} strokeWidth={sw} />
+            {Array.from({ length: treads - 1 }, (_, i) => {
+              const x = -hw + ((i + 1) * hw * 2) / treads;
+              return <line key={i} x1={x} y1={-hh} x2={x} y2={hh} stroke={stroke} strokeWidth={1.25} />;
+            })}
+            <line x1={-hw + 6} y1={0} x2={hw - 10} y2={0} stroke={stroke} strokeWidth={1.5} />
+            <polygon points={`${hw - 10},${-4} ${hw - 10},${4} ${hw - 3},0`} fill={stroke} />
+          </g>
+        );
+      }
+      case "stairs-l": // L footprint: two runs with a landing
+        return (
+          <g>
+            <polygon
+              points={`${-hw},${-hh} ${hw * 0.25},${-hh} ${hw * 0.25},${hh * 0.1} ${hw},${hh * 0.1} ${hw},${hh} ${-hw},${hh}`}
+              fill={fill} fillOpacity={0.2} stroke={stroke} strokeWidth={sw} strokeLinejoin="round"
+            />
+            {Array.from({ length: 5 }, (_, i) => {
+              const x = -hw + ((i + 1) * hw * 1.25) / 6;
+              return <line key={`a${i}`} x1={x} y1={-hh} x2={x} y2={hh * 0.1} stroke={stroke} strokeWidth={1.25} />;
+            })}
+            {Array.from({ length: 3 }, (_, i) => {
+              const y = hh * 0.1 + ((i + 1) * hh * 0.9) / 4;
+              return <line key={`b${i}`} x1={hw * 0.25} y1={y} x2={hw} y2={y} stroke={stroke} strokeWidth={1.25} />;
+            })}
+            <polygon points={`${hw - 4},${hh * 0.1 - 8} ${hw - 4},${hh * 0.1 + 2} ${hw + 3},${hh * 0.1 - 3}`} fill={stroke} />
+          </g>
+        );
+      case "stairs-u": // U footprint: two parallel runs
+        return (
+          <g>
+            <polygon
+              points={`${-hw},${-hh} ${hw},${-hh} ${hw},${hh} ${-hw},${hh} ${-hw},${hh * 0.35} ${hw * 0.55},${hh * 0.35} ${hw * 0.55},${-hh * 0.35} ${-hw},${-hh * 0.35}`}
+              fill={fill} fillOpacity={0.2} stroke={stroke} strokeWidth={sw} strokeLinejoin="round"
+            />
+            {Array.from({ length: 6 }, (_, i) => {
+              const x = -hw + ((i + 1) * hw * 2) / 7;
+              return <line key={i} x1={x} y1={-hh} x2={x} y2={-hh * 0.35} stroke={stroke} strokeWidth={1.25} />;
+            })}
+            {Array.from({ length: 6 }, (_, i) => {
+              const x = -hw + ((i + 1) * hw * 2) / 7;
+              return <line key={i} x1={x} y1={hh * 0.35} x2={x} y2={hh} stroke={stroke} strokeWidth={1.25} />;
+            })}
+          </g>
+        );
+      case "railing": {
+        const posts = Math.max(2, Math.round(hw / 12));
+        return (
+          <g>
+            <line x1={-hw} y1={0} x2={hw} y2={0} stroke={stroke} strokeWidth={sw + 1} />
+            {Array.from({ length: posts }, (_, i) => {
+              const x = -hw + (i * hw * 2) / Math.max(1, posts - 1);
+              return <line key={i} x1={x} y1={-hh} x2={x} y2={hh} stroke={stroke} strokeWidth={1.25} />;
+            })}
+          </g>
+        );
+      }
+      case "column":
+        return (
+          <g>
+            <circle r={Math.min(hw, hh)} fill={fill} fillOpacity={0.5} stroke={stroke} strokeWidth={sw} />
+            <circle r={Math.min(hw, hh) * 0.45} fill="none" stroke={stroke} strokeWidth={1.25} />
+          </g>
+        );
+      case "fireplace":
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.3} stroke={stroke} strokeWidth={sw} />
+            <rect x={-hw * 0.55} y={-hh * 0.5} width={hw * 1.1} height={hh} fill="#1f2937" stroke={stroke} strokeWidth={1.25} />
+            <line x1={-hw} y1={hh} x2={hw} y2={hh} stroke={stroke} strokeWidth={1.5} strokeDasharray="5 3" opacity={0.8} />
+          </g>
+        );
+      default:
+        return (
+          <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="none" stroke={stroke} strokeWidth={sw} />
+        );
+    }
+  })();
+
+  return (
+    <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
+      {glyph}
+      <text y={Math.max(hw, hh) + 14} textAnchor="middle" fontSize={10} fill="#9ca3af">
+        {symbol.label}
+      </text>
+    </g>
+  );
+}
+
+/**
+ * Site/outdoor symbol: hardscape surfaces, site structures, landscape.
+ * Glyph-driven (symbol.glyph); same ctx contract as the other routines.
+ */
+export function drawSiteOutdoorSymbol({ symbol, instance, toScreen, scale, highlighted }) {
+  const c = toScreen({ x: instance.x, y: instance.y });
+  const hw = (symbol.widthIn * scale) / 2;
+  const hh = (symbol.depthIn * scale) / 2;
+  const stroke = selectionStroke(highlighted, "#e5e7eb");
+  const sw = highlighted ? 3 : 2;
+  const fill = symbol.color || "#a3835b";
+
+  const glyph = (() => {
+    switch (symbol.glyph) {
+      case "deck": {
+        const planks = Math.max(3, Math.min(10, Math.round(hh / 6)));
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.35} stroke={stroke} strokeWidth={sw} />
+            {Array.from({ length: planks - 1 }, (_, i) => {
+              const y = -hh + ((i + 1) * hh * 2) / planks;
+              return <line key={i} x1={-hw} y1={y} x2={hw} y2={y} stroke={stroke} strokeWidth={1} opacity={0.7} />;
+            })}
+          </g>
+        );
+      }
+      case "patio": {
+        const nx = Math.max(2, Math.round(hw / 14));
+        const ny = Math.max(2, Math.round(hh / 14));
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.35} stroke={stroke} strokeWidth={sw} />
+            {Array.from({ length: nx - 1 }, (_, i) => {
+              const x = -hw + ((i + 1) * hw * 2) / nx;
+              return <line key={`x${i}`} x1={x} y1={-hh} x2={x} y2={hh} stroke={stroke} strokeWidth={1} opacity={0.6} />;
+            })}
+            {Array.from({ length: ny - 1 }, (_, i) => {
+              const y = -hh + ((i + 1) * hh * 2) / ny;
+              return <line key={`y${i}`} x1={-hw} y1={y} x2={hw} y2={y} stroke={stroke} strokeWidth={1} opacity={0.6} />;
+            })}
+          </g>
+        );
+      }
+      case "driveway":
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.35} stroke={stroke} strokeWidth={sw} />
+            <line x1={0} y1={-hh} x2={0} y2={hh} stroke={stroke} strokeWidth={1.25} strokeDasharray="6 4" opacity={0.8} />
+          </g>
+        );
+      case "walkway": {
+        const joints = Math.max(2, Math.round(hw / 16));
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.35} stroke={stroke} strokeWidth={sw} />
+            {Array.from({ length: joints - 1 }, (_, i) => {
+              const x = -hw + ((i + 1) * hw * 2) / joints;
+              return <line key={i} x1={x} y1={-hh} x2={x} y2={hh} stroke={stroke} strokeWidth={1.25} />;
+            })}
+          </g>
+        );
+      }
+      case "fence": {
+        const posts = Math.max(2, Math.round(hw / 10));
+        return (
+          <g>
+            <line x1={-hw} y1={-hh / 2} x2={hw} y2={-hh / 2} stroke={stroke} strokeWidth={1.5} />
+            <line x1={-hw} y1={hh / 2} x2={hw} y2={hh / 2} stroke={stroke} strokeWidth={1.5} />
+            {Array.from({ length: posts }, (_, i) => {
+              const x = -hw + (i * hw * 2) / Math.max(1, posts - 1);
+              return <line key={i} x1={x} y1={-hh} x2={x} y2={hh} stroke={fill} strokeWidth={sw} />;
+            })}
+          </g>
+        );
+      }
+      case "shed":
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={fill} fillOpacity={0.35} stroke={stroke} strokeWidth={sw} />
+            <line x1={-hw} y1={-hh} x2={hw} y2={hh} stroke={stroke} strokeWidth={1.25} opacity={0.8} />
+            <line x1={hw} y1={-hh} x2={-hw} y2={hh} stroke={stroke} strokeWidth={1.25} opacity={0.8} />
+            <line x1={0} y1={hh * 0.2} x2={0} y2={hh} stroke={stroke} strokeWidth={1.5} />
+          </g>
+        );
+      case "garden-bed":
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} rx={Math.min(hw, hh) * 0.4} fill={fill} fillOpacity={0.3} stroke={stroke} strokeWidth={sw} />
+            <circle cx={-hw * 0.5} cy={-hh * 0.3} r={3} fill={fill} />
+            <circle cx={0} cy={hh * 0.25} r={3.5} fill={fill} />
+            <circle cx={hw * 0.5} cy={-hh * 0.25} r={3} fill={fill} />
+            <circle cx={hw * 0.15} cy={-hh * 0.5} r={2.5} fill={fill} />
+          </g>
+        );
+      case "pool-rect":
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} rx={6} fill={fill} fillOpacity={0.45} stroke={stroke} strokeWidth={sw} />
+            <path
+              d={`M ${-hw + 8} 0 q 8 -5 16 0 t 16 0 t 16 0 t 16 0`}
+              fill="none" stroke="#e0f2fe" strokeWidth={1.5} opacity={0.9}
+            />
+          </g>
+        );
+      default:
+        return (
+          <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="none" stroke={stroke} strokeWidth={sw} />
+        );
+    }
+  })();
+
+  return (
+    <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
+      {glyph}
+      <text y={Math.max(hw, hh) + 14} textAnchor="middle" fontSize={10} fill="#9ca3af">
+        {symbol.label}
+      </text>
+    </g>
+  );
+}
+
+/**
+ * MEP fixture symbol: electrical devices and plumbing fixtures.
+ * Device glyphs are drawn oversized (the CAD-symbol convention) so they
+ * stay legible on the plan. Glyph-driven (symbol.glyph).
+ */
+export function drawMepFixtureSymbol({ symbol, instance, toScreen, scale, highlighted }) {
+  const c = toScreen({ x: instance.x, y: instance.y });
+  const hw = (symbol.widthIn * scale) / 2;
+  const hh = (symbol.depthIn * scale) / 2;
+  const stroke = selectionStroke(highlighted, "#e5e7eb");
+  const sw = highlighted ? 3 : 2;
+  const accent = highlighted ? "#f59e0b" : symbol.color || "#e3c878";
+
+  const glyph = (() => {
+    switch (symbol.glyph) {
+      case "outlet-duplex": // circle + two duplex slot pairs
+        return (
+          <g>
+            <circle r={Math.min(hw, hh)} fill="#1f2937" stroke={stroke} strokeWidth={sw} />
+            <line x1={-hw * 0.35} y1={-hh * 0.45} x2={-hw * 0.35} y2={-hh * 0.05} stroke={accent} strokeWidth={1.5} />
+            <line x1={-hw * 0.1} y1={-hh * 0.45} x2={-hw * 0.1} y2={-hh * 0.05} stroke={accent} strokeWidth={1.5} />
+            <line x1={hw * 0.1} y1={hh * 0.05} x2={hw * 0.1} y2={hh * 0.45} stroke={accent} strokeWidth={1.5} />
+            <line x1={hw * 0.35} y1={hh * 0.05} x2={hw * 0.35} y2={hh * 0.45} stroke={accent} strokeWidth={1.5} />
+          </g>
+        );
+      case "switch": // S-style toggle
+        return (
+          <g>
+            <circle r={Math.min(hw, hh)} fill="#1f2937" stroke={stroke} strokeWidth={sw} />
+            <text textAnchor="middle" dominantBaseline="central" fontSize={Math.min(hw, hh)} fontWeight={700} fill={accent}>
+              S
+            </text>
+          </g>
+        );
+      case "smoke-detector":
+        return (
+          <g>
+            <circle r={Math.min(hw, hh)} fill="#1f2937" stroke={stroke} strokeWidth={sw} />
+            <circle r={Math.min(hw, hh) * 0.5} fill="none" stroke={accent} strokeWidth={1.5} />
+            <circle r={1.75} fill={accent} />
+          </g>
+        );
+      case "load-center": // panel box + door seam + latch
+        return (
+          <g>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="#1f2937" stroke={stroke} strokeWidth={sw} />
+            <line x1={hw * 0.55} y1={-hh} x2={hw * 0.55} y2={hh} stroke={accent} strokeWidth={1.5} />
+            <circle cx={hw * 0.32} cy={0} r={1.75} fill={accent} />
+          </g>
+        );
+      case "hose-bib":
+        return (
+          <g>
+            <circle r={Math.min(hw, hh) * 0.7} fill="#1f2937" stroke={stroke} strokeWidth={sw} />
+            <line x1={0} y1={0} x2={hw} y2={hh * 0.6} stroke={accent} strokeWidth={sw} strokeLinecap="round" />
+            <circle cx={-hw * 0.2} cy={-hh * 0.2} r={1.75} fill={accent} />
+          </g>
+        );
+      case "floor-drain": // circle + grate cross
+        return (
+          <g>
+            <circle r={Math.min(hw, hh)} fill="#1f2937" stroke={stroke} strokeWidth={sw} />
+            <circle r={Math.min(hw, hh) * 0.62} fill="none" stroke={accent} strokeWidth={1.5} />
+            <line x1={-hw * 0.62} y1={0} x2={hw * 0.62} y2={0} stroke={accent} strokeWidth={1.25} />
+            <line x1={0} y1={-hh * 0.62} x2={0} y2={hh * 0.62} stroke={accent} strokeWidth={1.25} />
+          </g>
+        );
+      default:
+        return (
+          <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="none" stroke={stroke} strokeWidth={sw} />
+        );
+    }
+  })();
+
+  return (
+    <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
+      {glyph}
+      <text y={Math.max(hw, hh) + 14} textAnchor="middle" fontSize={10} fill="#9ca3af">
+        {symbol.label}
+      </text>
+    </g>
+  );
+}
+
 const routines = new Map([
   ["furniture", drawFurnitureSymbol],
   ["rooms", drawRoomSymbol],
   ["piping", drawPipingSymbol],
+  ["buildingElements", drawBuildingElementSymbol],
+  ["siteOutdoor", drawSiteOutdoorSymbol],
+  ["mepFixtures", drawMepFixtureSymbol],
 ]);
 
 /** Truncate a label so it fits a person card; SVG text never wraps. */

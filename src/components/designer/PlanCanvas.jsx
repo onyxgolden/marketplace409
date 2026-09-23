@@ -318,7 +318,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         rotationDeg: 0,
       };
     }
-    if (tool === "piping") {
+    if (tool === "piping" || tool === "symbol") {
       if (!pendingSymbol) return null;
       const symbol = findSymbol(pendingSymbol.domain, pendingSymbol.symbolId);
       if (!symbol) return null;
@@ -432,7 +432,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       });
       return;
     }
-    if (tool === "piping") {
+    if (tool === "piping" || tool === "symbol") {
       if (!pendingSymbol) return;
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
       dispatch({ type: "PLACE_SYMBOL", x: point.x, y: point.y });
