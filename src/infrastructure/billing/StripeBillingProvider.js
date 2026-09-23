@@ -179,8 +179,54 @@ export class StripeBillingProvider {
     return Object.freeze({ connectedAccountId: context.connectedAccountId, paymentIntentId: intent.id, clientSecret: intent.client_secret });
   }
 
-  async createReservationPaymentSession(context, input) {
-    if (this.mode !== "test") {
+  // Shared mandate-collection primitive for autopay enrollment (rental tenants and
+  // private-financing borrowers alike): a SetupIntent for a US bank account with
+  // off_session usage, so the stored payment method can be debited by the sweep
+  // without the borrower present. mandate_data carries the online acceptance
+  // evidence (IP + user agent) when the caller captured it; when omitted, Stripe
+  // still creates the mandate at confirmation time from the Payment Element flow.
+  async createAutopaySetupIntent(context, input) {
+    const online = {};
+    if (typeof input.ipAddress === "string" && input.ipAddress.trim() !== "") online.ip_address = input.ipAddress.trim();
+    if (typeof input.userAgent === "string" && input.userAgent.trim() !== "") online.user_agent = input.userAgent.trim();
+    const intent = await this.stripe.setupIntents.create({
+      customer: required(input.customerId, "a connected-account customer id"),
+      payment_method_types: ["us_bank_account"],
+      usage: "off_session",
+      payment_method_options: {
+        us_bank_account: {
+          verification_method: "instant",
+          financial_connections: { permissions: ["payment_method"] },
+        },
+      },
+      ...(Object.keys(online).length > 0
+        ? { mandate_data: { customer_acceptance: { type: "online", online } } }
+        : {}),
+      metadata: {
+        forge_autopay_enrollment_id: input.enrollmentId || undefined,
+        forge_owner_id: context.ownerId,
+      },
+    }, {
+      stripeAccount: required(context.connectedAccountId, "a connected account id"),
+      idempotencyKey: required(input.idempotencyKey, "an idempotency key"),
+    });
+    if (!intent.client_secret) throw new Error("Stripe did not return a SetupIntent client secret.");
+    return Object.freeze({ setupIntentId: intent.id, clientSecret: intent.client_secret });
+  }
+
+  async retrieveSetupIntent(context, id) {
+    const intent = await this.stripe.setupIntents.retrieve(
+      required(id, "a setup intent id"), {},
+      { stripeAccount: required(context.connectedAccountId, "a connected account id") });
+    return Object.freeze({
+      setupIntentId: intent.id,
+      status: intent.status,
+      paymentMethodId: typeof intent.payment_method === "string" ? intent.payment_method : intent.payment_method?.id || null,
+      mandateId: typeof intent.mandate === "string" ? intent.mandate : intent.mandate?.id || null,
+    });
+  }
+
+  async createReservationPaymentSession(context, input) {    if (this.mode !== "test") {
       throw new Error("Reservation payment initiation is limited to Stripe test mode.");
     }
     const amountCents = input.amountCents;
