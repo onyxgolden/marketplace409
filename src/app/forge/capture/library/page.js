@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import CaptureLibraryGrid from "@/components/forge/capture/CaptureLibraryGrid";
 
@@ -12,7 +13,7 @@ export const metadata = {
 export default async function CaptureLibraryPage({ searchParams }) {
   const forgeApplication = await createAuthenticatedForgeApplication();
   if (forgeApplication.response) {
-    return forgeApplication.response;
+    redirect("/auth");
   }
 
   const params = await searchParams;
