@@ -972,9 +972,11 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 /// Rung 6 — opens the FORGE capture library deep link in the OS default
-/// browser. The URL is allowlisted to the library page (optionally with a
-/// ?capture=<uuid> highlight) so the command can never be repurposed to open
-/// arbitrary sites. Windows only; other hosts fail closed.
+/// Opens the FORGE capture library page in the user's default browser. The
+/// URL is allowlisted to the library page (optionally with a ?capture=<uuid>
+/// highlight) so the command can never be repurposed to open arbitrary
+/// sites. Windows uses `cmd /C start`; Linux uses `xdg-open` (present on
+/// Zorin/Ubuntu desktops). Other hosts fail closed.
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     if !is_library_url_allowed(&url) {
@@ -990,10 +992,20 @@ fn open_external_url(url: String) -> Result<(), String> {
             .map_err(|e| format!("Could not open the browser: {e}"))?;
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| {
+                format!("Could not open the browser (xdg-open failed: {e}). Is xdg-utils installed?")
+            })?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = url;
-        Err("Opening the library in a browser is only implemented on Windows.".to_string())
+        Err("Opening the library in a browser is only implemented on Windows and Linux.".to_string())
     }
 }
 
