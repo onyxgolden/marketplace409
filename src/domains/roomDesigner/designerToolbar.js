@@ -15,9 +15,10 @@ export function orderToolbarTools(toolDefs) {
 }
 
 // Visio-style stencil groups for the left tool palette. House stuff goes
-// under House, piping under Mechanical, process-engineering symbols under
-// Process, and plan-level tools under Plan. A category with no tools is
-// hidden.
+// under House, pre-shaped rooms under Rooms, large drop-in structures
+// (shipping containers) under Structures, piping under Mechanical,
+// process-engineering symbols under Process, and plan-level tools under
+// Plan. A category with no tools is hidden.
 //
 // NOTE: grouping is by explicit tool id, not by name prefix. A future tool
 // like `process-pump` lands in `ungrouped` until the Process category's
@@ -30,7 +31,30 @@ export function orderToolbarTools(toolDefs) {
 // registerToolCategory() instead of editing this file. Categories may also
 // be passed directly to groupToolsByCategory() as a second argument.
 export const TOOL_CATEGORIES = [
-  { id: "house", label: "House", toolIds: ["wall", "wallrect", "room", "door", "window"] },
+  { id: "house", label: "House", toolIds: ["wall", "wallrect", "door", "window"] },
+  {
+    id: "rooms",
+    label: "Rooms",
+    toolIds: [
+      "room-living-room",
+      "room-bedroom",
+      "room-bedroom-small",
+      "room-bedroom-12x14",
+      "room-kitchen",
+      "room-kitchen-12x14",
+      "room-dining-room",
+      "room-master-bedroom",
+      "room-bathroom",
+      "room-bathroom-small",
+      "room-garage",
+      "room-office",
+    ],
+  },
+  {
+    id: "structures",
+    label: "Structures",
+    toolIds: ["structure-container-20", "structure-container-40"],
+  },
   { id: "mechanical", label: "Mechanical", toolIds: ["pipe", "piping"] },
   { id: "process", label: "Process", toolIds: [] },
   { id: "plan", label: "Plan", toolIds: ["orgchart", "calibrate"] },

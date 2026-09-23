@@ -68,7 +68,7 @@ import {
 } from "@/domains/roomDesigner/homeProject";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
-import { ROOM_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds, validateDesign } from "@/domains/roomDesigner/designerDocument";
+import { ROOM_TEMPLATES, STRUCTURE_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds, validateDesign } from "@/domains/roomDesigner/designerDocument";
 import { SHEET_CATALOG, SHEET_ORIENTATIONS, sheetSizeLabel } from "@/domains/roomDesigner/sheetCatalog";
 import { feetInchesLabel, parseDimensionInput, wallLength } from "@/domains/roomDesigner/designerGeometry";
 import {
@@ -117,13 +117,33 @@ const DesignerViewport3D = dynamic(() => import("./DesignerViewport3D"), {
   ),
 });
 
-const TOOL_DEFS = [
+// Exported for catalog-integrity tests: every roomTemplate referenced by a
+// palette entry must resolve via getRoomTemplate().
+export const TOOL_DEFS = [
   { id: "select", label: "Select", icon: MousePointer2, hint: "Click to select · drag endpoints & furniture · double-click furniture to rotate" },
   { id: "wall", label: "Wall", icon: Square, hint: "Drag on the plan to draw a wall (snaps to the grid)" },
   { id: "wallrect", label: "Wall rect", icon: SquareDashed, hint: "Drag on the plan to draw a rectangular wall outline (snaps to the grid)" },
-  { id: "room", label: "Room", icon: Home, hint: "Click to drop a pre-shaped room" },
   { id: "door", label: "Door", icon: DoorOpen, hint: "Click a wall to cut a door opening" },
   { id: "window", label: "Window", icon: Box, hint: "Click a wall to cut a window opening" },
+  // Pre-shaped rooms: one palette entry per template. Selecting one arms
+  // the room tool with that template pending (see onSelect below); the
+  // right panel still shows the full "Room shapes" picker.
+  { id: "room-living-room", label: "Living room", icon: Home, hint: "Drop a 16' × 20' living room", roomTemplate: "living-room" },
+  { id: "room-bedroom", label: "Bedroom", icon: Home, hint: "Drop a 12' × 12' bedroom", roomTemplate: "bedroom" },
+  { id: "room-bedroom-small", label: "Bedroom (small)", icon: Home, hint: "Drop a 10' × 12' bedroom", roomTemplate: "bedroom-small" },
+  { id: "room-bedroom-12x14", label: "Bedroom 12×14", icon: Home, hint: "Drop a 12' × 14' bedroom", roomTemplate: "bedroom-12x14" },
+  { id: "room-kitchen", label: "Kitchen", icon: Home, hint: "Drop a 10' × 12' kitchen", roomTemplate: "kitchen" },
+  { id: "room-kitchen-12x14", label: "Kitchen 12×14", icon: Home, hint: "Drop a 12' × 14' kitchen", roomTemplate: "kitchen-12x14" },
+  { id: "room-dining-room", label: "Dining room", icon: Home, hint: "Drop a 12' × 14' dining room", roomTemplate: "dining-room" },
+  { id: "room-master-bedroom", label: "Master bedroom", icon: Home, hint: "Drop a 14' × 18' master bedroom", roomTemplate: "master-bedroom" },
+  { id: "room-bathroom", label: "Bathroom", icon: Home, hint: "Drop an 8' × 6' bathroom", roomTemplate: "bathroom" },
+  { id: "room-bathroom-small", label: "Bathroom (small)", icon: Home, hint: "Drop a 5' × 8' bathroom", roomTemplate: "bathroom-small" },
+  { id: "room-garage", label: "Garage", icon: Home, hint: "Drop a 20' × 20' garage", roomTemplate: "garage" },
+  { id: "room-office", label: "Office", icon: Home, hint: "Drop a 10' × 10' office", roomTemplate: "office" },
+  // Drop-in structures: labeled rectangular footprints (shipping
+  // containers) placed through the room-drop pipeline.
+  { id: "structure-container-20", label: "Container 20'", icon: Box, hint: "Drop a 20' × 8' shipping container", roomTemplate: "container-20" },
+  { id: "structure-container-40", label: "Container 40'", icon: Box, hint: "Drop a 40' × 8' shipping container", roomTemplate: "container-40" },
   { id: "furniture", label: "Furniture", icon: Sofa, hint: "Pick a piece, then click the plan to place it", leftPalette: false },
   { id: "pipe", label: "Pipe", icon: Spline, hint: "Click to add pipe vertices · double-click or Enter to finish · Esc cancels" },
   { id: "piping", label: "Piping", icon: Shapes, hint: "Pick a valve, fitting, or equipment symbol, then click the plan to place it" },
@@ -134,7 +154,7 @@ const TOOL_DEFS = [
 ];
 
 // Pinned tools first, then Visio-style collapsible categories
-// (House, Mechanical, Process, Plan) in the left tool palette.
+// (House, Rooms, Structures, Mechanical, Process, Plan) in the left tool palette.
 const GROUPED_TOOL_DEFS = groupToolsByCategory(TOOL_DEFS);
 
 export default function DesignerScreen({ projectId, initialName }) {
@@ -691,7 +711,17 @@ export default function DesignerScreen({ projectId, initialName }) {
           grouped={GROUPED_TOOL_DEFS}
           activeToolId={tool}
           hasUnderlay={Boolean(design.underlay)}
-          onSelect={(toolId) => dispatch({ type: "SET_TOOL", tool: toolId })}
+          onSelect={(toolId) => {
+            // Room/structure presets are palette shortcuts: they arm the
+            // room tool with that template pending instead of switching to
+            // a (nonexistent) per-preset tool.
+            const def = TOOL_DEFS.find((t) => t.id === toolId);
+            if (def?.roomTemplate) {
+              dispatch({ type: "SET_PENDING_ROOM", templateId: def.roomTemplate });
+            } else {
+              dispatch({ type: "SET_TOOL", tool: toolId });
+            }
+          }}
         />
 
         {/* canvas */}
@@ -843,27 +873,32 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
   }
 
   if (tool === "room") {
+    const templateButton = (t) => (
+      <button
+        key={t.id}
+        onClick={() => dispatch({ type: "SET_PENDING_ROOM", templateId: t.id })}
+        className={`rounded border p-2 text-left text-xs ${
+          pendingRoomTemplate === t.id
+            ? "border-emerald-500 bg-emerald-900/40 text-white"
+            : "border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-500"
+        }`}
+      >
+        <span className="font-semibold">{t.label}</span>
+        <span className="block text-[10px] text-gray-500">
+          {feetInchesLabel(t.widthIn)} × {feetInchesLabel(t.depthIn)}
+        </span>
+      </button>
+    );
     return (
       <div>
         <h2 className="mb-2 text-sm font-semibold text-white">Room shapes</h2>
         <p className="mb-3 text-xs text-gray-400">Pick a shape, then click the plan to drop it.</p>
         <div className="grid grid-cols-1 gap-1">
-          {ROOM_TEMPLATES.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => dispatch({ type: "SET_PENDING_ROOM", templateId: t.id })}
-              className={`rounded border p-2 text-left text-xs ${
-                pendingRoomTemplate === t.id
-                  ? "border-emerald-500 bg-emerald-900/40 text-white"
-                  : "border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-500"
-              }`}
-            >
-              <span className="font-semibold">{t.label}</span>
-              <span className="block text-[10px] text-gray-500">
-                {feetInchesLabel(t.widthIn)} × {feetInchesLabel(t.depthIn)}
-              </span>
-            </button>
-          ))}
+          {ROOM_TEMPLATES.map(templateButton)}
+        </div>
+        <h2 className="mb-2 mt-4 text-sm font-semibold text-white">Structure shapes</h2>
+        <div className="grid grid-cols-1 gap-1">
+          {STRUCTURE_TEMPLATES.map(templateButton)}
         </div>
       </div>
     );
