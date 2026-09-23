@@ -244,19 +244,29 @@ async function saveToForge({ button, actions, setStatusFn, getPayload }) {
     setStatus: setStatusFn,
     getPayload,
     afterSave: (result) => {
-      // The web library view ships in a later rung; until then the button
-      // copies the deep link instead of navigating anywhere.
+      // Rung 6 — the web library view exists now: offer "View in FORGE"
+      // (opens the library deep link in the OS browser; the editor stays
+      // open — no automatic navigation) alongside "Copy link".
+      const viewBtn = document.createElement("button");
+      viewBtn.textContent = "View in FORGE";
+      viewBtn.onclick = async () => {
+        try {
+          await invoke("open_external_url", { url: F.libraryLink(baseUrl, result.id) });
+        } catch (e) {
+          setStatusFn(`Could not open the library: ${e}`, "error");
+        }
+      };
       const linkBtn = document.createElement("button");
       linkBtn.textContent = "Copy link";
       linkBtn.onclick = async () => {
         try {
           await invoke("copy_text_to_clipboard", { text: F.libraryLink(baseUrl, result.id) });
-          setStatusFn("Library link copied — the web library view ships in a later rung.", "ok");
+          setStatusFn("Library link copied.", "ok");
         } catch (e) {
           setStatusFn(`Copy failed: ${e}`, "error");
         }
       };
-      actions.append(linkBtn);
+      actions.append(viewBtn, linkBtn);
     },
   });
 }

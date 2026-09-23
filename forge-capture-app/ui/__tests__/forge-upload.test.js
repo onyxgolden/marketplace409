@@ -10,6 +10,7 @@ import {
   isCaptureId,
   isSessionExpired,
   libraryLink,
+  libraryPageUrl,
   newCaptureId,
   parseSession,
   refreshSession,
@@ -243,6 +244,11 @@ describe("uploadCapture", () => {
 
 describe("libraryLink", () => {
   it("builds the deep link for a library entry id", () => {
-    expect(libraryLink(BASE_URL, CAPTURE_ID)).toBe(`${BASE_URL}/forge/capture?capture=${CAPTURE_ID}`);
+    expect(libraryLink(BASE_URL, CAPTURE_ID)).toBe(`${BASE_URL}/forge/capture/library?capture=${CAPTURE_ID}`);
+  });
+
+  it("points at the Rung 6 library page, not the capture editor", () => {
+    expect(libraryPageUrl(BASE_URL)).toBe(`${BASE_URL}/forge/capture/library`);
+    expect(libraryLink(BASE_URL, CAPTURE_ID).startsWith(libraryPageUrl(BASE_URL))).toBe(true);
   });
 });
