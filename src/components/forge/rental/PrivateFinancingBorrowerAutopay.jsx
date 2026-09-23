@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Elements } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 import PrivateFinancingAutopaySetupForm from "./PrivateFinancingAutopaySetupForm";
@@ -17,8 +17,17 @@ export default function PrivateFinancingBorrowerAutopay({ accountId, enrollments
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [setup, setSetup] = useState(null);
-  const [chargeDay, setChargeDay] = useState(1);
   const current = enrollments.find((e) => ["setup_required", "active", "paused"].includes(e.status)) || null;
+  // Start from the existing enrollment's charge day when one is already loaded,
+  // so reopening the form never silently resets the user's configured day to 1.
+  const [chargeDay, setChargeDay] = useState(() => current?.chargeDay ?? 1);
+  // Portal enrollments can arrive after first render: sync the picker's day
+  // then, but never clobber a day the user has already picked this session.
+  const chargeDayPickedByUser = useRef(false);
+  useEffect(() => {
+    if (!chargeDayPickedByUser.current && current?.chargeDay) setChargeDay(current.chargeDay);
+  }, [current?.chargeDay]);
+  const pickChargeDay = (day) => { chargeDayPickedByUser.current = true; setChargeDay(day); };
   const stripe = useMemo(() => setup && KEY ? loadStripe(KEY, { stripeAccount: setup.connectedAccountId }) : null, [setup]);
 
   async function callOperation(operation, payload) {
@@ -114,7 +123,7 @@ export default function PrivateFinancingBorrowerAutopay({ accountId, enrollments
         </label>
         <div className="grid grid-cols-2 gap-3">
           <label className="text-sm font-bold">Charge day (day of the month)
-            <ChargeDayPicker value={chargeDay} onChange={setChargeDay} suggestedDay={dayOfMonth(nextDueDate)} />
+            <ChargeDayPicker value={chargeDay} onChange={pickChargeDay} suggestedDay={dayOfMonth(nextDueDate)} />
             <span className="mt-1 block text-xs font-normal text-slate-600">You&apos;ll be charged on this day each month — e.g. 15 means the 15th of every month. Pick a day from 1 to 28.</span>
           </label>
           <label className="text-sm font-bold">Reminder days before

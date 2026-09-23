@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Elements } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 import TenantAutopayBankSetupForm from "./TenantAutopayBankSetupForm";
@@ -28,7 +28,21 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
   // Bank-link in progress: { enrollmentId, setupIntentId, clientSecret, connectedAccountId }
   const [setup, setSetup] = useState(null);
   const [stripeLoadFailed, setStripeLoadFailed] = useState(false);
-  const [chargeDay, setChargeDay] = useState(1);
+  // Current enrollment (if any): derived from portal rentals that can arrive
+  // after first render. Declared here so the picker's initial state and the
+  // sync effect below can both read it.
+  const current = (rentals || []).flatMap((r) => r.autopayEnrollments || [])
+    .find((e) => ["setup_required", "active", "paused"].includes(e.status));
+  // Start from the existing enrollment's charge day when one is already loaded,
+  // so reopening the form never silently resets the user's configured day to 1.
+  const [chargeDay, setChargeDay] = useState(() => current?.chargeDay ?? 1);
+  // Sync a late-arriving enrollment's day, but never clobber a day the user
+  // has already picked in this session.
+  const chargeDayPickedByUser = useRef(false);
+  useEffect(() => {
+    if (!chargeDayPickedByUser.current && current?.chargeDay) setChargeDay(current.chargeDay);
+  }, [current?.chargeDay]);
+  const pickChargeDay = (day) => { chargeDayPickedByUser.current = true; setChargeDay(day); };
   // Controlled so the due-day suggestion below can follow the chosen lease.
   // Null until the tenant picks: falls back to the first rental (covers the
   // async portal load, which arrives after first render).
@@ -45,8 +59,6 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
       .sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0));
     return dayOfMonth(openRent[0]?.dueDate);
   })();
-  const current = (rentals || []).flatMap((r) => r.autopayEnrollments || [])
-    .find((e) => ["setup_required", "active", "paused"].includes(e.status));
   const needsBankLink = current?.status === "setup_required" && current?.paymentMethodType === "us_bank_account";
 
   const stripePromise = useMemo(() => {
@@ -182,7 +194,7 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
       </label>
       <div className="grid grid-cols-2 gap-3">
         <label className="text-sm font-bold">Charge day (day of the month)
-          <ChargeDayPicker value={chargeDay} onChange={setChargeDay} suggestedDay={suggestedDay} />
+          <ChargeDayPicker value={chargeDay} onChange={pickChargeDay} suggestedDay={suggestedDay} />
           <span className="mt-1 block text-xs font-normal text-slate-600">You&apos;ll be charged on this day each month — e.g. 15 means the 15th of every month. Pick a day from 1 to 28.</span>
         </label>
         <label className="text-sm font-bold">Reminder days before
