@@ -21,13 +21,25 @@ const ledgerPayload = {
     balanceCents: 77500,
   },
   deposits: { entries: [], heldCents: 0, requiredCents: 0 },
+  importedHistory: {
+    renterId: "1754498",
+    rows: [
+      { id: "evt-1", eventDate: "2026-08-05", amountCents: 127500, description: "Rent payment",
+        category: "rent", propertyId: "prop-1", rentecTransactionId: "txn-1",
+        source: "rentec", affectsBalance: false, attribution: "rentec_renter_id_match" },
+      { id: "evt-2", eventDate: "2026-07-05", amountCents: 127500, description: "Rent payment",
+        category: "rent", propertyId: "prop-1", rentecTransactionId: "txn-2",
+        source: "rentec", affectsBalance: false, attribution: "rentec_renter_id_match" },
+    ],
+    totalCents: 255000,
+  },
   openCharges: [
     { id: "c1", period: "2026-09", dueDate: "2026-09-01", chargeType: "rent", amountCents: 127500, paidCents: 50000, remainingCents: 77500, status: "open" },
   ],
 };
 
-function renderPage(props = {}) {
-  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ledgerPayload })));
+function renderPage(props = {}, payloadOverride = null) {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => payloadOverride || ledgerPayload })));
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -104,6 +116,28 @@ describe("TenantLedgerPage", () => {
     await act(async () => postIncome.click());
     expect(container.querySelector("[data-post-income-form]")).not.toBeNull();
     expect(container.querySelector("[data-post-income-form]").textContent).toContain("Paula");
+  });
+
+  it("renders the Imported Rentec Transactions section when the tenant has linked Rentec history", async () => {
+    ({ container, root } = renderPage());
+    await act(async () => root.render(<TenantLedgerPage tenantId="t1" tenantName="Paula" onClose={() => {}} />));
+    const section = container.querySelector("[data-imported-rentec-transactions]");
+    expect(section).not.toBeNull();
+    expect(section.textContent).toContain("Imported Rentec Transactions");
+    expect(section.textContent).toContain("accounting history only");
+    const rows = section.querySelectorAll("tbody tr");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].cells[1].textContent).toContain("Rent payment");
+    expect(rows[0].cells[3].textContent).toContain("$1,275.00");
+    expect(section.textContent).toContain("2 transactions");
+    expect(section.textContent).toContain("$2,550.00");
+  });
+
+  it("hides the Imported Rentec Transactions section when the tenant has no linked Rentec history", async () => {
+    const emptyPayload = { ...ledgerPayload, importedHistory: { renterId: "1754498", rows: [], totalCents: 0 } };
+    ({ container, root } = renderPage({}, emptyPayload));
+    await act(async () => root.render(<TenantLedgerPage tenantId="t1" tenantName="Paula" onClose={() => {}} />));
+    expect(container.querySelector("[data-imported-rentec-transactions]")).toBeNull();
   });
 
   it("shows a clear error when the ledger cannot load", async () => {

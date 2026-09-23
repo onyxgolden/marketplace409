@@ -31,6 +31,7 @@ async function fetchTenantLedger(tenantId) {
 export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onClose, onPostCharge, initialView = null }) {
   const [ledger, setLedger] = useState(null);
   const [deposits, setDeposits] = useState(null);
+  const [importedHistory, setImportedHistory] = useState(null);
   const [openCharges, setOpenCharges] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -47,6 +48,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
       const body = await fetchTenantLedger(tenantId);
       setLedger(body.ledger);
       setDeposits(body.deposits || null);
+      setImportedHistory(body.importedHistory || null);
       setOpenCharges(body.openCharges || []);
     } catch (caught) {
       setError(caught.message);
@@ -62,6 +64,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
         if (cancelled) return;
         setLedger(body.ledger);
         setDeposits(body.deposits || null);
+        setImportedHistory(body.importedHistory || null);
         setOpenCharges(body.openCharges || []);
         setError("");
       })
@@ -202,6 +205,40 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                   <li key={item.id}>{formatDate(item.transactionDate)} · {money.format(item.amountCents / 100)} · {item.category || "Rentec import"} · {item.rentecTransactionId}</li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {(importedHistory?.rows?.length || 0) > 0 && (
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40" data-imported-rentec-transactions>
+              <h4 className="text-lg font-black text-slate-950 dark:text-white">Imported Rentec Transactions</h4>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                Rentec-imported records linked to this tenant — accounting history only. They do not affect the balance above.
+              </p>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[560px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                      <th className="py-2 pr-3 font-black">Date</th>
+                      <th className="py-2 pr-3 font-black">Description</th>
+                      <th className="py-2 pr-3 font-black">Category</th>
+                      <th className="py-2 text-right font-black">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importedHistory.rows.map((row) => (
+                      <tr key={row.id} className="border-b border-slate-100 dark:border-slate-800">
+                        <td className="py-2 pr-3 font-bold text-slate-700 dark:text-slate-300">{formatDate(row.eventDate)}</td>
+                        <td className="py-2 pr-3 font-bold text-slate-950 dark:text-white">{row.description || "—"}</td>
+                        <td className="py-2 pr-3 text-slate-600 dark:text-slate-400">{label(row.category) || "—"}</td>
+                        <td className="py-2 text-right font-black text-slate-950 dark:text-white">{money.format(row.amountCents / 100)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
+                {importedHistory.rows.length} transaction{importedHistory.rows.length === 1 ? "" : "s"} · total {money.format(importedHistory.totalCents / 100)} · source: Rentec import
+              </p>
             </div>
           )}
 
