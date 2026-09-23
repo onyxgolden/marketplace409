@@ -1,6 +1,7 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -25,48 +26,26 @@ async function fetchTenantLedger(tenantId) {
 // Tenant card payment history: a "last 3 payments" summary card that expands inline into
 // the full chronological ledger — no separate screen, no re-selecting the tenant.
 // Deposits render in their own clearly-labeled section, never as rent.
+//
+// Data layer: stale-while-revalidate. Switching tenants serves the cached ledger
+// instantly and refreshes in the background — the old data never blanks out.
 export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullLedger = null }) {
-  const [ledger, setLedger] = useState(null);
-  const [deposits, setDeposits] = useState(null);
-  const [importedHistory, setImportedHistory] = useState(null);
   const [expanded, setExpanded] = useState(false);
-  const [loading, setLoading] = useState(() => Boolean(tenantId));
-  const [error, setError] = useState("");
-
-  const load = useCallback(async () => {
-    if (!tenantId) return;
-    setLoading(true);
-    setError("");
-    try {
-      const body = await fetchTenantLedger(tenantId);
-      setLedger(body.ledger);
-      setDeposits(body.deposits);
-      setImportedHistory(body.importedHistory || null);
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [tenantId]);
-
-  // Mount fetch: promise-chain style (no synchronous setState in the effect body),
-  // matching the panel components' established pattern.
-  useEffect(() => {
-    if (!tenantId) return undefined;
-    let cancelled = false;
-    fetchTenantLedger(tenantId)
-      .then((body) => { if (!cancelled) { setLedger(body.ledger); setDeposits(body.deposits); setImportedHistory(body.importedHistory || null); setError(""); } })
-      .catch((caught) => { if (!cancelled) setError(caught.message); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [tenantId]);
+  const { data: body, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    tenantId ? `tenant-ledger:${tenantId}` : null,
+    () => fetchTenantLedger(tenantId),
+    { ttlMs: 60_000 },
+  );
+  const ledger = body?.ledger ?? null;
+  const deposits = body?.deposits ?? null;
+  const importedHistory = body?.importedHistory ?? null;
 
   // Right-click shortcut: a tenant card context menu dispatches this to open the full
   // ledger for exactly this tenant without any re-selection step.
   useEffect(() => {
     const open = (event) => {
       if (event.detail?.tenantId === tenantId) {
-        if (!ledger && !loading && !error) load();
+        if (!ledger && !isRefreshing) refresh();
         setExpanded(true);
         requestAnimationFrame(() => {
           document.getElementById(`tenant-ledger-${tenantId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -75,7 +54,7 @@ export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullL
     };
     window.addEventListener(TENANT_LEDGER_OPEN_EVENT, open);
     return () => window.removeEventListener(TENANT_LEDGER_OPEN_EVENT, open);
-  }, [tenantId, ledger, loading, error, load]);
+  }, [tenantId, ledger, isRefreshing, refresh]);
 
   return (
     <section id={`tenant-ledger-${tenantId}`} data-tenant-payment-history aria-label={`Payment history for ${tenantName || "tenant"}`}
@@ -92,10 +71,11 @@ export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullL
         </button>
       </div>
 
-      {loading && <p className="mt-4 text-sm font-bold text-slate-500 dark:text-slate-400">Loading payment history…</p>}
+      {isLoading && <p className="mt-4 text-sm font-bold text-slate-500 dark:text-slate-400">Loading payment history…</p>}
       {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
+      {isRefreshing && ledger && <p className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>}
 
-      {!loading && !error && ledger && (
+      {!isLoading && !error && ledger && (
         <>
           {ledger.last3.length === 0
             ? <p className="mt-4 rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No payments recorded for this tenant yet.</p>
