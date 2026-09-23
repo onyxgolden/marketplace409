@@ -114,15 +114,16 @@ describe("HousePlansPanel (HP-L0)", () => {
     await clickTab("Project");
     expect(container.textContent).toContain("No project reference context yet.");
     await clickTab("Suggested");
-    expect(container.textContent).toContain("Suggested References");
+    expect(container.textContent).toContain("Sources by topic");
     expect(container.textContent).toContain("No suggestions yet.");
     await clickTab("Browse");
     await flushFetch();
     expect(container.textContent).toContain("The reference library is empty for now.");
     await clickTab("Search");
-    expect(container.textContent).toContain("Search over the reference index arrives in a later slice");
+    // HP-L6: search is live client-side filtering over the loaded index.
     const searchInput = container.querySelector('input[type="search"]');
-    expect(searchInput.disabled).toBe(true);
+    expect(searchInput.disabled).toBe(false);
+    expect(container.textContent).toContain("Search references");
     await clickTab("Saved");
     expect(container.textContent).toContain("Nothing saved yet.");
   });
@@ -217,29 +218,35 @@ describe("HousePlansPanel Browse tab (HP-L2)", () => {
     container.remove();
   });
 
-  it("does not fetch the reference library until the Browse tab opens", async () => {
+  const REFERENCES_URL = "/api/forge/designer/house-plans/references";
+  const referencesCalls = (fetchMock) =>
+    fetchMock.mock.calls.filter(([url]) => url === REFERENCES_URL);
+
+  it("does not fetch the reference library until a tab that needs it opens", async () => {
     const fetchMock = mockFetchReferences([]);
     await renderPanel();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // HP-L6: the Project tab (default) loads the snapshots list on open —
+    // the references endpoint itself still stays unfetched.
+    expect(referencesCalls(fetchMock)).toHaveLength(0);
     await clickTab("Project");
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(referencesCalls(fetchMock)).toHaveLength(0);
     await clickTab("Browse");
     await flushFetch();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith("/api/forge/designer/house-plans/references");
+    expect(referencesCalls(fetchMock)).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledWith(REFERENCES_URL);
   });
 
   it("fetches the reference library once even when the Browse tab is reopened", async () => {
     const fetchMock = mockFetchReferences([]);
     await renderPanel();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(referencesCalls(fetchMock)).toHaveLength(0);
     await clickTab("Browse");
     await flushFetch();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(referencesCalls(fetchMock)).toHaveLength(1);
     await clickTab("Project");
     await clickTab("Browse");
     await flushFetch();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(referencesCalls(fetchMock)).toHaveLength(1);
   });
 
   it("renders the reference list with factual metadata and official links", async () => {
@@ -296,5 +303,361 @@ describe("HousePlansPanel Browse tab (HP-L2)", () => {
     // No invented entries, no placeholder links.
     expect(text).not.toContain("Sample Building Reference");
     expect(container.querySelectorAll("a")).toHaveLength(0);
+  });
+});
+
+describe("HousePlansPanel (HP-L6)", () => {
+  let container;
+  let root;
+
+  const REFERENCES_URL = "/api/forge/designer/house-plans/references";
+  const SNAPSHOTS_URL = "/api/forge/designer/house-plans/snapshots";
+
+  const renderPanel = async (props = {}) => {
+    await act(async () => {
+      root.render(<HousePlansPanel {...props} />);
+    });
+  };
+
+  const clickTab = async (label) => {
+    const tab = [...container.querySelectorAll('[role="tab"]')].find(
+      (t) => t.textContent === label
+    );
+    await act(async () => {
+      tab.click();
+    });
+  };
+
+  const mockHousePlansApi = ({ references = [], snapshots = [] } = {}) => {
+    const fetchMock = vi.fn(async (url, init) => {
+      if (url === SNAPSHOTS_URL && init?.method === "POST") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, created: true, snapshot: { id: "s-new" } }),
+        };
+      }
+      if (url === SNAPSHOTS_URL) {
+        return { ok: true, status: 200, json: async () => ({ success: true, snapshots }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, references }) };
+    });
+    globalThis.fetch = fetchMock;
+    return fetchMock;
+  };
+
+  const writeDraft = (projectId, symbols) => {
+    localStorage.setItem(
+      `forge-designer-draft:${projectId}`,
+      JSON.stringify({
+        schemaVersion: 1,
+        designRevision: 3,
+        envelope: { levels: [{ id: "L01", design: { symbols } }] },
+      })
+    );
+  };
+
+  const statuteRef = {
+    id: "tx-statute",
+    title: "Texas Local Government Code — Chapter 214",
+    sectionIdentifier: "§214.212",
+    issuingAuthority: "Texas Legislature",
+    jurisdiction: "Texas",
+    edition: null,
+    effectiveDate: null,
+    officialUrl: "https://statutes.capitol.texas.gov/Docs/LG/htm/LG.214.htm",
+    topicTags: ["building-codes", "municipal-authority"],
+    provenance: "Official site of the Texas Legislature",
+    retrievalDate: "2026-09-23",
+    verificationDate: "2026-09-23",
+    jurisdictionState: "VERIFIED_SOURCE",
+  };
+
+  const agencyRef = {
+    id: "tx-agency",
+    title: "What you need to know about windstorm inspections",
+    sectionIdentifier: null,
+    issuingAuthority: "Texas Department of Insurance",
+    jurisdiction: "Texas",
+    edition: null,
+    effectiveDate: null,
+    officialUrl: "https://tdi.texas.gov/tips/need-windstorm-inspection.html",
+    topicTags: ["windstorm", "inspections"],
+    provenance: "Texas Department of Insurance",
+    retrievalDate: "2026-09-23",
+    verificationDate: "2026-09-23",
+    jurisdictionState: "VERIFIED_SOURCE",
+  };
+
+  const municipalRef = {
+    id: "tx-municipal",
+    title: "Building Codes — City of Beaumont",
+    sectionIdentifier: null,
+    issuingAuthority: "City of Beaumont",
+    jurisdiction: "Beaumont, Texas",
+    edition: null,
+    effectiveDate: null,
+    officialUrl: "https://beaumonttexas.gov/707/Building-Codes",
+    topicTags: ["building-codes", "permits", "inspections"],
+    provenance: "City of Beaumont",
+    retrievalDate: "2026-09-23",
+    verificationDate: "2026-09-23",
+    jurisdictionState: "VERIFIED_SOURCE",
+  };
+
+  const windowRef = {
+    id: "tx-windows",
+    title: "TDI Product Evaluations index",
+    sectionIdentifier: null,
+    issuingAuthority: "Texas Department of Insurance",
+    jurisdiction: "Texas",
+    edition: null,
+    effectiveDate: null,
+    officialUrl: "https://tdi.texas.gov/wind/prod/index.html",
+    topicTags: ["windstorm", "windows", "doors"],
+    provenance: "Texas Department of Insurance",
+    retrievalDate: "2026-09-23",
+    verificationDate: "2026-09-23",
+    jurisdictionState: "VERIFIED_SOURCE",
+  };
+
+  const otherRef = {
+    id: "other",
+    title: "Unlisted Reference",
+    sectionIdentifier: null,
+    issuingAuthority: "Some Authority",
+    jurisdiction: "Texas",
+    edition: null,
+    effectiveDate: null,
+    officialUrl: "https://example.gov/other",
+    topicTags: ["landscaping"],
+    provenance: null,
+    retrievalDate: null,
+    verificationDate: null,
+    jurisdictionState: "UNRESOLVED",
+  };
+
+  const ALL_REFS = [statuteRef, agencyRef, municipalRef, windowRef, otherRef];
+
+  const FORBIDDEN_PHRASES = [
+    "Applicable sources",
+    "Required references",
+    "Compliance checklist",
+    "Code violations",
+    "Missing requirements",
+  ];
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    localStorage.clear();
+    mockHousePlansApi({ references: ALL_REFS, snapshots: [] });
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = ORIGINAL_FETCH;
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("never uses forbidden requirement language on any tab", async () => {
+    writeDraft("proj-1", [{ domain: "buildingElements", symbolId: "window_double_hung" }]);
+    await renderPanel({ projectId: "proj-1" });
+    await flushFetch();
+    for (const tab of ["Project", "Suggested", "Browse", "Search", "Saved"]) {
+      await clickTab(tab);
+      await flushFetch();
+      const text = container.textContent;
+      for (const phrase of FORBIDDEN_PHRASES) {
+        expect(text).not.toContain(phrase);
+      }
+    }
+    // And the positive, review-sanctioned language is used instead.
+    await clickTab("Suggested");
+    expect(container.textContent).toContain("Sources by topic");
+  });
+
+  it("Suggested matches placed entities to reference topic tags (entity → topic)", async () => {
+    writeDraft("proj-1", [
+      { domain: "buildingElements", symbolId: "window_double_hung" },
+      { domain: "furniture", symbolId: "toilet" },
+    ]);
+    await renderPanel({ projectId: "proj-1" });
+    await clickTab("Suggested");
+    await flushFetch();
+
+    const text = container.textContent;
+    // window_double_hung → windows matches the TDI product-evaluations index.
+    expect(text).toContain("TDI Product Evaluations index");
+    // toilet → plumbing/residential-code matches nothing in ALL_REFS; no
+    // invented suggestions, and non-matching refs stay out.
+    expect(text).not.toContain("Unlisted Reference");
+    expect(text).not.toContain("Building Codes — City of Beaumont");
+  });
+
+  it("Suggested shows matches for plumbing fixtures by topic", async () => {
+    const plumbingRef = {
+      ...otherRef,
+      id: "plumbing-ref",
+      title: "Plumbing Reference",
+      officialUrl: "https://example.gov/plumbing",
+      topicTags: ["plumbing"],
+    };
+    mockHousePlansApi({ references: [...ALL_REFS, plumbingRef], snapshots: [] });
+    writeDraft("proj-1", [{ domain: "furniture", symbolId: "toilet" }]);
+    await renderPanel({ projectId: "proj-1" });
+    await clickTab("Suggested");
+    await flushFetch();
+
+    const text = container.textContent;
+    expect(text).toContain("Plumbing Reference");
+    // landscaping reference does not intersect toilet topics.
+    expect(text).not.toContain("Unlisted Reference");
+  });
+
+  it("Suggested shows an honest empty state when nothing is placed", async () => {
+    writeDraft("proj-1", []);
+    await renderPanel({ projectId: "proj-1" });
+    await clickTab("Suggested");
+    await flushFetch();
+    expect(container.textContent).toContain("No suggestions yet.");
+  });
+
+  it("Suggested shows an honest state with no connected project", async () => {
+    await renderPanel();
+    await clickTab("Suggested");
+    await flushFetch();
+    expect(container.textContent).toContain("No project connected.");
+  });
+
+  it("Search filters the index client-side by title, authority, and topic", async () => {
+    await renderPanel();
+    await clickTab("Search");
+    await flushFetch();
+    expect(container.textContent).toContain("TDI Product Evaluations index");
+
+    const input = container.querySelector('input[type="search"]');
+    await act(async () => {
+      input.focus();
+      // React onChange via native setter.
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value"
+      ).set;
+      setter.call(input, "windstorm");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // input event may not trigger React's onChange; also try change.
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const text = container.textContent;
+    expect(text).toContain("TDI Product Evaluations index");
+    expect(text).not.toContain("Building Codes — City of Beaumont");
+  });
+
+  it("Saved bookmarks persist per project in localStorage", async () => {
+    await renderPanel({ projectId: "proj-1" });
+    await clickTab("Browse");
+    await flushFetch();
+
+    const bookmarkButtons = [...container.querySelectorAll('[aria-label="Bookmark this reference"]')];
+    expect(bookmarkButtons.length).toBeGreaterThan(0);
+    await act(async () => {
+      bookmarkButtons[0].click();
+    });
+    expect(JSON.parse(localStorage.getItem("forge-house-plans-bookmarks:proj-1"))).toEqual([
+      "tx-statute",
+    ]);
+
+    await clickTab("Saved");
+    await flushFetch();
+    expect(container.textContent).toContain("Texas Local Government Code — Chapter 214");
+    expect(container.textContent).not.toContain("Nothing saved yet.");
+  });
+
+  it("Saved shows an honest empty state and stays project-isolated", async () => {
+    await renderPanel({ projectId: "proj-1" });
+    await clickTab("Saved");
+    await flushFetch();
+    expect(container.textContent).toContain("Nothing saved yet.");
+
+    // A bookmark under another project does not leak in.
+    localStorage.setItem("forge-house-plans-bookmarks:proj-2", JSON.stringify(["tx-statute"]));
+    await clickTab("Project");
+    await clickTab("Saved");
+    await flushFetch();
+    expect(container.textContent).toContain("Nothing saved yet.");
+  });
+
+  it("Project shows jurisdiction facts and the snapshot count", async () => {
+    const snapshots = [
+      {
+        id: "snap-1",
+        label: "Texas references — 2026-09-23",
+        sourceCount: 7,
+        capturedAt: "2026-09-23T10:00:00Z",
+      },
+    ];
+    mockHousePlansApi({ references: ALL_REFS, snapshots });
+    const jurisdiction = {
+      jurisdictionState: "VERIFIED_SOURCE",
+      provenance: "U.S. Census Geocoder",
+      geography: {
+        place: { name: "Beaumont city" },
+        county: { name: "Jefferson County" },
+        state: { name: "Texas" },
+      },
+    };
+    await renderPanel({ projectId: "proj-1", jurisdiction });
+    await flushFetch();
+
+    const text = container.textContent;
+    expect(text).toContain("Beaumont city, Jefferson County, Texas");
+    expect(text).toContain("Status: VERIFIED_SOURCE");
+    expect(text).toContain("1 pinned snapshot");
+    expect(text).toContain("Texas references — 2026-09-23");
+    expect(text).toContain("7 sources");
+    // Pin control is present.
+    expect(container.textContent).toContain("Pin current library");
+  });
+
+  it("Project pin control posts a snapshot and reports the result", async () => {
+    const fetchMock = mockHousePlansApi({ references: ALL_REFS, snapshots: [] });
+    await renderPanel({ projectId: "proj-1" });
+    await flushFetch();
+
+    const pinButton = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent.includes("Pin current library")
+    );
+    await act(async () => {
+      pinButton.click();
+    });
+    await flushFetch();
+
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) => url === SNAPSHOTS_URL && init?.method === "POST"
+      )
+    ).toBe(true);
+    expect(container.textContent).toContain("Snapshot pinned.");
+  });
+
+  it("Reference cards show source-type badges from the curated seed only", async () => {
+    await renderPanel({ projectId: "proj-1" });
+    await clickTab("Browse");
+    await flushFetch();
+
+    const text = container.textContent;
+    expect(text).toContain("Statute");
+    expect(text).toContain("Agency resource");
+    expect(text).toContain("Municipal reference");
+    // The unlisted URL gets no badge — count badge elements directly.
+    const badges = [...container.querySelectorAll("span")].filter((s) =>
+      ["Statute", "Agency resource", "Municipal reference"].includes(s.textContent)
+    );
+    expect(badges).toHaveLength(4); // four seed references
   });
 });
