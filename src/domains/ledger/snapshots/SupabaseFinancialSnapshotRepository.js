@@ -5,9 +5,14 @@ import { FinancialSnapshotRepository } from "./FinancialSnapshotRepository.js";
 
 export class SupabaseFinancialSnapshotRepository extends FinancialSnapshotRepository {
   async save(snapshot) {
+    // The table is RLS-protected and owner-scoped: the insert policy requires
+    // owner_id = auth.uid(), so the row must carry the authenticated user.
+    // Fail closed when there is no signed-in user rather than writing an
+    // ownerless row nobody (including the caller) could ever read back.
+    const ownerId = await this.resolveOwnerId();
     const { data, error } = await supabase
       .from("financial_snapshots")
-      .upsert(this.toRow(snapshot))
+      .upsert(this.toRow(snapshot, ownerId))
       .select("*")
       .single();
 
@@ -16,6 +21,21 @@ export class SupabaseFinancialSnapshotRepository extends FinancialSnapshotReposi
     }
 
     return this.toSnapshot(data);
+  }
+
+  async resolveOwnerId() {
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
+
+    if (error || !user?.id) {
+      throw new Error(
+        "Authenticated user is required to save a financial snapshot.",
+      );
+    }
+
+    return user.id;
   }
 
   async list() {
@@ -60,9 +80,10 @@ export class SupabaseFinancialSnapshotRepository extends FinancialSnapshotReposi
     return data ? this.toSnapshot(data) : null;
   }
 
-  toRow(snapshot) {
+  toRow(snapshot, ownerId = null) {
     return {
       id: snapshot.id,
+      owner_id: ownerId,
       captured_at: snapshot.capturedAt,
       period_start: snapshot.period?.start || null,
       period_end: snapshot.period?.end || null,
