@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">FORGE Call Shield</string>
+    <string name="title_activity_main">FORGE Call Shield</string>
+    <string name="package_name">online.marketplace409.forge</string>
+    <string name="custom_url_scheme">online.marketplace409.forge</string>
+</resources>

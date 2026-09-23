@@ -52,3 +52,12 @@ supabase/.temp/
 # local runs; never committed (requirement 9: never commit a screenshot with real borrower/tenant/
 # financial/auth/payment information -- the safest default is to never commit the output at all).
 /ui-improvement-manager/evidence/
+
+# Call Shield Android companion (Capacitor) -- commit the platform project and
+# native bridge sources; never the SDK deps, Gradle caches, or build outputs.
+mobile/node_modules/
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/android/captures/

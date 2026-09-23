@@ -1,0 +1,1 @@
+{"dependencies":{"@capacitor/android":"^6.1.0","@capacitor/core":"^6.1.0"},"description":"Call Shield Android companion shell — native call-log import for FORGE.","devDependencies":{"@capacitor/cli":"^6.1.0"},"name":"call-shield-android","private":true,"scripts":{"add:android":"cap add android","build:apk":"bash scripts/build-apk.sh","sync":"cap sync android"},"version":"0.1.0"}
