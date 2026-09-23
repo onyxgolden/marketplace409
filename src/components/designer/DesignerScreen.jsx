@@ -768,7 +768,10 @@ export default function DesignerScreen({ projectId, initialName }) {
             className="w-80 shrink-0 overflow-hidden border-l border-gray-800 bg-gray-900"
             aria-label="House Plans reference library"
           >
-            <HousePlansPanel onClose={() => setHousePlansOpen(false)} />
+            <HousePlansPanel
+              onClose={() => setHousePlansOpen(false)}
+              projectId={projectId}
+            />
           </aside>
         )}
       </div>
