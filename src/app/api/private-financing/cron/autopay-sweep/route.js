@@ -34,6 +34,7 @@ export async function GET(request) {
       try {
         const result = await executePfAutopayAttempt(db, enrollment.id, billingPeriod);
         if (result.body?.duplicate) skipped += 1;
+        else if (result.body?.skipped) skipped += 1;
         else if (result.httpStatus === 200) succeeded += 1;
         else failed += 1;
       } catch (attemptError) {

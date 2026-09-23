@@ -59,6 +59,28 @@ export async function executePfAutopayAttempt(db, enrollmentId, billingPeriod) {
   if (pendingResult.data)
     return { httpStatus: 409, body: { error: "A payment is already pending for this account." } };
 
+  // Early-payment guard: a borrower who already paid this billing month in full online must
+  // not be charged again by the sweep. Only settled ("succeeded") payments count — a payment
+  // still in flight is already refused by the pending gate above, and failed payments must
+  // never suppress a retry. Partial early payments do NOT skip autopay: the attempt still
+  // debits the full scheduled amount (autopay is all-or-nothing per billing month).
+  // Scoped to the enrollment's own provider_mode so a sandbox payment can never suppress a
+  // live debit (or vice versa). A skip records no attempt row: the attempts table requires a
+  // payment_id and has no "skipped" status, and the daily sweep simply re-checks.
+  const periodStart = `${billingPeriod}-01T00:00:00.000Z`;
+  const [periodYear, periodMonth] = billingPeriod.split("-").map(Number);
+  const nextPeriodStart = periodMonth === 12
+    ? `${periodYear + 1}-01-01T00:00:00.000Z`
+    : `${periodYear}-${String(periodMonth + 1).padStart(2, "0")}-01T00:00:00.000Z`;
+  const settledResult = await db.from("private_financing_online_payments").select("amount_cents")
+    .eq("owner_id", enrollment.owner_id).eq("account_id", enrollment.account_id)
+    .eq("borrower_id", enrollment.borrower_id).eq("provider_mode", enrollment.provider_mode)
+    .eq("status", "succeeded").gte("created_at", periodStart).lt("created_at", nextPeriodStart);
+  if (settledResult.error) throw settledResult.error;
+  const settledCents = (settledResult.data || []).reduce((total, row) => total + Number(row.amount_cents || 0), 0);
+  if (settledCents >= amountCents)
+    return { httpStatus: 200, body: { success: true, skipped: true, billingPeriod, reason: "already_paid" } };
+
   const account = await db.from("landlord_payment_accounts").select("*")
     .eq("owner_id", enrollment.owner_id).eq("provider", "stripe").eq("provider_mode", enrollment.provider_mode).single();
   if (account.error || !account.data?.provider_account_id) throw account.error || new Error("Stripe account missing");

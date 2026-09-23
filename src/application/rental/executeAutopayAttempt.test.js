@@ -57,6 +57,7 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
+      .mockReturnValueOnce(chain({ data: null, error: null }))
       .mockReturnValueOnce(chain(FORGE_SCHEDULE))
       .mockReturnValueOnce(chain(BILLING_ENABLED))
       .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
@@ -76,6 +77,7 @@ describe("executeAutopayAttempt", () => {
     db.from
       .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+      .mockReturnValueOnce(chain({ data: null, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
       .mockReturnValueOnce(chain(FORGE_SCHEDULE))
       .mockReturnValueOnce(chain(BILLING_ENABLED))
@@ -97,6 +99,7 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
+      .mockReturnValueOnce(chain({ data: null, error: null }))
       .mockReturnValueOnce(chain(FORGE_SCHEDULE))
       .mockReturnValueOnce(chain(BILLING_ENABLED))
       .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
@@ -116,6 +119,7 @@ describe("executeAutopayAttempt", () => {
     db.from
       .mockReturnValueOnce(chain({ data: { ...ENROLLMENT, consecutive_failures: 0, retry_limit: 0 }, error: null }))
       .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+      .mockReturnValueOnce(chain({ data: null, error: null }))
       .mockReturnValueOnce(chain({ data: null, error: null }))
       .mockReturnValueOnce(chain(FORGE_SCHEDULE))
       .mockReturnValueOnce(chain(BILLING_ENABLED))
@@ -141,13 +145,15 @@ describe("executeAutopayAttempt", () => {
         .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
         .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
         .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
         .mockReturnValueOnce(chain({ data: { collection_mode: "external", forge_cutover_date: null }, error: null }));
       const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
       expect(result.httpStatus).toBe(409);
       expect(result.body).toEqual({ error: "This lease is not currently collected through FORGE." });
-      // Only 4 db.from calls happened (enrollment, charge, existing-attempt, schedule) — the gate
-      // returned before any account lookup, payment insert, or Stripe call could occur.
-      expect(db.from).toHaveBeenCalledTimes(4);
+      // Only 5 db.from calls happened (enrollment, charge, existing-attempt, in-flight-payment,
+      // schedule) — the gate returned before any account lookup, payment insert, or Stripe call
+      // could occur.
+      expect(db.from).toHaveBeenCalledTimes(5);
     });
 
     it("rejects an attempt when the FORGE cutover date has not arrived yet", async () => {
@@ -155,6 +161,7 @@ describe("executeAutopayAttempt", () => {
       db.from
         .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
         .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
         .mockReturnValueOnce(chain({ data: null, error: null }))
         .mockReturnValueOnce(chain({ data: { collection_mode: "forge", forge_cutover_date: "2099-01-01" }, error: null }));
       const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
@@ -166,6 +173,7 @@ describe("executeAutopayAttempt", () => {
       db.from
         .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
         .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
         .mockReturnValueOnce(chain({ data: null, error: null }))
         .mockReturnValueOnce(chain({ data: null, error: null }));
       const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
@@ -182,14 +190,16 @@ describe("executeAutopayAttempt", () => {
         .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
         .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
         .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
         .mockReturnValueOnce(chain(FORGE_SCHEDULE))
         .mockReturnValueOnce(chain({ data: { billing_enabled: false }, error: null }));
       const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
       expect(result.httpStatus).toBe(409);
       expect(result.body).toEqual({ error: "Rental online billing is currently paused for this owner." });
-      // 5 db.from calls: enrollment, charge, existing-attempt, schedule, billing settings — the
-      // gate returned before any account lookup, payment insert, or Stripe call could occur.
-      expect(db.from).toHaveBeenCalledTimes(5);
+      // 6 db.from calls: enrollment, charge, existing-attempt, in-flight-payment, schedule,
+      // billing settings — the gate returned before any account lookup, payment insert, or Stripe
+      // call could occur.
+      expect(db.from).toHaveBeenCalledTimes(6);
     });
 
     it("rejects an attempt when no rental_billing_settings row exists yet for the owner (defaults to paused)", async () => {
@@ -198,10 +208,96 @@ describe("executeAutopayAttempt", () => {
         .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
         .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
         .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
         .mockReturnValueOnce(chain(FORGE_SCHEDULE))
         .mockReturnValueOnce(chain({ data: null, error: null }));
       const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
       expect(result.httpStatus).toBe(409);
+    });
+  });
+
+  // Double-charge protection: a tenant who pays early (manually) must never be charged
+  // again by autopay for the same charge.
+  describe("early/in-flight payment protection", () => {
+    it("skips the debit when a payment is already in flight for the charge, without touching Stripe", async () => {
+      const offSession = vi.fn(async () => ({ paymentIntentId: "pi_1", status: "succeeded" }));
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: offSession });
+      const db = { from: vi.fn() };
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: { id: "rental_payment_inflight" }, error: null }));
+      const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(result.httpStatus).toBe(200);
+      expect(result.body).toEqual({ success: true, skipped: true, chargeId: "charge_1", reason: "payment_pending" });
+      expect(offSession).not.toHaveBeenCalled();
+      // Only 4 db.from calls happened (enrollment, charge, existing-attempt, in-flight-payment)
+      // — the skip returned before any schedule gate, account lookup, or Stripe call.
+      expect(db.from).toHaveBeenCalledTimes(4);
+    });
+
+    it("scopes the in-flight check to the charge and the enrollment's provider_mode", async () => {
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: vi.fn(async () => ({ paymentIntentId: "pi_1", status: "succeeded" })) });
+      const inFlightChain = chain({ data: null, error: null });
+      const db = { from: vi.fn() };
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(inFlightChain)
+        .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+        .mockReturnValueOnce(chain(BILLING_ENABLED))
+        .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
+        .mockReturnValueOnce(chain({ data: { id: "rental_payment_1" }, error: null }))
+        .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
+        .mockReturnValueOnce(chain({ error: null }))
+        .mockReturnValueOnce(chain({ error: null }));
+      await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(inFlightChain.eq).toHaveBeenCalledWith("charge_id", "charge_1");
+      expect(inFlightChain.eq).toHaveBeenCalledWith("provider_mode", "test");
+      expect(inFlightChain.in).toHaveBeenCalledWith("status",
+        ["created", "requires_payment_method", "requires_action", "processing"]);
+    });
+
+    it("skips instead of attempting a $0 debit when the charge ledger already shows it fully paid", async () => {
+      const offSession = vi.fn(async () => ({ paymentIntentId: "pi_1", status: "succeeded" }));
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: offSession });
+      const db = { from: vi.fn() };
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: { ...CHARGE, paid_amount_cents: 150000 }, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }));
+      const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(result.httpStatus).toBe(200);
+      expect(result.body).toEqual({ success: true, skipped: true, chargeId: "charge_1", reason: "already_paid" });
+      expect(offSession).not.toHaveBeenCalled();
+    });
+
+    it("debits only the remainder when the charge was partially paid early", async () => {
+      const offSession = vi.fn(async () => ({ paymentIntentId: "pi_1", status: "succeeded" }));
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: offSession });
+      const paymentInsert = chain({ data: { id: "rental_payment_1" }, error: null });
+      const db = { from: vi.fn() };
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: { ...CHARGE, paid_amount_cents: 50000 }, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+        .mockReturnValueOnce(chain(BILLING_ENABLED))
+        .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
+        .mockReturnValueOnce(paymentInsert)
+        .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
+        .mockReturnValueOnce(chain({ error: null }))
+        .mockReturnValueOnce(chain({ error: null }));
+      const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(result.httpStatus).toBe(200);
+      expect(result.body).toEqual(expect.objectContaining({ success: true, duplicate: false }));
+      const [, input] = offSession.mock.calls[0];
+      expect(input.amountCents).toBe(100000);
+      expect(paymentInsert.insert).toHaveBeenCalledWith(expect.objectContaining({ amount_cents: 100000 }));
     });
   });
 });

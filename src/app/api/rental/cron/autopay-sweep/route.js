@@ -40,18 +40,19 @@ export async function GET(request) {
         pairs.push({ enrollmentId: enrollment.id, chargeId: charge.id });
     }
 
-    let succeeded = 0, failed = 0;
+    let succeeded = 0, failed = 0, skipped = 0;
     for (const pair of pairs) {
       try {
         const result = await executeAutopayAttempt(db, pair.enrollmentId, pair.chargeId);
-        if (result.httpStatus === 200) succeeded += 1; else failed += 1;
+        if (result.body?.skipped) skipped += 1;
+        else if (result.httpStatus === 200) succeeded += 1; else failed += 1;
       } catch (attemptError) {
         failed += 1;
         console.error("Autopay sweep attempt failed", pair, attemptError);
       }
     }
     const settlements = await reconcileMissingStripeSettlements(db, provider);
-    return NextResponse.json({ success: true, candidates: pairs.length, succeeded, failed, settlements });
+    return NextResponse.json({ success: true, candidates: pairs.length, succeeded, failed, skipped, settlements });
   } catch (error) {
     console.error("Autopay sweep cron error", error);
     return NextResponse.json({ error: "Unable to run autopay sweep." }, { status: 500 });

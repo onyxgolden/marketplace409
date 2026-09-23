@@ -108,7 +108,9 @@ export default function PrivateFinancingBorrowerPortal() {
           {!summaryAvailable ? null : onlinePaymentsEnabled ? (
             paying === account.id ? (
               <PrivateFinancingBorrowerPayment accountId={account.id} regularScheduledPaymentCents={regularScheduledPaymentCents}
-                pendingPayment={pendingPayment} onCancel={() => { setPaying(null); loadPortal(); }} />
+                pendingPayment={pendingPayment}
+                autopayChargeDay={(autopayEnrollments || []).find((enrollment) => enrollment.status === "active")?.chargeDay}
+                onCancel={() => { setPaying(null); loadPortal(); }} />
             ) : pendingPayment && !pendingPayment.resumable ? (
               <p className="mt-6 rounded-xl bg-slate-100 p-4 text-sm font-bold">A payment is currently processing for this account. Please check back shortly.</p>
             ) : (

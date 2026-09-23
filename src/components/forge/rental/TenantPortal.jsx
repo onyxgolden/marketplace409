@@ -9,6 +9,7 @@ import RentalPaymentReceipt from "./RentalPaymentReceipt";
 import TenantDepositPanel from "./TenantDepositPanel";
 import TenantInspectionsPanel from "./TenantInspectionsPanel";
 import TenantAutopayPanel from "./TenantAutopayPanel";
+import AutopayPaymentNotice from "./AutopayPaymentNotice";
 import TenantInsurancePanel from "./TenantInsurancePanel";
 import TenantAnimalsPanel from "./TenantAnimalsPanel";
 import TenantLeaseSigningPanel from "./TenantLeaseSigningPanel";
@@ -88,20 +89,28 @@ export default function TenantPortal({ initialPortal = null } = {}) {
     setStarting(chargeId); setError(""); setStripeInitError(false);
     try { const response = await fetch("/api/rental/portal/payment-session", { method: "POST",
       headers: { "content-type": "application/json" }, body: JSON.stringify({ chargeId }) });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error); setSession(body);
+      const body = await response.json(); if (!response.ok) throw new Error(body.error); setSession({ ...body, chargeId });
     } catch (reason) { setError(reason.message); } finally { setStarting(null); }
   }
   async function resume(paymentId, chargeId) {
     setStarting(chargeId); setError(""); setStripeInitError(false);
     try { const response = await fetch("/api/rental/portal/payment-session/resume", { method: "POST",
       headers: { "content-type": "application/json" }, body: JSON.stringify({ paymentId }) });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error); setSession(body);
+      const body = await response.json(); if (!response.ok) throw new Error(body.error); setSession({ ...body, chargeId });
     } catch (reason) { setError(reason.message); } finally { setStarting(null); }
   }
   function retryStripeInit() { setStripeInitError(false); setStripeRetryCount((count) => count + 1); }
   if (error && !portal) return <main className="mx-auto max-w-3xl p-8"><p role="alert">{error}</p></main>;
   if (!portal) return <main className="mx-auto max-w-3xl p-8">Loading your tenant portal…</main>;
   const summary = buildTenantPaymentSummary(portal.rentals, portal.billingEnabled);
+  // Autopay disclosure for the one-time payment screen: shown only when the charge's lease
+  // has an active autopay enrollment. Rental one-time payments always settle the full
+  // remaining charge balance (payment-session charges remainingCents, no amount entry), so
+  // the notice takes the "covers" wording — the comparison below stays computed rather than
+  // hardcoded so the copy keeps following the backend's remaining-balance rule.
+  const sessionRental = session ? (portal.rentals || []).find((rental) => (rental.charges || []).some((charge) => charge.id === session.chargeId)) : null;
+  const sessionCharge = sessionRental ? sessionRental.charges.find((charge) => charge.id === session.chargeId) : null;
+  const sessionAutopayActive = (sessionRental?.autopayEnrollments || []).some((enrollment) => enrollment.status === "active");
   return <main className="min-h-screen bg-slate-50 px-5 py-10"><div className="mx-auto max-w-3xl space-y-6">
     <header><p className="text-sm font-bold uppercase tracking-widest text-amber-700">FORGE Tenant Portal</p>
       <h1 className="mt-2 text-3xl font-black text-slate-950">Welcome, {portal.tenant.displayName}</h1></header>
@@ -124,6 +133,9 @@ export default function TenantPortal({ initialPortal = null } = {}) {
           <button type="button" onClick={() => setSession(null)} className="rounded-xl border px-4 py-2 font-bold">Back to balance</button>
         </div>
       </section> : <section className="rounded-2xl border bg-white p-6 shadow-sm"><h2 className="mb-5 text-xl font-black">Pay rent securely</h2>
+      {sessionAutopayActive && sessionCharge ? <div className="mb-5"><AutopayPaymentNotice
+        coversAutopay={session.amountCents >= sessionCharge.amountCents - sessionCharge.paidAmountCents}
+        autopayDateLabel={date.format(new Date(`${sessionCharge.dueDate}T00:00:00`))} /></div> : null}
       <Elements key={stripeRetryCount} stripe={stripePromise} options={{ clientSecret: session.clientSecret, appearance: { theme: "stripe" } }}>
         <TenantPaymentForm returnUrl={session.returnUrl} amountLabel={money.format(session.amountCents / 100)}
           dueDate={date.format(new Date(`${session.dueDate}T00:00:00`))} chargeLabel={(session.chargeType || "rent").replaceAll("_", " ")} onCancel={() => setSession(null)} />
