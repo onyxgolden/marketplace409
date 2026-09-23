@@ -112,5 +112,62 @@ cargo tauri build --target x86_64-pc-windows-msvc
 
 Cross-checks run on Linux: `cargo test -p forge-capture-core` (pure logic),
 `cargo check -p forge-capture-core --target x86_64-pc-windows-msvc`
-(native Win32 module). The full Tauri app links only on a Windows host
-(GTK system deps are not installed for the Linux host build).
+(native Win32 module).
+
+## Linux build (Rung: linux target)
+
+The same codebase now bundles for Linux alongside Windows
+(`bundle.targets: ["nsis", "deb", "appimage"]` in `app/tauri.conf.json`).
+
+**Prerequisites (Debian/Ubuntu):**
+```sh
+sudo apt-get install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
+**Build:**
+```sh
+cd forge-capture-app/app
+npx @tauri-apps/cli@2 build --bundles deb appimage
+# or: cargo install tauri-cli && cargo tauri build --bundles deb appimage
+```
+The frontend (`../ui`) is plain JS with no build step
+(`beforeBuildCommand` is empty), so the bundler copies it directly.
+
+**Install on the target machine (Zorin/Ubuntu):** `sudo dpkg -i
+forge-capture_0.2.0_amd64.deb` (or run the `.AppImage`). Captures land in
+`~/.local/share/forge-capture/Captures`.
+
+### What works on Linux today
+
+- App shell, capture window + region-picker overlay, delayed capture UI.
+- Screen **recording**: fully web-platform — the webview's MediaRecorder
+  captures via `getDisplayMedia`, which WebKitGTK serves through
+  xdg-desktop-portal/PipeWire (standard on Zorin/Ubuntu Wayland and X11).
+  No Windows-only code in the recording path. Cursor-overlay positions
+  come from `get_cursor_pos`, which degrades with an explicit error on
+  Linux, so the compositor's cursor highlight is unavailable until the
+  Linux capture engine lands.
+- Print Screen takeover: registered best-effort via
+  `tauri-plugin-global-shortcut`; a rejection never fails startup and the
+  app reports `printscreen_takeover_active`. Note: on Wayland sessions the
+  plugin cannot grab global keys (compositor restriction), so expect
+  "takeover unavailable" there — the app window still works.
+- "Open in FORGE" library links open via `xdg-open`.
+- All Rust/JS unit tests run on Linux.
+
+### Linux gaps (explicit errors today, follow-up slices)
+
+These fail closed with a clear message instead of fake behavior:
+
+1. **Native screen capture** (`capture_rect`, `list_windows`,
+   `find_window`, `cursor_pos`) — GDI/BitBlt only. Needs a Linux capture
+   engine (X11 and/or xdg-desktop-portal Screenshot) before screenshots
+   work on Linux.
+2. **Image clipboard** (`copy_to_clipboard`) — Win32 `CF_DIB` only.
+3. **Text clipboard** (`copy_text_to_clipboard`, the "copy library link"
+   button) — Win32 only.
+4. **OS credential store** (`session_store.rs` — Rung 5/6 "Save to FORGE"
+   sign-in) — Windows Credential Manager only. Needs a Linux path
+   (Secret Service / GNOME Keyring) before uploads can authenticate from
+   the Linux app.
