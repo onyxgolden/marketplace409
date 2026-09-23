@@ -26,6 +26,7 @@ function isTypingTarget(el) {
 const DATA_TAB_LABELS = {
   ask: "Ask",
   drift: "Drift",
+  checks: "Checks",
   calendars: "Calendars",
   baselines: "Baselines",
   resources: "Resources",
