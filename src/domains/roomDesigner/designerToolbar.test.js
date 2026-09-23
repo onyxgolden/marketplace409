@@ -17,9 +17,10 @@ const currentOrder = [
   "select",
   "wall",
   "wallrect",
-  "room",
   "door",
   "window",
+  "room-bedroom",
+  "structure-container-20",
   "furniture",
   "pipe",
   "piping",
@@ -44,9 +45,10 @@ describe("orderToolbarTools", () => {
       "pan",
       "wall",
       "wallrect",
-      "room",
       "door",
       "window",
+      "room-bedroom",
+      "structure-container-20",
       "furniture",
       "pipe",
       "piping",
@@ -73,11 +75,11 @@ describe("orderToolbarTools", () => {
       tool("wall"),
       tool("pan"),
       tool("select"),
-      tool("room"),
+      tool("room-bedroom"),
       tool("erase"),
     ];
     const ids = orderToolbarTools(shuffled).map((t) => t.id);
-    expect(ids).toEqual(["select", "erase", "pan", "wall", "room"]);
+    expect(ids).toEqual(["select", "erase", "pan", "wall", "room-bedroom"]);
   });
 
   it("gracefully skips a missing pinned tool", () => {
@@ -107,10 +109,22 @@ describe("groupToolsByCategory", () => {
     expect(house.tools.map((t) => t.id)).toEqual([
       "wall",
       "wallrect",
-      "room",
       "door",
       "window",
     ]);
+  });
+
+  it("groups every room preset under Rooms and containers under Structures", () => {
+    const { categories } = groupToolsByCategory(currentOrder);
+    const byId = new Map(categories.map((c) => [c.id, c]));
+    expect(byId.get("rooms").label).toBe("Rooms");
+    expect(byId.get("rooms").tools.map((t) => t.id)).toEqual(["room-bedroom"]);
+    expect(byId.get("structures").label).toBe("Structures");
+    expect(byId.get("structures").tools.map((t) => t.id)).toEqual([
+      "structure-container-20",
+    ]);
+    // Room presets live only under Rooms — never in House.
+    expect(byId.get("house").tools.map((t) => t.id)).not.toContain("room-bedroom");
   });
 
   it("groups piping under Mechanical and plan tools under Plan", () => {
@@ -145,9 +159,9 @@ describe("groupToolsByCategory", () => {
     expect(ungrouped.map((t) => t.id)).toEqual(["laser-measure"]);
   });
 
-  it("categories follow the declared House, Mechanical, Plan order", () => {
+  it("categories follow the declared House, Rooms, Structures, Mechanical, Plan order", () => {
     const { categories } = groupToolsByCategory(currentOrder);
-    expect(categories.map((c) => c.id)).toEqual(["house", "mechanical", "plan"]);
+    expect(categories.map((c) => c.id)).toEqual(["house", "rooms", "structures", "mechanical", "plan"]);
   });
 
   it("excludes tools with leftPalette: false from the left palette entirely", () => {
@@ -181,9 +195,11 @@ describe("extensible tool categories", () => {
     resetToolCategories();
   });
 
-  it("returns the built-in House, Mechanical, Process, Plan categories by default", () => {
+  it("returns the built-in House, Rooms, Structures, Mechanical, Process, Plan categories by default", () => {
     expect(getToolCategories().map((c) => c.id)).toEqual([
       "house",
+      "rooms",
+      "structures",
       "mechanical",
       "process",
       "plan",
@@ -218,10 +234,10 @@ describe("extensible tool categories", () => {
 
   it("accepts categories passed directly as a second argument", () => {
     const { categories } = groupToolsByCategory(currentOrder, [
-      { id: "shapes", label: "Shapes", toolIds: ["room"] },
+      { id: "shapes", label: "Shapes", toolIds: ["room-bedroom"] },
     ]);
     expect(categories.map((c) => c.id)).toEqual(["shapes"]);
-    expect(categories[0].tools.map((t) => t.id)).toEqual(["room"]);
+    expect(categories[0].tools.map((t) => t.id)).toEqual(["room-bedroom"]);
   });
 
   it("rejects malformed category registrations", () => {

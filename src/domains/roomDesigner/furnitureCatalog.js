@@ -130,12 +130,24 @@ export const ROOM_TEMPLATES = Object.freeze([
   Object.freeze({ id: "living-room", label: "Living room", widthIn: 192, depthIn: 240 }),
   Object.freeze({ id: "bedroom", label: "Bedroom", widthIn: 144, depthIn: 144 }),
   Object.freeze({ id: "bedroom-small", label: "Bedroom (small)", widthIn: 120, depthIn: 144 }),
+  Object.freeze({ id: "bedroom-12x14", label: "Bedroom 12×14", widthIn: 144, depthIn: 168 }),
   Object.freeze({ id: "kitchen", label: "Kitchen", widthIn: 120, depthIn: 144 }),
+  Object.freeze({ id: "kitchen-12x14", label: "Kitchen 12×14", widthIn: 144, depthIn: 168 }),
   Object.freeze({ id: "dining-room", label: "Dining room", widthIn: 144, depthIn: 168 }),
+  Object.freeze({ id: "master-bedroom", label: "Master bedroom", widthIn: 168, depthIn: 216 }),
   Object.freeze({ id: "bathroom", label: "Bathroom", widthIn: 96, depthIn: 72 }),
   Object.freeze({ id: "bathroom-small", label: "Bathroom (small)", widthIn: 60, depthIn: 96 }),
   Object.freeze({ id: "garage", label: "Garage", widthIn: 240, depthIn: 240 }),
   Object.freeze({ id: "office", label: "Office", widthIn: 120, depthIn: 120 }),
+]);
+
+// ---- Drop-in structures (width x depth in inches) — large labeled
+// rectangular footprints placed through the same drop pipeline as rooms
+// (four walls + labeled polygon). Standard intermodal container sizes;
+// heights are nominal (8'6" standard) and informational only.
+export const STRUCTURE_TEMPLATES = Object.freeze([
+  Object.freeze({ id: "container-20", label: "Shipping container 20'", widthIn: 240, depthIn: 96 }),
+  Object.freeze({ id: "container-40", label: "Shipping container 40'", widthIn: 480, depthIn: 96 }),
 ]);
 
 // ---- Symbol-set registration ----

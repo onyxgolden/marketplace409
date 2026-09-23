@@ -14,9 +14,22 @@ const TOOL_DEFS = [
   "select",
   "wall",
   "wallrect",
-  "room",
   "door",
   "window",
+  "room-living-room",
+  "room-bedroom",
+  "room-bedroom-small",
+  "room-bedroom-12x14",
+  "room-kitchen",
+  "room-kitchen-12x14",
+  "room-dining-room",
+  "room-master-bedroom",
+  "room-bathroom",
+  "room-bathroom-small",
+  "room-garage",
+  "room-office",
+  "structure-container-20",
+  "structure-container-40",
   "furniture",
   "pipe",
   "piping",
@@ -162,15 +175,16 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
     expect(queryCategoryHeader(container, "Favorites")).toBeNull();
   });
 
-  it("renders House, Mechanical and Plan categories expanded by default", async () => {
+  it("renders House, Rooms, Structures, Mechanical and Plan categories expanded by default", async () => {
     await renderPalette();
-    for (const label of ["House", "Mechanical", "Plan"]) {
+    for (const label of ["House", "Rooms", "Structures", "Mechanical", "Plan"]) {
       const header = queryCategoryHeader(container, label);
       expect(header).not.toBeNull();
       expect(header.getAttribute("aria-expanded")).toBe("true");
     }
     // Representative tools are visible.
-    expect(queryToolButton(container, "room")).not.toBeNull();
+    expect(queryToolButton(container, "room-bedroom")).not.toBeNull();
+    expect(queryToolButton(container, "structure-container-40")).not.toBeNull();
     expect(queryToolButton(container, "pipe")).not.toBeNull();
     expect(queryToolButton(container, "orgchart")).not.toBeNull();
   });
@@ -186,7 +200,9 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
       queryCategoryHeader(container, "House").click();
     });
     expect(queryCategoryHeader(container, "House").getAttribute("aria-expanded")).toBe("false");
-    expect(queryToolButton(container, "room")).toBeUndefined();
+    expect(queryToolButton(container, "wall")).toBeUndefined();
+    // Room presets live in their own Rooms category now, not House.
+    expect(queryToolButton(container, "room-bedroom")).not.toBeNull();
     // Other categories are untouched.
     expect(queryCategoryHeader(container, "Mechanical").getAttribute("aria-expanded")).toBe("true");
     expect(queryToolButton(container, "pipe")).not.toBeNull();
@@ -221,7 +237,7 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
     await renderPalette();
 
     expect(queryCategoryHeader(container, "House").getAttribute("aria-expanded")).toBe("false");
-    expect(queryToolButton(container, "room")).toBeUndefined();
+    expect(queryToolButton(container, "wall")).toBeUndefined();
     expect(queryCategoryHeader(container, "Mechanical").getAttribute("aria-expanded")).toBe("true");
   });
 

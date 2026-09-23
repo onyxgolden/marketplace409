@@ -26,7 +26,7 @@
 // Every operation is pure: it takes a design and returns a new design.
 // Coordinates are inches; opening offsets are inches from wall.a.
 
-import { getCatalogEntry, ROOM_TEMPLATES } from "./furnitureCatalog";
+import { getCatalogEntry, ROOM_TEMPLATES, STRUCTURE_TEMPLATES } from "./furnitureCatalog";
 import { findSymbol } from "./symbolRegistry";
 // Side-effect import: registers the "piping" symbol set so placeSymbol
 // and validateDesign resolve it in every context that loads the document
@@ -54,7 +54,7 @@ import {
 
 // Re-exported for the catalog UI; the canonical definition lives in
 // furnitureCatalog.js, where the "rooms" symbol set is registered.
-export { ROOM_TEMPLATES };
+export { ROOM_TEMPLATES, STRUCTURE_TEMPLATES };
 
 export const DESIGN_VERSION = 1;
 
@@ -218,7 +218,10 @@ export function deleteWall(design, wallId) {
 }
 
 export function getRoomTemplate(templateId) {
-  return ROOM_TEMPLATES.find((t) => t.id === templateId);
+  return (
+    ROOM_TEMPLATES.find((t) => t.id === templateId) ||
+    STRUCTURE_TEMPLATES.find((t) => t.id === templateId)
+  );
 }
 
 /**
