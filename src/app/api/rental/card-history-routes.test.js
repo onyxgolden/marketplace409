@@ -7,6 +7,7 @@ function chainFor(rows) {
   const chain = {
     select: vi.fn(() => chain),
     eq: vi.fn(() => chain),
+    filter: vi.fn(() => chain),
     or: vi.fn(() => chain),
     order: vi.fn(() => chain),
     maybeSingle: vi.fn(async () => ({ data: rows?.[0] ?? null, error: null })),
@@ -87,6 +88,54 @@ describe("tenant-ledger route", () => {
   it("requires tenantId", async () => {
     const response = await tenantLedgerGET(get("http://localhost/api/rental/tenant-ledger"));
     expect(response.status).toBe(400);
+  });
+
+  it("returns an empty importedHistory when the tenant has no migration renter id", async () => {
+    const response = await tenantLedgerGET(get("http://localhost/api/rental/tenant-ledger?tenantId=tenant_1"));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.importedHistory).toEqual({ renterId: null, rows: [], totalCents: 0 });
+  });
+
+  it("links Rentec-imported income rows by exact renter id with non-billing semantics", async () => {
+    tables.rental_tenants = [{ id: "tenant_1", display_name: "Paula", email: "paula@example.com", status: "active", source_record_id: "renter_9" }];
+    tables.financial_events = [
+      { id: "evt_1", event_date: "2026-03-01", description: "Rent", amount: 1500.0, transaction_kind: "income", normalized_category: "rent_income", property_id: "4800-kent-ave", source_record_id: "txn1:splitA", metadata: { rentec_transaction_id: "txn1", rentec_renter_id: "renter_9" }, status: "posted", is_deleted: false },
+      { id: "evt_2", event_date: "2026-02-01", description: "Rent", amount: 1500.0, transaction_kind: "income", normalized_category: "rent_income", property_id: "4800-kent-ave", source_record_id: "txn2:splitA", metadata: { rentec_transaction_id: "txn2", rentec_renter_id: "renter_9" }, status: "posted", is_deleted: false },
+      { id: "evt_other", event_date: "2026-03-01", description: "Rent", amount: 900.0, transaction_kind: "income", normalized_category: "rent_income", property_id: "other", source_record_id: "txnX:none", metadata: { rentec_transaction_id: "txnX", rentec_renter_id: "renter_other" }, status: "posted", is_deleted: false },
+    ];
+    const response = await tenantLedgerGET(get("http://localhost/api/rental/tenant-ledger?tenantId=tenant_1"));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.importedHistory.renterId).toBe("renter_9");
+    // evt_other fails the builder's exact renter-id match (the mock ignores SQL filters).
+    expect(body.importedHistory.rows.map((row) => row.id)).toEqual(["evt_1", "evt_2"]);
+    for (const row of body.importedHistory.rows) {
+      expect(row.source).toBe("rentec");
+      expect(row.affectsBalance).toBe(false);
+      expect(row.attribution).toBe("rentec_renter_id_match");
+    }
+    expect(body.importedHistory.totalCents).toBe(300000);
+    // The billing ledger is untouched by the imported rows.
+    expect(body.ledger.balanceCents).toBe(0);
+  });
+
+  it("dedups imported rows already represented as rentec_external payments", async () => {
+    tables.rental_tenants = [{ id: "tenant_1", display_name: "Paula", email: "paula@example.com", status: "active", source_record_id: "renter_9" }];
+    tables.rental_payments = [
+      { id: "pay_rentec", charge_id: "charge_1", lease_id: "lease_1", tenant_id: "tenant_1", provider: "rentec_external", provider_payment_id: "txn1", amount_cents: 150000, refunded_amount_cents: 0, status: "succeeded", payment_method: "ach", received_at: "2026-03-01T12:00:00Z", created_at: "2026-03-01T12:00:00Z" },
+      { id: "pay_stripe", charge_id: null, lease_id: "lease_1", tenant_id: "tenant_1", provider: "stripe", provider_payment_id: "txn2", amount_cents: 150000, refunded_amount_cents: 0, status: "succeeded", payment_method: "card", received_at: "2026-02-01T12:00:00Z", created_at: "2026-02-01T12:00:00Z" },
+    ];
+    tables.financial_events = [
+      { id: "evt_1", event_date: "2026-03-01", description: "Rent", amount: 1500.0, transaction_kind: "income", normalized_category: "rent_income", property_id: "4800-kent-ave", source_record_id: "txn1:splitA", metadata: { rentec_transaction_id: "txn1", rentec_renter_id: "renter_9" }, status: "posted", is_deleted: false },
+      { id: "evt_2", event_date: "2026-02-01", description: "Rent", amount: 1500.0, transaction_kind: "income", normalized_category: "rent_income", property_id: "4800-kent-ave", source_record_id: "txn2:splitA", metadata: { rentec_transaction_id: "txn2", rentec_renter_id: "renter_9" }, status: "posted", is_deleted: false },
+    ];
+    const response = await tenantLedgerGET(get("http://localhost/api/rental/tenant-ledger?tenantId=tenant_1"));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // txn1 is suppressed (rentec_external payment exists); txn2 stays (its payment
+    // is under the stripe provider, so it is not in the dedup set).
+    expect(body.importedHistory.rows.map((row) => row.id)).toEqual(["evt_2"]);
   });
 });
 
