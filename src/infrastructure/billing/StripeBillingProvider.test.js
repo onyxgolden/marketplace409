@@ -23,6 +23,8 @@ function setup() {
         id: "pi_rent", client_secret: "pi_rent_secret_test", status: "requires_payment_method",
         latest_charge: { id: "ch_rent", balance_transaction: "txn_rent" },
       })) },
+    setupIntents: { create: vi.fn(async () => ({ id: "seti_1", client_secret: "seti_1_secret_test", status: "requires_payment_method" })),
+      retrieve: vi.fn(async () => ({ id: "seti_1", status: "succeeded", payment_method: "pm_bank_1", mandate: "mandate_1" })) },
     webhooks: { constructEvent: vi.fn(() => ({ id: "evt_1" })) },
   };
   return { stripeClient, provider: new StripeBillingProvider({ stripeClient }) };
@@ -384,6 +386,40 @@ describe("StripeBillingProvider", () => {
     expect(stripeClient.paymentIntents.retrieve).toHaveBeenCalledWith("pi_existing", {}, { stripeAccount: "acct_kent" });
     expect(stripeClient.paymentIntents.create).not.toHaveBeenCalled();
     expect(result).toEqual({ id: "pi_rent", clientSecret: "pi_rent_secret_test", status: "requires_payment_method" });
+  });
+
+  it("creates an autopay SetupIntent for a US bank account with off_session usage and online mandate acceptance", async () => {
+    const { provider, stripeClient } = setup();
+    const result = await provider.createAutopaySetupIntent(
+      { ownerId: "owner_1", connectedAccountId: "acct_kent" },
+      { customerId: "cus_borrower", enrollmentId: "pf_autopay_1", ipAddress: "203.0.113.7", userAgent: "TestAgent/1.0", idempotencyKey: "pf-autopay-setup:test:pf_autopay_1" });
+    const [params, opts] = stripeClient.setupIntents.create.mock.calls[0];
+    expect(params.customer).toBe("cus_borrower");
+    expect(params.payment_method_types).toEqual(["us_bank_account"]);
+    expect(params.usage).toBe("off_session");
+    expect(params.mandate_data.customer_acceptance.type).toBe("online");
+    expect(params.mandate_data.customer_acceptance.online.ip_address).toBe("203.0.113.7");
+    expect(params.mandate_data.customer_acceptance.online.user_agent).toBe("TestAgent/1.0");
+    expect(params.metadata.forge_autopay_enrollment_id).toBe("pf_autopay_1");
+    expect(opts).toEqual({ stripeAccount: "acct_kent", idempotencyKey: "pf-autopay-setup:test:pf_autopay_1" });
+    expect(result).toEqual({ setupIntentId: "seti_1", clientSecret: "seti_1_secret_test" });
+  });
+
+  it("omits mandate_data when no acceptance evidence is provided, and still returns the client secret", async () => {
+    const { provider, stripeClient } = setup();
+    await provider.createAutopaySetupIntent(
+      { ownerId: "owner_1", connectedAccountId: "acct_kent" },
+      { customerId: "cus_borrower", idempotencyKey: "key-2" });
+    const [params] = stripeClient.setupIntents.create.mock.calls[0];
+    expect(params).not.toHaveProperty("mandate_data");
+    expect(params.payment_method_types).toEqual(["us_bank_account"]);
+  });
+
+  it("retrieves a SetupIntent and surfaces the verified payment method and mandate ids", async () => {
+    const { provider, stripeClient } = setup();
+    const result = await provider.retrieveSetupIntent({ connectedAccountId: "acct_kent" }, "seti_1");
+    expect(stripeClient.setupIntents.retrieve).toHaveBeenCalledWith("seti_1", {}, { stripeAccount: "acct_kent" });
+    expect(result).toEqual({ setupIntentId: "seti_1", status: "succeeded", paymentMethodId: "pm_bank_1", mandateId: "mandate_1" });
   });
 });
 

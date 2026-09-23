@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
+import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
+import { validatePublishableKeyMode } from "@/infrastructure/billing/stripeMode";
 import { projectBorrowerPayoff, UnsupportedBorrowerProjectionError } from "@/domains/private-financing/borrowerPayoffProjection";
 import { computeDueState, UnsupportedDueStateError } from "@/domains/private-financing/dueState";
 import { mapEventRowsForReplay } from "@/domains/private-financing/persistedRowMapping";
@@ -249,7 +252,7 @@ export async function GET(request) {
 
   const accounts = [];
   for (const membership of memberships.data || []) {
-    const [accountResult, eventResult, componentResult, termsResult, settingsResult, pendingPaymentResult] = await Promise.all([
+    const [accountResult, eventResult, componentResult, termsResult, settingsResult, pendingPaymentResult, autopayResult] = await Promise.all([
       db.from("private_financing_accounts").select("id,product,status,opened_date,origination_principal_cents").eq("id", membership.account_id).maybeSingle(),
       db.rpc("read_private_financing_borrower_events", { p_account_id: membership.account_id }),
       db.from("private_financing_components").select("*").eq("account_id", membership.account_id),
@@ -260,6 +263,12 @@ export async function GET(request) {
       db.from("private_financing_online_payments").select("id,status,amount_cents")
         .eq("owner_id", membership.owner_id).eq("account_id", membership.account_id).eq("borrower_id", membership.borrower_id)
         .in("status", ["created", "requires_payment_method", "requires_action", "processing"]).maybeSingle(),
+      // Borrower-visible autopay state (RLS: pf_autopay_enrollments_borrower_read) -- drives
+      // the Automatic payments section of the borrower portal.
+      db.from("private_financing_autopay_enrollments")
+        .select("id,status,payment_method_type,charge_day,retry_limit,reminder_days_before,consented_at,cancelled_at")
+        .eq("owner_id", membership.owner_id).eq("account_id", membership.account_id).eq("borrower_id", membership.borrower_id)
+        .in("status", ["setup_required", "active", "paused"]),
     ]);
     if (!accountResult.data || eventResult.error || componentResult.error || termsResult.error) continue;
     const model = buildBorrowerPortalModelSafely({
@@ -287,6 +296,11 @@ export async function GET(request) {
         id: pendingRow.id, status: pendingRow.status, amountCents: Number(pendingRow.amount_cents),
         resumable: ["created", "requires_payment_method", "requires_action"].includes(pendingRow.status),
       } : null,
+      autopayEnrollments: (autopayResult.error ? [] : autopayResult.data || []).map((row) => ({
+        id: row.id, status: row.status, paymentMethodType: row.payment_method_type, chargeDay: row.charge_day,
+        retryLimit: row.retry_limit, reminderDaysBefore: row.reminder_days_before,
+        consentedAt: row.consented_at, cancelledAt: row.cancelled_at,
+      })),
     });
   }
 
@@ -321,6 +335,51 @@ export async function GET(request) {
   return NextResponse.json({ success: true, email: user.email, invitedEmail, mismatched, accounts, conversations, claim: claim.data || null });
 }
 
+function mapAutopayEnrollment(row) {
+  return {
+    id: row.id, status: row.status, paymentMethodType: row.payment_method_type, chargeDay: row.charge_day,
+    retryLimit: row.retry_limit, reminderDaysBefore: row.reminder_days_before,
+    consentedAt: row.consented_at, cancelledAt: row.cancelled_at,
+  };
+}
+
+// Borrower identity for autopay operations: resolved from the authenticated user, then every
+// subsequent query is explicitly scoped to (owner_id, borrower_id) — the service-role client
+// bypasses RLS, so scoping mistakes here would cross borrower boundaries.
+async function resolveAutopayBorrower(db, userId) {
+  const { data, error } = await db.from("private_financing_borrowers")
+    .select("owner_id,id,email,full_name").eq("auth_user_id", userId).maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function assertActiveAutopayMembership(db, borrower, accountId) {
+  const { data, error } = await db.from("private_financing_account_borrowers").select("status")
+    .eq("owner_id", borrower.owner_id).eq("account_id", accountId).eq("borrower_id", borrower.id).eq("status", "active").maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
+}
+
+async function ensureAutopayBillingCustomer(db, provider, borrower, connectedAccountId) {
+  const existing = await db.from("private_financing_billing_customers").select("*")
+    .eq("owner_id", borrower.owner_id).eq("borrower_id", borrower.id)
+    .eq("provider", "stripe").eq("provider_mode", provider.mode).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data) return existing.data;
+  const created = await provider.createPrivateFinancingCustomer(
+    { ownerId: borrower.owner_id, connectedAccountId },
+    { borrowerId: borrower.id, email: borrower.email, displayName: borrower.full_name || borrower.email },
+    `pf-customer:${provider.mode}:${borrower.owner_id}:${borrower.id}`);
+  const saved = await db.from("private_financing_billing_customers").upsert({
+    owner_id: borrower.owner_id, borrower_id: borrower.id, provider: "stripe", provider_mode: provider.mode,
+    connected_account_id: connectedAccountId, customer_id: created.customerId,
+  }, { onConflict: "owner_id,borrower_id,provider,provider_mode" }).select("*").single();
+  if (saved.error) throw saved.error;
+  return saved.data;
+}
+
+const AUTOPAY_CONSENT_TEXT = "I authorize recurring loan repayments from my US bank account under the schedule shown here. I understand enrollment is not active until Stripe securely verifies my bank account and debit mandate, and I may cancel future automatic payments at any time.";
+
 export async function POST(request) {
   const db = await createClient();
   const { data: { user } } = await db.auth.getUser();
@@ -344,6 +403,152 @@ export async function POST(request) {
     const { error } = await db.rpc("mark_pf_conversation_read_by_borrower", { p_owner_id: body.ownerId || null });
     if (error) return NextResponse.json({ error: "Unable to mark this conversation as read." }, { status: 500 });
     return NextResponse.json({ success: true });
+  }
+  if (body?.operation === "request-autopay") {
+    try {
+      const accountId = typeof body.accountId === "string" ? body.accountId.trim() : "";
+      const chargeDay = Number(body.chargeDay);
+      const reminderDaysBefore = Number(body.reminderDaysBefore);
+      if (!accountId) return NextResponse.json({ error: "Financing account is required." }, { status: 400 });
+      if (body.paymentMethodType && body.paymentMethodType !== "us_bank_account")
+        return NextResponse.json({ error: "Only US bank account autopay is supported." }, { status: 400 });
+      if (!Number.isSafeInteger(chargeDay) || chargeDay < 1 || chargeDay > 28)
+        return NextResponse.json({ error: "Charge day must be between 1 and 28." }, { status: 400 });
+      if (!Number.isSafeInteger(reminderDaysBefore) || reminderDaysBefore < 0 || reminderDaysBefore > 14)
+        return NextResponse.json({ error: "Reminder must be between 0 and 14 days before." }, { status: 400 });
+      if (body.consentConfirmed !== true)
+        return NextResponse.json({ error: "Autopay consent is required." }, { status: 400 });
+      const svc = createRentalWebhookClient();
+      const provider = createStripeBillingProvider();
+      const borrower = await resolveAutopayBorrower(svc, user.id);
+      if (!borrower) return NextResponse.json({ error: "No borrower access is linked to this account." }, { status: 403 });
+      if (!await assertActiveAutopayMembership(svc, borrower, accountId))
+        return NextResponse.json({ error: "This financing account is not available to this borrower." }, { status: 403 });
+      const settings = await svc.from("private_financing_online_payment_settings").select("enabled")
+        .eq("owner_id", borrower.owner_id).eq("account_id", accountId).maybeSingle();
+      if (settings.error) throw settings.error;
+      if (!settings.data?.enabled)
+        return NextResponse.json({ error: "Online payments are not active for this financing account." }, { status: 409 });
+      const now = new Date().toISOString();
+      const inserted = await svc.from("private_financing_autopay_enrollments").insert({
+        owner_id: borrower.owner_id, id: `pf_autopay_${crypto.randomUUID()}`, account_id: accountId, borrower_id: borrower.id,
+        status: "setup_required", payment_method_type: "us_bank_account", provider: "stripe", provider_mode: provider.mode,
+        charge_day: chargeDay, reminder_days_before: reminderDaysBefore,
+        consent_text: AUTOPAY_CONSENT_TEXT, consented_at: now, created_at: now, updated_at: now,
+      }).select("*").single();
+      if (inserted.error) {
+        if (inserted.error.code === "23505")
+          return NextResponse.json({ error: "This account already has an autopay enrollment." }, { status: 409 });
+        throw inserted.error;
+      }
+      return NextResponse.json({ success: true, enrollment: mapAutopayEnrollment(inserted.data) });
+    } catch (error) {
+      console.error("Private financing autopay request error", { name: error?.name || "Error" });
+      return NextResponse.json({ error: "Unable to start autopay enrollment." }, { status: 500 });
+    }
+  }
+  if (body?.operation === "create-autopay-setup") {
+    try {
+      const enrollmentId = typeof body.enrollmentId === "string" ? body.enrollmentId.trim() : "";
+      if (!enrollmentId) return NextResponse.json({ error: "enrollmentId is required." }, { status: 400 });
+      const svc = createRentalWebhookClient();
+      const provider = createStripeBillingProvider();
+      validatePublishableKeyMode(provider.mode);
+      const borrower = await resolveAutopayBorrower(svc, user.id);
+      if (!borrower) return NextResponse.json({ error: "No borrower access is linked to this account." }, { status: 403 });
+      const enrollmentResult = await svc.from("private_financing_autopay_enrollments").select("*")
+        .eq("owner_id", borrower.owner_id).eq("id", enrollmentId).eq("borrower_id", borrower.id).maybeSingle();
+      if (enrollmentResult.error) throw enrollmentResult.error;
+      const enrollment = enrollmentResult.data;
+      if (!enrollment) return NextResponse.json({ error: "Autopay enrollment was not found." }, { status: 404 });
+      if (enrollment.status !== "setup_required" || enrollment.payment_method_type !== "us_bank_account")
+        return NextResponse.json({ error: "This autopay enrollment is not awaiting bank setup." }, { status: 409 });
+      const account = await svc.from("landlord_payment_accounts").select("*")
+        .eq("owner_id", borrower.owner_id).eq("provider", "stripe").eq("provider_mode", provider.mode).maybeSingle();
+      if (account.error) throw account.error;
+      if (!account.data?.provider_account_id || account.data.status !== "enabled" || !account.data.charges_enabled || !account.data.payouts_enabled)
+        return NextResponse.json({ error: "The seller payment account is not ready." }, { status: 409 });
+      const customer = await ensureAutopayBillingCustomer(svc, provider, borrower, account.data.provider_account_id);
+      const forwarded = request.headers.get("x-forwarded-for");
+      const setup = await provider.createAutopaySetupIntent(
+        { ownerId: borrower.owner_id, connectedAccountId: account.data.provider_account_id },
+        { customerId: customer.customer_id, enrollmentId: enrollment.id,
+          ipAddress: forwarded ? forwarded.split(",")[0].trim() : null, userAgent: request.headers.get("user-agent"),
+          idempotencyKey: `pf-autopay-setup:${provider.mode}:${enrollment.id}` });
+      const stored = await svc.from("private_financing_autopay_enrollments").update({
+        setup_intent_id: setup.setupIntentId, updated_at: new Date().toISOString(),
+      }).eq("owner_id", borrower.owner_id).eq("id", enrollment.id).eq("status", "setup_required").select("id").single();
+      if (stored.error) throw stored.error;
+      return NextResponse.json({ success: true, enrollmentId: enrollment.id, setupIntentId: setup.setupIntentId,
+        clientSecret: setup.clientSecret, connectedAccountId: account.data.provider_account_id });
+    } catch (error) {
+      console.error("Private financing autopay setup error", { name: error?.name || "Error" });
+      return NextResponse.json({ error: "Unable to start bank account setup." }, { status: 500 });
+    }
+  }
+  if (body?.operation === "complete-autopay-setup") {
+    try {
+      const enrollmentId = typeof body.enrollmentId === "string" ? body.enrollmentId.trim() : "";
+      const setupIntentId = typeof body.setupIntentId === "string" ? body.setupIntentId.trim() : "";
+      if (!enrollmentId || !setupIntentId)
+        return NextResponse.json({ error: "enrollmentId and setupIntentId are required." }, { status: 400 });
+      const svc = createRentalWebhookClient();
+      const provider = createStripeBillingProvider();
+      const borrower = await resolveAutopayBorrower(svc, user.id);
+      if (!borrower) return NextResponse.json({ error: "No borrower access is linked to this account." }, { status: 403 });
+      const enrollmentResult = await svc.from("private_financing_autopay_enrollments").select("*")
+        .eq("owner_id", borrower.owner_id).eq("id", enrollmentId).eq("borrower_id", borrower.id).maybeSingle();
+      if (enrollmentResult.error) throw enrollmentResult.error;
+      const enrollment = enrollmentResult.data;
+      if (!enrollment) return NextResponse.json({ error: "Autopay enrollment was not found." }, { status: 404 });
+      if (enrollment.status !== "setup_required")
+        return NextResponse.json({ error: "This autopay enrollment is not awaiting bank setup." }, { status: 409 });
+      if (enrollment.setup_intent_id !== setupIntentId)
+        return NextResponse.json({ error: "This bank setup session does not match the enrollment." }, { status: 409 });
+      const account = await svc.from("landlord_payment_accounts").select("*")
+        .eq("owner_id", borrower.owner_id).eq("provider", "stripe").eq("provider_mode", provider.mode).maybeSingle();
+      if (account.error) throw account.error;
+      if (!account.data?.provider_account_id)
+        return NextResponse.json({ error: "The seller payment account is not ready." }, { status: 409 });
+      const customer = await ensureAutopayBillingCustomer(svc, provider, borrower, account.data.provider_account_id);
+      const setup = await provider.retrieveSetupIntent({ connectedAccountId: account.data.provider_account_id }, setupIntentId);
+      if (setup.status !== "succeeded" || !setup.paymentMethodId)
+        return NextResponse.json({ error: "Bank account verification did not complete. Please try linking again." }, { status: 409 });
+      const now = new Date().toISOString();
+      const updated = await svc.from("private_financing_autopay_enrollments").update({
+        provider_payment_method_id: setup.paymentMethodId, provider_mandate_id: setup.mandateId,
+        provider_customer_id: customer.customer_id, status: "active", activated_at: now,
+        consecutive_failures: 0, updated_at: now,
+      }).eq("owner_id", borrower.owner_id).eq("id", enrollment.id).eq("status", "setup_required").select("*").single();
+      if (updated.error) throw updated.error;
+      if (!updated.data) return NextResponse.json({ error: "This autopay enrollment is not awaiting bank setup." }, { status: 409 });
+      return NextResponse.json({ success: true, enrollment: mapAutopayEnrollment(updated.data) });
+    } catch (error) {
+      console.error("Private financing autopay completion error", { name: error?.name || "Error" });
+      return NextResponse.json({ error: "Unable to activate autopay." }, { status: 500 });
+    }
+  }
+  if (body?.operation === "cancel-autopay") {
+    try {
+      const enrollmentId = typeof body.enrollmentId === "string" ? body.enrollmentId.trim() : "";
+      if (!enrollmentId) return NextResponse.json({ error: "enrollmentId is required." }, { status: 400 });
+      const svc = createRentalWebhookClient();
+      const borrower = await resolveAutopayBorrower(svc, user.id);
+      if (!borrower) return NextResponse.json({ error: "No borrower access is linked to this account." }, { status: 403 });
+      const now = new Date().toISOString();
+      const updated = await svc.from("private_financing_autopay_enrollments").update({
+        status: "cancelled", cancelled_at: now,
+        cancellation_reason: typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : "Cancelled by borrower",
+        updated_at: now,
+      }).eq("owner_id", borrower.owner_id).eq("id", enrollmentId).eq("borrower_id", borrower.id)
+        .in("status", ["setup_required", "active", "paused"]).select("*").single();
+      if (updated.error) throw updated.error;
+      if (!updated.data) return NextResponse.json({ error: "Autopay enrollment was not found." }, { status: 404 });
+      return NextResponse.json({ success: true, enrollment: mapAutopayEnrollment(updated.data) });
+    } catch (error) {
+      console.error("Private financing autopay cancellation error", { name: error?.name || "Error" });
+      return NextResponse.json({ error: "Unable to cancel autopay." }, { status: 500 });
+    }
   }
   return NextResponse.json({ error: "A supported operation is required." }, { status: 400 });
 }

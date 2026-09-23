@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import PrivateFinancingBorrowerPayment from "./PrivateFinancingBorrowerPayment";
 import PrivateFinancingBorrowerProgress from "./PrivateFinancingBorrowerProgress";
 import PrivateFinancingBorrowerMessages from "./PrivateFinancingBorrowerMessages";
+import PrivateFinancingBorrowerAutopay from "./PrivateFinancingBorrowerAutopay";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const dollars = (cents) => money.format(Number(cents || 0) / 100);
@@ -70,7 +71,7 @@ export default function PrivateFinancingBorrowerPortal() {
             <p>No invitation matches this signed-in email.</p>
           )}
         </div>
-      ) : state.data.accounts.map(({ account, role, summary, events, regularScheduledPaymentCents, projection, progressAvailable = true, summaryAvailable = true, onlinePaymentsEnabled, pendingPayment }) => (
+      ) : state.data.accounts.map(({ account, role, summary, events, regularScheduledPaymentCents, projection, progressAvailable = true, summaryAvailable = true, onlinePaymentsEnabled, pendingPayment, autopayEnrollments = [] }) => (
         <section key={account.id} className="mt-6 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
           <div className="flex justify-between gap-4">
             <h2 className="text-xl font-black">Financing account</h2>
@@ -119,8 +120,9 @@ export default function PrivateFinancingBorrowerPortal() {
             <p className="mt-6 rounded-xl bg-slate-100 p-4 text-sm">Online payments are not currently active for this account.</p>
           )}
 
-          <h3 className="mt-7 text-lg font-black">Payment history</h3>
-          <ol className="mt-3 divide-y">
+          {summaryAvailable ? <PrivateFinancingBorrowerAutopay accountId={account.id} enrollments={autopayEnrollments} onChanged={loadPortal} /> : null}
+
+          <h3 className="mt-7 text-lg font-black">Payment history</h3>          <ol className="mt-3 divide-y">
             {events.filter((event) => event.event_type === "payment_posted").map((event) => (
               <li key={event.id} className="flex justify-between py-3"><span>{event.effective_date}</span><strong>{dollars(event.amount_cents)}</strong></li>
             ))}
