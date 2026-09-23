@@ -35,7 +35,14 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # android-actions/setup-android@v3 defaults its `packages` input to
+      # "tools platform-tools", but Google removed the legacy `tools` SDK
+      # package from the repository (2026-09), so `sdkmanager tools` exits 1
+      # and kills the job. Override the default; the Android Gradle Plugin
+      # resolves platform-34 / build-tools 34 itself at build time.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install dependencies
         run: npm ci
