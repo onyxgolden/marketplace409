@@ -46,6 +46,7 @@ import {
   removeUnderlay,
   renameDesign,
   renameOrgChart,
+  renameRoom,
   resizeFurniture,
   resizeOpening,
   resetFurnitureSize,
@@ -520,6 +521,16 @@ export function designerReducer(state, action) {
       }
     case "SET_WALL_MATERIAL":
       return touch(state, setWallMaterial(state.design, action.wallId, action.material));
+    // Naming a room. Coalesced so typing a name is one undo step, not one
+    // per keystroke.
+    case "RENAME_ROOM": {
+      if (!findRoom(state.design, action.roomId)) return state;
+      return touch(
+        state,
+        renameRoom(state.design, action.roomId, action.label),
+        action.coalesce,
+      );
+    }
     case "SET_ROOM_FINISH":
       return touch(state, setRoomFinish(state.design, action.roomId, action.finish));
     case "SET_FURNITURE_COST":

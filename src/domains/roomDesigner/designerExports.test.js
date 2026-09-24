@@ -26,8 +26,9 @@ describe("designerExports — summarizeDesignForEstimating", () => {
     const summary = summarizeDesignForEstimating(d);
     expect(summary.designName).toBe("Demo house");
     expect(summary.roomCount).toBe(2);
-    expect(summary.rooms[0]).toMatchObject({ label: "Bedroom", areaSqFt: 144 });
-    expect(summary.rooms[1]).toMatchObject({ label: "Bathroom", areaSqFt: 48 });
+    // An unnamed room exports a blank label; area is what estimating uses.
+    expect(summary.rooms[0]).toMatchObject({ label: "", areaSqFt: 144 });
+    expect(summary.rooms[1]).toMatchObject({ label: "", areaSqFt: 48 });
     expect(summary.totalRoomAreaSqFt).toBe(192);
     expect(summary.wallCount).toBe(8);
     expect(summary.totalWallLengthIn).toBe(2 * (144 + 144) + 2 * (96 + 72));

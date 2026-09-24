@@ -2436,6 +2436,53 @@ function ArrangePanel({ state, dispatch }) {
   );
 }
 
+/**
+ * Room name field.
+ *
+ * The stored label is trimmed (renameRoom's contract), but a field bound
+ * straight to it cannot be typed into: after "Great " the store holds
+ * "Great", so the next keystroke produces "Greatr" and a space can never be
+ * entered. The field therefore keeps the raw text being typed in local state
+ * and re-syncs from the store only when the two genuinely diverge — which
+ * happens on a different room being selected, or on undo — never mid-word.
+ */
+export function RoomNameField({ room, dispatch }) {
+  const stored = room.label || "";
+  const [text, setText] = useState(stored);
+  const [synced, setSynced] = useState({ id: room.id, label: stored });
+
+  // Adjusting state during render is React's documented way to derive state
+  // from props; an effect would run a render late and fight the keystroke.
+  if (synced.id !== room.id || synced.label !== stored) {
+    setSynced({ id: room.id, label: stored });
+    // While typing, the store holds the trimmed form of what is on screen, so
+    // these agree and the field is left alone. They diverge only on a real
+    // external change (a different room selected, or undo).
+    if (stored !== text.trim()) setText(stored);
+  }
+
+  return (
+    <label className="block text-xs text-gray-400">
+      Name
+      <input
+        type="text"
+        value={text}
+        placeholder="e.g. Primary bedroom"
+        onChange={(e) => {
+          setText(e.target.value);
+          dispatch({
+            type: "RENAME_ROOM",
+            roomId: room.id,
+            label: e.target.value,
+            coalesce: `rename-room:${room.id}`,
+          });
+        }}
+        className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white placeholder:text-gray-600"
+      />
+    </label>
+  );
+}
+
 function SelectionPanel({ state, dispatch, onPrint }) {
   const { design, selection } = state;
   if (selection.kind === "sheet") {
@@ -2599,7 +2646,11 @@ function SelectionPanel({ state, dispatch, onPrint }) {
     const room = design.rooms.find((r) => r.id === selection.id);
     if (!room) return null;
     return (
-      <PanelShell title={room.label} onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
+      <PanelShell
+        title={room.label || "Unnamed room"}
+        onDelete={() => dispatch({ type: "DELETE_SELECTION" })}
+      >
+        <RoomNameField room={room} dispatch={dispatch} />
         <label className="block text-xs text-gray-400">
           Finish
           <input

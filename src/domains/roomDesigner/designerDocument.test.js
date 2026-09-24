@@ -174,12 +174,15 @@ describe("designerDocument — walls", () => {
 });
 
 describe("designerDocument — room templates", () => {
-  it("drops a 12x12 bedroom as four walls plus a labeled polygon", () => {
+  it("drops a 12x12 bedroom as four walls plus an unnamed polygon", () => {
     let d = createEmptyDesign();
     d = addRoomFromTemplate(d, "bedroom", { x: 0, y: 0 });
     expect(d.walls).toHaveLength(4);
     expect(d.rooms).toHaveLength(1);
-    expect(d.rooms[0].label).toBe("Bedroom");
+    // New rooms arrive UNNAMED; the template identity lives on templateId
+    // and the user names the room themselves (see renameRoom).
+    expect(d.rooms[0].label).toBe("");
+    expect(d.rooms[0].templateId).toBe("bedroom");
     expect(totalRoomAreaSqFt(d)).toBe(144); // 12ft x 12ft
   });
 
