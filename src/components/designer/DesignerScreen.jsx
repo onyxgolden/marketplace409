@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
@@ -35,7 +34,7 @@ import {
   ZoomIn,
 } from "lucide-react";
 import PdfImportPanel from "./PdfImportPanel";
-import PlanCanvas from "./PlanCanvas";
+import DesignerCanvasArea from "./DesignerCanvasArea";
 import PrintSheetOverlay from "./PrintSheetOverlay";
 import { decodeUnderlayFile, UNDERLAY_ACCEPT, UNDERLAY_ACCEPT_LABEL } from "./underlayImage";
 import HousePlansPanel from "./HousePlansPanel";
@@ -124,15 +123,6 @@ import ElevationPrintOverlay from "./ElevationPrintOverlay";
 import DxfExportDialog from "./DxfExportDialog";
 import { groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
 import ToolPalette from "./ToolPalette";
-
-const DesignerViewport3D = dynamic(() => import("./DesignerViewport3D"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-full w-full items-center justify-center bg-[#0b1220] text-gray-400">
-      Loading 3D view…
-    </div>
-  ),
-});
 
 // Exported for catalog-integrity tests: every roomTemplate referenced by a
 // palette entry must resolve via getRoomTemplate().
@@ -664,7 +654,7 @@ export default function DesignerScreen({ projectId, initialName }) {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
 
-  const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, orthoSnap, layerVisibility, view, dirty, past, future } = state;
+  const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, view, dirty, past, future } = state;
   const summary = summarizeDesignForEstimating(design);
   const activeTool = TOOL_DEFS.find((t) => t.id === tool);
   // "Zoom to sheet" requests from the Paper sheets panel: consumed by PlanCanvas.
@@ -708,13 +698,13 @@ export default function DesignerScreen({ projectId, initialName }) {
             </button>
           )}
           <div className="flex overflow-hidden rounded border border-gray-700">
-            {(["2d", "3d"]).map((v) => (
+            {(["2d", "split", "3d"]).map((v) => (
               <button
                 key={v}
                 onClick={() => dispatch({ type: "SET_VIEW", view: v })}
                 className={`px-3 py-1 text-sm ${view === v ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
               >
-                {v === "2d" ? "2D Plan" : "3D View"}
+                {v === "2d" ? "2D Plan" : v === "split" ? "Split" : "3D View"}
               </button>
             ))}
           </div>
@@ -824,8 +814,9 @@ export default function DesignerScreen({ projectId, initialName }) {
           <DesignerErrorBoundary projectId={projectId}>
           {status.kind === "loading" ? (
             <div className="flex h-full items-center justify-center text-gray-400">Loading design…</div>
-          ) : view === "2d" ? (
-            <PlanCanvas
+          ) : (
+            <DesignerCanvasArea
+              view={view}
               design={design}
               tool={tool}
               selection={selection}
@@ -835,13 +826,12 @@ export default function DesignerScreen({ projectId, initialName }) {
               pendingRoomTemplate={pendingRoomTemplate}
               pendingPipe={pendingPipe}
               pendingSymbol={pendingSymbol}
+              pendingCustomShape={pendingCustomShape}
               orthoSnap={orthoSnap}
               layerVisibility={layerVisibility}
               dispatch={dispatch}
               zoomRequest={zoomRequest}
             />
-          ) : (
-            <DesignerViewport3D design={design} />
           )}
           </DesignerErrorBoundary>
           {activeTool && (

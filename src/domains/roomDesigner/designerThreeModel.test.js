@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildThreeScene,
   furnitureToBox,
+  highlightKeysForSelection,
+  highlightRegistryKey,
   pickWallAt,
   splitWallByOpenings,
   stairsDescriptors,
@@ -319,5 +321,66 @@ describe("designerThreeModel — stairsDescriptors", () => {
     const stairs = stairsDescriptors(d);
     expect(() => JSON.stringify(stairs)).not.toThrow();
     expect(JSON.parse(JSON.stringify(stairs))).toEqual(stairs);
+  });
+});
+
+
+// P1-A: split-screen view sync — selection -> 3D highlight-registry mapping.
+// Pure, framework-free: no Three.js object is created or needed to test this.
+describe("highlightRegistryKey / highlightKeysForSelection", () => {
+  it("builds a stable, distinct key per kind and id", () => {
+    expect(highlightRegistryKey("wall", "w1")).toBe("wall:w1");
+    expect(highlightRegistryKey("wall", "w2")).not.toBe(highlightRegistryKey("wall", "w1"));
+    expect(highlightRegistryKey("wall", "w1")).not.toBe(highlightRegistryKey("opening", "w1"));
+  });
+
+  it("maps a wall selection to its own registry key", () => {
+    expect(highlightKeysForSelection({ kind: "wall", id: "w1" }, createEmptyDesign())).toEqual([
+      "wall:w1",
+    ]);
+  });
+
+  it("maps an opening selection to its own registry key", () => {
+    expect(highlightKeysForSelection({ kind: "opening", id: "o1" }, createEmptyDesign())).toEqual([
+      "opening:o1",
+    ]);
+  });
+
+  it("maps a furniture selection to its own registry key", () => {
+    expect(highlightKeysForSelection({ kind: "furniture", id: "f1" }, createEmptyDesign())).toEqual([
+      "furniture:f1",
+    ]);
+  });
+
+  it("maps a room selection to ALL of its walls' keys, since a room has no mesh of its own", () => {
+    let d = addRoomFromTemplate(createEmptyDesign(), "bedroom", { x: 0, y: 0 });
+    const room = d.rooms[0];
+    expect(room.wallIds).toHaveLength(4);
+    const keys = highlightKeysForSelection({ kind: "room", id: room.id }, d);
+    expect(keys).toEqual(room.wallIds.map((id) => `wall:${id}`));
+  });
+
+  it("maps an unknown room id to no keys, rather than throwing", () => {
+    expect(highlightKeysForSelection({ kind: "room", id: "nope" }, createEmptyDesign())).toEqual([]);
+  });
+
+  it("maps symbol and pipe selections to no keys — no 3D mesh exists for them yet", () => {
+    expect(highlightKeysForSelection({ kind: "symbol", id: "s1" }, createEmptyDesign())).toEqual([]);
+    expect(highlightKeysForSelection({ kind: "pipe", id: "p1" }, createEmptyDesign())).toEqual([]);
+  });
+
+  it("maps a sheet or org-chart selection to no keys — neither exists in 3D", () => {
+    expect(highlightKeysForSelection({ kind: "sheet", id: "sh1" }, createEmptyDesign())).toEqual([]);
+    expect(highlightKeysForSelection({ kind: "orgchart", id: "oc1" }, createEmptyDesign())).toEqual([]);
+  });
+
+  it("maps no selection to no keys", () => {
+    expect(highlightKeysForSelection(null, createEmptyDesign())).toEqual([]);
+    expect(highlightKeysForSelection(undefined, createEmptyDesign())).toEqual([]);
+    expect(highlightKeysForSelection({}, createEmptyDesign())).toEqual([]);
+  });
+
+  it("tolerates a missing design for a non-room selection", () => {
+    expect(highlightKeysForSelection({ kind: "wall", id: "w1" }, null)).toEqual(["wall:w1"]);
   });
 });

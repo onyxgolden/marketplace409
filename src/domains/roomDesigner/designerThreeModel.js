@@ -388,3 +388,41 @@ export function pickWallAt(design, point, maxDistanceIn = 12) {
 }
 
 export { findWall };
+
+// ---------------------------------------------------------------------------
+// Selection <-> 3D highlight mapping (P1-A: split-screen view sync)
+//
+// The 3D viewport tags every mesh it builds with a registry key so a 2D
+// selection can find and highlight the matching mesh(es) without rebuilding
+// the scene. This mapping — which registry key(s) a given 2D selection
+// corresponds to — is pure and framework-free, so it belongs here rather
+// than in the DesignerViewport3D component, and is unit-testable against
+// plain design objects with no Three.js or DOM involved.
+// ---------------------------------------------------------------------------
+
+/** Registry key for a highlightable 3D entity. */
+export function highlightRegistryKey(kind, id) {
+  return `${kind}:${id}`;
+}
+
+/**
+ * Which highlight-registry keys does a 2D selection correspond to in 3D?
+ *
+ * A room has no 3D mesh of its own — it highlights via its own walls. An
+ * opening highlights via its window glass/sill/header (a door is an open
+ * gap with no mesh, so it has nothing to highlight — that is correct
+ * behavior, not a gap in coverage). Symbols and pipes have no 3D
+ * representation yet (buildThreeScene does not emit meshes for them), so
+ * selecting one maps to no keys — a deliberate no-op, not an oversight.
+ */
+export function highlightKeysForSelection(selection, design) {
+  if (!selection || !selection.kind) return [];
+  if (selection.kind === "wall") return [highlightRegistryKey("wall", selection.id)];
+  if (selection.kind === "opening") return [highlightRegistryKey("opening", selection.id)];
+  if (selection.kind === "furniture") return [highlightRegistryKey("furniture", selection.id)];
+  if (selection.kind === "room") {
+    const room = (design?.rooms || []).find((r) => r.id === selection.id);
+    return (room?.wallIds || []).map((id) => highlightRegistryKey("wall", id));
+  }
+  return [];
+}

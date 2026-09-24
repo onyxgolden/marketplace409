@@ -291,8 +291,14 @@ export function designerReducer(state, action) {
         },
       };
     }
+    // Three view modes: "2d" (PlanCanvas only), "3d" (DesignerViewport3D
+    // only), "split" (both, side by side — see DesignerCanvasArea). Anything
+    // else falls back to "2d" rather than rendering nothing.
     case "SET_VIEW":
-      return { ...state, view: action.view === "3d" ? "3d" : "2d" };
+      return {
+        ...state,
+        view: action.view === "3d" || action.view === "split" ? action.view : "2d",
+      };
     case "SELECT":
       return { ...state, selection: action.selection, multiSelection: [] };
     case "TOGGLE_MULTI_SELECT": {
