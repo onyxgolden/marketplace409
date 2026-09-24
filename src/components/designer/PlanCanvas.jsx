@@ -563,6 +563,26 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       }
       return;
     }
+    // Wall body — click to select, drag to move the whole wall rigidly.
+    // This sits AFTER the endpoint-handle check above, so grabbing an
+    // endpoint still stretches the wall; only a hit on the body translates
+    // it. The grab offset is kept (as with rooms) so the wall never jumps
+    // its endpoint to the cursor when the drag starts.
+    if (hit?.kind === "wall") {
+      const wall = design.walls.find((w) => w.id === hit.id);
+      dispatch({ type: "SELECT", selection: hit });
+      if (wall) {
+        setDrag({
+          kind: "move-wall",
+          id: hit.id,
+          moved: false,
+          grabX: plan.x - wall.a.x,
+          grabY: plan.y - wall.a.y,
+          last: { x: wall.a.x, y: wall.a.y },
+        });
+      }
+      return;
+    }
     // Placed room — click to select, drag to move the room and its walls.
     if (hit?.kind === "room") {
       const room = (design.rooms || []).find((r) => r.id === hit.id);
@@ -726,6 +746,21 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (drag.kind === "move-sheet") {
       dispatch({ type: "MOVE_SHEET", sheetId: drag.id, x: plan.x - drag.dx, y: plan.y - drag.dy, coalesce: `move-sheet:${drag.id}` });
       setDrag({ ...drag, moved: true });
+    }
+    // Wall body drag — the grab offset is preserved and the wall's `a`
+    // endpoint follows the snapped pointer, so the wall moves on grid
+    // increments while the pointer stays where it grabbed. Deltas are
+    // dispatched (not absolute points) so both endpoints translate equally
+    // and the wall's length and angle are preserved exactly.
+    if (drag.kind === "move-wall") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      const anchor = { x: point.x - drag.grabX, y: point.y - drag.grabY };
+      const dx = anchor.x - drag.last.x;
+      const dy = anchor.y - drag.last.y;
+      if (dx !== 0 || dy !== 0) {
+        dispatch({ type: "MOVE_WALL", wallId: drag.id, dx, dy, coalesce: `move-wall:${drag.id}` });
+      }
+      setDrag({ ...drag, last: anchor, moved: true });
     }
     // Placed room drag — the grab offset is preserved and the room anchor
     // follows the snapped pointer, so the room moves on grid increments

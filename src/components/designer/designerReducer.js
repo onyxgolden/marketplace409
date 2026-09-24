@@ -26,6 +26,7 @@ import {
   findRoom,
   findSheet,
   findSymbolInstance,
+  findWall,
   moveFurniture,
   moveFurnitureMany,
   moveOpening,
@@ -36,6 +37,7 @@ import {
   moveSheet,
   moveSymbol,
   moveUnderlay,
+  moveWall,
   moveWallEndpoint,
   patchSheet,
   placeFurniture,
@@ -296,6 +298,16 @@ export function designerReducer(state, action) {
         moveWallEndpoint(state.design, action.wallId, action.end, action.point),
         action.coalesce,
       );
+    // Rigid move of a whole wall, mirroring MOVE_ROOM: guarded on the wall
+    // still existing, and coalesced so one drag is one undo step.
+    case "MOVE_WALL": {
+      if (!findWall(state.design, action.wallId)) return state;
+      return touch(
+        state,
+        moveWall(state.design, action.wallId, action.dx, action.dy),
+        action.coalesce,
+      );
+    }
     case "ADD_ROOM":
       return touch(state, addRoomFromTemplate(state.design, action.templateId, action.at));
     case "DELETE_ROOM":

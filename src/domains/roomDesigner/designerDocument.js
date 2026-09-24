@@ -212,6 +212,33 @@ export function moveWallEndpoint(design, wallId, end, point) {
   return { ...design, walls };
 }
 
+/**
+ * Translate a whole wall rigidly by (dx, dy) — both endpoints move by the
+ * same delta, so the wall keeps its length and angle exactly.
+ *
+ * Openings are stored as `{ wallId, offsetIn, widthIn }` — an offset ALONG
+ * the wall from `a`, not an absolute point — so a rigid translation carries
+ * them along untouched, with no opening arithmetic here. That is asserted in
+ * the tests rather than left as a comment nobody checks.
+ *
+ * Unlike moveWallEndpoint, an unknown wall id is not an error: drags race
+ * against deletes, and a pointermove that lands after the wall is gone should
+ * be a no-op, not a thrown error in an event handler.
+ */
+export function moveWall(design, wallId, dx, dy) {
+  assertDesign(design);
+  if (!isFiniteNumber(dx) || !isFiniteNumber(dy)) {
+    throw new Error("Wall move delta must be finite numbers.");
+  }
+  if (!findWall(design, wallId)) return design;
+  const walls = design.walls.map((w) =>
+    w.id === wallId
+      ? { ...w, a: { x: w.a.x + dx, y: w.a.y + dy }, b: { x: w.b.x + dx, y: w.b.y + dy } }
+      : w,
+  );
+  return { ...design, walls };
+}
+
 /** Delete a wall and any openings cut into it. */
 export function deleteWall(design, wallId) {
   assertDesign(design);
