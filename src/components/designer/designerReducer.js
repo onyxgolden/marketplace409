@@ -591,6 +591,25 @@ export function designerReducer(state, action) {
       // and ONE undo touch, so the import is a single undoable unit and a
       // failed prepare can never leave a half-applied design behind.
       return touch(state, applyImportResult(withPipeDefaults(state.design), action.importResult));
+    // Atomic PDF import, same contract as VSDX: ONE pure step, ONE undo touch.
+    // A vector import appends native walls; a scanned import replaces the
+    // background underlay. The merge is done here with the same primitives the
+    // rest of the reducer uses rather than by calling into the importer, so
+    // pdf.js and the importer pipeline stay out of the main bundle.
+    case "IMPORT_PDF_RESULT": {
+      const prepared = action.importResult;
+      if (!prepared) return state;
+      if (prepared.mode === "raster") {
+        if (!prepared.image) return state;
+        return {
+          ...touch(state, setUnderlay(state.design, prepared.image)),
+          // A new underlay invalidates any in-progress calibration clicks.
+          calibration: null,
+        };
+      }
+      if (!prepared.records) return state;
+      return touch(state, applyImportResult(withPipeDefaults(state.design), prepared.records));
+    }
     default:
       return state;
   }
