@@ -889,7 +889,8 @@ export default function CaptureEditorHost() {
               className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center text-gray-300"
             >
               <span className="text-lg font-medium">Open a PNG, JPEG, or WebP to start</span>
-              <span className="text-sm text-gray-400">…or paste a screenshot from your clipboard (Ctrl+V)</span>
+              <span className="hidden text-sm text-gray-400 md:inline">…or paste a screenshot from your clipboard (Ctrl+V)</span>
+              <span className="text-sm text-gray-400 md:hidden">…or tap Open image to pick a screenshot from your photos</span>
               <span className="text-xs text-gray-500">SVG and GIF are rejected · images are re-encoded on import, metadata stripped</span>
             </button>
           ) : (
