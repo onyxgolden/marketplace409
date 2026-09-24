@@ -374,36 +374,41 @@ export default function ForgeApplicationRail({
                 </button>
               </div>
 
-              <Link
-                href="/?chooseWorkspace=1"
-                onClick={() => setMobileOpen(false)}
-                className="mb-5 flex min-h-12 items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 text-sm font-black text-slate-300"
+              <div
+                data-testid="mobile-nav-scroll"
+                className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
               >
-                <LayoutGrid aria-hidden="true" className="h-5 w-5" />
-                All apps
-              </Link>
+                <Link
+                  href="/?chooseWorkspace=1"
+                  onClick={() => setMobileOpen(false)}
+                  className="mb-5 flex min-h-12 items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 text-sm font-black text-slate-300"
+                >
+                  <LayoutGrid aria-hidden="true" className="h-5 w-5" />
+                  All apps
+                </Link>
 
-              <div className="mb-5">
-                <WorkspaceLinks
-                  pathname={pathname}
-                  expanded
-                  onNavigate={() => setMobileOpen(false)}
-                />
-              </div>
-
-              <div className="border-t border-white/10 pt-3">
-                <div className="px-1 pb-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                  Forge
+                <div className="mb-5">
+                  <WorkspaceLinks
+                    pathname={pathname}
+                    expanded
+                    onNavigate={() => setMobileOpen(false)}
+                  />
                 </div>
-                <ForgeApplicationLinks
-                  pathname={pathname}
-                  expanded
-                  onNavigate={() =>
-                    setMobileOpen(
-                      false,
-                    )
-                  }
-                />
+
+                <div className="border-t border-white/10 pt-3">
+                  <div className="px-1 pb-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                    Forge
+                  </div>
+                  <ForgeApplicationLinks
+                    pathname={pathname}
+                    expanded
+                    onNavigate={() =>
+                      setMobileOpen(
+                        false,
+                      )
+                    }
+                  />
+                </div>
               </div>
             </aside>
           </div>

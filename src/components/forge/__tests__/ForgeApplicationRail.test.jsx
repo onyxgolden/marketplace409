@@ -47,6 +47,7 @@ describe(
           "Import",
           "Members",
           "Capture",
+          "Call Shield",
           "Charts",
         ]);
 

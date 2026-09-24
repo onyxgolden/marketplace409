@@ -238,7 +238,12 @@ export default function WorkspaceShell({ children }) {
                 All apps
               </Link>
 
-              <WorkspaceLinks pathname={pathname} expanded onNavigate={() => setMobileOpen(false)} />
+              <div
+                data-testid="mobile-nav-scroll"
+                className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+              >
+                <WorkspaceLinks pathname={pathname} expanded onNavigate={() => setMobileOpen(false)} />
+              </div>
             </aside>
           </div>
         )}
