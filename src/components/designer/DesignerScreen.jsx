@@ -2620,6 +2620,8 @@ export function SaveAsShapeButton({ onSave }) {
         &ldquo;My shapes&rdquo; — star it there for quick access.
       </p>
     </div>
+  );
+}
 
 /**
  * Room name field.
@@ -2665,8 +2667,6 @@ export function RoomNameField({ room, dispatch }) {
         className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white placeholder:text-gray-600"
       />
     </label>
-  );
-}
   );
 }
 
