@@ -26,8 +26,16 @@ const CASE_OPENED_ROW = {
   id: "event-1",
   type: "CASE_OPENED",
   payload: { caseId: CASE_ID, reportedBusinessName: "Cruise Agency" },
-  recorded_at: "2026-09-23T15:00:00.000Z",
+  recorded_at: "2026-09-23T15:30:00.000Z",
   seq: 0,
+};
+
+const IMPORT_EVENT_ROW = {
+  id: "event-9",
+  type: "CALL_LOGGED",
+  payload: { numberShown: "(713) 239-9946", sourceImportId: IMPORT_ID },
+  recorded_at: "2026-09-23T15:30:00.000Z",
+  seq: 1,
 };
 
 function confirmJson(body, params) {
@@ -43,14 +51,14 @@ function methodsOf(db, method) {
 }
 
 describe("POST /api/call-shield/imports/[id]/confirm", () => {
-  it("appends the call event and marks the import matched in one request", async () => {
+  it("claims the import, appends the call event, and returns success", async () => {
     const db = mockSupabase([
       { data: IMPORT_ROW, error: null }, // import row
       { data: { id: CASE_ID }, error: null }, // case ownership check
       { data: [CASE_OPENED_ROW], error: null }, // case events
+      { data: { id: IMPORT_ID }, error: null }, // claim update wins
       { data: { seq: 0 }, error: null }, // max seq
       { data: null, error: null }, // insert event
-      { data: { id: IMPORT_ID }, error: null }, // mark matched
     ]);
     authedGuard(guardCallShieldRequest, db);
 
@@ -60,6 +68,11 @@ describe("POST /api/call-shield/imports/[id]/confirm", () => {
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
 
+    // The claim is a single conditional UPDATE guarded by IS NULL.
+    const updateCall = methodsOf(db, "update")[0];
+    expect(updateCall[1][0]).toEqual({ matched_case_id: CASE_ID, dismissed: false });
+    expect(db._calls).toContainEqual(["is", ["matched_case_id", null]]);
+
     const insertCall = methodsOf(db, "insert")[0];
     const inserted = insertCall[1][0];
     expect(inserted.type).toBe("CALL_LOGGED");
@@ -67,14 +80,68 @@ describe("POST /api/call-shield/imports/[id]/confirm", () => {
     expect(inserted.payload.direction).toBe("incoming");
     expect(inserted.payload.businessNameStated).toBe("Cruise Agency");
     expect(inserted.payload.sourceImportId).toBe(IMPORT_ID);
-
-    const updateCall = methodsOf(db, "update")[0];
-    expect(updateCall[1][0]).toEqual({ matched_case_id: CASE_ID, dismissed: false });
   });
 
-  it("is idempotent: an already-matched import returns success without appending", async () => {
+  it("loser of a concurrent confirm race returns alreadyMatched without appending", async () => {
+    const db = mockSupabase([
+      { data: IMPORT_ROW, error: null }, // import row, still unmatched
+      { data: { id: CASE_ID }, error: null }, // case ownership check
+      { data: [CASE_OPENED_ROW], error: null }, // case events
+      { data: null, error: null }, // claim update: lost the race
+      { data: { ...IMPORT_ROW, matched_case_id: CASE_ID }, error: null }, // re-read: winner claimed it
+    ]);
+    authedGuard(guardCallShieldRequest, db);
+
+    const response = await confirmJson({ caseId: CASE_ID });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.alreadyMatched).toBe(true);
+    // No event appended by the loser.
+    expect(methodsOf(db, "insert")).toHaveLength(0);
+  });
+
+  it("loser of a race against a different case gets 409", async () => {
+    const db = mockSupabase([
+      { data: IMPORT_ROW, error: null },
+      { data: { id: CASE_ID }, error: null },
+      { data: [CASE_OPENED_ROW], error: null },
+      { data: null, error: null }, // claim update: lost the race
+      { data: { ...IMPORT_ROW, matched_case_id: OTHER_CASE_ID }, error: null }, // winner used another case
+    ]);
+    authedGuard(guardCallShieldRequest, db);
+
+    const response = await confirmJson({ caseId: CASE_ID });
+    expect(response.status).toBe(409);
+    expect(methodsOf(db, "insert")).toHaveLength(0);
+  });
+
+  it("recovers after a crash between claim and event append: appends without duplicating", async () => {
+    const db = mockSupabase([
+      { data: { ...IMPORT_ROW, matched_case_id: CASE_ID }, error: null }, // claimed, no event yet
+      { data: { id: CASE_ID }, error: null }, // case ownership check
+      { data: [CASE_OPENED_ROW], error: null }, // events: no import event
+      { data: { seq: 0 }, error: null }, // max seq
+      { data: null, error: null }, // insert event
+    ]);
+    authedGuard(guardCallShieldRequest, db);
+
+    const response = await confirmJson({ caseId: CASE_ID });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.recovered).toBe(true);
+    const insertCall = methodsOf(db, "insert")[0];
+    expect(insertCall[1][0].payload.sourceImportId).toBe(IMPORT_ID);
+  });
+
+  it("is idempotent: an already-matched import with its event returns success without writing", async () => {
     const db = mockSupabase([
       { data: { ...IMPORT_ROW, matched_case_id: CASE_ID }, error: null },
+      { data: { id: CASE_ID }, error: null },
+      { data: [CASE_OPENED_ROW, IMPORT_EVENT_ROW], error: null },
     ]);
     authedGuard(guardCallShieldRequest, db);
 
@@ -100,19 +167,12 @@ describe("POST /api/call-shield/imports/[id]/confirm", () => {
     expect(methodsOf(db, "update")).toHaveLength(0);
   });
 
-  it("recovers after a crash between event append and matched-mark: marks matched without duplicating", async () => {
-    const existingEvent = {
-      id: "event-9",
-      type: "CALL_LOGGED",
-      payload: { numberShown: "(713) 239-9946", sourceImportId: IMPORT_ID },
-      recorded_at: "2026-09-23T15:30:00.000Z",
-      seq: 1,
-    };
+  it("never double-appends when an orphaned event predates the claim", async () => {
     const db = mockSupabase([
       { data: IMPORT_ROW, error: null }, // import row, still unmatched
       { data: { id: CASE_ID }, error: null }, // case ownership check
-      { data: [CASE_OPENED_ROW, existingEvent], error: null }, // events incl. the orphaned one
-      { data: { id: IMPORT_ID }, error: null }, // mark matched
+      { data: [CASE_OPENED_ROW, IMPORT_EVENT_ROW], error: null }, // events incl. an orphaned one
+      { data: { id: IMPORT_ID }, error: null }, // claim update wins
     ]);
     authedGuard(guardCallShieldRequest, db);
 
@@ -122,10 +182,7 @@ describe("POST /api/call-shield/imports/[id]/confirm", () => {
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.recovered).toBe(true);
-    // No second event appended — only the matched-mark update ran.
     expect(methodsOf(db, "insert")).toHaveLength(0);
-    const updateCall = methodsOf(db, "update")[0];
-    expect(updateCall[1][0]).toEqual({ matched_case_id: CASE_ID, dismissed: false });
   });
 
   it("returns 404 when the import is not the owner's", async () => {
@@ -136,7 +193,7 @@ describe("POST /api/call-shield/imports/[id]/confirm", () => {
     expect(db.from).toHaveBeenCalledTimes(1);
   });
 
-  it("returns 404 when the case is not the owner's", async () => {
+  it("returns 404 when the case is not the owner's, without claiming", async () => {
     const db = mockSupabase([
       { data: IMPORT_ROW, error: null },
       { data: null, error: null }, // case check: not found
@@ -145,6 +202,7 @@ describe("POST /api/call-shield/imports/[id]/confirm", () => {
     const response = await confirmJson({ caseId: CASE_ID });
     expect(response.status).toBe(404);
     expect(methodsOf(db, "insert")).toHaveLength(0);
+    expect(methodsOf(db, "update")).toHaveLength(0);
   });
 
   it("rejects a malformed caseId without touching the database", async () => {
