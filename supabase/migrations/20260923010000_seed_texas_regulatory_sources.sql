@@ -41,22 +41,29 @@ select
   seed.issuing_authority,
   seed.jurisdiction,
   seed.edition,
-  seed.effective_date,
+  seed.effective_date::date,
   seed.official_url,
-  seed.topic_tags,
+  seed.topic_tags::text[],
   seed.provenance,
-  seed.retrieval_date,
-  seed.verification_date,
+  seed.retrieval_date::date,
+  seed.verification_date::date,
   seed.jurisdiction_state
 from (select distinct id::text as owner_id from auth.users) as owners
 cross join (values
-    ('Texas Local Government Code — Chapter 214, Municipal Regulation of Housing and Other Structures', '§214.212', 'Texas Legislature', 'Texas', NULL, NULL, 'https://statutes.capitol.texas.gov/Docs/LG/htm/LG.214.htm', '{"building-codes","municipal-authority"}', 'Official site of the Texas Legislature', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE') -- https://statutes.capitol.texas.gov/Docs/LG/htm/LG.214.htm,
-    ('What you need to know about windstorm inspections', NULL, 'Texas Department of Insurance', 'Texas', NULL, NULL, 'https://tdi.texas.gov/tips/need-windstorm-inspection.html', '{"windstorm","inspections"}', 'Texas Department of Insurance', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE') -- https://tdi.texas.gov/tips/need-windstorm-inspection.html,
-    ('TDI Product Evaluations index', NULL, 'Texas Department of Insurance', 'Texas', NULL, NULL, 'https://tdi.texas.gov/wind/prod/index.html', '{"windstorm","windows","doors"}', 'Texas Department of Insurance', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE') -- https://tdi.texas.gov/wind/prod/index.html,
-    ('WPI-8 windstorm inspection fact sheet', NULL, 'Texas Department of Insurance', 'Texas', NULL, NULL, 'https://tdi.texas.gov/WIND/documents/WPI-8-fact-sheet-eng-sp.pdf', '{"windstorm","inspections"}', 'Texas Department of Insurance', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE') -- https://tdi.texas.gov/WIND/documents/WPI-8-fact-sheet-eng-sp.pdf,
-    ('Building Codes — City of Beaumont', NULL, 'City of Beaumont', 'Beaumont, Texas', NULL, NULL, 'https://beaumonttexas.gov/707/Building-Codes', '{"building-codes","permits","inspections"}', 'City of Beaumont', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE') -- https://beaumonttexas.gov/707/Building-Codes,
-    ('Adopted Building Codes — City of Beaumont', NULL, 'City of Beaumont', 'Beaumont, Texas', NULL, NULL, 'https://beaumonttexas.gov/160/Adopted-Building-Codes', '{"building-codes","residential-code"}', 'City of Beaumont', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE') -- https://beaumonttexas.gov/160/Adopted-Building-Codes,
-    ('City of Port Arthur — official website', NULL, 'City of Port Arthur', 'Port Arthur, Texas', NULL, NULL, 'https://www.portarthurtx.gov/', '{"building-codes","permits"}', 'City of Port Arthur — see the Permits & Inspections department', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE') -- https://www.portarthurtx.gov/
+    -- https://statutes.capitol.texas.gov/Docs/LG/htm/LG.214.htm
+    ('Texas Local Government Code — Chapter 214, Municipal Regulation of Housing and Other Structures', '§214.212', 'Texas Legislature', 'Texas', NULL, NULL, 'https://statutes.capitol.texas.gov/Docs/LG/htm/LG.214.htm', '{"building-codes","municipal-authority"}', 'Official site of the Texas Legislature', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE'),
+    -- https://tdi.texas.gov/tips/need-windstorm-inspection.html
+    ('What you need to know about windstorm inspections', NULL, 'Texas Department of Insurance', 'Texas', NULL, NULL, 'https://tdi.texas.gov/tips/need-windstorm-inspection.html', '{"windstorm","inspections"}', 'Texas Department of Insurance', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE'),
+    -- https://tdi.texas.gov/wind/prod/index.html
+    ('TDI Product Evaluations index', NULL, 'Texas Department of Insurance', 'Texas', NULL, NULL, 'https://tdi.texas.gov/wind/prod/index.html', '{"windstorm","windows","doors"}', 'Texas Department of Insurance', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE'),
+    -- https://tdi.texas.gov/WIND/documents/WPI-8-fact-sheet-eng-sp.pdf
+    ('WPI-8 windstorm inspection fact sheet', NULL, 'Texas Department of Insurance', 'Texas', NULL, NULL, 'https://tdi.texas.gov/WIND/documents/WPI-8-fact-sheet-eng-sp.pdf', '{"windstorm","inspections"}', 'Texas Department of Insurance', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE'),
+    -- https://beaumonttexas.gov/707/Building-Codes
+    ('Building Codes — City of Beaumont', NULL, 'City of Beaumont', 'Beaumont, Texas', NULL, NULL, 'https://beaumonttexas.gov/707/Building-Codes', '{"building-codes","permits","inspections"}', 'City of Beaumont', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE'),
+    -- https://beaumonttexas.gov/160/Adopted-Building-Codes
+    ('Adopted Building Codes — City of Beaumont', NULL, 'City of Beaumont', 'Beaumont, Texas', NULL, NULL, 'https://beaumonttexas.gov/160/Adopted-Building-Codes', '{"building-codes","residential-code"}', 'City of Beaumont', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE'),
+    -- https://www.portarthurtx.gov/
+    ('City of Port Arthur — official website', NULL, 'City of Port Arthur', 'Port Arthur, Texas', NULL, NULL, 'https://www.portarthurtx.gov/', '{"building-codes","permits"}', 'City of Port Arthur — see the Permits & Inspections department', '2026-09-23', '2026-09-23', 'VERIFIED_SOURCE')
 ) as seed (
   title,
   section_identifier,
