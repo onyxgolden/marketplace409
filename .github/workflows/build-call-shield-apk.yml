@@ -1,0 +1,58 @@
+# Build the Call Shield Android companion APK (Slice A).
+#
+# The dev sandbox cannot run Gradle (its network filter intercepts the
+# JVM-to-JVM TCP the Gradle daemon needs), so the debug APK is built here on
+# a standard GitHub-hosted runner and uploaded as an artifact. Sideload the
+# APK from the workflow run's Artifacts onto the test phone.
+name: Build Call Shield APK
+
+on:
+  push:
+    branches:
+      - "feat/call-shield-s3a-android-import"
+    paths:
+      - "mobile/**"
+      - ".github/workflows/build-call-shield-apk.yml"
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # android-actions/setup-android@v3 defaults its `packages` input to
+      # "tools platform-tools", but Google removed the legacy `tools` SDK
+      # package from the repository (2026-09), so `sdkmanager tools` exits 1
+      # and kills the job. Override the default; the Android Gradle Plugin
+      # resolves platform-34 / build-tools 34 itself at build time.
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build debug APK
+        run: bash scripts/build-apk.sh
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-call-shield-debug
+          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

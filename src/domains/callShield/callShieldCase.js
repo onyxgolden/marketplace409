@@ -70,6 +70,11 @@ export function logCall(caseState, {
   pitchNotes = "",
   agentName = "",
   businessNameStated = "",
+  // Links the event to the staged android_call_imports row it was confirmed
+  // from. Lets the confirm endpoint recover (instead of duplicating) when a
+  // retry arrives after the event was appended but before the import was
+  // marked matched.
+  sourceImportId = null,
 } = {}) {
   assertCaseState(caseState);
   if (!isNonEmptyString(numberShown)) {
@@ -91,6 +96,7 @@ export function logCall(caseState, {
     agentName: typeof agentName === "string" ? agentName.trim() : "",
     // What the caller claimed to represent — a user assertion, not a finding.
     businessNameStated: typeof businessNameStated === "string" ? businessNameStated.trim() : "",
+    sourceImportId: typeof sourceImportId === "string" && sourceImportId ? sourceImportId : null,
   });
   return { state: applyEvents(caseState.events, [event]), event };
 }

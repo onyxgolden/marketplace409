@@ -81,6 +81,11 @@ export const FORGE_APPLICATIONS =
       shortLabel: "Cp",
     }),
     Object.freeze({
+      href: "/forge/call-shield",
+      label: "Call Shield",
+      shortLabel: "CS",
+    }),
+    Object.freeze({
       href: "/forge/charts",
       label: "Charts",
       shortLabel: "Ch",

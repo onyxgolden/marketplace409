@@ -64,6 +64,17 @@ describe("logCall", () => {
     expect(() => logCall(s, { numberShown: "123", occurredAt: "not-a-date" })).toThrow(TypeError);
     expect(() => logCall(s, { numberShown: "123", direction: "sideways" })).toThrow(TypeError);
   });
+
+  it("carries an optional sourceImportId so confirms stay idempotent", () => {
+    const { event } = logCall(openedCase(), {
+      numberShown: "123",
+      sourceImportId: "import-1",
+    });
+    expect(event.payload.sourceImportId).toBe("import-1");
+
+    const { event: noSource } = logCall(openedCase(), { numberShown: "123" });
+    expect(noSource.payload.sourceImportId).toBeNull();
+  });
 });
 
 describe("recordOptOut / recordDncRegistration / acknowledgeRecordingNotice", () => {
