@@ -57,7 +57,7 @@ const OPENING_MIN_WIDTH_IN = 12;
  * SVG 2D floor-plan editor. All plan math is inches; the component maps
  * plan <-> screen with a pan/zoom transform kept in local state.
  */
-export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, orthoSnap, layerVisibility, dispatch, zoomRequest }) {
+export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
   const [view, setView] = useState({ scale: 1.6, ox: 60, oy: 60 });
@@ -337,6 +337,19 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
       return { kind: "orgchart", x: point.x, y: point.y };
     }
+    if (tool === "custom-shape" && pendingCustomShape) {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      const widthIn = pendingCustomShape.bounds?.widthIn || 0;
+      const heightIn = pendingCustomShape.bounds?.heightIn || 0;
+      return {
+        kind: "custom-shape",
+        x: point.x - widthIn / 2,
+        y: point.y - heightIn / 2,
+        widthIn,
+        heightIn,
+        label: pendingCustomShape.name,
+      };
+    }
     if (tool === "wall" || tool === "wallrect") {
       const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapRadiusIn: 9 });
       return { kind: "anchor", x: point.x, y: point.y };
@@ -443,6 +456,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (tool === "orgchart") {
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
       dispatch({ type: "ADD_ORG_CHART", x: point.x, y: point.y });
+      return;
+    }
+    // Saved shape from the user's library: click to drop a copy, centered on
+    // the click the way any other drop-in shape behaves.
+    if (tool === "custom-shape") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      dispatch({ type: "PLACE_CUSTOM_SHAPE", x: point.x, y: point.y });
       return;
     }
     if (tool === "erase") {
@@ -1339,6 +1359,22 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         </g>
       );
     }
+    if (ghost.kind === "custom-shape") {
+      const topLeft = toScreen({ x: ghost.x, y: ghost.y });
+      const wPx = ghost.widthIn * view.scale;
+      const hPx = ghost.heightIn * view.scale;
+      return (
+        <g pointerEvents="none" data-testid="placement-ghost">
+          <rect x={topLeft.x} y={topLeft.y} width={wPx} height={hPx}
+            fill={GHOST} fillOpacity={0.18}
+            stroke={GHOST} strokeWidth={2} strokeDasharray="8 5" />
+          <text x={topLeft.x + wPx / 2} y={topLeft.y + hPx / 2}
+            textAnchor="middle" fontSize={13} fontWeight={600} fill={GHOST}>
+            {ghost.label}
+          </text>
+        </g>
+      );
+    }
     if (ghost.kind === "anchor") {
       const s = toScreen(ghost);
       return (
@@ -1355,7 +1391,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const cursorForTool = {
     select: "default", wall: "crosshair", wallrect: "crosshair", room: "copy", door: "crosshair",
     window: "crosshair", furniture: "copy", pipe: "crosshair", piping: "copy",
-    orgchart: "copy",
+    orgchart: "copy", "custom-shape": "copy",
     erase: "not-allowed", pan: spaceDown ? "grabbing" : "grab",
     calibrate: "crosshair",
   }[tool] || "default";

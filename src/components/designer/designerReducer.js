@@ -66,6 +66,7 @@ import {
   updateUnderlay,
 } from "@/domains/roomDesigner/designerDocument";
 import { applyImportResult } from "@/domains/roomDesigner/importers/vsdx/visioMapper";
+import { insertShapeCentered } from "@/domains/roomDesigner/customShapes/customShapeInstantiate";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { PIPE_DIAMETERS_IN, PIPE_LAYERS } from "@/domains/roomDesigner/pipingGeometry";
@@ -85,6 +86,8 @@ export const TOOLS = Object.freeze([
   "erase",
   "pan",
   "calibrate",
+  // Placing a saved shape from the user's personal library.
+  "custom-shape",
 ]);
 
 export function createInitialState(design) {
@@ -96,6 +99,7 @@ export function createInitialState(design) {
     // Phase 2: piping mode — defaults for new pipe runs.
     pendingPipe: { diameterIn: 2, material: "Carbon steel", service: "Process", layer: "auto" },
     pendingSymbol: null, // { domain, symbolId } for the piping-symbol tool
+    pendingCustomShape: null, // the saved shape record armed for placement
     orthoSnap: true, // orthogonal (90°) vertex snapping for pipe runs
     layerVisibility: { piping: true, equipment: true, annotations: true },
     selection: null, // { kind: "wall"|"opening"|"furniture"|"room"|"pipe"|"symbol", id }
@@ -242,6 +246,26 @@ export function designerReducer(state, action) {
         return state;
       }
       return { ...state, pendingPipe: { ...state.pendingPipe, ...action.pipe }, tool: "pipe" };
+    }
+    // Arm a saved shape for placement. The shape RECORD travels in the action
+    // rather than an id: the library lives in the screen (it is per-user local
+    // storage, not part of the design document), so the reducer never needs to
+    // know how to look one up.
+    case "SET_PENDING_CUSTOM_SHAPE": {
+      if (!action.shape || !action.shape.entities) return state;
+      return { ...state, pendingCustomShape: action.shape, tool: "custom-shape" };
+    }
+    case "PLACE_CUSTOM_SHAPE": {
+      const shape = action.shape || state.pendingCustomShape;
+      if (!shape) return state;
+      // Placement is ONE pure merge and ONE undo touch, so a dropped shape is
+      // a single undoable unit however many entities it contains.
+      try {
+        return touch(state, insertShapeCentered(state.design, shape, { x: action.x, y: action.y }));
+      } catch {
+        // A damaged shape must not take the canvas down mid-click.
+        return state;
+      }
     }
     case "SET_PENDING_SYMBOL": {
       if (!findSymbol(action.domain, action.symbolId)) return state;

@@ -299,3 +299,142 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
     expect(reason.textContent).toMatch(/background image/i);
   });
 });
+
+describe("ToolPalette (external favorites)", () => {
+  let container;
+  let root;
+
+  const customTool = (id, favorite) => tool(id, { favorite });
+
+  const renderPalette = async (props = {}) => {
+    await act(async () => {
+      root.render(
+        <ToolPalette
+          grouped={grouped()}
+          activeToolId="select"
+          hasUnderlay={false}
+          onSelect={() => {}}
+          {...props}
+        />
+      );
+    });
+  };
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    window.localStorage.clear();
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    window.localStorage.clear();
+  });
+
+  it("shows a tool as favorited from the external map, not the palette's own list", async () => {
+    const externalFavorites = new Map([["custom-shape-a", true]]);
+    const customGrouped = groupToolsByCategory([
+      ...TOOL_DEFS,
+      customTool("custom-shape-a", true),
+    ], [
+      { id: "custom", label: "My shapes", toolIds: ["custom-shape-a"] },
+    ]);
+    await act(async () => {
+      root.render(
+        <ToolPalette
+          grouped={customGrouped}
+          activeToolId="select"
+          hasUnderlay={false}
+          onSelect={() => {}}
+          externalFavorites={externalFavorites}
+          onToggleExternalFavorite={() => {}}
+        />
+      );
+    });
+    // Externally-favorited tool shows up in the Favorites category...
+    const header = queryCategoryHeader(container, "Favorites");
+    expect(header).toBeTruthy();
+    expect(container.textContent).toContain("custom-shape-a");
+    // ...and its star renders as filled (aria-pressed true).
+    const star = queryFavoriteToggle(container, "custom-shape-a");
+    expect(star.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("calls onToggleExternalFavorite instead of touching localStorage for an external tool", async () => {
+    const externalFavorites = new Map([["custom-shape-a", false]]);
+    const onToggle = vi.fn();
+    const customGrouped = groupToolsByCategory([
+      ...TOOL_DEFS,
+      customTool("custom-shape-a", false),
+    ], [
+      { id: "custom", label: "My shapes", toolIds: ["custom-shape-a"] },
+    ]);
+    await act(async () => {
+      root.render(
+        <ToolPalette
+          grouped={customGrouped}
+          activeToolId="select"
+          hasUnderlay={false}
+          onSelect={() => {}}
+          externalFavorites={externalFavorites}
+          onToggleExternalFavorite={onToggle}
+        />
+      );
+    });
+    const star = queryFavoriteToggle(container, "custom-shape-a");
+    await act(async () => {
+      star.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+    expect(onToggle).toHaveBeenCalledWith("custom-shape-a");
+    // Toggling an externally-owned favorite must never ADD it to the
+    // palette's own favorite-tool-ids list — the shape record is the only
+    // source of truth for its starred state. (The palette still persists its
+    // own, unrelated favoriteIds state on mount, which is fine.)
+    expect(JSON.parse(window.localStorage.getItem(FAVORITE_STORAGE_KEY) || "[]")).not.toContain(
+      "custom-shape-a",
+    );
+  });
+
+  it("leaves ordinary tools on the palette's own favorites list unaffected", async () => {
+    window.localStorage.setItem(FAVORITE_STORAGE_KEY, JSON.stringify(["wall"]));
+    const externalFavorites = new Map([["custom-shape-a", false]]);
+    const customGrouped = groupToolsByCategory([
+      ...TOOL_DEFS,
+      customTool("custom-shape-a", false),
+    ], [
+      { id: "custom", label: "My shapes", toolIds: ["custom-shape-a"] },
+    ]);
+    await act(async () => {
+      root.render(
+        <ToolPalette
+          grouped={customGrouped}
+          activeToolId="select"
+          hasUnderlay={false}
+          onSelect={() => {}}
+          externalFavorites={externalFavorites}
+          onToggleExternalFavorite={() => {}}
+        />
+      );
+    });
+    const wallStar = queryFavoriteToggle(container, "wall");
+    expect(wallStar.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => {
+      wallStar.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+    // Unstarred ordinary tool -> palette's own storage updates as usual.
+    expect(JSON.parse(window.localStorage.getItem(FAVORITE_STORAGE_KEY))).toEqual([]);
+  });
+
+  it("behaves exactly as before when no external favorites are given", async () => {
+    await renderPalette();
+    const star = queryFavoriteToggle(container, "wall");
+    await act(async () => {
+      star.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+    expect(JSON.parse(window.localStorage.getItem(FAVORITE_STORAGE_KEY))).toEqual(["wall"]);
+  });
+});
