@@ -114,11 +114,12 @@ describe("room preset + container catalog integrity", () => {
     }
   });
 
-  it("a 40' container drops as a labeled 480×96 footprint with four walls", () => {
+  it("a 40' container drops unnamed as a 480×96 footprint with four walls", () => {
     const design = addRoomFromTemplate(createEmptyDesign(), "container-40", { x: 0, y: 0 });
     expect(design.rooms).toHaveLength(1);
     const [room] = design.rooms;
-    expect(room.label).toBe("Shipping container 40'");
+    // Presets drop unnamed now; the preset identity is on templateId.
+    expect(room.label).toBe("");
     expect(room.templateId).toBe("container-40");
     expect(room.wallIds).toHaveLength(4);
     expect(design.walls).toHaveLength(4);

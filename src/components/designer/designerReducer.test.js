@@ -57,7 +57,9 @@ describe("designerReducer", () => {
       type: "ADD_ROOM", templateId: "kitchen", at: { x: 0, y: 0 },
     });
     expect(state.design.walls).toHaveLength(4);
-    expect(state.design.rooms[0].label).toBe("Kitchen");
+    // New rooms arrive unnamed; templateId still records which preset it was.
+    expect(state.design.rooms[0].label).toBe("");
+    expect(state.design.rooms[0].templateId).toBe("kitchen");
   });
 
   it("cuts an opening and deletes it via selection", () => {

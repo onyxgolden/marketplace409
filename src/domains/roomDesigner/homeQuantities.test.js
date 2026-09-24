@@ -74,7 +74,7 @@ describe("homeQuantities — measureLevelDesign", () => {
   it("measures a room level from geometry", () => {
     const m = measureLevelDesign(bedroomDesign());
     expect(m.roomCount).toBe(1);
-    expect(m.rooms[0]).toMatchObject({ label: "Bedroom", areaSqFt: 144 });
+    expect(m.rooms[0]).toMatchObject({ label: "", areaSqFt: 144 });
     expect(m.grossRoomAreaSqFt).toBe(144);
     // net = 144 - (576 * 4.5 / 144) = 144 - 18 = 126
     expect(m.netRoomAreaSqFt).toBe(126);

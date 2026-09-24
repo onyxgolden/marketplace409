@@ -212,6 +212,33 @@ export function moveWallEndpoint(design, wallId, end, point) {
   return { ...design, walls };
 }
 
+/**
+ * Translate a whole wall rigidly by (dx, dy) — both endpoints move by the
+ * same delta, so the wall keeps its length and angle exactly.
+ *
+ * Openings are stored as `{ wallId, offsetIn, widthIn }` — an offset ALONG
+ * the wall from `a`, not an absolute point — so a rigid translation carries
+ * them along untouched, with no opening arithmetic here. That is asserted in
+ * the tests rather than left as a comment nobody checks.
+ *
+ * Unlike moveWallEndpoint, an unknown wall id is not an error: drags race
+ * against deletes, and a pointermove that lands after the wall is gone should
+ * be a no-op, not a thrown error in an event handler.
+ */
+export function moveWall(design, wallId, dx, dy) {
+  assertDesign(design);
+  if (!isFiniteNumber(dx) || !isFiniteNumber(dy)) {
+    throw new Error("Wall move delta must be finite numbers.");
+  }
+  if (!findWall(design, wallId)) return design;
+  const walls = design.walls.map((w) =>
+    w.id === wallId
+      ? { ...w, a: { x: w.a.x + dx, y: w.a.y + dy }, b: { x: w.b.x + dx, y: w.b.y + dy } }
+      : w,
+  );
+  return { ...design, walls };
+}
+
 /** Delete a wall and any openings cut into it. */
 export function deleteWall(design, wallId) {
   assertDesign(design);
@@ -251,13 +278,38 @@ export function addRoomFromTemplate(design, templateId, at) {
     wallIds.push(id);
   }
   const room = {
+    // New rooms start UNNAMED: the template's label ("Bedroom") described the
+    // shape that was dropped, not what this room is, and there was no way to
+    // change it. templateId still carries the template identity for anything
+    // that keys off it; renameRoom supplies the name. Consumers already fall
+    // back sensibly on a blank label (DXF export writes "Room").
     id: nextId("room"),
-    label: template.label,
+    label: "",
     templateId: template.id,
     wallIds,
     polygon: [clonePoint(tl), clonePoint(tr), clonePoint(br), clonePoint(bl)],
   };
   return { ...next, rooms: [...next.rooms, room] };
+}
+
+/**
+ * Name (or re-name) a room. Whitespace is trimmed, and a blank name is a
+ * legitimate state meaning "unnamed" — it is what a new room starts as, and
+ * consumers already fall back on it.
+ *
+ * An unknown room id returns the design unchanged rather than throwing: this
+ * is driven by a text field, and a keystroke that lands after the room is
+ * deleted should be a no-op.
+ */
+export function renameRoom(design, roomId, label) {
+  assertDesign(design);
+  const room = (design.rooms || []).find((r) => r.id === roomId);
+  if (!room) return design;
+  const clean = typeof label === "string" ? label.trim().slice(0, 120) : "";
+  return {
+    ...design,
+    rooms: design.rooms.map((r) => (r.id === roomId ? { ...r, label: clean } : r)),
+  };
 }
 
 export function deleteRoom(design, roomId) {

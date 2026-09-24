@@ -26,6 +26,7 @@ import {
   findRoom,
   findSheet,
   findSymbolInstance,
+  findWall,
   moveFurniture,
   moveFurnitureMany,
   moveOpening,
@@ -36,6 +37,7 @@ import {
   moveSheet,
   moveSymbol,
   moveUnderlay,
+  moveWall,
   moveWallEndpoint,
   patchSheet,
   placeFurniture,
@@ -44,6 +46,7 @@ import {
   removeUnderlay,
   renameDesign,
   renameOrgChart,
+  renameRoom,
   resizeFurniture,
   resizeOpening,
   resetFurnitureSize,
@@ -296,6 +299,16 @@ export function designerReducer(state, action) {
         moveWallEndpoint(state.design, action.wallId, action.end, action.point),
         action.coalesce,
       );
+    // Rigid move of a whole wall, mirroring MOVE_ROOM: guarded on the wall
+    // still existing, and coalesced so one drag is one undo step.
+    case "MOVE_WALL": {
+      if (!findWall(state.design, action.wallId)) return state;
+      return touch(
+        state,
+        moveWall(state.design, action.wallId, action.dx, action.dy),
+        action.coalesce,
+      );
+    }
     case "ADD_ROOM":
       return touch(state, addRoomFromTemplate(state.design, action.templateId, action.at));
     case "DELETE_ROOM":
@@ -508,6 +521,16 @@ export function designerReducer(state, action) {
       }
     case "SET_WALL_MATERIAL":
       return touch(state, setWallMaterial(state.design, action.wallId, action.material));
+    // Naming a room. Coalesced so typing a name is one undo step, not one
+    // per keystroke.
+    case "RENAME_ROOM": {
+      if (!findRoom(state.design, action.roomId)) return state;
+      return touch(
+        state,
+        renameRoom(state.design, action.roomId, action.label),
+        action.coalesce,
+      );
+    }
     case "SET_ROOM_FINISH":
       return touch(state, setRoomFinish(state.design, action.roomId, action.finish));
     case "SET_FURNITURE_COST":
