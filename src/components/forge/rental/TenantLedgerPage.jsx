@@ -1,7 +1,9 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PostIncomeForm from "./PostIncomeForm";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -28,59 +30,33 @@ async function fetchTenantLedger(tenantId) {
 // balance after every row. Charges and refunds land in the Charge column, payments in
 // the Payment column. Security deposits are never in this table; they keep their own
 // section below. Clicking a row's description opens the read-only transaction detail.
+//
+// Data layer: stale-while-revalidate. Reopening a recently viewed tenant's ledger
+// serves the cached payload instantly and refreshes in the background — the last
+// good ledger never blanks out while the new tenant's data loads.
 export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onClose, onPostCharge, initialView = null }) {
-  const [ledger, setLedger] = useState(null);
-  const [deposits, setDeposits] = useState(null);
-  const [importedHistory, setImportedHistory] = useState(null);
-  const [openCharges, setOpenCharges] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    tenantId ? `tenant-ledger:${tenantId}` : null,
+    () => fetchTenantLedger(tenantId),
+    { ttlMs: 60_000 },
+  );
+  const ledger = data?.ledger || null;
+  const deposits = data?.deposits || null;
+  const importedHistory = data?.importedHistory || null;
+  const openCharges = data?.openCharges || [];
   const [detailEntry, setDetailEntry] = useState(null);
   const [showPostIncome, setShowPostIncome] = useState(initialView === "post-income");
   const [postedMessage, setPostedMessage] = useState("");
   const printFired = useRef(false);
 
-  const load = useCallback(async () => {
-    if (!tenantId) return;
-    setLoading(true);
-    setError("");
-    try {
-      const body = await fetchTenantLedger(tenantId);
-      setLedger(body.ledger);
-      setDeposits(body.deposits || null);
-      setImportedHistory(body.importedHistory || null);
-      setOpenCharges(body.openCharges || []);
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [tenantId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchTenantLedger(tenantId)
-      .then((body) => {
-        if (cancelled) return;
-        setLedger(body.ledger);
-        setDeposits(body.deposits || null);
-        setImportedHistory(body.importedHistory || null);
-        setOpenCharges(body.openCharges || []);
-        setError("");
-      })
-      .catch((caught) => { if (!cancelled) setError(caught.message); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [tenantId]);
-
   // "Print Statement" from the card menu lands here and fires the print dialog once
   // the ledger has loaded — one click from card to paper.
   useEffect(() => {
-    if (initialView === "print" && !loading && !error && ledger && !printFired.current) {
+    if (initialView === "print" && !isLoading && !error && ledger && !printFired.current) {
       printFired.current = true;
       if (typeof window.print === "function") window.print();
     }
-  }, [initialView, loading, error, ledger]);
+  }, [initialView, isLoading, error, ledger]);
 
   useEffect(() => {
     if (!detailEntry) return undefined;
@@ -124,20 +100,23 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
       </div>
 
       {postedMessage && <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200 print:hidden">{postedMessage}</p>}
-      {loading && <p className="mt-6 text-sm font-bold text-slate-500 dark:text-slate-400">Loading ledger…</p>}
+      {isLoading && <ForgeLoadingState label="Loading ledger…" />}
+      {isRefreshing && ledger && (
+        <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+      )}
       {error && <p role="alert" className="mt-6 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
 
-      {!loading && !error && ledger && (
+      {!isLoading && ledger && (
         <>
           {showPostIncome && (
             <div className="mt-6 print:hidden">
               <PostIncomeForm tenantName={tenantName} openCharges={openCharges}
                 onCancel={() => setShowPostIncome(false)}
-                onStaleBalance={load}
+                onStaleBalance={refresh}
                 onSaved={(payment) => {
                   setShowPostIncome(false);
                   setPostedMessage(`Income posted: ${money.format(Number(payment?.amountCents || 0) / 100)} on ${formatDate(payment?.receivedAt)}.`);
-                  load();
+                  refresh();
                 }} />
             </div>
           )}

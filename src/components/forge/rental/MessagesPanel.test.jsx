@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MessagesPanel from "./MessagesPanel.jsx";
+import { clearSWRCache } from "../../../hooks/swrCache";
 
 function mount(ui) {
   const container = document.createElement("div");
@@ -38,6 +39,9 @@ function stubFetch({ rental = rentalPayload, pf = pfPayload, thread = { messages
 
 describe("MessagesPanel", () => {
   let mounted;
+  // The stale-while-revalidate cache is module-global: clear it so each test
+  // starts cold and the loading/error assertions are deterministic.
+  beforeEach(() => { clearSWRCache(); });
   afterEach(() => { if (mounted) unmount(mounted); mounted = null; vi.unstubAllGlobals(); });
 
   it("shows a loading state, then merges rental and private-financing conversations sorted by most recent activity", async () => {

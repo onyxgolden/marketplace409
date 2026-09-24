@@ -2,8 +2,9 @@
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TenantLedgerPage from "./TenantLedgerPage";
+import { clearSWRCache } from "../../../hooks/swrCache";
 
 const ledgerPayload = {
   ledger: {
@@ -49,6 +50,11 @@ function renderPage(props = {}, payloadOverride = null) {
 describe("TenantLedgerPage", () => {
   let container;
   let root;
+
+  // The stale-while-revalidate cache is module-global and keyed by tenant: clear
+  // it so each test fetches its own stubbed payload instead of a previous
+  // test's cached ledger.
+  beforeEach(() => { clearSWRCache(); });
 
   afterEach(() => {
     if (root) act(() => root.unmount());
