@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import RentalRecordActions, { labelRentalRecordContext } from "./RentalRecordActions";
 import RentalPhotoUpload from "./RentalPhotoUpload";
@@ -7,6 +7,8 @@ import TenantPaymentHistory from "./TenantPaymentHistory";
 import TenantLedgerPage from "./TenantLedgerPage";
 import { useCardContextMenu, CardContextMenu, CARD_REGION_ATTRIBUTE } from "./CardContextMenu";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 export function propertyLabelForTenant(tenant, leases, leaseMemberships, units) {
   const leaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id);
@@ -43,16 +45,41 @@ const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD
 
 export default function RentalTenantPanel({ initialTenants = [], onNavigate: navigate, recordContext = null }) {
   const [message, setMessage] = useState("");
-  const [tenants, setTenants] = useState(initialTenants);
-  const [leases, setLeases] = useState([]);
-  const [leaseMemberships, setLeaseMemberships] = useState([]);
-  const [units, setUnits] = useState([]);
-  const [openCharges, setOpenCharges] = useState([]);
   const openCreateTenant = recordContext?.openCreateTenant === true;
+  // Master tenant dataset: stale-while-revalidate under one global key. The panel
+  // renders `initialTenants` (or the last cached payload) immediately and refreshes
+  // in the background — switching away and back never blanks the tenant list.
+  // Mutations post through /api/rental then call refresh() to revalidate.
+  const fetchRentalMaster = useCallback(async () => {
+    const response = await fetch("/api/rental");
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to load tenants.");
+    return result;
+  }, []);
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "rental:tenants",
+    fetchRentalMaster,
+    { ttlMs: 60_000 },
+  );
+  const tenants = data?.tenants ?? initialTenants;
+  const leases = data?.leases || [];
+  const leaseMemberships = data?.leaseMemberships || [];
+  const units = data?.units || [];
+  const openCharges = data?.openCharges || [];
   const [showCreate, setShowCreate] = useState(openCreateTenant || initialTenants.length === 0);
   const [selectedId, setSelectedId] = useState(initialTenants[0]?.id || null);
   const [working, setWorking] = useState(false);
   const { menu: contextMenu, onContextMenu, openAt: openContextMenuAt, close: closeContextMenu } = useCardContextMenu();
+  // One-time adoption of the loaded dataset (mirrors the old fetch-on-mount): pick
+  // the first tenant when nothing is selected yet, and collapse the create form
+  // when tenants exist. Background refreshes never touch selection or the form.
+  const adoptedInitial = useRef(false);
+  useEffect(() => {
+    if (!data || adoptedInitial.current) return;
+    adoptedInitial.current = true;
+    setSelectedId((current) => current || data.tenants?.[0]?.id || null);
+    setShowCreate(openCreateTenant || (data.tenants?.length || 0) === 0);
+  }, [data, openCreateTenant]);
   // Full-page ledger state: { tenant, initialView } where initialView is null |
   // "post-income" | "print". Rendered full-page below, replacing the card surface.
   const [ledgerTenant, setLedgerTenant] = useState(null);
@@ -73,21 +100,8 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     const rect = buttonElement?.getBoundingClientRect?.();
     openContextMenuAt(rect ? rect.left : 120, rect ? rect.bottom + 6 : 120, tenantMenuItems(tenant, context));
   }, [openContextMenuAt, tenantMenuItems]);
-  async function loadTenants(preferredId = null) {
-    const response = await fetch("/api/rental");
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Unable to load tenants.");
-    const loaded = result.tenants || []; setTenants(loaded); setSelectedId((current) => loaded.some((item) => item.id === preferredId) ? preferredId : loaded.some((item) => item.id === current) ? current : loaded[0]?.id || null);
-    setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setUnits(result.units || []); setOpenCharges(result.openCharges || []);
-  }
-  useEffect(() => {
-    fetch("/api/rental").then(async (response) => {
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Unable to load tenants.");
-      return result;
-    }).then((result) => { const loadedTenants = result.tenants || []; setTenants(loadedTenants); setSelectedId(loadedTenants[0]?.id || null); setShowCreate(openCreateTenant || loadedTenants.length === 0);
-      setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setUnits(result.units || []); setOpenCharges(result.openCharges || []); }).catch((error) => setMessage(error.message));
-  }, [openCreateTenant]);
+  // Mutations revalidate the cached master dataset; selection is preserved because
+  // refresh() never blanks the list.
   async function save(event) {
     event.preventDefault(); setWorking(true); setMessage("");
     const formElement = event.currentTarget;
@@ -103,7 +117,8 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       }
       const savedId = result.tenant.id;
       formElement.reset();
-      await loadTenants(savedId);
+      await refresh();
+      setSelectedId(savedId);
       setShowCreate(false);
       setMessage(`New tenant added: ${result.tenant.displayName}. The saved tenant is open below.`);
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
@@ -116,7 +131,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
         body: JSON.stringify({ operation: "delete-unused-tenant", tenantId: tenant.id, confirmation: "DELETE" }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to delete the unused tenant.");
-      await loadTenants();
+      await refresh();
       setMessage(`Deleted unused duplicate: ${result.deletedTenant.display_name}.`);
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
@@ -125,7 +140,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ operation: "update-tenant-email", tenantId, email: form.get("portalEmail") }) });
       const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to update tenant email.");
-      setMessage(`Portal email updated for ${result.tenant.display_name}.`); await loadTenants();
+      setMessage(`Portal email updated for ${result.tenant.display_name}.`); await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function updateProfile(event, tenantId) {
@@ -143,7 +158,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ operation: "update-tenant-profile", tenantId, profile }) });
       const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to update tenant profile.");
-      setMessage(`Tenant information updated for ${result.tenant.display_name}.`); await loadTenants();
+      setMessage(`Tenant information updated for ${result.tenant.display_name}.`); await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function makePrimary(leaseId, tenantId) {
@@ -151,7 +166,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ operation: "set-primary-tenant", leaseId, tenantId }) });
       const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to change the primary tenant.");
-      setMessage("Primary tenant updated."); await loadTenants();
+      setMessage("Primary tenant updated."); await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   // Full-page ledger replaces the entire panel surface — Rentec-style, no cramped card.
@@ -172,6 +187,9 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       {tenants.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`shrink-0 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a new tenant</button>}
     </div>
     {message && <p role="status" className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-slate-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-slate-200">{message}</p>}
+    {isLoading && <div className="mt-4"><ForgeLoadingState label="Loading tenants…" /></div>}
+    {isRefreshing && tenants.length > 0 && <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>}
+    {loadError && !data && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{loadError}</p>}
     {tenants.length > 0 && <RentalRecordBrowser title="Tenants" records={tenants} selectedId={selectedId} onSelect={setSelectedId} getThumbnail={(tenant) => tenant.photo_url} listSize="wide"
       columns={[
         { header: "Tenant", render: (tenant) => <><strong className="block text-sm text-slate-950 dark:text-white">{tenant.display_name}</strong><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{tenant.email} · {tenant.status || "Status not set"}</span></> },
@@ -195,9 +213,9 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
           className="rounded-xl border border-slate-300 px-3 py-2 text-lg font-black leading-none text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">⋮</button><RentalRecordActions label="Tenant actions" summaryClassName="cursor-pointer list-none rounded-xl bg-red-600 px-4 py-2 text-sm font-black text-white transition hover:bg-red-700" actions={[{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Messaging",onSelect:()=>onNavigate?.("communications",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)}]}/></div></div>
         <LeaseSummary lease={household.lease} unit={household.unit}/>
         <TenantPaymentHistory key={tenant.id} tenantId={tenant.id} tenantName={tenant.display_name} onOpenFullLedger={() => openFullLedger(tenant)} />
-        <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={loadTenants}/>
+        <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh}/>
         {!leaseMemberships.some((item) => item.tenant_id === tenant.id) && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="text-sm font-bold text-red-900 dark:text-red-200">This tenant is not assigned to any lease.</p><button type="button" disabled={working} onClick={() => deleteUnusedTenant(tenant)} className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Delete unused duplicate</button></div>}
-        <div className="mt-6 space-y-4"><h3 className="text-xl font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={loadTenants} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>
+        <div className="mt-6 space-y-4"><h3 className="text-xl font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>
         <a href="/auth?next=/forge/rental/portal" className="mt-5 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant sign-in</a></div>; })()}
     </RentalRecordBrowser>}
     {showCreate && <form onSubmit={save} className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2">

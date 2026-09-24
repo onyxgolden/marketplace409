@@ -1,8 +1,10 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { compressImageFile } from "./compressImageFile";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const label = (value) => value?.replaceAll("_", " ") || "—";
 const identity = (value) => value;
@@ -23,8 +25,25 @@ const EXPIRATION_TEXT = { expired: "Expired", expiring_soon: "Expiring soon", cu
 
 export default function RentalDocumentsPanel({ initialData = null, dataScope = identity, recordContext = null }) {
   const propertyId = recordContext?.propertyId || null;
-  const [documents, setDocuments] = useState(initialData?.documents || []);
-  const [schedules, setSchedules] = useState(initialData?.schedules || []);
+  // Document library: stale-while-revalidate, keyed per property scope. The cached
+  // library renders instantly on return visits and refreshes in the background —
+  // the last good list never blanks out. Uploads/removals call refresh() to
+  // revalidate. When the parent supplies initialData we render it as-is (no fetch).
+  const fetchDocumentsPayload = useCallback(async () => {
+    const [documentResponse, rentalResponse] = await Promise.all([fetch("/api/rental/documents"), fetch("/api/rental")]);
+    const documentBody = await documentResponse.json();
+    const rentalBody = await rentalResponse.json();
+    if (!documentResponse.ok) throw new Error(documentBody.error);
+    if (!rentalResponse.ok) throw new Error(rentalBody.error);
+    return dataScope({ ...rentalBody, documents: documentBody.documents || [] });
+  }, [dataScope]);
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    initialData ? null : `rental-documents:${propertyId || "all"}`,
+    fetchDocumentsPayload,
+    { ttlMs: 60_000 },
+  );
+  const documents = (initialData?.documents ?? data?.documents) || [];
+  const schedules = (initialData?.schedules ?? data?.schedules) || [];
   const [selectedId, setSelectedId] = useState("");
   const [showUpload, setShowUpload] = useState(false);
   const [versionOf, setVersionOf] = useState(null);
@@ -34,18 +53,6 @@ export default function RentalDocumentsPanel({ initialData = null, dataScope = i
   const [searchResults, setSearchResults] = useState(null);
   const [versions, setVersions] = useState(null);
   const [auditLog, setAuditLog] = useState(null);
-
-  const load = useCallback(() => Promise.all([fetch("/api/rental/documents"), fetch("/api/rental")]).then(async ([documentResponse, rentalResponse]) => {
-    const documentBody = await documentResponse.json();
-    const rentalBody = await rentalResponse.json();
-    if (!documentResponse.ok) throw new Error(documentBody.error);
-    if (!rentalResponse.ok) throw new Error(rentalBody.error);
-    const scoped = dataScope({ ...rentalBody, documents: documentBody.documents || [] });
-    setDocuments(scoped.documents || []);
-    setSchedules(scoped.schedules || []);
-  }), [dataScope]);
-
-  useEffect(() => { if (!initialData) load().catch((reason) => setError(reason.message)); }, [initialData, load]);
 
   async function runSearch(event) {
     event.preventDefault();
@@ -90,7 +97,7 @@ export default function RentalDocumentsPanel({ initialData = null, dataScope = i
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(body?.error || (response.status === 413 ? "That file is too large to upload, even after compression." : `Upload failed (${response.status}).`));
       element.reset();
-      await load();
+      await refresh();
       setShowUpload(false);
       setMessage(versionOf ? "New version uploaded. The prior version is preserved and still accessible." : "Document uploaded.");
       setVersionOf(null);
@@ -121,7 +128,7 @@ export default function RentalDocumentsPanel({ initialData = null, dataScope = i
       const response = await fetch(`/api/rental/documents?documentId=${encodeURIComponent(documentId)}`, { method: "DELETE" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error);
-      await load();
+      await refresh();
       setMessage("Document removed.");
     } catch (reason) { setError(reason.message); }
   }
@@ -161,6 +168,9 @@ export default function RentalDocumentsPanel({ initialData = null, dataScope = i
     </div>
 
     {error ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p> : null}
+    {!error && loadError && !data && !initialData ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{loadError}</p> : null}
+    {!error && loadError && (data || initialData) ? <p role="status" className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh the library — showing the last saved data.</p> : null}
+    {isRefreshing && documents.length > 0 ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
     {message ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">{message}</p> : null}
 
     <form onSubmit={runSearch} className="mt-6 flex flex-wrap gap-2" role="search">
@@ -171,12 +181,12 @@ export default function RentalDocumentsPanel({ initialData = null, dataScope = i
       <button className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 dark:border-slate-600 dark:text-slate-200">Search</button>
       {searchResults ? <button type="button" onClick={clearSearch} className="rounded-lg px-4 py-2 text-sm font-bold text-sky-700 dark:text-sky-400">Clear</button> : null}
     </form>
-    {searchResults ? <p className="mt-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{searchResults.length} result(s) for "{searchTerm}"</p> : null}
+    {searchResults ? <p className="mt-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{searchResults.length} result(s) for &ldquo;{searchTerm}&rdquo;</p> : null}
 
     {showUpload ? <form aria-label={versionOf ? `Upload a new version of ${versionOf.title}` : "Upload rental document"} onSubmit={upload}
       className="mt-6 grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40 md:grid-cols-2">
       {versionOf ? <p className="rounded-lg bg-sky-50 p-3 text-sm font-bold text-sky-950 dark:bg-sky-950/30 dark:text-sky-200 md:col-span-2">
-        New version of "{versionOf.title}". The current file is preserved and stays accessible in version history.
+        New version of &ldquo;{versionOf.title}&rdquo;. The current file is preserved and stays accessible in version history.
       </p> : null}
       <label className="text-sm font-bold text-slate-900 dark:text-white">Lease (leave blank for a property-level document)
         <select name="leaseId" defaultValue="" required={!propertyId} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-3 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white">
@@ -211,7 +221,7 @@ export default function RentalDocumentsPanel({ initialData = null, dataScope = i
       <button className={`rounded-lg px-5 py-3 text-sm font-bold transition md:col-span-2 ${goldControlClassName}`}>{versionOf ? "Upload new version" : "Upload document"}</button>
     </form> : null}
 
-    <div className="mt-6">
+    {isLoading ? <div className="mt-6"><ForgeLoadingState label="Loading documents…" /></div> : <div className="mt-6">
       <RentalRecordBrowser title="Rental documents" records={visibleDocuments} selectedId={activeId} onSelect={(id) => { setSelectedId(id); setVersions(null); setAuditLog(null); }}
         getTitle={(item) => item.title} getSubtitle={(item) => `${label(item.category)} · ${item.tenant_visible ? "Published" : "Private"}${item.expiration_status ? ` · ${EXPIRATION_TEXT[item.expiration_status]}` : ""}`}
         emptyMessage="No rental documents uploaded.">
@@ -267,7 +277,7 @@ export default function RentalDocumentsPanel({ initialData = null, dataScope = i
           </div> : null}
         </div>}
       </RentalRecordBrowser>
-    </div>
+    </div>}
   </section>;
 }
 function Fact({ term, value }) { return <div><dt className="text-xs font-bold uppercase text-slate-500 dark:text-slate-400">{term}</dt><dd className="mt-1 break-words font-bold capitalize text-slate-900 dark:text-white">{value || "—"}</dd></div>; }
