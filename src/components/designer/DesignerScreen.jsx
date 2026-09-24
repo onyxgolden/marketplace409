@@ -33,6 +33,7 @@ import {
   X,
   ZoomIn,
 } from "lucide-react";
+import PdfImportPanel from "./PdfImportPanel";
 import PlanCanvas from "./PlanCanvas";
 import PrintSheetOverlay from "./PrintSheetOverlay";
 import { decodeUnderlayFile, UNDERLAY_ACCEPT, UNDERLAY_ACCEPT_LABEL } from "./underlayImage";
@@ -1000,6 +1001,7 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
         scheduling and cost tools — nothing is locked inside the editor.
       </p>
       <VsdxImportSection dispatch={dispatch} />
+      <PdfImportPanel design={design} dispatch={dispatch} />
       <UnderlaySection design={design} dispatch={dispatch} />
     </div>
   );

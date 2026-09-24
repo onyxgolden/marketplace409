@@ -989,12 +989,23 @@ export function totalRoomAreaSqFt(design) {
 // Follow-up if images get large: migrate to Supabase Storage and keep
 // only the storage path + dimensions on the design.
 
-/** Default underlay record fields for a freshly imported image. */
-export function buildUnderlayRecord({ name, mimeType, dataUrl, widthPx, heightPx }) {
+/**
+ * Default underlay record fields for a freshly imported image.
+ *
+ * `pxPerIn` is normally unknowable for a bitmap, so the default simply makes
+ * the image DEFAULT_UNDERLAY_WIDTH_IN wide on the plan and the user calibrates
+ * from there. A source that genuinely knows the image's physical scale (a PDF
+ * page, which carries its true paper size) may pass `pxPerIn` to skip that
+ * arbitrary default and land true to scale immediately.
+ */
+export function buildUnderlayRecord({ name, mimeType, dataUrl, widthPx, heightPx, pxPerIn }) {
   if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
     throw new Error("Underlay must be a PNG/JPEG data URL.");
   }
   if (!(widthPx > 0) || !(heightPx > 0)) throw new Error("Underlay image dimensions must be positive.");
+  if (pxPerIn !== undefined && !(pxPerIn > 0)) {
+    throw new Error("Underlay scale must be positive.");
+  }
   return {
     id: nextId("underlay"),
     name: typeof name === "string" && name.trim() ? name.trim() : "background",
@@ -1006,7 +1017,7 @@ export function buildUnderlayRecord({ name, mimeType, dataUrl, widthPx, heightPx
     locked: false,
     x: 0,
     y: 0,
-    pxPerIn: widthPx / DEFAULT_UNDERLAY_WIDTH_IN,
+    pxPerIn: pxPerIn > 0 ? pxPerIn : widthPx / DEFAULT_UNDERLAY_WIDTH_IN,
   };
 }
 
