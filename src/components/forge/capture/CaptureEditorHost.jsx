@@ -774,16 +774,16 @@ export default function CaptureEditorHost() {
 
   return (
     <div data-testid="capture-host" className="flex h-full flex-col" onPaste={onPaste}>
-      <div className="flex items-center justify-between border-b border-gray-200 px-6 py-3">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">Capture</h1>
-          <p className="text-sm text-gray-500">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-4 py-3 md:flex-nowrap md:px-6">
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold text-gray-900 md:text-xl">Capture</h1>
+          <p className="text-xs text-gray-500 md:text-sm">
             {doc
               ? `${doc.canvas.width}×${doc.canvas.height} · ${doc.annotations.length} annotation${doc.annotations.length === 1 ? "" : "s"}`
               : "Screenshot & image markup — annotations live in source-image pixels"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button type="button" className="rounded border border-gray-300 px-3 py-2 text-sm" onClick={() => fileRef.current?.click()} disabled={busy}>
             {doc ? "Replace image" : "Open image"}
           </button>
@@ -839,7 +839,7 @@ export default function CaptureEditorHost() {
       {notice && (
         <div
           role={notice.kind === "error" ? "alert" : "status"}
-          className={`border-b px-6 py-2 text-sm ${notice.kind === "error" ? "border-red-200 bg-red-50 text-red-800" : "border-green-200 bg-green-50 text-green-800"}`}
+          className={`border-b px-4 py-2 text-sm md:px-6 ${notice.kind === "error" ? "border-red-200 bg-red-50 text-red-800" : "border-green-200 bg-green-50 text-green-800"}`}
         >
           {notice.text}
           <button type="button" className="ml-4 underline" onClick={() => setNotice(null)}>Dismiss</button>
@@ -847,15 +847,21 @@ export default function CaptureEditorHost() {
       )}
 
       {recovered && (
-        <div role="alert" className="border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-900">
+        <div role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 md:px-6">
           Found an unsaved draft from your last session.
           <button type="button" className="ml-4 rounded border border-amber-400 px-2 py-1" onClick={restoreRecovered}>Restore draft</button>
           <button type="button" className="ml-2 underline" onClick={discardRecovered}>Discard</button>
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
-        <div className="flex w-36 flex-col gap-1 overflow-y-auto border-r border-gray-200 p-2" role="toolbar" aria-label="Annotation tools">
+      {/* Mobile: tools strip on top, canvas, then the inspector below (page scrolls).
+          Desktop (md+): classic three-column editor, unchanged. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
+        <div
+          className="flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-gray-200 p-2 md:w-36 md:flex-col md:overflow-x-visible md:overflow-y-auto md:border-b-0 md:border-r"
+          role="toolbar"
+          aria-label="Annotation tools"
+        >
           {TOOLS.map((t) => (
             <button
               key={t.id}
@@ -863,24 +869,24 @@ export default function CaptureEditorHost() {
               data-tool={t.id}
               onClick={() => setTool(t.id)}
               aria-pressed={tool === t.id}
-              className={`rounded px-3 py-2 text-left text-sm ${tool === t.id ? "bg-blue-600 text-white" : "text-gray-700 hover:bg-gray-100"}`}
+              className={`whitespace-nowrap rounded px-3 py-2 text-left text-sm md:whitespace-normal ${tool === t.id ? "bg-blue-600 text-white" : "text-gray-700 hover:bg-gray-100"}`}
             >
               {t.label}
             </button>
           ))}
-          <div className="mt-2 border-t border-gray-200 pt-2 text-xs text-gray-500">
+          <div className="hidden shrink-0 px-1 pt-2 text-xs text-gray-500 md:block">
             <p>Wheel: zoom</p>
             <p>Middle-drag / Space-drag: pan</p>
             <p>Del: remove · Ctrl+Z: undo</p>
           </div>
         </div>
 
-        <div ref={wrapRef} className="relative min-w-0 flex-1 bg-gray-900">
+        <div ref={wrapRef} className="relative h-[46vh] min-h-[280px] w-full shrink-0 bg-gray-900 md:h-auto md:min-h-0 md:min-w-0 md:flex-1 md:shrink">
           {!doc ? (
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-gray-300"
+              className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center text-gray-300"
             >
               <span className="text-lg font-medium">Open a PNG, JPEG, or WebP to start</span>
               <span className="text-sm text-gray-400">…or paste a screenshot from your clipboard (Ctrl+V)</span>
@@ -900,7 +906,7 @@ export default function CaptureEditorHost() {
           )}
         </div>
 
-        <div className="flex w-72 flex-col gap-4 overflow-y-auto border-l border-gray-200 p-4">
+        <div className="flex w-full shrink-0 flex-col gap-4 border-t border-gray-200 p-4 md:w-72 md:overflow-y-auto md:border-l md:border-t-0">
           <section>
             <h2 className="text-sm font-semibold text-gray-900">View</h2>
             <div className="mt-2 flex flex-wrap gap-2">
