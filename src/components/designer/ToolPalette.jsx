@@ -93,7 +93,19 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
  * runtime-registered categories such as Custom). Collapse state and
  * favorites persist across reloads.
  */
-export default function ToolPalette({ grouped, activeToolId, hasUnderlay, onSelect }) {
+export default function ToolPalette({
+  grouped,
+  activeToolId,
+  hasUnderlay,
+  onSelect,
+  // Tools whose starred state is owned elsewhere, as a Map of toolId ->
+  // boolean. Custom shapes use this: a shape's star lives on the shape record
+  // in the user's library, so it survives a delete-and-re-save and travels
+  // with the library, rather than being a second list keyed by tool id here.
+  // Tools absent from the map keep using the palette's own favorites.
+  externalFavorites = null,
+  onToggleExternalFavorite = null,
+}) {
   const [collapsedByCategory, setCollapsedByCategory] = useState(readCollapsedByCategory);
   const [favoriteIds, setFavoriteIds] = useState(readFavoriteToolIds);
 
@@ -134,9 +146,21 @@ export default function ToolPalette({ grouped, activeToolId, hasUnderlay, onSele
     if (!toolById.has(tool.id)) toolById.set(tool.id, tool);
   });
 
+  const ownedElsewhere = (toolId) =>
+    externalFavorites instanceof Map && externalFavorites.has(toolId);
+  const isFavorite = (toolId) =>
+    ownedElsewhere(toolId) ? externalFavorites.get(toolId) === true : favoriteIds.includes(toolId);
+  const handleToggleFavorite = (toolId) => {
+    if (ownedElsewhere(toolId)) {
+      if (typeof onToggleExternalFavorite === "function") onToggleExternalFavorite(toolId);
+      return;
+    }
+    toggleFavorite(toolId);
+  };
+
   // Favorites render as a category above the stencil groups, in palette
   // display order, ignoring stale ids that no longer exist.
-  const favoriteTools = allTools.filter((tool) => favoriteIds.includes(tool.id));
+  const favoriteTools = allTools.filter((tool) => isFavorite(tool.id));
   const categories =
     favoriteTools.length > 0
       ? [{ id: "favorites", label: "Favorites", tools: favoriteTools }, ...grouped.categories]
@@ -148,9 +172,9 @@ export default function ToolPalette({ grouped, activeToolId, hasUnderlay, onSele
       tool={tool}
       active={activeToolId === tool.id}
       disabled={tool.needsUnderlay && !hasUnderlay}
-      favorite={favoriteIds.includes(tool.id)}
+      favorite={isFavorite(tool.id)}
       onSelect={onSelect}
-      onToggleFavorite={toggleFavorite}
+      onToggleFavorite={handleToggleFavorite}
     />
   );
 

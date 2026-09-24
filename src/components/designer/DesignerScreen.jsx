@@ -17,6 +17,7 @@ import {
   Network,
   Plus,
   Printer,
+  Puzzle,
   Redo2,
   RotateCw,
   Ruler,
@@ -52,6 +53,21 @@ import {
 import OrgChartPanel from "./OrgChartPanel";
 import ObjectLibraryPanel from "./ObjectLibraryPanel";
 import { createInitialState, designerReducer } from "./designerReducer";
+import {
+  createEmptyLibrary,
+  removeShape,
+  renameShape,
+  toggleShapeFavorite,
+} from "@/domains/roomDesigner/customShapes/customShapeLibrary";
+import { addShape as addShapeToLibrary } from "@/domains/roomDesigner/customShapes/customShapeLibrary";
+import { captureSelection } from "@/domains/roomDesigner/customShapes/customShapeCapture";
+import { CustomShapeError } from "@/domains/roomDesigner/customShapes/customShapeErrors";
+import { loadLibrary, saveLibrary } from "@/domains/roomDesigner/customShapes/customShapeStorage";
+import {
+  customShapeToolDefs,
+  registerCustomShapeCategory,
+  shapeIdFromToolId,
+} from "@/domains/roomDesigner/customShapes/customShapeTools";
 // HOME DESIGNER slice 2: the screen edits the current level of a HomeProject.
 // The full envelope (levels[], currentLevelId, building metadata) persists
 // to designer_projects.design — see the slice 2 API. Legacy rows wrap
@@ -154,12 +170,76 @@ export const TOOL_DEFS = [
   { id: "calibrate", label: "Calibrate", icon: Ruler, hint: "Set the background image scale: click two points on it, then enter the real distance", needsUnderlay: true },
 ];
 
-// Pinned tools first, then Visio-style collapsible categories
-// (House, Rooms, Structures, Mechanical, Process, Plan) in the left tool palette.
-const GROUPED_TOOL_DEFS = groupToolsByCategory(TOOL_DEFS);
-
 export default function DesignerScreen({ projectId, initialName }) {
   const [state, dispatch] = useReducer(designerReducer, undefined, () => createInitialState());
+  // Personal custom-shape library: local-only, per browser, not part of the
+  // design document (a shape belongs to the DESIGNER, not to any one plan).
+  // Lazily read on mount so SSR never touches localStorage.
+  // Restored after mount (not via a lazy useState initializer), the same
+  // way ThemeProvider restores its stored preference — see that component
+  // for the rationale. ToolPalette's own localStorage reads use a lazy
+  // initializer instead, which works there because favorites/collapse state
+  // never add or remove a whole DOM subtree by themselves; a saved shape
+  // does (a new "My shapes" category, with its own button), so starting
+  // from the real library on the very first client render would make that
+  // render disagree with the server-rendered (library-less) markup — a
+  // hydration mismatch verified live: it forced a full remount and, in the
+  // window before that remount, the newly-added palette buttons did not
+  // respond to clicks at all.
+  const [shapeLibrary, setShapeLibrary] = useState(createEmptyLibrary);
+  useEffect(() => {
+    const stored = loadLibrary();
+    if (stored.shapes.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore of a value from an external store (localStorage) on mount.
+      setShapeLibrary(stored);
+    }
+  }, []);
+  // Persist on every change EXCEPT the mount commit. Skipping it there
+  // matters, not just tidiness: the restore effect above and this one both
+  // run in that same first commit, in declaration order, against the SAME
+  // (still-empty) `shapeLibrary` closure — the restore's setShapeLibrary
+  // only takes effect on the NEXT commit. Persisting unconditionally would
+  // therefore overwrite a real saved library with the empty one on every
+  // single page load, before the restore had a chance to matter.
+  const mountedShapeLibraryRef = useRef(false);
+  useEffect(() => {
+    if (!mountedShapeLibraryRef.current) {
+      mountedShapeLibraryRef.current = true;
+      return;
+    }
+    saveLibrary(shapeLibrary);
+  }, [shapeLibrary]);
+  // Pure, synchronous: capture + addShapeToLibrary either both succeed or
+  // both throw, so the library state never updates on a half-failed save.
+  // Throws CustomShapeError, which the button component below catches and
+  // shows inline — this function does not touch UI state itself.
+  const saveSelectionAsShape = useCallback(
+    (name) => {
+      const captured = captureSelection(state.design, state.selection, state.multiSelection);
+      setShapeLibrary((lib) => addShapeToLibrary(lib, captured, name));
+    },
+    [state.design, state.selection, state.multiSelection],
+  );
+
+  // Registered DURING render, not in an effect: registerToolCategory only
+  // mutates a module-level registry (no React state involved), and
+  // groupedToolDefs below is computed in this SAME render from that registry
+  // via getToolCategories()'s default parameter. If registration ran in an
+  // effect instead, the render that just added a shape would compute
+  // groupedToolDefs BEFORE the effect had a chance to run, so the
+  // freshly-saved shape would land in `ungrouped` instead of "My shapes"
+  // until some unrelated re-render happened to follow — verified live: this
+  // was exactly the bug before this fix.
+  registerCustomShapeCategory(shapeLibrary);
+
+  // Pinned tools first, then Visio-style collapsible categories (House,
+  // Rooms, Structures, Mechanical, Process, Plan, My shapes) in the left
+  // tool palette. Recomputed as the library changes (unlike the other
+  // categories, this one is genuinely dynamic).
+  const groupedToolDefs = groupToolsByCategory([
+    ...TOOL_DEFS,
+    ...customShapeToolDefs(shapeLibrary, Puzzle),
+  ]);
   const [name, setName] = useState(initialName || "Untitled design");
   const [status, setStatus] = useState({ kind: "loading", message: "Loading design…" });
   const [saving, setSaving] = useState(false);
@@ -709,7 +789,7 @@ export default function DesignerScreen({ projectId, initialName }) {
       <div className="flex min-h-0 flex-1">
         {/* tool palette: pinned tools, then collapsible Visio-style categories */}
         <ToolPalette
-          grouped={GROUPED_TOOL_DEFS}
+          grouped={groupedToolDefs}
           activeToolId={tool}
           hasUnderlay={Boolean(design.underlay)}
           onSelect={(toolId) => {
@@ -717,11 +797,25 @@ export default function DesignerScreen({ projectId, initialName }) {
             // room tool with that template pending instead of switching to
             // a (nonexistent) per-preset tool.
             const def = TOOL_DEFS.find((t) => t.id === toolId);
+            const shapeId = shapeIdFromToolId(toolId);
             if (def?.roomTemplate) {
               dispatch({ type: "SET_PENDING_ROOM", templateId: def.roomTemplate });
+            } else if (shapeId) {
+              const shape = shapeLibrary.shapes.find((s) => s.id === shapeId);
+              if (shape) dispatch({ type: "SET_PENDING_CUSTOM_SHAPE", shape });
             } else {
               dispatch({ type: "SET_TOOL", tool: toolId });
             }
+          }}
+          // A shape's star lives on the shape record, not in the palette's
+          // own favorite-tool-ids list, so it survives the shape being
+          // deleted and re-saved and travels with the library.
+          externalFavorites={
+            new Map(shapeLibrary.shapes.map((s) => [`custom-shape-${s.id}`, s.favorite]))
+          }
+          onToggleExternalFavorite={(toolId) => {
+            const shapeId = shapeIdFromToolId(toolId);
+            if (shapeId) setShapeLibrary((lib) => toggleShapeFavorite(lib, shapeId));
           }}
         />
 
@@ -759,7 +853,7 @@ export default function DesignerScreen({ projectId, initialName }) {
 
         {/* right panel */}
         <aside className="w-72 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3">
-          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} />
         </aside>
 
         {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
@@ -848,7 +942,7 @@ export default function DesignerScreen({ projectId, initialName }) {
   );
 }
 
-function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation }) {
+function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation, onSaveShape }) {
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingSymbol } = state;
 
   // Scale calibration for the background underlay (Visio trace-over workflow).
@@ -869,7 +963,7 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
 
   // Visio-style arrange: shift-click 2+ furniture pieces on the plan.
   if (multiSelection.length >= 2) {
-    return <ArrangePanel state={state} dispatch={dispatch} />;
+    return <ArrangePanel state={state} dispatch={dispatch} onSaveShape={onSaveShape} />;
   }
 
   // Object library: one Domain dropdown -> Category dropdown -> icon grid.
@@ -920,7 +1014,16 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
   }
 
   if (selection) {
-    return <SelectionPanel state={state} dispatch={dispatch} onPrint={onPrint} />;
+    return (
+      <div>
+        <SelectionPanel state={state} dispatch={dispatch} onPrint={onPrint} />
+        {SAVEABLE_SELECTION_KINDS.has(selection.kind) && (
+          <div className="mt-3 border-t border-gray-800 pt-3">
+            <SaveAsShapeButton onSave={onSaveShape} />
+          </div>
+        )}
+      </div>
+    );
   }
 
   // default: design summary + settings
@@ -2389,7 +2492,7 @@ function CalibrationPanel({ state, dispatch }) {
   );
 }
 
-function ArrangePanel({ state, dispatch }) {
+function ArrangePanel({ state, dispatch, onSaveShape }) {
   const { multiSelection } = state;
   const count = multiSelection.length;
   const btn = "rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700 disabled:opacity-40";
@@ -2428,6 +2531,9 @@ function ArrangePanel({ state, dispatch }) {
       {count < 3 && (
         <p className="mt-1 text-[11px] text-gray-500">Select 3 or more pieces to distribute.</p>
       )}
+      <div className="mt-2 border-t border-gray-800 pt-2">
+        <SaveAsShapeButton onSave={onSaveShape} />
+      </div>
       <button
         onClick={() => dispatch({ type: "DELETE_SELECTION" })}
         className="mt-3 flex items-center gap-1 rounded bg-red-900/60 px-2 py-1 text-xs text-red-200 hover:bg-red-800"
@@ -2437,6 +2543,83 @@ function ArrangePanel({ state, dispatch }) {
     </div>
   );
 }
+
+/** Selection kinds captureSelection can turn into a reusable shape. */
+const SAVEABLE_SELECTION_KINDS = new Set(["wall", "furniture", "room", "pipe", "symbol"]);
+
+/**
+ * "Save as shape" affordance: a button that opens an inline name prompt.
+ * `onSave(name)` is expected to throw CustomShapeError on failure (bad name,
+ * duplicate, full library, nothing capturable) — this component's only job
+ * is to show that message inline and keep the prompt open so the user can
+ * fix it, never to decide what is or is not saveable.
+ */
+export function SaveAsShapeButton({ onSave }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [error, setError] = useState(null);
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => {
+          setOpen(true);
+          setName("");
+          setError(null);
+        }}
+        className="flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700"
+      >
+        <Puzzle size={13} /> Save as shape…
+      </button>
+    );
+  }
+
+  const submit = () => {
+    try {
+      onSave(name);
+      setOpen(false);
+    } catch (err) {
+      setError(err?.message || "Could not save that shape.");
+    }
+  };
+
+  return (
+    <div className="rounded border border-gray-700 bg-gray-800/60 p-2">
+      <label className="block text-[11px] text-gray-400">
+        Shape name
+        <input
+          type="text"
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+            if (e.key === "Escape") setOpen(false);
+          }}
+          placeholder="e.g. Bay window nook"
+          className="mt-1 block w-full rounded bg-gray-900 px-2 py-1 text-white placeholder:text-gray-600"
+        />
+      </label>
+      {error && <p className="mt-1 text-[11px] text-red-300">{error}</p>}
+      <div className="mt-2 flex gap-1">
+        <button
+          onClick={submit}
+          className="rounded bg-emerald-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-emerald-600"
+        >
+          Save
+        </button>
+        <button
+          onClick={() => setOpen(false)}
+          className="rounded bg-gray-800 px-2 py-1 text-[11px] text-gray-300 hover:bg-gray-700"
+        >
+          Cancel
+        </button>
+      </div>
+      <p className="mt-1 text-[10px] leading-relaxed text-gray-500">
+        Saved locally to your browser. It appears in the left palette under
+        &ldquo;My shapes&rdquo; — star it there for quick access.
+      </p>
+    </div>
 
 /**
  * Room name field.
@@ -2482,6 +2665,8 @@ export function RoomNameField({ room, dispatch }) {
         className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white placeholder:text-gray-600"
       />
     </label>
+  );
+}
   );
 }
 
