@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Building2, Car, Coins, Gem, Pencil, Plus, Tractor, Trash2, Truck } from "lucide-react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const CLASS_PRESENTATION = {
@@ -18,23 +20,28 @@ const CLASS_PRESENTATION = {
 const today = () => new Date().toISOString().slice(0, 10);
 const emptyForm = () => ({ name: "", assetClass: "vehicle", ownershipScope: "business", value: "", valueDate: today(), purchaseCost: "", purchaseDate: "", linkedPropertyId: "", notes: "" });
 
+async function fetchAssetsPayload() {
+  const response = await fetch("/api/financial/assets");
+  const body = await response.json();
+  if (!response.ok) throw new Error(body?.error || "Unable to load assets.");
+  return body;
+}
+
 export default function FinancialAssetsPanel() {
-  const [assets, setAssets] = useState(null);
-  const [properties, setProperties] = useState([]);
+  // Stale-while-revalidate: the cached registry renders instantly on return visits; a
+  // refresh keeps the old rows on screen with only the subtle indicator flipping.
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "financial:assets",
+    fetchAssetsPayload,
+    { ttlMs: 60_000 },
+  );
+  const assets = data?.assets ?? null;
+  const properties = data?.properties ?? [];
   const [showForm, setShowForm] = useState(false);
   const [editingAssetId, setEditingAssetId] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-
-  const load = useCallback(async () => {
-    const response = await fetch("/api/financial/assets");
-    const body = await response.json();
-    if (!response.ok) throw new Error(body?.error || "Unable to load assets.");
-    setAssets(body.assets);
-    setProperties(body.properties || []);
-  }, []);
-  useEffect(() => { load().catch((thrown) => setError(thrown.message)); }, [load]);
 
   const totals = useMemo(() => {
     const rows = assets || [];
@@ -55,7 +62,7 @@ export default function FinancialAssetsPanel() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body?.error || "Unable to create asset.");
-      setForm(emptyForm()); setEditingAssetId(null); setShowForm(false); await load();
+      setForm(emptyForm()); setEditingAssetId(null); setShowForm(false); await refresh();
     } catch (thrown) { setError(thrown.message); } finally { setSaving(false); }
   }
 
@@ -90,7 +97,7 @@ export default function FinancialAssetsPanel() {
     });
     const body = await response.json();
     if (!response.ok) throw new Error(body?.error || "Unable to retire asset.");
-    await load();
+    await refresh();
   }
 
   const grouped = Object.entries(CLASS_PRESENTATION).map(([key, presentation]) => ({
@@ -99,11 +106,23 @@ export default function FinancialAssetsPanel() {
 
   return (
     <section data-financial-assets className="space-y-5">
+      {!assets && isLoading ? <ForgeLoadingState label="Loading assets…" /> : null}
+      {!assets && !isLoading && loadError ? (
+        <ForgeErrorState
+          title="Could not load your assets."
+          detail={loadError}
+          onRetry={refresh}
+        />
+      ) : null}
+      {assets ? (
+        <>
       <div className="rounded-3xl border border-slate-700 bg-[linear-gradient(135deg,#111b31_0%,#0b1325_55%,#17233c_100%)] p-6 text-white shadow-xl">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div><p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-400">FORGE Assets</p><h2 className="mt-2 text-3xl font-black">Net worth building blocks</h2><p className="mt-2 max-w-2xl text-sm text-slate-300">Track property, vehicles, equipment, trailers, collectibles, and crypto separately from income and expenses.</p></div>
           <button type="button" onClick={beginCreate} className={`inline-flex items-center gap-2 rounded-full px-5 py-2 text-sm font-black ${goldControlClassName}`}><Plus size={17} /> Add asset</button>
         </div>
+        {isRefreshing ? <p role="status" className="mt-4 text-xs font-bold text-slate-400">Updating…</p> : null}
+        {loadError ? <p role="status" className="mt-4 text-xs font-bold text-slate-400">Could not refresh — showing the last saved assets.</p> : null}
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
           {[["Total assets", totals.all], ["Business", totals.business], ["Personal", totals.personal]].map(([label, cents]) => <div key={label} className="rounded-2xl border border-white/10 bg-white/5 p-4"><p className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</p><p className="mt-1 text-2xl font-black tabular-nums">{money.format(cents / 100)}</p></div>)}
         </div>
@@ -124,8 +143,17 @@ export default function FinancialAssetsPanel() {
       </form>}
 
       {error && <p role="alert" className="rounded-2xl bg-rose-50 p-4 font-bold text-rose-800 dark:bg-rose-950/30 dark:text-rose-300">{error}</p>}
-      {assets && assets.length === 0 && <div className="rounded-3xl border border-dashed border-slate-300 p-10 text-center dark:border-slate-700"><h3 className="text-xl font-black">Your asset registry is ready</h3><p className="mt-2 text-sm text-slate-500">Add the vehicles, equipment, trailers, collectibles, crypto, and property values that belong in Net Worth.</p></div>}
+      {assets.length === 0 ? (
+        <ForgeEmptyState
+          headline="Your asset registry is ready"
+          guidance="Add the vehicles, equipment, trailers, collectibles, crypto, and property values that belong in Net Worth."
+          actionLabel="Add asset"
+          onAction={beginCreate}
+        />
+      ) : null}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">{grouped.map((group) => <section key={group.key} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900"><div className="flex items-center gap-3"><span className="rounded-xl bg-slate-100 p-2 dark:bg-slate-800"><group.icon size={20} /></span><h3 className="text-lg font-black">{group.label}</h3><span className="ml-auto text-sm font-black text-slate-500">{money.format(group.assets.reduce((sum, asset) => sum + Number(asset.latestValuation?.amountCents || 0), 0) / 100)}</span></div><div className="mt-4 divide-y divide-slate-200 dark:divide-slate-700">{group.assets.map((asset) => { const property = properties.find((item) => item.id === asset.linkedPropertyId); return <div key={asset.id} className="flex items-center justify-between gap-4 py-3"><div><p className="font-black">{asset.name}</p><p className="text-xs font-bold uppercase tracking-wide text-slate-500">{asset.ownershipScope} · {asset.latestValuation?.source || "no valuation"}{property ? ` · ${property.label}` : ""}</p></div><div className="flex items-center gap-3"><div className="text-right"><p className="font-black tabular-nums">{money.format(Number(asset.latestValuation?.amountCents || 0) / 100)}</p><p className="text-xs text-slate-500">as of {asset.latestValuation?.effectiveDate || "—"}</p></div><button type="button" onClick={() => beginEdit(asset)} aria-label={`Edit ${asset.name}`} className="min-h-[44px] min-w-[44px] rounded-xl bg-slate-100 p-2 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 lg:min-h-0 lg:min-w-0"><Pencil size={16} /></button><button type="button" onClick={() => retire(asset).catch((thrown) => setError(thrown.message))} aria-label={`Retire ${asset.name}`} className="min-h-[44px] min-w-[44px] rounded-xl bg-rose-50 p-2 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/30 dark:text-rose-300 lg:min-h-0 lg:min-w-0"><Trash2 size={16} /></button></div></div>; })}</div></section>)}</div>
+        </>
+      ) : null}
     </section>
   );
 }

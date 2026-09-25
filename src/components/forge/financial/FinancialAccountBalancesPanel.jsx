@@ -1,7 +1,9 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -561,37 +563,34 @@ async function fetchJson(url) {
   return body;
 }
 
+// All three backing reads in one cached payload: banking balances, physical assets, and
+// investment accounts. One SWR key so the whole account tree refreshes atomically.
+async function fetchAccountBalanceTree() {
+  const [accountBalances, assets, investmentAccounts] = await Promise.all([
+    fetchJson("/api/financial/account-balances"),
+    fetchJson("/api/financial/assets"),
+    fetchJson("/api/financial/investment-accounts"),
+  ]);
+  return {
+    accounts: accountBalances.accounts || [],
+    assets: assets.assets || [],
+    investmentAccounts: investmentAccounts.accounts || [],
+  };
+}
+
 export default function FinancialAccountBalancesPanel({ onSelectAccount, selectedAccountId = null } = {}) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState("");
+  // Stale-while-revalidate: the cached tree renders instantly on return visits; a refresh
+  // keeps the old rows on screen with only the subtle indicator below flipping.
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "financial:account-balances",
+    fetchAccountBalanceTree,
+    { ttlMs: 60_000 },
+  );
   const [collapsedKeys, setCollapsedKeys] = useState(() => new Set(["banking", "investments", "assets", "liabilities"]));
 
-  const load = useCallback(async () => {
-    try {
-      const [accountBalances, assets, investmentAccounts] = await Promise.all([
-        fetchJson("/api/financial/account-balances"),
-        fetchJson("/api/financial/assets"),
-        fetchJson("/api/financial/investment-accounts"),
-      ]);
-      setData({
-        accounts: accountBalances.accounts || [],
-        assets: assets.assets || [],
-        investmentAccounts: investmentAccounts.accounts || [],
-      });
-    } catch (thrown) {
-      setError(thrown.message);
-    }
-  }, []);
-
-  useEffect(() => {
-    // The initial request intentionally drives this panel's local loading state.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    load();
-  }, [load]);
-
   const groups = useMemo(
-    () => (data ? buildTree(data, load, onSelectAccount, selectedAccountId) : []),
-    [data, load, onSelectAccount, selectedAccountId],
+    () => (data ? buildTree(data, refresh, onSelectAccount, selectedAccountId) : []),
+    [data, refresh, onSelectAccount, selectedAccountId],
   );
 
   const netWorthCents = useMemo(() => groups.reduce(
@@ -608,7 +607,20 @@ export default function FinancialAccountBalancesPanel({ onSelectAccount, selecte
     });
   }
 
-  if (error) return <p role="alert" className="rounded-2xl bg-red-50 p-4 text-red-800 dark:bg-red-950/30 dark:text-red-300">{error}</p>;
+  if (!data && isLoading) return <ForgeLoadingState label="Loading accounts…" />;
+  if (!data && loadError) {
+    return (
+      <section data-financial-account-balances className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="mt-2">
+          <ForgeErrorState
+            title="Could not load your accounts."
+            detail={loadError}
+            onRetry={refresh}
+          />
+        </div>
+      </section>
+    );
+  }
   if (!data) return null;
 
   // Every real group is omitted entirely when it has no rows (see buildTree above), so a genuinely
@@ -620,7 +632,7 @@ export default function FinancialAccountBalancesPanel({ onSelectAccount, selecte
       <section data-financial-account-balances className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <h3 className="px-1.5 text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Accounts</h3>
         <p className="px-1.5 py-2 text-xs text-slate-500 dark:text-slate-400">No accounts yet.</p>
-        <div className="pl-1"><AddAccountRow groupKey="banking" onCreated={load} /></div>
+        <div className="pl-1"><AddAccountRow groupKey="banking" onCreated={refresh} /></div>
       </section>
     );
   }
@@ -628,6 +640,8 @@ export default function FinancialAccountBalancesPanel({ onSelectAccount, selecte
   return (
     <section data-financial-account-balances className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
       <h3 className="px-1.5 text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Accounts</h3>
+      {isRefreshing ? <p role="status" className="px-1.5 text-[10px] font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
+      {loadError ? <p role="status" className="px-1.5 text-[10px] font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved balances.</p> : null}
       <div className="flex items-center justify-between px-1.5 py-2">
         <span className="text-sm font-black text-slate-900 dark:text-white">Net Worth</span>
         <span data-net-worth className="text-sm font-black tabular-nums text-slate-950 dark:text-white">{money.format(netWorthCents / 100)}</span>
@@ -635,7 +649,7 @@ export default function FinancialAccountBalancesPanel({ onSelectAccount, selecte
 
       <div>
         {groups.map((group) => (
-          <Group key={group.key} group={group} isCollapsed={isCollapsed} onToggle={toggle} onSaved={load} />
+          <Group key={group.key} group={group} isCollapsed={isCollapsed} onToggle={toggle} onSaved={refresh} />
         ))}
       </div>
     </section>

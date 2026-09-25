@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { forgeTheme } from "@/components/forge/theme";
+import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { money } from "./formatMoney.js";
 
 const DAY_OPTIONS = [30, 60, 90];
@@ -70,48 +72,44 @@ function ForecastSparkline({ checkpoints, danger }) {
   );
 }
 
+async function loadForecast(days) {
+  const response = await fetch(`/api/financial/forecast?days=${days}`);
+  const payload = await response.json();
+  if (!response.ok || payload?.success !== true) {
+    throw new Error(payload?.error || "Could not build the cash forecast.");
+  }
+  return payload.data;
+}
+
 export default function CashForecastPanel() {
   const [collapsed, setCollapsed] = useState(false);
   const [days, setDays] = useState(90);
-  const [forecast, setForecast] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const response = await fetch(`/api/financial/forecast?days=${days}`);
-        const payload = await response.json();
-        if (!response.ok || payload?.success !== true) {
-          throw new Error(payload?.error || "Could not build the cash forecast.");
-        }
-        if (!cancelled) setForecast(payload.data);
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "Could not build the cash forecast.");
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    }
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [days]);
+  // Stale-while-revalidate, keyed by horizon: switching horizons serves the cached
+  // forecast instantly and refreshes in the background; switching back to a recently
+  // viewed horizon never flashes "Projecting balances…".
+  const { data: forecast, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    `financial:forecast:${days}`,
+    () => loadForecast(days),
+    { ttlMs: 60_000 },
+  );
 
   function changeDays(option) {
     if (option === days) return;
     setDays(option);
-    setIsLoading(true);
-    setError(null);
   }
 
-  const warnings = forecast?.warnings ?? [];
-  const accounts = forecast?.accounts ?? [];
+  // Switching horizons swaps the cache key, so keep the last visible forecast on screen
+  // while the new horizon loads — the horizon switch never blanks the panel.
+  const [lastForecast, setLastForecast] = useState(null);
+  if (forecast && forecast !== lastForecast) {
+    // Adjusting state during render on a fresh payload: the standard React
+    // derived-state pattern, so the previous horizon stays visible mid-switch.
+    setLastForecast(forecast);
+  }
+  const visible = forecast ?? lastForecast;
+
+  const warnings = visible?.warnings ?? [];
+  const accounts = visible?.accounts ?? [];
   const dangerByAccount = Object.fromEntries(
     accounts.map((account) => [
       account.accountId,
@@ -168,17 +166,36 @@ export default function CashForecastPanel() {
           </div>
 
           <div className="mt-4">
-            {isLoading && <p className={forgeTheme.textSmall}>Projecting balances…</p>}
+            {!visible && isLoading && <ForgeLoadingState label="Projecting balances…" />}
 
-            {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+            {!visible && !isLoading && error && (
+              <ForgeErrorState
+                title="Could not build the cash forecast."
+                detail={error}
+                onRetry={refresh}
+              />
+            )}
 
-            {!isLoading && !error && accounts.length === 0 && (
-              <p className={forgeTheme.textSmall}>
-                No cash accounts with known balances to forecast.
+            {visible && error && (
+              <p role="status" className={`${forgeTheme.textSmall} mt-2`}>
+                Could not refresh — showing the last saved forecast.
               </p>
             )}
 
-            {!isLoading && !error && warnings.length > 0 && (
+            {visible && (isRefreshing || !forecast) && (
+              <p role="status" className={`${forgeTheme.textSmall} mt-2`}>
+                Updating…
+              </p>
+            )}
+
+            {visible && accounts.length === 0 && (
+              <ForgeEmptyState
+                headline="No cash accounts with known balances to forecast"
+                guidance="Add a bank account with a balance and this forecast will project it forward from your recurring payments and recent daily burn."
+              />
+            )}
+
+            {visible && warnings.length > 0 && (
               <ul className="flex flex-col gap-2">
                 {warnings.map((warning, index) => (
                   <li
@@ -200,13 +217,13 @@ export default function CashForecastPanel() {
               </ul>
             )}
 
-            {!isLoading && !error && warnings.length === 0 && accounts.length > 0 && (
+            {visible && warnings.length === 0 && accounts.length > 0 && (
               <p className={forgeTheme.textSmall}>
                 No shortfalls or tight spots in the next {days} days.
               </p>
             )}
 
-            {!isLoading && !error && accounts.length > 0 && (
+            {visible && accounts.length > 0 && (
               <ul className={`flex flex-col gap-3 ${warnings.length > 0 ? "mt-4" : "mt-2"}`}>
                 {accounts.map((account) => (
                   <li
