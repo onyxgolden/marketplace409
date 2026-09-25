@@ -7,6 +7,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import {
+  ForgeEmptyState,
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 import {
   TITLE_MAX,
   deleteCapture,
@@ -36,30 +42,28 @@ function kindLabel(item) {
 }
 
 export default function CaptureLibraryGrid({ highlightId = null }) {
-  const [items, setItems] = useState(null); // null = loading
-  const [error, setError] = useState("");
+  // Library items: stale-while-revalidate over the libraryClient wrapper (not
+  // raw fetch -- libraryClient.js itself is untouched). A revisit renders the
+  // cached grid instantly; a refresh never blanks it.
+  const {
+    data: cachedItems,
+    error: loadError,
+    isLoading,
+    isRefreshing,
+    refresh,
+  } = useStaleWhileRevalidate("capture:library-items", fetchLibraryItems, { ttlMs: 60_000 });
+  // Optimistic overlay for rename/delete: applied locally for instant
+  // feedback, and keyed to the cached payload's identity -- once a refresh
+  // resolves with fresh server data the identity changes and the overlay is
+  // ignored automatically (no effect needed).
+  const [overlay, setOverlay] = useState(null); // { base, items }
+  const items = (overlay && overlay.base === cachedItems ? overlay.items : cachedItems) ?? null; // null = loading
+  const error = loadError;
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
   const [busyId, setBusyId] = useState(null);
   const [notice, setNotice] = useState("");
   const cardRefs = useRef({});
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchLibraryItems()
-      .then((loaded) => {
-        if (!cancelled) setItems(loaded);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Unable to load the library.");
-          setItems([]);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (highlightId && items && items.length > 0) {
@@ -91,8 +95,9 @@ export default function CaptureLibraryGrid({ highlightId = null }) {
     setNotice("");
     try {
       const title = await renameCapture(item.id, clean);
-      setItems((prev) => (prev || []).map((entry) => (entry.id === item.id ? { ...entry, title } : entry)));
+      setOverlay({ base: cachedItems, items: ((overlay && overlay.base === cachedItems ? overlay.items : cachedItems) || []).map((entry) => (entry.id === item.id ? { ...entry, title } : entry)) });
       cancelRename();
+      refresh();
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Unable to rename the capture.");
     } finally {
@@ -120,7 +125,8 @@ export default function CaptureLibraryGrid({ highlightId = null }) {
     setNotice("");
     try {
       await deleteCapture(item.id);
-      setItems((prev) => (prev || []).filter((entry) => entry.id !== item.id));
+      setOverlay({ base: cachedItems, items: ((overlay && overlay.base === cachedItems ? overlay.items : cachedItems) || []).filter((entry) => entry.id !== item.id) });
+      refresh();
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Unable to delete the capture.");
     } finally {
@@ -135,23 +141,24 @@ export default function CaptureLibraryGrid({ highlightId = null }) {
           {notice}
         </p>
       ) : null}
-      {error ? (
-        <p role="alert" className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
-          {error}
+      {error && items === null ? (
+        <ForgeErrorState title={error} onRetry={refresh} />
+      ) : null}
+      {error && items !== null ? (
+        <p role="status" className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Could not refresh — showing the last saved library.
         </p>
       ) : null}
+      {isRefreshing ? (
+        <p className="mb-4 text-xs font-bold text-slate-400">Updating…</p>
+      ) : null}
       {items === null ? (
-        <p className="text-sm text-slate-500">Loading your library…</p>
+        <ForgeLoadingState label="Loading your library…" />
       ) : items.length === 0 && !error ? (
-        <div className="rounded border border-dashed border-slate-300 px-6 py-10 text-center">
-          <p className="text-base font-medium text-slate-800">No captures in your FORGE library yet.</p>
-          <p className="mx-auto mt-3 max-w-xl text-sm text-slate-600">
-            <span className="font-semibold">How captures get here:</span> nothing uploads automatically. Captures are
-            stored in your FORGE library only when you press{" "}
-            <span className="font-semibold">Save to FORGE</span> on a screenshot or recording in the FORGE Capture
-            desktop app.
-          </p>
-        </div>
+        <ForgeEmptyState
+          headline="No captures in your FORGE library yet."
+          guidance="Nothing uploads automatically. Captures are stored in your FORGE library only when you press Save to FORGE on a screenshot or recording in the FORGE Capture desktop app."
+        />
       ) : (
         <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => {

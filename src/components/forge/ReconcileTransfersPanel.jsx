@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import {
   ForgeErrorState,
   ForgeLoadingState,
@@ -49,6 +50,20 @@ function categoryOptionsFor(suggestionCategory) {
   return [...options].sort();
 }
 
+// Loads the transfer/distribution classification preview. The 503
+// schema-unavailable case is not an error -- the feature simply isn't active
+// in this environment -- so it resolves as a payload with a flag instead of
+// throwing; the panel renders nothing for it, same as before.
+async function fetchTransferPreview() {
+  const response = await fetch("/api/financial/reconcile-transfers");
+  const payload = await response.json();
+  if (response.status === 503 && payload.code === "transfer_classification_schema_unavailable") {
+    return { schemaUnavailable: true };
+  }
+  if (!response.ok) throw new Error(payload.error || "Unable to check for transfer/distribution classification.");
+  return payload;
+}
+
 // Surfaces two related raw-bank-feed problems and lets the owner explicitly apply the fix -- never
 // automatic. See correctRawBankFeedDirection.js and classifyTransferPairs.js for the logic:
 //   1. Direction fixes: a real deposit landed as a negative "expense" (the unmapped-category
@@ -57,9 +72,17 @@ function categoryOptionsFor(suggestionCategory) {
 //      income or a real expense instead of an internal transfer -- or, when it crosses the
 //      personal/business line, a real owner distribution that wasn't labeled as one.
 export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
-  const [status, setStatus] = useState("loading"); // "loading" | "available" | "schema-unavailable" | "error"
-  const [errorMessage, setErrorMessage] = useState("");
-  const [preview, setPreview] = useState(null);
+  // Classification preview: stale-while-revalidate. The last preview stays on
+  // screen (and its backlog count stays reported) while a refresh is in
+  // flight; a failed refresh keeps it too.
+  const {
+    data: preview,
+    error: loadError,
+    isLoading,
+    isRefreshing,
+    refresh,
+  } = useStaleWhileRevalidate("financial:reconcile-transfers", fetchTransferPreview, { ttlMs: 60_000 });
+  const schemaUnavailable = preview?.schemaUnavailable === true;
   const [acknowledged, setAcknowledged] = useState(false);
   const [confirmationText, setConfirmationText] = useState("");
   const [applyStatus, setApplyStatus] = useState("idle"); // "idle" | "applying" | "done" | "error"
@@ -71,7 +94,17 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
   const [rowCategoryChoices, setRowCategoryChoices] = useState({});
   const [rowApplyStatus, setRowApplyStatus] = useState({});
   const [rowApplyMessages, setRowApplyMessages] = useState({});
-  const requestInFlight = useRef(false);
+
+  // Report the ambiguous-transfer backlog up to the parent (e.g. the
+  // connections page headline) from the data already fetched -- no second
+  // query. Null when the panel has nothing to report.
+  useEffect(() => {
+    if (!preview || schemaUnavailable) {
+      onBacklogCount?.(null);
+      return;
+    }
+    onBacklogCount?.(preview.ambiguousTransfers?.length ?? 0);
+  }, [preview, schemaUnavailable, onBacklogCount]);
 
   const applyRowCategory = (eventId, category) => {
     setRowApplyStatus((prev) => ({ ...prev, [eventId]: "applying" }));
@@ -88,12 +121,8 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
       .then(({ response, payload }) => {
         if (!response.ok) throw new Error(payload.error || "Unable to apply the category.");
         setRowApplyStatus((prev) => ({ ...prev, [eventId]: "done" }));
-        setRowCategoryChoices((prev) => {
-          const next = { ...prev };
-          delete next[eventId];
-          return next;
-        });
-        load();
+        setRowCategoryChoices({});
+        refresh();
         return null;
       })
       .catch((applyError) => {
@@ -105,39 +134,25 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
       });
   };
 
-  const load = useCallback(() => {
-    if (requestInFlight.current) return undefined;
-    requestInFlight.current = true;
-    setStatus("loading");
-    setErrorMessage("");
-    setRowCategoryChoices({});
-    return fetch("/api/financial/reconcile-transfers")
-      .then((response) => response.json().then((payload) => ({ response, payload })))
-      .then(({ response, payload }) => {
-        if (response.status === 503 && payload.code === "transfer_classification_schema_unavailable") {
-          setStatus("schema-unavailable");
-          onBacklogCount?.(null);
-          return null;
-        }
-        if (!response.ok) throw new Error(payload.error || "Unable to check for transfer/distribution classification.");
-        setPreview(payload);
-        setStatus("available");
-        onBacklogCount?.(payload?.ambiguousTransfers?.length ?? 0);
-        return null;
-      })
-      .catch((loadError) => {
-        setErrorMessage(loadError.message);
-        setStatus("error");
-        onBacklogCount?.(null);
-      })
-      .finally(() => {
-        requestInFlight.current = false;
-      });
-  }, [onBacklogCount]);
+  if (!preview && isLoading) {
+    return <ForgeLoadingState label="Checking for misclassified transfers…" />;
+  }
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  if (schemaUnavailable) {
+    return null;
+  }
+
+  if (!preview && loadError) {
+    return (
+      <ForgeErrorState
+        title={
+          loadError ||
+          "Something went wrong checking for transfer/distribution classification."
+        }
+        onRetry={refresh}
+      />
+    );
+  }
 
   const totalItems =
     (preview?.directionFixes.length ?? 0) +
@@ -172,7 +187,7 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
         );
         setAcknowledged(false);
         setConfirmationText("");
-        return load();
+        refresh();
       })
       .catch((applyError) => {
         setApplyStatus("error");
@@ -180,22 +195,22 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
       });
   };
 
-  if (status === "loading") {
+  if (!preview && isLoading) {
     return <ForgeLoadingState label="Checking for misclassified transfers…" />;
   }
 
-  if (status === "schema-unavailable") {
+  if (schemaUnavailable) {
     return null;
   }
 
-  if (status === "error") {
+  if (!preview && loadError) {
     return (
       <ForgeErrorState
         title={
-          errorMessage ||
+          loadError ||
           "Something went wrong checking for transfer/distribution classification."
         }
-        onRetry={load}
+        onRetry={refresh}
       />
     );
   }
@@ -219,6 +234,14 @@ export default function ReconcileTransfersPanel({ onBacklogCount } = {}) {
         your own accounts from real income or a real expense. This finds both by matching amount, date, and
         which account each side belongs to — only ever flags exact, unambiguous matches.
       </p>
+      {isRefreshing ? (
+        <p className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+      ) : null}
+      {loadError ? (
+        <p role="status" className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">
+          Could not refresh — showing the last saved classification.
+        </p>
+      ) : null}
 
       {totalItems === 0 && ambiguousTransfers.length === 0 ? (
         <p className="mt-6 text-sm font-bold text-emerald-700 dark:text-emerald-400">Nothing to reclassify right now.</p>
