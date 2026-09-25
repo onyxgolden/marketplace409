@@ -1,11 +1,12 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import {
   ForgeEmptyState,
   ForgeErrorState,
   ForgeLoadingState,
 } from "@/components/forge/ForgeStates";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { isSavingsOrInvestmentCategory } from "@/domains/budgeting/isSavingsOrInvestmentCategory";
 import { isDebtPayoffCategory } from "@/domains/budgeting/isDebtPayoffCategory";
 import { resolveCategoryDisplayLabel } from "@/domains/budgeting/categoryDisplayLabel";
@@ -40,6 +41,10 @@ function currentMonth() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// Stable empty collections for the budget slice -- downstream memos must never
+// see a fresh array literal on every render.
+const EMPTY_BUDGET_LINES = [];
+
 function monthLabel(month) {
   const [year, monthNumber] = month.split("-").map(Number);
   return new Date(year, monthNumber - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
@@ -70,66 +75,70 @@ function normalizedCategoryFromLabel(label) {
 // "unassigned" dollars. Switching scope reloads everything from scratch for that scope.
 export default function BudgetPanel() {
   const [scope, setScope] = useState("personal"); // "personal" | "business"
-  const [status, setStatus] = useState("loading"); // "loading" | "available" | "schema-unavailable" | "error"
+  const month = useMemo(() => currentMonth(), []);
+
+  // Budget snapshot: stale-while-revalidate keyed by month + scope. The last
+  // saved plan stays on screen while a scope switch or post-save refresh
+  // revalidates in the background -- never a blank table mid-refresh.
+  const budgetKey = `budget:${month}:${scope}`;
+  const fetchBudget = useCallback(async () => {
+    const [planResult, suggestionsResult] = await Promise.all([
+      fetch(`/api/budgeting/plan?month=${month}&scope=${scope}`).then((response) => response.json().then((payload) => ({ response, payload }))),
+      fetch(`/api/budgeting/suggestions?month=${month}&scope=${scope}`).then((response) => response.json().then((payload) => ({ response, payload }))),
+    ]);
+    for (const { response, payload } of [planResult, suggestionsResult]) {
+      if (response.status === 503 && payload.code === "budgeting_schema_unavailable") {
+        return { schemaUnavailable: true };
+      }
+      if (!response.ok) throw new Error(payload.error || "Unable to load your budget.");
+    }
+    // Recurring detection is advisory -- if it's down, the budget still loads.
+    const recurringPatterns = await fetch("/api/financial/recurring")
+      .then((response) => response.json().then((payload) => ({ response, payload })))
+      .then(({ response, payload }) => (response.ok ? payload.patterns ?? [] : []))
+      .catch(() => []);
+    return {
+      lines: planResult.payload.lines || [],
+      totalIncomeCents: planResult.payload.summary?.totalIncomeCents ?? 0,
+      incomeByCategory: planResult.payload.incomeByCategory || [],
+      suggestions: suggestionsResult.payload.categories || [],
+      recurringPatterns,
+    };
+  }, [month, scope]);
+
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    budgetKey,
+    fetchBudget,
+    { ttlMs: 60_000 },
+  );
+  const schemaUnavailable = Boolean(data?.schemaUnavailable);
+  const budgetAvailable = Boolean(data) && !schemaUnavailable;
+  // One stable object per data identity so downstream memos never see a fresh
+  // array literal on every render.
+  const budget = useMemo(() => (budgetAvailable ? data : null), [budgetAvailable, data]);
+  const lines = budget?.lines ?? EMPTY_BUDGET_LINES;
+  const totalIncomeCents = budget?.totalIncomeCents ?? 0;
+  const incomeByCategory = budget?.incomeByCategory ?? EMPTY_BUDGET_LINES;
+  const suggestions = budget?.suggestions ?? EMPTY_BUDGET_LINES;
+  const recurringPatterns = budget?.recurringPatterns ?? EMPTY_BUDGET_LINES;
+
+  // Transient mutation failures (save/add/rename/remove line) -- separate
+  // from the snapshot's own load error, which the shared ForgeErrorState below renders.
   const [errorMessage, setErrorMessage] = useState("");
-  const [lines, setLines] = useState([]);
-  const [totalIncomeCents, setTotalIncomeCents] = useState(0);
-  const [incomeByCategory, setIncomeByCategory] = useState([]);
-  const [suggestions, setSuggestions] = useState([]);
-  const [recurringPatterns, setRecurringPatterns] = useState([]);
   const [drafts, setDrafts] = useState({});
+  // Drafts track the loaded plan lines; when the month/scope key changes they
+  // re-seed from the new snapshot. Render-guarded so it never loops.
+  const [draftSourceKey, setDraftSourceKey] = useState(null);
+  if (budgetAvailable && draftSourceKey !== budgetKey) {
+    setDraftSourceKey(budgetKey);
+    setDrafts(draftsFromLines(data.lines));
+  }
   const [savingCategoryId, setSavingCategoryId] = useState(null);
   const [addingCategory, setAddingCategory] = useState(null);
   const [renamingCategoryId, setRenamingCategoryId] = useState(null);
   const [removingCategoryId, setRemovingCategoryId] = useState(null);
   const [savingNoteCategoryId, setSavingNoteCategoryId] = useState(null);
   const [manualLabel, setManualLabel] = useState("");
-  const requestInFlight = useRef(false);
-  const month = useMemo(() => currentMonth(), []);
-
-  const load = useCallback(() => {
-    if (requestInFlight.current) return undefined;
-    requestInFlight.current = true;
-    setStatus("loading");
-    setErrorMessage("");
-    return Promise.all([
-      fetch(`/api/budgeting/plan?month=${month}&scope=${scope}`).then((response) => response.json().then((payload) => ({ response, payload }))),
-      fetch(`/api/budgeting/suggestions?month=${month}&scope=${scope}`).then((response) => response.json().then((payload) => ({ response, payload }))),
-      // Recurring detection is advisory -- if it's down, the budget still loads.
-      fetch("/api/financial/recurring")
-        .then((response) => response.json().then((payload) => ({ response, payload })))
-        .then(({ response, payload }) => (response.ok ? payload.patterns ?? [] : []))
-        .catch(() => []),
-    ])
-      .then(([planResult, suggestionsResult, recurringResult]) => {
-        for (const { response, payload } of [planResult, suggestionsResult]) {
-          if (response.status === 503 && payload.code === "budgeting_schema_unavailable") {
-            setStatus("schema-unavailable");
-            return null;
-          }
-          if (!response.ok) throw new Error(payload.error || "Unable to load your budget.");
-        }
-        setLines(planResult.payload.lines || []);
-        setDrafts(draftsFromLines(planResult.payload.lines || []));
-        setTotalIncomeCents(planResult.payload.summary?.totalIncomeCents ?? 0);
-        setIncomeByCategory(planResult.payload.incomeByCategory || []);
-        setSuggestions(suggestionsResult.payload.categories || []);
-        setRecurringPatterns(recurringResult || []);
-        setStatus("available");
-        return null;
-      })
-      .catch((loadError) => {
-        setErrorMessage(loadError.message);
-        setStatus("error");
-      })
-      .finally(() => {
-        requestInFlight.current = false;
-      });
-  }, [month, scope]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   // Families, not exact categories: a planned "dining_drinks_restaurants" line already covers the
   // "dining_drinks" family, so the family suggestion must not reappear as addable.
@@ -196,12 +205,12 @@ export default function BudgetPanel() {
     () =>
       describeLeftToSpend({
         leftToSpendCents:
-          status === "available"
+          budgetAvailable
             ? lineVarianceCents({ plannedAmountCents: totalPlannedCents, actualAmountCents: totalActualCents })
             : null,
-        totalPlannedCents: status === "available" ? totalPlannedCents : null,
+        totalPlannedCents: budgetAvailable ? totalPlannedCents : null,
       }),
-    [status, totalPlannedCents, totalActualCents],
+    [budgetAvailable, totalPlannedCents, totalActualCents],
   );
 
   const incomeChartEntries = useMemo(
@@ -229,12 +238,14 @@ export default function BudgetPanel() {
         .then((response) => response.json().then((payload) => ({ response, payload })))
         .then(({ response, payload }) => {
           if (!response.ok) throw new Error(payload.error || "Unable to save this amount.");
-          setLines((previous) => previous.map((line) => (line.categoryId === categoryId ? { ...line, plannedAmountCents: cents } : line)));
+          // The saved plan revalidates in the background; the stale line
+          // stays visible while it fetches.
+          return refresh();
         })
         .catch((saveError) => setErrorMessage(saveError.message))
         .finally(() => setSavingCategoryId(null));
     },
-    [drafts, month],
+    [drafts, month, refresh],
   );
 
   const addCategory = useCallback(
@@ -249,12 +260,14 @@ export default function BudgetPanel() {
         .then(({ response, payload }) => {
           if (!response.ok) throw new Error(payload.error || "Unable to add this category.");
           setManualLabel("");
-          return load();
+          // The new category appears after a background revalidate; the
+          // existing plan stays visible while it fetches.
+          return refresh();
         })
         .catch((addError) => setErrorMessage(addError.message))
         .finally(() => setAddingCategory(null));
     },
-    [load, scope],
+    [refresh, scope],
   );
 
   const renameCategory = useCallback(
@@ -268,12 +281,12 @@ export default function BudgetPanel() {
         .then((response) => response.json().then((payload) => ({ response, payload })))
         .then(({ response, payload }) => {
           if (!response.ok) throw new Error(payload.error || "Unable to rename this category.");
-          setLines((previous) => previous.map((line) => (line.categoryId === categoryId ? { ...line, displayLabel } : line)));
+          return refresh();
         })
         .catch((renameError) => setErrorMessage(renameError.message))
         .finally(() => setRenamingCategoryId(null));
     },
-    [],
+    [refresh],
   );
 
   const saveNote = useCallback(
@@ -287,13 +300,12 @@ export default function BudgetPanel() {
         .then((response) => response.json().then((payload) => ({ response, payload })))
         .then(({ response, payload }) => {
           if (!response.ok) throw new Error(payload.error || "Unable to save this note.");
-          const savedNote = payload.category?.note ?? null;
-          setLines((previous) => previous.map((line) => (line.categoryId === categoryId ? { ...line, note: savedNote } : line)));
+          return refresh();
         })
         .catch((noteError) => setErrorMessage(noteError.message))
         .finally(() => setSavingNoteCategoryId(null));
     },
-    [],
+    [refresh],
   );
 
   const removeCategory = useCallback(
@@ -303,12 +315,12 @@ export default function BudgetPanel() {
         .then((response) => response.json().then((payload) => ({ response, payload })))
         .then(({ response, payload }) => {
           if (!response.ok) throw new Error(payload.error || "Unable to remove this category.");
-          setLines((previous) => previous.filter((line) => line.categoryId !== categoryId));
+          return refresh();
         })
         .catch((removeError) => setErrorMessage(removeError.message))
         .finally(() => setRemovingCategoryId(null));
     },
-    [],
+    [refresh],
   );
 
   return (
@@ -359,18 +371,27 @@ export default function BudgetPanel() {
           : "Your rental/business income and expenses, kept separate from personal spending. Same suggestion and planning tools, scoped to the business."}
       </p>
 
-      {status === "loading" ? (
+      {!data && isLoading ? (
         <div className="mt-6">
           <ForgeLoadingState label="Loading your budget…" />
         </div>
       ) : null}
 
-      {status === "schema-unavailable" ? (
+      {!data && !isLoading && loadError ? (
+        <div className="mt-6">
+          <ForgeErrorState
+            title={loadError || "Something went wrong loading your budget."}
+            onRetry={refresh}
+          />
+        </div>
+      ) : null}
+
+      {schemaUnavailable ? (
         <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-900/60 dark:bg-amber-950/30" role="alert">
           <p className="text-sm font-bold text-amber-900 dark:text-amber-200">Budget has not been activated for this environment yet.</p>
           <button
             type="button"
-            onClick={load}
+            onClick={refresh}
             className={`mt-4 rounded-xl border border-amber-400 px-4 py-2 text-sm font-bold text-amber-900 transition hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/40 ${FOCUS_RING}`}
           >
             Retry
@@ -378,17 +399,19 @@ export default function BudgetPanel() {
         </div>
       ) : null}
 
-      {status === "error" ? (
-        <div className="mt-6">
-          <ForgeErrorState
-            title={errorMessage || "Something went wrong loading your budget."}
-            onRetry={load}
-          />
-        </div>
-      ) : null}
-
-      {status === "available" ? (
+      {budgetAvailable ? (
         <>
+          {isRefreshing ? (
+            <p role="status" className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+          ) : null}
+          {loadError ? (
+            <p role="status" className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">
+              Could not refresh — showing the last saved budget.
+            </p>
+          ) : null}
+          {errorMessage ? (
+            <p role="alert" className="mt-4 text-sm font-bold text-red-700 dark:text-red-400">{errorMessage}</p>
+          ) : null}
           <BudgetSummaryBar
             totalIncomeCents={totalIncomeCents}
             totalPlannedCents={totalPlannedCents}

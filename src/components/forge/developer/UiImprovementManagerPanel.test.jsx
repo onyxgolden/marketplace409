@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import UiImprovementManagerPanel from "./UiImprovementManagerPanel.jsx";
 
 function mount(ui) {
@@ -38,7 +39,7 @@ const deterministicFinding = {
 
 describe("UiImprovementManagerPanel", () => {
   let mounted;
-  afterEach(() => { if (mounted) unmount(mounted); mounted = null; vi.unstubAllGlobals(); });
+  afterEach(() => { if (mounted) unmount(mounted); mounted = null; vi.unstubAllGlobals(); clearSWRCache(); });
 
   it("loads and renders a deterministic finding with its severity and confidence", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(200, { success: true, findings: [deterministicFinding] })));

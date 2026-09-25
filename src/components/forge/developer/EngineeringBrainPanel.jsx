@@ -1,6 +1,12 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import {
+  ForgeEmptyState,
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 const SOURCE_TYPES = [
   "application_source_file", "application_source_symbol", "api_route_file", "api_route_symbol",
@@ -25,40 +31,44 @@ function shortSha(sha) {
   return sha ? sha.slice(0, 12) : "";
 }
 
+// The search query lives in the SWR key so the submitted query + filters drive
+// a background revalidate while the previous result set stays on screen.
+const EMPTY_PARAMS = { queryText: "", sourceType: "", authorityLevel: "" };
+function brainKey(params) {
+  return `engineering-brain:${JSON.stringify(params)}`;
+}
+
+async function fetchBrainResults(params) {
+  const query = new URLSearchParams();
+  if (params.queryText) query.set("q", params.queryText);
+  if (params.sourceType) query.set("sourceType", params.sourceType);
+  if (params.authorityLevel) query.set("authorityLevel", params.authorityLevel);
+  const res = await fetch(`/api/forge/engineering-brain/query?${query.toString()}`);
+  const payload = await res.json();
+  if (!res.ok) throw new Error(payload.error || "Unable to query the engineering brain.");
+  return payload;
+}
+
 export default function EngineeringBrainPanel() {
   const [queryText, setQueryText] = useState("");
   const [sourceType, setSourceType] = useState("");
   const [authorityLevel, setAuthorityLevel] = useState("");
-  const [response, setResponse] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  // Draft inputs edit the fields above; only a submitted search becomes the
+  // key (and therefore the visible result set).
+  const [params, setParams] = useState(EMPTY_PARAMS);
 
-  const search = useCallback(() => {
-    const params = new URLSearchParams();
-    if (queryText) params.set("q", queryText);
-    if (sourceType) params.set("sourceType", sourceType);
-    if (authorityLevel) params.set("authorityLevel", authorityLevel);
-    return fetch(`/api/forge/engineering-brain/query?${params.toString()}`)
-      .then((res) => res.json().then((payload) => ({ res, payload })))
-      .then(({ res, payload }) => {
-        if (!res.ok) throw new Error(payload.error || "Unable to query the engineering brain.");
-        setResponse(payload);
-      })
-      .catch((searchError) => setError(searchError.message))
-      .finally(() => setLoading(false));
-  }, [queryText, sourceType, authorityLevel]);
-
-  useEffect(() => {
-    search();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const { data: response, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    brainKey(params),
+    useCallback(() => fetchBrainResults(params), [params]),
+    { ttlMs: 60_000 },
+  );
 
   function handleSubmit(event) {
     event.preventDefault();
-    setLoading(true);
-    setError("");
-    search();
+    setParams({ queryText, sourceType, authorityLevel });
   }
+
+  const resultsVisible = Boolean(response) && !isLoading;
 
   return (
     <main data-engineering-brain-panel className="min-h-screen bg-slate-100 px-4 py-6 text-slate-950 dark:bg-slate-950 dark:text-slate-100 lg:px-8">
@@ -114,21 +124,36 @@ export default function EngineeringBrainPanel() {
               {AUTHORITY_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
             </select>
           </label>
-          <button type="submit" disabled={loading} className={`rounded-lg px-5 py-2 text-sm font-black transition ${goldControlClassName}`}>
+          <button type="submit" disabled={isLoading || isRefreshing} className={`rounded-lg px-5 py-2 text-sm font-black transition ${goldControlClassName}`}>
             Search
           </button>
         </form>
 
-        {loading ? <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">Searching…</p> : null}
-        {error ? <p role="alert" className="mt-4 text-sm font-bold text-red-700 dark:text-red-400">{error}</p> : null}
+        {isRefreshing ? <p role="status" className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">Updating results…</p> : null}
 
-        {!loading && response?.insufficient_evidence ? (
+        {!response && isLoading ? (
+          <div className="mt-4">
+            <ForgeLoadingState label="Searching the engineering brain…" />
+          </div>
+        ) : null}
+        {!response && error ? (
+          <div className="mt-4">
+            <ForgeErrorState title={error || "Unable to query the engineering brain."} onRetry={refresh} />
+          </div>
+        ) : null}
+        {response && error ? (
+          <p role="status" className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">
+            Could not refresh — showing the last saved results.
+          </p>
+        ) : null}
+
+        {resultsVisible && response?.insufficient_evidence ? (
           <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
             Insufficient evidence: {response.reason}
           </p>
         ) : null}
 
-        {!loading && response?.conflicts?.length > 0 ? (
+        {resultsVisible && response?.conflicts?.length > 0 ? (
           <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">
             <p className="font-black">{response.conflicts.length} unresolved conflict(s) across authority tiers:</p>
             {response.conflicts.map((conflict) => (
@@ -140,7 +165,7 @@ export default function EngineeringBrainPanel() {
           </div>
         ) : null}
 
-        {!loading && response?.results?.length > 0 ? (
+        {resultsVisible && response?.results?.length > 0 ? (
           <ul className="mt-4 flex flex-col gap-3">
             {response.results.map((result) => (
               <li key={`${result.source_path}#${result.symbol_or_section}`} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -169,6 +194,14 @@ export default function EngineeringBrainPanel() {
               </li>
             ))}
           </ul>
+        ) : null}
+        {resultsVisible && !response?.insufficient_evidence && (!response?.results || response.results.length === 0) ? (
+          <div className="mt-4">
+            <ForgeEmptyState
+              headline="No results matched this query."
+              guidance="Try fewer filters or a different term — the index only cites what it can find."
+            />
+          </div>
         ) : null}
       </div>
     </main>
