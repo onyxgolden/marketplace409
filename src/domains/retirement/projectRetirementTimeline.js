@@ -13,7 +13,7 @@
 // asked for current savings, and inventing an accumulation path would be a
 // fabrication. The chart shows pre-retirement years as a milestone runway.
 //
-// Spending smile: optional spendingDeclinePct compounds per retirement year
+// Declining spending: optional spendingDeclinePct compounds per retirement year
 // (withdrawal * (1 - decline)^i), matching backtestRetirement.
 //
 // Pure function: no I/O, no Date, no randomness. Safe to run in useMemo.
@@ -79,7 +79,7 @@ export default function projectRetirementTimeline({
   if (avgPct == null) return nullResult(horizon);
   const avg = avgPct / 100;
 
-  // Same smile semantics as backtestRetirement: non-positive or non-finite
+  // Same declining-spending semantics as backtestRetirement: non-positive or non-finite
   // declines clamp to 0 (flat real); capped at 99%.
   const decline =
     Number.isFinite(spendingDeclinePct) && spendingDeclinePct > 0 ? Math.min(spendingDeclinePct, 99) / 100 : 0;

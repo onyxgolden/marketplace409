@@ -173,4 +173,55 @@ describe("backtestRetirement", () => {
       expect(result.survivalPct).toBe(100);
     }
   });
+
+  it("ending at exactly $0 after the final withdrawal counts as survival", () => {
+    // 0% real returns, nestEgg 90, withdrawal 30, horizon 3:
+    // 90 -> 60 -> 30 -> 0. The money lasted the full horizon.
+    const flat = {
+      years: [2000, 2001, 2002, 2003],
+      stockReal: [0, 0, 0, 0],
+      bondReal: [0, 0, 0, 0],
+      inflation: [0, 0, 0, 0],
+    };
+    const result = backtestRetirement({
+      nestEgg: 90,
+      annualWithdrawal: 30,
+      stockPct: 1.0,
+      horizonYears: 3,
+      data: flat,
+    });
+    expect(result.windowsTested).toBe(1);
+    expect(result.successes).toBe(1);
+    expect(result.survivalPct).toBe(100);
+  });
+
+  it("from the same starting nest egg, declining spending isolates the spending shape", () => {
+    // 0% real returns, nestEgg 100, withdrawal 60, horizon 2.
+    // Flat: 100 -> 40 -> -20 (fails). Declining 50%/yr: 100 -> 40 -> 10 (survives).
+    // The UI's flat-vs-declining comparison runs both from the same nest egg
+    // so the survival gap reflects the spending shape, not the starting balance.
+    const flat = {
+      years: [2000, 2001, 2002],
+      stockReal: [0, 0, 0],
+      bondReal: [0, 0, 0],
+      inflation: [0, 0, 0],
+    };
+    const runFlat = backtestRetirement({
+      nestEgg: 100,
+      annualWithdrawal: 60,
+      stockPct: 1.0,
+      horizonYears: 2,
+      data: flat,
+    });
+    const runDeclining = backtestRetirement({
+      nestEgg: 100,
+      annualWithdrawal: 60,
+      stockPct: 1.0,
+      horizonYears: 2,
+      data: flat,
+      spendingDeclinePct: 50,
+    });
+    expect(runFlat.survivalPct).toBe(0);
+    expect(runDeclining.survivalPct).toBe(100);
+  });
 });

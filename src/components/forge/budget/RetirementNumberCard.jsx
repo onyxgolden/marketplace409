@@ -161,7 +161,7 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
     generalInflationPct != null &&
     generalInflationPct >= 0;
 
-  // Shared domain input; the smile scenario reuses it with the flag flipped.
+  // Shared domain input; the declining-spending scenario reuses it with the flag flipped.
   const domainInput = useMemo(() => {
     if (!inputsValid) return null;
     return {
@@ -246,24 +246,29 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
     smileResult.requiredNestEgg != null &&
     Number.isFinite(smileResult.requiredNestEgg);
 
-  // Smile backtest: the smile nest egg funded by a declining real-withdrawal
-  // path — the historically honest validation of the smaller number.
+  // Declining-spending backtest: the SAME starting nest egg as the flat path
+  // (result.requiredNestEgg), so the survival comparison isolates the spending
+  // shape instead of conflating it with a smaller starting balance. The
+  // nest-egg savings from declining spending are reported separately in the
+  // headline figures above.
   const backtestSmile = useMemo(() => {
     if (!showSmileHeadline) return null;
     const profile = allocationProfileById(persisted.allocationId);
     return backtestRetirement({
-      nestEgg: smileResult.requiredNestEgg,
+      nestEgg: result.requiredNestEgg,
       annualWithdrawal: smileResult.portfolioNeedAnnual,
       stockPct: profile?.stockPct ?? 0.6,
       horizonYears: planningAge - retirementAge,
       spendingDeclinePct: SPENDING_SMILE_DECLINE_PCT,
       data: shillerAnnual,
     });
-  }, [showSmileHeadline, smileResult, persisted.allocationId, planningAge, retirementAge]);
+  }, [showSmileHeadline, result, smileResult, persisted.allocationId, planningAge, retirementAge]);
+  // Note: backtestSmile depends on `result` (same starting nest egg as the
+  // flat path) and `smileResult` (headline gating + first-year withdrawal).
 
   // Milestone timeline: year-by-year balance projection at the allocation's
   // long-run average real return (derived from the Shiller dataset — never
-  // invented), with milestone dots. The smile scenario reuses the declining
+  // invented), with milestone dots. The declining-spending scenario reuses the declining
   // withdrawal path so both lines match their headlines.
   const timelineFlat = useMemo(() => {
     if (!showHeadline) return null;
@@ -324,8 +329,8 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
         The 4%-rule nest egg that funds your spending — with your real expenses, pulled straight from this budget.
       </p>
 
-      {/* Headline — both numbers side by side when the smile is on, so the
-          research assumption is a comparison, never a hidden optimism dial. */}
+      {/* Headline — both numbers side by side when declining spending is on, so the
+          spending assumption is a comparison, never a hidden optimism dial. */}
       <div className="mt-4">
         {showHeadline ? (
           showSmileHeadline ? (
@@ -342,16 +347,16 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
                 </div>
                 <div className="rounded-2xl bg-sky-950 px-5 py-6 text-center ring-1 ring-sky-800 dark:bg-sky-950/60">
                   <p className="text-[10px] font-black uppercase tracking-[0.18em] text-sky-300">
-                    Spending smile
+                    Declining spending
                   </p>
                   <p className="mt-1 text-3xl font-black tabular-nums tracking-tight text-white sm:text-4xl">
                     {wholeDollars.format(smileResult.requiredNestEgg)}
                   </p>
-                  <p className="mt-1 text-xs font-semibold text-sky-400/80">research-based · Blanchett/Kitces</p>
+                  <p className="mt-1 text-xs font-semibold text-sky-400/80">real spending falls ~1%/yr</p>
                 </div>
               </div>
               <p className="mt-2 text-center text-xs font-semibold text-slate-400">
-                in {result.retirementYear} dollars · funds spending to age {planningAge}
+                in {result.retirementYear} dollars · 4% rule estimate · before taxes and fees
               </p>
             </>
           ) : (
@@ -360,7 +365,7 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
                 {wholeDollars.format(result.requiredNestEgg)}
               </p>
               <p className="mt-2 text-xs font-semibold text-slate-400">
-                in {result.retirementYear} dollars · funds spending to age {planningAge}
+                in {result.retirementYear} dollars · 4% rule estimate · before taxes and fees
               </p>
             </div>
           )
@@ -376,7 +381,7 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
         )}
       </div>
 
-      {/* Historical backtest — second headline; dual figures with the smile */}
+      {/* Historical backtest — second headline; dual figures with declining spending */}
       {showHeadline ? (
         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-700 dark:bg-slate-800/50">
           {backtest?.survivalPct == null ? (
@@ -395,7 +400,7 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
                   note="would have survived"
                 />
                 <SurvivalFigure
-                  label="Spending smile"
+                  label="Declining spending"
                   survivalPct={backtestSmile.survivalPct}
                   note="would have survived"
                 />
@@ -404,6 +409,9 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
                 of {backtest.windowsTested} historical {backtest.horizonYears}-year retirements,{" "}
                 {shillerAnnual.years[0]}–{shillerAnnual.years[shillerAnnual.years.length - 1]} ·
                 Historical stress-test: past returns don&apos;t predict the future.
+              </p>
+              <p className="mt-1 text-center text-[11px] font-medium text-slate-500 dark:text-slate-500">
+                Both figures start from the flat-path nest egg above, so the gap isolates the spending shape.
               </p>
             </>
           ) : (
@@ -445,7 +453,7 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
           </div>
           {timelineFlat.exhaustedAt != null ? (
             <p className="mt-2 text-center text-xs font-bold text-amber-600 dark:text-amber-400">
-              At the historical-average return, the flat path runs out at age {timelineFlat.exhaustedAt} —
+              At the historical-average return, the flat path runs out during the year you turn {timelineFlat.exhaustedAt} —
               the survival % above is the honest stress test.
             </p>
           ) : null}
@@ -591,8 +599,8 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
                   },
                   {
                     value: true,
-                    title: "Spending smile",
-                    desc: "Research-based — real spending falls ~1%/yr (Blanchett/Kitces).",
+                    title: "Declining spending",
+                    desc: "Assumes real spending falls ~1%/yr — simpler than the Blanchett/Kitces smile curve.",
                   },
                 ].map((option) => {
                   const selected = persisted.spendingSmile === option.value;
@@ -616,7 +624,7 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
                 })}
               </div>
               <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-                Generic research assumption, not advice — both numbers are always shown side by side for
+                Generic spending-path assumption, not advice — both numbers are always shown side by side for
                 comparison.
               </p>
             </div>
@@ -663,6 +671,8 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
               {persisted.includeHealthcare && showHeadline ? (
                 <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
                   At 65, the post-65 cost is about {wholeDollars.format(result.post65At65)}/yr in nominal dollars.
+                  The headline number uses the {retirementAge < 65 ? "pre-65 bridge" : "post-65 Medicare"} figure
+                  matching your retirement age — it does not blend the two phases.
                 </p>
               ) : null}
             </div>
