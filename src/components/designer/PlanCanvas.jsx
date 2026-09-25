@@ -57,7 +57,7 @@ const OPENING_MIN_WIDTH_IN = 12;
  * SVG 2D floor-plan editor. All plan math is inches; the component maps
  * plan <-> screen with a pan/zoom transform kept in local state.
  */
-export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest }) {
+export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest, onViewCenterChange = null }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
   const [view, setView] = useState({ scale: 1.6, ox: 60, oy: 60 });
@@ -120,6 +120,16 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     (p) => ({ x: view.ox + p.x * view.scale, y: view.oy + p.y * view.scale }),
     [view],
   );
+  // Report the plan point at the middle of the visible viewport, so a
+  // one-tap Favorites placement lands where the user is looking.
+  useEffect(() => {
+    if (!onViewCenterChange || !(canvasSize.w > 0) || !(canvasSize.h > 0)) return;
+    onViewCenterChange({
+      x: (canvasSize.w / 2 - view.ox) / view.scale,
+      y: (canvasSize.h / 2 - view.oy) / view.scale,
+    });
+  }, [onViewCenterChange, view, canvasSize]);
+
   const toPlan = useCallback(
     (s) => ({ x: (s.x - view.ox) / view.scale, y: (s.y - view.oy) / view.scale }),
     [view],
@@ -1448,7 +1458,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     );
   };
 
+  // Furniture counts too: a furniture-only plan (e.g. a set dropped from
+  // Favorites onto a blank plan) must not stay hidden under the prompt.
   const isEmpty = design.walls.length === 0 && design.rooms.length === 0
+    && (design.furniture || []).length === 0
     && (design.pipes || []).length === 0 && (design.symbols || []).length === 0
     && (design.orgCharts || []).length === 0 && (design.annotations || []).length === 0;
 

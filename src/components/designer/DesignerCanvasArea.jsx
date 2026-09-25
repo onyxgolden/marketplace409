@@ -51,6 +51,8 @@ export default function DesignerCanvasArea({
   layerVisibility,
   dispatch,
   zoomRequest,
+  onPlanCenterChange = null,
+  onFloorCenterChange = null,
 }) {
   const [ratio, setRatio] = useState(readSplitRatio);
   const containerRef = useRef(null);
@@ -162,6 +164,7 @@ export default function DesignerCanvasArea({
           layerVisibility={layerVisibility}
           dispatch={dispatch}
           zoomRequest={zoomRequest}
+          onViewCenterChange={onPlanCenterChange}
         />
       </div>
 
@@ -182,7 +185,13 @@ export default function DesignerCanvasArea({
       )}
 
       <div data-testid="canvas-pane-3d" className="relative h-full min-w-0 flex-1" hidden={!show3d}>
-        <DesignerViewport3D design={design} selection={selection} dispatch={dispatch} />
+        <DesignerViewport3D
+          design={design}
+          selection={selection}
+          multiSelection={multiSelection}
+          dispatch={dispatch}
+          onFloorCenterChange={onFloorCenterChange}
+        />
       </div>
     </div>
   );

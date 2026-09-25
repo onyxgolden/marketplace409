@@ -10,12 +10,25 @@
  *
  * The key is versioned (`.v1`). A future schema change bumps the version
  * rather than migrating in place, so an old library can never be
- * half-interpreted by new code.
+ * half-interpreted by new code. (favoriteOrder and starterSeeded are
+ * optional additions within v1: older code ignores them, and a library
+ * without them reads back sanely.)
+ *
+ * Per user: when the signed-in user's id is known, the library lives under
+ * `<key>.user.<id>`, so two accounts sharing one browser keep separate
+ * libraries. The first time a user's key is missing, the pre-per-user
+ * (unscoped) library is adopted and the unscoped key removed, so existing
+ * shapes carry over exactly once instead of leaking to every account.
  */
 
 import { createEmptyLibrary, LIBRARY_VERSION } from "./customShapeLibrary";
 
 export const SHAPE_LIBRARY_STORAGE_KEY = "forge-designer.custom-shapes.v1";
+
+/** The storage key for a user's library; the unscoped key when no user id is known. */
+export function shapeLibraryStorageKey(userId) {
+  return typeof userId === "string" && userId ? `${SHAPE_LIBRARY_STORAGE_KEY}.user.${userId}` : SHAPE_LIBRARY_STORAGE_KEY;
+}
 
 const ENTITY_KEYS = ["walls", "rooms", "openings", "furniture", "pipes", "symbols"];
 
@@ -75,13 +88,25 @@ export function parseLibrary(raw) {
     seen.add(shape.id);
     shapes.push(normalizeShape(shape));
   }
-  return { version: LIBRARY_VERSION, shapes };
+  const favoriteOrder = Array.isArray(parsed.favoriteOrder)
+    ? parsed.favoriteOrder.filter((id) => typeof id === "string" && seen.has(id))
+    : [];
+  const library = { version: LIBRARY_VERSION, shapes, favoriteOrder };
+  if (parsed.starterSeeded === true) library.starterSeeded = true;
+  return library;
 }
 
-/** Read the library from localStorage; any failure yields an empty library. */
-export function loadLibrary(storage = defaultStorage()) {
+/**
+ * Read the library from localStorage; any failure yields an empty library.
+ * With a userId, falls back to the unscoped (pre-per-user) library when the
+ * user has none yet — saveLibrary then completes the move.
+ */
+export function loadLibrary(storage = defaultStorage(), userId = null) {
   if (!storage) return createEmptyLibrary();
   try {
+    const key = shapeLibraryStorageKey(userId);
+    const own = storage.getItem(key);
+    if (own != null || key === SHAPE_LIBRARY_STORAGE_KEY) return parseLibrary(own);
     return parseLibrary(storage.getItem(SHAPE_LIBRARY_STORAGE_KEY));
   } catch {
     return createEmptyLibrary();
@@ -93,10 +118,14 @@ export function loadLibrary(storage = defaultStorage()) {
  * Returns true on success, false when storage refused (private mode, quota) —
  * the caller keeps working in memory either way, but can say so.
  */
-export function saveLibrary(library, storage = defaultStorage()) {
+export function saveLibrary(library, storage = defaultStorage(), userId = null) {
   if (!storage) return false;
   try {
-    storage.setItem(SHAPE_LIBRARY_STORAGE_KEY, JSON.stringify(library));
+    const key = shapeLibraryStorageKey(userId);
+    storage.setItem(key, JSON.stringify(library));
+    // Finish a per-user migration: once this user's key holds the library,
+    // the unscoped copy must not be adopted again by another account.
+    if (key !== SHAPE_LIBRARY_STORAGE_KEY) storage.removeItem(SHAPE_LIBRARY_STORAGE_KEY);
     return true;
   } catch {
     return false;

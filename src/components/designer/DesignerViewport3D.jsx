@@ -55,6 +55,8 @@ function pickQualityTier() {
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+const EMPTY_MULTI = Object.freeze([]);
+
 /** Debounce for content rebuilds: rapid drags/keystrokes coalesce into one rebuild. */
 const REBUILD_DEBOUNCE_MS = 120;
 
@@ -90,7 +92,16 @@ const HIGHLIGHT_INTENSITY = 0.85;
  * pinned above the selection. The gesture math lives in designer3DEditing.js;
  * this component only raycasts and dispatches.
  */
-export default function DesignerViewport3D({ design, selection = null, dispatch = null }) {
+export default function DesignerViewport3D({
+  design,
+  selection = null,
+  multiSelection = EMPTY_MULTI,
+  dispatch = null,
+  // Called with { x, y } — the plan point under the camera's orbit target
+  // (the floor spot the view is centered on) — whenever it moves. One-tap
+  // shape placement in 3D drops the shape there.
+  onFloorCenterChange = null,
+}) {
   const mountRef = useRef(null);
 
   // Cross-effect handles. Refs, not state: none of this should ever trigger
@@ -109,16 +120,20 @@ export default function DesignerViewport3D({ design, selection = null, dispatch 
   const initialCameraSetRef = useRef(false);
   const rebuildTimerRef = useRef(null);
   const selectionRef = useRef(selection);
+  const multiSelectionRef = useRef(multiSelection);
+  const onFloorCenterChangeRef = useRef(onFloorCenterChange);
   const designRef = useRef(design);
   const dispatchRef = useRef(dispatch);
   const popupRef = useRef(null);
   const popupAnchorRef = useRef(null);
   useEffect(() => {
     selectionRef.current = selection;
+    multiSelectionRef.current = multiSelection;
+    onFloorCenterChangeRef.current = onFloorCenterChange;
     designRef.current = design;
     dispatchRef.current = dispatch;
     popupAnchorRef.current = popupAnchorForSelection(selection, design);
-  }, [selection, design, dispatch]);
+  }, [selection, multiSelection, design, dispatch, onFloorCenterChange]);
   // ---- setup: once per mount ----
   useEffect(() => {
     const mount = mountRef.current;
@@ -205,12 +220,20 @@ export default function DesignerViewport3D({ design, selection = null, dispatch 
       el.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%)`;
     };
 
+    const lastTarget = { x: NaN, z: NaN };
     let raf = 0;
     const animate = () => {
       raf = requestAnimationFrame(animate);
       controls.update();
       renderer.render(threeScene, camera);
       placePopup();
+      // Report the orbit target only when it actually moves (not every frame).
+      const t = controls.target;
+      if (onFloorCenterChangeRef.current && (t.x !== lastTarget.x || t.z !== lastTarget.z)) {
+        lastTarget.x = t.x;
+        lastTarget.z = t.z;
+        onFloorCenterChangeRef.current({ x: t.x, y: t.z });
+      }
     };
     animate();
 
@@ -669,7 +692,7 @@ export default function DesignerViewport3D({ design, selection = null, dispatch 
 
       // A rebuild replaces every mesh, so a live highlight would otherwise
       // vanish on the next keystroke; re-apply it against the new registry.
-      applyHighlight(selectionRef.current, design, registryRef, highlightedRef);
+      applyHighlight(selectionRef.current, design, registryRef, highlightedRef, multiSelectionRef.current);
     }, REBUILD_DEBOUNCE_MS);
 
     return () => {
@@ -682,8 +705,8 @@ export default function DesignerViewport3D({ design, selection = null, dispatch 
 
   // ---- highlight: on selection change, cheap ----
   useEffect(() => {
-    applyHighlight(selection, design, registryRef, highlightedRef);
-  }, [selection, design]);
+    applyHighlight(selection, design, registryRef, highlightedRef, multiSelection);
+  }, [selection, multiSelection, design]);
 
   return (
     <div className="relative h-full w-full overflow-hidden">
@@ -702,13 +725,18 @@ export default function DesignerViewport3D({ design, selection = null, dispatch 
 }
 
 /** Revert any previously highlighted meshes, then tint the newly selected ones. */
-export function applyHighlight(selection, design, registryRef, highlightedRef) {
+export function applyHighlight(selection, design, registryRef, highlightedRef, multiSelection = []) {
   for (const { mesh, originalMaterial } of highlightedRef.current) {
     mesh.material = originalMaterial;
   }
   highlightedRef.current = [];
 
-  const keys = highlightKeysForSelection(selection, design);
+  // A multi-selection (e.g. a furniture set just placed from Favorites)
+  // lights up every piece, not just the single selection.
+  const keys = [
+    ...highlightKeysForSelection(selection, design),
+    ...(multiSelection || []).flatMap((m) => highlightKeysForSelection(m, design)),
+  ];
   if (keys.length === 0) return;
   const registry = registryRef.current;
   const seen = new Set();

@@ -8,10 +8,11 @@ import { describe, expect, it } from "vitest";
 import {
   SHAPE_LIBRARY_STORAGE_KEY,
   loadLibrary,
+  shapeLibraryStorageKey,
   parseLibrary,
   saveLibrary,
 } from "./customShapeStorage";
-import { addShape, createEmptyLibrary, setShapeFavorite } from "./customShapeLibrary";
+import { addShape, createEmptyLibrary, favoriteShapes, moveFavorite, setShapeFavorite } from "./customShapeLibrary";
 
 /** An in-memory stand-in for localStorage. */
 function fakeStorage(initial = {}) {
@@ -19,6 +20,7 @@ function fakeStorage(initial = {}) {
   return {
     getItem: (k) => (map.has(k) ? map.get(k) : null),
     setItem: (k, v) => map.set(k, String(v)),
+    removeItem: (k) => map.delete(k),
     _map: map,
   };
 }
@@ -151,5 +153,52 @@ describe("storage failures", () => {
   it("works with no storage at all (SSR)", () => {
     expect(loadLibrary(null).shapes).toEqual([]);
     expect(saveLibrary(createEmptyLibrary(), null)).toBe(false);
+  });
+});
+
+describe("Favorites order and starter flag persistence", () => {
+  it("round-trips the Favorites order and the starter-seeded flag", () => {
+    let library = createEmptyLibrary();
+    for (const name of ["A", "B", "C"]) library = addShape(library, capture(), name);
+    for (const s of library.shapes) library = setShapeFavorite(library, s.id, true);
+    library = moveFavorite(library, library.shapes[2].id, -2); // C to the top
+    library = { ...library, starterSeeded: true };
+    const storage = fakeStorage();
+    saveLibrary(library, storage);
+    const back = loadLibrary(storage);
+    expect(favoriteShapes(back).map((s) => s.name)).toEqual(["C", "A", "B"]);
+    expect(back.starterSeeded).toBe(true);
+  });
+
+  it("drops order entries for shapes that did not load", () => {
+    const raw = JSON.stringify({ version: 1, shapes: [], favoriteOrder: ["ghost", 7] });
+    expect(parseLibrary(raw).favoriteOrder).toEqual([]);
+  });
+});
+
+describe("per-user libraries", () => {
+  const oneShape = (name) => addShape(createEmptyLibrary(), capture(), name);
+
+  it("keys the library by user id", () => {
+    expect(shapeLibraryStorageKey("u1")).toBe(`${SHAPE_LIBRARY_STORAGE_KEY}.user.u1`);
+    expect(shapeLibraryStorageKey(null)).toBe(SHAPE_LIBRARY_STORAGE_KEY);
+  });
+
+  it("keeps two users' libraries apart in one browser", () => {
+    const storage = fakeStorage();
+    saveLibrary(oneShape("Alice's"), storage, "alice");
+    saveLibrary(oneShape("Bob's"), storage, "bob");
+    expect(loadLibrary(storage, "alice").shapes.map((s) => s.name)).toEqual(["Alice's"]);
+    expect(loadLibrary(storage, "bob").shapes.map((s) => s.name)).toEqual(["Bob's"]);
+  });
+
+  it("adopts the pre-per-user library once, then removes the unscoped copy", () => {
+    const storage = fakeStorage({ [SHAPE_LIBRARY_STORAGE_KEY]: JSON.stringify(oneShape("Legacy")) });
+    const adopted = loadLibrary(storage, "alice");
+    expect(adopted.shapes.map((s) => s.name)).toEqual(["Legacy"]);
+    saveLibrary(adopted, storage, "alice");
+    expect(storage._map.has(SHAPE_LIBRARY_STORAGE_KEY)).toBe(false);
+    // A second account on the same browser starts empty, not with Alice's shapes.
+    expect(loadLibrary(storage, "bob").shapes).toEqual([]);
   });
 });

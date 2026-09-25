@@ -7,6 +7,8 @@ import {
   favoriteShapes,
   findShape,
   listShapesForDisplay,
+  moveFavorite,
+  orderedFavoriteIds,
   removeShape,
   renameShape,
   setShapeFavorite,
@@ -169,7 +171,7 @@ describe("favorites", () => {
 });
 
 describe("listShapesForDisplay", () => {
-  it("puts favorites first, each group sorted by name", () => {
+  it("puts favorites first (in Favorites order), then the rest by name", () => {
     let library = createEmptyLibrary();
     for (const name of ["Zebra", "Alpha", "Mango", "Beta"]) {
       library = addShape(library, capture(), name);
@@ -191,5 +193,56 @@ describe("listShapesForDisplay", () => {
     expect(listShapesForDisplay(createEmptyLibrary())).toEqual([]);
     expect(listShapesForDisplay(null)).toEqual([]);
     expect(favoriteShapes(null)).toEqual([]);
+  });
+});
+
+describe("Favorites order", () => {
+  /** Library with shapes A..D, then starred in the given order. */
+  function starred(order) {
+    let library = createEmptyLibrary();
+    for (const name of ["A", "B", "C", "D"]) library = addShape(library, capture(), name);
+    const id = (name) => library.shapes.find((s) => s.name === name).id;
+    for (const name of order) library = setShapeFavorite(library, id(name), true);
+    return { library, id };
+  }
+  const names = (library) => favoriteShapes(library).map((s) => s.name);
+
+  it("lists favorites in the order they were starred, not by name", () => {
+    const { library } = starred(["C", "A", "D"]);
+    expect(names(library)).toEqual(["C", "A", "D"]);
+    expect(listShapesForDisplay(library).map((s) => s.name)).toEqual(["C", "A", "D", "B"]);
+  });
+
+  it("moves a favorite up and down, clamped at the ends", () => {
+    const { library, id } = starred(["C", "A", "D"]);
+    expect(names(moveFavorite(library, id("D"), -1))).toEqual(["C", "D", "A"]);
+    expect(names(moveFavorite(library, id("C"), 1))).toEqual(["A", "C", "D"]);
+    expect(names(moveFavorite(library, id("A"), -5))).toEqual(["A", "C", "D"]);
+    expect(moveFavorite(library, id("C"), -1)).toBe(library); // already first
+    expect(moveFavorite(library, id("B"), 1)).toBe(library); // not starred
+    expect(moveFavorite(library, "nope", 1)).toBe(library);
+  });
+
+  it("unstarring removes a shape from the order; re-starring adds it at the end", () => {
+    const { library, id } = starred(["C", "A", "D"]);
+    const without = setShapeFavorite(library, id("C"), false);
+    expect(names(without)).toEqual(["A", "D"]);
+    expect(names(setShapeFavorite(without, id("C"), true))).toEqual(["A", "D", "C"]);
+  });
+
+  it("deleting a starred shape drops it from the order", () => {
+    const { library, id } = starred(["C", "A"]);
+    const next = removeShape(library, id("C"));
+    expect(next.favoriteOrder).toEqual([id("A")]);
+  });
+
+  it("reconciles a stale or missing stored order against the stars", () => {
+    const { library, id } = starred(["C", "A"]);
+    // Order names a deleted id and omits a starred one; no order at all also works.
+    const messy = { ...library, favoriteOrder: ["gone", id("A"), id("A")] };
+    expect(orderedFavoriteIds(messy)).toEqual([id("A"), id("C")]);
+    const legacy = { ...library };
+    delete legacy.favoriteOrder;
+    expect(orderedFavoriteIds(legacy)).toEqual([id("A"), id("C")]);
   });
 });

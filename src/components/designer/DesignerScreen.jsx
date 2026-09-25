@@ -54,10 +54,16 @@ import ObjectLibraryPanel from "./ObjectLibraryPanel";
 import { createInitialState, designerReducer } from "./designerReducer";
 import {
   createEmptyLibrary,
+  favoriteShapes,
+  moveFavorite,
   removeShape,
   renameShape,
+  setShapeFavorite,
   toggleShapeFavorite,
 } from "@/domains/roomDesigner/customShapes/customShapeLibrary";
+import { seedStarterFavorites } from "@/domains/roomDesigner/customShapes/starterShapes";
+import { oneTapPlacementPoint } from "@/domains/roomDesigner/customShapes/customShapePlacement";
+import ShapeFavoritesSection from "./ShapeFavoritesSection";
 import { addShape as addShapeToLibrary } from "@/domains/roomDesigner/customShapes/customShapeLibrary";
 import { captureSelection } from "@/domains/roomDesigner/customShapes/customShapeCapture";
 import { CustomShapeError } from "@/domains/roomDesigner/customShapes/customShapeErrors";
@@ -160,10 +166,12 @@ export const TOOL_DEFS = [
   { id: "calibrate", label: "Calibrate", icon: Ruler, hint: "Set the background image scale: click two points on it, then enter the real distance", needsUnderlay: true },
 ];
 
-export default function DesignerScreen({ projectId, initialName }) {
+export default function DesignerScreen({ projectId, initialName, userId = null }) {
   const [state, dispatch] = useReducer(designerReducer, undefined, () => createInitialState());
-  // Personal custom-shape library: local-only, per browser, not part of the
-  // design document (a shape belongs to the DESIGNER, not to any one plan).
+  // Personal custom-shape library: local-only, per signed-in user (keyed by
+  // `userId` in localStorage), not part of the design document (a shape
+  // belongs to the DESIGNER, not to any one plan). Starter favorites are
+  // seeded into it once per user.
   // Lazily read on mount so SSR never touches localStorage.
   // Restored after mount (not via a lazy useState initializer), the same
   // way ThemeProvider restores its stored preference — see that component
@@ -178,12 +186,14 @@ export default function DesignerScreen({ projectId, initialName }) {
   // respond to clicks at all.
   const [shapeLibrary, setShapeLibrary] = useState(createEmptyLibrary);
   useEffect(() => {
-    const stored = loadLibrary();
-    if (stored.shapes.length > 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore of a value from an external store (localStorage) on mount.
-      setShapeLibrary(stored);
-    }
-  }, []);
+    // Seeding is a no-op for a library that already had its starters, so
+    // this is still a plain restore for returning users. The persist effect
+    // below then writes the seeded (and, for a pre-per-user library,
+    // migrated) library back under this user's key.
+    const stored = seedStarterFavorites(loadLibrary(undefined, userId));
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore of a value from an external store (localStorage) on mount.
+    setShapeLibrary(stored);
+  }, [userId]);
   // Persist on every change EXCEPT the mount commit. Skipping it there
   // matters, not just tidiness: the restore effect above and this one both
   // run in that same first commit, in declaration order, against the SAME
@@ -197,8 +207,8 @@ export default function DesignerScreen({ projectId, initialName }) {
       mountedShapeLibraryRef.current = true;
       return;
     }
-    saveLibrary(shapeLibrary);
-  }, [shapeLibrary]);
+    saveLibrary(shapeLibrary, undefined, userId);
+  }, [shapeLibrary, userId]);
   // Pure, synchronous: capture + addShapeToLibrary either both succeed or
   // both throw, so the library state never updates on a half-failed save.
   // Throws CustomShapeError, which the button component below catches and
@@ -230,6 +240,29 @@ export default function DesignerScreen({ projectId, initialName }) {
     ...TOOL_DEFS,
     ...customShapeToolDefs(shapeLibrary, Puzzle),
   ]);
+  // One-tap placement from Favorites: each pane reports the plan point at
+  // the middle of what it shows (refs — updated on every pan/zoom/orbit
+  // without re-rendering the screen), and the tap drops the shape there.
+  const planCenterRef = useRef(null);
+  const floorCenterRef = useRef(null);
+  const reportPlanCenter = useCallback((p) => {
+    planCenterRef.current = p;
+  }, []);
+  const reportFloorCenter = useCallback((p) => {
+    floorCenterRef.current = p;
+  }, []);
+  const placeFavoriteShape = (shapeId) => {
+    const shape = shapeLibrary.shapes.find((s) => s.id === shapeId);
+    if (!shape) return;
+    const at = oneTapPlacementPoint({
+      view: state.view,
+      planCenter: planCenterRef.current,
+      floorCenter: floorCenterRef.current,
+      design: state.design,
+    });
+    dispatch({ type: "PLACE_CUSTOM_SHAPE", shape, x: at.x, y: at.y, selectPlaced: true });
+  };
+
   const [name, setName] = useState(initialName || "Untitled design");
   const [status, setStatus] = useState({ kind: "loading", message: "Loading design…" });
   const [saving, setSaving] = useState(false);
@@ -807,6 +840,14 @@ export default function DesignerScreen({ projectId, initialName }) {
             const shapeId = shapeIdFromToolId(toolId);
             if (shapeId) setShapeLibrary((lib) => toggleShapeFavorite(lib, shapeId));
           }}
+          favoritesSection={
+            <ShapeFavoritesSection
+              shapes={favoriteShapes(shapeLibrary)}
+              onPlace={placeFavoriteShape}
+              onMove={(shapeId, delta) => setShapeLibrary((lib) => moveFavorite(lib, shapeId, delta))}
+              onRemove={(shapeId) => setShapeLibrary((lib) => setShapeFavorite(lib, shapeId, false))}
+            />
+          }
         />
 
         {/* canvas */}
@@ -831,6 +872,8 @@ export default function DesignerScreen({ projectId, initialName }) {
               layerVisibility={layerVisibility}
               dispatch={dispatch}
               zoomRequest={zoomRequest}
+              onPlanCenterChange={reportPlanCenter}
+              onFloorCenterChange={reportFloorCenter}
             />
           )}
           </DesignerErrorBoundary>

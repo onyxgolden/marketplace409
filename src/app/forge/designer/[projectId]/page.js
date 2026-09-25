@@ -7,5 +7,5 @@ export default async function DesignerEditorPage({ params }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/auth");
   const { projectId } = await params;
-  return <DesignerScreen projectId={projectId} />;
+  return <DesignerScreen projectId={projectId} userId={user.id} />;
 }
