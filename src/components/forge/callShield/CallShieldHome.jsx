@@ -8,6 +8,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { findPossibleDuplicateCalls } from "@/domains/callShield/callShieldImport";
+import {
+  IMPORT_FILTERS,
+  LABEL_OFFENDER,
+  LABEL_PERSONAL,
+  applyLabelFilter,
+  fetchAllLabels,
+  labelForNumber,
+} from "@/domains/callShield/callShieldLabels";
 import { fetchNativeCallRecords, isNativeShell } from "@/lib/callShield/callShieldNative";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import {
@@ -72,6 +80,15 @@ export default function CallShieldHome() {
   );
   const cases = homeData?.cases ?? null;
   const imports = homeData?.imports ?? null;
+  // Contact labels live under their own key: classification needs the full
+  // set and the endpoint is paginated server-side, so page through it all.
+  const { data: labelsData, refresh: refreshLabels } = useStaleWhileRevalidate(
+    "call-shield:labels",
+    () => fetchAllLabels(api),
+    { ttlMs: 60_000 },
+  );
+  const labels = useMemo(() => labelsData ?? [], [labelsData]);
+  const [labelFilter, setLabelFilter] = useState("all");
   const [selectedCaseId, setSelectedCaseId] = useState("");
   // Working case detail: its own key so switching cases serves the cached
   // detail instantly and revalidates behind it.
@@ -196,7 +213,55 @@ export default function CallShieldHome() {
     }
   }
 
+  async function handleLabel(importRow, label) {
+    setError("");
+    setBusy(`label-${importRow.id}`);
+    try {
+      await api("/api/call-shield/labels", {
+        method: "POST",
+        body: JSON.stringify({ phoneNumber: importRow.phone_number, label }),
+      });
+      setNotice(
+        label === LABEL_OFFENDER
+          ? `${importRow.phone_number} marked as an offender. The symbol will stick to this number.`
+          : `${importRow.phone_number} marked personal — filter it out of the review queue anytime.`,
+      );
+      await refreshLabels();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleRemoveLabel(importRow) {
+    setBusy(`label-${importRow.id}`);
+    try {
+      await api(`/api/call-shield/labels?phoneNumber=${encodeURIComponent(importRow.phone_number)}`, {
+        method: "DELETE",
+      });
+      await refreshLabels();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const existingCalls = caseDetail?.calls || [];
+
+  const visibleImports = applyLabelFilter(imports ?? [], labels, labelFilter);
+  const filterCounts = useMemo(() => {
+    const list = imports ?? [];
+    const counts = { all: list.length, personal: 0, offender: 0, unlabeled: 0 };
+    for (const row of list) {
+      const kind = labelForNumber(labels, row.phone_number)?.label;
+      if (kind === LABEL_PERSONAL) counts.personal += 1;
+      else if (kind === LABEL_OFFENDER) counts.offender += 1;
+      else counts.unlabeled += 1;
+    }
+    return counts;
+  }, [imports, labels]);
 
   return (
     <div className="space-y-8">
@@ -326,11 +391,46 @@ export default function CallShieldHome() {
           )}
         </div>
 
+        <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Filter staged calls by contact label">
+          {IMPORT_FILTERS.map((filter) => {
+            const label =
+              filter === "personal"
+                ? "Personal"
+                : filter === "offender"
+                  ? "\uD83D\uDEAB Offenders"
+                  : filter === "unlabeled"
+                    ? "Unlabeled"
+                    : "All";
+            const active = labelFilter === filter;
+            return (
+              <button
+                key={filter}
+                onClick={() => setLabelFilter(filter)}
+                aria-pressed={active}
+                className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                  active
+                    ? "border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-900"
+                    : "border-slate-300 text-slate-600 dark:border-slate-600 dark:text-slate-300"
+                }`}
+              >
+                {label} ({filterCounts[filter]})
+              </button>
+            );
+          })}
+        </div>
+
         <div className="mt-4 space-y-2">
-          {(imports ?? []).length === 0 && (
-            <p className="text-sm text-slate-500">No staged imports. Nothing waiting for review.</p>
+          {visibleImports.length === 0 && (
+            <p className="text-sm text-slate-500">
+              {(imports ?? []).length === 0
+                ? "No staged imports. Nothing waiting for review."
+                : "No calls match this filter."}
+            </p>
           )}
-          {(imports ?? []).map((row) => {
+          {visibleImports.map((row) => {
+            const contactLabel = labelForNumber(labels, row.phone_number);
+            const isOffender = contactLabel?.label === LABEL_OFFENDER;
+            const isPersonal = contactLabel?.label === LABEL_PERSONAL;
             const duplicates = findPossibleDuplicateCalls(
               {
                 phoneNumber: row.phone_number,
@@ -345,11 +445,24 @@ export default function CallShieldHome() {
                 className="flex flex-wrap items-center gap-3 rounded border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"
               >
                 <div className="min-w-0 flex-1">
-                  <span className="font-semibold">{row.phone_number}</span>
+                  <span className="font-semibold">
+                    {isOffender && <span className="mr-1">{contactLabel.symbol || "\u26A0"}</span>}
+                    {row.phone_number}
+                  </span>
                   {row.caller_name && <span className="ml-2 text-slate-500">({row.caller_name})</span>}
                   <span className="ml-2 text-slate-500">
                     {formatStartedAt(row.started_at)} · {formatDuration(row.duration_seconds)} · {row.call_type}
                   </span>
+                  {isOffender && (
+                    <span className="ml-2 rounded bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800 dark:bg-red-900 dark:text-red-200">
+                      Offender
+                    </span>
+                  )}
+                  {isPersonal && (
+                    <span className="ml-2 rounded bg-slate-200 px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                      Personal
+                    </span>
+                  )}
                   {duplicates.length > 0 && (
                     <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                       Possible duplicate
@@ -361,6 +474,32 @@ export default function CallShieldHome() {
                     </span>
                   )}
                 </div>
+                {!contactLabel ? (
+                  <>
+                    <button
+                      onClick={() => handleLabel(row, LABEL_PERSONAL)}
+                      disabled={busy === `label-${row.id}`}
+                      className="rounded border border-slate-300 px-3 py-1.5 text-xs disabled:opacity-50 dark:border-slate-600"
+                    >
+                      Mark personal
+                    </button>
+                    <button
+                      onClick={() => handleLabel(row, LABEL_OFFENDER)}
+                      disabled={busy === `label-${row.id}`}
+                      className="rounded border border-red-300 px-3 py-1.5 text-xs text-red-700 disabled:opacity-50 dark:border-red-700 dark:text-red-300"
+                    >
+                      🚫 Mark offender
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => handleRemoveLabel(row)}
+                    disabled={busy === `label-${row.id}`}
+                    className="rounded border border-slate-300 px-3 py-1.5 text-xs disabled:opacity-50 dark:border-slate-600"
+                  >
+                    Remove label
+                  </button>
+                )}
                 {!row.matched_case_id && (
                   <>
                     <button
