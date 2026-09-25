@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { forgeTheme } from "@/components/forge/theme";
 import {
@@ -8,6 +8,7 @@ import {
   ForgeErrorState,
   ForgeLoadingState,
 } from "@/components/forge/ForgeStates.jsx";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { money } from "./formatMoney.js";
 import {
   DEBT_QUESTION_CHIPS,
@@ -221,57 +222,61 @@ function DebtRow({ debt, needsTerms, onTermsChanged }) {
   );
 }
 
+async function loadPayoffComparison(committed) {
+  const response = await fetch(
+    `/api/financial/debt-payoff?monthlySurplus=${encodeURIComponent(committed.surplus)}&taxRate=${encodeURIComponent(committed.taxRate)}`,
+  );
+  const payload = await response.json();
+  if (!response.ok || payload?.success !== true) {
+    throw new Error(payload?.error || "Could not build the debt-payoff comparison.");
+  }
+  return payload.data;
+}
+
 export default function DebtPayoffPanel() {
   const [collapsed, setCollapsed] = useState(false);
   const [surplusInput, setSurplusInput] = useState("500");
   const [taxRateInput, setTaxRateInput] = useState("");
   const [committed, setCommitted] = useState({ surplus: 500, taxRate: 0 });
   const [strategy, setStrategy] = useState("avalanche");
-  const [data, setData] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
+  // Stale-while-revalidate, keyed by the committed inputs: committing new inputs
+  // keeps the old comparison on screen while the new one computes.
+  const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    `financial:debt-payoff:${committed.surplus}:${committed.taxRate}`,
+    () => loadPayoffComparison(committed),
+    { ttlMs: 60_000 },
+  );
   const [prefSaving, setPrefSaving] = useState(false);
   const [prefError, setPrefError] = useState(null);
   const [activeQuestion, setActiveQuestion] = useState(null);
   const [whatIfInput, setWhatIfInput] = useState("500");
-  const [reloadNonce, setReloadNonce] = useState(0);
 
   function reload() {
-    setReloadNonce((nonce) => nonce + 1);
+    refresh();
   }
 
-  useEffect(() => {
-    let cancelled = false;
+  // Committing new surplus/tax inputs swaps the cache key, so keep the last
+  // visible comparison on screen while the new one computes -- never blank.
+  const [lastData, setLastData] = useState(null);
+  if (data && data !== lastData) {
+    // Adjusting state during render on a fresh payload: the standard React
+    // derived-state pattern, so the previous comparison stays visible on re-commit.
+    setLastData(data);
+  }
+  const visible = data ?? lastData;
 
-    async function load() {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const response = await fetch(
-          `/api/financial/debt-payoff?monthlySurplus=${encodeURIComponent(committed.surplus)}&taxRate=${encodeURIComponent(committed.taxRate)}`,
-        );
-        const payload = await response.json();
-        if (!response.ok || payload?.success !== true) {
-          throw new Error(payload?.error || "Could not build the debt-payoff comparison.");
-        }
-        if (!cancelled) setData(payload.data);
-      } catch (loadError) {
-        if (!cancelled) {
-          setData(null);
-          setError(
-            loadError instanceof Error ? loadError.message : "Could not build the debt-payoff comparison.",
-          );
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    }
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [committed, reloadNonce]);
+  // Optimistic preference override: the PUT returns the new value and the old
+  // code applied it to the checkbox immediately. Keep that instant feedback and
+  // let the canonical server value from the next fresh fetch clear the override.
+  const [suggestionsOverride, setSuggestionsOverride] = useState(null);
+  const [prevFetchedData, setPrevFetchedData] = useState(data);
+  if (data !== prevFetchedData) {
+    // Adjusting state during render on a fresh payload: the standard React
+    // derived-state pattern, so the canonical value always wins over the override.
+    setPrevFetchedData(data);
+    setSuggestionsOverride(null);
+  }
+  const suggestionsEnabled = suggestionsOverride ?? visible?.suggestionsEnabled !== false;
 
   function commitInputs() {
     const surplus = Number(surplusInput);
@@ -295,9 +300,9 @@ export default function DebtPayoffPanel() {
       if (!response.ok || payload?.success !== true) {
         throw new Error(payload?.error || "Could not save the preference.");
       }
-      setData((current) =>
-        current ? { ...current, suggestionsEnabled: payload.data.suggestionsEnabled } : current,
-      );
+      // Optimistic: reflect the owner's choice immediately. The next fresh
+      // payload from the cache layer clears the override with the canonical value.
+      setSuggestionsOverride(payload.data.suggestionsEnabled);
     } catch (saveError) {
       setPrefError(saveError instanceof Error ? saveError.message : "Could not save the preference.");
     } finally {
@@ -305,25 +310,25 @@ export default function DebtPayoffPanel() {
     }
   }
 
-  const strategies = data?.strategies ?? null;
+  const strategies = visible?.strategies ?? null;
   const selected = strategies?.[strategy] ?? null;
-  const saved = data?.interestSavedVsMinimums?.[strategy] ?? null;
-  const eligible = data?.eligible ?? [];
-  const needsTerms = data?.needsTerms ?? [];
+  const saved = visible?.interestSavedVsMinimums?.[strategy] ?? null;
+  const eligible = visible?.eligible ?? [];
+  const needsTerms = visible?.needsTerms ?? [];
   const hasAnyDebts = eligible.length > 0 || needsTerms.length > 0;
 
   // The API strips the (identical) per-strategy eligible lists; reattach one
   // copy so the deterministic Q&A below works on the true engine shape.
   const comparisonForAnswers =
-    data && strategies
+    visible && strategies
       ? {
           strategies: {
             avalanche: { ...strategies.avalanche, eligible },
             snowball: { ...strategies.snowball, eligible },
             minimums: { ...strategies.minimums, eligible },
           },
-          interestSavedVsMinimums: data.interestSavedVsMinimums,
-          topMove: data.topMove,
+          interestSavedVsMinimums: visible.interestSavedVsMinimums,
+          topMove: visible.topMove,
         }
       : null;
   const activeAnswer =
@@ -332,7 +337,7 @@ export default function DebtPayoffPanel() {
           comparison: comparisonForAnswers,
           debts: eligible,
           extraPerMonth: Number(whatIfInput),
-          marginalTaxRate: data.marginalTaxRate ?? 0,
+          marginalTaxRate: visible.marginalTaxRate ?? 0,
           strategy,
         })
       : null;
@@ -366,8 +371,8 @@ export default function DebtPayoffPanel() {
             payments at your bank.
           </p>
 
-          {isLoading && <ForgeLoadingState label="Building the payoff comparison…" />}
-          {error && !isLoading && (
+          {!visible && isLoading && <ForgeLoadingState label="Building the payoff comparison…" />}
+          {!visible && !isLoading && error && (
             <div className="mt-4">
               <ForgeErrorState
                 title="Could not build the debt-payoff comparison."
@@ -377,7 +382,19 @@ export default function DebtPayoffPanel() {
             </div>
           )}
 
-          {!isLoading && !error && !hasAnyDebts && (
+          {visible && error && (
+            <p role="status" className={`${forgeTheme.textSmall} mt-2`}>
+              Could not refresh — showing the last saved comparison.
+            </p>
+          )}
+
+          {visible && (isRefreshing || !data) && (
+            <p role="status" className={`${forgeTheme.textSmall} mt-2`}>
+              Updating…
+            </p>
+          )}
+
+          {visible && !hasAnyDebts && (
             <div className="mt-4">
               <ForgeEmptyState
                 headline="No debts found"
@@ -386,7 +403,7 @@ export default function DebtPayoffPanel() {
             </div>
           )}
 
-          {!isLoading && !error && hasAnyDebts && (
+          {visible && hasAnyDebts && (
             <>
               <div className="mt-4 flex flex-wrap items-end gap-3">
                 <label className="text-xs font-bold text-slate-600 dark:text-slate-400">
@@ -427,7 +444,7 @@ export default function DebtPayoffPanel() {
                 <input
                   id="debt-payoff-suggestions"
                   type="checkbox"
-                  checked={data?.suggestionsEnabled !== false}
+                  checked={suggestionsEnabled}
                   disabled={prefSaving}
                   onChange={(e) => toggleSuggestions(e.target.checked)}
                 />

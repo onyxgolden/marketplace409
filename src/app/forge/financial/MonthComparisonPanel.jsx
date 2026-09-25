@@ -1,8 +1,10 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { forgeTheme } from "@/components/forge/theme";
+import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { money } from "./formatMoney.js";
 
 function lastThreeCalendarMonths() {
@@ -37,59 +39,40 @@ function groupLines(period, type) {
 export default function MonthComparisonPanel() {
   const [collapsed, setCollapsed] = useState(false);
   const [months, setMonths] = useState(lastThreeCalendarMonths);
-  const [periods, setPeriods] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  // The comparison that is actually on screen. Month-picker edits only become
+  // live data when Compare is pressed -- the picker itself never triggers a fetch.
+  const [appliedKeys, setAppliedKeys] = useState(() => months.join(","));
+  const [validationError, setValidationError] = useState(null);
 
-  const compare = useCallback(async (monthKeys) => {
+  // Stale-while-revalidate keyed by the committed month set: pressing Compare
+  // keeps the previous table on screen while the new periods load.
+  const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    `financial:comparison:${appliedKeys}`,
+    () => loadComparison(appliedKeys.split(",")),
+    { ttlMs: 60_000 },
+  );
+  const periods = data ?? null;
+
+  // Changing the month set swaps the cache key, so keep the last visible table
+  // on screen while the new periods load -- pressing Compare never blanks the panel.
+  const [lastPeriods, setLastPeriods] = useState(null);
+  if (periods && periods !== lastPeriods) {
+    // Adjusting state during render on a fresh payload: the standard React
+    // derived-state pattern, so the previous table stays visible mid-compare.
+    setLastPeriods(periods);
+  }
+  const visible = periods ?? lastPeriods;
+
+  const compare = useCallback((monthKeys) => {
     const keys = monthKeys.filter(Boolean);
 
     if (keys.length === 0) {
-      setError("Pick at least one month to compare.");
-      setPeriods(null);
+      setValidationError("Pick at least one month to compare.");
       return;
     }
 
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      setPeriods(await loadComparison(keys));
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Could not load the month comparison. Try again.",
-      );
-      setPeriods(null);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Initial load: fetch directly in a promise callback so no setState runs
-    // synchronously inside the effect body.
-    let cancelled = false;
-
-    loadComparison(lastThreeCalendarMonths()).then(
-      (data) => {
-        if (!cancelled) setPeriods(data);
-      },
-      (loadError) => {
-        if (cancelled) return;
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : "Could not load the month comparison. Try again.",
-        );
-        setPeriods(null);
-      },
-    );
-
-    return () => {
-      cancelled = true;
-    };
+    setValidationError(null);
+    setAppliedKeys(keys.join(","));
   }, []);
 
   const setMonthAt = (index, value) => {
@@ -98,17 +81,19 @@ export default function MonthComparisonPanel() {
     );
   };
 
-  const revenueAccounts = periods?.[0]
-    ? groupLines(periods[0], "revenue")
+  const revenueAccounts = visible?.[0]
+    ? groupLines(visible[0], "revenue")
     : [];
-  const expenseAccounts = periods?.[0]
-    ? groupLines(periods[0], "expense")
+  const expenseAccounts = visible?.[0]
+    ? groupLines(visible[0], "expense")
     : [];
   const hasActivity =
     revenueAccounts.length > 0 || expenseAccounts.length > 0;
 
   const amountFor = (period, accountId) =>
     period.lines.find((line) => line.accountId === accountId)?.amount ?? 0;
+
+  const showError = validationError || (!visible && !isLoading ? error : null);
 
   return (
     <section
@@ -166,40 +151,51 @@ export default function MonthComparisonPanel() {
             <button
               type="button"
               onClick={() => compare(months)}
-              disabled={isLoading}
+              disabled={isLoading || isRefreshing}
               className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50"
             >
-              {isLoading ? "Comparing…" : "Compare"}
+              {isLoading || isRefreshing ? "Comparing…" : "Compare"}
             </button>
           </div>
 
           <div className="mt-5">
-            {isLoading && !periods && (
-              <p className={forgeTheme.textSmall}>
-                Loading the comparison…
+            {!visible && isLoading && <ForgeLoadingState label="Loading the comparison…" />}
+
+            {showError && !visible ? (
+              <ForgeErrorState
+                title="Could not load the month comparison."
+                detail={showError}
+                onRetry={refresh}
+              />
+            ) : null}
+
+            {visible && error && (
+              <p role="status" className={`${forgeTheme.textSmall} mt-2`}>
+                Could not refresh — showing the last saved comparison.
               </p>
             )}
 
-            {error && (
-              <p className="text-sm text-red-600 dark:text-red-400">
-                {error}
+            {visible && (isRefreshing || !periods) && (
+              <p role="status" className={`${forgeTheme.textSmall} mt-2`}>
+                Updating…
               </p>
             )}
 
-            {!isLoading && !error && periods && !hasActivity && (
-              <p className={forgeTheme.textSmall}>
-                No revenue or expense activity in the selected months.
-              </p>
+            {visible && !hasActivity && (
+              <ForgeEmptyState
+                headline="No revenue or expense activity in the selected months"
+                guidance="Pick different months or check that your ledger has imported activity for them."
+              />
             )}
 
-            {!error && periods && hasActivity && (
+            {visible && hasActivity && (
               <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
                 <table className="w-full border-collapse text-left">
                   <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
                     <tr>
                       <th className="p-4">Account</th>
 
-                      {periods.map((period) => (
+                      {visible.map((period) => (
                         <th
                           key={period.period.key}
                           className="p-4 text-right"
@@ -219,7 +215,7 @@ export default function MonthComparisonPanel() {
                         <Fragment key={`${title}-group`}>
                           <tr className="bg-slate-50 dark:bg-slate-800/40">
                             <td
-                              colSpan={periods.length + 1}
+                              colSpan={visible.length + 1}
                               className="px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400"
                             >
                               {title}
@@ -235,7 +231,7 @@ export default function MonthComparisonPanel() {
                                 {row.name}
                               </td>
 
-                              {periods.map((period) => (
+                              {visible.map((period) => (
                                 <td
                                   key={period.period.key}
                                   className="p-4 text-right tabular-nums text-slate-900 dark:text-slate-100"
@@ -274,7 +270,7 @@ export default function MonthComparisonPanel() {
                           {label}
                         </td>
 
-                        {periods.map((period) => {
+                        {visible.map((period) => {
                           const amount = value(period);
                           const isNegative = Number(amount) < 0;
 

@@ -7,6 +7,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.stubGlobal("fetch", vi.fn());
 import DebtPayoffPanel from "./DebtPayoffPanel.jsx";
+import { clearSWRCache } from "../../../hooks/swrCache.js";
 
 function plan(overrides = {}) {
   return {
@@ -73,7 +74,7 @@ async function mount() {
 }
 
 describe("DebtPayoffPanel suggestions preference", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearSWRCache(); });
   afterEach(() => document.body.innerHTML = "");
 
   it("shows the checkbox checked when suggestions are enabled", async () => {
@@ -106,7 +107,7 @@ describe("DebtPayoffPanel suggestions preference", () => {
 });
 
 describe("DebtPayoffPanel question chips", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearSWRCache(); });
   afterEach(() => document.body.innerHTML = "");
 
   it("renders the four preselected questions and answers inline on tap", async () => {

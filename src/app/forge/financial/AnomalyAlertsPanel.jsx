@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { forgeTheme } from "@/components/forge/theme";
+import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { money } from "./formatMoney.js";
 
 const SEVERITY_STYLES = {
@@ -33,39 +35,25 @@ function evidenceLine(alert) {
   }
 }
 
+async function scanAnomalies() {
+  const response = await fetch("/api/financial/anomalies");
+  const payload = await response.json();
+  if (!response.ok || payload?.success !== true) {
+    throw new Error(payload?.error || "Could not scan for anomalies.");
+  }
+  return payload.data.alerts ?? [];
+}
+
 export default function AnomalyAlertsPanel() {
   const [collapsed, setCollapsed] = useState(false);
-  const [alerts, setAlerts] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const response = await fetch("/api/financial/anomalies");
-        const payload = await response.json();
-        if (!response.ok || payload?.success !== true) {
-          throw new Error(payload?.error || "Could not scan for anomalies.");
-        }
-        if (!cancelled) setAlerts(payload.data.alerts ?? []);
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(
-            loadError instanceof Error ? loadError.message : "Could not scan for anomalies.",
-          );
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    }
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Stale-while-revalidate: the cached alert list renders instantly on return visits; a
+  // background refresh keeps the old list on screen with only the subtle indicator flipping.
+  const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "financial:anomalies",
+    scanAnomalies,
+    { ttlMs: 60_000 },
+  );
+  const alerts = data ?? null;
 
   return (
     <section
@@ -104,25 +92,36 @@ export default function AnomalyAlertsPanel() {
           </p>
 
           <div className="mt-4">
-            {isLoading && (
-              <p className={forgeTheme.textSmall}>
-                Scanning the books…
+            {!alerts && isLoading && <ForgeLoadingState label="Scanning the books…" />}
+
+            {!alerts && !isLoading && error && (
+              <ForgeErrorState
+                title="Could not scan for anomalies."
+                detail={error}
+                onRetry={refresh}
+              />
+            )}
+
+            {alerts && error && (
+              <p role="status" className={`${forgeTheme.textSmall} mt-2`}>
+                Could not refresh — showing the last saved scan.
               </p>
             )}
 
-            {error && (
-              <p className="text-sm text-red-600 dark:text-red-400">
-                {error}
+            {alerts && isRefreshing && (
+              <p role="status" className={`${forgeTheme.textSmall} mt-2`}>
+                Updating…
               </p>
             )}
 
-            {!isLoading && !error && alerts?.length === 0 && (
-              <p className={forgeTheme.textSmall}>
-                No anomalies detected.
-              </p>
+            {alerts && alerts.length === 0 && (
+              <ForgeEmptyState
+                headline="No anomalies detected"
+                guidance="Spend spikes, possible duplicate charges, recurring payments that changed amount, and first-time large payees will show up here."
+              />
             )}
 
-            {!isLoading && !error && alerts?.length > 0 && (
+            {alerts && alerts.length > 0 && (
               <ul className="flex flex-col gap-2">
                 {alerts.map((alert, index) => (
                   <li

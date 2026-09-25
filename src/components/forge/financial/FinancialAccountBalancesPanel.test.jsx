@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FinancialAccountBalancesPanel from "./FinancialAccountBalancesPanel";
+import { clearSWRCache } from "../../../hooks/swrCache";
 
 function mount(ui) {
   const container = document.createElement("div");
@@ -52,6 +53,10 @@ function stubFetch(overrides = {}) {
 
 describe("FinancialAccountBalancesPanel", () => {
   let mounted;
+
+  // The panel serves a module-global SWR cache across mounts: clear it so each
+  // test's fetch stub, not a sibling test's cached payload, drives this test.
+  beforeEach(() => { clearSWRCache(); });
 
   afterEach(() => {
     if (mounted) { unmount(mounted); mounted = null; }
