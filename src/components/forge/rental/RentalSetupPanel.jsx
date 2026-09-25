@@ -6,6 +6,8 @@ import RentalPhotoUpload from "./RentalPhotoUpload";
 import PropertyExpenseHistory, { PROPERTY_EXPENSES_OPEN_EVENT } from "./PropertyExpenseHistory";
 import { useCardContextMenu, CardContextMenu } from "./CardContextMenu";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 async function submit(operation, key, value) {
   const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
@@ -34,12 +36,22 @@ export function activeBalanceCentsForUnit(unit, leases, openCharges) {
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 export default function RentalSetupPanel({ initialUnits = [], onNavigate: navigate }) {
+  // Rental units: stale-while-revalidate. The cached units render instantly on
+  // return visits and refresh in the background — the last good data never
+  // blanks out. Mutations post through /api/rental then call refresh() to
+  // revalidate. Archive/delete confirmations are preserved unchanged.
+  const fetchSetup = useCallback(async () => {
+    const response = await fetch("/api/rental");
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
+    return result;
+  }, []);
+  const { data: loaded, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "rental:setup",
+    fetchSetup,
+    { ttlMs: 60_000 },
+  );
   const [message, setMessage] = useState("");
-  const [units, setUnits] = useState(initialUnits);
-  const [leases, setLeases] = useState([]);
-  const [leaseMemberships, setLeaseMemberships] = useState([]);
-  const [tenants, setTenants] = useState([]);
-  const [openCharges, setOpenCharges] = useState([]);
   const [showCreate, setShowCreate] = useState(initialUnits.length === 0);
   const [selectedId, setSelectedId] = useState(initialUnits[0]?.id || null);
   const [working, setWorking] = useState(false);
@@ -49,21 +61,35 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   const openFullExpenses = useCallback((unit) => {
     window.dispatchEvent(new CustomEvent(PROPERTY_EXPENSES_OPEN_EVENT, { detail: { propertyId: unit?.property_id } }));
   }, []);
-  const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, units, "label"));
-  async function loadUnits() {
-    const response = await fetch("/api/rental"); const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
-    const loaded = result.units || []; setUnits(loaded); setSelectedId((current) => loaded.some((item) => item.id === current && item.status !== "inactive") ? current : loaded.find((item) => item.status !== "inactive")?.id || null); setShowCreate(loaded.every((item) => item.status === "inactive"));
-    setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setTenants(result.tenants || []); setOpenCharges(result.openCharges || []);
-  }
+  // Adopt freshly fetched data the same way the original mount fetch did:
+  // keep the current selection when still active, otherwise select the first
+  // active unit; show the create form only when everything is inactive.
+  // The adoption is deferred to a microtask so it runs outside the effect
+  // body, exactly like the original fetch .then() handler did.
   useEffect(() => {
-    fetch("/api/rental").then(async (response) => {
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Unable to load rental units.");
-      return result;
-    }).then((result) => { const loadedUnits = result.units || []; setUnits(loadedUnits); setSelectedId(loadedUnits.find((item) => item.status !== "inactive")?.id || null); setShowCreate(loadedUnits.every((item) => item.status === "inactive"));
-      setLeases(result.leases || []); setLeaseMemberships(result.leaseMemberships || []); setTenants(result.tenants || []); setOpenCharges(result.openCharges || []); }).catch((error) => setMessage(error.message));
-  }, []);
+    if (!loaded) return undefined;
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      const nextUnits = loaded.units || [];
+      setSelectedId((current) => nextUnits.some((item) => item.id === current && item.status !== "inactive") ? current : nextUnits.find((item) => item.status !== "inactive")?.id || null);
+      setShowCreate(nextUnits.every((item) => item.status === "inactive"));
+    });
+    return () => { cancelled = true; };
+  }, [loaded]);
+  const seed = initialUnits.length > 0 ? { units: initialUnits, leases: [], leaseMemberships: [], tenants: [], openCharges: [] } : null;
+  const result = loaded || seed;
+  const units = result?.units || [];
+  const leases = result?.leases || [];
+  const leaseMemberships = result?.leaseMemberships || [];
+  const tenants = result?.tenants || [];
+  const openCharges = result?.openCharges || [];
+  const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, units, "label"));
+  const refreshUnits = refresh;
+
+  if (!result && isLoading) return <ForgeLoadingState label="Loading rental units…" />;
+  if (!result && loadError) return <ForgeErrorState title="Unable to load rental units" detail={loadError} onRetry={() => refresh()} />;
+
   async function saveUnit(event) {
     event.preventDefault();
     const values = new FormData(event.currentTarget);
@@ -74,13 +100,13 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
     if (!window.confirm(action)) return;
     setWorking(true); setMessage("");
     try {
-      const result = await submit("save-unit", "unit", { id: values.get("id") || undefined, propertyId: values.get("propertyId"), label: values.get("label"),
+      const saved = await submit("save-unit", "unit", { id: values.get("id") || undefined, propertyId: values.get("propertyId"), label: values.get("label"),
         status: existing?.status || "preparing", bedrooms: Number(values.get("bedrooms")) || null, bathrooms: Number(values.get("bathrooms")) || null,
         squareFeet: Number(values.get("squareFeet")) || null, notes: values.get("notes") || null,
         availableAt: existing?.available_at || null, createdAt: existing?.created_at || undefined });
-      setMessage(`Unit saved: ${result.unit.label} — ID: ${result.unit.id}`);
+      setMessage(`Unit saved: ${saved.unit.label} — ID: ${saved.unit.id}`);
       setShowCreate(false); setEditingId(null);
-      await loadUnits();
+      await refreshUnits();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function archiveUnit(unit) {
@@ -89,7 +115,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
       await submit("archive-unit", "unitId", unit.id);
       setMessage(`${unit.label} archived. Financial and lease history was preserved.`);
       setArchiveCandidateId(null);
-      await loadUnits();
+      await refreshUnits();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function permanentlyDeleteUnit(unit) {
@@ -99,7 +125,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
     try {
       await submit("delete-archived-unit", "unitId", unit.id);
       setMessage(`${unit.label} was permanently deleted.`);
-      await loadUnits();
+      await refreshUnits();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   return (
@@ -110,6 +136,8 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review saved units first. Create another unit only as a deliberate action.</p></div>
         {units.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`shrink-0 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a new property / unit</button>}
       </div>
+      {result && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved units.</p> : null}
+      {result && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
       {units.length > 0 && !showCreate && <RentalRecordBrowser title="Rental properties" records={units.filter((unit) => unit.status !== "inactive")} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); setArchiveCandidateId(null); }} getThumbnail={(unit) => unit.photo_url} listSize="wide"
         columns={[
           { header: "Property address", render: (unit) => <><strong className="block text-sm text-slate-950 dark:text-white">{unit.label}</strong><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{unit.property_id} · {unit.status || "Status not set"}</span></> },
@@ -128,7 +156,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
             <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Selected unit</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{unit.label}</h3></div>
               <RentalRecordActions label="Property actions" summaryClassName="cursor-pointer list-none rounded-xl bg-red-600 px-4 py-2 text-sm font-black text-white transition hover:bg-red-700" actions={[{label:"Edit property details",onSelect:()=>{setArchiveCandidateId(null);setEditingId(unit.id);}},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Financial setup",onSelect:()=>onNavigate?.("financial-setup",context)},{label:"Work orders",onSelect:()=>onNavigate?.("maintenance",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)},{label:"Archive duplicate / inactive property",onSelect:()=>{setEditingId(null);setArchiveCandidateId(unit.id);}}]}/>
             </div>
-            <div className="mt-4"><RentalPhotoUpload entityType="unit" entityId={unit.id} photoUrl={unit.photo_url} onUploaded={loadUnits} /></div>
+            <div className="mt-4"><RentalPhotoUpload entityType="unit" entityId={unit.id} photoUrl={unit.photo_url} onUploaded={refreshUnits} /></div>
             <PropertyExpenseHistory key={unit.id} propertyId={unit.property_id} propertyLabel={unit.label} />
             {archiveCandidateId === unit.id ? <div className="mt-5 rounded-xl border border-red-300 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="font-black text-red-900 dark:text-red-200">Archive {unit.label}?</p><p className="mt-2 text-sm text-red-800 dark:text-red-300">This removes the property/unit from active lists but preserves its financial, lease, and audit history. A property with an active lease cannot be archived.</p><div className="mt-3 flex gap-2"><button type="button" disabled={working} onClick={() => archiveUnit(unit)} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white">Confirm archive</button><button type="button" onClick={() => setArchiveCandidateId(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold dark:border-slate-600 dark:text-slate-300">Cancel</button></div></div>
               : editingId===unit.id ? <UnitEditForm unit={unit} working={working} onCancel={()=>setEditingId(null)} onSave={saveUnit}/>

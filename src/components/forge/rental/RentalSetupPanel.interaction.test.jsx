@@ -2,13 +2,14 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalSetupPanel from "./RentalSetupPanel";
 
 const units = [{ id: "unit_1", property_id: "1214-wagner", label: "1214 Wagner", status: "available" }];
 
 describe("RentalSetupPanel tenant action", () => {
   let container; let root;
-  afterEach(() => { if (root) act(() => root.unmount()); container?.remove(); vi.unstubAllGlobals(); });
+  afterEach(() => { if (root) act(() => root.unmount()); container?.remove(); vi.unstubAllGlobals(); clearSWRCache(); });
 
   it("opens tenant creation for the selected property", async () => {
     const unit = { id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "available" };

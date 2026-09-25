@@ -1,5 +1,7 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -20,15 +22,26 @@ const STATE_TONE = {
 };
 
 export default function RentalReconciliationPanel() {
-  const [data, setData] = useState({ payments: [], settlements: [] });
-  const [error, setError] = useState("");
-  const load = useCallback(() => fetch("/api/rental").then(async (response) => {
+  // Payment reconciliation: stale-while-revalidate. The cached reconciliation
+  // table renders instantly on return visits and refreshes in the background —
+  // the last good data never blanks out. Reconciliation stays human-gated:
+  // the panel is read-only; any future confirm flow must keep the checkbox +
+  // "CONFIRM" gate and soft/reversible writes.
+  const fetchReconciliation = useCallback(async () => {
+    const response = await fetch("/api/rental");
     const body = await response.json();
     if (!response.ok) throw new Error(body.error);
-    setData({ payments: body.payments || [], settlements: body.settlements || [] });
-  }), []);
-  useEffect(() => { load().catch((reason) => setError(reason.message)); }, [load]);
-  const rows = useMemo(() => buildRentalReconciliation(data.payments, data.settlements), [data]);
+    return { payments: body.payments || [], settlements: body.settlements || [] };
+  }, []);
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "rental:reconciliation",
+    fetchReconciliation,
+    { ttlMs: 60_000 },
+  );
+  const rows = useMemo(() => buildRentalReconciliation(data?.payments || [], data?.settlements || []), [data]);
+
+  if (!data && isLoading) return <ForgeLoadingState label="Loading reconciliation…" />;
+  if (!data && loadError) return <ForgeErrorState title="Unable to load reconciliation" detail={loadError} onRetry={() => refresh()} />;
 
   return <section className="space-y-6" data-rental-reconciliation>
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -37,7 +50,8 @@ export default function RentalReconciliationPanel() {
       <p className="mt-2 max-w-2xl text-sm text-slate-600 dark:text-slate-400">
         Successful rent payments post once to FORGE rental income. Refunds and disputes reopen the charge balance and post a separate negative adjustment without deleting the original receipt.
       </p>
-      {error ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p> : null}
+      {loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved reconciliation.</p> : null}
+      {isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
       <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-left text-sm">
           <thead>

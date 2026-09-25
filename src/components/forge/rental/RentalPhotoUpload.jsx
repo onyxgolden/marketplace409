@@ -1,6 +1,10 @@
 "use client";
 import { useState } from "react";
 
+// no-blank-screens verdict: N/A — this component never fetches on mount. The
+// photo URL arrives via props; fetch fires only inside the user-initiated
+// upload/remove handlers, so the first paint is always complete and there is
+// no loading state to convert.
 export default function RentalPhotoUpload({ entityType, entityId, photoUrl, onUploaded }) {
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);

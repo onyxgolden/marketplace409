@@ -1,7 +1,10 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { seedCacheEntry } from "@/hooks/swrCache";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => value?.replaceAll("_", " ") || "—";
@@ -10,28 +13,38 @@ export const depositBalance = (deposit, transactions) => transactions.filter((it
   .reduce((sum, item) => sum + (["received", "adjustment_increase"].includes(item.transaction_type) ? 1 : -1) * Number(item.amount_cents), 0);
 
 export default function RentalDepositsPanel({ initialData = null }) {
-  const [data, setData] = useState(initialData || { deposits: [], transactions: [], schedules: [], tenants: [] });
+  // Security deposits: stale-while-revalidate. The cached obligations render
+  // instantly on return visits and refresh in the background — the last good
+  // list never blanks out. Mutations post through /api/rental then call
+  // refresh() to revalidate. Parent-supplied initialData is seeded into the
+  // cache so the key stays live: first paint is instant, no mount refetch
+  // fires (the entry is fresh), and refresh() after mutations actually
+  // revalidates.
+  if (initialData) seedCacheEntry("rental:deposits", initialData);
+  const fetchDeposits = useCallback(async () => {
+    const response = await fetch("/api/rental");
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error);
+    return { deposits: body.deposits || [], transactions: body.depositTransactions || [], schedules: body.schedules || [], tenants: body.tenants || [] };
+  }, []);
+  const { data: loaded, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "rental:deposits",
+    fetchDeposits,
+    { ttlMs: 60_000 },
+  );
+  const data = loaded;
   const [selectedId, setSelectedId] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [showTransaction, setShowTransaction] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const load = useCallback(() => fetch("/api/rental").then(async (response) => {
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error);
-    setData({ deposits: body.deposits || [], transactions: body.depositTransactions || [], schedules: body.schedules || [], tenants: body.tenants || [] });
-  }), []);
-  useEffect(() => { if (!initialData) load().catch((reason) => setError(reason.message)); }, [initialData, load]);
-  const activeId = data.deposits.some((item) => item.id === selectedId) ? selectedId : data.deposits[0]?.id || "";
-  const selected = data.deposits.find((item) => item.id === activeId);
-  const transactions = data.transactions.filter((item) => item.deposit_id === activeId);
 
   async function post(payload) {
     setError(""); setMessage("");
     const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
     const body = await response.json();
     if (!response.ok) throw new Error(body.error);
-    await load();
+    await refresh();
   }
   async function save(event) {
     event.preventDefault();
@@ -50,6 +63,19 @@ export default function RentalDepositsPanel({ initialData = null }) {
     } catch (reason) { setError(reason.message); }
   }
 
+  if (!data && isLoading) return <ForgeLoadingState label="Loading security deposits…" />;
+  if (!data && loadError) {
+    return <ForgeErrorState
+      title="Unable to load security deposits"
+      detail={loadError}
+      onRetry={() => refresh()}
+    />;
+  }
+
+  const activeId = data.deposits.some((item) => item.id === selectedId) ? selectedId : data.deposits[0]?.id || "";
+  const selected = data.deposits.find((item) => item.id === activeId);
+  const transactions = data.transactions.filter((item) => item.deposit_id === activeId);
+
   return <section className="space-y-6" data-rental-deposits>
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -62,6 +88,8 @@ export default function RentalDepositsPanel({ initialData = null }) {
       </div>
       {error ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p> : null}
       {message ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">{message}</p> : null}
+      {data && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved deposits.</p> : null}
+      {data && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
       {showAdd ? <form aria-label="Add deposit requirement" onSubmit={save} className="mt-6 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40 md:grid-cols-4">
         <select name="leaseId" required className="rounded-lg border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="">Lease</option>{data.schedules.map((item) => <option key={item.id} value={item.lease_id}>{item.lease_id}</option>)}</select>
         <select name="tenantId" required className="rounded-lg border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="">Tenant</option>{data.tenants.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select>

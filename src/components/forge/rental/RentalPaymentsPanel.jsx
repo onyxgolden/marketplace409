@@ -1,8 +1,11 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import { isChargeForgeCollectible } from "@/application/rental/isChargeForgeCollectible";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { seedCacheEntry } from "@/hooks/swrCache";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => value?.replaceAll("_", " ") || "—";
@@ -88,18 +91,59 @@ function BillingPauseBanner({ billingEnabled, busy, onSetBillingEnabled }) {
 }
 
 const identity = (value) => value;
-export default function RentalPaymentsPanel({ initialData = null, initialAccount, dataScope = identity, initialShowSetup = false }) {
-  const [account, setAccount] = useState(initialAccount), [data, setData] = useState(initialData || { openCharges: [], payments: [], settlements: [], schedules: [], billingEnabled: false });
+export default function RentalPaymentsPanel({ initialData = null, initialAccount, dataScope = identity, initialShowSetup = false, cacheKey = "rental:payments" }) {
+  // Rent collection: stale-while-revalidate under a cache key — the rental data
+  // and the Stripe account status. The cached activity renders instantly on
+  // return visits and refreshes in the background — the last good data never
+  // blanks out. Mutations post through /api/rental then call refresh() to
+  // revalidate. Parent-supplied initialData is seeded into the cache so the
+  // key stays live: first paint is instant, no mount refetch fires (the entry
+  // is fresh), and refresh() after mutations actually revalidates. The
+  // contextual surface passes its own scoped cacheKey so scoped data never
+  // pollutes the global key.
+  if (initialData) seedCacheEntry(cacheKey, initialData);
+  const fetchRentalData = useCallback(async () => {
+    const response = await fetch("/api/rental");
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "Unable to load rent collection data.");
+    return dataScope(body);
+  }, [dataScope]);
+  const { data: loaded, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    cacheKey,
+    fetchRentalData,
+    { ttlMs: 60_000 },
+  );
+  const fetchAccount = useCallback(async () => {
+    const response = await fetch("/api/rental/stripe-account");
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error);
+    return body.account;
+  }, []);
+  const { data: loadedAccount, error: accountError, refresh: refreshAccount } = useStaleWhileRevalidate(
+    initialAccount === undefined ? "rental:stripe-account" : null,
+    fetchAccount,
+    { ttlMs: 60_000 },
+  );
+  const data = loaded || { openCharges: [], payments: [], settlements: [], schedules: [], billingEnabled: false };
+  const account = initialAccount === undefined ? loadedAccount : initialAccount;
   const [selectedId, setSelectedId] = useState(""), [showOffline, setShowOffline] = useState(false), [showSetup, setShowSetup] = useState(initialShowSetup);
   const [message, setMessage] = useState(""), [saved, setSaved] = useState(""), [busy, setBusy] = useState(false);
-  async function loadRentalData() { const response = await fetch("/api/rental"), body = await response.json(); if (!response.ok) throw new Error(body.error || "Unable to load rent collection data."); setData(dataScope(body)); }
-  async function loadAccount() { const response = await fetch("/api/rental/stripe-account"), body = await response.json(); if (!response.ok) throw new Error(body.error); setAccount(body.account); }
-  useEffect(() => { if (!initialData) loadRentalData().catch((error) => setMessage(error.message)); if (initialAccount === undefined) loadAccount().catch((error) => setMessage(error.message)); }, [initialData, initialAccount]);
-  const records = useMemo(() => buildRentActivity(data.openCharges, data.payments, data.settlements), [data]);
+  useEffect(() => { if (accountError && initialAccount === undefined) setMessage(accountError); }, [accountError, initialAccount]);
+
+  if (!loaded && isLoading) return <ForgeLoadingState label="Loading rent collection…" />;
+  if (!loaded && loadError) {
+    return <ForgeErrorState
+      title="Unable to load rent collection data"
+      detail={loadError}
+      onRetry={() => refresh()}
+    />;
+  }
+
+  const records = buildRentActivity(data.openCharges, data.payments, data.settlements);
   const activeId = records.some((item) => item.id === selectedId) ? selectedId : records[0]?.id || "";
   const selected = records.find((item) => item.id === activeId);
   async function connect() { setBusy(true); setMessage(""); try { const response = await fetch("/api/rental/stripe-account", { method: "POST" }), body = await response.json(); if (!response.ok) throw new Error(body.error); window.location.assign(body.url); } catch (error) { setMessage(error.message); setBusy(false); } }
-  async function post(body, success) { setBusy(true); setMessage(""); setSaved(""); try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), result = await response.json(); if (!response.ok) throw new Error(result.error); setSaved(success(result)); await loadRentalData(); return true; } catch (error) { setMessage(error.message); return false; } finally { setBusy(false); } }
+  async function post(body, success) { setBusy(true); setMessage(""); setSaved(""); try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), result = await response.json(); if (!response.ok) throw new Error(result.error); setSaved(success(result)); await refresh(); return true; } catch (error) { setMessage(error.message); return false; } finally { setBusy(false); } }
   async function recordOffline(event) { event.preventDefault(); const element = event.currentTarget, form = new FormData(element); const success = await post({ operation: "record-offline-payment", payment: { chargeId: form.get("chargeId"), paymentMethod: form.get("paymentMethod"), amountCents: Math.round(Number(form.get("amount")) * 100), receivedAt: new Date(`${form.get("receivedDate")}T12:00:00`).toISOString(), receiptReference: form.get("receiptReference"), notes: form.get("notes") } }, () => "Offline payment recorded and rent balance updated."); if (success) { element.reset(); setShowOffline(false); } }
   async function voidCharge(chargeId, reason) { return post({ operation: "void-charge", chargeId, reason }, () => "Charge voided."); }
   async function setBillingEnabled(nextEnabled) { return post({ operation: "set-billing-enabled", enabled: nextEnabled }, () => nextEnabled ? "Rental online billing resumed." : "Rental online billing paused."); }
@@ -120,6 +164,8 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
       </div>
       {message ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{message}</p> : null}
       {saved ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">{saved}</p> : null}
+      {loaded && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved rent collection.</p> : null}
+      {loaded && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
       {showOffline ? <form aria-label="Record offline payment" onSubmit={recordOffline} className="mt-6 grid gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-900/60 dark:bg-amber-950/30 md:grid-cols-2">
         <label className="text-sm font-bold text-slate-900 dark:text-white md:col-span-2">Open rent charge<select name="chargeId" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-3 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="">Select a charge</option>{data.openCharges.map((charge) => <option key={charge.id} value={charge.id}>{charge.period} · due {charge.due_date} · {money.format((Number(charge.amount_cents) - Number(charge.paid_amount_cents)) / 100)}</option>)}</select></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Payment method<select name="paymentMethod" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-3 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="cash">Cash</option><option value="cashiers_check">Cashier&apos;s check</option></select></label>
@@ -134,7 +180,7 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
         <p className="mt-2 font-bold text-slate-800 dark:text-slate-200">Stripe: {account === undefined ? "checking…" : label(account?.status || "not connected")}</p>
         {account?.requirements_due?.length ? <p className="mt-1 text-sm text-amber-800 dark:text-amber-400">Stripe still requires {account.requirements_due.length} item(s).</p> : null}
         <button onClick={connect} disabled={busy || enabled} className="mt-3 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300">{enabled ? "Stripe ready" : account ? "Continue Stripe setup" : "Connect Stripe"}</button>
-        <button onClick={() => loadAccount().catch((error) => setMessage(error.message))} className="ml-2 mt-3 rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-white dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Refresh status</button>
+        <button onClick={() => refreshAccount().catch((error) => setMessage(error.message))} className="ml-2 mt-3 rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-white dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Refresh status</button>
         <div className="mt-5 border-t border-slate-200 pt-4 dark:border-slate-700">
           <h4 className="font-black text-slate-950 dark:text-white">Lease activation and charge generation</h4>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Activation starts billing. Monthly charge generation is idempotent.</p>

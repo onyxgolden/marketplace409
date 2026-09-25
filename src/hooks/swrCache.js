@@ -30,6 +30,17 @@ export function getCacheEntry(key) {
   return entries.get(key);
 }
 
+/**
+ * Synchronously seed a cache entry, e.g. from parent-supplied initial data.
+ * First writer wins: never clobbers live data. The seeded entry is fresh, so
+ * the hook serves it instantly on mount without a refetch, while refresh()
+ * keeps working because the key stays live.
+ */
+export function seedCacheEntry(key, data) {
+  if (key == null || entries.has(key)) return;
+  entries.set(key, { data: data ?? null, error: "", updatedAt: Date.now() });
+}
+
 export function isInflight(key) {
   return inflight.has(key);
 }
