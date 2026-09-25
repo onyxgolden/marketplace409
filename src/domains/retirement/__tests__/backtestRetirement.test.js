@@ -91,6 +91,76 @@ describe("backtestRetirement", () => {
     }
   });
 
+  it("spendingDeclinePct 0 is identical to flat behavior (regression)", () => {
+    const result = backtestRetirement({
+      nestEgg: 100,
+      annualWithdrawal: 30,
+      stockPct: 1.0,
+      horizonYears: 3,
+      data: SYNTHETIC,
+      spendingDeclinePct: 0,
+    });
+    expect(result.windowsTested).toBe(3);
+    expect(result.survivalPct).toBe(66.7);
+    expect(result.worstStarts).toEqual([2001]);
+  });
+
+  it("a 10%/yr spending decline rescues the failing 2001 window on the synthetic set", () => {
+    // Withdrawals: 30, 27, 24.30.
+    // Window 2000 (0.10, -0.20, 0.05): 80 -> 37 -> 14.55 > 0 -> SUCCESS
+    // Window 2001 (-0.20, 0.05, 0.08): 50 -> 25.5 -> 3.24 > 0 -> SUCCESS (was FAIL flat)
+    // Window 2002 (0.05, 0.08, -0.10): 75 -> 54 -> 24.3 > 0 -> SUCCESS
+    const result = backtestRetirement({
+      nestEgg: 100,
+      annualWithdrawal: 30,
+      stockPct: 1.0,
+      horizonYears: 3,
+      data: SYNTHETIC,
+      spendingDeclinePct: 10,
+    });
+    expect(result.windowsTested).toBe(3);
+    expect(result.successes).toBe(3);
+    expect(result.survivalPct).toBe(100);
+    expect(result.worstStarts).toEqual([]);
+  });
+
+  it("the 1% smile never hurts survival on real Shiller data", () => {
+    const flat = backtestRetirement({
+      nestEgg: 1_000_000,
+      annualWithdrawal: 40_000,
+      stockPct: 0.6,
+      horizonYears: 30,
+      data: shillerData,
+    });
+    const smile = backtestRetirement({
+      nestEgg: 1_000_000,
+      annualWithdrawal: 40_000,
+      stockPct: 0.6,
+      horizonYears: 30,
+      data: shillerData,
+      spendingDeclinePct: 1,
+    });
+    expect(flat.survivalPct).toBe(98.4);
+    // Declining withdrawals withdraw strictly less in every year after year 0,
+    // so no window that survived flat can fail with the smile.
+    expect(smile.survivalPct).toBeGreaterThanOrEqual(flat.survivalPct);
+  });
+
+  it("negative or non-finite decline clamps to flat behavior", () => {
+    for (const spendingDeclinePct of [-5, Number.NaN]) {
+      const result = backtestRetirement({
+        nestEgg: 100,
+        annualWithdrawal: 30,
+        stockPct: 1.0,
+        horizonYears: 3,
+        data: SYNTHETIC,
+        spendingDeclinePct,
+      });
+      expect(result.survivalPct).toBe(66.7);
+      expect(result.worstStarts).toEqual([2001]);
+    }
+  });
+
   it("a zero (or negative) withdrawal always survives — nothing to fund", () => {
     for (const annualWithdrawal of [0, -1000]) {
       const result = backtestRetirement({

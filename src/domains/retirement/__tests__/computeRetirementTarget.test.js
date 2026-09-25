@@ -165,6 +165,38 @@ describe("computeRetirementTarget", () => {
     expect(missingAge.requiredNestEgg).toBeNull();
   });
 
+  it("spending smile divides by (withdrawal rate + 1%) — $1.5M flat becomes $1.2M", () => {
+    // Flat real perpetuity at 4%: 60,000 / 0.04 = 1,500,000.
+    // Smile (real spending declining 1%/yr): 60,000 / 0.05 = 1,200,000.
+    const flat = computeRetirementTarget({ ...BASE, generalInflationPct: 0 });
+    const smile = computeRetirementTarget({ ...BASE, generalInflationPct: 0, spendingSmile: true });
+    expect(flat.spendingSmile).toBe(false);
+    expect(flat.requiredNestEgg).toBe(1_500_000);
+    expect(smile.spendingSmile).toBe(true);
+    expect(smile.requiredNestEgg).toBe(1_200_000);
+    // The first-year need is identical — only the funded path differs.
+    expect(smile.portfolioNeedAnnual).toBe(flat.portfolioNeedAnnual);
+  });
+
+  it("spending smile defaults off and levers stay consistent on the smile path", () => {
+    const def = computeRetirementTarget({ ...BASE, generalInflationPct: 0 });
+    expect(def.spendingSmile).toBe(false);
+    expect(def.requiredNestEgg).toBe(1_500_000); // unchanged behavior
+
+    const smile = computeRetirementTarget({ ...BASE, generalInflationPct: 0, spendingSmile: true });
+    // $200/mo less = $2,400/yr less need; at the 5% smile divisor that's -$48,000.
+    expect(smile.levers.spendLess200).toBe(-48_000);
+    // No inflation and no age-driven offsets here, so retiring later changes nothing.
+    expect(smile.levers.retireLater2).toBe(0);
+  });
+
+  it("spending smile still returns nulls for invalid inputs", () => {
+    const result = computeRetirementTarget({ ...BASE, withdrawalRatePct: 0, spendingSmile: true });
+    expect(result.requiredNestEgg).toBeNull();
+    expect(result.spendingSmile).toBeNull();
+    expect(result.levers.retireLater2).toBeNull();
+  });
+
   it("maps allocation profiles to their withdrawal rates", () => {
     expect(ALLOCATION_PROFILES).toHaveLength(3);
     expect(allocationProfileById("conservative")?.withdrawalRatePct).toBe(3.5);
