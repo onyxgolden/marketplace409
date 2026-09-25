@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 // Hand-rolled SVG — one dependency-free line chart with milestone dots and a
 // hover tooltip. X axis runs currentAge -> planningAge; the balance lines
 // start at retirementAge (pre-retirement accumulation is deliberately not
-// modeled — see projectRetirementTimeline). When the spending-smile toggle is
+// modeled — see projectRetirementTimeline). When the declining-spending toggle is
 // on, both paths render side by side, matching the card's established
 // comparison pattern.
 
@@ -93,7 +93,7 @@ export default function RetirementTimelineChart({
     tipLines.push(hoverFlat.calendarYear != null ? `${hoverFlat.calendarYear} · age ${hoverFlat.age}` : `Age ${hoverFlat.age}`);
     tipLines.push(`Flat: ${dollars.format(hoverFlat.balance ?? 0)}`);
     if (hoverFlat.withdrawal != null) tipLines.push(`Flat withdrawal: ${dollars.format(hoverFlat.withdrawal)}/yr`);
-    if (smileOn && hoverSmile) tipLines.push(`Smile: ${dollars.format(hoverSmile.balance ?? 0)}`);
+    if (smileOn && hoverSmile) tipLines.push(`Declining: ${dollars.format(hoverSmile.balance ?? 0)}`);
     if (hoverMilestone) tipLines.push(`★ ${hoverMilestone.label}`);
   }
   const tipWidth = 218;
@@ -225,7 +225,7 @@ export default function RetirementTimelineChart({
               className="inline-block h-0.5 w-6 bg-emerald-600"
               style={{ backgroundImage: "linear-gradient(90deg,#059669 60%,transparent 60%)", backgroundSize: "8px 2px" }}
             />
-            Spending smile
+            Declining spending
           </span>
         ) : null}
         <span className="inline-flex items-center gap-1.5">

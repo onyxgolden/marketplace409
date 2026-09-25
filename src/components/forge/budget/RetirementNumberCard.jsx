@@ -410,6 +410,9 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
                 {shillerAnnual.years[0]}–{shillerAnnual.years[shillerAnnual.years.length - 1]} ·
                 Historical stress-test: past returns don&apos;t predict the future.
               </p>
+              <p className="mt-1 text-center text-[11px] font-medium text-slate-500 dark:text-slate-500">
+                Both figures start from the flat-path nest egg above, so the gap isolates the spending shape.
+              </p>
             </>
           ) : (
             <>
