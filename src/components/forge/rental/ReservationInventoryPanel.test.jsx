@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import ReservationInventoryPanel from "./ReservationInventoryPanel";
 
 async function mount(payload) {
@@ -13,7 +14,7 @@ async function mount(payload) {
 
 describe("ReservationInventoryPanel", () => {
   let mounted;
-  afterEach(() => { if (mounted) { act(() => mounted.root.unmount()); mounted.container.remove(); } vi.unstubAllGlobals(); });
+  afterEach(() => { if (mounted) { act(() => mounted.root.unmount()); mounted.container.remove(); } vi.unstubAllGlobals(); clearSWRCache(); });
   it("lists configured RV sites and short-term stays", async () => {
     mounted = await mount({ units: [{ id: "unit-1", label: "Site 1" }], inventory: [{ unit_id: "unit-1", public_name: "Lake Site 1", inventory_type: "rv_site", maximum_guests: 6, minimum_nights: 2, booking_status: "draft" }] });
     expect(mounted.container.textContent).toContain("Lake Site 1");

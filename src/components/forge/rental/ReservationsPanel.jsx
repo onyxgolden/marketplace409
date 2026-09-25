@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import ReservationFinanceDetails from "@/components/reservations/ReservationFinanceDetails";
 import StatusTimeline from "@/components/forge/StatusTimeline";
 import ReservationMonthCalendar from "./ReservationMonthCalendar";
@@ -10,24 +12,30 @@ const INITIAL = { unitId: "", guestName: "", guestEmail: "", guestPhone: "", che
 const label = value => String(value || "").replaceAll("_", " ");
 const inputClass = "mt-1 w-full rounded-lg border p-2 text-slate-950 dark:bg-slate-950 dark:text-slate-100";
 
+async function fetchReservationsPayload() {
+  const [i, r] = await Promise.all([fetch("/api/rental/reservations/inventory"), fetch("/api/rental/reservations")]);
+  const ip = await i.json(), rp = await r.json();
+  if (!i.ok || !r.ok) throw new Error(ip.error || rp.error || "Unable to load reservations.");
+  return {
+    inventory: (ip.inventory || []).filter(item => ["draft", "active"].includes(item.booking_status)),
+    reservations: rp.reservations || [],
+    events: rp.events || [],
+  };
+}
+
 export default function ReservationsPanel() {
-  const [inventory, setInventory] = useState([]), [reservations, setReservations] = useState([]), [events, setEvents] = useState([]);
+  // Reservations + inventory: stale-while-revalidate. The cached list and calendar stay
+  // on screen while creates, modifications, and transitions revalidate in the background.
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "rental:reservations", fetchReservationsPayload, { ttlMs: 60_000 });
+  const inventory = data?.inventory || [];
+  const reservations = data?.reservations || [];
   const [selectedId, setSelectedId] = useState(""), [editing, setEditing] = useState(false), [form, setForm] = useState(INITIAL);
   const [preview, setPreview] = useState(null), [token, setToken] = useState(""), [ack, setAck] = useState(false), [typed, setTyped] = useState("");
   const [message, setMessage] = useState(""), [busy, setBusy] = useState(false);
   const selected = reservations.find(item => item.id === selectedId) || null;
-  const history = useMemo(() => events.filter(event => event.reservation_id === selectedId), [events, selectedId]);
+  const history = useMemo(() => (data?.events || []).filter(event => event.reservation_id === selectedId), [data, selectedId]);
 
-  async function load() {
-    try {
-      const [i, r] = await Promise.all([fetch("/api/rental/reservations/inventory"), fetch("/api/rental/reservations")]);
-      const ip = await i.json(), rp = await r.json();
-      if (!i.ok || !r.ok) throw new Error(ip.error || rp.error || "Unable to load reservations.");
-      setInventory((ip.inventory || []).filter(item => ["draft", "active"].includes(item.booking_status)));
-      setReservations(rp.reservations || []); setEvents(rp.events || []);
-    } catch (error) { setMessage(error.message); }
-  }
-  useEffect(() => { queueMicrotask(load); }, []);
   function clearPreview() { setPreview(null); setToken(""); setAck(false); setTyped(""); }
   function change(name, value) { setForm(current => ({ ...current, [name]: value })); clearPreview(); }
   function pickDates(checkIn, checkOut) { setForm(current => ({ ...current, checkIn, checkOut })); clearPreview(); }
@@ -46,7 +54,7 @@ export default function ReservationsPanel() {
       const response = await fetch("/api/rental/reservations", { method: modifying ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "Unable to process reservation.");
       if (operation.startsWith("preview")) { setPreview(payload.preview); setToken(payload.previewToken); }
-      else { setMessage(editing ? "Reservation updated." : "Reservation confirmed."); createMode(); await load(); }
+      else { setMessage(editing ? "Reservation updated." : "Reservation confirmed."); createMode(); await refresh(); }
     } catch (error) { setMessage(error.message); } finally { setBusy(false); }
   }
   async function transition(operation) {
@@ -55,7 +63,7 @@ export default function ReservationsPanel() {
     try {
       const response = await fetch("/api/rental/reservations", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ operation, reservationId: selectedId }) });
       const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "Unable to update reservation.");
-      setMessage(`Reservation ${label(operation)} complete.`); await load();
+      setMessage(`Reservation ${label(operation)} complete.`); await refresh();
     } catch (error) { setMessage(error.message); } finally { setBusy(false); }
   }
 
@@ -64,7 +72,11 @@ export default function ReservationsPanel() {
   return <section aria-label="Reservations" className="space-y-5">
     <div><p className="text-xs font-black uppercase tracking-[.18em] text-sky-700 dark:text-sky-400">Reservations</p><h2 className="text-2xl font-black">Reservation calendar & bookings</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Create and manage stays with immutable lifecycle history. No payment is charged here.</p></div>
     {message && <p role="status" className="rounded-xl border border-sky-200 bg-sky-50 p-3 font-bold text-sky-900">{message}</p>}
-    {!editing && <ReservationMonthCalendar reservations={reservations} unitId={form.unitId} checkIn={form.checkIn} checkOut={form.checkOut} onSelect={pickDates} />}
+    {!data && isLoading ? <ForgeLoadingState label="Loading reservations…" /> : null}
+    {!data && loadError ? <ForgeErrorState title="Unable to load reservations." detail={loadError} onRetry={refresh} /> : null}
+    {data ? (<>
+      {(isRefreshing || loadError) ? <p role="status" className="text-xs font-bold text-slate-400 dark:text-slate-500">{loadError ? "Could not refresh — showing the last saved reservations." : "Updating…"}</p> : null}
+      {!editing && <ReservationMonthCalendar reservations={reservations} unitId={form.unitId} checkIn={form.checkIn} checkOut={form.checkOut} onSelect={pickDates} />}
     <div className="grid gap-4 xl:grid-cols-2"><div className="space-y-4 rounded-2xl border bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
       <h3 className="font-black">Reservations</h3>
       {reservations.length === 0 ? <p className="text-sm text-slate-600 dark:text-slate-300">No reservations yet.</p> : <ul className="space-y-3">{reservations.map(item => <li key={item.id}><button type="button" aria-pressed={selectedId === item.id} onClick={() => setSelectedId(item.id)} className="w-full rounded-xl border p-3 text-left aria-pressed:border-sky-500 aria-pressed:ring-2 aria-pressed:ring-sky-200 dark:border-slate-700"><b>{item.reservation_inventory_settings?.public_name || item.unit_id}</b><span className="block text-sm">{item.reservation_guests?.display_name} · {item.check_in_date} to {item.check_out_date}</span><span className="block text-sm font-bold">{money(item.total_due_cents)} · {label(item.status)}</span></button></li>)}</ul>}
@@ -80,6 +92,7 @@ export default function ReservationsPanel() {
       <button disabled={busy} className="w-full rounded-lg bg-slate-950 px-4 py-2 font-black text-white disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950">Preview {editing ? "changes" : "reservation"}</button>
       {preview && <div className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-slate-950"><h4 className="font-black">Review {editing ? "changes" : preview.inventoryName}</h4><p className="text-sm"><b>{preview.quote.nights} nights · {money(preview.quote.totalDueCents)} total due</b><br />Lodging {money(preview.quote.lodgingAmountCents)} · Cleaning {money(preview.quote.cleaningFeeCents)} · Tax {money(preview.quote.lodgingTaxCents)} · Deposit {money(preview.quote.securityDepositCents)}</p><label className="flex gap-2 text-sm font-bold"><input type="checkbox" checked={ack} onChange={event => setAck(event.target.checked)} />I reviewed the dates, guest count, and price.</label><Field label={`Type ${confirmWord} to confirm`}><input value={typed} onChange={event => setTyped(event.target.value)} className={inputClass} /></Field><button type="button" disabled={busy || !ack || typed !== confirmWord} onClick={() => submit(editing ? "confirm_modification" : "confirm")} className="w-full rounded-lg bg-emerald-700 px-4 py-2 font-black text-white disabled:opacity-50">Confirm {editing ? "changes" : "reservation"}</button></div>}
     </form></div>
+    </>) : null}
   </section>;
 }
 

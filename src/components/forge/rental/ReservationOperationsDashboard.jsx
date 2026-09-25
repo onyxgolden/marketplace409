@@ -1,25 +1,46 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const money = cents => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(cents || 0) / 100);
 const percent = value => new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 }).format(Number(value || 0));
 const typeLabel = value => value === "rv_site" ? "RV spaces" : value === "cabin" ? "Cabins" : String(value || "Other").replaceAll("_", " ");
 
+async function fetchReservationDashboard(days) {
+  const response = await fetch(`/api/rental/reservations/dashboard?days=${days}`);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "Unable to load dashboard.");
+  return { dashboard: payload.dashboard };
+}
+
 export default function ReservationOperationsDashboard() {
-  const [days, setDays] = useState(90), [state, setState] = useState({ loading: true, error: "", dashboard: null });
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch(`/api/rental/reservations/dashboard?days=${days}`, { signal: controller.signal }).then(async response => {
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "Unable to load dashboard.");
-      setState({ loading: false, error: "", dashboard: payload.dashboard });
-    }).catch(error => { if (error.name !== "AbortError") setState({ loading: false, error: error.message, dashboard: null }); });
-    return () => controller.abort();
-  }, [days]);
+  const [days, setDays] = useState(90);
+  // Reservation dashboard: stale-while-revalidate, keyed per period. Switching periods
+  // keeps the last loaded period on screen while the new one fetches — never a blank.
+  const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    `rental:reservations-dashboard:${days}`,
+    () => fetchReservationDashboard(days),
+    { ttlMs: 60_000 },
+  );
+  const dashboard = data?.dashboard ?? null;
+  // Keep the last loaded period on screen while a different period fetches. This is
+  // React's documented "adjust state during render" pattern -- not an effect -- so a
+  // period switch never blanks the dashboard back to a skeleton.
+  const [prevDashboard, setPrevDashboard] = useState(null);
+  if (dashboard && dashboard !== prevDashboard) {
+    setPrevDashboard(dashboard);
+  }
+  const visible = dashboard ?? prevDashboard;
+  const loadingNew = isLoading && !visible;
   return <section aria-label="RV and cabin operations dashboard" className="space-y-5">
-    <header className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[.18em] text-sky-700 dark:text-sky-400">RV & cabin operations</p><h2 className="text-2xl font-black">Reservation dashboard</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Read-only booking and inventory truth. The selected period starts today and includes complete calendar days.</p></div><label className="text-sm font-bold">Period<select value={days} onChange={event => { setState(current => ({ ...current, loading: true, error: "" })); setDays(Number(event.target.value)); }} className="ml-2 rounded-lg border bg-white p-2 dark:bg-slate-900"><option value="30">Next 30 days</option><option value="90">Next 90 days</option><option value="365">Next 365 days</option></select></label></header>
-    {state.loading && <p role="status" className="rounded-xl border bg-white p-5 dark:border-slate-800 dark:bg-slate-900">Loading reservation operations…</p>}
-    {state.error && <p role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-5 font-bold text-rose-900">{state.error}</p>}
-    {!state.loading && !state.error && state.dashboard && <Dashboard dashboard={state.dashboard} />}
+    <header className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[.18em] text-sky-700 dark:text-sky-400">RV & cabin operations</p><h2 className="text-2xl font-black">Reservation dashboard</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Read-only booking and inventory truth. The selected period starts today and includes complete calendar days.</p></div><label className="text-sm font-bold">Period<select value={days} onChange={event => setDays(Number(event.target.value))} className="ml-2 rounded-lg border bg-white p-2 dark:bg-slate-900"><option value="30">Next 30 days</option><option value="90">Next 90 days</option><option value="365">Next 365 days</option></select></label></header>
+    {loadingNew ? <ForgeLoadingState label="Loading reservation operations…" /> : null}
+    {!loadingNew && error && !visible ? <ForgeErrorState title="Unable to load the reservation dashboard." detail={error} onRetry={refresh} /> : null}
+    {visible ? <>
+      {(isRefreshing || (isLoading && visible) || error) ? <p role="status" className="text-xs font-bold text-slate-400 dark:text-slate-500">{error ? "Could not refresh — showing the last saved dashboard." : "Updating…"}</p> : null}
+      <Dashboard dashboard={visible} />
+    </> : null}
   </section>;
 }
 
