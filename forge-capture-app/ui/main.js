@@ -19,17 +19,16 @@ function setStatus(text, kind) {
 }
 
 // ---------------------------------------------------------------------------
-// Tabs: Image / Video
+// Tabs: Image / Video / Meeting
 // ---------------------------------------------------------------------------
 
 function selectTab(which) {
-  const image = which === "image";
-  $("tab-image").classList.toggle("active", image);
-  $("tab-video").classList.toggle("active", !image);
-  $("tab-image").setAttribute("aria-selected", String(image));
-  $("tab-video").setAttribute("aria-selected", String(!image));
-  $("panel-image").hidden = !image;
-  $("panel-video").hidden = image;
+  for (const name of ["image", "video", "meeting"]) {
+    const on = which === name;
+    $(`tab-${name}`).classList.toggle("active", on);
+    $(`tab-${name}`).setAttribute("aria-selected", String(on));
+    $(`panel-${name}`).hidden = !on;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -569,6 +568,7 @@ async function init() {
   }
   $("tab-image").addEventListener("click", () => selectTab("image"));
   $("tab-video").addEventListener("click", () => selectTab("video"));
+  $("tab-meeting").addEventListener("click", () => selectTab("meeting"));
   document.querySelectorAll("#mode-chips .chip").forEach((chip) => {
     chip.addEventListener("click", () => selectMode(chip.dataset.mode));
   });
