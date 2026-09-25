@@ -14,14 +14,28 @@ import PropertyOperatingCostsPanel, {
   summarizeObligations,
 } from "../PropertyOperatingCostsPanel.jsx";
 
+import {
+  clearSWRCache,
+  fetchWithDedupe,
+} from "../../../../hooks/swrCache";
+
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("PropertyOperatingCostsPanel", () => {
-  it("renders a compact operating-cost workflow landing", () => {
+  it("renders a compact operating-cost workflow landing", async () => {
+    // A return visit serves the cached obligation list instantly -- the
+    // landing renders with no loading flash.
+    await fetchWithDedupe(
+      "property:operating-obligations",
+      () => Promise.resolve([]),
+    );
+
     const markup =
       renderToStaticMarkup(
         <PropertyOperatingCostsPanel />,
       );
+
+    clearSWRCache();
 
     expect(markup).toContain(
       "data-property-operating-costs-panel",
@@ -289,29 +303,37 @@ function findButtonByText(container, text) {
 // same error a real user would have hit.
 describe("PropertyOperatingCostsPanel -- the insurance-policy workflow", () => {
   let createPolicyCall;
+  let createdPolicies;
 
   beforeEach(() => {
     createPolicyCall = null;
+    createdPolicies = [];
+    clearSWRCache();
     global.fetch = vi.fn((url, init) => {
       if (url === "/api/property-operating-obligations" && (!init || init.method === undefined)) {
+        // Stateful GET: the obligation list includes policies created through
+        // the mock POST below, the way the real API would persist them -- the
+        // panel revalidates after a create instead of merging locally.
         return jsonResponse({
           success: true,
           obligations: [{
             id: "obligation_1", propertyId: "prop_1", obligationType: "fire_insurance",
             subjectLabel: "123 Main St annual insurance", recognitionStatus: "accrual_ready", reconciledFinancialEventId: "event_1",
-          }],
+          }, ...createdPolicies],
         });
       }
       if (url === "/api/property-operating-obligations" && init?.method === "POST") {
         const body = JSON.parse(init.body);
         if (body.operation === "create-verified-policy") {
           createPolicyCall = body;
+          const policy = {
+            id: "obligation_2", propertyId: body.propertyId, obligationType: body.obligationType,
+            subjectLabel: body.subjectLabel, recognitionStatus: "accrual_ready", reconciledFinancialEventId: null,
+          };
+          createdPolicies.push(policy);
           return jsonResponse({
             success: true,
-            policy: {
-              id: "obligation_2", propertyId: body.propertyId, obligationType: body.obligationType,
-              subjectLabel: body.subjectLabel, recognitionStatus: "accrual_ready", reconciledFinancialEventId: null,
-            },
+            policy,
           });
         }
       }

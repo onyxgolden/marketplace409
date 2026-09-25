@@ -1,10 +1,19 @@
 "use client";
 
 import {
-  useEffect,
   useMemo,
   useState,
 } from "react";
+
+import {
+  useStaleWhileRevalidate,
+} from "@/hooks/useStaleWhileRevalidate";
+
+import {
+  ForgeEmptyState,
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 import {
   parsePropertyValuationCsv,
@@ -21,6 +30,29 @@ import PropertyValuationWorkflowChooser, {
 export {
   buildPropertyPortfolioProperties as buildValuationProperties,
 } from "./buildPropertyPortfolioProperties";
+
+// Stale-while-revalidate fetchers: previously loaded properties and
+// valuations stay on screen while a refresh is in flight; only the first
+// paint (nothing cached) shows a loading state.
+async function fetchPortfolioProperties() {
+  const response = await fetch(
+    "/api/financial/read-models?financial=true&business=true",
+  );
+
+  const payload = await readJson(response);
+
+  return buildPropertyPortfolioProperties(payload);
+}
+
+async function fetchPropertyValuations() {
+  const response = await fetch(
+    "/api/property-valuations",
+  );
+
+  const payload = await readJson(response);
+
+  return payload.valuations ?? [];
+}
 
 function propertyLabel(property) {
   return (
@@ -81,12 +113,53 @@ async function readJson(response) {
 }
 
 export default function PropertyValuationPanel() {
-  const [properties, setProperties] =
-    useState([]);
-  const [valuations, setValuations] =
-    useState([]);
+  // Properties: stale-while-revalidate under one global key. The cached
+  // portfolio renders instantly on return visits and refreshes in the
+  // background -- never a blank property dropdown.
+  const {
+    data: cachedProperties,
+    error: propertiesError,
+    isLoading: propertiesLoading,
+    refresh: refreshProperties,
+  } = useStaleWhileRevalidate(
+    "property:portfolio-properties",
+    fetchPortfolioProperties,
+    { ttlMs: 60_000 },
+  );
+
+  const properties = useMemo(
+    () => cachedProperties || [],
+    [cachedProperties],
+  );
+
+  // Valuations: stale-while-revalidate under one global key. The cached list
+  // stays on screen while a refresh is in flight.
+  const {
+    data: cachedValuations,
+    error: valuationsError,
+    isLoading: valuationsLoading,
+    isRefreshing: valuationsRefreshing,
+    refresh: refreshValuations,
+  } = useStaleWhileRevalidate(
+    "property:valuations",
+    fetchPropertyValuations,
+    { ttlMs: 60_000 },
+  );
+
+  const valuations = cachedValuations || [];
+
   const [propertyId, setPropertyId] =
     useState("");
+  const [propertyChosen, setPropertyChosen] =
+    useState(false);
+
+  // The selected property defaults to the first loaded property at render
+  // time -- no synchronization effect, so a background refresh that
+  // reorders the portfolio can never stomp the user's own selection.
+  const effectivePropertyId =
+    propertyChosen
+      ? propertyId
+      : properties[0]?.id || "";
   const [amount, setAmount] =
     useState("");
   const [valuationType, setValuationType] =
@@ -101,8 +174,6 @@ export default function PropertyValuationPanel() {
     useState([]);
   const [preview, setPreview] =
     useState(null);
-  const [loading, setLoading] =
-    useState(true);
   const [saving, setSaving] =
     useState(false);
   const [importing, setImporting] =
@@ -116,20 +187,13 @@ export default function PropertyValuationPanel() {
   const [workflow, setWorkflow] =
     useState(null);
   const [showGuidance, setShowGuidance] =
-    useState(true);
-
-  useEffect(() => {
-    const storedPreference =
-      window.localStorage.getItem(
-        "forge.display.guidance",
-      );
-
-    if (storedPreference !== null) {
-      setShowGuidance(
-        storedPreference !== "off",
-      );
-    }
-  }, []);
+    useState(() =>
+      typeof window === "undefined"
+        ? true
+        : window.localStorage.getItem(
+            "forge.display.guidance",
+          ) !== "off",
+    );
 
   function toggleGuidance() {
     setShowGuidance(
@@ -148,61 +212,6 @@ export default function PropertyValuationPanel() {
     );
   }
 
-  useEffect(() => {
-    async function initialize() {
-      try {
-        const [
-          propertyResponse,
-          valuationResponse,
-        ] = await Promise.all([
-          fetch(
-            "/api/financial/read-models?financial=true&business=true",
-          ),
-          fetch(
-            "/api/property-valuations",
-          ),
-        ]);
-
-        const propertyPayload =
-          await readJson(
-            propertyResponse,
-          );
-
-        const valuationPayload =
-          await readJson(
-            valuationResponse,
-          );
-
-        const loadedProperties =
-          buildPropertyPortfolioProperties(
-            propertyPayload,
-          );
-
-        setProperties(
-          loadedProperties,
-        );
-        setValuations(
-          valuationPayload
-            .valuations ?? [],
-        );
-
-        setPropertyId(
-          loadedProperties[0]?.id ??
-          "",
-        );
-      } catch (initializationError) {
-        setError(
-          initializationError instanceof Error
-            ? initializationError.message
-            : "Unable to initialize property valuations.",
-        );
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    initialize();
-  }, []);
 
   const propertiesById =
     useMemo(
@@ -217,37 +226,6 @@ export default function PropertyValuationPanel() {
         ),
       [properties],
     );
-
-  function replaceLatest(
-    persistedValuations,
-  ) {
-    setValuations(
-      (current) => {
-        const replacements =
-          new Map(
-            persistedValuations.map(
-              (valuation) => [
-                valuation.propertyId,
-                valuation,
-              ],
-            ),
-          );
-
-        const retained =
-          current.filter(
-            (valuation) =>
-              !replacements.has(
-                valuation.propertyId,
-              ),
-          );
-
-        return [
-          ...persistedValuations,
-          ...retained,
-        ];
-      },
-    );
-  }
 
   async function handleManualSubmit(
     event,
@@ -273,7 +251,7 @@ export default function PropertyValuationPanel() {
                 operation:
                   "record-manual",
                 valuation: {
-                  propertyId,
+                  propertyId: effectivePropertyId,
                   amount,
                   valuationType,
                   effectiveAt:
@@ -290,9 +268,10 @@ export default function PropertyValuationPanel() {
       const payload =
         await readJson(response);
 
-      replaceLatest([
-        payload.valuation,
-      ]);
+      // Revalidate the valuation list -- the recorded valuation arrives
+      // with the server's list, so the cache never drifts from what was
+      // written.
+      refreshValuations();
 
       setAmount("");
       setNotes("");
@@ -411,10 +390,9 @@ export default function PropertyValuationPanel() {
         return;
       }
 
-      replaceLatest(
-        payload.result
-          .persistedValuations,
-      );
+      // Revalidate the valuation list -- the imported valuations arrive
+      // with the server's list.
+      refreshValuations();
 
       setPreview(
         payload.result,
@@ -480,20 +458,9 @@ export default function PropertyValuationPanel() {
 
       await readJson(response);
 
-      const refreshedResponse =
-        await fetch(
-          "/api/property-valuations",
-        );
-
-      const refreshedPayload =
-        await readJson(
-          refreshedResponse,
-        );
-
-      setValuations(
-        refreshedPayload
-          .valuations ?? [],
-      );
+      // Revalidate the valuation list -- the removal is reflected in the
+      // server's list.
+      refreshValuations();
 
       setMessage(
         "Property valuation removed.",
@@ -507,6 +474,33 @@ export default function PropertyValuationPanel() {
     } finally {
       setDeletingId(null);
     }
+  }
+
+  const initialLoading =
+    (!cachedProperties && propertiesLoading) ||
+    (!cachedValuations && valuationsLoading);
+
+  const initialError =
+    (!cachedProperties && propertiesError) ||
+    (!cachedValuations && valuationsError);
+
+  if (initialLoading) {
+    return (
+      <ForgeLoadingState label="Loading property valuations…" />
+    );
+  }
+
+  if (initialError) {
+    return (
+      <ForgeErrorState
+        title="Property valuations could not be loaded."
+        detail={propertiesError || valuationsError}
+        onRetry={() => {
+          refreshProperties();
+          refreshValuations();
+        }}
+      />
+    );
   }
 
   return (
@@ -534,12 +528,6 @@ export default function PropertyValuationPanel() {
             </p>
           </div>
 
-          {loading && (
-            <div className="mt-5 max-w-xl rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-600 dark:text-slate-300 dark:bg-slate-800/60 dark:border-slate-800">
-              Loading property valuations…
-            </div>
-          )}
-
           {error && (
             <div
               role="alert"
@@ -566,6 +554,18 @@ export default function PropertyValuationPanel() {
             <div className="mt-1 text-xl font-black text-slate-950 dark:text-slate-50">
               {valuations.length}
             </div>
+
+            {(valuationsLoading || valuationsRefreshing) && cachedValuations ? (
+              <p className="mt-1 text-xs font-bold text-slate-400 dark:text-slate-500">
+                Updating…
+              </p>
+            ) : null}
+
+            {valuationsError && cachedValuations ? (
+              <p role="status" className="mt-1 text-xs font-bold text-slate-400 dark:text-slate-500">
+                Could not refresh — showing the last saved valuations.
+              </p>
+            ) : null}
           </div>
 
           <PropertyValuationWorkflowChooser
@@ -631,12 +631,13 @@ export default function PropertyValuationPanel() {
               </span>
 
               <select
-                value={propertyId}
-                onChange={(event) =>
+                value={effectivePropertyId}
+                onChange={(event) => {
                   setPropertyId(
                     event.target.value,
-                  )
-                }
+                  );
+                  setPropertyChosen(true);
+                }}
                 required
                 className="mt-2 block w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:bg-slate-800 dark:border-slate-700"
               >
@@ -762,7 +763,7 @@ export default function PropertyValuationPanel() {
               type="submit"
               disabled={
                 saving ||
-                !propertyId
+                !effectivePropertyId
               }
               className="rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -902,12 +903,26 @@ export default function PropertyValuationPanel() {
           </div>
         </div>
 
-        {!loading &&
-          valuations.length === 0 && (
-            <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm font-semibold text-slate-600 dark:text-slate-300 dark:bg-slate-800/60 dark:border-slate-700">
-              No property valuations recorded yet.
-            </div>
-          )}
+        {(valuationsLoading || valuationsRefreshing) && cachedValuations ? (
+          <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">
+            Updating…
+          </p>
+        ) : null}
+
+        {valuationsError && cachedValuations ? (
+          <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">
+            Could not refresh — showing the last saved valuations.
+          </p>
+        ) : null}
+
+        {valuations.length === 0 && (
+          <div className="mt-5">
+            <ForgeEmptyState
+              headline="No property valuations recorded yet."
+              guidance="Record a property value or import a valuation CSV to start this property's owner-controlled history."
+            />
+          </div>
+        )}
 
         {valuations.length > 0 && (
           <div className="mt-5 grid gap-3 md:grid-cols-2">

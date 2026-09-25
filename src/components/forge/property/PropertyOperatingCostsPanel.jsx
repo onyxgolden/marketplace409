@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+
+import {
+  ForgeEmptyState,
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 import PropertyOperatingCostsWorkflowChooser, {
   PropertyOperatingCostsWorkflowHeader,
@@ -57,19 +65,13 @@ async function readJson(response) {
   return payload;
 }
 
-function mergeObligations(current, incoming) {
-  const byId = new Map(current.map((item) => [item.id, item]));
-
-  for (const item of incoming) {
-    byId.set(item.id, item);
-  }
-
-  return [...byId.values()].sort(
-    (left, right) =>
-      (left.propertyId || left.subjectLabel).localeCompare(
-        right.propertyId || right.subjectLabel,
-      ) || left.obligationType.localeCompare(right.obligationType),
-  );
+// Stale-while-revalidate fetcher: the cached obligation list renders
+// instantly on return visits and stays on screen while a refresh is in
+// flight -- only the first paint (nothing cached) shows a loading state.
+async function fetchOperatingObligations() {
+  const response = await fetch("/api/property-operating-obligations");
+  const payload = await readJson(response);
+  return payload.obligations || [];
 }
 
 export function buildOperatingCostPropertyChoices(
@@ -1218,11 +1220,25 @@ function ObligationRow({ obligation, onVerified }) {
 }
 
 export default function PropertyOperatingCostsPanel() {
-  const [obligations, setObligations] = useState([]);
+  // Obligations: stale-while-revalidate under one global key. The cached
+  // list renders instantly on return visits and stays on screen while a
+  // refresh is in flight -- never blanked by a spinner.
+  const {
+    data: cachedObligations,
+    error: loadError,
+    isLoading,
+    isRefreshing,
+    refresh,
+  } = useStaleWhileRevalidate(
+    "property:operating-obligations",
+    fetchOperatingObligations,
+    { ttlMs: 60_000 },
+  );
+
+  const obligations = cachedObligations || [];
   const [csv, setCsv] = useState("");
   const [fileName, setFileName] = useState("");
   const [preview, setPreview] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -1230,18 +1246,13 @@ export default function PropertyOperatingCostsPanel() {
   const [
     showGuidance,
     setShowGuidance,
-  ] = useState(true);
-
-  useEffect(() => {
-    const savedPreference =
-      window.localStorage.getItem(
-        "forge.display.guidance",
-      );
-
-    if (savedPreference === "off") {
-      setShowGuidance(false);
-    }
-  }, []);
+  ] = useState(() =>
+    typeof window === "undefined"
+      ? true
+      : window.localStorage.getItem(
+          "forge.display.guidance",
+        ) !== "off",
+  );
 
   function toggleGuidance() {
     setShowGuidance((current) => {
@@ -1255,22 +1266,6 @@ export default function PropertyOperatingCostsPanel() {
       return next;
     });
   }
-
-  useEffect(() => {
-    async function initialize() {
-      try {
-        const response = await fetch("/api/property-operating-obligations");
-        const payload = await readJson(response);
-        setObligations(payload.obligations || []);
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Unable to load operating costs.");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    initialize();
-  }, []);
 
   const summary = summarizeObligations(obligations);
   const propertyChoices =
@@ -1338,7 +1333,9 @@ export default function PropertyOperatingCostsPanel() {
         return;
       }
 
-      setObligations((current) => mergeObligations(current, payload.result.persistedObligations || []));
+      // Revalidate the obligation list -- the imported obligations arrive
+      // with the server's list.
+      refresh();
       setPreview(payload.result);
       setMessage(`${payload.result.importedCount} operating obligations imported.`);
     } catch (caught) {
@@ -1356,13 +1353,9 @@ export default function PropertyOperatingCostsPanel() {
   function mergeCreatedPolicy(
     policy,
   ) {
-    setObligations(
-      (current) =>
-        mergeObligations(
-          current,
-          [policy],
-        ),
-    );
+    // Revalidate the obligation list -- the created policy arrives with the
+    // server's list, so the cache never drifts from what was just written.
+    refresh();
 
     setMessage(
       `${policy.subjectLabel} created from verified policy evidence.`,
@@ -1373,12 +1366,9 @@ export default function PropertyOperatingCostsPanel() {
   function mergeVerifiedCoverage(
     verified,
   ) {
-    setObligations((current) =>
-      mergeObligations(
-        current,
-        [verified],
-      ),
-    );
+    // Revalidate the obligation list -- the verified coverage arrives with
+    // the server's list.
+    refresh();
 
     setMessage(
       `${verified.subjectLabel} coverage verified and ready for accrual.`,
@@ -1398,18 +1388,25 @@ export default function PropertyOperatingCostsPanel() {
         <div />
       </div>
 
-      {loading && (
-        <div className="p-5 text-sm font-bold text-slate-600 dark:text-slate-300">
-          Loading operating costs…
+      {isRefreshing && (
+        <div className="border-b border-slate-200 px-4 py-2 text-xs font-bold text-slate-400 dark:border-slate-800 dark:text-slate-500">
+          Updating…
         </div>
       )}
 
-      {!loading &&
-        items.length === 0 && (
-          <div className="p-5 text-sm text-slate-600 dark:text-slate-300">
-            {emptyMessage}
-          </div>
-        )}
+      {loadError && (
+        <div role="status" className="border-b border-slate-200 px-4 py-2 text-xs font-bold text-slate-400 dark:border-slate-800 dark:text-slate-500">
+          Could not refresh — showing the last saved obligations.
+        </div>
+      )}
+
+      {items.length === 0 && (
+        <div className="p-5">
+          <ForgeEmptyState
+            headline={emptyMessage}
+          />
+        </div>
+      )}
 
       {items.map((item) => (
         <ObligationRow
@@ -1422,6 +1419,22 @@ export default function PropertyOperatingCostsPanel() {
       ))}
     </div>
   );
+
+  if (!cachedObligations && isLoading) {
+    return (
+      <ForgeLoadingState label="Loading operating costs…" />
+    );
+  }
+
+  if (!cachedObligations && loadError) {
+    return (
+      <ForgeErrorState
+        title="Operating costs could not be loaded."
+        detail={loadError}
+        onRetry={refresh}
+      />
+    );
+  }
 
   return (
     <section

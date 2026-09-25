@@ -12,6 +12,26 @@ import PropertyValuationPanel, {
   buildValuationProperties,
 } from "../PropertyValuationPanel.jsx";
 
+import {
+  clearSWRCache,
+  fetchWithDedupe,
+} from "../../../../hooks/swrCache";
+
+// Seeds the stale-while-revalidate cache the way a return visit would: the
+// panel renders instantly from cached data with no loading flash.
+async function seedValuationCache() {
+  await fetchWithDedupe(
+    "property:portfolio-properties",
+    () => Promise.resolve([
+      { id: "prop_1", name: "123 Main St" },
+    ]),
+  );
+  await fetchWithDedupe(
+    "property:valuations",
+    () => Promise.resolve([]),
+  );
+}
+
 describe(
   "PropertyValuationPanel",
   () => {
@@ -69,11 +89,15 @@ describe(
 
     it(
       "renders a compact valuation landing surface",
-      () => {
+      async () => {
+        await seedValuationCache();
+
         const markup =
           renderToStaticMarkup(
             <PropertyValuationPanel />,
           );
+
+        clearSWRCache();
 
         expect(markup).toContain(
           "data-property-valuation-panel",
@@ -111,11 +135,15 @@ describe(
 
     it(
       "renders provenance and latest-value messaging",
-      () => {
+      async () => {
+        await seedValuationCache();
+
         const markup =
           renderToStaticMarkup(
             <PropertyValuationPanel />,
           );
+
+        clearSWRCache();
 
         expect(markup).toContain(
           "owner-controlled valuation history",
@@ -133,7 +161,8 @@ describe(
           "Remove valuation",
         );
 
-        expect(markup).toContain(
+        // Warm cache: the landing renders with no loading flash.
+        expect(markup).not.toContain(
           "Loading property valuations",
         );
       },

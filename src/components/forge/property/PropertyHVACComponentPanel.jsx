@@ -1,9 +1,18 @@
 "use client";
 
 import {
-  useEffect,
   useState,
 } from "react";
+
+import {
+  useStaleWhileRevalidate,
+} from "@/hooks/useStaleWhileRevalidate";
+
+import {
+  ForgeEmptyState,
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 import {
   HVAC_COMPONENT_STATUSES,
@@ -145,6 +154,31 @@ function Field({
   );
 }
 
+// Stale-while-revalidate fetcher: a system's component/service history stays
+// on screen while a refresh is in flight; only the first paint (nothing
+// cached) shows a loading state.
+async function fetchHVACHistory(
+  systemId,
+) {
+  const response = await fetch(
+    `/api/property-hvac?systemId=${encodeURIComponent(
+      systemId,
+    )}`,
+  );
+
+  const payload =
+    await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      payload?.error ||
+        "Unable to load HVAC history.",
+    );
+  }
+
+  return payload?.history || null;
+}
+
 export default function PropertyHVACComponentPanel({
   systems = [],
   mode = "all",
@@ -158,10 +192,34 @@ export default function PropertyHVACComponentPanel({
       systems[0]?.id || "",
   );
 
-  const [
-    history,
-    setHistory,
-  ] = useState(null);
+  // The selected system stays valid at render time -- no synchronization
+  // effect: an empty choice or a system that vanished from a refreshed list
+  // falls back to the first available system.
+  const effectiveSystemId =
+    systemId &&
+    systems.some(
+      (system) =>
+        system.id === systemId,
+    )
+      ? systemId
+      : systems[0]?.id || "";
+
+  // History: stale-while-revalidate keyed per system. The cached history
+  // renders instantly when returning to a system and stays on screen while a
+  // refresh is in flight -- never blanked by a spinner.
+  const {
+    data: history,
+    error: historyError,
+    isLoading: historyLoading,
+    isRefreshing: historyRefreshing,
+    refresh: refreshHistory,
+  } = useStaleWhileRevalidate(
+    effectiveSystemId
+      ? `property-hvac-history:${effectiveSystemId}`
+      : null,
+    () => fetchHVACHistory(effectiveSystemId),
+    { ttlMs: 60_000 },
+  );
 
   const [
     values,
@@ -169,11 +227,6 @@ export default function PropertyHVACComponentPanel({
   ] = useState({
     ...INITIAL_COMPONENT,
   });
-
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
 
   const [
     saving,
@@ -184,86 +237,6 @@ export default function PropertyHVACComponentPanel({
     message,
     setMessage,
   ] = useState("");
-
-  useEffect(() => {
-    if (
-      !systemId &&
-      systems[0]?.id
-    ) {
-      setSystemId(systems[0].id);
-    }
-
-    if (
-      systemId &&
-      !systems.some(
-        (system) =>
-          system.id === systemId,
-      )
-    ) {
-      setSystemId(
-        systems[0]?.id || "",
-      );
-    }
-  }, [
-    systemId,
-    systems,
-  ]);
-
-  useEffect(() => {
-    if (!systemId) {
-      setHistory(null);
-      return;
-    }
-
-    let active = true;
-
-    async function loadHistory() {
-      setLoading(true);
-
-      try {
-        const response = await fetch(
-          `/api/property-hvac?systemId=${encodeURIComponent(
-            systemId,
-          )}`,
-        );
-
-        const payload =
-          await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            payload?.error ||
-              "Unable to load HVAC history.",
-          );
-        }
-
-        if (active) {
-          setHistory(
-            payload?.history || null,
-          );
-        }
-      } catch (error) {
-        if (active) {
-          setHistory(null);
-          setMessage(
-            error instanceof Error
-              ? error.message
-              : "Unable to load HVAC history.",
-          );
-        }
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
-    }
-
-    loadHistory();
-
-    return () => {
-      active = false;
-    };
-  }, [systemId]);
 
   function updateValue(
     name,
@@ -296,7 +269,7 @@ export default function PropertyHVACComponentPanel({
   }
 
   async function saveComponent() {
-    if (!systemId) {
+    if (!effectiveSystemId) {
       setMessage(
         "Choose an HVAC system.",
       );
@@ -320,7 +293,7 @@ export default function PropertyHVACComponentPanel({
               "save-component",
             component:
               buildHVACComponentPayload({
-                systemId,
+                systemId: effectiveSystemId,
                 values,
               }),
           }),
@@ -338,27 +311,9 @@ export default function PropertyHVACComponentPanel({
       }
 
       if (payload?.component) {
-        setHistory((current) => ({
-          system:
-            current?.system ||
-            systems.find(
-              (system) =>
-                system.id === systemId,
-            ) ||
-            null,
-          components: [
-            payload.component,
-            ...(
-              current?.components || []
-            ).filter(
-              (component) =>
-                component.id !==
-                payload.component.id,
-            ),
-          ],
-          events:
-            current?.events || [],
-        }));
+        // Revalidate the history -- the saved component arrives with the
+        // server's history, so the cache never drifts from what was written.
+        refreshHistory();
       }
 
       setValues({
@@ -428,7 +383,7 @@ export default function PropertyHVACComponentPanel({
       <div className="mt-5 max-w-2xl">
         <Field label="HVAC system">
           <select
-            value={systemId}
+            value={effectiveSystemId}
             onChange={(event) =>
               setSystemId(
                 event.target.value,
@@ -767,14 +722,33 @@ export default function PropertyHVACComponentPanel({
           Recorded components
         </h6>
 
-        {loading ? (
-          <p className="mt-3 text-sm font-semibold text-slate-500 dark:text-slate-400">
-            Loading component history...
+        {history && (historyLoading || historyRefreshing) ? (
+          <p className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">
+            Updating…
           </p>
+        ) : null}
+
+        {history && historyError ? (
+          <p role="status" className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">
+            Could not refresh — showing the last saved component history.
+          </p>
+        ) : null}
+
+        {effectiveSystemId && !history && historyLoading ? (
+          <ForgeLoadingState label="Loading component history…" />
+        ) : effectiveSystemId && !history && historyError ? (
+          <ForgeErrorState
+            title="HVAC history could not be loaded."
+            detail={historyError}
+            onRetry={refreshHistory}
+          />
         ) : components.length === 0 ? (
-          <p className="mt-3 text-sm font-semibold text-slate-500 dark:text-slate-400">
-            No components recorded for this system.
-          </p>
+          <div className="mt-3">
+            <ForgeEmptyState
+              headline="No components recorded for this system."
+              guidance="Record the first component to start this system's service history."
+            />
+          </div>
         ) : (
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             {components.map(
@@ -826,38 +800,19 @@ export default function PropertyHVACComponentPanel({
           systems.find(
             (system) =>
               system.id ===
-              systemId,
+              effectiveSystemId,
           )?.propertyId ||
           ""
         }
-        systemId={systemId}
+        systemId={effectiveSystemId}
         components={components}
         events={history?.events || []}
         initialEventType={
           initialEventType
         }
-        onEventSaved={(savedEvent) =>
-          setHistory((current) => ({
-            system:
-              current?.system ||
-              systems.find(
-                (system) =>
-                  system.id === systemId,
-              ) ||
-              null,
-            components:
-              current?.components || [],
-            events: [
-              savedEvent,
-              ...(
-                current?.events || []
-              ).filter(
-                (event) =>
-                  event.id !==
-                  savedEvent.id,
-              ),
-            ],
-          }))
+        onEventSaved={() =>
+          // The saved event arrives with the server's revalidated history.
+          refreshHistory()
         }
       />
       )}
