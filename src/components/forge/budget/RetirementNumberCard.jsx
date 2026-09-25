@@ -3,8 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import computeRetirementTarget, { SPENDING_SMILE_DECLINE_PCT } from "@/domains/retirement/computeRetirementTarget";
 import backtestRetirement from "@/domains/retirement/backtestRetirement";
+import projectRetirementTimeline from "@/domains/retirement/projectRetirementTimeline";
+import deriveRetirementMilestones from "@/domains/retirement/deriveRetirementMilestones";
 import shillerAnnual from "@/domains/retirement/shillerAnnual.json";
 import { ALLOCATION_PROFILES, allocationProfileById } from "@/domains/retirement/allocationProfiles";
+import RetirementTimelineChart from "@/components/forge/budget/RetirementTimelineChart";
 
 const STORAGE_KEY = "forge:retirement-card:v1";
 
@@ -41,6 +44,7 @@ const DEFAULTS = {
   ssHaircut: false,
   rentalMonthlyText: "",
   planningAgeText: "95",
+  mortgagePayoffAgeText: "",
   spendingSmile: false,
   checklist: { emergency: false, debt: false, fund: false },
 };
@@ -257,6 +261,59 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
     });
   }, [showSmileHeadline, smileResult, persisted.allocationId, planningAge, retirementAge]);
 
+  // Milestone timeline: year-by-year balance projection at the allocation's
+  // long-run average real return (derived from the Shiller dataset — never
+  // invented), with milestone dots. The smile scenario reuses the declining
+  // withdrawal path so both lines match their headlines.
+  const timelineFlat = useMemo(() => {
+    if (!showHeadline) return null;
+    const profile = allocationProfileById(persisted.allocationId);
+    return projectRetirementTimeline({
+      retirementAge,
+      planningAge,
+      retirementYear: result.retirementYear,
+      nestEgg: result.requiredNestEgg,
+      annualWithdrawal: result.portfolioNeedAnnual,
+      stockPct: profile?.stockPct ?? 0.6,
+      data: shillerAnnual,
+    });
+  }, [showHeadline, result, persisted.allocationId, planningAge, retirementAge]);
+
+  const timelineSmile = useMemo(() => {
+    if (!showSmileHeadline) return null;
+    const profile = allocationProfileById(persisted.allocationId);
+    return projectRetirementTimeline({
+      retirementAge,
+      planningAge,
+      retirementYear: smileResult.retirementYear,
+      nestEgg: smileResult.requiredNestEgg,
+      annualWithdrawal: smileResult.portfolioNeedAnnual,
+      stockPct: profile?.stockPct ?? 0.6,
+      spendingDeclinePct: SPENDING_SMILE_DECLINE_PCT,
+      data: shillerAnnual,
+    });
+  }, [showSmileHeadline, smileResult, persisted.allocationId, planningAge, retirementAge]);
+
+  const milestones = useMemo(() => {
+    if (!inputsValid) return [];
+    return deriveRetirementMilestones({
+      currentAge,
+      retirementAge,
+      planningAge,
+      ssClaimAge: parseNumber(persisted.ssClaimAge) ?? 67,
+      monthlySSBenefit: parseNumber(persisted.ssMonthlyText) ?? 0,
+      mortgagePayoffAge: parseNumber(persisted.mortgagePayoffAgeText),
+    });
+  }, [
+    inputsValid,
+    currentAge,
+    retirementAge,
+    planningAge,
+    persisted.ssClaimAge,
+    persisted.ssMonthlyText,
+    persisted.mortgagePayoffAgeText,
+  ]);
+
   return (
     <section aria-labelledby="retirement-number-heading" className="mt-6 rounded-3xl border bg-white p-5 shadow-sm dark:bg-slate-900 sm:p-6 border-slate-200 dark:border-slate-800">
       <p className="text-[11px] font-black uppercase tracking-[0.18em] text-sky-600 dark:text-sky-400">Retire</p>
@@ -368,6 +425,36 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
               </p>
             </>
           )}
+        </div>
+      ) : null}
+
+      {/* Milestone timeline — year-by-year balance projection with milestone dots */}
+      {showHeadline && timelineFlat?.years?.length ? (
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-700 dark:bg-slate-800/50">
+          <p className="text-xs font-bold text-slate-600 dark:text-slate-300">Milestone timeline</p>
+          <div className="mt-2">
+            <RetirementTimelineChart
+              flat={timelineFlat}
+              smile={persisted.spendingSmile ? timelineSmile : null}
+              milestones={milestones}
+              currentAge={currentAge}
+              retirementAge={retirementAge}
+              planningAge={planningAge}
+              smileOn={persisted.spendingSmile && timelineSmile != null}
+            />
+          </div>
+          {timelineFlat.exhaustedAt != null ? (
+            <p className="mt-2 text-center text-xs font-bold text-amber-600 dark:text-amber-400">
+              At the historical-average return, the flat path runs out at age {timelineFlat.exhaustedAt} —
+              the survival % above is the honest stress test.
+            </p>
+          ) : null}
+          <p className="mt-2 text-center text-[11px] font-medium text-slate-500 dark:text-slate-500">
+            Projected at the long-run average real return of your allocation (
+            {timelineFlat.avgRealReturnPct}%/yr) — a historical average, not a promise.
+            Pre-retirement savings growth isn&apos;t modeled. A generic planning estimate,
+            never personalized advice.
+          </p>
         </div>
       ) : null}
 
@@ -637,16 +724,29 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
             {/* Planning age */}
             <div>
               <p className="text-sm font-bold text-slate-800 dark:text-slate-200">Planning horizon</p>
-              <div className="mt-3 max-w-sm">
-                <NumberField
-                  label="Plan spending to age"
-                  value={persisted.planningAgeText}
-                  onChange={(value) => update({ planningAgeText: value })}
-                  min="1"
-                  step="1"
-                  inputMode="numeric"
-                  hint="Assumption — Fidelity plans to 96."
-                />
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="max-w-sm">
+                  <NumberField
+                    label="Plan spending to age"
+                    value={persisted.planningAgeText}
+                    onChange={(value) => update({ planningAgeText: value })}
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    hint="Assumption — Fidelity plans to 96."
+                  />
+                </div>
+                <div className="max-w-sm">
+                  <NumberField
+                    label="Mortgage paid off at age"
+                    value={persisted.mortgagePayoffAgeText}
+                    onChange={(value) => update({ mortgagePayoffAgeText: value })}
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    hint="Optional — adds a milestone dot on the timeline."
+                  />
+                </div>
               </div>
             </div>
           </div>
