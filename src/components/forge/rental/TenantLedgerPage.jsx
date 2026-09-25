@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import PostIncomeForm from "./PostIncomeForm";
+import TenantCreditSection from "./TenantCreditSection";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
@@ -44,6 +45,11 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
   const deposits = data?.deposits || null;
   const importedHistory = data?.importedHistory || null;
   const openCharges = data?.openCharges || [];
+  const credits = data?.credits || [];
+  const creditApplications = data?.creditApplications || [];
+  const availableCreditCents = credits
+    .filter((credit) => credit.status === "open")
+    .reduce((sum, credit) => sum + Number(credit.remaining_cents || 0), 0);
   const [detailEntry, setDetailEntry] = useState(null);
   const [showPostIncome, setShowPostIncome] = useState(initialView === "post-income");
   const [postedMessage, setPostedMessage] = useState("");
@@ -110,7 +116,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
         <>
           {showPostIncome && (
             <div className="mt-6 print:hidden">
-              <PostIncomeForm tenantName={tenantName} openCharges={openCharges}
+              <PostIncomeForm tenantId={tenantId} tenantName={tenantName} openCharges={openCharges}
                 onCancel={() => setShowPostIncome(false)}
                 onStaleBalance={refresh}
                 onSaved={(payment) => {
@@ -126,6 +132,9 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
             <p className="text-sm font-bold text-slate-600 dark:text-slate-400">
               Balance: <strong className={`text-lg font-black ${balanceClass(ledger.balanceCents)}`}>{money.format(ledger.balanceCents / 100)}</strong>
               <span className="ml-2 font-normal">{ledger.balanceCents > 0 ? "owed" : ledger.balanceCents < 0 ? "credit" : "paid in full"}</span>
+              {availableCreditCents > 0 && (
+                <span className="ml-3 font-normal text-sky-700 dark:text-sky-400">Available credit: <strong>{money.format(availableCreditCents / 100)}</strong></span>
+              )}
             </p>
           </div>
 
@@ -145,6 +154,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                 <tbody>
                   {ledger.entries.map((entry) => {
                     const isChargeSide = entry.kind !== "payment";
+                    const isCreditMemo = entry.kind === "credit" || entry.kind === "credit_application";
                     return (
                       <tr key={entry.id} data-ledger-entry={entry.kind} className="border-b border-slate-100 dark:border-slate-800">
                         <td className="py-2.5 pr-3 font-bold text-slate-700 dark:text-slate-300">{formatDate(entry.date)}</td>
@@ -154,14 +164,18 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                             className="text-left font-bold text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-300">
                             {entry.label}
                           </button>
+                          {isCreditMemo && <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black uppercase text-sky-800 dark:bg-sky-900 dark:text-sky-200">Credit memo</span>}
                           <span className="ml-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label(entry.status)}</span>
                           {entry.rentecEvidence?.length > 0 && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black uppercase text-slate-700 dark:bg-slate-700 dark:text-slate-200">Rentec history</span>}
                           <span className="block text-xs text-slate-500 dark:text-slate-400">
                             {[entry.period, entry.method ? label(entry.method) : null, entry.reference].filter(Boolean).join(" · ")}
+                            {isCreditMemo && entry.remainingCents != null && ` · ${money.format(entry.remainingCents / 100)} remaining`}
                           </span>
                         </td>
                         <td className="py-2.5 pr-3 text-right font-black text-slate-950 dark:text-white">
-                          {isChargeSide ? money.format(entry.amountCents / 100) : <span className="font-normal text-slate-300 dark:text-slate-700">—</span>}
+                          {isCreditMemo
+                            ? <span className="font-bold text-slate-500 dark:text-slate-400">{money.format(entry.amountCents / 100)} <span className="text-[10px] font-black uppercase">memo</span></span>
+                            : isChargeSide ? money.format(entry.amountCents / 100) : <span className="font-normal text-slate-300 dark:text-slate-700">—</span>}
                         </td>
                         <td className="py-2.5 pr-3 text-right font-black text-emerald-700 dark:text-emerald-400">
                           {!isChargeSide ? money.format(entry.amountCents / 100) : <span className="font-normal text-slate-300 dark:text-slate-700">—</span>}
@@ -220,6 +234,8 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
               </p>
             </div>
           )}
+
+          <TenantCreditSection credits={credits} creditApplications={creditApplications} openCharges={openCharges} onChanged={refresh} />
 
           <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40" data-ledger-deposits>
             <h4 className="text-lg font-black text-slate-950 dark:text-white">Deposits — held separately, never rent</h4>

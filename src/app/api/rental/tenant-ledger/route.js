@@ -51,6 +51,7 @@ export async function GET(request) {
     const [
       chargesResult, paymentsResult, settlementsResult, leasesResult, membershipsResult,
       unitsResult, rentecResult, depositsResult, depositTransactionsResult, importedHistoryResult,
+      creditsResult, creditApplicationsResult,
     ] = await Promise.all([
       // All statuses: history must include paid and voided charges, not just open ones.
       supabaseClient.from("rent_charges")
@@ -76,9 +77,18 @@ export async function GET(request) {
       supabaseClient.from("rental_security_deposit_transactions").select("*")
         .eq("owner_id", effectiveOwnerId).order("occurred_at", { ascending: true }),
       importedHistoryQuery,
+      // Overpayment credits: the tenant's money already received, waiting to be applied.
+      // Read-only here — creation/application/void go through the dedicated RPCs.
+      supabaseClient.from("rental_tenant_credits")
+        .select("id, tenant_id, lease_id, amount_cents, remaining_cents, source, source_payment_id, status, notes, voided_at, voided_by, void_reason, created_at, updated_at")
+        .eq("owner_id", effectiveOwnerId).eq("tenant_id", tenant.id).order("created_at", { ascending: true }),
+      supabaseClient.from("rental_credit_applications")
+        .select("id, credit_id, tenant_id, lease_id, charge_id, amount_cents, applied_at, notes")
+        .eq("owner_id", effectiveOwnerId).eq("tenant_id", tenant.id).order("applied_at", { ascending: true }),
     ]);
     const failed = [chargesResult, paymentsResult, settlementsResult, leasesResult, membershipsResult,
-      unitsResult, rentecResult, depositsResult, depositTransactionsResult, importedHistoryResult].find((r) => r.error)?.error;
+      unitsResult, rentecResult, depositsResult, depositTransactionsResult, importedHistoryResult,
+      creditsResult, creditApplicationsResult].find((r) => r.error)?.error;
     if (failed) throw failed;
 
     const ledger = buildTenantPaymentLedger({
@@ -90,6 +100,8 @@ export async function GET(request) {
       leaseMemberships: membershipsResult.data || [],
       units: unitsResult.data || [],
       rentecImports: rentecResult.data || [],
+      credits: creditsResult.data || [],
+      creditApplications: creditApplicationsResult.data || [],
     });
     const deposits = buildTenantDepositHistory({
       tenantId: tenant.id,
@@ -147,6 +159,10 @@ export async function GET(request) {
       deposits,
       importedHistory,
       openCharges,
+      // Overpayment credits + their applications, for the ledger's credit section.
+      // Additive only — the ledger entries above already carry the memo rows.
+      credits: creditsResult.data || [],
+      creditApplications: creditApplicationsResult.data || [],
     });
   } catch (error) {
     console.error("Tenant ledger query error", error);

@@ -10,6 +10,11 @@
 //                                      the tenant is never guessed from rentec_renter_id
 //   rental_security_deposits +         a dedicated Deposits section — deposits are never
 //     rental_security_deposit_transactions  labeled as rent and never mixed into the ledger
+//   rental_tenant_credits +            overpayment credits and their applications, as
+//     rental_credit_applications       balance-neutral memo entries: the money was already
+//                                      counted in the payment that created the credit,
+//                                      so these explain where the excess lives without
+//                                      moving the running balance twice
 //
 // Deliberately NOT read: financial_events. The ledger stays structurally incapable of
 // showing a Stripe payment twice (once from rental_payments, once from the accounting
@@ -76,6 +81,8 @@ export function buildTenantPaymentLedger({
   leaseMemberships = [],
   units = [],
   rentecImports = [],
+  credits = [],
+  creditApplications = [],
 } = {}) {
   const unitById = new Map(units.map((unit) => [unit.id, unit]));
   const leaseById = new Map(leases.map((lease) => [lease.id, lease]));
@@ -230,8 +237,77 @@ export function buildTenantPaymentLedger({
     // Otherwise: linked elsewhere or unlinked entirely — not this tenant's ledger.
   }
 
+  // --- Overpayment credits: balance-neutral memo entries. The payment that created the
+  // credit already moved the money (its entry carries the full received amount), so the
+  // credit and its applications explain where the excess lives without touching the
+  // running balance. The charge's paid_amount_cents (bumped by the RPCs) keeps the
+  // per-charge "remaining" views consistent with this ledger.
+  const creditEntries = [];
+  const applicationByCreditId = new Map();
+  for (const application of creditApplications) {
+    if (application.tenant_id !== tenantId) continue;
+    if (!applicationByCreditId.has(application.credit_id)) applicationByCreditId.set(application.credit_id, []);
+    applicationByCreditId.get(application.credit_id).push(application);
+  }
+  for (const credit of credits) {
+    if (credit.tenant_id !== tenantId) continue;
+    if (!tenantLeaseIds.has(credit.lease_id)) continue;
+    const lease = leaseById.get(credit.lease_id) || null;
+    const context = unitContext(lease ? unitById.get(lease.unit_id) : null);
+    const status = credit.status || "unknown";
+    const applications = applicationByCreditId.get(credit.id) || [];
+    const appliedCents = applications.reduce((sum, a) => sum + signedCents(a.amount_cents), 0);
+    creditEntries.push({
+      id: `credit:${credit.id}`,
+      sourceId: credit.id,
+      kind: "credit",
+      date: (credit.created_at || "").slice(0, 10) || null,
+      amountCents: signedCents(credit.amount_cents),
+      balanceEffectCents: 0,
+      label: status === "void" ? "Credit voided" : "Overpayment credit",
+      status,
+      method: null,
+      period: null,
+      leaseId: credit.lease_id,
+      chargeId: null,
+      propertyLabel: context.propertyLabel,
+      unitLabel: context.unitLabel,
+      reference: credit.source_payment_id || credit.id,
+      remainingCents: signedCents(credit.remaining_cents),
+      appliedCents,
+      voidedAt: credit.voided_at || null,
+      voidedBy: credit.voided_by || null,
+      voidReason: credit.void_reason || null,
+      notes: credit.notes || null,
+      rentecEvidence: [],
+    });
+    for (const application of applications) {
+      const chargeEntry = application.charge_id ? chargeById.get(application.charge_id) : null;
+      creditEntries.push({
+        id: `credit-application:${application.id}`,
+        sourceId: application.id,
+        kind: "credit_application",
+        date: (application.applied_at || "").slice(0, 10) || null,
+        amountCents: signedCents(application.amount_cents),
+        balanceEffectCents: 0,
+        label: "Credit applied",
+        status: "applied",
+        method: null,
+        period: chargeEntry?.period || null,
+        leaseId: application.lease_id,
+        chargeId: application.charge_id,
+        creditId: application.credit_id,
+        propertyLabel: context.propertyLabel,
+        unitLabel: context.unitLabel,
+        reference: `credit ${credit.id}`,
+        notes: application.notes || null,
+        rentecEvidence: [],
+      });
+    }
+  }
+
   // --- Chronological ledger with running balance.
-  const entries = sortChronological([...chargeEntries, ...paymentEntries]);
+  const entries = sortChronological([...chargeEntries, ...paymentEntries, ...creditEntries]);
   let runningCents = 0;
   for (const entry of entries) {
     runningCents += entry.balanceEffectCents;

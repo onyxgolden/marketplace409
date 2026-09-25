@@ -285,3 +285,53 @@ describe("buildTenantDepositHistory", () => {
     expect(history.entries[0].depositId).toBe("dep_1");
   });
 });
+
+describe("buildTenantPaymentLedger with tenant credits", () => {
+  const credit = (overrides = {}) => ({
+    id: "credit_1", tenant_id: TENANT, lease_id: "lease_1", amount_cents: 3200,
+    remaining_cents: 3200, source: "overpayment", source_payment_id: "pay_1",
+    status: "open", notes: "Overpayment on charge charge_1 (2026-09)", created_at: "2026-09-05T12:00:00Z",
+    ...overrides,
+  });
+  const application = (overrides = {}) => ({
+    id: "app_1", credit_id: "credit_1", tenant_id: TENANT, lease_id: "lease_1",
+    charge_id: "charge_oct", amount_cents: 3200, applied_at: "2026-10-01T12:00:00Z", notes: null,
+    ...overrides,
+  });
+
+  it("renders credits and applications as balance-neutral memo entries", () => {
+    const ledger = buildTenantPaymentLedger(baseInput({
+      charges: [charge({ id: "charge_1", period: "2026-09", paid_amount_cents: 150000, status: "paid" })],
+      payments: [payment({ id: "pay_1", amount_cents: 153200, payment_method: "cash" })],
+      credits: [credit()],
+      creditApplications: [application()],
+    }));
+    const memos = ledger.entries.filter((e) => e.kind === "credit" || e.kind === "credit_application");
+    expect(memos).toHaveLength(2);
+    // The money was already counted in the payment — memos never move the balance.
+    expect(memos.every((e) => e.balanceEffectCents === 0)).toBe(true);
+    expect(ledger.balanceCents).toBe(-3200); // paid $1,532 against a $1,500 charge
+    expect(ledger.totals.paidCents).toBe(153200); // full received amount, counted once
+    const creditEntry = memos.find((e) => e.kind === "credit");
+    expect(creditEntry.remainingCents).toBe(3200);
+    const applicationEntry = memos.find((e) => e.kind === "credit_application");
+    expect(applicationEntry.chargeId).toBe("charge_oct");
+  });
+
+  it("excludes credits belonging to other tenants or leases", () => {
+    const ledger = buildTenantPaymentLedger(baseInput({
+      credits: [
+        credit({ id: "mine" }),
+        credit({ id: "theirs", tenant_id: OTHER }),
+        credit({ id: "wrong-lease", lease_id: "lease_2" }),
+      ],
+    }));
+    expect(ledger.entries.filter((e) => e.kind === "credit").map((e) => e.sourceId)).toEqual(["mine"]);
+  });
+
+  it("labels voided credits distinctly", () => {
+    const ledger = buildTenantPaymentLedger(baseInput({ credits: [credit({ status: "void", remaining_cents: 0 })] }));
+    const entry = ledger.entries.find((e) => e.kind === "credit");
+    expect(entry.label).toBe("Credit voided");
+  });
+});

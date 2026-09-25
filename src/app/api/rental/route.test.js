@@ -741,3 +741,106 @@ describe("Rental Manager POST — co-owner manager-action scoping", () => {
     expect(deleteChain.eq).not.toHaveBeenCalledWith("owner_id", CO_OWNER);
   });
 });
+
+describe("Rental Manager POST — tenant credit operations", () => {
+  function rpcClient({ rpcResult = { data: {}, error: null } } = {}) {
+    const recorded = [];
+    const rpc = vi.fn(async (name, params) => { recorded.push([name, params]); return rpcResult; });
+    return { from: vi.fn(() => ({})), rpc, recorded };
+  }
+  async function asOwner(client) {
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({
+      application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: client,
+    });
+  }
+
+  it("record-offline-payment passes the overpayment-credit flag through to the RPC", async () => {
+    const client = rpcClient({ rpcResult: { data: { id: "pay_1", credit: { id: "credit_1" } }, error: null } });
+    await asOwner(client);
+    const response = await POST(request({
+      operation: "record-offline-payment",
+      payment: { chargeId: "c1", paymentMethod: "cash", amountCents: 153200, receivedAt: "2026-09-05T12:00:00.000Z", allowOverpaymentCredit: true },
+    }));
+    expect(response.status).toBe(200);
+    expect(client.rpc).toHaveBeenCalledWith("record_offline_rental_payment", expect.objectContaining({
+      p_owner_id: "owner_1", p_charge_id: "c1", p_amount_cents: 153200, p_allow_overpayment_credit: true,
+    }));
+    expect((await response.json()).payment.credit.id).toBe("credit_1");
+  });
+
+  it("record-offline-payment defaults the overpayment-credit flag to false", async () => {
+    const client = rpcClient();
+    await asOwner(client);
+    await POST(request({
+      operation: "record-offline-payment",
+      payment: { chargeId: "c1", paymentMethod: "cash", amountCents: 150000, receivedAt: "2026-09-05T12:00:00.000Z" },
+    }));
+    expect(client.rpc).toHaveBeenCalledWith("record_offline_rental_payment", expect.objectContaining({ p_allow_overpayment_credit: false }));
+  });
+
+  it("record-offline-payment passes the tenant id and idempotency key through to the RPC", async () => {
+    const client = rpcClient({ rpcResult: { data: { id: "pay_1" }, error: null } });
+    await asOwner(client);
+    await POST(request({
+      operation: "record-offline-payment",
+      payment: { chargeId: "c1", tenantId: "tenant_9", paymentMethod: "cash", amountCents: 153200,
+        receivedAt: "2026-09-05T12:00:00.000Z", allowOverpaymentCredit: true, idempotencyKey: "intent-abc-123" },
+    }));
+    expect(client.rpc).toHaveBeenCalledWith("record_offline_rental_payment", expect.objectContaining({
+      p_tenant_id: "tenant_9", p_idempotency_key: "intent-abc-123",
+    }));
+  });
+
+  it("record-offline-payment nulls a blank tenant id or idempotency key", async () => {
+    const client = rpcClient({ rpcResult: { data: { id: "pay_1" }, error: null } });
+    await asOwner(client);
+    await POST(request({
+      operation: "record-offline-payment",
+      payment: { chargeId: "c1", tenantId: "   ", paymentMethod: "cash", amountCents: 150000,
+        receivedAt: "2026-09-05T12:00:00.000Z", idempotencyKey: "  " },
+    }));
+    expect(client.rpc).toHaveBeenCalledWith("record_offline_rental_payment", expect.objectContaining({
+      p_tenant_id: null, p_idempotency_key: null,
+    }));
+  });
+
+
+  it("apply-tenant-credit requires owner confirmation and routes to the apply RPC", async () => {
+    const client = rpcClient({ rpcResult: { data: { id: "app_1", amountCents: 3200 }, error: null } });
+    await asOwner(client);
+    const denied = await POST(request({
+      operation: "apply-tenant-credit", credit: { creditId: "credit_1", chargeId: "charge_oct", amountCents: 3200 },
+    }));
+    expect(denied.status).toBe(400);
+    expect(client.rpc).not.toHaveBeenCalled();
+
+    await asOwner(client);
+    const response = await POST(request({
+      operation: "apply-tenant-credit",
+      credit: { creditId: "credit_1", chargeId: "charge_oct", amountCents: 3200, ownerConfirmed: true },
+    }));
+    expect(response.status).toBe(200);
+    expect(client.rpc).toHaveBeenCalledWith("apply_rental_tenant_credit", expect.objectContaining({
+      p_owner_id: "owner_1", p_credit_id: "credit_1", p_charge_id: "charge_oct", p_amount_cents: 3200,
+    }));
+  });
+
+  it("void-tenant-credit requires a reason, owner confirmation, and routes to the void RPC", async () => {
+    const client = rpcClient({ rpcResult: { data: { id: "credit_1", status: "void" }, error: null } });
+    await asOwner(client);
+    expect((await POST(request({ operation: "void-tenant-credit", creditId: "credit_1", reason: "refunded", ownerConfirmed: false }))).status).toBe(400);
+    await asOwner(client);
+    expect((await POST(request({ operation: "void-tenant-credit", creditId: "credit_1", reason: "  ", ownerConfirmed: true }))).status).toBe(400);
+    expect(client.rpc).not.toHaveBeenCalled();
+
+    await asOwner(client);
+    const response = await POST(request({
+      operation: "void-tenant-credit", creditId: "credit_1", reason: "refunded to tenant in cash", ownerConfirmed: true,
+    }));
+    expect(response.status).toBe(200);
+    expect(client.rpc).toHaveBeenCalledWith("void_rental_tenant_credit", expect.objectContaining({
+      p_owner_id: "owner_1", p_credit_id: "credit_1", p_reason: "refunded to tenant in cash",
+    }));
+  });
+});
