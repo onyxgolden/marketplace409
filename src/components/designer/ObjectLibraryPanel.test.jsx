@@ -52,10 +52,10 @@ describe("ObjectLibraryPanel", () => {
     container.remove();
   });
 
-  it("discovers the four object domains through the registry", async () => {
+  it("discovers the five object domains through the registry", async () => {
     await renderPanel();
     const options = Array.from(domainSelect(container).options).map((o) => o.textContent);
-    expect(options).toEqual(["Furniture", "Building elements", "Site & outdoor", "MEP fixtures"]);
+    expect(options).toEqual(["Furniture", "Building elements", "Site & outdoor", "MEP fixtures", "Process equipment"]);
     // Room templates and piping keep their own panels: not listed.
     expect(options.join(" ")).not.toMatch(/room|piping/i);
   });

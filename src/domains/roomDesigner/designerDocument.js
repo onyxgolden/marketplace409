@@ -37,6 +37,7 @@ import "./pipingCatalog";
 import "./buildingElementsCatalog";
 import "./siteOutdoorCatalog";
 import "./mepFixturesCatalog";
+import "./processEquipmentCatalog";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {

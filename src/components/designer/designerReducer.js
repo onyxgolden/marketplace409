@@ -67,11 +67,12 @@ import {
 } from "@/domains/roomDesigner/designerDocument";
 import { applyImportResult } from "@/domains/roomDesigner/importers/vsdx/visioMapper";
 import { insertShapeCentered } from "@/domains/roomDesigner/customShapes/customShapeInstantiate";
+import { autoTagFor } from "@/domains/roomDesigner/equipmentTags";
 import { placedSelection } from "@/domains/roomDesigner/customShapes/customShapePlacement";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { PIPE_DIAMETERS_IN, PIPE_LAYERS } from "@/domains/roomDesigner/pipingGeometry";
-import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
+import { findSymbol, getSymbolSet } from "@/domains/roomDesigner/symbolRegistry";
 
 export const TOOLS = Object.freeze([
   "select",
@@ -100,6 +101,7 @@ export function createInitialState(design) {
     // Phase 2: piping mode — defaults for new pipe runs.
     pendingPipe: { diameterIn: 2, material: "Carbon steel", service: "Process", layer: "auto" },
     pendingSymbol: null, // { domain, symbolId } for the piping-symbol tool
+    libraryDomain: null, // object-library domain opened from a palette tool (e.g. process equipment)
     pendingCustomShape: null, // the saved shape record armed for placement
     orthoSnap: true, // orthogonal (90°) vertex snapping for pipe runs
     layerVisibility: { piping: true, equipment: true, annotations: true },
@@ -272,6 +274,12 @@ export function designerReducer(state, action) {
         return state;
       }
     }
+    // Open the object library on a given symbol domain without arming a
+    // symbol yet (the Process "Equipment" palette tool). The canvas ignores
+    // clicks under the symbol tool until a symbol is picked.
+    case "OPEN_OBJECT_LIBRARY":
+      if (!getSymbolSet(action.domain)) return state;
+      return { ...state, tool: "symbol", pendingSymbol: null, libraryDomain: action.domain };
     case "SET_PENDING_SYMBOL": {
       if (!findSymbol(action.domain, action.symbolId)) return state;
       // The piping domain keeps its established tool; every other symbol
@@ -469,14 +477,14 @@ export function designerReducer(state, action) {
     case "PLACE_SYMBOL": {
       const pending = state.pendingSymbol;
       if (!pending) return state;
-      const design = placeSymbol(
-        state.design,
-        action.domain || pending.domain || "piping",
-        action.symbolId || pending.symbolId,
-        action.x,
-        action.y,
-        { layer: state.pendingPipe.layer === "auto" ? undefined : state.pendingPipe.layer },
-      );
+      const domain = action.domain || pending.domain || "piping";
+      const symbolId = action.symbolId || pending.symbolId;
+      const design = placeSymbol(state.design, domain, symbolId, action.x, action.y, {
+        layer: state.pendingPipe.layer === "auto" ? undefined : state.pendingPipe.layer,
+        // Process equipment gets the next free tag for its letter code
+        // (P-101, P-102, ...); other symbols stay untagged as before.
+        tag: autoTagFor(state.design, domain, symbolId) || undefined,
+      });
       const inst = design.symbols[design.symbols.length - 1];
       return { ...touch(state, design), selection: { kind: "symbol", id: inst.id } };
     }

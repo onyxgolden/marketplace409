@@ -533,6 +533,52 @@ export default function DesignerViewport3D({
         register(highlightRegistryKey("furniture", item.id), fGroup);
       }
 
+      // process equipment: floor-standing primitives, selectable like furniture.
+      for (const eq of built.equipment || []) {
+        const mat = stdMaterial({ color: eq.color, roughness: 0.55 });
+        const legs = [];
+        let mesh;
+        if (eq.shape === "vcyl") {
+          const r = Math.min(eq.widthIn, eq.depthIn) / 2;
+          mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, eq.heightIn, 28), mat);
+          mesh.position.y = eq.heightIn / 2;
+        } else if (eq.shape === "hcyl") {
+          // Horizontal vessel along its width, resting on low saddles.
+          const r = eq.depthIn / 2;
+          const saddle = Math.max(0, eq.heightIn - eq.depthIn);
+          mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, eq.widthIn, 28), mat);
+          mesh.rotation.z = Math.PI / 2;
+          mesh.position.y = saddle + r;
+        } else if (eq.shape === "sphere") {
+          // Pressure sphere: the ball sits at the top of its nominal height,
+          // carried on six legs down to the floor.
+          const r = Math.min(eq.widthIn, eq.depthIn) / 2;
+          const cy = Math.max(r, eq.heightIn - r);
+          mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 20), mat);
+          mesh.position.y = cy;
+          const legMat = stdMaterial({ color: "#6b7280", roughness: 0.7 });
+          for (let k = 0; k < 6; k += 1) {
+            const a = (k / 6) * Math.PI * 2;
+            const leg = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(3, 3, cy, 8), legMat));
+            leg.position.set(Math.cos(a) * r * 0.85, cy / 2, Math.sin(a) * r * 0.85);
+            legs.push(leg);
+          }
+        } else {
+          mesh = new THREE.Mesh(new THREE.BoxGeometry(eq.widthIn, eq.heightIn, eq.depthIn), mat);
+          mesh.position.y = eq.heightIn / 2;
+        }
+        shadowed(mesh);
+        const eGroup = new THREE.Group();
+        eGroup.add(mesh);
+        for (const leg of legs) eGroup.add(leg);
+        eGroup.position.set(eq.x, 0, eq.z);
+        eGroup.rotation.y = eq.rotY;
+        eGroup.userData.entityKind = "symbol";
+        eGroup.userData.entityId = eq.id;
+        group.add(eGroup);
+        register(highlightRegistryKey("symbol", eq.id), eGroup);
+      }
+
       // stairs: composed runs + landings from pure descriptors, with railings.
       const stairWood = stdMaterial({ color: "#8f6f4b", roughness: 0.75 });
       const stairRailMat = stdMaterial({ color: "#6b5138", roughness: 0.7 });
@@ -682,10 +728,15 @@ export default function DesignerViewport3D({
       if (camera && controls && !initialCameraSetRef.current && built.floor) {
         const cx = built.floor ? (built.floor.minX + built.floor.maxX) / 2 : 0;
         const cz = built.floor ? (built.floor.minZ + built.floor.maxZ) / 2 : 0;
-        camera.position.set(cx + floorSize * 0.55, floorSize * 0.75, cz + floorSize * 0.55);
-        camera.far = floorSize * 20;
+        // Tall process equipment (towers, stacks, flares) can dwarf the plot
+        // footprint; frame on whichever is bigger so the camera starts
+        // outside the model, looking at mid-height of the tallest piece.
+        const tallest = Math.max(0, ...(built.equipment || []).map((e) => e.heightIn));
+        const frame = Math.max(floorSize, tallest * 1.8);
+        camera.position.set(cx + frame * 0.55, frame * 0.75, cz + frame * 0.55);
+        camera.far = frame * 20;
         camera.updateProjectionMatrix();
-        controls.target.set(cx, 0, cz);
+        controls.target.set(cx, Math.min(tallest, floorSize) * 0.3, cz);
         controls.update();
         initialCameraSetRef.current = true;
       }

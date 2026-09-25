@@ -13,6 +13,7 @@ const LIBRARY_DOMAINS = Object.freeze([
   "buildingElements",
   "siteOutdoor",
   "mepFixtures",
+  "processEquipment",
 ]);
 
 /** Category names in first-appearance order within the domain's symbols. */

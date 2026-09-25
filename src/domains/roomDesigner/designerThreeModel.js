@@ -15,6 +15,7 @@ import {
 } from "./designerGeometry";
 import { findWall, pieceSize } from "./designerDocument";
 import { findSymbol } from "./symbolRegistry";
+import { PROCESS_EQUIPMENT_DOMAIN } from "./processEquipmentCatalog";
 import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
 
 export const WINDOW_SILL_IN = 36;
@@ -325,8 +326,39 @@ export function stairsDescriptors(design) {
 }
 
 /**
+ * Process equipment -> 3D primitive descriptors (plain JSON, like
+ * furnitureToBox): { kind:"equipment", id, shape:"vcyl"|"hcyl"|"box", x, z,
+ * rotY, widthIn, depthIn, heightIn, color, tag }. Sits on the floor.
+ * Other symbol domains have no 3D form yet and are skipped.
+ */
+export function equipmentDescriptors(design) {
+  const out = [];
+  for (const inst of design?.symbols || []) {
+    if (inst.domain !== PROCESS_EQUIPMENT_DOMAIN) continue;
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!symbol || !symbol.shape3d) continue;
+    out.push({
+      kind: "equipment",
+      id: inst.id,
+      shape: symbol.shape3d,
+      x: inst.x,
+      z: inst.y,
+      // screen-space clockwise degrees -> three.js counter-clockwise radians
+      rotY: (-(inst.rotationDeg || 0) * Math.PI) / 180,
+      widthIn: inst.widthIn ?? symbol.widthIn,
+      depthIn: inst.depthIn ?? symbol.depthIn,
+      heightIn: symbol.heightIn,
+      color: symbol.color,
+      tag: inst.tag || "",
+    });
+  }
+  return out;
+}
+
+/**
  * Full scene descriptor for a design:
- * { walls: [...segments], glass: [...window panes], furniture: [...boxes], stairs: [...], floor: {minX,minZ,maxX,maxZ}|null }
+ * { walls: [...segments], glass: [...window panes], furniture: [...boxes], stairs: [...],
+ *   equipment: [...primitives], floor: {minX,minZ,maxX,maxZ}|null }
  */
 export function buildThreeScene(design) {
   if (!design || !Array.isArray(design.walls)) {
@@ -348,6 +380,7 @@ export function buildThreeScene(design) {
     .map(furnitureToBox)
     .filter(Boolean);
   const stairs = stairsDescriptors(design);
+  const equipment = equipmentDescriptors(design);
 
   let floor = null;
   const xs = [];
@@ -356,7 +389,7 @@ export function buildThreeScene(design) {
     xs.push(wall.a.x, wall.b.x);
     zs.push(wall.a.y, wall.b.y);
   }
-  for (const f of furniture) {
+  for (const f of [...furniture, ...equipment]) {
     xs.push(f.x - f.widthIn / 2, f.x + f.widthIn / 2);
     zs.push(f.z - f.depthIn / 2, f.z + f.depthIn / 2);
   }
@@ -369,7 +402,7 @@ export function buildThreeScene(design) {
       maxZ: Math.max(...zs) + pad,
     };
   }
-  return { walls, glass, furniture, stairs, floor };
+  return { walls, glass, furniture, stairs, equipment, floor };
 }
 
 /** Find the wall whose centerline is nearest to a plan point (for picking). */
@@ -411,15 +444,17 @@ export function highlightRegistryKey(kind, id) {
  * A room has no 3D mesh of its own — it highlights via its own walls. An
  * opening highlights via its window glass/sill/header (a door is an open
  * gap with no mesh, so it has nothing to highlight — that is correct
- * behavior, not a gap in coverage). Symbols and pipes have no 3D
- * representation yet (buildThreeScene does not emit meshes for them), so
- * selecting one maps to no keys — a deliberate no-op, not an oversight.
+ * behavior, not a gap in coverage). A symbol maps to its own key: process
+ * equipment is built as a 3D primitive registered under it, while other
+ * symbol domains have no mesh, so their key simply matches nothing. Pipes
+ * have no 3D representation yet and map to no keys.
  */
 export function highlightKeysForSelection(selection, design) {
   if (!selection || !selection.kind) return [];
   if (selection.kind === "wall") return [highlightRegistryKey("wall", selection.id)];
   if (selection.kind === "opening") return [highlightRegistryKey("opening", selection.id)];
   if (selection.kind === "furniture") return [highlightRegistryKey("furniture", selection.id)];
+  if (selection.kind === "symbol") return [highlightRegistryKey("symbol", selection.id)];
   if (selection.kind === "room") {
     const room = (design?.rooms || []).find((r) => r.id === selection.id);
     return (room?.wallIds || []).map((id) => highlightRegistryKey("wall", id));

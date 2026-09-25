@@ -27,7 +27,7 @@ import {
 } from "./designerGeometry";
 
 /** Entity kinds that can be picked, dragged and sized from the 3D view. */
-export const EDITABLE_3D_KINDS = Object.freeze(["wall", "opening", "furniture"]);
+export const EDITABLE_3D_KINDS = Object.freeze(["wall", "opening", "furniture", "symbol"]);
 
 /** Pointer travel (px) under which a press-release counts as a click, not an orbit. */
 export const CLICK_TOLERANCE_PX = 5;
@@ -96,6 +96,11 @@ export function beginDrag3D(selection, design, p) {
     if (!wall) return null;
     return { kind: "opening", id: opening.id, grabOffsetIn: offsetAlongWall(p, wall) - opening.offsetIn };
   }
+  if (selection.kind === "symbol") {
+    const inst = (design.symbols || []).find((s) => s.id === selection.id);
+    if (!inst) return null;
+    return { kind: "symbol", id: inst.id, grab: { x: p.x - inst.x, y: p.y - inst.y } };
+  }
   return null;
 }
 
@@ -131,6 +136,19 @@ export function dragStep3D(drag, design, p) {
     return {
       drag,
       action: { type: "MOVE_FURNITURE", furnitureId: drag.id, x: point.x, y: point.y, coalesce: `move-furniture:${drag.id}` },
+    };
+  }
+
+  if (drag.kind === "symbol") {
+    const { point } = snapPoint(
+      { x: p.x - drag.grab.x, y: p.y - drag.grab.y },
+      { ...snap, snapRadiusIn: DRAG_SNAP_RADIUS_IN },
+    );
+    const inst = (design.symbols || []).find((s) => s.id === drag.id);
+    if (!inst || (inst.x === point.x && inst.y === point.y)) return { drag, action: null };
+    return {
+      drag,
+      action: { type: "MOVE_SYMBOL", symbolId: drag.id, x: point.x, y: point.y, coalesce: `move-symbol:${drag.id}` },
     };
   }
 

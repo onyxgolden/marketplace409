@@ -22,6 +22,7 @@ import {
   Ruler,
   Save,
   Shapes,
+  Factory,
   Sofa,
   Spline,
   Square,
@@ -51,6 +52,7 @@ import {
 } from "./designerDraft";
 import OrgChartPanel from "./OrgChartPanel";
 import ObjectLibraryPanel from "./ObjectLibraryPanel";
+import EquipmentScheduleSection from "./EquipmentScheduleSection";
 import { createInitialState, designerReducer } from "./designerReducer";
 import {
   createEmptyLibrary,
@@ -160,6 +162,10 @@ export const TOOL_DEFS = [
   { id: "furniture", label: "Furniture", icon: Sofa, hint: "Pick a piece, then click the plan to place it", leftPalette: false },
   { id: "pipe", label: "Pipe", icon: Spline, hint: "Click to add pipe vertices · double-click or Enter to finish · Esc cancels" },
   { id: "piping", label: "Piping", icon: Shapes, hint: "Pick a valve, fitting, or equipment symbol, then click the plan to place it" },
+  // Process category: opens the object library on the process-equipment
+  // catalog (pumps, vessels, exchangers, ...). Each placed piece is auto-
+  // tagged with the next number for its letter code (P-101, V-101, ...).
+  { id: "process-equipment", label: "Equipment", icon: Factory, hint: "Pick process equipment, then click the plan to place it · tags number themselves (P-101, P-102…)", symbolDomain: "processEquipment" },
   { id: "orgchart", label: "Org chart", icon: Network, hint: "Click the plan to place an org chart, then add people and reporting lines" },
   { id: "erase", label: "Erase", icon: Eraser, hint: "Click anything to delete it" },
   { id: "pan", label: "Pan", icon: Hand, hint: "Drag to pan · scroll to zoom (or hold Space anytime)" },
@@ -813,7 +819,13 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
         {/* tool palette: pinned tools, then collapsible Visio-style categories */}
         <ToolPalette
           grouped={groupedToolDefs}
-          activeToolId={tool}
+          // The Equipment tool IS the symbol tool on the process domain;
+          // light its palette button while that library is in use.
+          activeToolId={
+            tool === "symbol" && (pendingSymbol?.domain ?? state.libraryDomain) === "processEquipment"
+              ? "process-equipment"
+              : tool
+          }
           hasUnderlay={Boolean(design.underlay)}
           onSelect={(toolId) => {
             // Room/structure presets are palette shortcuts: they arm the
@@ -823,6 +835,8 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
             const shapeId = shapeIdFromToolId(toolId);
             if (def?.roomTemplate) {
               dispatch({ type: "SET_PENDING_ROOM", templateId: def.roomTemplate });
+            } else if (def?.symbolDomain) {
+              dispatch({ type: "OPEN_OBJECT_LIBRARY", domain: def.symbolDomain });
             } else if (shapeId) {
               const shape = shapeLibrary.shapes.find((s) => s.id === shapeId);
               if (shape) dispatch({ type: "SET_PENDING_CUSTOM_SHAPE", shape });
@@ -1009,7 +1023,9 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
         dispatch={dispatch}
         pendingCatalogId={pendingCatalogId}
         pendingSymbol={pendingSymbol}
-        initialDomain={tool === "symbol" ? pendingSymbol?.domain : "furniture"}
+        initialDomain={tool === "symbol" ? pendingSymbol?.domain ?? state.libraryDomain : "furniture"}
+        // Remount when a palette tool switches domains, so the panel opens on it.
+        key={tool === "symbol" ? state.libraryDomain ?? "symbol" : "furniture"}
       />
     );
   }
@@ -1075,8 +1091,9 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
             <dd>{feetInchesLabel(lengthIn)}</dd>
           </div>
         ))}
-        <div className="flex justify-between"><dt>Piping symbols</dt><dd>{summary.pipingSymbolCount}</dd></div>
+        <div className="flex justify-between"><dt title="Every placed symbol: piping, fixtures, building elements, process equipment">Symbols</dt><dd>{summary.pipingSymbolCount}</dd></div>
       </dl>
+      <EquipmentScheduleSection design={design} dispatch={dispatch} />
       {/* HOME DESIGNER slice 3: construction intelligence — project-wide
           measurements derived from geometry. */}
       <MeasurementsSection project={project} design={design} />
