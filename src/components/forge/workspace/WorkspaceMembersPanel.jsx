@@ -1,42 +1,42 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import {
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 const STATUS_LABELS = { invited: "Invited", active: "Active", suspended: "Suspended" };
 
+async function fetchMembers() {
+  const response = await fetch("/api/workspace/members");
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "Unable to load workspace members.");
+  return { viewerRole: payload.viewerRole, viewerId: payload.viewerId, members: payload.members || [] };
+}
+
 export default function WorkspaceMembersPanel() {
-  const [viewerRole, setViewerRole] = useState(null);
-  const [viewerId, setViewerId] = useState(null);
-  const [members, setMembers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Membership snapshot: stale-while-revalidate. The last saved roster stays
+  // visible while invite/accept/suspend refreshes run in the background.
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "workspace:members",
+    fetchMembers,
+    { ttlMs: 60_000 },
+  );
+  const viewerRole = data?.viewerRole ?? null;
+  const viewerId = data?.viewerId ?? null;
+  const members = data?.members ?? null;
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const load = useCallback(() => {
-    setLoading(true);
-    return fetch("/api/workspace/members")
-      .then((response) => response.json().then((payload) => ({ response, payload })))
-      .then(({ response, payload }) => {
-        if (!response.ok) throw new Error(payload.error || "Unable to load workspace members.");
-        setViewerRole(payload.viewerRole);
-        setViewerId(payload.viewerId);
-        setMembers(payload.members || []);
-      })
-      .catch((loadError) => setError(loadError.message))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
   // resolveEffectiveOwnerId only matches an *active* co-owner membership, so viewerRole still reads
   // "primary_owner" for someone who has been invited but hasn't accepted yet -- their own pending row
   // shows up in `members` (via the self-select RLS policy) with memberUserId equal to their own id.
   // That, not viewerRole, is what identifies "this invitation is addressed to me."
-  const ownPendingInvite = members.find((member) => member.memberUserId === viewerId && member.status === "invited");
+  const ownPendingInvite = members?.find((member) => member.memberUserId === viewerId && member.status === "invited");
 
   async function invite(event) {
     event.preventDefault();
@@ -53,7 +53,7 @@ export default function WorkspaceMembersPanel() {
       if (!response.ok) throw new Error(payload.error || "Unable to invite that member.");
       setMessage(`Invited ${payload.member.invitedEmail} as a co-owner.`);
       setEmail("");
-      await load();
+      await refresh();
     } catch (inviteError) {
       setError(inviteError.message);
     } finally {
@@ -70,7 +70,7 @@ export default function WorkspaceMembersPanel() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Unable to accept that invitation.");
       setMessage("Invitation accepted. You now have co-owner access.");
-      await load();
+      await refresh();
     } catch (acceptError) {
       setError(acceptError.message);
     } finally {
@@ -91,7 +91,7 @@ export default function WorkspaceMembersPanel() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Unable to update that member.");
       setMessage(action === "suspend" ? "Access suspended." : "Access reactivated.");
-      await load();
+      await refresh();
     } catch (updateError) {
       setError(updateError.message);
     } finally {
@@ -108,9 +108,26 @@ export default function WorkspaceMembersPanel() {
         and payout-bank changes always stay with the primary owner.
       </p>
 
-      {loading ? <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">Loading membership status…</p> : null}
+      {!members && isLoading ? (
+        <div className="mt-4">
+          <ForgeLoadingState label="Loading membership status…" />
+        </div>
+      ) : null}
+      {!members && loadError ? (
+        <div className="mt-4">
+          <ForgeErrorState title={loadError || "Unable to load workspace members."} onRetry={refresh} />
+        </div>
+      ) : null}
+      {members && isRefreshing ? (
+        <p role="status" className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+      ) : null}
+      {members && loadError ? (
+        <p role="status" className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">
+          Could not refresh — showing the last saved roster.
+        </p>
+      ) : null}
 
-      {!loading && ownPendingInvite ? (
+      {members && ownPendingInvite ? (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/30">
           <p className="text-sm font-bold text-amber-900 dark:text-amber-200">
             You have a pending invitation to become a co-owner of this workspace.
@@ -121,13 +138,13 @@ export default function WorkspaceMembersPanel() {
         </div>
       ) : null}
 
-      {!loading && viewerRole === "co_owner" ? (
+      {members && viewerRole === "co_owner" ? (
         <p className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-200">
           You have co-owner access to this workspace. Only the primary owner can invite, suspend, or reactivate members.
         </p>
       ) : null}
 
-      {!loading && viewerRole === "primary_owner" ? (
+      {members && viewerRole === "primary_owner" ? (
         <form onSubmit={invite} className="mt-4 flex flex-wrap items-end gap-2">
           <label className="flex-1 min-w-[220px]">
             <span className="block text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -148,11 +165,11 @@ export default function WorkspaceMembersPanel() {
         </form>
       ) : null}
 
-      {!loading && members.length === 0 ? (
+      {members && members.length === 0 ? (
         <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">No workspace members yet.</p>
       ) : null}
 
-      {members.map((member) => (
+      {(members ?? []).map((member) => (
         <article key={member.id} className="mt-4 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>

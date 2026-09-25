@@ -1,5 +1,11 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import {
+  ForgeEmptyState,
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 const SEVERITY_CLASS = {
   critical: "border-rose-400 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200",
@@ -120,28 +126,35 @@ function FindingCard({ finding, onAction, actionPending }) {
   );
 }
 
+async function fetchProposals() {
+  const res = await fetch("/api/forge/developer/ui-improvement-manager/proposals");
+  const payload = await res.json();
+  if (!res.ok) throw new Error(payload.error || "Unable to load UI improvement proposals.");
+  return payload.findings ?? [];
+}
+
 export default function UiImprovementManagerPanel() {
-  const [findings, setFindings] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  // Proposal list: stale-while-revalidate. The last saved list stays on
+  // screen while a background revalidate is in flight; the review/reject
+  // actions below still apply their server responses as local updates.
+  const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "ui-improvement:proposals",
+    fetchProposals,
+    { ttlMs: 60_000 },
+  );
+  const findings = data ?? null;
   const [pendingFindingId, setPendingFindingId] = useState(null);
-
-  const load = useCallback(() => {
-    // No setLoading(true) here: `loading` already initializes true, and this is only ever invoked
-    // once, from the mount effect below -- an explicit reset would be a synchronous setState call
-    // inside that effect's body, which is exactly what react-hooks/set-state-in-effect disallows.
-    return fetch("/api/forge/developer/ui-improvement-manager/proposals")
-      .then((res) => res.json().then((payload) => ({ res, payload })))
-      .then(({ res, payload }) => {
-        if (!res.ok) throw new Error(payload.error || "Unable to load UI improvement proposals.");
-        setFindings(payload.findings);
-        setError("");
-      })
-      .catch((loadError) => setError(loadError.message))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
+  // Transient action failures (review/reject/etc.) -- separate from the list's
+  // own load error, which the shared ForgeErrorState below renders.
+  const [actionError, setActionError] = useState("");
+  // Server-confirmed status changes apply as a local overlay immediately (the
+  // same instant update the pre-SWR code did); the background revalidate below
+  // then converges the cached list with the server truth.
+  const [statusOverrides, setStatusOverrides] = useState({});
+  const visibleFindings = useMemo(
+    () => (findings ?? []).map((finding) => statusOverrides[finding.findingId] ?? finding),
+    [findings, statusOverrides],
+  );
 
   const onAction = useCallback((findingId, action) => {
     setPendingFindingId(findingId);
@@ -153,14 +166,17 @@ export default function UiImprovementManagerPanel() {
       .then((res) => res.json().then((payload) => ({ res, payload })))
       .then(({ res, payload }) => {
         if (!res.ok) throw new Error(payload.error || "Unable to update this proposal.");
-        setFindings((current) => current.map((finding) => (finding.findingId === findingId ? payload.finding : finding)));
+        // Apply the server's updated finding immediately, then revalidate in
+        // the background so the stale list stays visible while it fetches.
+        setStatusOverrides((current) => ({ ...current, [findingId]: payload.finding }));
+        return refresh();
       })
-      .catch((actionError) => setError(actionError.message))
+      .catch((actionError) => setActionError(actionError.message))
       .finally(() => setPendingFindingId(null));
-  }, []);
+  }, [refresh]);
 
-  const deterministic = findings.filter((finding) => finding.findingClass === "deterministic");
-  const subjective = findings.filter((finding) => finding.findingClass === "subjective");
+  const deterministic = visibleFindings.filter((finding) => finding.findingClass === "deterministic");
+  const subjective = visibleFindings.filter((finding) => finding.findingClass === "subjective");
 
   return (
     <main className="mx-auto max-w-5xl p-8">
@@ -173,14 +189,32 @@ export default function UiImprovementManagerPanel() {
         push, open a pull request, merge, deploy, migrate, or touch Production by itself.
       </p>
 
-      {loading ? <p role="status" className="mt-6 text-sm font-semibold text-slate-500">Loading proposals…</p> : null}
-      {error ? <p role="alert" className="mt-6 rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm font-bold text-rose-900 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{error}</p> : null}
+      {actionError ? <p role="alert" className="mt-6 rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm font-bold text-rose-900 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{actionError}</p> : null}
 
-      {!loading && !error && findings.length === 0 ? (
-        <p className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-          No findings yet. Run the FB-UI-1 screenshot-evidence CLI, then the FB-UI-2 finding-engine CLI,
-          against <code>ui-improvement-manager/evidence/latest</code> to populate this list.
+      {!findings && isLoading ? (
+        <div className="mt-6">
+          <ForgeLoadingState label="Loading proposals…" />
+        </div>
+      ) : null}
+      {!findings && error ? (
+        <div className="mt-6">
+          <ForgeErrorState title={error || "Unable to load UI improvement proposals."} onRetry={refresh} />
+        </div>
+      ) : null}
+      {findings && isRefreshing ? <p role="status" className="mt-6 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
+      {findings && error ? (
+        <p role="status" className="mt-6 text-xs font-bold text-slate-400 dark:text-slate-500">
+          Could not refresh — showing the last saved proposals.
         </p>
+      ) : null}
+
+      {findings && visibleFindings.length === 0 ? (
+        <div className="mt-6">
+          <ForgeEmptyState
+            headline="No findings yet."
+            guidance="Run the FB-UI-1 screenshot-evidence CLI, then the FB-UI-2 finding-engine CLI, against ui-improvement-manager/evidence/latest to populate this list."
+          />
+        </div>
       ) : null}
 
       {deterministic.length > 0 ? (

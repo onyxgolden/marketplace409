@@ -1,12 +1,17 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- private, short-lived signed URLs cannot use the static Next image host allowlist */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { compressImageFile } from "@/components/forge/rental/compressImageFile";
 import HealthLabTrendChart from "./HealthLabTrendChart";
 import HealthLabCombinedTrendChart from "./HealthLabCombinedTrendChart";
 import HealthVitalsTrendChart from "./HealthVitalsTrendChart";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import {
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 const tabs = ["Overview", "Labs", "Regimen", "Peptides", "Workouts", "Programs", "Vitals", "Timeline"];
 
@@ -770,15 +775,46 @@ function HealthProgramDayCard({ day, onChanged, onStartWorkout }) {
   </div>;
 }
 
+// Empty snapshot shape -- what every tab renders against before the first
+// load completes, so no tab blanks on a refresh.
+const EMPTY_SNAPSHOT = { profiles: [], conditions: [], careTeam: [], labs: [], regimen: [], measurements: [], workouts: [], timeline: [], programs: [], programDays: [] };
+
 export default function HealthDashboard({ initialMembership }) {
   const supabase = useMemo(() => createClient(), []);
   const [workspaceId, setWorkspaceId] = useState(initialMembership?.workspace_id ?? null);
   const [activeTab, setActiveTab] = useState("Overview");
-  const [loading, setLoading] = useState(Boolean(workspaceId));
+  // Transient action errors (create workspace, add dependent) -- separate from
+  // the snapshot's own load error, which the shared ForgeErrorState renders.
   const [error, setError] = useState("");
+  const [creating, setCreating] = useState(false);
   const [dependentName, setDependentName] = useState("");
   const [dependentRelationship, setDependentRelationship] = useState("");
-  const [data, setData] = useState({ profiles: [], conditions: [], careTeam: [], labs: [], regimen: [], measurements: [], workouts: [], timeline: [], programs: [], programDays: [] });
+
+  // The RLS-scoped health snapshot: stale-while-revalidate keyed by the
+  // workspace identifier. A failed refresh keeps the last good snapshot on
+  // screen and surfaces the error alongside it.
+  const fetchSnapshot = useCallback(async () => {
+    const id = workspaceId;
+    if (!id) return null;
+    const tables = [
+      ["profiles", "health_profiles", "display_name"], ["labs", "health_lab_results", "collected_on"],
+      ["conditions", "health_conditions", "name"], ["careTeam", "health_care_team", "clinician_name"],
+      ["regimen", "health_regimen_items", "name"], ["measurements", "health_measurements", "measured_at"],
+      ["workouts", "health_workouts", "performed_at"], ["timeline", "health_clinical_timeline", "occurred_on"],
+      ["programs", "health_programs", "name"], ["programDays", "health_program_days", "day_number"],
+    ];
+    const results = await Promise.all(tables.map(([, table, order]) => supabase.from(table).select("*").eq("workspace_id", id).order(order, { ascending: false })));
+    const failed = results.find((result) => result.error);
+    if (failed) throw new Error(failed.error.message);
+    return Object.fromEntries(tables.map(([key], index) => [key, results[index].data ?? []]));
+  }, [workspaceId, supabase]);
+
+  const { data: snapshot, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    workspaceId ? `health:dashboard:${workspaceId}` : null,
+    fetchSnapshot,
+    { ttlMs: 60_000 },
+  );
+  const data = snapshot ?? EMPTY_SNAPSHOT;
   const [viewProfileId, setViewProfileId] = useState(null);
   const [currentUserEmail, setCurrentUserEmail] = useState(null);
   const [selectedProgramId, setSelectedProgramId] = useState(null);
@@ -809,31 +845,11 @@ export default function HealthDashboard({ initialMembership }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.profiles, currentUserEmail]);
 
-  async function load(id = workspaceId) {
-    if (!id) return;
-    setError("");
-    const tables = [
-      ["profiles", "health_profiles", "display_name"], ["labs", "health_lab_results", "collected_on"],
-      ["conditions", "health_conditions", "name"], ["careTeam", "health_care_team", "clinician_name"],
-      ["regimen", "health_regimen_items", "name"], ["measurements", "health_measurements", "measured_at"],
-      ["workouts", "health_workouts", "performed_at"], ["timeline", "health_clinical_timeline", "occurred_on"],
-      ["programs", "health_programs", "name"], ["programDays", "health_program_days", "day_number"],
-    ];
-    const results = await Promise.all(tables.map(([, table, order]) => supabase.from(table).select("*").eq("workspace_id", id).order(order, { ascending: false })));
-    const failed = results.find((result) => result.error);
-    if (failed) setError(failed.error.message);
-    else setData(Object.fromEntries(tables.map(([key], index) => [key, results[index].data ?? []])));
-    setLoading(false);
-  }
-
-  // The workspace identifier is the external subscription key; reload its RLS-scoped snapshot when it changes.
-  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-  useEffect(() => { if (workspaceId) load(workspaceId); }, [workspaceId]);
-
   async function initialize() {
-    setLoading(true); setError("");
+    setCreating(true); setError("");
     const { data: id, error: setupError } = await supabase.rpc("bootstrap_private_health_workspace");
-    if (setupError) { setError(setupError.message); setLoading(false); return; }
+    setCreating(false);
+    if (setupError) { setError(setupError.message); return; }
     setWorkspaceId(id);
   }
 
@@ -843,10 +859,10 @@ export default function HealthDashboard({ initialMembership }) {
       p_workspace_id: workspaceId, p_display_name: dependentName, p_relationship: dependentRelationship, p_date_of_birth: null,
     });
     if (dependentError) { setError(dependentError.message); return; }
-    setDependentName(""); setDependentRelationship(""); await load(workspaceId);
+    setDependentName(""); setDependentRelationship(""); await refresh();
   }
 
-  if (!workspaceId) return <main className="mx-auto max-w-3xl p-6"><Card title="Private FORGE Health"><p className="text-slate-600 dark:text-slate-300">Create one shared health workspace for you and your active co-owner. Only the two explicitly added accounts will have access.</p><button onClick={initialize} disabled={loading} className="mt-5 rounded-xl bg-amber-400 px-5 py-3 font-black text-slate-950 disabled:opacity-50">{loading ? "Creating…" : "Create our private health workspace"}</button>{error && <p role="alert" className="mt-4 text-sm font-bold text-red-600">{error}</p>}</Card></main>;
+  if (!workspaceId) return <main className="mx-auto max-w-3xl p-6"><Card title="Private FORGE Health"><p className="text-slate-600 dark:text-slate-300">Create one shared health workspace for you and your active co-owner. Only the two explicitly added accounts will have access.</p><button onClick={initialize} disabled={creating} className="mt-5 rounded-xl bg-amber-400 px-5 py-3 font-black text-slate-950 disabled:opacity-50">{creating ? "Creating…" : "Create our private health workspace"}</button>{error && <p role="alert" className="mt-4 text-sm font-bold text-red-600">{error}</p>}</Card></main>;
 
   const viewLabs = data.labs.filter((lab) => lab.profile_id === viewProfileId);
   const viewRegimen = data.regimen.filter((item) => item.profile_id === viewProfileId);
@@ -863,7 +879,25 @@ export default function HealthDashboard({ initialMembership }) {
       <div className="mt-5 flex flex-wrap gap-2">{tabs.map((tab) => <button key={tab} onClick={() => setActiveTab(tab)} className={`rounded-xl px-4 py-2 text-sm font-black ${activeTab === tab ? "bg-amber-400 text-slate-950" : "bg-slate-200 dark:bg-slate-800"}`}>{tab}</button>)}</div>
       {data.profiles.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2"><span className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Viewing:</span>{data.profiles.map((profile) => <button key={profile.id} onClick={() => setViewProfileId(profile.id)} className={`rounded-full px-3 py-1 text-xs font-black ${viewProfileId === profile.id ? "bg-amber-400 text-slate-950" : "bg-slate-200 dark:bg-slate-800"}`}>{profile.display_name}</button>)}</div>}
       {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 font-bold text-red-700 dark:bg-red-950 dark:text-red-200">{error}</p>}
-      {loading ? <p className="mt-8 font-bold">Loading private health records…</p> : <div className="mt-6 grid gap-5 lg:grid-cols-2">
+      {!snapshot && isLoading ? (
+        <div className="mt-8">
+          <ForgeLoadingState label="Loading private health records…" />
+        </div>
+      ) : null}
+      {!snapshot && loadError ? (
+        <div className="mt-8">
+          <ForgeErrorState title={loadError || "Unable to load your health records."} onRetry={refresh} />
+        </div>
+      ) : null}
+      {snapshot && isRefreshing ? (
+        <p role="status" className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+      ) : null}
+      {snapshot && loadError ? (
+        <p role="status" className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">
+          Could not refresh — showing the last saved health records.
+        </p>
+      ) : null}
+      {!snapshot ? null : <div className="mt-6 grid gap-5 lg:grid-cols-2">
         {activeTab === "Overview" && <>
           <Card title="Household profiles"><div className="space-y-3">{data.profiles.map((profile) => <div key={profile.id} className="rounded-xl bg-slate-100 p-4 dark:bg-slate-800"><p className="font-black">{profile.display_name}</p><p className="text-xs text-slate-500 dark:text-slate-400">{profile.profile_type === "managed_dependent" ? `Managed ${profile.relationship || "dependent"}` : "Private household member"} · {data.conditions.filter((condition) => condition.profile_id === profile.id && condition.status === "active").length} active conditions · {activeRegimen.filter((item) => item.profile_id === profile.id).length} active regimen items</p></div>)}</div><form onSubmit={addDependent} className="mt-4 grid gap-2 sm:grid-cols-2"><input aria-label="Dependent full name" required value={dependentName} onChange={(event) => setDependentName(event.target.value)} placeholder="Dependent full name" className="rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/><input aria-label="Relationship" required value={dependentRelationship} onChange={(event) => setDependentRelationship(event.target.value)} placeholder="Relationship, such as mother" className="rounded-xl border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"/><button className="rounded-xl bg-slate-950 px-4 py-2 font-black text-white dark:bg-amber-400 dark:text-slate-950 sm:col-span-2">Add managed dependent</button></form></Card>
           <Card title="Current regimen"><p className="text-3xl font-black text-emerald-600">{activeRegimen.length}</p><p className="text-sm text-slate-500">active prescriptions, supplements, and peptides for {viewingProfile?.display_name || "the selected person"}</p></Card>
@@ -875,30 +909,30 @@ export default function HealthDashboard({ initialMembership }) {
           const { narrow: narrowTier, wide: wideTier } = splitLabTiers(groupedViewLabs);
           const hasCombinableTrend = Object.values(groupedViewLabs).some((points) => points.length >= 2);
           return <>
-            <HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="lab_report" onConfirmed={() => load(workspaceId)}/>
+            <HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="lab_report" onConfirmed={() => refresh()}/>
             {viewLabs.length > 0 && <Card title={`Combined trends — ${viewingProfile?.display_name || ""}`}>
               {hasCombinableTrend ? <div className="space-y-4">
                 <HealthLabCombinedTrendChart title="Narrow-range markers" groupedLabs={narrowTier}/>
                 <HealthLabCombinedTrendChart title="Wide-range markers" groupedLabs={wideTier}/>
               </div> : <p className="text-sm text-slate-500">Once a marker has a second draw on file, its trend joins a combined chart here.</p>}
             </Card>}
-            <Card title={`Laboratory history — ${viewingProfile?.display_name || ""}`}>{viewLabs.length ? <div className="space-y-4">{Object.entries(groupedViewLabs).map(([markerName, points]) => <div key={markerName}><HealthLabTrendChart markerName={markerName} points={points}/><div className="mt-1 space-y-1">{points.map((point) => <HealthLabResultRow key={point.id} point={point} onChanged={() => load(workspaceId)}/>)}</div></div>)}</div> : <p className="text-sm text-slate-500">Structured results and trend charts will appear here. The database preserves values, units, ranges, flags, dates, panels and source documents independently.</p>}</Card>
+            <Card title={`Laboratory history — ${viewingProfile?.display_name || ""}`}>{viewLabs.length ? <div className="space-y-4">{Object.entries(groupedViewLabs).map(([markerName, points]) => <div key={markerName}><HealthLabTrendChart markerName={markerName} points={points}/><div className="mt-1 space-y-1">{points.map((point) => <HealthLabResultRow key={point.id} point={point} onChanged={() => refresh()}/>)}</div></div>)}</div> : <p className="text-sm text-slate-500">Structured results and trend charts will appear here. The database preserves values, units, ranges, flags, dates, panels and source documents independently.</p>}</Card>
           </>;
         })()}
-        {activeTab === "Regimen" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="medication_label" onConfirmed={() => load(workspaceId)}/><HealthRegimenBulkForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="prescription" onSaved={() => load(workspaceId)}/><Card title={`Prescriptions and supplements — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewRegimen.filter((x) => x.category !== "peptide").map((item) => <HealthRegimenItemCard key={item.id} item={item} onChanged={() => load(workspaceId)}/>)}{!viewRegimen.filter((x) => x.category !== "peptide").length && <p className="text-sm text-slate-500">No prescriptions or supplements logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
+        {activeTab === "Regimen" && <><HealthDocumentImporter workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="medication_label" onConfirmed={() => refresh()}/><HealthRegimenBulkForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="prescription" onSaved={() => refresh()}/><Card title={`Prescriptions and supplements — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewRegimen.filter((x) => x.category !== "peptide").map((item) => <HealthRegimenItemCard key={item.id} item={item} onChanged={() => refresh()}/>)}{!viewRegimen.filter((x) => x.category !== "peptide").length && <p className="text-sm text-slate-500">No prescriptions or supplements logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
         {activeTab === "Peptides" && (() => {
           const viewPeptides = viewRegimen.filter((item) => item.category === "peptide");
           return <>
-            <HealthRegimenBulkForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="peptide" onSaved={() => load(workspaceId)}/>
+            <HealthRegimenBulkForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} defaultCategory="peptide" onSaved={() => refresh()}/>
             <Card title={`Peptides — ${viewingProfile?.display_name || ""}`}>
               <div className="space-y-3">
-                {viewPeptides.map((item) => <HealthRegimenItemCard key={item.id} item={item} onChanged={() => load(workspaceId)}/>)}
+                {viewPeptides.map((item) => <HealthRegimenItemCard key={item.id} item={item} onChanged={() => refresh()}/>)}
                 {!viewPeptides.length && <p className="text-sm text-slate-500">Track the prescribed or supervised product, concentration, dose, route, cycle, individual injections, injection site, missed doses and reactions.</p>}
               </div>
             </Card>
           </>;
         })()}
-        {activeTab === "Workouts" && <><HealthWorkoutForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} initialDraft={workoutDraft} onDraftConsumed={() => setWorkoutDraft(null)} onSaved={() => load(workspaceId)}/><Card title={`Workout history — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewWorkouts.map((workout) => <HealthWorkoutCard key={workout.id} workout={workout} onChanged={() => load(workspaceId)}/>)}{!viewWorkouts.length && <p className="text-sm text-slate-500">No workouts logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
+        {activeTab === "Workouts" && <><HealthWorkoutForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} initialDraft={workoutDraft} onDraftConsumed={() => setWorkoutDraft(null)} onSaved={() => refresh()}/><Card title={`Workout history — ${viewingProfile?.display_name || ""}`}><div className="space-y-3">{viewWorkouts.map((workout) => <HealthWorkoutCard key={workout.id} workout={workout} onChanged={() => refresh()}/>)}{!viewWorkouts.length && <p className="text-sm text-slate-500">No workouts logged yet for {viewingProfile?.display_name || "the selected person"}.</p>}</div></Card></>}
         {activeTab === "Programs" && (() => {
           const programDaysForSelected = data.programDays.filter((day) => day.program_id === selectedProgramId).sort((a, b) => a.day_number - b.day_number);
           const selectedProgram = data.programs.find((program) => program.id === selectedProgramId);
@@ -907,21 +941,21 @@ export default function HealthDashboard({ initialMembership }) {
               <div className="space-y-2">
                 {data.programs.map((program) => <div key={program.id} className="flex items-center justify-between gap-2 rounded-xl bg-slate-100 p-3 dark:bg-slate-800">
                   <button type="button" onClick={() => setSelectedProgramId(program.id)} className={`text-left font-black ${selectedProgramId === program.id ? "text-amber-600 dark:text-amber-400" : ""}`}>{program.name}{program.source ? ` — ${program.source}` : ""}</button>
-                  <DeleteButton label={`Delete ${program.name}`} onDelete={async () => { const { error } = await supabase.from("health_programs").delete().eq("id", program.id); if (!error) { if (selectedProgramId === program.id) setSelectedProgramId(null); await load(workspaceId); } }}/>
+                  <DeleteButton label={`Delete ${program.name}`} onDelete={async () => { const { error } = await supabase.from("health_programs").delete().eq("id", program.id); if (!error) { if (selectedProgramId === program.id) setSelectedProgramId(null); await refresh(); } }}/>
                 </div>)}
                 {!data.programs.length && <p className="text-sm text-slate-500">No programs yet. Add one below, then add its days.</p>}
               </div>
             </Card>
-            <HealthProgramForm workspaceId={workspaceId} onSaved={async (id) => { await load(workspaceId); setSelectedProgramId(id); }}/>
+            <HealthProgramForm workspaceId={workspaceId} onSaved={async (id) => { await refresh(); setSelectedProgramId(id); }}/>
             {selectedProgram && <>
               <Card title={`${selectedProgram.name}${selectedProgram.source ? ` — ${selectedProgram.source}` : ""}`}>
-                <HealthProgramNotes program={selectedProgram} onChanged={() => load(workspaceId)}/>
+                <HealthProgramNotes program={selectedProgram} onChanged={() => refresh()}/>
                 <div className="space-y-3">
-                  {programDaysForSelected.map((day) => <HealthProgramDayCard key={day.id} day={day} onChanged={() => load(workspaceId)} onStartWorkout={(draft) => { setWorkoutDraft(draft); setActiveTab("Workouts"); }}/>)}
+                  {programDaysForSelected.map((day) => <HealthProgramDayCard key={day.id} day={day} onChanged={() => refresh()} onStartWorkout={(draft) => { setWorkoutDraft(draft); setActiveTab("Workouts"); }}/>)}
                   {!programDaysForSelected.length && <p className="text-sm text-slate-500">No days added yet.</p>}
                 </div>
               </Card>
-              <HealthProgramDayForm key={`${selectedProgram.id}-${(programDaysForSelected.at(-1)?.day_number || 0) + 1}`} workspaceId={workspaceId} programId={selectedProgram.id} nextDayNumber={(programDaysForSelected.at(-1)?.day_number || 0) + 1} onSaved={() => load(workspaceId)}/>
+              <HealthProgramDayForm key={`${selectedProgram.id}-${(programDaysForSelected.at(-1)?.day_number || 0) + 1}`} workspaceId={workspaceId} programId={selectedProgram.id} nextDayNumber={(programDaysForSelected.at(-1)?.day_number || 0) + 1} onSaved={() => refresh()}/>
             </>}
           </>;
         })()}
@@ -929,13 +963,13 @@ export default function HealthDashboard({ initialMembership }) {
           const groupedVitals = groupMeasurementsByType(viewMeasurements);
           const typesPresent = MEASUREMENT_TYPES.filter((type) => groupedVitals[type.value]?.length);
           return <>
-            <HealthMeasurementForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} onSaved={() => load(workspaceId)}/>
+            <HealthMeasurementForm workspaceId={workspaceId} profiles={data.profiles} defaultProfileId={viewProfileId} onSaved={() => refresh()}/>
             {typesPresent.length > 0 && <Card title={`Vitals trends — ${viewingProfile?.display_name || ""}`}>
               <div className="space-y-4">{typesPresent.map((type) => <HealthVitalsTrendChart key={type.value} title={type.label} unit={type.unit} points={groupedVitals[type.value]} primaryLabel={type.primaryLabel} secondaryLabel={type.secondaryLabel}/>)}</div>
             </Card>}
             <Card title={`Vitals history — ${viewingProfile?.display_name || ""}`}>
               <div className="space-y-3">
-                {viewMeasurements.map((measurement) => <HealthMeasurementCard key={measurement.id} measurement={measurement} onChanged={() => load(workspaceId)}/>)}
+                {viewMeasurements.map((measurement) => <HealthMeasurementCard key={measurement.id} measurement={measurement} onChanged={() => refresh()}/>)}
                 {!viewMeasurements.length && <p className="text-sm text-slate-500">No vitals logged yet for {viewingProfile?.display_name || "the selected person"}. Log steps, blood pressure, heart rate, blood oxygen, sleep or weight above -- these same rows are where a Samsung Health export will land once that import exists.</p>}
               </div>
             </Card>

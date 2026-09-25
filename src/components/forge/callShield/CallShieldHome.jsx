@@ -9,6 +9,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { findPossibleDuplicateCalls } from "@/domains/callShield/callShieldImport";
 import { fetchNativeCallRecords, isNativeShell } from "@/lib/callShield/callShieldNative";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import {
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 async function readError(response) {
   try {
@@ -46,10 +51,44 @@ function formatDuration(seconds) {
 }
 
 export default function CallShieldHome() {
-  const [cases, setCases] = useState([]);
-  const [imports, setImports] = useState([]);
-  const [caseDetail, setCaseDetail] = useState(null);
+  // Cases + staged imports: stale-while-revalidate under one key. The last
+  // saved lists stay on screen while a background refresh is in flight.
+  const {
+    data: homeData,
+    error: homeError,
+    isLoading: homeLoading,
+    isRefreshing: homeRefreshing,
+    refresh: refreshHome,
+  } = useStaleWhileRevalidate(
+    "call-shield:home",
+    async () => {
+      const [caseData, importData] = await Promise.all([
+        api("/api/call-shield/cases"),
+        api("/api/call-shield/imports"),
+      ]);
+      return { cases: caseData.items || [], imports: importData.items || [] };
+    },
+    { ttlMs: 60_000 },
+  );
+  const cases = homeData?.cases ?? null;
+  const imports = homeData?.imports ?? null;
   const [selectedCaseId, setSelectedCaseId] = useState("");
+  // Working case detail: its own key so switching cases serves the cached
+  // detail instantly and revalidates behind it.
+  const {
+    data: caseDetailData,
+    error: caseDetailError,
+    isLoading: caseDetailLoading,
+    refresh: refreshCaseDetail,
+  } = useStaleWhileRevalidate(
+    selectedCaseId ? `call-shield:case:${selectedCaseId}` : null,
+    async () => {
+      const data = await api(`/api/call-shield/cases/${encodeURIComponent(selectedCaseId)}`);
+      return data.item;
+    },
+    { ttlMs: 60_000 },
+  );
+  const caseDetail = caseDetailData ?? null;
   const [businessName, setBusinessName] = useState("");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(null);
@@ -58,52 +97,17 @@ export default function CallShieldHome() {
   const [explainPermission, setExplainPermission] = useState(false);
   const native = useMemo(() => isNativeShell(), []);
 
-  async function refresh() {
-    const [caseData, importData] = await Promise.all([
-      api("/api/call-shield/cases"),
-      api("/api/call-shield/imports"),
-    ]);
-    setCases(caseData.items || []);
-    setImports(importData.items || []);
-  }
-
+  // Default the working case to the first case once the list loads, without
+  // clobbering a case the user (or a mutation below) already picked.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [caseData, importData] = await Promise.all([
-          api("/api/call-shield/cases"),
-          api("/api/call-shield/imports"),
-        ]);
-        if (cancelled) return;
-        setCases(caseData.items || []);
-        setImports(importData.items || []);
-        if (caseData.items?.length) {
-          setSelectedCaseId((current) => current || caseData.items[0].id);
-        }
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Unable to load.");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (selectedCaseId || !cases?.length) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time default, guarded above so it never loops
+    setSelectedCaseId(cases[0].id);
+  }, [cases, selectedCaseId]);
 
-  useEffect(() => {
-    if (!selectedCaseId) return;
-    let cancelled = false;
-    api(`/api/call-shield/cases/${encodeURIComponent(selectedCaseId)}`)
-      .then((data) => {
-        if (!cancelled) setCaseDetail(data.item);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedCaseId]);
+  // A failed detail load still reads as a load error, like before (rendered
+  // inline with the transient error below -- no state sync needed).
+  const detailLoadError = !caseDetail && caseDetailError ? caseDetailError : "";
 
   async function handleCreateCase(event) {
     event.preventDefault();
@@ -119,7 +123,7 @@ export default function CallShieldHome() {
       setNotes("");
       setSelectedCaseId(data.item.id);
       setNotice(`Case opened for ${data.item.reportedBusinessName}.`);
-      await refresh();
+      await refreshHome();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -145,7 +149,7 @@ export default function CallShieldHome() {
         body: JSON.stringify({ records }),
       });
       setNotice(`${data.received} call record(s) received for your review. Nothing was added to any case yet.`);
-      await refresh();
+      await refreshHome();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -167,10 +171,9 @@ export default function CallShieldHome() {
         method: "POST",
         body: JSON.stringify({ caseId: selectedCaseId }),
       });
-      const detail = await api(`/api/call-shield/cases/${encodeURIComponent(selectedCaseId)}`);
-      setCaseDetail(detail.item);
+      await refreshCaseDetail();
       setNotice(`Call from ${importRow.phone_number} logged on the case.`);
-      await refresh();
+      await refreshHome();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -185,7 +188,7 @@ export default function CallShieldHome() {
         method: "PATCH",
         body: JSON.stringify({ dismissed: true }),
       });
-      await refresh();
+      await refreshHome();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -197,9 +200,9 @@ export default function CallShieldHome() {
 
   return (
     <div className="space-y-8">
-      {error && (
+      {(error || detailLoadError) && (
         <p role="alert" className="rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {error}
+          {error || detailLoadError}
         </p>
       )}
       {notice && (
@@ -208,6 +211,21 @@ export default function CallShieldHome() {
         </p>
       )}
 
+      {!homeData && homeLoading ? <ForgeLoadingState label="Loading Call Shield…" /> : null}
+      {!homeData && homeError ? (
+        <ForgeErrorState title={homeError || "Unable to load Call Shield."} onRetry={refreshHome} />
+      ) : null}
+      {homeData && homeRefreshing ? (
+        <p role="status" className="text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+      ) : null}
+      {homeData && homeError ? (
+        <p role="status" className="text-xs font-bold text-slate-400 dark:text-slate-500">
+          Could not refresh — showing the last saved cases and imports.
+        </p>
+      ) : null}
+
+      {!homeData ? null : (
+      <>
       <section className="rounded border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
         <h2 className="text-lg font-semibold">Cases</h2>
         <form onSubmit={handleCreateCase} className="mt-3 flex flex-wrap items-end gap-3">
@@ -237,7 +255,7 @@ export default function CallShieldHome() {
             {busy === "create-case" ? "Opening…" : "Open case"}
           </button>
         </form>
-        {cases.length > 0 && (
+        {(cases ?? []).length > 0 && (
           <label className="mt-4 flex flex-col text-sm">
             <span className="mb-1 font-medium">Working case</span>
             <select
@@ -245,7 +263,7 @@ export default function CallShieldHome() {
               onChange={(e) => setSelectedCaseId(e.target.value)}
               className="w-64 rounded border border-slate-300 px-3 py-2 dark:border-slate-600 dark:bg-slate-800"
             >
-              {cases.map((c) => (
+              {(cases ?? []).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.reported_business_name}
                 </option>
@@ -309,10 +327,10 @@ export default function CallShieldHome() {
         </div>
 
         <div className="mt-4 space-y-2">
-          {imports.length === 0 && (
+          {(imports ?? []).length === 0 && (
             <p className="text-sm text-slate-500">No staged imports. Nothing waiting for review.</p>
           )}
-          {imports.map((row) => {
+          {(imports ?? []).map((row) => {
             const duplicates = findPossibleDuplicateCalls(
               {
                 phoneNumber: row.phone_number,
@@ -366,6 +384,8 @@ export default function CallShieldHome() {
           })}
         </div>
       </section>
+      </>
+      )}
     </div>
   );
 }
