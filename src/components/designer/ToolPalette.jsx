@@ -105,6 +105,11 @@ export default function ToolPalette({
   // Tools absent from the map keep using the palette's own favorites.
   externalFavorites = null,
   onToggleExternalFavorite = null,
+  // Rendered right under the pinned tools. The screen passes the shape
+  // library's Favorites section here: favorite SHAPES get their own ordered,
+  // one-tap section, so they are left out of the generic Favorites category
+  // below instead of appearing twice.
+  favoritesSection = null,
 }) {
   const [collapsedByCategory, setCollapsedByCategory] = useState(readCollapsedByCategory);
   const [favoriteIds, setFavoriteIds] = useState(readFavoriteToolIds);
@@ -159,8 +164,9 @@ export default function ToolPalette({
   };
 
   // Favorites render as a category above the stencil groups, in palette
-  // display order, ignoring stale ids that no longer exist.
-  const favoriteTools = allTools.filter((tool) => isFavorite(tool.id));
+  // display order, ignoring stale ids that no longer exist. Tools whose star
+  // is owned elsewhere (custom shapes) are shown by `favoritesSection`.
+  const favoriteTools = allTools.filter((tool) => !ownedElsewhere(tool.id) && isFavorite(tool.id));
   const categories =
     favoriteTools.length > 0
       ? [{ id: "favorites", label: "Favorites", tools: favoriteTools }, ...grouped.categories]
@@ -184,6 +190,7 @@ export default function ToolPalette({
       aria-label="Tools"
     >
       {grouped.pinned.map(renderTool)}
+      {favoritesSection}
       {categories.map((category) => {
         const collapsed = Boolean(collapsedByCategory[category.id]);
         const Chevron = collapsed ? ChevronRight : ChevronDown;

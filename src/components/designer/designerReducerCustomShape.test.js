@@ -88,3 +88,36 @@ describe("PLACE_CUSTOM_SHAPE", () => {
     expect(JSON.stringify(state.design)).toBe(snapshot);
   });
 });
+
+describe("PLACE_CUSTOM_SHAPE with selectPlaced (one-tap Favorites)", () => {
+  it("places a furniture set and multi-selects every placed piece, in one undo", async () => {
+    const { buildStarterShapes } = await import("@/domains/roomDesigner/customShapes/starterShapes");
+    const dining = buildStarterShapes().find((s) => s.id === "starter-dining-set");
+    let state = designerReducer(createInitialState(), {
+      type: "PLACE_CUSTOM_SHAPE", shape: dining, x: 300, y: 300, selectPlaced: true,
+    });
+    expect(state.design.furniture).toHaveLength(dining.entities.furniture.length);
+    expect(state.multiSelection.map((m) => m.id).sort()).toEqual(state.design.furniture.map((f) => f.id).sort());
+    expect(state.selection).toBeNull();
+    // The tool isn't hijacked: one-tap doesn't arm the custom-shape tool.
+    expect(state.tool).not.toBe("custom-shape");
+    state = designerReducer(state, { type: "UNDO" });
+    expect(state.design.furniture).toHaveLength(0);
+  });
+
+  it("selects the room when a walled shape has no furniture", async () => {
+    const { buildStarterShapes } = await import("@/domains/roomDesigner/customShapes/starterShapes");
+    const bath = buildStarterShapes().find((s) => s.id === "starter-full-bath");
+    // Furniture stripped: with furniture present, the pieces would be selected instead.
+    const state = designerReducer(createInitialState(), {
+      type: "PLACE_CUSTOM_SHAPE", shape: { ...bath, entities: { ...bath.entities, furniture: [] } }, x: 300, y: 300, selectPlaced: true,
+    });
+    expect(state.selection).toEqual({ kind: "room", id: state.design.rooms[0].id });
+  });
+
+  it("leaves selection alone for a normal click placement", () => {
+    let state = designerReducer(createInitialState(), { type: "SET_PENDING_CUSTOM_SHAPE", shape: shapeOf() });
+    state = designerReducer(state, { type: "PLACE_CUSTOM_SHAPE", x: 500, y: 500 });
+    expect(state.selection).toBeNull();
+  });
+});

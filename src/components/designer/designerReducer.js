@@ -67,6 +67,7 @@ import {
 } from "@/domains/roomDesigner/designerDocument";
 import { applyImportResult } from "@/domains/roomDesigner/importers/vsdx/visioMapper";
 import { insertShapeCentered } from "@/domains/roomDesigner/customShapes/customShapeInstantiate";
+import { placedSelection } from "@/domains/roomDesigner/customShapes/customShapePlacement";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { PIPE_DIAMETERS_IN, PIPE_LAYERS } from "@/domains/roomDesigner/pipingGeometry";
@@ -261,7 +262,11 @@ export function designerReducer(state, action) {
       // Placement is ONE pure merge and ONE undo touch, so a dropped shape is
       // a single undoable unit however many entities it contains.
       try {
-        return touch(state, insertShapeCentered(state.design, shape, { x: action.x, y: action.y }));
+        const next = touch(state, insertShapeCentered(state.design, shape, { x: action.x, y: action.y }));
+        // One-tap placement from Favorites selects what it dropped, so the
+        // user can immediately move or delete it — like a placed furniture piece.
+        if (!action.selectPlaced) return next;
+        return { ...next, ...placedSelection(state.design, next.design) };
       } catch {
         // A damaged shape must not take the canvas down mid-click.
         return state;

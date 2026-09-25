@@ -3,6 +3,8 @@
  *
  *   {
  *     version: 1,
+ *     favoriteOrder: [shapeId, ...],   // the user's order for starred shapes
+ *     starterSeeded: true | undefined, // starter favorites offered once
  *     shapes: [{
  *       id, name, createdAt, updatedAt, favorite,
  *       bounds: { widthIn, heightIn },
@@ -21,6 +23,11 @@
  * another page load and has to travel with the shape if the library is ever
  * exported — so it belongs to the shape, and the palette's star is wired to
  * it rather than duplicating it.
+ *
+ * `favorite` says WHETHER a shape is starred; `favoriteOrder` says WHERE it
+ * sits in the Favorites section. The order is always reconciled against the
+ * flags (orderedFavoriteIds), so a hand-edited or older library with no
+ * order — or an order naming deleted shapes — still displays sensibly.
  */
 
 import { CustomShapeError, MAX_LIBRARY_SIZE, cleanShapeName } from "./customShapeErrors";
@@ -28,7 +35,27 @@ import { CustomShapeError, MAX_LIBRARY_SIZE, cleanShapeName } from "./customShap
 export const LIBRARY_VERSION = 1;
 
 export function createEmptyLibrary() {
-  return { version: LIBRARY_VERSION, shapes: [] };
+  return { version: LIBRARY_VERSION, shapes: [], favoriteOrder: [] };
+}
+
+/**
+ * Starred shape ids in display order: the stored order first (skipping ids
+ * that are gone or no longer starred), then any starred shape the order
+ * doesn't mention yet, in library order.
+ */
+export function orderedFavoriteIds(library) {
+  const starred = (library?.shapes || []).filter((s) => s.favorite).map((s) => s.id);
+  const starredSet = new Set(starred);
+  const seen = new Set();
+  const ordered = [];
+  for (const id of library?.favoriteOrder || []) {
+    if (starredSet.has(id) && !seen.has(id)) {
+      seen.add(id);
+      ordered.push(id);
+    }
+  }
+  for (const id of starred) if (!seen.has(id)) ordered.push(id);
+  return ordered;
 }
 
 /** Deterministic-ish id; the timestamp keeps ordering readable in storage. */
@@ -112,7 +139,11 @@ export function renameShape(library, shapeId, name, { now = Date.now() } = {}) {
 export function removeShape(library, shapeId) {
   assertLibrary(library);
   if (!findShape(library, shapeId)) return library;
-  return { ...library, shapes: library.shapes.filter((s) => s.id !== shapeId) };
+  return {
+    ...library,
+    shapes: library.shapes.filter((s) => s.id !== shapeId),
+    favoriteOrder: orderedFavoriteIds(library).filter((id) => id !== shapeId),
+  };
 }
 
 /** Star / unstar a shape. Unknown id returns the library unchanged. */
@@ -122,11 +153,15 @@ export function setShapeFavorite(library, shapeId, favorite, { now = Date.now() 
   if (!shape) return library;
   const next = Boolean(favorite);
   if (shape.favorite === next) return library;
+  // A newly starred shape joins the END of the Favorites section; an
+  // unstarred one leaves it. Everyone else keeps their place.
+  const order = orderedFavoriteIds(library).filter((id) => id !== shapeId);
   return {
     ...library,
     shapes: library.shapes.map((s) =>
       s.id === shapeId ? { ...s, favorite: next, updatedAt: now } : s,
     ),
+    favoriteOrder: next ? [...order, shapeId] : order,
   };
 }
 
@@ -137,18 +172,36 @@ export function toggleShapeFavorite(library, shapeId, options = {}) {
   return setShapeFavorite(library, shapeId, !shape.favorite, options);
 }
 
-/** Every favorited shape, in library order. */
+/** Every favorited shape, in the user's Favorites order. */
 export function favoriteShapes(library) {
-  return (library?.shapes || []).filter((s) => s.favorite);
+  const byId = new Map((library?.shapes || []).map((s) => [s.id, s]));
+  return orderedFavoriteIds(library).map((id) => byId.get(id));
 }
 
 /**
- * Shapes for display: favorites first, then the rest, each group sorted by
- * name (case-insensitive) so the palette does not reshuffle as shapes are
- * edited.
+ * Move a starred shape `delta` places within Favorites (-1 = up, +1 = down),
+ * clamped at either end. Unknown or unstarred ids return the library unchanged.
+ */
+export function moveFavorite(library, shapeId, delta) {
+  assertLibrary(library);
+  const order = orderedFavoriteIds(library);
+  const from = order.indexOf(shapeId);
+  if (from === -1 || !Number.isInteger(delta) || delta === 0) return library;
+  const to = Math.max(0, Math.min(order.length - 1, from + delta));
+  if (to === from) return library;
+  const next = [...order];
+  next.splice(from, 1);
+  next.splice(to, 0, shapeId);
+  return { ...library, favoriteOrder: next };
+}
+
+/**
+ * Shapes for display: favorites first in the user's Favorites order, then
+ * the rest sorted by name (case-insensitive) so the palette does not
+ * reshuffle as shapes are edited.
  */
 export function listShapesForDisplay(library) {
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   const shapes = [...(library?.shapes || [])];
-  return [...shapes.filter((s) => s.favorite).sort(byName), ...shapes.filter((s) => !s.favorite).sort(byName)];
+  return [...favoriteShapes(library), ...shapes.filter((s) => !s.favorite).sort(byName)];
 }

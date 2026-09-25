@@ -355,11 +355,12 @@ describe("ToolPalette (external favorites)", () => {
         />
       );
     });
-    // Externally-favorited tool shows up in the Favorites category...
-    const header = queryCategoryHeader(container, "Favorites");
-    expect(header).toBeTruthy();
+    // An externally-owned favorite (a custom shape) is NOT duplicated into
+    // the generic Favorites category — the screen's favoritesSection shows
+    // favorite shapes in their own ordered section...
+    expect(queryCategoryHeader(container, "Favorites")).toBeNull();
     expect(container.textContent).toContain("custom-shape-a");
-    // ...and its star renders as filled (aria-pressed true).
+    // ...but its star in My shapes still renders as filled (aria-pressed true).
     const star = queryFavoriteToggle(container, "custom-shape-a");
     expect(star.getAttribute("aria-pressed")).toBe("true");
   });
@@ -436,5 +437,32 @@ describe("ToolPalette (external favorites)", () => {
       star.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     });
     expect(JSON.parse(window.localStorage.getItem(FAVORITE_STORAGE_KEY))).toEqual(["wall"]);
+  });
+});
+
+describe("ToolPalette (favoritesSection slot)", () => {
+  it("renders the favorites section right after the pinned tools", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <ToolPalette
+          grouped={groupToolsByCategory(TOOL_DEFS)}
+          activeToolId="select"
+          hasUnderlay={false}
+          onSelect={() => {}}
+          favoritesSection={<section data-testid="fav-slot">favs</section>}
+        />
+      );
+    });
+    const nav = container.querySelector("nav");
+    const slot = container.querySelector('[data-testid="fav-slot"]');
+    const children = [...nav.children];
+    const firstCategory = children.findIndex((el) => el.querySelector?.("[aria-expanded]") && el !== slot);
+    expect(children.indexOf(slot)).toBeGreaterThan(-1);
+    expect(children.indexOf(slot)).toBeLessThan(firstCategory);
+    await act(async () => root.unmount());
+    container.remove();
   });
 });
