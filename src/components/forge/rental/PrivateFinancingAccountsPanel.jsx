@@ -1,6 +1,8 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import PrivateFinancingAccountDetail from "./PrivateFinancingAccountDetail";
 import PrivateFinancingHistoricalImport from "./PrivateFinancingHistoricalImport";
 
@@ -20,42 +22,33 @@ const FOCUS_RING = "focus-visible:outline focus-visible:outline-2 focus-visible:
 // SF-2A's own /api/private-financing/accounts read model already computes every figure this panel
 // displays (via computeAccountBalanceSummary, which replays the real event history server-side) -- this
 // component only ever renders what the API returned. It never recomputes a balance in React.
+//
+// The 503 schema-unavailable response is not a load failure -- the feature simply isn't activated in
+// this environment -- so the fetcher carries it through the data channel as a tagged status (the
+// error channel only keeps the message string), preserving the honest amber explanation below.
+async function fetchAccounts() {
+  const response = await fetch("/api/private-financing/accounts");
+  const payload = await response.json();
+  if (response.status === 503 && payload.code === "private_financing_schema_unavailable") {
+    return { status: "schema-unavailable", accounts: [] };
+  }
+  if (!response.ok) throw new Error(payload.error || "Unable to load private financing accounts.");
+  return { status: "ok", accounts: payload.accounts || [] };
+}
+
 export default function PrivateFinancingAccountsPanel() {
-  const [status, setStatus] = useState("loading"); // "loading" | "available" | "schema-unavailable" | "error"
-  const [accounts, setAccounts] = useState([]);
-  const [errorMessage, setErrorMessage] = useState("");
+  // Stale-while-revalidate: the cached account list renders instantly and stays
+  // on screen while a refresh runs in the background -- no blanking to a
+  // spinner on every return visit or Retry.
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "private-financing:accounts",
+    fetchAccounts,
+    { ttlMs: 60_000 },
+  );
+  const schemaUnavailable = data?.status === "schema-unavailable";
+  const accounts = data?.status === "ok" ? data.accounts : null;
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [showHistoricalImport, setShowHistoricalImport] = useState(false);
-  const requestInFlight = useRef(false);
-
-  const load = useCallback(() => {
-    if (requestInFlight.current) return undefined; // never let a second Retry click overlap an in-flight request
-    requestInFlight.current = true;
-    setStatus("loading");
-    setErrorMessage("");
-    return fetch("/api/private-financing/accounts")
-      .then((response) => response.json().then((payload) => ({ response, payload })))
-      .then(({ response, payload }) => {
-        if (response.status === 503 && payload.code === "private_financing_schema_unavailable") {
-          setStatus("schema-unavailable");
-          return;
-        }
-        if (!response.ok) throw new Error(payload.error || "Unable to load private financing accounts.");
-        setAccounts(payload.accounts || []);
-        setStatus("available");
-      })
-      .catch((loadError) => {
-        setErrorMessage(loadError.message);
-        setStatus("error");
-      })
-      .finally(() => {
-        requestInFlight.current = false;
-      });
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   // Opening an account switches this SAME panel instance into detail mode -- the already-loaded
   // `accounts` list stays in memory untouched, so returning via Back never re-fetches or resets it
@@ -75,7 +68,7 @@ export default function PrivateFinancingAccountsPanel() {
   if (showHistoricalImport) {
     return (
       <section data-guided-workflow-panel aria-label="Private Financing historical import" className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-        <PrivateFinancingHistoricalImport onBack={() => setShowHistoricalImport(false)} onImported={() => load()} />
+        <PrivateFinancingHistoricalImport onBack={() => setShowHistoricalImport(false)} onImported={() => refresh()} />
       </section>
     );
   }
@@ -104,13 +97,9 @@ export default function PrivateFinancingAccountsPanel() {
         </button>
       </div>
 
-      {status === "loading" ? (
-        <p role="status" className="mt-6 text-sm text-slate-500 dark:text-slate-400">
-          Loading private financing accounts…
-        </p>
-      ) : null}
+      {!data && isLoading ? <div className="mt-6"><ForgeLoadingState label="Loading private financing accounts…" /></div> : null}
 
-      {status === "schema-unavailable" ? (
+      {schemaUnavailable ? (
         <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-900/60 dark:bg-amber-950/30" role="alert">
           <p className="text-sm font-bold text-amber-900 dark:text-amber-200">
             Private Financing has not been activated for this environment yet.
@@ -122,7 +111,7 @@ export default function PrivateFinancingAccountsPanel() {
           <button
             type="button"
             data-guided-workflow-control="retry"
-            onClick={load}
+            onClick={() => refresh()}
             className={`mt-4 rounded-xl border border-amber-400 px-4 py-2 text-sm font-bold text-amber-900 transition hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/40 ${FOCUS_RING}`}
           >
             Retry
@@ -130,37 +119,40 @@ export default function PrivateFinancingAccountsPanel() {
         </div>
       ) : null}
 
-      {status === "error" ? (
-        <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-900/60 dark:bg-red-950/30">
-          <p role="alert" className="text-sm font-bold text-red-800 dark:text-red-300">
-            {errorMessage || "Something went wrong loading private financing accounts."}
-          </p>
-          <button
-            type="button"
-            data-guided-workflow-control="retry"
-            onClick={load}
-            className={`mt-4 rounded-xl border border-red-400 px-4 py-2 text-sm font-bold text-red-800 transition hover:bg-red-100 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/40 ${FOCUS_RING}`}
-          >
-            Retry
-          </button>
+      {!accounts && !schemaUnavailable && loadError ? (
+        <div className="mt-6" data-guided-workflow-control="retry">
+          <ForgeErrorState
+            title="Unable to load private financing accounts."
+            detail={loadError}
+            onRetry={() => refresh()}
+          />
         </div>
       ) : null}
 
-      {status === "available" && accounts.length === 0 ? (
-        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
-          <p className="text-sm font-bold text-slate-800 dark:text-slate-200">No private financing accounts yet.</p>
-          <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-            Load an approved JSON plan to create one through the controlled historical-import workflow.
-          </p>
+      {accounts && accounts.length === 0 ? (
+        <div className="mt-6">
+          <ForgeEmptyState
+            headline="No private financing accounts yet."
+            guidance="Load an approved JSON plan to create one through the controlled historical-import workflow."
+          />
         </div>
       ) : null}
 
-      {status === "available" && accounts.length > 0 ? (
+      {accounts && accounts.length > 0 ? (
         <ul className="mt-6 space-y-3">
           {accounts.map((account) => (
             <AccountRow key={account.id} account={account} onOpen={() => setSelectedAccountId(account.id)} />
           ))}
         </ul>
+      ) : null}
+
+      {accounts && isRefreshing ? (
+        <p role="status" className="mt-6 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+      ) : null}
+      {accounts && loadError ? (
+        <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">
+          Could not refresh — showing the last saved accounts.
+        </p>
       ) : null}
     </section>
   );

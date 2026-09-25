@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 
 vi.mock("./PrivateFinancingBorrowerProgress", () => ({ default: () => <div data-testid="progress" /> }));
 vi.mock("./PrivateFinancingBorrowerPayment", () => ({
@@ -41,6 +42,7 @@ describe("PrivateFinancingBorrowerPortal", () => {
   afterEach(() => {
     if (mounted) unmount(mounted);
     mounted = null;
+    clearSWRCache();
     vi.unstubAllGlobals();
     window.history.pushState({}, "", "/forge/private-financing/portal");
   });

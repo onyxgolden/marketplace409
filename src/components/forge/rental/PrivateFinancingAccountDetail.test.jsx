@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import PrivateFinancingAccountDetail from "./PrivateFinancingAccountDetail.jsx";
 
 function mount(ui) {
@@ -96,6 +97,7 @@ describe("PrivateFinancingAccountDetail", () => {
       unmount(mounted);
       mounted = null;
     }
+    clearSWRCache();
     vi.unstubAllGlobals();
   });
 

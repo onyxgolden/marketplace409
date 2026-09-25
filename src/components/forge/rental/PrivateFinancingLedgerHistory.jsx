@@ -1,9 +1,13 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { financingPartyLabel } from "@/domains/private-financing/financingPartyLabel";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const centsToMoney = (cents) => (typeof cents === "number" ? money.format(cents / 100) : "—");
+
+const EMPTY_EVENTS = [];
 
 const FOCUS_RING = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600";
 
@@ -168,104 +172,116 @@ function LedgerEventRow({ event, alreadyReversed, onReverseRequested, onCorrectR
   );
 }
 
+async function fetchFirstPage(accountId) {
+  const response = await fetch(`/api/private-financing/accounts/${accountId}/events`);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "Unable to load ledger history.");
+  return { events: payload.events || [], pageInfo: payload.pageInfo || { hasMore: false, nextCursor: null } };
+}
+
 // Seller-facing, read-only, paginated ledger history for one account. Uses only the SF-2A events
 // endpoint's own keyset cursor -- never re-derives ordering, page boundaries, or a running balance
 // itself; principalRemaining*Cents on each row is the authoritative stored value the ledger-write RPC
 // already verified via ledgerIntegrity.js, never recomputed here.
+//
+// The first page is stale-while-revalidate: previously loaded events stay on screen while a refresh
+// (retry, refreshSignal from the parent) runs in the background. "Load more" is a pure append -- it
+// never replaces the list -- so it stays a manual fetch that merges into the appended pages; any
+// first-page refresh resets those appended pages back to the fresh first page.
 export default function PrivateFinancingLedgerHistory({ accountId, product, components = [], onReverseRequested, onCorrectRequested, refreshSignal }) {
   const partyLabel = financingPartyLabel(product);
   const componentLabelsByKey = useMemo(
     () => Object.fromEntries(components.map((component) => [component.componentKey, component.label])),
     [components],
   );
-  const [status, setStatus] = useState("loading"); // "loading" | "available" | "error"
-  const [events, setEvents] = useState([]);
-  const [pageInfo, setPageInfo] = useState({ hasMore: false, nextCursor: null });
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    accountId ? `private-financing:events:${accountId}` : null,
+    () => fetchFirstPage(accountId),
+    { ttlMs: 30_000 },
+  );
+  const [appended, setAppended] = useState([]);
+  const [appendedBase, setAppendedBase] = useState(null);
+  const [appendedPageInfo, setAppendedPageInfo] = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  const requestInFlight = useRef(false);
-  const loadedIds = useRef(new Set());
+  const [moreError, setMoreError] = useState("");
 
-  const loadFirstPage = useCallback(() => {
-    if (requestInFlight.current) return undefined;
-    requestInFlight.current = true;
-    setStatus("loading");
-    setErrorMessage("");
-    loadedIds.current = new Set();
-    return fetch(`/api/private-financing/accounts/${accountId}/events`)
-      .then((response) => response.json().then((payload) => ({ response, payload })))
-      .then(({ response, payload }) => {
-        if (!response.ok) throw new Error(payload.error || "Unable to load ledger history.");
-        const rows = payload.events || [];
-        for (const event of rows) loadedIds.current.add(event.id);
-        setEvents(rows);
-        setPageInfo(payload.pageInfo || { hasMore: false, nextCursor: null });
-        setStatus("available");
-      })
-      .catch((loadError) => {
-        setErrorMessage(loadError.message);
-        setStatus("error");
-      })
-      .finally(() => {
-        requestInFlight.current = false;
-      });
-  }, [accountId]);
+  // The appended pages belong to the previous first page: whenever the first
+  // page changes (account switch, refresh, retry) they reset. This render-phase
+  // adjustment is the React-endorsed alternative to setState inside an effect.
+  if (appendedBase !== data) {
+    setAppendedBase(data);
+    setAppended([]);
+    setAppendedPageInfo(null);
+    setMoreError("");
+  }
+
+  // refreshSignal is an intentional extra dependency: any change re-triggers a fresh first page after a
+  // seller action posts a new event, so the history never shows a stale reversal/correction state.
+  const signaled = useRef(0);
+  useEffect(() => {
+    if (refreshSignal > signaled.current) {
+      signaled.current = refreshSignal;
+      refresh();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal]);
+
+  const firstEvents = data?.events ?? EMPTY_EVENTS;
+  const events = useMemo(() => [...firstEvents, ...appended], [firstEvents, appended]);
+  // The freshest pageInfo wins: the first page's until "Load more" advances it.
+  const pageInfo = useMemo(
+    () => appendedPageInfo ?? data?.pageInfo ?? { hasMore: false, nextCursor: null },
+    [appendedPageInfo, data],
+  );
 
   const loadMore = useCallback(() => {
-    if (requestInFlight.current || !pageInfo.nextCursor) return undefined;
-    requestInFlight.current = true;
+    const cursor = pageInfo.nextCursor;
+    if (loadingMore || !cursor) return;
     setLoadingMore(true);
-    setErrorMessage("");
-    return fetch(`/api/private-financing/accounts/${accountId}/events?cursor=${encodeURIComponent(pageInfo.nextCursor)}`)
+    setMoreError("");
+    const knownIds = new Set(events.map((event) => event.id));
+    return fetch(`/api/private-financing/accounts/${accountId}/events?cursor=${encodeURIComponent(cursor)}`)
       .then((response) => response.json().then((payload) => ({ response, payload })))
       .then(({ response, payload }) => {
         if (!response.ok) throw new Error(payload.error || "Unable to load more ledger history.");
         const rows = payload.events || [];
         // The keyset cursor guarantees no duplicate/missing rows across pages -- this filter is a purely
         // defensive belt-and-suspenders check against ever rendering the same event twice.
-        const newRows = rows.filter((event) => !loadedIds.current.has(event.id));
-        for (const event of newRows) loadedIds.current.add(event.id);
-        setEvents((current) => [...current, ...newRows]);
-        setPageInfo(payload.pageInfo || { hasMore: false, nextCursor: null });
+        const newRows = rows.filter((event) => !knownIds.has(event.id));
+        setAppended((current) => [...current, ...newRows]);
+        setAppendedPageInfo(payload.pageInfo ?? { hasMore: false, nextCursor: null });
       })
-      .catch((loadError) => setErrorMessage(loadError.message))
-      .finally(() => {
-        requestInFlight.current = false;
-        setLoadingMore(false);
-      });
-  }, [accountId, pageInfo.nextCursor]);
-
-  // refreshSignal is an intentional extra dependency: any change re-triggers a fresh first page after a
-  // seller action posts a new event, so the history never shows a stale reversal/correction state.
-  useEffect(() => {
-    loadFirstPage();
-  }, [loadFirstPage, refreshSignal]);
+      .catch((loadMoreError) => setMoreError(loadMoreError.message))
+      .finally(() => setLoadingMore(false));
+  }, [accountId, loadingMore, pageInfo, events]);
+  const moreAvailable = pageInfo.nextCursor != null || pageInfo.hasMore;
 
   return (
     <div data-guided-workflow-ledger-history>
       <h3 className="text-lg font-black text-slate-950 dark:text-white">Ledger history</h3>
 
-      {status === "loading" ? <p role="status" className="mt-3 text-sm text-slate-500 dark:text-slate-400">Loading ledger history…</p> : null}
+      {!data && isLoading ? <div className="mt-3"><ForgeLoadingState label="Loading ledger history…" /></div> : null}
 
-      {status === "error" ? (
-        <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/30">
-          <p role="alert" className="text-sm font-bold text-red-800 dark:text-red-300">{errorMessage}</p>
-          <button
-            type="button"
-            data-guided-workflow-control="retry-ledger-history"
-            onClick={loadFirstPage}
-            className={`mt-3 rounded-lg border border-red-400 px-3 py-1.5 text-sm font-bold text-red-800 transition hover:bg-red-100 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/40 ${FOCUS_RING}`}
-          >
-            Retry
-          </button>
+      {!data && loadError ? (
+        <div className="mt-3" data-guided-workflow-control="retry-ledger-history">
+          <ForgeErrorState
+            title="Unable to load ledger history."
+            detail={loadError}
+            onRetry={() => refresh()}
+          />
         </div>
       ) : null}
 
-      {status === "available" && events.length === 0 ? (
-        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">No ledger events recorded yet for this account.</p>
+      {data && events.length === 0 ? (
+        <div className="mt-3">
+          <ForgeEmptyState
+            headline="No ledger events recorded yet."
+            guidance="Events will appear here as payments, corrections, and other account activity are recorded."
+          />
+        </div>
       ) : null}
 
-      {status === "available" && events.length > 0 ? (
+      {data && events.length > 0 ? (
         <ul className="mt-3 space-y-2">
           {events.map((event) => (
             <LedgerEventRow
@@ -281,7 +297,16 @@ export default function PrivateFinancingLedgerHistory({ accountId, product, comp
         </ul>
       ) : null}
 
-      {status === "available" && pageInfo.hasMore ? (
+      {data && isRefreshing ? (
+        <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+      ) : null}
+      {data && loadError ? (
+        <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">
+          Could not refresh — showing the last saved ledger history.
+        </p>
+      ) : null}
+
+      {data && moreAvailable ? (
         <button
           type="button"
           data-guided-workflow-control="load-more-events"
@@ -293,8 +318,8 @@ export default function PrivateFinancingLedgerHistory({ accountId, product, comp
         </button>
       ) : null}
 
-      {errorMessage && status === "available" ? (
-        <p role="alert" className="mt-2 text-sm font-bold text-red-700 dark:text-red-400">{errorMessage}</p>
+      {moreError ? (
+        <p role="alert" className="mt-2 text-sm font-bold text-red-700 dark:text-red-400">{moreError}</p>
       ) : null}
     </div>
   );
