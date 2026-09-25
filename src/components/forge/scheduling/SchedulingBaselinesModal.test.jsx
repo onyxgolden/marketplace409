@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import SchedulingBaselinesModal from "./SchedulingBaselinesModal";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,7 +36,7 @@ async function flush() {
 describe("SchedulingBaselinesModal", () => {
   let mounted;
 
-  beforeEach(() => { global.fetch = vi.fn(); });
+  beforeEach(() => { clearSWRCache(); global.fetch = vi.fn(); });
   afterEach(() => {
     if (mounted) unmount(mounted);
     mounted = null;

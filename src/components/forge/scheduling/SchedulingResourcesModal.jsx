@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { PROJECT_TEMPLATES } from "./schedulingBoardState";
 import { starterResourceSetForTemplate } from "./schedulingStarterResources";
 
@@ -18,24 +20,31 @@ function emptyDraft() {
 // The panel content, shared by the legacy centered modal below and the docked
 // inspector rail. In the rail, onClose collapses the rail.
 export function SchedulingResourcesPanel({ isOwner, onClose, onChanged, templateId }) {
-  const [resources, setResources] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // The owner-global resource dictionary: stale-while-revalidate under one
+  // shared key (same key the board's assignment pickers read). Creates,
+  // deletes, and starter-set loads refresh in place instead of blanking.
+  const {
+    data: resourcesData,
+    error: resourcesError,
+    isLoading: resourcesLoading,
+    isRefreshing: resourcesRefreshing,
+    refresh: refreshResources,
+  } = useStaleWhileRevalidate(
+    "scheduling:resources",
+    async () => {
+      const response = await fetch("/api/forge/scheduling/resources");
+      const result = await response.json().catch(() => ({}));
+      return result.resources || [];
+    },
+    { ttlMs: 60_000 },
+  );
+  const resources = resourcesData ?? [];
+  const loading = !resourcesData && resourcesLoading;
   const [draft, setDraft] = useState(emptyDraft());
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
   const [starterTemplateId, setStarterTemplateId] = useState(templateId || PROJECT_TEMPLATES[0].id);
   const [loadingStarter, setLoadingStarter] = useState(false);
-
-  async function loadResources() {
-    setLoading(true);
-    const response = await fetch("/api/forge/scheduling/resources");
-    const result = await response.json().catch(() => ({}));
-    setResources(result.resources || []);
-    setLoading(false);
-  }
-
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { loadResources(); }, []);
 
   async function handleCreate() {
     const name = draft.name.trim();
@@ -50,7 +59,7 @@ export function SchedulingResourcesPanel({ isOwner, onClose, onChanged, template
     if (!response.ok) { setMessage(result.error || "Unable to create this resource."); return; }
     setDraft(emptyDraft());
     setMessage("Resource added.");
-    await loadResources();
+    await refreshResources();
     onChanged?.();
   }
 
@@ -74,7 +83,7 @@ export function SchedulingResourcesPanel({ isOwner, onClose, onChanged, template
     }
     setLoadingStarter(false);
     setMessage(skipped > 0 ? `Added ${added} resources (${skipped} already existed).` : `Added ${added} resources.`);
-    await loadResources();
+    await refreshResources();
     onChanged?.();
   }
 
@@ -82,7 +91,7 @@ export function SchedulingResourcesPanel({ isOwner, onClose, onChanged, template
     await fetch(`/api/forge/scheduling/resources/${resource.id}`, {
       method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ isActive: !resource.is_active }),
     });
-    await loadResources();
+    await refreshResources();
     onChanged?.();
   }
 
@@ -90,7 +99,7 @@ export function SchedulingResourcesPanel({ isOwner, onClose, onChanged, template
     const response = await fetch(`/api/forge/scheduling/resources/${resource.id}`, { method: "DELETE" });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) { setMessage(result.error || "Unable to delete this resource."); return; }
-    await loadResources();
+    await refreshResources();
     onChanged?.();
   }
 
@@ -153,8 +162,16 @@ export function SchedulingResourcesPanel({ isOwner, onClose, onChanged, template
 
         <div className="mt-6">
           <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">Resource dictionary</h3>
-          {loading && <p className="mt-2 text-xs text-slate-400">Loading…</p>}
-          {!loading && resources.length === 0 && <p className="mt-2 text-xs text-slate-400">No resources yet.</p>}
+          {loading && <ForgeLoadingState label="Loading resources…" />}
+          {!loading && resourcesError && (
+            <div className="mt-2"><ForgeErrorState title="Unable to load resources" detail={resourcesError} onRetry={refreshResources} /></div>
+          )}
+          {!loading && !resourcesError && resources.length === 0 && (
+            <div className="mt-2"><ForgeEmptyState headline="No resources yet" /></div>
+          )}
+          {resourcesData && resourcesRefreshing && (
+            <p role="status" className="mt-2 text-xs font-bold text-slate-400">Updating…</p>
+          )}
           <div className="mt-2 overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>

@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import SchedulingEvmDcmaModal from "./SchedulingEvmDcmaModal";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -49,7 +50,7 @@ const REPORT = {
 
 describe("SchedulingEvmDcmaModal", () => {
   let mounted;
-  beforeEach(() => { global.fetch = vi.fn(); });
+  beforeEach(() => { clearSWRCache(); global.fetch = vi.fn(); });
   afterEach(() => {
     if (mounted) unmount(mounted);
     mounted = null;

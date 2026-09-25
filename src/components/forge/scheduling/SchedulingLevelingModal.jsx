@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 // Read-only preview + an explicit apply action, owner-only (see SchedulingBoard.jsx -- gated the
 // same way Costs/EVM & DCMA are, matching the SCHED-05 migration's decision that resource/cost
@@ -8,25 +10,38 @@ import { useEffect, useState } from "react";
 // inspector rail. In the rail, onClose collapses the rail.
 export function SchedulingLevelingPanel({ projectId, blocks, onClose }) {
   const [allowExtension, setAllowExtension] = useState(false);
-  const [preview, setPreview] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const previewKey = projectId ? `scheduling:leveling:${projectId}:${allowExtension}` : null;
+  // The leveling preview: stale-while-revalidate keyed by project + the
+  // allow-extension toggle. The previous preview stays on screen while the
+  // toggle refetches instead of blanking to "Computing…".
+  const {
+    data: preview,
+    error: previewError,
+    isLoading,
+    isRefreshing,
+    refresh,
+  } = useStaleWhileRevalidate(
+    previewKey,
+    async () => {
+      const response = await fetch(`/api/forge/scheduling/${projectId}/level-resources?allowExtension=${allowExtension}`);
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "The leveling preview could not be computed.");
+      return result;
+    },
+    { ttlMs: 60_000 },
+  );
+  // shownPreview lags the SWR key so toggling "allow extension" keeps the
+  // previous preview visible until the new one arrives. Adopted during render
+  // (adjust-state-during-render) -- no syncing effect.
+  const [shownPreview, setShownPreview] = useState(null);
+  if (preview && preview !== shownPreview) {
+    setShownPreview(preview);
+  }
+  const loading = !shownPreview && isLoading;
   const [applying, setApplying] = useState(false);
   const [message, setMessage] = useState("");
 
   const labelByTaskCode = new Map(blocks.map((block) => [block.taskCode, block.label]));
-
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoading(true);
-    setMessage("");
-    (async () => {
-      const response = await fetch(`/api/forge/scheduling/${projectId}/level-resources?allowExtension=${allowExtension}`);
-      const result = await response.json().catch(() => ({}));
-      if (!cancelled) { setPreview(response.ok ? result : null); setLoading(false); }
-    })();
-    return () => { cancelled = true; };
-  }, [projectId, allowExtension]);
 
   async function handleApply() {
     setApplying(true);
@@ -55,26 +70,37 @@ export function SchedulingLevelingPanel({ projectId, blocks, onClose }) {
         </div>
 
         <label className="mt-4 flex items-center gap-2 text-xs font-bold text-slate-600">
-          <input type="checkbox" checked={allowExtension} onChange={(e) => setAllowExtension(e.target.checked)} />
+          <input type="checkbox" checked={allowExtension} onChange={(e) => { setAllowExtension(e.target.checked); setMessage(""); }} />
           Allow extending the project finish date if float alone can&apos;t resolve every conflict
         </label>
 
-        {loading && <p className="mt-4 text-xs text-slate-400">Computing…</p>}
-        {!loading && !preview && <p className="mt-4 text-xs text-slate-400">Unable to load a leveling preview for this project.</p>}
+        {loading && <div className="mt-4"><ForgeLoadingState label="Computing leveling preview…" /></div>}
+        {!loading && !shownPreview && (
+          <div className="mt-4">
+            <ForgeErrorState title="Unable to load a leveling preview for this project" detail={previewError} onRetry={refresh} />
+          </div>
+        )}
 
-        {!loading && preview && (
+        {shownPreview && (isLoading || isRefreshing) && (
+          <p role="status" className="mt-4 text-xs font-bold text-slate-400">Updating…</p>
+        )}
+        {shownPreview && previewError && (
+          <p role="status" className="mt-2 text-xs font-bold text-slate-400">Could not refresh — showing the last saved leveling preview.</p>
+        )}
+
+        {!loading && shownPreview && (
           <>
             <div className="mt-4 rounded-lg border border-slate-200 p-3">
               <p className="text-sm font-bold">
-                Project finish extension: <span className={preview.projectFinishExtensionDays > 0 ? "text-red-600" : "text-emerald-600"}>{preview.projectFinishExtensionDays} day(s)</span>
+                Project finish extension: <span className={shownPreview.projectFinishExtensionDays > 0 ? "text-red-600" : "text-emerald-600"}>{shownPreview.projectFinishExtensionDays} day(s)</span>
               </p>
             </div>
 
-            {preview.unresolvedConflicts.length > 0 && (
+            {shownPreview.unresolvedConflicts.length > 0 && (
               <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3" data-scheduling-leveling-unresolved>
                 <p className="text-xs font-black uppercase tracking-wide text-amber-800">Unresolved conflicts</p>
                 <ul className="mt-1.5 space-y-1 text-xs text-amber-900">
-                  {preview.unresolvedConflicts.map((conflict) => (
+                  {shownPreview.unresolvedConflicts.map((conflict) => (
                     <li key={conflict.task_code}>
                       {conflict.task_code} ({labelByTaskCode.get(conflict.task_code) || ""}) still over capacity on {conflict.conflicts.map((c) => c.date).join(", ")}
                     </li>
@@ -85,8 +111,8 @@ export function SchedulingLevelingPanel({ projectId, blocks, onClose }) {
 
             <div className="mt-4">
               <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">Activities that would move</h3>
-              {preview.leveledBlocks.length === 0 && <p className="mt-2 text-xs text-slate-400">No resource conflicts to resolve -- nothing would move.</p>}
-              {preview.leveledBlocks.length > 0 && (
+              {shownPreview.leveledBlocks.length === 0 && <p className="mt-2 text-xs text-slate-400">No resource conflicts to resolve -- nothing would move.</p>}
+              {shownPreview.leveledBlocks.length > 0 && (
                 <div className="mt-2 overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead>
@@ -98,7 +124,7 @@ export function SchedulingLevelingPanel({ projectId, blocks, onClose }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {preview.leveledBlocks.map((block) => (
+                      {shownPreview.leveledBlocks.map((block) => (
                         <tr key={block.task_code} className="border-t border-slate-100">
                           <td className="py-1 pr-2 font-bold">{block.task_code} {labelByTaskCode.get(block.task_code) || ""}</td>
                           <td className="py-1 pr-2">{block.original_start}</td>
@@ -113,7 +139,7 @@ export function SchedulingLevelingPanel({ projectId, blocks, onClose }) {
             </div>
 
             <div className="mt-4 flex items-center gap-3">
-              <button type="button" onClick={handleApply} disabled={applying || preview.leveledBlocks.length === 0}
+              <button type="button" onClick={handleApply} disabled={applying || shownPreview.leveledBlocks.length === 0}
                 className="rounded bg-slate-950 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" data-scheduling-leveling-apply>
                 {applying ? "Applying…" : "Apply this leveling"}
               </button>

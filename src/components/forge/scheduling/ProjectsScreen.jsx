@@ -1,7 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { PROJECT_TEMPLATES } from "./schedulingBoardState";
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -18,27 +20,27 @@ function formatTimestamp(iso) {
 
 async function fetchProjects() {
   const response = await fetch("/api/forge/scheduling");
-  if (!response.ok) return [];
+  if (!response.ok) throw new Error("The project list could not be loaded.");
   const body = await response.json();
   return body.projects || [];
 }
 
 export default function ProjectsScreen() {
   const router = useRouter();
-  const [projects, setProjects] = useState([]);
-  const [loaded, setLoaded] = useState(false);
+  // The saved-projects list: stale-while-revalidate under one global key. The
+  // cached list renders instantly on return visits and refreshes in the
+  // background -- deletes revalidate instead of blanking the table.
+  const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "scheduling:projects",
+    fetchProjects,
+    { ttlMs: 60_000 },
+  );
+  const projects = data ?? [];
   const [creating, setCreating] = useState(false);
   const [templateId, setTemplateId] = useState(PROJECT_TEMPLATES[0].id);
 
-  async function refresh() {
-    setProjects(await fetchProjects());
-  }
-
-  useEffect(() => {
-    refresh().finally(() => setLoaded(true));
-  }, []);
-
   async function handleCreateProject() {
+    // Creating stays a plain mutation (POST) -- the new project opens directly.
     setCreating(true);
     try {
       const response = await fetch("/api/forge/scheduling", {
@@ -56,7 +58,7 @@ export default function ProjectsScreen() {
     if (!window.confirm(`Delete "${project.name}"? This can't be undone.`)) return;
     const response = await fetch(`/api/forge/scheduling/${project.id}`, { method: "DELETE" });
     if (!response.ok) { window.alert("Unable to delete that project."); return; }
-    refresh();
+    await refresh();
   }
 
   return (
@@ -79,9 +81,27 @@ export default function ProjectsScreen() {
           className="shrink-0 rounded-xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-50">+ New Project</button>
       </div>
 
-      {loaded && projects.length === 0 && (
-        <div className="mt-8 rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
-          No projects yet. Click "+ New Project" to build your first Gantt Chart.
+      {!data && isLoading && (
+        <div className="mt-6"><ForgeLoadingState label="Loading projects…" /></div>
+      )}
+
+      {!data && error && (
+        <div className="mt-6"><ForgeErrorState title="Unable to load projects" detail={error} onRetry={refresh} /></div>
+      )}
+
+      {data && isRefreshing && (
+        <p role="status" className="mt-4 text-xs font-bold text-slate-400">Updating…</p>
+      )}
+      {data && error && (
+        <p role="status" className="mt-4 text-xs font-bold text-slate-400">Could not refresh — showing the last saved project list.</p>
+      )}
+
+      {data && projects.length === 0 && (
+        <div className="mt-8">
+          <ForgeEmptyState
+            headline="No projects yet"
+            guidance='Click "+ New Project" to build your first Gantt Chart.'
+          />
         </div>
       )}
 

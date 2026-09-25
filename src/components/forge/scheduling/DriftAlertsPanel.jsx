@@ -1,5 +1,7 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const THRESHOLD_OPTIONS = [1, 2, 3, 5, 7];
 
@@ -20,52 +22,45 @@ function formatDateRange(item) {
   return { baseline, current };
 }
 
+// Fetches the deterministic drift report from GET /api/forge/scheduling/[projectId]/drift.
+async function fetchDriftReport(projectId, thresholdDays) {
+  const response = await fetch(
+    `/api/forge/scheduling/${projectId}/drift?thresholdDays=${thresholdDays}`,
+  );
+  const body = await response.json();
+  if (!response.ok) throw new Error(body?.error || "Drift could not be computed right now.");
+  return body;
+}
+
 // Read-only "Baseline Drift" panel for the docked inspector rail. Fetches the
 // deterministic drift report from GET /api/forge/scheduling/[projectId]/drift
 // and lists drifted activities with baseline vs current dates and severity.
 // Nothing here changes the schedule -- the threshold only re-queries the report.
 export function DriftAlertsPanel({ projectId, onClose }) {
   const [thresholdDays, setThresholdDays] = useState(2);
-  const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  // Monotonic request id: only the latest request for the current
-  // {projectId, threshold} may update state, so a slow earlier response can
-  // never overwrite a newer report (e.g. user switches 2d -> 5d and the 2d
-  // response arrives last).
-  const requestSeq = useRef(0);
+  // shownReport lags the SWR key on threshold/project switches so the previous
+  // report stays visible while the new one loads -- each key caches separately,
+  // so a slow response for the old threshold can never overwrite the new one.
+  const [shownReport, setShownReport] = useState(null);
 
-  const load = useCallback(async (threshold) => {
-    const seq = ++requestSeq.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(
-        `/api/forge/scheduling/${projectId}/drift?thresholdDays=${threshold}`,
-      );
-      const body = await response.json();
-      if (!response.ok) throw new Error(body?.error || "Drift could not be computed right now.");
-      if (requestSeq.current === seq) setReport(body);
-    } catch (err) {
-      if (requestSeq.current === seq) {
-        setError(err.message);
-        setReport(null);
-      }
-    } finally {
-      if (requestSeq.current === seq) setLoading(false);
-    }
-  }, [projectId]);
+  const {
+    data: report,
+    error,
+    isLoading,
+    isRefreshing,
+    refresh,
+  } = useStaleWhileRevalidate(
+    projectId ? `scheduling:drift:${projectId}:${thresholdDays}` : null,
+    () => fetchDriftReport(projectId, thresholdDays),
+    { ttlMs: 60_000 },
+  );
 
-  useEffect(() => {
-    // Fetch-in-effect is intentional here (matches the SchedulingBoard
-    // loadResources/loadCostAccounts pattern).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (projectId) load(thresholdDays);
-    // Intentional: re-fetch only on project/threshold change, not on `load`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, thresholdDays]);
+  // Adopted during render (adjust-state-during-render) -- no syncing effect.
+  if (report && report !== shownReport) {
+    setShownReport(report);
+  }
 
-  const summary = report?.summary;
+  const summary = shownReport?.summary;
 
   return (
     <div className="flex h-full flex-col gap-3 p-3">
@@ -88,7 +83,7 @@ export function DriftAlertsPanel({ projectId, onClose }) {
         <label htmlFor="drift-threshold" className="text-xs font-bold text-slate-600">Flag moves over</label>
         <select id="drift-threshold" value={thresholdDays}
           onChange={(event) => setThresholdDays(Number(event.target.value))}
-          disabled={loading}
+          disabled={isLoading}
           className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-900 disabled:opacity-50">
           {THRESHOLD_OPTIONS.map((days) => (
             <option key={days} value={days}>{days} {days === 1 ? "day" : "days"}</option>
@@ -96,40 +91,43 @@ export function DriftAlertsPanel({ projectId, onClose }) {
         </select>
       </div>
 
-      {error && (
-        <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700">
-          {error}
-        </p>
+      {!shownReport && isLoading && <ForgeLoadingState label="Computing drift…" />}
+
+      {!shownReport && error && (
+        <ForgeErrorState title="Baseline drift is unavailable" detail={error} onRetry={refresh} />
       )}
 
-      {loading && !report && (
-        <p className="text-xs italic text-slate-500">Computing drift…</p>
+      {shownReport && (isLoading || isRefreshing) && (
+        <p role="status" className="text-xs font-bold text-slate-400">Updating…</p>
+      )}
+      {shownReport && error && (
+        <p role="status" className="text-xs font-bold text-slate-400">Could not refresh — showing the last saved drift report.</p>
       )}
 
-      {report && !report.hasBaseline && (
-        <p className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-600">
-          No baseline has been captured for this project yet. Capture one in the{" "}
-          <span className="font-bold">Baselines</span> tab and drift alerts will appear here.
-        </p>
+      {shownReport && !shownReport.hasBaseline && (
+        <ForgeEmptyState
+          headline="No baseline has been captured yet"
+          guidance='Capture one in the "Baselines" tab and drift alerts will appear here.'
+        />
       )}
 
-      {report?.hasBaseline && summary && (
+      {shownReport?.hasBaseline && summary && (
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
           <p className="text-sm font-semibold text-slate-900">
             {summary.driftedCount === 0
-              ? `No drift beyond ${report.thresholdDays}d vs "${report.baselineName}".`
-              : `${summary.driftedCount} drifted (${summary.majorCount} major) vs "${report.baselineName}"`}
+              ? `No drift beyond ${shownReport.thresholdDays}d vs "${shownReport.baselineName}".`
+              : `${summary.driftedCount} drifted (${summary.majorCount} major) vs "${shownReport.baselineName}"`}
             <span className="block text-xs font-normal text-slate-500">
-              As of {report.asOf}
+              As of {shownReport.asOf}
               {summary.projectFinishVarianceDays != null && summary.projectFinishVarianceDays !== 0
                 ? ` · project finish ${summary.projectFinishVarianceDays > 0 ? "+" : ""}${summary.projectFinishVarianceDays}d`
                 : ""}
               {summary.completedExcludedCount > 0 ? ` · ${summary.completedExcludedCount} completed excluded` : ""}
             </span>
           </p>
-          {report.drifted.length > 0 ? (
+          {shownReport.drifted.length > 0 ? (
             <ul className="flex flex-col gap-1.5">
-              {report.drifted.map((item) => {
+              {shownReport.drifted.map((item) => {
                 const { baseline, current } = formatDateRange(item);
                 return (
                   <li key={item.taskCode}

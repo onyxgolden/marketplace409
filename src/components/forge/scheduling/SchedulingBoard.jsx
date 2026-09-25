@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import SchedulingInspector, { visibleInspectorTabs } from "./SchedulingInspector";
 import { usePersistedBoard } from "./usePersistedBoard";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import {
   LANE_LABEL_WIDTH_PX, MAX_ZOOM_PX, MIN_ZOOM_PX, MILESTONE_COLOR, RELATIONSHIP_TYPES, ROW_HEIGHT_PX,
   TEXT_COLOR_OPTIONS, TEXT_SIZE_OPTIONS,
@@ -76,7 +77,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   const [customChipTouched, setCustomChipTouched] = useState({ label: false, durationWeeks: false });
   const customChipErrors = validateCustomChipDraft(customChipDraft);
   const customChipValid = Object.keys(customChipErrors).length === 0;
-  const [paletteCollapsed, setPaletteCollapsed] = useState(false);
+  const [paletteCollapsed, setPaletteCollapsed] = useState(loadPaletteCollapsed);
   const [hideEmptyWeeks, setHideEmptyWeeks] = useState(false);
   const [history, setHistory] = useState(emptyHistory);
   // The docked inspector rail (right side): one tab per scheduling workspace.
@@ -88,13 +89,33 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
   useEffect(() => {
     if (inspectorTab) lastInspectorTabRef.current = inspectorTab;
   }, [inspectorTab]);
-  // The owner-global resource dictionary (SCHED-06) -- fetched once for the drawer's per-block
-  // assignment picker. Owner-only: a non-owner viewing the shared example project can't see or
-  // create assignments on it regardless (schedule_resource_assignments has no public-select
-  // policy -- see the SCHED-05 migration), so there's nothing useful to fetch for them here.
-  const [resources, setResources] = useState([]);
-  const [costAccounts, setCostAccounts] = useState([]);
-  const [showCriticalPath, setShowCriticalPath] = useState(false);
+  // The owner-global resource dictionary (SCHED-06) -- fetched for the drawer's per-block
+  // assignment picker, stale-while-revalidate under one shared key (the Resources panel
+  // writes through the same key, so the pickers update without a refetch). Owner-only:
+  // a non-owner viewing the shared example project can't see or create assignments on
+  // it regardless (schedule_resource_assignments has no public-select policy -- see the
+  // SCHED-05 migration), so there's nothing useful to fetch for them here.
+  const { data: resourcesData, refresh: refreshResources } = useStaleWhileRevalidate(
+    isOwner ? "scheduling:resources" : null,
+    async () => {
+      const response = await fetch("/api/forge/scheduling/resources");
+      const result = await response.json().catch(() => ({}));
+      return result.resources || [];
+    },
+    { ttlMs: 60_000 },
+  );
+  const resources = resourcesData ?? [];
+  // SCHED-19: same owner-only, shared-key shape as resources above.
+  const { data: costAccountsData, refresh: refreshCostAccounts } = useStaleWhileRevalidate(
+    isOwner ? "scheduling:cost-accounts" : null,
+    async () => {
+      const response = await fetch("/api/forge/scheduling/cost-accounts");
+      const result = await response.json().catch(() => ({}));
+      return result.costAccounts || [];
+    },
+    { ttlMs: 60_000 },
+  );
+  const costAccounts = costAccountsData ?? [];
   // Local overrides for progress fields (percent complete, actual start/finish) edited this
   // session, layered over board.cpm.byTaskCode's server-computed values -- these fields live only
   // on schedule_blocks (see scheduleProjectAssembly.js), never on the board jsonb, so there's no
@@ -154,25 +175,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
       refreshDriftBadge();
     }
   }
-  async function loadResources() {
-    if (!isOwner) return;
-    const response = await fetch("/api/forge/scheduling/resources");
-    const result = await response.json().catch(() => ({}));
-    setResources(result.resources || []);
-  }
-  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-  useEffect(() => { loadResources(); }, [isOwner]);
-
-  // SCHED-19: same owner-only, fetch-once-for-the-drawer-picker shape as resources above.
-  async function loadCostAccounts() {
-    if (!isOwner) return;
-    const response = await fetch("/api/forge/scheduling/cost-accounts");
-    const result = await response.json().catch(() => ({}));
-    setCostAccounts(result.costAccounts || []);
-  }
-  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-  useEffect(() => { loadCostAccounts(); }, [isOwner]);
-
+  const [showCriticalPath, setShowCriticalPath] = useState(false);
   // Baseline drift badge: read-only count of drifted activities (major count for
   // the badge color). Drift is computed from dates/CPM/baselines, which non-owners
   // can already see, so this fetch is not owner-gated. A null badge means "not
@@ -231,10 +234,6 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
       return result.history;
     });
   }
-
-  useEffect(() => {
-    setPaletteCollapsed(loadPaletteCollapsed());
-  }, []);
 
   function togglePaletteCollapsed() {
     setPaletteCollapsed((current) => {
@@ -1030,7 +1029,7 @@ export default function SchedulingBoard({ projectId, wbsEnabled = false }) {
             onSetDefaultCalendar={(calendarId) => commitBoard((current) => setDefaultCalendar(current, calendarId))}
             onAddBlackout={(input) => commitBoard((current) => addBlackoutWindow(current, input))}
             onRemoveBlackout={(blackoutId) => commitBoard((current) => removeBlackoutWindow(current, blackoutId))}
-            onResourcesChanged={loadResources} onCostAccountsChanged={loadCostAccounts} />
+            onResourcesChanged={refreshResources} onCostAccountsChanged={refreshCostAccounts} />
         )}
       </div>
 
@@ -1397,27 +1396,38 @@ function DependencyDrawer({ board, block, onClose, onAddDependency, onRemoveDepe
 // this project's cost data regardless (no public-select policy on either table), so there's nothing
 // for this panel to usefully show them.
 function BlockResourcesPanel({ projectId, taskCode, resources, costAccounts }) {
-  const [assignments, setAssignments] = useState([]);
-  const [expenses, setExpenses] = useState([]);
+  const blockCostsKey = `scheduling:block-costs:${projectId}:${taskCode}`;
+  // Per-block assignments/expenses: stale-while-revalidate. The previously
+  // selected block's rows stay visible while the newly selected block's rows
+  // load, instead of flashing an empty list.
+  const { data: blockCosts, isRefreshing: blockCostsRefreshing, refresh: refreshBlockCosts } =
+    useStaleWhileRevalidate(
+      blockCostsKey,
+      async () => {
+        const [assignmentsResponse, expensesResponse] = await Promise.all([
+          fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/assignments`),
+          fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/expenses`),
+        ]);
+        const assignmentsResult = await assignmentsResponse.json().catch(() => ({}));
+        const expensesResult = await expensesResponse.json().catch(() => ({}));
+        return {
+          assignments: assignmentsResult.assignments || [],
+          expenses: expensesResult.expenses || [],
+        };
+      },
+      { ttlMs: 60_000 },
+    );
+  // shownCosts lags the SWR key so selecting a different block keeps the
+  // previous block's rows visible until the new rows arrive. Adopted during
+  // render (adjust-state-during-render) -- no syncing effect.
+  const [shownCosts, setShownCosts] = useState(null);
+  if (blockCosts && blockCosts !== shownCosts) {
+    setShownCosts(blockCosts);
+  }
+  const assignments = shownCosts?.assignments ?? [];
+  const expenses = shownCosts?.expenses ?? [];
   const [assignDraft, setAssignDraft] = useState({ resourceId: "", budgetedUnits: "", costAccountId: "" });
   const [expenseDraft, setExpenseDraft] = useState({ name: "", budgetedCost: "", costAccountId: "" });
-
-  async function loadBlockCosts() {
-    const [assignmentsResponse, expensesResponse] = await Promise.all([
-      fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/assignments`),
-      fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/expenses`),
-    ]);
-    const assignmentsResult = await assignmentsResponse.json().catch(() => ({}));
-    const expensesResult = await expensesResponse.json().catch(() => ({}));
-    setAssignments(assignmentsResult.assignments || []);
-    setExpenses(expensesResult.expenses || []);
-  }
-
-  // Refetches whenever a different block is selected -- taskCode is the one stable identifier a
-  // relational assignment/expense row keys off of (via its parent block), matching how the progress
-  // row's own effects key off block.id/taskCode above.
-  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-  useEffect(() => { loadBlockCosts(); }, [projectId, taskCode]);
 
   async function handleAddAssignment() {
     if (!assignDraft.resourceId) return;
@@ -1425,11 +1435,11 @@ function BlockResourcesPanel({ projectId, taskCode, resources, costAccounts }) {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ resourceId: assignDraft.resourceId, budgetedUnits: assignDraft.budgetedUnits || 0, costAccountId: assignDraft.costAccountId || null }),
     });
-    if (response.ok) { setAssignDraft({ resourceId: "", budgetedUnits: "", costAccountId: "" }); await loadBlockCosts(); }
+    if (response.ok) { setAssignDraft({ resourceId: "", budgetedUnits: "", costAccountId: "" }); await refreshBlockCosts(); }
   }
   async function handleRemoveAssignment(assignmentId) {
     await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/assignments/${assignmentId}`, { method: "DELETE" });
-    await loadBlockCosts();
+    await refreshBlockCosts();
   }
   async function handleAddExpense() {
     const name = expenseDraft.name.trim();
@@ -1438,11 +1448,11 @@ function BlockResourcesPanel({ projectId, taskCode, resources, costAccounts }) {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, budgetedCost: expenseDraft.budgetedCost || 0, costAccountId: expenseDraft.costAccountId || null }),
     });
-    if (response.ok) { setExpenseDraft({ name: "", budgetedCost: "", costAccountId: "" }); await loadBlockCosts(); }
+    if (response.ok) { setExpenseDraft({ name: "", budgetedCost: "", costAccountId: "" }); await refreshBlockCosts(); }
   }
   async function handleRemoveExpense(expenseId) {
     await fetch(`/api/forge/scheduling/${projectId}/blocks/${encodeURIComponent(taskCode)}/expenses/${expenseId}`, { method: "DELETE" });
-    await loadBlockCosts();
+    await refreshBlockCosts();
   }
 
   const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
@@ -1450,7 +1460,10 @@ function BlockResourcesPanel({ projectId, taskCode, resources, costAccounts }) {
 
   return (
     <div className="mt-3 rounded-lg bg-slate-50 p-2.5" data-scheduling-resources-panel>
-      <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">Resources &amp; costs</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">Resources &amp; costs</p>
+        {blockCostsRefreshing && <p role="status" className="text-[10px] font-bold text-slate-400">Updating…</p>}
+      </div>
       <ul className="mt-1.5 space-y-1 text-xs">
         {assignments.map((assignment) => {
           const resource = resourceById.get(assignment.resource_id);

@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 // Positive variance = later/longer than baseline (a slip); negative = earlier/shorter (ahead).
 // Matches schedulingBaselines.js's sign convention exactly -- see computeBlockVariance.
@@ -24,8 +26,26 @@ function varianceToneClass(days) {
 // The panel content, shared by the legacy centered modal below and the docked
 // inspector rail. In the rail, onClose collapses the rail.
 export function SchedulingBaselinesPanel({ projectId, isOwner, blocks, onClose, onBaselineCaptured }) {
-  const [baselines, setBaselines] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Captured baselines: stale-while-revalidate. The cached list renders
+  // instantly when the panel reopens; capturing refreshes it in place instead
+  // of blanking the list.
+  const {
+    data: baselinesData,
+    error: baselinesError,
+    isLoading: baselinesLoading,
+    isRefreshing: baselinesRefreshing,
+    refresh: refreshBaselines,
+  } = useStaleWhileRevalidate(
+    projectId ? `scheduling:baselines:${projectId}` : null,
+    async () => {
+      const response = await fetch(`/api/forge/scheduling/${projectId}/baselines`);
+      const result = await response.json().catch(() => ({}));
+      return result.baselines || [];
+    },
+    { ttlMs: 60_000 },
+  );
+  const baselines = baselinesData ?? [];
+  const loading = !baselinesData && baselinesLoading;
   const [captureName, setCaptureName] = useState("");
   const [capturing, setCapturing] = useState(false);
   const [message, setMessage] = useState("");
@@ -34,20 +54,6 @@ export function SchedulingBaselinesPanel({ projectId, isOwner, blocks, onClose, 
   const [varianceLoading, setVarianceLoading] = useState(false);
 
   const labelByTaskCode = new Map(blocks.map((block) => [block.taskCode, block.label]));
-
-  async function loadBaselines() {
-    setLoading(true);
-    const response = await fetch(`/api/forge/scheduling/${projectId}/baselines`);
-    const result = await response.json().catch(() => ({}));
-    setBaselines(result.baselines || []);
-    setLoading(false);
-  }
-
-  // One-time fetch on mount / when the modal is reopened for a different project; loadBaselines is
-  // omitted from deps deliberately -- it's redefined every render, so including it would refire
-  // this on every render instead of only when projectId actually changes.
-  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-  useEffect(() => { loadBaselines(); }, [projectId]);
 
   async function handleCapture() {
     const name = captureName.trim();
@@ -61,7 +67,7 @@ export function SchedulingBaselinesPanel({ projectId, isOwner, blocks, onClose, 
     if (!response.ok) { setMessage(result.error || "Unable to capture a baseline."); return; }
     setCaptureName("");
     setMessage("Baseline captured.");
-    await loadBaselines();
+    await refreshBaselines();
     // Notify the parent (the drift badge lives there) only after a successful
     // capture -- the drift report is computed against the new baseline now.
     if (onBaselineCaptured) onBaselineCaptured();
@@ -103,8 +109,14 @@ export function SchedulingBaselinesPanel({ projectId, isOwner, blocks, onClose, 
 
         <div className="mt-6">
           <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">Captured baselines</h3>
-          {loading && <p className="mt-2 text-xs text-slate-400">Loading…</p>}
-          {!loading && baselines.length === 0 && <p className="mt-2 text-xs text-slate-400">No baselines captured yet.</p>}
+          {loading && <ForgeLoadingState label="Loading baselines…" />}
+          {!loading && !baselinesError && baselines.length === 0 && <p className="mt-2 text-xs text-slate-400">No baselines captured yet.</p>}
+          {!loading && baselinesError && (
+            <div className="mt-2"><ForgeErrorState title="Unable to load baselines" detail={baselinesError} onRetry={refreshBaselines} /></div>
+          )}
+          {baselinesData && baselinesRefreshing && (
+            <p role="status" className="mt-2 text-xs font-bold text-slate-400">Updating…</p>
+          )}
           <ul className="mt-2 space-y-1.5">
             {baselines.map((baseline) => (
               <li key={baseline.id}>
