@@ -52,7 +52,7 @@ describe("PostIncomeForm", () => {
     expect(container.querySelector('button[type="submit"]')).toBeNull();
   });
 
-  it("rejects an amount larger than the selected charge's remaining balance", async () => {
+  it("pauses on an overpayment and shows the exact applied-vs-credit split", async () => {
     ({ container, root } = renderForm());
     const amount = container.querySelector('input[type="number"]');
     // React 18 controlled input: set value via native setter so onChange fires.
@@ -64,7 +64,106 @@ describe("PostIncomeForm", () => {
     await act(async () => {
       container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
-    expect(container.querySelector('[role="alert"]').textContent).toContain("exceeds the remaining balance");
+    // No longer a dead-end rejection — the form explains the split behind the human gate.
+    const panel = container.querySelector("[data-overpayment-confirm]");
+    expect(panel).not.toBeNull();
+    expect(panel.textContent).toContain("Apply $1,275.00 to the charge");
+    expect(panel.textContent).toContain("Record $725.00 as an open credit");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("records the overpayment with the credit flag only after checkbox + CONFIRM", async () => {
+    ({ container, root } = renderForm());
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    const amount = container.querySelector('input[type="number"]');
+    await act(async () => {
+      nativeSetter.call(amount, "2000");
+      amount.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const posted = [];
+    vi.stubGlobal("fetch", async (url, options) => {
+      posted.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ payment: { id: "pay_1", amountCents: 200000, receivedAt: "2026-09-05T12:00:00.000Z", credit: { id: "credit_1", amountCents: 72500 } } }) };
+    });
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    const panel = container.querySelector("[data-overpayment-confirm]");
+    // Unconfirmed confirm submit: the gate holds, nothing is posted.
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(posted).toHaveLength(0);
+    expect(container.querySelector('[role="alert"]').textContent).toContain("CONFIRM");
+
+    // Confirm properly: checkbox + CONFIRM, then the POST carries the flag.
+    const checkbox = panel.querySelector('input[type="checkbox"]');
+    const confirmInput = panel.querySelector('input[placeholder="CONFIRM"]');
+    const checkedSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked").set;
+    await act(async () => {
+      checkedSetter.call(checkbox, true);
+      checkbox.dispatchEvent(new Event("click", { bubbles: true }));
+      nativeSetter.call(confirmInput, "CONFIRM");
+      confirmInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(posted).toHaveLength(1);
+    expect(posted[0].payment.allowOverpaymentCredit).toBe(true);
+    expect(posted[0].payment.amountCents).toBe(200000);
+  });
+
+  it("attributes the payment to the tenant and sends a stable idempotency key", async () => {
+    const post = vi.fn(async () => ({ ok: true, json: async () => ({ success: true, payment: { amountCents: 10000, receivedAt: "2026-09-05T12:00:00.000Z" } }) }));
+    vi.stubGlobal("fetch", post);
+    ({ container, root } = renderForm({ tenantId: "tenant_9" }));
+    const amountInput = container.querySelector('input[type="number"]');
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    await act(async () => {
+      nativeSetter.call(amountInput, "100");
+      amountInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    const firstKey = JSON.parse(post.mock.calls[0][1].body).payment.idempotencyKey;
+    expect(firstKey).toBeTruthy();
+    expect(JSON.parse(post.mock.calls[0][1].body).payment.tenantId).toBe("tenant_9");
+    // The successful submit completes its intent; the next submit is a new intent, so the key regenerates.
+    await act(async () => { container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    const secondKey = JSON.parse(post.mock.calls[1][1].body).payment.idempotencyKey;
+    expect(secondKey).toBeTruthy();
+    expect(secondKey).not.toBe(firstKey);
+  });
+
+  it("regenerates the idempotency key when the submission intent changes", async () => {
+    const post = vi.fn(async () => ({ ok: true, json: async () => ({ success: true, payment: { amountCents: 10000 } }) }));
+    vi.stubGlobal("fetch", post);
+    ({ container, root } = renderForm({ tenantId: "tenant_9" }));
+    const amountInput = container.querySelector('input[type="number"]');
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    await act(async () => {
+      nativeSetter.call(amountInput, "100");
+      amountInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // A failed submit keeps the same key so the retry replays; editing the amount
+    // after the failure produces a new key because the intent changed.
+    const failThenSucceed = vi.fn()
+      .mockResolvedValueOnce({ ok: false, json: async () => ({ error: "Payment exceeds the remaining rent balance." }) })
+      .mockResolvedValue({ ok: true, json: async () => ({ success: true, payment: {} }) });
+    vi.stubGlobal("fetch", failThenSucceed);
+    await act(async () => { container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    const failedKey = JSON.parse(failThenSucceed.mock.calls[0][1].body).payment.idempotencyKey;
+    // A retry of the same failed intent (no edits) reuses the key, so the backend replays.
+    await act(async () => { container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(JSON.parse(failThenSucceed.mock.calls[1][1].body).payment.idempotencyKey).toBe(failedKey);
+    // Editing the amount after the failure changes the intent — the key regenerates.
+    await act(async () => {
+      nativeSetter.call(amountInput, "50");
+      amountInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    const retryKey = JSON.parse(failThenSucceed.mock.calls[2][1].body).payment.idempotencyKey;
+    expect(retryKey).not.toBe(failedKey);
   });
 
   it("rejects a future payment date", async () => {

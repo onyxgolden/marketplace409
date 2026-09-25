@@ -33,7 +33,7 @@ export class TenantPortalQueryService {
       .eq("owner_id", tenantRow.owner_id).in("id", leaseIds).order("start_date", { ascending: false });
     if (leaseError) throw leaseError;
     const rentals = await Promise.all((leases || []).map(async (leaseRow) => {
-      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult, autopayResult, animalResult, leasePreparationResult, leaseRosterResult] = await Promise.all([
+      const [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult, autopayResult, animalResult, leasePreparationResult, leaseRosterResult, creditResult, creditApplicationResult] = await Promise.all([
         this.supabase.from("rental_units").select("*").eq("owner_id", tenantRow.owner_id).eq("id", leaseRow.unit_id).maybeSingle(),
         this.supabase.from("rent_schedules").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("effective_start_date", { ascending: false }),
         this.supabase.from("rent_charges").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("due_date", { ascending: false }),
@@ -61,8 +61,18 @@ export class TenantPortalQueryService {
         // outstanding, not just this tenant's own.
         this.supabase.from("rental_lease_tenants").select("tenant_id, rental_tenants(display_name)")
           .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id),
+        // Tenant overpayment credits on this lease — the tenant_select RLS policies limit
+        // these to leases this tenant can see, and the tenant_id filter keeps each joint
+        // tenant's credits separate (credits are attributed to the tenant who paid).
+        // Read-only here; creation/application go through the owner-gated RPCs.
+        this.supabase.from("rental_tenant_credits")
+          .select("id, tenant_id, lease_id, amount_cents, remaining_cents, source, source_payment_id, status, notes, voided_at, void_reason, created_at")
+          .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).eq("tenant_id", tenantRow.id).order("created_at", { ascending: false }),
+        this.supabase.from("rental_credit_applications")
+          .select("id, credit_id, tenant_id, lease_id, charge_id, amount_cents, applied_at, notes")
+          .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).eq("tenant_id", tenantRow.id).order("applied_at", { ascending: false }),
       ]);
-      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult, autopayResult,animalResult, leasePreparationResult, leaseRosterResult])
+      for (const result of [unitResult, scheduleResult, chargeResult, paymentResult, insuranceRequirementResult, insurancePolicyResult, maintenanceResult, depositResult, inspectionResult, autopayResult,animalResult, leasePreparationResult, leaseRosterResult, creditResult, creditApplicationResult])
         if (result.error) throw result.error;
       const depositIds = (depositResult.data || []).map(({ id }) => id);
       let depositTransactions = [];
@@ -106,6 +116,13 @@ export class TenantPortalQueryService {
           paymentMethod: row.payment_method, receiptReference: row.receipt_reference,
           failureMessage: row.failure_message, createdAt: row.created_at, succeededAt: row.succeeded_at,
           receivedAt: row.received_at }))),
+        credits: Object.freeze((creditResult.data || []).map((row) => Object.freeze({ id: row.id, tenantId: row.tenant_id,
+          leaseId: row.lease_id, amountCents: Number(row.amount_cents), remainingCents: Number(row.remaining_cents),
+          source: row.source, sourcePaymentId: row.source_payment_id, status: row.status, notes: row.notes,
+          voidedAt: row.voided_at || null, voidReason: row.void_reason || null, createdAt: row.created_at }))),
+        creditApplications: Object.freeze((creditApplicationResult.data || []).map((row) => Object.freeze({ id: row.id,
+          creditId: row.credit_id, tenantId: row.tenant_id, leaseId: row.lease_id, chargeId: row.charge_id,
+          amountCents: Number(row.amount_cents), appliedAt: row.applied_at, notes: row.notes }))),
         insuranceRequirement: insuranceRequirementResult.data ? Object.freeze({ required: insuranceRequirementResult.data.required,
           minimumLiabilityCents: Number(insuranceRequirementResult.data.minimum_liability_cents),
           purchaseUrl: insuranceRequirementResult.data.purchase_url, jurisdictionCode: insuranceRequirementResult.data.jurisdiction_code }) : null,

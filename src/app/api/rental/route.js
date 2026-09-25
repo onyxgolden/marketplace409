@@ -368,13 +368,49 @@ export async function POST(request) {
           return badRequest("chargeId and a supported offline payment method are required.");
         const amountCents = Number(input.amountCents);
         if (!Number.isSafeInteger(amountCents) || amountCents <= 0) return badRequest("A positive payment amount is required.");
+        // allowOverpaymentCredit: when true, an amount exceeding the charge's remaining
+        // balance is accepted — the applied portion settles the charge and the excess is
+        // recorded as an open tenant credit (see rental_tenant_credits) instead of being
+        // rejected. Requires the caller's explicit human-gated confirmation (the UI
+        // enforces checkbox + CONFIRM); the RPC re-validates everything.
+        // tenantId: the tenant the payment (and any credit) is attributed to — validated
+        // by the RPC as a member of the charge's lease. idempotencyKey: client-generated
+        // per submission intent so a retried POST replays instead of double-recording.
+        const tenantId = typeof input.tenantId === "string" && input.tenantId.trim() ? input.tenantId.trim() : null;
+        const idempotencyKey = typeof input.idempotencyKey === "string" && input.idempotencyKey.trim() ? input.idempotencyKey.trim() : null;
         const { data, error } = await authenticated.supabaseClient.rpc("record_offline_rental_payment", {
           p_owner_id: effectiveOwnerId, p_charge_id: input.chargeId, p_payment_method: input.paymentMethod,
           p_amount_cents: amountCents, p_received_at: input.receivedAt,
           p_receipt_reference: input.receiptReference || null, p_notes: input.notes || null,
+          p_allow_overpayment_credit: input.allowOverpaymentCredit === true,
+          p_tenant_id: tenantId, p_idempotency_key: idempotencyKey,
         });
         if (error) throw error;
         return NextResponse.json({ success: true, payment: data });
+      }
+      case "apply-tenant-credit": {
+        const input = body.credit;
+        const amountCents = Number(input?.amountCents);
+        if (typeof input?.creditId !== "string" || !input.creditId.trim() || typeof input?.chargeId !== "string" || !input.chargeId.trim())
+          return badRequest("creditId and chargeId are required.");
+        if (!Number.isSafeInteger(amountCents) || amountCents <= 0) return badRequest("A positive credit amount is required.");
+        if (input.ownerConfirmed !== true) return badRequest("Owner confirmation is required to apply a credit.");
+        const { data, error } = await authenticated.supabaseClient.rpc("apply_rental_tenant_credit", {
+          p_owner_id: effectiveOwnerId, p_credit_id: input.creditId.trim(), p_charge_id: input.chargeId.trim(),
+          p_amount_cents: amountCents, p_notes: typeof input.notes === "string" ? input.notes.trim() || null : null,
+        });
+        if (error) throw error;
+        return NextResponse.json({ success: true, application: data });
+      }
+      case "void-tenant-credit": {
+        if (typeof body.creditId !== "string" || !body.creditId.trim()) return badRequest("creditId is required.");
+        if (typeof body.reason !== "string" || !body.reason.trim()) return badRequest("A reason is required to void a credit.");
+        if (body.ownerConfirmed !== true) return badRequest("Owner confirmation is required to void a credit.");
+        const { data, error } = await authenticated.supabaseClient.rpc("void_rental_tenant_credit", {
+          p_owner_id: effectiveOwnerId, p_credit_id: body.creditId.trim(), p_reason: body.reason.trim(),
+        });
+        if (error) throw error;
+        return NextResponse.json({ success: true, credit: data });
       }
       case "queue-rent-reminder": {
         if(!body.chargeId||!["rent_reminder","balance_overdue"].includes(body.notificationType)||!body.scheduledFor)return badRequest("Charge, reminder type, and schedule are required.");const attempts=Number(body.maxAttempts);if(!Number.isInteger(attempts)||attempts<1||attempts>5)return badRequest("Retry limit must be between 1 and 5.");const{data,error}=await authenticated.supabaseClient.rpc("queue_rental_balance_reminder",{p_owner_id:effectiveOwnerId,p_charge_id:body.chargeId,p_scheduled_for:body.scheduledFor,p_notification_type:body.notificationType,p_max_attempts:attempts});if(error)throw error;return NextResponse.json({success:true,notification:data});

@@ -83,6 +83,8 @@ describe("TenantPortalQueryService", () => {
         rental_autopay_enrollments: chain({ data: [], error: null }),
         rental_animals: chain({ data: [], error: null }),
         rental_lease_preparations: chain({ data: null, error: null }),
+        rental_tenant_credits: chain({ data: [], error: null }),
+        rental_credit_applications: chain({ data: [], error: null }),
         rental_conversations: chain({ data: null, error: null }),
         ...overrides,
       };
@@ -221,5 +223,93 @@ describe("TenantPortalQueryService", () => {
       const portal = await service.load("auth_1");
       expect(portal.conversation.hasUnread).toBe(false);
     });
+  });
+});
+
+describe("TenantPortalQueryService tenant credits", () => {
+  function chain(result) {
+    const node = { select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node),
+      order: vi.fn(() => node), maybeSingle: vi.fn(async () => result), then: (resolve) => resolve(result) };
+    return node;
+  }
+  const TENANT = { id: "tenant_1", owner_id: "owner_1", auth_user_id: "auth_1", display_name: "T",
+    email: "t@example.com", phone: null, status: "active", invited_at: null, activated_at: null,
+    created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" };
+  const LEASE = { owner_id: "owner_1", id: "lease_1", property_id: "property_1", unit_id: "unit_1",
+    status: "active", start_date: "2026-09-01", end_date: null, monthly_rent_cents: 150000,
+    currency_code: "USD", rent_due_day: 1, document_evidence_id: null, activated_at: "2026-09-01T12:00:00Z",
+    ended_at: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", notes: null };
+
+  it("surfaces the tenant's credits and applications on the portal rental", async () => {
+    const tables = {
+      rental_tenants: chain({ data: TENANT, error: null }),
+      rental_billing_settings: chain({ data: null, error: null }),
+      rental_lease_tenants: chain({ data: [{ owner_id: "owner_1", lease_id: "lease_1", tenant_id: "tenant_1" }], error: null }),
+      rental_leases: chain({ data: [LEASE], error: null }),
+      rental_units: chain({ data: null, error: null }),
+      rent_schedules: chain({ data: [], error: null }),
+      rent_charges: chain({ data: [], error: null }),
+      rental_payments: chain({ data: [], error: null }),
+      renters_insurance_requirements: chain({ data: null, error: null }),
+      renters_insurance_policies: chain({ data: [], error: null }),
+      rental_maintenance_requests: chain({ data: [], error: null }),
+      rental_security_deposits: chain({ data: [], error: null }),
+      rental_inspections: chain({ data: [], error: null }),
+      rental_autopay_enrollments: chain({ data: [], error: null }),
+      rental_animals: chain({ data: [], error: null }),
+      rental_lease_preparations: chain({ data: null, error: null }),
+      rental_tenant_credits: chain({ data: [{
+        id: "credit_1", tenant_id: "tenant_1", lease_id: "lease_1", amount_cents: 3200,
+        remaining_cents: 3200, source: "overpayment", source_payment_id: "pay_1",
+        status: "open", notes: null, voided_at: null, void_reason: null,
+        created_at: "2026-09-05T12:00:00Z" }], error: null }),
+      rental_credit_applications: chain({ data: [{
+        id: "app_1", credit_id: "credit_1", tenant_id: "tenant_1", lease_id: "lease_1",
+        charge_id: "charge_oct", amount_cents: 3200, applied_at: "2026-10-01T12:00:00Z", notes: null }], error: null }),
+      rental_conversations: chain({ data: null, error: null }),
+    };
+    const service = new TenantPortalQueryService({
+      from: vi.fn((table) => tables[table]),
+      rpc: vi.fn(async () => ({ data: [], error: null })),
+    });
+    const portal = await service.load("auth_1");
+    const rental = portal.rentals[0];
+    expect(rental.credits).toHaveLength(1);
+    expect(rental.credits[0]).toMatchObject({ id: "credit_1", amountCents: 3200, remainingCents: 3200, status: "open", voidedAt: null, voidReason: null });
+    expect(rental.creditApplications).toHaveLength(1);
+    expect(rental.creditApplications[0]).toMatchObject({ id: "app_1", creditId: "credit_1", chargeId: "charge_oct" });
+  });
+
+  it("scopes the portal credit queries to the viewing tenant in a joint tenancy", async () => {
+    const tables = {
+      rental_tenants: chain({ data: TENANT, error: null }),
+      rental_billing_settings: chain({ data: null, error: null }),
+      rental_lease_tenants: chain({ data: [{ owner_id: "owner_1", lease_id: "lease_1", tenant_id: "tenant_1" }], error: null }),
+      rental_leases: chain({ data: [LEASE], error: null }),
+      rental_units: chain({ data: null, error: null }),
+      rent_schedules: chain({ data: [], error: null }),
+      rent_charges: chain({ data: [], error: null }),
+      rental_payments: chain({ data: [], error: null }),
+      renters_insurance_requirements: chain({ data: null, error: null }),
+      renters_insurance_policies: chain({ data: [], error: null }),
+      rental_maintenance_requests: chain({ data: [], error: null }),
+      rental_security_deposits: chain({ data: [], error: null }),
+      rental_inspections: chain({ data: [], error: null }),
+      rental_autopay_enrollments: chain({ data: [], error: null }),
+      rental_animals: chain({ data: [], error: null }),
+      rental_lease_preparations: chain({ data: null, error: null }),
+      rental_tenant_credits: chain({ data: [], error: null }),
+      rental_credit_applications: chain({ data: [], error: null }),
+      rental_conversations: chain({ data: null, error: null }),
+    };
+    const service = new TenantPortalQueryService({
+      from: vi.fn((table) => tables[table]),
+      rpc: vi.fn(async () => ({ data: [], error: null })),
+    });
+    await service.load("auth_1");
+    // Each joint tenant sees only the credits attributed to them — never the lease's
+    // other tenants' credits.
+    expect(tables.rental_tenant_credits.eq).toHaveBeenCalledWith("tenant_id", "tenant_1");
+    expect(tables.rental_credit_applications.eq).toHaveBeenCalledWith("tenant_id", "tenant_1");
   });
 });

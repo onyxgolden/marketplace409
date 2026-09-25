@@ -130,6 +130,49 @@ describe("TenantPortal charge action labeling", () => {
 
 // Rendered-component regression guard: the tenant portal must never present an externally-managed
 // charge as payable, even though it remains fully visible in the per-charge list.
+describe("TenantPortal rent credits", () => {
+  const creditPortal = { ...openChargePortal, rentals: [{ ...openChargePortal.rentals[0],
+    credits: [
+      { id: "credit_1", tenantId: "t1", leaseId: "lease_1", amountCents: 3200, remainingCents: 1200,
+        source: "overpayment", sourcePaymentId: "pay_1", status: "open", notes: null,
+        voidedAt: null, voidReason: null, createdAt: "2026-09-05T12:00:00Z" },
+      { id: "credit_2", tenantId: "t1", leaseId: "lease_1", amountCents: 2000, remainingCents: 0,
+        source: "overpayment", sourcePaymentId: "pay_2", status: "fully_applied", notes: null,
+        voidedAt: null, voidReason: null, createdAt: "2026-08-05T12:00:00Z" },
+    ],
+    creditApplications: [
+      { id: "app_1", creditId: "credit_2", tenantId: "t1", leaseId: "lease_1", chargeId: "charge_1",
+        amountCents: 2000, appliedAt: "2026-08-01T12:00:00Z", notes: null },
+    ] }] };
+
+  it("shows the available credit total and per-credit status with application history", () => {
+    const markup = renderToStaticMarkup(<TenantPortal initialPortal={creditPortal} />);
+    expect(markup).toContain("Rent credits");
+    expect(markup).toContain("You have $12.00 available.");
+    expect(markup).toContain("$32.00");
+    expect(markup).toContain("Available");
+    expect(markup).toContain("Applied");
+    expect(markup).toContain("Applied $20.00");
+  });
+
+  it("labels a voided credit honestly with its reason", () => {
+    const portal = { ...openChargePortal, rentals: [{ ...openChargePortal.rentals[0],
+      credits: [{ id: "credit_3", tenantId: "t1", leaseId: "lease_1", amountCents: 5000, remainingCents: 0,
+        source: "overpayment", sourcePaymentId: "pay_3", status: "void", notes: null,
+        voidedAt: "2026-09-10T12:00:00Z", voidReason: "Recorded in error — refunded separately",
+        createdAt: "2026-09-05T12:00:00Z" }],
+      creditApplications: [] }] };
+    const markup = renderToStaticMarkup(<TenantPortal initialPortal={portal} />);
+    expect(markup).toContain("Voided");
+    expect(markup).toContain("Recorded in error — refunded separately");
+  });
+
+  it("shows no credit panel when the tenant has no credits", () => {
+    const markup = renderToStaticMarkup(<TenantPortal initialPortal={openChargePortal} />);
+    expect(markup).not.toContain("Rent credits");
+  });
+});
+
 describe("TenantPortal collection-authority containment", () => {
   const externallyManagedPortal = {
     tenant: { displayName: "Brandy Morgan" },

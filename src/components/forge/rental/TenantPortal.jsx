@@ -161,7 +161,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
       <Elements key={stripeRetryCount} stripe={stripePromise} options={{ clientSecret: session.clientSecret, appearance: { theme: "stripe" } }}>
         <TenantPaymentForm returnUrl={session.returnUrl} amountLabel={money.format(session.amountCents / 100)}
           dueDate={date.format(new Date(`${session.dueDate}T00:00:00`))} chargeLabel={(session.chargeType || "rent").replaceAll("_", " ")} onCancel={() => setSession(null)} />
-      </Elements></section>) : portal.rentals.map(({ lease, unit, charges, payments = [], schedules = [] }) => <section key={lease.id} className="rounded-2xl border bg-white p-6 shadow-sm">
+      </Elements></section>) : portal.rentals.map(({ lease, unit, charges, payments = [], schedules = [], credits = [], creditApplications = [] }) => <section key={lease.id} className="rounded-2xl border bg-white p-6 shadow-sm">
       <h2 className="text-xl font-black">{unit?.label || "Rental home"}</h2>
       <p className="mt-1 text-sm text-slate-500">Lease {lease.startDate} {lease.endDate ? `through ${lease.endDate}` : "— current"}</p>
       <div className="mt-6 space-y-3">{charges.map((charge) => <div key={charge.id} className="flex items-center justify-between gap-4 rounded-xl border p-4">
@@ -178,6 +178,39 @@ export default function TenantPortal({ initialPortal = null } = {}) {
             })() : <p className="mt-2 text-xs font-bold uppercase tracking-wide text-slate-500">Managed in Rentec</p>
           ) : null}</div>
       </div>)}</div>
+      {credits.length ? <div className="mt-8 border-t pt-6"><h3 className="font-black">Rent credits</h3>
+        <p className="mt-1 text-sm text-slate-500">
+          Overpayments you already paid are held as credit and applied to future rent automatically, oldest first.
+          {(() => { const available = credits.filter((credit) => credit.status === "open")
+            .reduce((sum, credit) => sum + Number(credit.remainingCents || 0), 0);
+            return available ? ` You have ${money.format(available / 100)} available.` : ""; })()}
+        </p>
+        {credits.map((credit) => {
+          const applications = creditApplications.filter((application) => application.creditId === credit.id);
+          const statusLabel = credit.status === "open" ? "Available"
+            : credit.status === "fully_applied" ? "Applied" : credit.status === "void" ? "Voided" : credit.status.replaceAll("_", " ");
+          return <div key={credit.id} className="mt-3 rounded-xl border p-4">
+            <div className="flex items-baseline justify-between gap-4">
+              <p className="font-bold">{money.format(credit.amountCents / 100)} <span className="text-xs font-black uppercase tracking-wide text-slate-500">{statusLabel}</span></p>
+              <p className="text-sm font-bold text-slate-600">{credit.status === "open" ? `${money.format(credit.remainingCents / 100)} remaining` : "No remaining balance"}</p>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">Created {credit.createdAt ? date.format(new Date(credit.createdAt)) : "—"}{credit.notes ? ` — ${credit.notes}` : ""}</p>
+            {credit.status === "void" && credit.voidReason ? <p className="mt-1 text-xs font-bold text-slate-500">
+              Voided{credit.voidedAt ? ` on ${date.format(new Date(credit.voidedAt))}` : ""}: {credit.voidReason}
+            </p> : null}
+            {applications.length ? <ul className="mt-2 space-y-1 text-xs text-slate-500">
+              {applications.map((application) => {
+                const target = charges.find((charge) => charge.id === application.chargeId);
+                return <li key={application.id}>
+                  Applied {money.format(application.amountCents / 100)} on {application.appliedAt ? date.format(new Date(application.appliedAt)) : "—"}
+                  {target ? ` to the ${date.format(new Date(`${target.dueDate}T00:00:00`))} rent` : ""}
+                  {application.notes ? ` — ${application.notes}` : ""}
+                </li>;
+              })}
+            </ul> : null}
+          </div>;
+        })}
+      </div> : null}
       <div className="mt-8 border-t pt-6"><h3 className="font-black">Payment history</h3>
         {payments.length === 0 ? <p className="mt-2 text-sm text-slate-500">No payments recorded yet.</p> :
           payments.map((payment) => <div key={payment.id} className="mt-3 flex justify-between gap-4 border-b pb-3 text-sm">
