@@ -87,10 +87,29 @@ describe("tenant credit migration", () => {
     expect(sql).toContain("revoke all on function apply_rental_tenant_credit(text, text, text, bigint, text) from public, anon");
   });
 
+  it("uses composite primary keys (owner_id, id) like the rest of the rental schema", () => {
+    // Composite FKs reference (owner_id, id); a bare PK on id alone breaks them.
+    const creditsDef = sql.slice(sql.indexOf("create table if not exists rental_tenant_credits"),
+      sql.indexOf("create index if not exists idx_rental_tenant_credits_owner_tenant"));
+    expect(creditsDef).toContain("primary key (owner_id, id)");
+    expect(creditsDef).not.toMatch(/id text primary key/);
+    const appsDef = sql.slice(sql.indexOf("create table if not exists rental_credit_applications"),
+      sql.indexOf("create index if not exists idx_rental_credit_applications_owner_credit"));
+    expect(appsDef).toContain("primary key (owner_id, id)");
+    expect(appsDef).not.toMatch(/id text primary key/);
+  });
+
   it("keeps credit applications immutable: no UPDATE or DELETE, ever", () => {
     expect(sql).toContain("trg_rental_credit_applications_immutable");
     expect(sql).toContain("before update or delete on rental_credit_applications");
     expect(sql).toContain("Credit applications are immutable history");
+  });
+
+  it("revokes direct table writes from authenticated too, not just public/anon", () => {
+    // Supabase default privileges grant ALL to anon/authenticated on new public tables.
+    expect(sql).toContain("revoke all on table rental_tenant_credits from public, anon, authenticated;");
+    expect(sql).toContain("revoke all on table rental_credit_applications from public, anon, authenticated;");
+    expect(sql).toContain("grant select on table rental_tenant_credits to authenticated;");
   });
 
   it("locks the charge before the credit in every path that touches both rows", () => {
