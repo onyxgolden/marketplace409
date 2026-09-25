@@ -29,7 +29,7 @@
 
 create table if not exists rental_tenant_credits (
   owner_id text not null,
-  id text primary key,
+  id text not null,
   tenant_id text not null,
   lease_id text not null,
   amount_cents bigint not null check (amount_cents > 0),
@@ -46,6 +46,9 @@ create table if not exists rental_tenant_credits (
   void_reason text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  -- Composite primary key matches the rental schema convention (rental_payments,
+  -- rent_charges, ...): composite FKs reference (owner_id, id).
+  primary key (owner_id, id),
   check (remaining_cents <= amount_cents),
   check (status <> 'void' or (voided_at is not null and void_reason is not null)),
   foreign key (owner_id, source_payment_id) references rental_payments(owner_id, id) on delete restrict,
@@ -63,7 +66,7 @@ create unique index if not exists uq_rental_tenant_credits_owner_source_payment
 
 create table if not exists rental_credit_applications (
   owner_id text not null,
-  id text primary key,
+  id text not null,
   credit_id text not null,
   tenant_id text not null,
   lease_id text not null,
@@ -72,6 +75,8 @@ create table if not exists rental_credit_applications (
   applied_at timestamptz not null default now(),
   applied_by text,
   notes text,
+  -- Composite primary key matches the rental schema convention.
+  primary key (owner_id, id),
   foreign key (owner_id, credit_id) references rental_tenant_credits(owner_id, id) on delete restrict,
   foreign key (owner_id, charge_id) references rent_charges(owner_id, id) on delete restrict,
   foreign key (owner_id, lease_id) references rental_leases(owner_id, id) on delete restrict,
@@ -111,8 +116,11 @@ create policy "rental_credit_applications_tenant_select" on rental_credit_applic
 -- read these tables through the API/portal SELECTs above; every write path is a definer
 -- RPC. No INSERT/UPDATE/DELETE is granted to any caller role — mirroring the contract's
 -- "no DELETE on any payment/ledger table" rule, extended to all direct writes here.
-revoke all on table rental_tenant_credits from public, anon;
-revoke all on table rental_credit_applications from public, anon;
+-- Supabase default privileges grant ALL to anon/authenticated/service_role on new public
+-- tables, so the revoke must name authenticated explicitly — revoking only public/anon
+-- would leave full direct-write grants behind.
+revoke all on table rental_tenant_credits from public, anon, authenticated;
+revoke all on table rental_credit_applications from public, anon, authenticated;
 grant select on table rental_tenant_credits to authenticated;
 grant select on table rental_credit_applications to authenticated;
 
