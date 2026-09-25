@@ -1,9 +1,14 @@
 "use client";
 
 import {
-  useEffect,
-  useState,
-} from "react";
+  useStaleWhileRevalidate,
+} from "@/hooks/useStaleWhileRevalidate";
+
+import {
+  ForgeEmptyState,
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 function displayValue(value) {
   return String(value || "")
@@ -140,15 +145,43 @@ export function buildPropertyEvidenceUrl(
     : null;
 }
 
+// Stale-while-revalidate fetcher: previously loaded evidence stays on screen
+// while a refresh is in flight; only the first paint (nothing cached) shows
+// a loading state.
+async function fetchPropertyEvidence(
+  url,
+) {
+  const response = await fetch(url);
+
+  const payload =
+    await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      payload?.error ||
+        "Unable to load property evidence.",
+    );
+  }
+
+  return Array.isArray(
+    payload?.evidence,
+  )
+    ? payload.evidence
+    : [];
+}
+
 export function PropertyEvidenceHistoryList({
   evidence = [],
   systems = [],
 }) {
   if (evidence.length === 0) {
     return (
-      <p className="mt-4 text-sm font-semibold text-slate-500 dark:text-slate-400">
-        No private evidence has been recorded for this property.
-      </p>
+      <div className="mt-4">
+        <ForgeEmptyState
+          headline="No private evidence has been recorded for this property."
+          guidance="Upload an invoice or photograph to start this property's private evidence history."
+        />
+      </div>
     );
   }
 
@@ -289,93 +322,27 @@ export default function PropertyEvidenceHistoryPanel({
   propertyId,
   systems = [],
 }) {
-  const [
-    evidence,
-    setEvidence,
-  ] = useState([]);
+  const url =
+    buildPropertyEvidenceUrl(
+      propertyId,
+    );
 
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
+  // Evidence: stale-while-revalidate keyed per property. Cached evidence
+  // renders instantly on return visits; a manual refresh keeps the old list
+  // visible with a subtle indicator instead of blanking to "Loading…".
+  const {
+    data: cachedEvidence,
+    error: loadError,
+    isLoading,
+    isRefreshing,
+    refresh,
+  } = useStaleWhileRevalidate(
+    url ? `property-evidence:${propertyId}` : null,
+    () => fetchPropertyEvidence(url),
+    { ttlMs: 60_000 },
+  );
 
-  const [
-    message,
-    setMessage,
-  ] = useState("");
-
-  const [
-    refreshVersion,
-    setRefreshVersion,
-  ] = useState(0);
-
-  useEffect(() => {
-    const url =
-      buildPropertyEvidenceUrl(
-        propertyId,
-      );
-
-    if (!url) {
-      setEvidence([]);
-      setMessage("");
-      setLoading(false);
-      return;
-    }
-
-    let active = true;
-
-    async function loadEvidence() {
-      setLoading(true);
-      setMessage("");
-
-      try {
-        const response =
-          await fetch(url);
-
-        const payload =
-          await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            payload?.error ||
-              "Unable to load property evidence.",
-          );
-        }
-
-        if (active) {
-          setEvidence(
-            Array.isArray(
-              payload?.evidence,
-            )
-              ? payload.evidence
-              : [],
-          );
-        }
-      } catch (error) {
-        if (active) {
-          setEvidence([]);
-          setMessage(
-            error instanceof Error
-              ? error.message
-              : "Unable to load property evidence.",
-          );
-        }
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
-    }
-
-    loadEvidence();
-
-    return () => {
-      active = false;
-    };
-  }, [
-    propertyId,
-    refreshVersion,
-  ]);
+  const evidence = cachedEvidence || [];
 
   return (
     <section
@@ -400,21 +367,14 @@ export default function PropertyEvidenceHistoryPanel({
         <button
           type="button"
           disabled={
-            loading ||
-            !buildPropertyEvidenceUrl(
-              propertyId,
-            )
+            isRefreshing ||
+            !url
           }
-          onClick={() =>
-            setRefreshVersion(
-              (current) =>
-                current + 1,
-            )
-          }
+          onClick={refresh}
           className="rounded-xl border border-violet-300 bg-white px-4 py-2 text-xs font-black text-violet-800 disabled:opacity-50 dark:bg-slate-900"
         >
-          {loading
-            ? "Refreshing evidence..."
+          {isRefreshing
+            ? "Refreshing evidence…"
             : "Refresh evidence"}
         </button>
       </div>
@@ -423,22 +383,33 @@ export default function PropertyEvidenceHistoryPanel({
         <p className="mt-4 text-sm font-semibold text-slate-500 dark:text-slate-400">
           Choose a property to view its private evidence.
         </p>
-      ) : loading ? (
-        <p className="mt-4 text-sm font-semibold text-slate-500 dark:text-slate-400">
-          Loading private evidence...
-        </p>
-      ) : message ? (
-        <p
-          role="status"
-          className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800 dark:bg-rose-950/30"
-        >
-          {message}
-        </p>
-      ) : (
-        <PropertyEvidenceHistoryList
-          evidence={evidence}
-          systems={systems}
+      ) : !cachedEvidence && isLoading ? (
+        <ForgeLoadingState label="Loading private evidence…" />
+      ) : !cachedEvidence && loadError ? (
+        <ForgeErrorState
+          title="Property evidence could not be loaded."
+          detail={loadError}
+          onRetry={refresh}
         />
+      ) : (
+        <>
+          {loadError ? (
+            <p role="status" className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">
+              Could not refresh — showing the last saved evidence.
+            </p>
+          ) : null}
+
+          {isRefreshing ? (
+            <p className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">
+              Updating…
+            </p>
+          ) : null}
+
+          <PropertyEvidenceHistoryList
+            evidence={evidence}
+            systems={systems}
+          />
+        </>
       )}
     </section>
   );

@@ -21,6 +21,11 @@ import PropertyConditionAssessmentPanel, {
   formatPropertyConditionDate,
 } from "../PropertyConditionAssessmentPanel.jsx";
 
+import {
+  clearSWRCache,
+  fetchWithDedupe,
+} from "../../../../hooks/swrCache";
+
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 describe(
@@ -28,7 +33,21 @@ describe(
   () => {
     it(
       "renders a compact condition workflow landing",
-      () => {
+      async () => {
+        // Seed the stale-while-revalidate cache the way a return visit would:
+        // the landing renders instantly from cached data with no loading
+        // flash.
+        await fetchWithDedupe(
+          "property:portfolio-properties",
+          () => Promise.resolve([
+            { id: "prop_1", name: "123 Main St" },
+          ]),
+        );
+        await fetchWithDedupe(
+          "property-condition-assessments:prop_1",
+          () => Promise.resolve([]),
+        );
+
         const markup =
           renderToStaticMarkup(
             <PropertyConditionAssessmentPanel />,
@@ -248,6 +267,7 @@ function findButtonByText(container, text) {
 // pick a checklist item, fill an attribute, add/remove/re-add an observation, then save.
 describe("PropertyConditionAssessmentPanel -- the record workflow", () => {
   beforeEach(() => {
+    clearSWRCache();
     global.fetch = vi.fn((url, init) => {
       if (typeof url === "string" && url.startsWith("/api/financial/read-models")) {
         return jsonResponse({

@@ -12,16 +12,36 @@ import PropertyHVACPanel, {
   buildHVACSystemPayload,
 } from "../PropertyHVACPanel.jsx";
 
+import {
+  clearSWRCache,
+  fetchWithDedupe,
+} from "../../../../hooks/swrCache";
+
 describe(
   "PropertyHVACPanel",
   () => {
     it(
       "renders the HVAC system identity interface",
-      () => {
+      async () => {
+        // A return visit serves the cached portfolio and the cached (empty)
+        // system list instantly -- no loading flash, no blank panel.
+        await fetchWithDedupe(
+          "property:portfolio-properties",
+          () => Promise.resolve([
+            { id: "prop_1", name: "123 Main St" },
+          ]),
+        );
+        await fetchWithDedupe(
+          "property-hvac-systems:prop_1",
+          () => Promise.resolve([]),
+        );
+
         const markup =
           renderToStaticMarkup(
             <PropertyHVACPanel />,
           );
+
+        clearSWRCache();
 
         expect(markup).toContain(
           "data-property-hvac-panel",

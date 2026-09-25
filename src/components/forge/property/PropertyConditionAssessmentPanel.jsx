@@ -1,10 +1,19 @@
 "use client";
 
 import {
-  useEffect,
   useMemo,
   useState,
 } from "react";
+
+import {
+  useStaleWhileRevalidate,
+} from "@/hooks/useStaleWhileRevalidate";
+
+import {
+  ForgeEmptyState,
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 import {
   PROPERTY_CONDITION_SECTIONS,
@@ -62,6 +71,49 @@ function displayValue(value) {
     .replace(/\b\w/g, (character) =>
       character.toUpperCase(),
     );
+}
+
+// Stale-while-revalidate fetchers: previously loaded property and assessment
+// data stays on screen while a refresh is in flight; only the first paint
+// (nothing cached) shows a loading state.
+async function fetchPortfolioProperties() {
+  const response = await fetch(
+    "/api/financial/read-models?financial=true&business=true",
+  );
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      payload?.error ||
+        "Property records could not be loaded.",
+    );
+  }
+
+  return buildPropertyPortfolioProperties(
+    payload,
+  );
+}
+
+async function fetchConditionAssessments(
+  propertyId,
+) {
+  const response = await fetch(
+    `/api/property-condition-assessments?propertyId=${encodeURIComponent(
+      propertyId,
+    )}`,
+  );
+
+  const payload =
+    await response.json();
+
+  // An API-level failure keeps the previous behavior: an empty assessment
+  // list rather than a hard error -- only transport failures throw.
+  if (!response.ok || !payload.success) {
+    return [];
+  }
+
+  return payload.assessments || [];
 }
 
 function checklistItemKey(definition) {
@@ -202,19 +254,59 @@ export function buildConditionObservation({
 
 export default function PropertyConditionAssessmentPanel() {
   const [
-    properties,
-    setProperties,
-  ] = useState([]);
-
-  const [
-    assessments,
-    setAssessments,
-  ] = useState([]);
-
-  const [
     propertyId,
     setPropertyId,
   ] = useState("");
+  const [
+    propertyChosen,
+    setPropertyChosen,
+  ] = useState(false);
+
+  // Properties: stale-while-revalidate under one global key. The cached
+  // portfolio renders instantly on return visits and refreshes in the
+  // background -- never a blank property dropdown.
+  const {
+    data: cachedProperties,
+    error: propertiesError,
+    isLoading: propertiesLoading,
+    refresh: refreshProperties,
+  } = useStaleWhileRevalidate(
+    "property:portfolio-properties",
+    fetchPortfolioProperties,
+    { ttlMs: 60_000 },
+  );
+
+  const properties = useMemo(
+    () => cachedProperties || [],
+    [cachedProperties],
+  );
+
+  // The selected property defaults to the first loaded property at render
+  // time -- no synchronization effect, so a background refresh that
+  // reorders the portfolio can never stomp the user's own selection.
+  const effectivePropertyId =
+    propertyChosen
+      ? propertyId
+      : properties[0]?.id || "";
+
+  // Assessments: keyed per property. Switching properties serves the newly
+  // selected property's cached list instantly; a background refresh keeps the
+  // stale list on screen with a subtle indicator.
+  const {
+    data: cachedAssessments,
+    error: assessmentsError,
+    isLoading: assessmentsLoading,
+    isRefreshing: assessmentsRefreshing,
+    refresh: refreshAssessments,
+  } = useStaleWhileRevalidate(
+    effectivePropertyId
+      ? `property-condition-assessments:${effectivePropertyId}`
+      : null,
+    () => fetchConditionAssessments(effectivePropertyId),
+    { ttlMs: 60_000 },
+  );
+
+  const assessments = cachedAssessments || [];
 
   const [
     effectiveAt,
@@ -314,18 +406,13 @@ export default function PropertyConditionAssessmentPanel() {
   const [
     showGuidance,
     setShowGuidance,
-  ] = useState(true);
-
-  useEffect(() => {
-    const savedPreference =
-      window.localStorage.getItem(
-        "forge.display.guidance",
-      );
-
-    if (savedPreference === "off") {
-      setShowGuidance(false);
-    }
-  }, []);
+  ] = useState(() =>
+    typeof window === "undefined"
+      ? true
+      : window.localStorage.getItem(
+          "forge.display.guidance",
+        ) !== "off",
+  );
 
   function toggleGuidance() {
     setShowGuidance((current) => {
@@ -340,97 +427,6 @@ export default function PropertyConditionAssessmentPanel() {
     });
   }
 
-  useEffect(() => {
-    let active = true;
-
-    async function loadProperties() {
-      try {
-        const response = await fetch(
-          "/api/financial/read-models?financial=true&business=true",
-        );
-
-        const payload =
-          await response.json();
-
-        if (!active) {
-          return;
-        }
-
-        const loadedProperties =
-          buildPropertyPortfolioProperties(
-            payload,
-          );
-
-        setProperties(loadedProperties);
-
-        if (loadedProperties[0]) {
-          setPropertyId(
-            loadedProperties[0].id,
-          );
-        }
-      } catch {
-        if (active) {
-          setMessage(
-            "Property records could not be loaded.",
-          );
-        }
-      }
-    }
-
-    loadProperties();
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadAssessments() {
-      if (!propertyId) {
-        setAssessments([]);
-        return;
-      }
-
-      try {
-        const response = await fetch(
-          `/api/property-condition-assessments?propertyId=${encodeURIComponent(
-            propertyId,
-          )}`,
-        );
-
-        const payload =
-          await response.json();
-
-        if (!active) {
-          return;
-        }
-
-        if (
-          !response.ok ||
-          !payload.success
-        ) {
-          setAssessments([]);
-          return;
-        }
-
-        setAssessments(
-          payload.assessments || [],
-        );
-      } catch {
-        if (active) {
-          setAssessments([]);
-        }
-      }
-    }
-
-    loadAssessments();
-
-    return () => {
-      active = false;
-    };
-  }, [propertyId]);
 
   // Attributes/notes/cost/year all describe the currently selected item -- once the item (or
   // its section) changes, none of them still apply to whatever gets selected next.
@@ -529,7 +525,7 @@ export default function PropertyConditionAssessmentPanel() {
   }
 
   async function saveAssessment() {
-    if (!propertyId) {
+    if (!effectivePropertyId) {
       setMessage("Choose a property before saving.");
       return;
     }
@@ -555,7 +551,7 @@ export default function PropertyConditionAssessmentPanel() {
           body: JSON.stringify({
             operation: "record-owner-assessment",
             assessment: {
-              propertyId,
+              propertyId: effectivePropertyId,
               effectiveAt,
               summary,
               items: observations,
@@ -573,13 +569,13 @@ export default function PropertyConditionAssessmentPanel() {
         );
       }
 
-      setAssessments((current) => [
-        payload.assessment,
-        ...current,
-      ]);
       setObservations([]);
       setSummary("");
       setMessage("Assessment saved.");
+
+      // Revalidate the assessment list -- the saved record arrives with the
+      // server's list, so the cache never drifts from what was just written.
+      refreshAssessments();
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -589,6 +585,27 @@ export default function PropertyConditionAssessmentPanel() {
     } finally {
       setSaving(false);
     }
+  }
+
+  const assessmentsRefreshingStale =
+    effectivePropertyId &&
+    (assessmentsLoading || assessmentsRefreshing) &&
+    cachedAssessments;
+
+  if (!cachedProperties && propertiesLoading) {
+    return (
+      <ForgeLoadingState label="Loading property condition assessments…" />
+    );
+  }
+
+  if (!cachedProperties && propertiesError) {
+    return (
+      <ForgeErrorState
+        title="Property records could not be loaded."
+        detail={propertiesError}
+        onRetry={refreshProperties}
+      />
+    );
   }
 
   return (
@@ -620,12 +637,13 @@ export default function PropertyConditionAssessmentPanel() {
         <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
           Property
           <select
-            value={propertyId}
-            onChange={(event) =>
+            value={effectivePropertyId}
+            onChange={(event) => {
               setPropertyId(
                 event.target.value,
-              )
-            }
+              );
+              setPropertyChosen(true);
+            }}
             className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
           >
             <option value="">
@@ -644,6 +662,15 @@ export default function PropertyConditionAssessmentPanel() {
         </label>
       </div>
 
+          {effectivePropertyId &&
+          !cachedAssessments &&
+          assessmentsError ? (
+            <ForgeErrorState
+              title="Assessments could not be loaded."
+              detail={assessmentsError}
+              onRetry={refreshAssessments}
+            />
+          ) : (
           <div className="mt-5 max-w-xl rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:bg-slate-800/60 dark:border-slate-800">
             <div className="text-[11px] font-black uppercase text-slate-500 dark:text-slate-400">
               Saved assessments
@@ -652,7 +679,20 @@ export default function PropertyConditionAssessmentPanel() {
             <div className="mt-1 text-xl font-black text-slate-950 dark:text-slate-50">
               {assessments.length}
             </div>
+
+            {assessmentsRefreshingStale ? (
+              <p className="mt-1 text-xs font-bold text-slate-400 dark:text-slate-500">
+                Updating…
+              </p>
+            ) : null}
+
+            {assessmentsError && cachedAssessments ? (
+              <p role="status" className="mt-1 text-xs font-bold text-slate-400 dark:text-slate-500">
+                Could not refresh — showing the last saved assessments.
+              </p>
+            ) : null}
           </div>
+          )}
 
           <PropertyConditionWorkflowChooser
             showGuidance={
@@ -686,12 +726,13 @@ export default function PropertyConditionAssessmentPanel() {
         <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
           Property
           <select
-            value={propertyId}
-            onChange={(event) =>
+            value={effectivePropertyId}
+            onChange={(event) => {
               setPropertyId(
                 event.target.value,
-              )
-            }
+              );
+              setPropertyChosen(true);
+            }}
             className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
           >
             <option value="">
@@ -1081,12 +1122,13 @@ export default function PropertyConditionAssessmentPanel() {
         <label className="text-xs font-black uppercase tracking-wide text-slate-600 dark:text-slate-400">
           Property
           <select
-            value={propertyId}
-            onChange={(event) =>
+            value={effectivePropertyId}
+            onChange={(event) => {
               setPropertyId(
                 event.target.value,
-              )
-            }
+              );
+              setPropertyChosen(true);
+            }}
             className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700"
           >
             <option value="">
@@ -1109,10 +1151,25 @@ export default function PropertyConditionAssessmentPanel() {
           Condition history
         </h5>
 
-        {assessments.length === 0 ? (
-          <p className="mt-3 text-sm font-semibold text-slate-500 dark:text-slate-400">
-            No saved assessments for this property yet.
+        {assessmentsRefreshingStale ? (
+          <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">
+            Updating…
           </p>
+        ) : null}
+
+        {effectivePropertyId && !cachedAssessments && assessmentsError ? (
+          <ForgeErrorState
+            title="Assessments could not be loaded."
+            detail={assessmentsError}
+            onRetry={refreshAssessments}
+          />
+        ) : assessments.length === 0 ? (
+          <div className="mt-3">
+            <ForgeEmptyState
+              headline="No saved assessments for this property yet."
+              guidance="Record an owner condition assessment to start this property's standardized history."
+            />
+          </div>
         ) : (
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             {assessments.map(

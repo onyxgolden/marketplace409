@@ -1,9 +1,18 @@
 "use client";
 
 import {
-  useEffect,
   useState,
 } from "react";
+
+import {
+  useStaleWhileRevalidate,
+} from "@/hooks/useStaleWhileRevalidate";
+
+import {
+  ForgeEmptyState,
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 import {
   HVAC_CONDITIONS,
@@ -144,21 +153,98 @@ function Field({
 const INPUT_CLASS =
   "mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-bold normal-case text-slate-950 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700";
 
-export default function PropertyHVACPanel() {
-  const [
-    properties,
-    setProperties,
-  ] = useState([]);
+// Stale-while-revalidate fetchers: previously loaded properties and systems
+// stay on screen while a refresh is in flight; only the first paint (nothing
+// cached) shows a loading state.
+async function fetchPortfolioProperties() {
+  const response = await fetch(
+    "/api/financial/read-models?financial=true&business=true",
+  );
 
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      payload?.error ||
+        "Property records could not be loaded.",
+    );
+  }
+
+  return buildPropertyPortfolioProperties(payload);
+}
+
+async function fetchHVACSystems(propertyId) {
+  const response = await fetch(
+    `/api/property-hvac?propertyId=${encodeURIComponent(
+      propertyId,
+    )}`,
+  );
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      payload?.error ||
+        "HVAC systems could not be loaded.",
+    );
+  }
+
+  return Array.isArray(payload?.systems)
+    ? payload.systems
+    : [];
+}
+
+export default function PropertyHVACPanel() {
   const [
     propertyId,
     setPropertyId,
   ] = useState("");
-
   const [
-    systems,
-    setSystems,
-  ] = useState([]);
+    propertyChosen,
+    setPropertyChosen,
+  ] = useState(false);
+
+  // Properties: stale-while-revalidate under one global key. The cached
+  // portfolio renders instantly on return visits and refreshes in the
+  // background -- never a blank property dropdown.
+  const {
+    data: cachedProperties,
+    error: propertiesError,
+    isLoading: propertiesLoading,
+    refresh: refreshProperties,
+  } = useStaleWhileRevalidate(
+    "property:portfolio-properties",
+    fetchPortfolioProperties,
+    { ttlMs: 60_000 },
+  );
+
+  // The selected property defaults to the first loaded property at render
+  // time -- no synchronization effect, so a background refresh that
+  // reorders the portfolio can never stomp the user's own selection.
+  const properties = cachedProperties || [];
+  const effectivePropertyId =
+    propertyChosen
+      ? propertyId
+      : properties[0]?.id || "";
+
+  // Systems: keyed per property. Switching properties serves the newly
+  // selected property's cached systems instantly; a background refresh keeps
+  // the stale list on screen with a subtle indicator.
+  const {
+    data: cachedSystems,
+    error: systemsError,
+    isLoading: systemsLoading,
+    isRefreshing: systemsRefreshing,
+    refresh: refreshSystems,
+  } = useStaleWhileRevalidate(
+    effectivePropertyId
+      ? `property-hvac-systems:${effectivePropertyId}`
+      : null,
+    () => fetchHVACSystems(effectivePropertyId),
+    { ttlMs: 60_000 },
+  );
+
+  const systems = cachedSystems || [];
 
   const [
     values,
@@ -166,11 +252,6 @@ export default function PropertyHVACPanel() {
   ] = useState({
     ...INITIAL_SYSTEM,
   });
-
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
 
   const [
     saving,
@@ -190,18 +271,13 @@ export default function PropertyHVACPanel() {
   const [
     showGuidance,
     setShowGuidance,
-  ] = useState(true);
-
-  useEffect(() => {
-    const savedPreference =
-      window.localStorage.getItem(
-        "forge.display.guidance",
-      );
-
-    if (savedPreference === "off") {
-      setShowGuidance(false);
-    }
-  }, []);
+  ] = useState(() =>
+    typeof window === "undefined"
+      ? true
+      : window.localStorage.getItem(
+          "forge.display.guidance",
+        ) !== "off",
+  );
 
   function toggleGuidance() {
     setShowGuidance((current) => {
@@ -216,27 +292,10 @@ export default function PropertyHVACPanel() {
     });
   }
 
-  function finishReplacement(result) {
-    if (
-      result?.predecessorSystem &&
-      result?.replacementSystem
-    ) {
-      setSystems((current) => [
-        result.replacementSystem,
-        ...current
-          .filter(
-            (system) =>
-              system.id !==
-              result.replacementSystem.id,
-          )
-          .map((system) =>
-            system.id ===
-            result.predecessorSystem.id
-              ? result.predecessorSystem
-              : system,
-          ),
-      ]);
-    }
+  function finishReplacement() {
+    // The replacement transition arrives with the server's revalidated
+    // system list, so the cache never drifts from what was just written.
+    refreshSystems();
 
     setMessage(
       "HVAC replacement recorded.",
@@ -244,100 +303,6 @@ export default function PropertyHVACPanel() {
     setWorkflow(null);
   }
 
-  useEffect(() => {
-    let active = true;
-
-    async function loadProperties() {
-      try {
-        const response = await fetch(
-          "/api/financial/read-models?financial=true&business=true",
-        );
-
-        const payload =
-          await response.json();
-
-        if (!active) {
-          return;
-        }
-
-        const loadedProperties =
-          buildPropertyPortfolioProperties(
-            payload,
-          );
-
-        setProperties(loadedProperties);
-
-        if (loadedProperties[0]) {
-          setPropertyId(
-            loadedProperties[0].id,
-          );
-        }
-      } catch {
-        if (active) {
-          setMessage(
-            "Property records could not be loaded.",
-          );
-        }
-      }
-    }
-
-    loadProperties();
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!propertyId) {
-      setSystems([]);
-      return;
-    }
-
-    let active = true;
-
-    async function loadSystems() {
-      setLoading(true);
-
-      try {
-        const response = await fetch(
-          `/api/property-hvac?propertyId=${encodeURIComponent(
-            propertyId,
-          )}`,
-        );
-
-        const payload =
-          await response.json();
-
-        if (!active) {
-          return;
-        }
-
-        setSystems(
-          Array.isArray(payload?.systems)
-            ? payload.systems
-            : [],
-        );
-      } catch {
-        if (active) {
-          setSystems([]);
-          setMessage(
-            "HVAC systems could not be loaded.",
-          );
-        }
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
-    }
-
-    loadSystems();
-
-    return () => {
-      active = false;
-    };
-  }, [propertyId]);
 
   function updateValue(
     name,
@@ -350,7 +315,7 @@ export default function PropertyHVACPanel() {
   }
 
   async function saveSystem() {
-    if (!propertyId) {
+    if (!effectivePropertyId) {
       setMessage("Choose a property.");
       return;
     }
@@ -371,7 +336,7 @@ export default function PropertyHVACPanel() {
             operation: "save-system",
             system:
               buildHVACSystemPayload({
-                propertyId,
+                propertyId: effectivePropertyId,
                 values,
               }),
           }),
@@ -389,14 +354,9 @@ export default function PropertyHVACPanel() {
       }
 
       if (payload?.system) {
-        setSystems((current) => [
-          payload.system,
-          ...current.filter(
-            (system) =>
-              system.id !==
-              payload.system.id,
-          ),
-        ]);
+        // Revalidate the system list -- the saved system arrives with the
+        // server's list, so the cache never drifts from what was written.
+        refreshSystems();
       }
 
       setValues({
@@ -417,6 +377,22 @@ export default function PropertyHVACPanel() {
     } finally {
       setSaving(false);
     }
+  }
+
+  if (!cachedProperties && propertiesLoading) {
+    return (
+      <ForgeLoadingState label="Loading HVAC systems…" />
+    );
+  }
+
+  if (!cachedProperties && propertiesError) {
+    return (
+      <ForgeErrorState
+        title="Property records could not be loaded."
+        detail={propertiesError}
+        onRetry={refreshProperties}
+      />
+    );
   }
 
   return (
@@ -788,11 +764,12 @@ export default function PropertyHVACPanel() {
       <div className="mt-6 max-w-2xl">
         <Field label="Property">
           <select
-            value={propertyId}
+            value={effectivePropertyId}
             onChange={(event) => {
               setPropertyId(
                 event.target.value,
               );
+              setPropertyChosen(true);
               setWorkflow(null);
             }}
             className={INPUT_CLASS}
@@ -832,27 +809,39 @@ export default function PropertyHVACPanel() {
           )}
         </div>
 
-        {loading ? (
-          <p className="mt-3 text-sm font-semibold text-slate-500 dark:text-slate-400">
-            Loading HVAC systems...
-          </p>
+        {effectivePropertyId && !cachedSystems && systemsLoading ? (
+          <ForgeLoadingState label="Loading HVAC systems…" />
+        ) : effectivePropertyId && !cachedSystems && systemsError ? (
+          <ForgeErrorState
+            title="HVAC systems could not be loaded."
+            detail={systemsError}
+            onRetry={refreshSystems}
+          />
         ) : systems.length === 0 ? (
-          <div className="mt-4 max-w-xl rounded-2xl border border-sky-200 bg-sky-50 p-5 dark:bg-sky-950/30">
-            <p className="text-base font-black text-slate-950 dark:text-slate-50">
-              No HVAC system is recorded for this property.
-            </p>
-
-            <button
-              type="button"
-              onClick={() =>
+          <div className="mt-4 max-w-xl">
+            <ForgeEmptyState
+              headline="No HVAC system is recorded for this property."
+              guidance="Add the property's first HVAC system to start tracking components and service history."
+              actionLabel="Add this property’s first HVAC system"
+              onAction={() =>
                 setWorkflow("add-system")
               }
-              className="mt-4 w-full rounded-xl bg-sky-700 px-5 py-3 text-sm font-black text-white sm:w-auto"
-            >
-              Add this property’s first HVAC system
-            </button>
+            />
           </div>
         ) : (
+          <>
+            {systemsRefreshing || systemsLoading ? (
+              <p className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">
+                Updating…
+              </p>
+            ) : null}
+
+            {systemsError ? (
+              <p role="status" className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">
+                Could not refresh — showing the last saved systems.
+              </p>
+            ) : null}
+
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             {systems.map((system) => (
               <article
@@ -902,6 +891,7 @@ export default function PropertyHVACPanel() {
               </article>
             ))}
           </div>
+          </>
         )}
       </div>
 
@@ -975,7 +965,7 @@ export default function PropertyHVACPanel() {
           />
 
           <PropertyEvidenceHistoryPanel
-            propertyId={propertyId}
+            propertyId={effectivePropertyId}
             systems={systems}
           />
         </div>
