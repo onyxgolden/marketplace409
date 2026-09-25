@@ -1,11 +1,39 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import RentalApplicationShell, { buildRentalSurface, HIDEABLE_SIDEBAR_SECTIONS, RENTAL_FUNCTIONS, RENTAL_NAVIGATION, resolveRentalSectionParam } from "./RentalApplicationShell.jsx";
 import RentalPageClient from "./RentalPageClient.jsx";
 import RentalLeasePanel from "./RentalLeasePanel.jsx";
+
+// The converted rental panels render ForgeLoadingState until their SWR cache
+// entry exists. Seed the shared cache with empty-but-valid payloads so the
+// cold SSR renders exercise the panels' real markup (headings, copy, controls)
+// instead of the loading skeletons.
+const SWR_SEEDS = {
+  "rental:autopay": [],
+  "rental:communications": { notifications: [], charges: [] },
+  "rental:email-settings": { settings: null, readiness: { resendConfigured: false, workerConfigured: false, domainConfigured: false, verifiedDomain: null } },
+  "rental:deposits": { deposits: [], transactions: [], schedules: [], tenants: [] },
+  "rental:inspections": { inspections: [], units: [], tenants: [], documents: [], inspectionItems: [], inspectionAcknowledgements: [] },
+  "rental:lease-lifecycle": { leases: [], leaseChanges: [], lateFeeRules: [], lateFeeAssessments: [], tenants: [], units: [], properties: [] },
+  "rental:lease-preparation": { leases: [], leasePreparations: [], leasePreparationVersions: [], leaseMemberships: [], leaseSignatures: [], tenants: [] },
+  "rental:lease-setup": { units: [], tenants: [], leases: [], schedules: [], leaseMemberships: [] },
+  "rental:maintenance": { maintenanceRequests: [], contractors: [], workOrders: [], workEvents: [] },
+  "rental:payments": { openCharges: [], payments: [], settlements: [], schedules: [], billingEnabled: false },
+  "rental:stripe-account": null,
+  "rental:reconciliation": { payments: [], settlements: [] },
+  "rental:setup": { units: [] },
+  "rental:support": [],
+};
+async function seedSWR() {
+  clearSWRCache();
+  await Promise.all(Object.entries(SWR_SEEDS).map(([key, payload]) => fetchWithDedupe(key, () => Promise.resolve(payload))));
+}
+beforeEach(async () => { await seedSWR(); });
+afterEach(() => { clearSWRCache(); });
 
 const EXPECTED_FUNCTION_IDS = [
   "overview",

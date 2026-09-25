@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import RentalSetupPanel, { activeBalanceCentsForUnit, tenantLabelForUnit } from "./RentalSetupPanel";
 
 const leases = [
@@ -42,7 +43,11 @@ describe("activeBalanceCentsForUnit", () => {
 });
 
 describe("RentalSetupPanel new-unit creation", () => {
-  it("labels the create action generically instead of naming a specific property", () => {
+  afterEach(() => { clearSWRCache(); });
+  it("labels the create action generically instead of naming a specific property", async () => {
+    // Seed the SWR cache so the converted panel renders its create form instead
+    // of the loading skeleton on a cold static render.
+    await fetchWithDedupe("rental:setup", () => Promise.resolve({ units: [], leases: [], leaseMemberships: [], tenants: [], openCharges: [] }));
     const markup = renderToStaticMarkup(<RentalSetupPanel />);
     expect(markup).toContain("Review and create property / unit");
     expect(markup).not.toContain("Save Kent Avenue unit");

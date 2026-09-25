@@ -2,6 +2,12 @@
 import { useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 
+// no-blank-screens verdict: N/A — no mount-time fetch. Previews and approvals
+// are deliberately user-gated behind explicit buttons (the approval endpoint
+// recomputes its batch fresh from Rentec immediately before writing, and the
+// panel's own comments note auto-fetching would hit Rentec's rate limit), so
+// nothing here can move to stale-while-revalidate. First paint is static copy
+// + "Run preview" with inline error/confirm states: never blank.
 const money = (cents) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cents || 0) / 100);
 
 // Narrow, authenticated import-control screen for the Rentec financial-history resume importer.
@@ -76,7 +82,7 @@ export default function RentecFinancialHistoryImportPanel() {
       <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Financial History</p>
       <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Import Rentec financial history</h2>
       <p className="mt-2 max-w-3xl text-sm text-slate-600 dark:text-slate-400">
-        Preview the Rentec transaction history still missing from Rental Manager's financial events and,
+        Preview the Rentec transaction history still missing from Rental Manager&apos;s financial events and,
         on your explicit approval, import it one year at a time, oldest first. Nothing is written until
         you confirm a specific year, and every batch is recomputed fresh on the server immediately before
         it writes anything.

@@ -1,8 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import RentRollImportPanel from "./RentRollImportPanel";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const STATUS_TEXT_COLORS = { active: "text-emerald-700 dark:text-emerald-400", draft: "text-amber-700 dark:text-amber-400", cancelled: "text-slate-400 line-through dark:text-slate-500", ended: "text-slate-400 dark:text-slate-500", terminated: "text-slate-400 dark:text-slate-500" };
@@ -25,10 +27,25 @@ export function propertyIdForSelectedUnit(units, unitId) {
 }
 
 export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [], schedules: [], leaseMemberships: [] }, loadOnMount = true, initialShowCreate = null, recordContext = null }) {
+  // Lease setup: stale-while-revalidate under one global key (skipped entirely
+  // when loadOnMount is false). The cached setup renders instantly on return
+  // visits and refreshes in the background — the last good data never blanks
+  // out. Mutations post through /api/rental then call refresh() to revalidate.
+  const fetchLeaseSetup = useCallback(async () => {
+    const response = await fetch("/api/rental");
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to load lease setup records.");
+    return { units: result.units || [], tenants: result.tenants || [], leases: result.leases || [], schedules: result.schedules || [], leaseMemberships: result.leaseMemberships || [] };
+  }, []);
+  const { data: loaded, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    loadOnMount ? "rental:lease-setup" : null,
+    fetchLeaseSetup,
+    { ttlMs: 60_000 },
+  );
+  const setup = loaded || initialSetup;
   const initialDefaults = deriveLeaseFormDefaults(initialSetup, recordContext);
   const contextTenantId = recordContext?.recordType === "tenant" ? recordContext.recordId : null;
   const [message, setMessage] = useState("");
-  const [setup, setSetup] = useState(initialSetup);
   const [showCreate, setShowCreate] = useState(initialShowCreate ?? initialDefaults.showCreate);
   const [selectedId, setSelectedId] = useState(initialDefaults.selectedId);
   const [selectedUnitId, setSelectedUnitId] = useState("");
@@ -36,23 +53,24 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
   useEffect(() => {
     if (!selectedUnitId && setup.units.length === 1) setSelectedUnitId(setup.units[0].id);
   }, [setup.units, selectedUnitId]);
-  const selectedUnitPropertyId = propertyIdForSelectedUnit(setup.units, selectedUnitId);
-  async function reload() {
-    const response = await fetch("/api/rental"); const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Unable to load lease setup records.");
-    const loaded = { units: result.units || [], tenants: result.tenants || [], leases: result.leases || [], schedules: result.schedules || [], leaseMemberships: result.leaseMemberships || [] };
-    setSetup(loaded); setSelectedId((current) => loaded.leases.some((item) => item.id === current) ? current : loaded.leases[0]?.id || null); setShowCreate(loaded.leases.length === 0);
-    return loaded;
-  }
+  // One-time adoption of the loaded dataset (mirrors the old fetch-on-mount):
+  // keep the selection on a real lease and collapse the create form when
+  // leases exist. Background refreshes never touch selection or the form.
+  const adoptedInitial = useRef(false);
   useEffect(() => {
-    if (!loadOnMount) return;
-    reload().then((loaded) => {
-      if (!contextTenantId) return;
+    if (!loaded || adoptedInitial.current) return;
+    adoptedInitial.current = true;
+    const leases = loaded.leases || [];
+    if (contextTenantId) {
       const defaults = deriveLeaseFormDefaults(loaded, recordContext);
       setShowCreate(defaults.showCreate);
       setSelectedId(defaults.selectedId);
-    }).catch((error) => setMessage(error.message));
-  }, [loadOnMount]);
+      return;
+    }
+    setSelectedId((current) => leases.some((item) => item.id === current) ? current : leases[0]?.id || null);
+    setShowCreate(leases.length === 0);
+  }, [loaded, contextTenantId, recordContext]);
+  const selectedUnitPropertyId = propertyIdForSelectedUnit(setup.units, selectedUnitId);
   async function activateLease(lease) {
     const schedule = (setup.schedules || []).find((item) => item.lease_id === lease.id);
     if (!schedule) { setMessage("No rent schedule found for this lease — save one before activating."); return; }
@@ -63,7 +81,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to activate the lease.");
       setMessage(`Lease activated: ${result.activation.leaseId}`);
-      await reload();
+      await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function createSchedule(event, lease) {
@@ -77,7 +95,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to save the rent schedule.");
       setMessage(`Rent schedule saved: ${result.schedule.id}. You can now activate this lease.`);
-      await reload();
+      await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function cancelLease(lease) {
@@ -88,7 +106,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to cancel the lease.");
       setMessage(`Lease cancelled: ${result.lease.id}`);
-      await reload();
+      await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function save(event) {
@@ -115,10 +133,22 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       setMessage(`Lease saved: ${leaseResult.lease.id} — Schedule: ${scheduleResult.schedule.id}`);
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
+
+  if (loadOnMount && !loaded && isLoading) return <ForgeLoadingState label="Loading leases and rent schedules…" />;
+  if (loadOnMount && !loaded && loadError) {
+    return <ForgeErrorState
+      title="Unable to load leases and rent schedules"
+      detail={loadError}
+      onRetry={() => refresh()}
+    />;
+  }
+
   return <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-lease-setup>
     <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Lease setup</p>
     <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Leases and rent schedules</h2>
     <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review existing leases first. New schedules remain draft until the signed lease is ready. If a tenant is already renting but has no lease on file (their original term expired and was never re-signed, or the record didn't import), add one below and leave the end date blank for an ongoing month-to-month tenancy.</p>
+    {(loaded || initialSetup) && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved setup.</p> : null}
+    {(loaded || initialSetup) && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
     {(setup.leases || []).length > 0 && <RentalRecordBrowser title="Leases" records={setup.leases} selectedId={selectedId} onSelect={setSelectedId}
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
       getSubtitle={(lease) => <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly</>}>
@@ -128,7 +158,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
       Save at least one rental unit and tenant before creating a lease.</p>}
     {(setup.leases || []).length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`mt-5 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a lease for an existing tenant</button>}
-    <RentRollImportPanel units={setup.units} tenants={setup.tenants} leases={setup.leases} onImported={reload} />
+    <RentRollImportPanel units={setup.units} tenants={setup.tenants} leases={setup.leases} onImported={refresh} />
     {showCreate && <form onSubmit={save} className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {(setup.leases || []).length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/30 md:col-span-2 xl:col-span-3"><p className="text-sm font-bold text-amber-950 dark:text-amber-200">Other leases already exist. This adds a new one — for a future/replacement term, or to attach a currently-renting tenant who has no lease on file yet.</p><button type="button" onClick={() => setShowCreate(false)} className="rounded-lg border border-amber-500 bg-white px-3 py-2 text-sm font-black text-amber-950 transition hover:bg-amber-50 dark:border-amber-700 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-slate-800">Cancel setup</button></div>}
       <label className="text-sm font-bold text-slate-900 dark:text-white">Rental unit<select name="unitId" required value={selectedUnitId} onChange={(event) => setSelectedUnitId(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white">

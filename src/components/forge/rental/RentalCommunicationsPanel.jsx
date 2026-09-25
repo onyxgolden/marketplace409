@@ -1,30 +1,59 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { seedCacheEntry } from "@/hooks/swrCache";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 const label = value => value?.replaceAll("_", " ") || "—";
 const identity = value => value;
 const emptyReadiness = { resendConfigured: false, workerConfigured: false, domainConfigured: false, verifiedDomain: null };
+const emptyEmailState = { settings: null, readiness: emptyReadiness };
 
-export default function RentalCommunicationsPanel({ initialData = null, dataScope = identity, initialEmailSettings }) {
-  const [data, setData] = useState(initialData || { notifications: [], charges: [] });
+export default function RentalCommunicationsPanel({ initialData = null, dataScope = identity, initialEmailSettings, cacheKey = "rental:communications" }) {
+  // Notification outbox + email settings: stale-while-revalidate under two
+  // keys. The cached outbox renders instantly on return visits and refreshes
+  // in the background — the last good list never blanks out. Mutations post
+  // through /api/rental then call refresh() to revalidate. Parent-supplied
+  // initialData/initialEmailSettings are seeded into the cache so the keys
+  // stay live: first paint is instant, no mount refetch fires (the entries
+  // are fresh), and refresh() after mutations actually revalidates. The
+  // contextual surface passes its own scoped cacheKey so scoped data never
+  // pollutes the global key.
+  if (initialData) seedCacheEntry(cacheKey, initialData);
+  if (initialEmailSettings !== undefined) seedCacheEntry("rental:email-settings", initialEmailSettings);
+  const fetchNotifications = useCallback(async () => {
+    const response = await fetch("/api/rental");
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error);
+    const scoped = dataScope(body);
+    return { ...scoped, charges: scoped.openCharges || [] };
+  }, [dataScope]);
+  const { data: loaded, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    cacheKey,
+    fetchNotifications,
+    { ttlMs: 60_000 },
+  );
+  const fetchEmailSettings = useCallback(async () => {
+    const response = await fetch("/api/rental/email-settings");
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error);
+    return { settings: body.settings, readiness: body.readiness };
+  }, []);
+  const { data: loadedEmailSettings, refresh: refreshEmailSettings } = useStaleWhileRevalidate(
+    "rental:email-settings",
+    fetchEmailSettings,
+    { ttlMs: 60_000 },
+  );
+  const data = loaded || { notifications: [], charges: [] };
   const [selectedId, setSelectedId] = useState("");
   const [showQueue, setShowQueue] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [emailState, setEmailState] = useState(initialEmailSettings || { settings: null, readiness: emptyReadiness });
+  const [savedEmailState, setSavedEmailState] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const load = useCallback(() => fetch("/api/rental").then(async response => {
-    const body = await response.json(); if (!response.ok) throw new Error(body.error);
-    const scoped = dataScope(body); setData({ ...scoped, charges: scoped.openCharges || [] });
-  }), [dataScope]);
-  const loadSettings = useCallback(() => fetch("/api/rental/email-settings").then(async response => {
-    const body = await response.json(); if (!response.ok) throw new Error(body.error);
-    setEmailState({ settings: body.settings, readiness: body.readiness });
-  }), []);
-  useEffect(() => { if (!initialData) load().catch(reason => setError(reason.message)); }, [initialData, load]);
-  useEffect(() => { if (initialEmailSettings === undefined) loadSettings().catch(reason => setError(reason.message)); }, [initialEmailSettings, loadSettings]);
+  const emailState = savedEmailState || loadedEmailSettings || emptyEmailState;
 
   const activeId = data.notifications.some(item => item.id === selectedId) ? selectedId : data.notifications[0]?.id || "";
   const selected = data.notifications.find(item => item.id === activeId);
@@ -32,7 +61,7 @@ export default function RentalCommunicationsPanel({ initialData = null, dataScop
 
   async function post(payload, text) {
     setError(""); const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
-    const body = await response.json(); if (!response.ok) throw new Error(body.error); setMessage(text); await load();
+    const body = await response.json(); if (!response.ok) throw new Error(body.error); setMessage(text); await refresh();
   }
   async function queue(event) {
     event.preventDefault(); const element = event.currentTarget, form = new FormData(element);
@@ -42,13 +71,30 @@ export default function RentalCommunicationsPanel({ initialData = null, dataScop
   async function saveSettings(event) {
     event.preventDefault(); setError(""); const form = new FormData(event.currentTarget);
     const payload = { senderName: form.get("senderName"), senderEmail: form.get("senderEmail"), status: form.get("status"), transactionalEnabled: form.get("transactionalEnabled") === "on", remindersEnabled: form.get("remindersEnabled") === "on" };
-    try { const response = await fetch("/api/rental/email-settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }); const body = await response.json(); if (!response.ok) throw new Error(body.error); setEmailState({ settings: body.settings, readiness: body.readiness }); setMessage(payload.status === "active" ? "Rental email delivery activated." : "Rental email settings saved without activating delivery."); }
+    try {
+      const response = await fetch("/api/rental/email-settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error);
+      setSavedEmailState({ settings: body.settings, readiness: body.readiness });
+      await refreshEmailSettings();
+      setMessage(payload.status === "active" ? "Rental email delivery activated." : "Rental email settings saved without activating delivery.");
+    }
     catch (reason) { setError(reason.message); }
+  }
+
+  if (!loaded && isLoading) return <ForgeLoadingState label="Loading notification outbox…" />;
+  if (!loaded && loadError) {
+    return <ForgeErrorState
+      title="Unable to load the notification outbox"
+      detail={loadError}
+      onRetry={() => refresh()}
+    />;
   }
 
   return <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
     <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Communications</p><h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Notification outbox</h2><p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review queued messages and bounded retries. Email delivery is {active ? "active" : "not active"}.</p></div><div className="flex gap-2"><button type="button" onClick={() => { setShowSettings(value => !value); setShowQueue(false); }} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">{showSettings ? "Close settings" : "Email settings"}</button><button type="button" onClick={() => { setShowQueue(value => !value); setShowSettings(false); }} className={`rounded-xl px-4 py-2 text-sm font-bold transition ${goldControlClassName}`}>{showQueue ? "Cancel reminder" : "Queue reminder"}</button></div></div>
     {error ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p> : null}{message ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">{message}</p> : null}
+    {loaded && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved outbox.</p> : null}
+    {loaded && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
     {showSettings ? <EmailSettingsForm emailState={emailState} onSubmit={saveSettings} /> : null}
     {showQueue ? <form aria-label="Queue rent reminder" onSubmit={queue} className="mt-6 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40 md:grid-cols-2"><select name="chargeId" required className="rounded-xl border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="">Select open charge</option>{data.charges.map(item => <option key={item.id} value={item.id}>{item.period} · due {item.due_date}</option>)}</select><select name="notificationType" className="rounded-xl border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="rent_reminder">Upcoming reminder</option><option value="balance_overdue">Overdue balance</option></select><input aria-label="Schedule time" name="scheduledFor" type="datetime-local" required className="rounded-xl border border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white"/><label className="text-sm font-bold text-slate-900 dark:text-white">Maximum attempts<input name="maxAttempts" type="number" min="1" max="5" defaultValue="3" className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-3 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white"/></label><button className={`rounded-xl px-4 py-3 text-sm font-bold transition md:col-span-2 ${goldControlClassName}`}>Queue reminder for review</button></form> : null}
     <div className="mt-6"><RentalRecordBrowser title="Communications" records={data.notifications} selectedId={activeId} onSelect={setSelectedId} getTitle={item => item.subject} getSubtitle={item => `${label(item.status)} · ${label(item.notification_type)}`} emptyMessage="No notifications queued.">{!selected ? <p className="text-sm text-slate-500 dark:text-slate-400">No tenant communication requires review.</p> : <div><p className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">Selected communication</p><h3 className="mt-2 text-xl font-black text-slate-950 dark:text-white">{selected.subject}</h3><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Fact term="Status" value={label(selected.status)}/><Fact term="Type" value={label(selected.notification_type)}/><Fact term="Recipient" value={selected.recipient}/><Fact term="Scheduled" value={selected.scheduled_for ? new Date(selected.scheduled_for).toLocaleString() : "—"}/><Fact term="Attempts" value={`${selected.attempt_count || 0} of ${selected.max_attempts || 0}`}/><Fact term="Channel" value={label(selected.channel || "email")}/></dl><div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-950/40 dark:text-slate-300">{selected.body_text}</div>{selected.failure_message ? <p className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950/40 dark:text-red-300">{selected.failure_message}</p> : null}{["queued", "failed"].includes(selected.status) ? <button onClick={() => post({ operation: "cancel-rent-notification", notificationId: selected.id }, "Queued communication cancelled.").catch(reason => setError(reason.message))} className="mt-5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Cancel communication</button> : null}</div>}</RentalRecordBrowser></div>

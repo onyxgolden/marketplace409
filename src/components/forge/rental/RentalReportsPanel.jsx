@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useState } from "react";
 import ManualFinancialEventForm from "@/components/forge/rental/ManualFinancialEventForm";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -97,9 +99,45 @@ export default function RentalReportsPanel() {
   const [expenseScope, setExpenseScope] = useState("all");
   const [category, setCategory] = useState("");
   const [favorites, setFavorites] = useState([]);
-  const [loaded, setLoaded] = useState(null);
-  const [error, setError] = useState("");
+  // Reports: stale-while-revalidate under a key built from the report plus its
+  // filter params. The last good report stays visible while a new report or a
+  // manual refresh is in flight — switching tabs/filters never blanks the
+  // content area. The adoption effect below is the only writer of `held`,
+  // so a late response for stale params can never overwrite a newer report.
+  const [held, setHeld] = useState(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const filters = { propertyId, asOfDate, startDate, endDate, taxYear, contractorId, expenseScope, category };
+  const paramsString = buildReportParams(reportKey, filters).toString();
+  const swrKey = `rental:reports:${paramsString}:${refreshToken}`;
+  // Plain (non-memoized) fetcher: useStaleWhileRevalidate keeps the latest
+  // closure in a ref, so a fresh function each render is safe — and it keeps
+  // React Compiler's preserve-manual-memoization rule quiet.
+  const fetchReport = async () => {
+    const response = await fetch(`/api/rental/reports?${paramsString}`);
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error);
+    return { reportKeyAtFetch: reportKey, report: body.report };
+  };
+  const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    swrKey,
+    fetchReport,
+    { ttlMs: 60_000 },
+  );
+  // `direct` serves the current key's payload synchronously — this is what
+  // static markup and first paint see. `held` keeps the last good report on
+  // screen while a new key's fetch is in flight, so switching tabs or filters
+  // never blanks the content area. Adoption happens during render (React's
+  // endorsed derived-state pattern): a fresh payload is stored before commit,
+  // with no setState-in-effect. `data.report` is a new object per fetch, so
+  // the identity check only fires when a genuinely new payload arrives.
+  const direct = data ? { key: data.reportKeyAtFetch, report: data.report } : null;
+  if (direct && held?.report !== direct.report) {
+    setHeld(direct);
+    if (direct.report.availableProperties) setAvailableProperties(direct.report.availableProperties);
+    if (direct.report.availableContractors) setAvailableContractors(direct.report.availableContractors);
+    if (direct.report.availableCategories) setAvailableCategories(direct.report.availableCategories);
+  }
+  const loaded = direct || held;
   useEffect(() => {
     setFavorites(loadFavorites());
   }, []);
@@ -121,46 +159,14 @@ export default function RentalReportsPanel() {
     setExpenseScope("all");
     setCategory("");
   };
-  const filters = { propertyId, asOfDate, startDate, endDate, taxYear, contractorId, expenseScope, category };
-  const load = useCallback((key, currentFilters) => {
-    const params = buildReportParams(key, currentFilters);
-    return fetch(`/api/rental/reports?${params.toString()}`).then(
-      async (response) => {
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error);
-        return body.report;
-      },
-    );
-  }, []);
-  useEffect(() => {
-    let cancelled = false;
-    setError("");
-    load(reportKey, filters)
-      .then((nextReport) => {
-        if (cancelled) return;
-        setLoaded({ key: reportKey, report: nextReport });
-        if (nextReport.availableProperties) {
-          setAvailableProperties(nextReport.availableProperties);
-        }
-        if (nextReport.availableContractors) {
-          setAvailableContractors(nextReport.availableContractors);
-        }
-        if (nextReport.availableCategories) setAvailableCategories(nextReport.availableCategories);
-      })
-      .catch((reason) => {
-        if (cancelled) return;
-        setError(reason.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, reportKey, propertyId, asOfDate, startDate, endDate, taxYear, contractorId, expenseScope, category, refreshToken]);
-  // Only trust `loaded` when it was fetched for the currently-selected tab —
-  // otherwise a render can land between a tab switch and its effect running,
-  // pairing the new reportKey with a report shaped for the previous tab.
-  const report = loaded && loaded.key === reportKey ? loaded.report : null;
-  const csvHref = `/api/rental/reports?${buildReportParams(reportKey, filters, { format: "csv" }).toString()}`;
+  const fetching = isLoading || isRefreshing;
+  // The content area is driven by `loaded.key` (the report that produced the
+  // visible data), never by the in-flight `reportKey` — that is what keeps the
+  // previously selected report visible, with matching views, while the new
+  // request runs. Sidebar and filters respond to `reportKey` immediately.
+  const viewKey = loaded ? loaded.key : reportKey;
+  const report = loaded ? loaded.report : null;
+  const csvHref = `/api/rental/reports?${buildReportParams(viewKey, filters, { format: "csv" }).toString()}`;
   return (
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 print:border-0 print:shadow-none">
       <div className="border-b border-slate-200 p-6 dark:border-slate-700 print:hidden">
@@ -175,14 +181,14 @@ export default function RentalReportsPanel() {
       </div>
       <div className="hidden print:block p-6">
         <h2 className="text-2xl font-black">
-          {REPORTS.find((item) => item.key === reportKey)?.label}
+          {REPORTS.find((item) => item.key === viewKey)?.label}
         </h2>
         <p className="mt-1 text-sm text-slate-600">
           Generated {new Date().toLocaleString()}
           {propertyId ? ` — ${propertyLabel(propertyId)}` : ""}
           {asOfDate ? ` — as of ${asOfDate}` : ""}
           {startDate || endDate ? ` — ${startDate || "…"} to ${endDate || "…"}` : ""}
-          {FILTER_MODES[reportKey] === "taxYear" ? ` — tax year ${taxYear}` : ""}
+          {FILTER_MODES[viewKey] === "taxYear" ? ` — tax year ${taxYear}` : ""}
         </p>
       </div>
       <div className="flex flex-col md:flex-row">
@@ -222,12 +228,20 @@ export default function RentalReportsPanel() {
         availableProperties={availableProperties}
         onSaved={() => setRefreshToken((token) => token + 1)}
       />
-      {error ? (
+      {error && loaded ? (
         <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">
-          {error}
+          Could not refresh — showing the last saved report. {error}
         </p>
-      ) : !report ? (
-        <p className="mt-4 text-slate-500 dark:text-slate-400">Loading report…</p>
+      ) : null}
+      {loaded && fetching ? (
+        <p className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+      ) : null}
+      {!report ? (
+        isLoading ? (
+          <ForgeLoadingState label="Loading report…" />
+        ) : (
+          <ForgeErrorState title="Unable to load report" detail={error} onRetry={() => refresh()} />
+        )
       ) : (
         <>
           <div className="mt-5 flex flex-wrap gap-3 print:hidden">
@@ -244,7 +258,7 @@ export default function RentalReportsPanel() {
             >
               Download CSV
             </a>
-            {!reportKey && (
+            {!viewKey && (
               <a
                 href={`/api/rental/reports?format=tax-csv&taxYear=${new Date().getFullYear()}`}
                 className="rounded-lg border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 transition hover:border-slate-400 dark:border-slate-600 dark:text-slate-300 dark:hover:border-slate-500"
@@ -253,27 +267,27 @@ export default function RentalReportsPanel() {
               </a>
             )}
           </div>
-          {!reportKey && (
+          {!viewKey && (
             <p className="mt-3 text-sm text-slate-600 dark:text-slate-400 print:hidden">Review package only—not a filed 1099 or an automatic eligibility decision.</p>
           )}
-          {reportKey === "schedule-e-assistant" && (
+          {viewKey === "schedule-e-assistant" && (
             <p className="mt-3 text-sm text-slate-600 dark:text-slate-400 print:hidden">Starting point for your accountant—not a filed tax return. Depreciation isn&apos;t tracked yet.</p>
           )}
-          {reportKey === "" && <RentRollView report={report} />}
-          {reportKey === "delinquent-tenants" && <DelinquentTenantsView report={report} />}
-          {reportKey === "lease-expiration" && <LeaseExpirationView report={report} />}
-          {reportKey === "vacant-units" && <VacantUnitsView report={report} />}
-          {reportKey === "tenant-contacts" && <TenantContactsView report={report} />}
-          {reportKey === "upcoming-charges" && <UpcomingChargesView report={report} />}
-          {reportKey === "account-ledger" && <AccountLedgerView report={report} />}
-          {reportKey === "income-expense-statement" && <IncomeExpenseStatementView report={report} />}
-          {reportKey === "business-expenses" && <BusinessExpenseView report={report} />}
-          {reportKey === "schedule-e-assistant" && <ScheduleEAssistantView report={report} />}
-          {reportKey === "security-deposits" && <SecurityDepositsView report={report} />}
-          {reportKey === "renters-insurance" && <RentersInsuranceView report={report} />}
-          {reportKey === "work-orders" && <WorkOrdersView report={report} />}
-          {reportKey === "vendor-contacts" && <VendorContactsView report={report} />}
-          {reportKey === "vendor-ledger" && <VendorLedgerView report={report} />}
+          {viewKey === "" && <RentRollView report={report} />}
+          {viewKey === "delinquent-tenants" && <DelinquentTenantsView report={report} />}
+          {viewKey === "lease-expiration" && <LeaseExpirationView report={report} />}
+          {viewKey === "vacant-units" && <VacantUnitsView report={report} />}
+          {viewKey === "tenant-contacts" && <TenantContactsView report={report} />}
+          {viewKey === "upcoming-charges" && <UpcomingChargesView report={report} />}
+          {viewKey === "account-ledger" && <AccountLedgerView report={report} />}
+          {viewKey === "income-expense-statement" && <IncomeExpenseStatementView report={report} />}
+          {viewKey === "business-expenses" && <BusinessExpenseView report={report} />}
+          {viewKey === "schedule-e-assistant" && <ScheduleEAssistantView report={report} />}
+          {viewKey === "security-deposits" && <SecurityDepositsView report={report} />}
+          {viewKey === "renters-insurance" && <RentersInsuranceView report={report} />}
+          {viewKey === "work-orders" && <WorkOrdersView report={report} />}
+          {viewKey === "vendor-contacts" && <VendorContactsView report={report} />}
+          {viewKey === "vendor-ledger" && <VendorLedgerView report={report} />}
         </>
       )}
         </div>

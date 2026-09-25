@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalReportsPanel from "./RentalReportsPanel";
 
 describe("RentalReportsPanel", () => {
@@ -9,6 +10,7 @@ describe("RentalReportsPanel", () => {
   afterEach(() => {
     if (mounted) { act(() => mounted.root.unmount()); mounted.container.remove(); mounted = null; }
     vi.unstubAllGlobals();
+    clearSWRCache();
   });
 
   it("renders without crashing and shows the report content once loaded", async () => {

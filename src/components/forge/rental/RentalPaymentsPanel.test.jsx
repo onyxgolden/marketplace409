@@ -2,8 +2,14 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalPaymentsPanel, { chargeCollectionLabel, defaultChargeMonth, isChargeVoidable, resolveChargeIdentity, resolveScheduleContext } from "./RentalPaymentsPanel";
+
+// Each test starts with a clean SWR cache: the panels seed parent-supplied
+// initialData into the shared cache (first writer wins), so sequential
+// renders with different fixtures must not leak entries across tests.
+beforeEach(() => { clearSWRCache(); });
 
 const baseData = {
   openCharges: [], payments: [], settlements: [],
@@ -158,6 +164,7 @@ describe("RentalPaymentsPanel Generate monthly charge interaction", () => {
   afterEach(() => {
     if (mounted) { unmountPanel(mounted); mounted = null; }
     vi.unstubAllGlobals();
+    clearSWRCache();
   });
 
   it("submits the correct schedule id for the clicked row, even when two leases share identical rent and due day", async () => {
@@ -243,6 +250,7 @@ describe("RentalPaymentsPanel Void charge action", () => {
   afterEach(() => {
     if (mounted) { unmountPanel(mounted); mounted = null; }
     vi.unstubAllGlobals();
+    clearSWRCache();
   });
 
   it("shows a Void charge action for an unpaid open charge", () => {
@@ -420,7 +428,7 @@ describe("RentalPaymentsPanel charge collection-authority visibility", () => {
 
 // Rental billing master pause banner — required at the top of Rent & Payments.
 describe("RentalPaymentsPanel billing pause banner", () => {
-  afterEach(() => { vi.unstubAllGlobals(); });
+  afterEach(() => { vi.unstubAllGlobals(); clearSWRCache(); });
 
   it("shows PAUSED by default and offers a Resume FORGE billing control", () => {
     const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: false }} initialAccount={null} />);

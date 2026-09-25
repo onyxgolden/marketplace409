@@ -1,20 +1,28 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import RentalLeasePanel from "./RentalLeasePanel.jsx";
 import RentalSetupPanel from "./RentalSetupPanel.jsx";
 import RentalTenantPanel from "./RentalTenantPanel.jsx";
 
 describe("rental existing-record safety", () => {
-  it("shows an existing lease and hides duplicate creation by default", () => {
-    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={{ units: [{ id: "unit_1", label: "Main residence" }], tenants: [], leases: [{ id: "lease_1", unit_id: "unit_1", status: "active", monthly_rent_cents: 200000, start_date: "2026-08-12", end_date: null }] }} />);
+  afterEach(() => { clearSWRCache(); });
+  it("shows an existing lease and hides duplicate creation by default", async () => {
+    // Seed the SWR cache so the converted panel renders its lease detail
+    // instead of the loading skeleton on a cold static render.
+    const initialSetup = { units: [{ id: "unit_1", label: "Main residence" }], tenants: [], leases: [{ id: "lease_1", unit_id: "unit_1", status: "active", monthly_rent_cents: 200000, start_date: "2026-08-12", end_date: null }] };
+    await fetchWithDedupe("rental:lease-setup", () => Promise.resolve(initialSetup));
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={initialSetup} />);
     expect(markup).toContain("Selected lease");
     expect(markup).toContain("$2,000.00 monthly");
     expect(markup).toContain("Add a lease for an existing tenant");
     expect(markup).not.toContain("Save draft lease and schedule");
   });
 
-  it("warns about an existing lease and provides a setup cancel action", () => {
-    const markup = renderToStaticMarkup(<RentalLeasePanel initialShowCreate initialSetup={{ units: [{ id: "unit_1", label: "Main residence" }], tenants: [{ id: "tenant_1", display_name: "John Jones" }], leases: [{ id: "lease_1", unit_id: "unit_1", status: "active", monthly_rent_cents: 200000, start_date: "2026-08-12" }] }} />);
+  it("warns about an existing lease and provides a setup cancel action", async () => {
+    const initialSetup = { units: [{ id: "unit_1", label: "Main residence" }], tenants: [{ id: "tenant_1", display_name: "John Jones" }], leases: [{ id: "lease_1", unit_id: "unit_1", status: "active", monthly_rent_cents: 200000, start_date: "2026-08-12" }] };
+    await fetchWithDedupe("rental:lease-setup", () => Promise.resolve(initialSetup));
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialShowCreate initialSetup={initialSetup} />);
     expect(markup).toContain("Other leases already exist");
     expect(markup).toContain("Cancel setup");
     expect(markup).toContain("Save draft lease and schedule");

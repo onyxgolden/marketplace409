@@ -3,6 +3,11 @@
 import { useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 
+// no-blank-screens verdict: N/A — no mount-time fetch. The file inventory is
+// an expensive, rate-limited multi-request Rentec scan that must stay behind
+// the explicit "Inspect Rentec files" button, so it cannot move to
+// stale-while-revalidate. First paint is static copy + action button with
+// progress/error states on the manual flow: never blank.
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const formatBytes = (bytes) => new Intl.NumberFormat("en-US", { style: "unit", unit: "megabyte", maximumFractionDigits: 1 }).format(Number(bytes || 0) / 1_000_000);
 

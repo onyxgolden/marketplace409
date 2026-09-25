@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalLeasePreparationPanel from "./RentalLeasePreparationPanel.jsx";
 
 const portalData = {
@@ -15,7 +16,7 @@ const portalData = {
 
 describe("RentalLeasePreparationPanel signature status", () => {
   let container; let root;
-  afterEach(() => { if (root) act(() => root.unmount()); container?.remove(); vi.unstubAllGlobals(); });
+  afterEach(() => { if (root) act(() => root.unmount()); container?.remove(); vi.unstubAllGlobals(); clearSWRCache(); });
 
   it("shows each tenant's signing status once a version is approved", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => portalData })));
