@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 function emptyLine() {
   return { date: "", description: "", amount: "", capitalized: true };
@@ -29,29 +31,37 @@ export function setupToFormState(setup) {
 
 export default function PropertyFinancialSetupPanel({ recordContext }) {
   const propertyId = recordContext?.propertyId || "";
-  const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(setupToFormState(null));
   const [transactions, setTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [hadSetup, setHadSetup] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [result, setResult] = useState(null);
-
+  // Stale-while-revalidate: a property revisited while switching records shows
+  // its last loaded setup instantly instead of blanking the form to a spinner.
+  // The form is only ever seeded from fetched data -- never invented.
+  const { data, error: loadError, isLoading, isRefreshing, refresh, invalidate } = useStaleWhileRevalidate(
+    propertyId ? `rental:property-financial-setup:${propertyId}` : null,
+    async () => {
+      const response = await fetch(`/api/rental/property-financial-setup?propertyId=${encodeURIComponent(propertyId)}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to load financial setup.");
+      return payload;
+    },
+    { ttlMs: 60_000 },
+  );
+  const seededFor = useRef(null);
   useEffect(() => {
-    if (!propertyId) { setLoading(false); return; }
-    setLoading(true); setError(""); setResult(null);
-    fetch(`/api/rental/property-financial-setup?propertyId=${encodeURIComponent(propertyId)}`)
-      .then((response) => response.json().then((payload) => ({ response, payload })))
-      .then(({ response, payload }) => {
-        if (!response.ok) throw new Error(payload.error || "Unable to load financial setup.");
-        setForm(setupToFormState(payload.setup));
-        setHadSetup(Boolean(payload.setup));
-        setAccounts(payload.available_accounts || []);
-      })
-      .catch((requestError) => setError(requestError.message))
-      .finally(() => setLoading(false));
-  }, [propertyId]);
+    // Seed the editable form from loaded data once per property -- and only
+    // once, so a background refresh never clobbers fields the user is editing.
+    if (data && seededFor.current !== propertyId) {
+      seededFor.current = propertyId;
+      setForm(setupToFormState(data.setup));
+      setHadSetup(Boolean(data.setup));
+      setAccounts(data.available_accounts || []);
+    }
+  }, [data, propertyId]);
 
   function updateField(name, value) {
     setForm((current) => ({ ...current, [name]: value }));
@@ -68,7 +78,7 @@ export default function PropertyFinancialSetupPanel({ recordContext }) {
 
   async function save(event) {
     event.preventDefault();
-    setBusy(true); setError(""); setResult(null);
+    setBusy(true); setSaveError(""); setResult(null);
     try {
       const response = await fetch("/api/rental/property-financial-setup", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -79,8 +89,12 @@ export default function PropertyFinancialSetupPanel({ recordContext }) {
       setResult(payload.result);
       setHadSetup(true);
       setTransactions([]);
-    } catch (saveError) {
-      setError(saveError.message);
+      // The saved state supersedes the cache -- drop it so the next visit
+      // refetches rather than serving the pre-save snapshot.
+      invalidate();
+      seededFor.current = null;
+    } catch (saveException) {
+      setSaveError(saveException.message);
     } finally {
       setBusy(false);
     }
@@ -89,7 +103,16 @@ export default function PropertyFinancialSetupPanel({ recordContext }) {
   if (!propertyId) {
     return <p role="alert" className="rounded-xl bg-red-50 p-4 font-bold text-red-800">Select a property before opening financial setup.</p>;
   }
-  if (loading) return <p role="status" className="rounded-xl bg-cyan-50 p-4 font-bold text-cyan-900">Loading financial setup…</p>;
+  if (!data && isLoading) return <ForgeLoadingState label="Loading financial setup…" />;
+  if (!data && loadError) {
+    return (
+      <ForgeErrorState
+        title="Unable to load financial setup."
+        detail={loadError}
+        onRetry={() => refresh()}
+      />
+    );
+  }
 
   return <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-property-financial-setup-panel>
     <div>
@@ -99,7 +122,13 @@ export default function PropertyFinancialSetupPanel({ recordContext }) {
         {hadSetup ? "This property already has a financial setup. Saving again updates the acquisition record and replaces its recorded transactions." : "This property has no financial history in Financial FORGE yet. Recording acquisition details here writes the corresponding transactions against this exact property — no new property is created."}
       </p>
     </div>
-    {error ? <p role="alert" className="rounded-xl bg-red-50 p-4 font-bold text-red-800">{error}</p> : null}
+    {isRefreshing ? <p role="status" className="text-xs font-bold text-slate-400">Updating…</p> : null}
+    {loadError ? (
+      <p role="status" className="text-xs font-bold text-slate-400">
+        Could not refresh — showing the last saved financial setup.
+      </p>
+    ) : null}
+    {saveError ? <p role="alert" className="rounded-xl bg-red-50 p-4 font-bold text-red-800">{saveError}</p> : null}
     {result ? <p role="status" className="rounded-xl bg-emerald-50 p-4 font-bold text-emerald-900">Saved. {result.financial_events_written} financial event(s) recorded.</p> : null}
 
     <form onSubmit={save} className="space-y-6">

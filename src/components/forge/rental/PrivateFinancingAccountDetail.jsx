@@ -1,8 +1,10 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { isQuoteExpired } from "@/domains/private-financing/payoffQuote";
 import { ADJUSTMENT_ACTION_TYPES } from "@/domains/private-financing/adjustmentActionRegistry";
 import { financingPartyLabel } from "@/domains/private-financing/financingPartyLabel";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import PrivateFinancingLedgerHistory from "./PrivateFinancingLedgerHistory";
 import PrivateFinancingSellerActions from "./PrivateFinancingSellerActions";
 import PrivateFinancingExternalPaymentForm from "./PrivateFinancingExternalPaymentForm";
@@ -33,51 +35,40 @@ function todayISODate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// The 503 schema-unavailable and 404 not-found responses are not load failures -- they describe the
+// environment (feature not activated) or the record (gone / not accessible) -- so the fetcher carries
+// them through the data channel as tagged statuses (the error channel only keeps the message string),
+// preserving the honest distinctions below.
+async function fetchAccountDetail(accountId) {
+  const response = await fetch(`/api/private-financing/accounts/${accountId}`);
+  const payload = await response.json();
+  if (response.status === 503 && payload.code === "private_financing_schema_unavailable") {
+    return { status: "schema-unavailable" };
+  }
+  if (response.status === 404) {
+    return { status: "not-found" };
+  }
+  if (!response.ok) throw new Error(payload.error || "Unable to load this private financing account.");
+  return { status: "ok", ...payload };
+}
+
 // SF-2A/2C's own read model already computes every figure this component displays (via
 // computeAccountBalanceSummary and computeAccountPayoffEstimate, both server-side, both replaying the
 // real event history through SF-1's engine). This component only ever renders what the API returned --
 // it never calculates a balance, an allocation, or a payoff in React. isQuoteExpired is imported (not
 // reimplemented) purely to compare two already-computed date strings for the staleness banner below.
 export default function PrivateFinancingAccountDetail({ accountId, onBack }) {
-  const [status, setStatus] = useState("loading"); // loading | available | schema-unavailable | not-found | error
-  const [detail, setDetail] = useState(null);
-  const [errorMessage, setErrorMessage] = useState("");
+  // Stale-while-revalidate: the last loaded account detail stays on screen while
+  // a refresh (seller action, Recalculate, Refresh button) runs in the
+  // background -- the screen never blanks to a spinner mid-edit.
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    accountId ? `private-financing:account:${accountId}` : null,
+    () => fetchAccountDetail(accountId),
+    { ttlMs: 60_000 },
+  );
+  const detail = data?.status === "ok" ? data : null;
   const [prefillReversalTarget, setPrefillReversalTarget] = useState(null);
   const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0);
-  const requestInFlight = useRef(false);
-
-  const load = useCallback(() => {
-    if (requestInFlight.current) return undefined;
-    requestInFlight.current = true;
-    setStatus("loading");
-    setErrorMessage("");
-    return fetch(`/api/private-financing/accounts/${accountId}`)
-      .then((response) => response.json().then((payload) => ({ response, payload })))
-      .then(({ response, payload }) => {
-        if (response.status === 503 && payload.code === "private_financing_schema_unavailable") {
-          setStatus("schema-unavailable");
-          return;
-        }
-        if (response.status === 404) {
-          setStatus("not-found");
-          return;
-        }
-        if (!response.ok) throw new Error(payload.error || "Unable to load this private financing account.");
-        setDetail(payload);
-        setStatus("available");
-      })
-      .catch((loadError) => {
-        setErrorMessage(loadError.message);
-        setStatus("error");
-      })
-      .finally(() => {
-        requestInFlight.current = false;
-      });
-  }, [accountId]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const handleReverseRequested = useCallback((eventId) => {
     setPrefillReversalTarget({ actionType: ADJUSTMENT_ACTION_TYPES.PAYMENT_REVERSAL, eventId });
@@ -89,9 +80,9 @@ export default function PrivateFinancingAccountDetail({ accountId, onBack }) {
   // account detail and history" -- both the balances/components/payoff read model AND the ledger history
   // are re-fetched after any seller action successfully posts, never just one or the other.
   const handlePosted = useCallback(() => {
-    load();
+    refresh();
     setHistoryRefreshSignal((value) => value + 1);
-  }, [load]);
+  }, [refresh]);
 
   return (
     <div data-guided-workflow-panel aria-label="Private financing account detail">
@@ -104,35 +95,36 @@ export default function PrivateFinancingAccountDetail({ accountId, onBack }) {
         ← Back to accounts
       </button>
 
-      {status === "loading" ? <p role="status" className="mt-4 text-sm text-slate-500 dark:text-slate-400">Loading account details…</p> : null}
+      {!data && isLoading ? <div className="mt-4"><ForgeLoadingState label="Loading account details…" /></div> : null}
 
-      {status === "schema-unavailable" ? (
+      {data?.status === "schema-unavailable" ? (
         <div role="alert" className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-900/60 dark:bg-amber-950/30">
           <p className="text-sm font-bold text-amber-900 dark:text-amber-200">
             Private Financing has not been activated for this environment yet.
           </p>
-          <RetryButton onClick={load} />
+          <RetryButton onClick={() => refresh()} />
         </div>
       ) : null}
 
-      {status === "not-found" ? (
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
-          <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
-            This account was not found, or is not accessible to this workspace.
-          </p>
+      {data?.status === "not-found" ? (
+        <div className="mt-4">
+          <ForgeEmptyState
+            headline="This account was not found, or is not accessible to this workspace."
+          />
         </div>
       ) : null}
 
-      {status === "error" ? (
-        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-900/60 dark:bg-red-950/30">
-          <p role="alert" className="text-sm font-bold text-red-800 dark:text-red-300">
-            {errorMessage || "Something went wrong loading this account."}
-          </p>
-          <RetryButton onClick={load} />
+      {!detail && data?.status !== "schema-unavailable" && data?.status !== "not-found" && loadError ? (
+        <div className="mt-4" data-guided-workflow-control="retry">
+          <ForgeErrorState
+            title="Unable to load this account."
+            detail={loadError}
+            onRetry={() => refresh()}
+          />
         </div>
       ) : null}
 
-      {status === "available" && detail ? (
+      {detail ? (
         <div className="mt-4 space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">
@@ -141,19 +133,27 @@ export default function PrivateFinancingAccountDetail({ accountId, onBack }) {
             <button
               type="button"
               data-guided-workflow-control="refresh-account"
-              onClick={load}
+              onClick={() => refresh()}
               className={`rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 ${FOCUS_RING}`}
             >
               Refresh
             </button>
           </div>
+          {isRefreshing ? (
+            <p role="status" className="text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+          ) : null}
+          {loadError ? (
+            <p role="status" className="text-xs font-bold text-slate-400 dark:text-slate-500">
+              Could not refresh — showing the last saved account details.
+            </p>
+          ) : null}
 
           <AccountSummary account={detail.account} balance={detail.balance} dueState={detail.dueState} servicingPolicy={detail.servicingPolicy} />
           <ComponentDetails components={detail.components} balance={detail.balance} />
-          <PayoffPresentation payoffEstimate={detail.payoffEstimate} account={detail.account} onRecalculate={load} />
+          <PayoffPresentation payoffEstimate={detail.payoffEstimate} account={detail.account} onRecalculate={() => refresh()} />
           <BorrowerMemberships borrowers={detail.borrowers} />
-          <PrivateFinancingBorrowerInvite accountId={accountId} onInvited={load} />
-          <PrivateFinancingOnlinePaymentControl accountId={accountId} settings={detail.onlinePaymentSettings} onChanged={load}/>
+          <PrivateFinancingBorrowerInvite accountId={accountId} onInvited={() => refresh()} />
+          <PrivateFinancingOnlinePaymentControl accountId={accountId} settings={detail.onlinePaymentSettings} onChanged={() => refresh()} />
           {detail.servicingPolicy?.paymentAcceptancePolicy ? (
             <PrivateFinancingPaymentPolicyControl
               accountId={accountId}
