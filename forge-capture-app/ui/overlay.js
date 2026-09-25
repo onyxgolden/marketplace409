@@ -1,29 +1,106 @@
-// FORGE Capture region-picker overlay. Fullscreen transparent window on the
-// target monitor; the user drags a rectangle in CSS px. On release we invoke
-// `capture` with mode "region-overlay" — the backend closes this window
-// before acquiring so the overlay never appears in its own capture.
-"use strict";
+// FORGE Capture region-picker overlay — Snagit-style aiming.
+//
+// Fullscreen window on the target monitor. On open it asks the backend for
+// a frozen frame (`region_pick_backdrop`) and draws crosshair lines, a
+// magnifier loupe, and a live pixel readout over it. The user drags a
+// rectangle in CSS px; on release we invoke `capture` with mode
+// "region-overlay" — the backend closes this window before acquiring so the
+// overlay never appears in its own capture. Esc / right-click cancels.
+//
+// Pure geometry lives in overlay-core.js (unit-tested); this module owns
+// the DOM, canvas, and IPC.
+import {
+  rectOf,
+  dimsText,
+  coordsText,
+  loupeSourceRect,
+  readoutPosition,
+} from "./overlay-core.js";
 
 function invoke(cmd, args) {
   return window.__TAURI_INTERNALS__.invoke(cmd, args);
 }
 
+const backdrop = document.getElementById("backdrop");
+const chV = document.getElementById("ch-v");
+const chH = document.getElementById("ch-h");
+const loupe = document.getElementById("loupe");
+const lctx = loupe.getContext("2d");
+const coords = document.getElementById("coords");
 const sel = document.getElementById("sel");
 const dims = document.getElementById("dims");
 const hint = document.getElementById("hint");
+
+const LOUPE_PX = 148;
 let start = null;
 let busy = false;
+let dpr = window.devicePixelRatio || 1;
+let backdropReady = false;
 
-function rectOf(a, b) {
-  return {
-    x: Math.min(a.x, b.x),
-    y: Math.min(a.y, b.y),
-    w: Math.abs(a.x - b.x),
-    h: Math.abs(a.y - b.y),
-  };
+function showAimTools() {
+  // Crosshairs stay up while dragging (the OS cursor is hidden); the
+  // loupe and readout stand down so the selection stays readable.
+  const cross = backdropReady && !busy;
+  const hover = cross && !start;
+  chV.style.display = cross ? "block" : "none";
+  chH.style.display = cross ? "block" : "none";
+  loupe.style.display = hover ? "block" : "none";
+  coords.style.display = hover ? "block" : "none";
 }
 
-function draw(r) {
+function drawLoupe(xCss, yCss) {
+  const nw = backdrop.naturalWidth;
+  const nh = backdrop.naturalHeight;
+  if (!nw || !nh) return;
+  const r = loupeSourceRect(xCss, yCss, nw, nh, window.innerWidth, window.innerHeight);
+  lctx.imageSmoothingEnabled = false;
+  lctx.clearRect(0, 0, LOUPE_PX, LOUPE_PX);
+  lctx.drawImage(backdrop, r.sx, r.sy, r.sw, r.sh, 0, 0, LOUPE_PX, LOUPE_PX);
+  // Center marker on the exact pixel under the cursor.
+  const mx = (r.centerX / r.sw) * LOUPE_PX;
+  const my = (r.centerY / r.sh) * LOUPE_PX;
+  lctx.strokeStyle = "#d99a3d";
+  lctx.lineWidth = 1;
+  lctx.beginPath();
+  lctx.moveTo(mx - 7, my);
+  lctx.lineTo(mx + 7, my);
+  lctx.moveTo(mx, my - 7);
+  lctx.lineTo(mx, my + 7);
+  lctx.stroke();
+  lctx.strokeStyle = "rgba(0,0,0,0.6)";
+  lctx.strokeRect(mx - 3.5, my - 3.5, 7, 7);
+}
+
+function positionAimTools(xCss, yCss) {
+  chV.style.left = xCss + "px";
+  chH.style.top = yCss + "px";
+  // Loupe follows the cursor; readoutPosition flips it inside the window
+  // near the edges.
+  const loupePos = readoutPosition(
+    xCss,
+    yCss,
+    window.innerWidth,
+    window.innerHeight,
+    LOUPE_PX,
+    LOUPE_PX
+  );
+  loupe.style.left = loupePos.left + "px";
+  loupe.style.top = loupePos.top + "px";
+  drawLoupe(xCss, yCss);
+  coords.textContent = coordsText(xCss, yCss, dpr);
+  const coordsPos = readoutPosition(
+    xCss,
+    yCss,
+    window.innerWidth,
+    window.innerHeight,
+    110,
+    26
+  );
+  coords.style.left = coordsPos.left + "px";
+  coords.style.top = coordsPos.top + "px";
+}
+
+function drawSelection(r) {
   sel.style.display = "block";
   sel.style.left = r.x + "px";
   sel.style.top = r.y + "px";
@@ -32,18 +109,48 @@ function draw(r) {
   dims.style.display = "block";
   dims.style.left = r.x + "px";
   dims.style.top = r.y + r.h + 6 + "px";
-  dims.textContent = `${Math.round(r.w)} x ${Math.round(r.h)}`;
+  dims.textContent = dimsText(r.w, r.h, dpr);
 }
+
+async function init() {
+  try {
+    const ctx = await invoke("overlay_context");
+    if (ctx && ctx.dpr) dpr = ctx.dpr;
+  } catch {
+    /* fall back to window.devicePixelRatio */
+  }
+  try {
+    const shot = await invoke("region_pick_backdrop");
+    backdrop.src = "data:image/png;base64," + shot.png_b64;
+    await new Promise((resolve, reject) => {
+      backdrop.onload = resolve;
+      backdrop.onerror = reject;
+    });
+    backdrop.style.display = "block";
+    backdropReady = true;
+  } catch {
+    // Honest degradation: no frozen frame, no loupe — the drag picker
+    // still works exactly as before.
+    hint.textContent = "Drag to select a region — Esc cancels (preview unavailable)";
+  }
+  showAimTools();
+}
+
+document.addEventListener("mousemove", (e) => {
+  if (busy) return;
+  if (start) {
+    drawSelection(rectOf(start, { x: e.clientX, y: e.clientY }));
+    return;
+  }
+  if (backdropReady) positionAimTools(e.clientX, e.clientY);
+  showAimTools();
+});
 
 document.addEventListener("mousedown", (e) => {
   if (busy || e.button !== 0) return;
   start = { x: e.clientX, y: e.clientY };
   hint.style.display = "none";
-});
-
-document.addEventListener("mousemove", (e) => {
-  if (!start || busy) return;
-  draw(rectOf(start, { x: e.clientX, y: e.clientY }));
+  showAimTools();
 });
 
 document.addEventListener("mouseup", async (e) => {
@@ -90,3 +197,5 @@ document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   if (!busy) invoke("cancel_region_pick");
 });
+
+document.addEventListener("DOMContentLoaded", init);

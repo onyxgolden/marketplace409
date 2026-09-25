@@ -2,128 +2,176 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FORGE Capture</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header>
-    <h1>FORGE Capture <span id="version" class="version"></span></h1>
-    <p class="subtitle">Local-first screen capture. No account, no upload — files stay on this machine.
-      <button id="help-btn" class="linklike" type="button">Help</button></p>
+  <header class="topbar">
+    <div class="brand">FORGE Capture <span id="version" class="version"></span></div>
+    <div class="top-actions">
+      <button id="help-btn" class="ghost-btn" type="button">Help</button>
+    </div>
   </header>
 
+  <div class="tabs" role="tablist" aria-label="Capture type">
+    <button id="tab-image" class="tab active" role="tab" aria-selected="true" type="button">Image</button>
+    <button id="tab-video" class="tab" role="tab" aria-selected="false" type="button">Video</button>
+  </div>
+
   <main>
-    <section class="card">
-      <h2>Capture</h2>
-      <label>Mode
-        <select id="mode">
-          <option value="full-monitor">Full monitor</option>
-          <option value="window">Window</option>
-          <option value="region-overlay">Region (drag on screen)</option>
-        </select>
-      </label>
-      <label id="monitor-row">Monitor
-        <select id="monitor"></select>
-      </label>
-      <label id="window-row" hidden>Window
-        <select id="window"></select>
-      </label>
-      <label>Delay (seconds)
-        <input id="delay" type="number" min="0" max="60" value="0" />
-      </label>
-      <label class="inline"><input id="cursor" type="checkbox" checked /> Include cursor</label>
-      <div class="row">
-        <button id="capture-btn" class="primary">Capture</button>
-        <button id="refresh-btn" title="Reload monitor and window lists">Refresh</button>
-      </div>
-      <p id="status" class="status" role="status"></p>
-    </section>
-
-    <section class="card">
-      <h2>Session captures</h2>
-      <p class="hint">Every capture is saved automatically under the captures folder as PNG + a <code>.forge.json</code> sidecar.</p>
-      <ul id="captures"></ul>
-      <p class="hint">Captures folder: <code id="captures-dir"></code></p>
-    </section>
-
-    <section class="card">
-      <h2>Scrolling capture</h2>
-      <p class="hint">Stitches a full scrollable document from tiles. Every run reports
-        <strong>complete</strong>, <strong>incomplete</strong> (with reason and evidence),
-        or <strong>failed</strong> — a partial stitch is never labeled complete.</p>
-      <label>Target
-        <select id="scroll-target-kind">
-          <option value="window">Window</option>
-          <option value="region">Region (virtual-desktop px)</option>
-        </select>
-      </label>
-      <label id="scroll-window-row">Window
-        <select id="scroll-window"></select>
-      </label>
-      <div id="scroll-region-rows" hidden>
-        <div class="row">
-          <label>X <input id="scroll-x" type="number" value="0" /></label>
-          <label>Y <input id="scroll-y" type="number" value="0" /></label>
+    <!-- ============================ IMAGE ============================ -->
+    <section id="panel-image" role="tabpanel" aria-labelledby="tab-image">
+      <div class="palette">
+        <div class="chips" id="mode-chips" role="radiogroup" aria-label="What to capture">
+          <button type="button" class="chip active" data-mode="region-overlay" role="radio" aria-checked="true">Region</button>
+          <button type="button" class="chip" data-mode="window" role="radio" aria-checked="false">Window</button>
+          <button type="button" class="chip" data-mode="full-monitor" role="radio" aria-checked="false">Full screen</button>
+          <button type="button" class="chip" data-mode="scrolling" role="radio" aria-checked="false">Scrolling</button>
         </div>
-        <div class="row">
-          <label>W <input id="scroll-w" type="number" value="800" /></label>
-          <label>H <input id="scroll-h" type="number" value="600" /></label>
+
+        <div class="row" id="monitor-row">
+          <label class="field">Monitor
+            <select id="monitor"></select>
+          </label>
         </div>
-        <p class="hint">Regions expose no scroll geometry, so they always use raster-observation (wheel input).</p>
+        <div class="row" id="window-row" hidden>
+          <label class="field">Window
+            <select id="window"></select>
+          </label>
+        </div>
+
+        <div class="row compact-row">
+          <label class="field inline">Delay
+            <select id="delay">
+              <option value="0">None</option>
+              <option value="3">3 s</option>
+              <option value="5">5 s</option>
+              <option value="10">10 s</option>
+            </select>
+          </label>
+          <button type="button" id="cursor-chip" class="chip small" aria-pressed="false" title="Include the mouse cursor in the capture">Cursor</button>
+          <button type="button" id="advanced-toggle" class="ghost-btn small" aria-expanded="false" aria-controls="advanced">Advanced</button>
+        </div>
+
+        <button id="capture-btn" class="capture-btn" type="button">Capture</button>
+
+        <div class="row meta-row">
+          <button id="refresh-btn" class="ghost-btn small" type="button">Refresh</button>
+          <span id="captures-dir" class="captures-dir" title="Captures folder"></span>
+        </div>
+
+        <div id="advanced" hidden>
+          <h3>Scrolling capture</h3>
+          <div class="row">
+            <label class="field">Target
+              <select id="scroll-target-kind">
+                <option value="region">Region</option>
+                <option value="window">Window</option>
+              </select>
+            </label>
+          </div>
+          <div class="row" id="scroll-window-row" hidden>
+            <label class="field">Window
+              <select id="scroll-window"></select>
+            </label>
+          </div>
+          <div id="scroll-region-rows">
+            <div class="row coords">
+              <label class="field">X <input id="scroll-x" type="number" value="0" /></label>
+              <label class="field">Y <input id="scroll-y" type="number" value="0" /></label>
+              <label class="field">W <input id="scroll-w" type="number" value="800" /></label>
+              <label class="field">H <input id="scroll-h" type="number" value="600" /></label>
+            </div>
+          </div>
+          <div class="row">
+            <label class="field">Engine
+              <select id="scroll-engine">
+                <option value="auto">Auto</option>
+                <option value="dom-aware">DOM aware</option>
+                <option value="raster-observation">Raster observation</option>
+              </select>
+            </label>
+            <label class="field">Direction
+              <select id="scroll-direction">
+                <option value="vertical">Vertical</option>
+                <option value="horizontal">Horizontal</option>
+                <option value="both">Both</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <button id="scroll-btn" type="button">Start scrolling capture</button>
+            <button id="scroll-stop-btn" type="button" hidden>Stop</button>
+          </div>
+          <div id="scroll-status" class="status" role="status"></div>
+        </div>
+
+        <div id="status" class="status" role="status"></div>
       </div>
-      <label>Engine
-        <select id="scroll-engine">
-          <option value="auto">Auto — DOM-aware, falls back to raster</option>
-          <option value="dom-aware">DOM-aware — window scrollbars (exact)</option>
-          <option value="raster-observation">Raster-observation — synthesized wheel input</option>
-        </select>
-      </label>
-      <label>Direction
-        <select id="scroll-direction">
-          <option value="vertical">Vertical</option>
-          <option value="horizontal">Horizontal</option>
-        </select>
-      </label>
-      <div class="row">
-        <button id="scroll-btn" class="primary">Start scrolling capture</button>
-        <button id="scroll-stop-btn" hidden>Stop</button>
-      </div>
-      <p id="scroll-status" class="status" role="status"></p>
+
+      <section class="library" aria-label="This session">
+        <h2>This session</h2>
+        <ul id="captures" class="captures"></ul>
+      </section>
     </section>
 
-    <div id="record-mount"></div>
-
-    <dialog id="help-dialog" aria-labelledby="help-title">
-      <h2 id="help-title">How FORGE Capture works</h2>
-      <div class="help-body">
-        <h3>Capture modes</h3>
-        <ul>
-          <li><strong>Full monitor</strong> — captures the whole selected monitor, right now.</li>
-          <li><strong>Window</strong> — pick a window from the list, then Capture. (Windows only for now — on Linux use monitor or region.)</li>
-          <li><strong>Region (drag on screen)</strong> — the screen dims; drag a rectangle, or press <kbd>Esc</kbd> to cancel.</li>
-        </ul>
-        <h3>Keyboard shortcuts</h3>
-        <ul>
-          <li><kbd>PrintScreen</kbd> — open the Capture window</li>
-          <li><kbd>Shift</kbd>+<kbd>PrintScreen</kbd> — start a region capture</li>
-          <li><kbd>Ctrl</kbd>+<kbd>PrintScreen</kbd> — window capture (pick the window, then Capture)</li>
-          <li><kbd>Alt</kbd>+<kbd>PrintScreen</kbd> — capture the current monitor now</li>
-          <li><kbd>Esc</kbd> — cancel a region pick</li>
-        </ul>
-        <p class="hint">On Linux, the global shortcuts work in X11/Xorg sessions; on Wayland the compositor may block them — everything still works from this window.</p>
-        <h3>Where captures go</h3>
-        <p>Every capture is saved automatically as PNG + a <code>.forge.json</code> sidecar in the captures folder shown under “Session captures” (<code>~/.local/share/forge-capture/Captures</code> on Linux). Use Copy on any capture to put the image on the clipboard.</p>
-        <p class="hint">Save-to-FORGE isn't in this build yet.</p>
-      </div>
-      <form method="dialog">
-        <button class="primary" type="submit">Close</button>
-      </form>
-    </dialog>
+    <!-- ============================ VIDEO ============================ -->
+    <section id="panel-video" role="tabpanel" aria-labelledby="tab-video" hidden>
+      <div id="record-mount"></div>
+    </section>
   </main>
 
-  <script src="main.js"></script>
-  <script type="module" src="forge-upload.js"></script>
+  <dialog id="help-dialog">
+    <h2>FORGE Capture help</h2>
+    <div class="help-body">
+      <h3>Capture</h3>
+      <p>Pick <strong>Image</strong> or <strong>Video</strong>, choose what to grab —
+      <strong>Region</strong> (drag a rectangle), <strong>Window</strong>, <strong>Full screen</strong>,
+      or <strong>Scrolling</strong> — then hit the red <strong>Capture</strong> button.</p>
+      <ul>
+        <li><strong>Region</strong> freezes the screen, then shows crosshairs and a magnifier so you can aim precisely. Drag to select; the live readout shows pixel coordinates and size.</li>
+        <li><strong>Delay</strong> waits 3–10 s before capturing. <strong>Cursor</strong> includes the mouse pointer.</li>
+        <li><strong>Scrolling</strong> lives under <strong>Advanced</strong>: pick a region or window and an engine, then start/stop the run.</li>
+      </ul>
+      <h3>Shortcuts</h3>
+      <ul>
+        <li><strong>PrintScreen</strong> — open Capture</li>
+        <li><strong>Shift+PrintScreen</strong> — start a region capture</li>
+        <li><strong>Ctrl+PrintScreen</strong> — arm window capture</li>
+        <li><strong>Alt+PrintScreen</strong> — capture the current monitor</li>
+        <li><strong>Esc</strong> / right-click — cancel the region picker</li>
+      </ul>
+      <h3>AI Edit</h3>
+      <p>Every captured image has an <strong>AI Edit</strong> button. Describe the change; the
+      original is never modified — the finished edit comes back as a new versioned copy
+      (e.g. <code>…-ai-edit.png</code>).</p>
+      <p>Capture itself never touches the network: it writes your image and prompt to a local
+      job folder and waits. An <strong>AI runner</strong> carries jobs to the AI team and drops
+      results back. Until a runner is set up, jobs wait honestly in the queue — see
+      <code>forge-capture-app/docs/ai-edit.md</code> for the setup contract.</p>
+      <h3>Session library</h3>
+      <p>Everything captured this session appears under <strong>This session</strong>, newest first.
+      Copy puts the image on the clipboard; Provenance shows the capture's sidecar record;
+      <strong>Save to FORGE</strong> uploads to your FORGE library when you're signed in.</p>
+    </div>
+    <form method="dialog"><button type="submit">Close</button></form>
+  </dialog>
+
+  <dialog id="ai-edit-dialog">
+    <h2>AI Edit</h2>
+    <p class="dialog-sub">Describe what should change. The original stays untouched — the result arrives as a new versioned copy.</p>
+    <label class="field block">Edit prompt
+      <textarea id="ai-edit-prompt" rows="4" maxlength="2000" placeholder="e.g. remove the mouse cursor, crop to the dialog"></textarea>
+    </label>
+    <div id="ai-edit-status" class="status" role="status"></div>
+    <div class="dialog-actions">
+      <button id="ai-edit-cancel" type="button" class="ghost-btn">Cancel</button>
+      <button id="ai-edit-submit" type="button" class="primary-btn">Send to AI</button>
+    </div>
+  </dialog>
+
+  <script src="forge-upload.js"></script>
+  <script type="module" src="main.js"></script>
   <script type="module" src="record.js"></script>
 </body>
 </html>

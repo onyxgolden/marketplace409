@@ -9,9 +9,21 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: rgba(0, 0, 0, 0.25);
-      cursor: crosshair;
+      background: rgba(0, 0, 0, 0.35);
+      cursor: none;
       user-select: none;
+    }
+    /* Frozen fullscreen frame captured just before the overlay opened.
+       The crosshair and magnifier aim on this image; the real capture
+       happens on the live screen after the overlay closes. */
+    #backdrop {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: fill;
+      pointer-events: none;
+      display: none;
     }
     #hint {
       position: fixed;
@@ -24,6 +36,39 @@
       padding: 8px 14px;
       border-radius: 6px;
       pointer-events: none;
+      z-index: 30;
+    }
+    .crosshair {
+      position: fixed;
+      background: rgba(217, 154, 61, 0.85);
+      pointer-events: none;
+      display: none;
+      z-index: 10;
+    }
+    #ch-v { top: 0; bottom: 0; width: 1px; }
+    #ch-h { left: 0; right: 0; height: 1px; }
+    #loupe {
+      position: fixed;
+      width: 148px;
+      height: 148px;
+      border: 2px solid #d99a3d;
+      border-radius: 50%;
+      background: #111;
+      pointer-events: none;
+      display: none;
+      z-index: 20;
+    }
+    #coords {
+      position: fixed;
+      background: rgba(20, 22, 26, 0.92);
+      color: #e8eaed;
+      font: 12px "Segoe UI", system-ui, sans-serif;
+      padding: 4px 8px;
+      border-radius: 4px;
+      pointer-events: none;
+      display: none;
+      z-index: 20;
+      white-space: nowrap;
     }
     #sel {
       position: fixed;
@@ -31,23 +76,30 @@
       background: rgba(217, 154, 61, 0.12);
       display: none;
       pointer-events: none;
+      z-index: 15;
     }
     #dims {
       position: fixed;
-      background: rgba(20, 22, 26, 0.9);
+      background: rgba(20, 22, 26, 0.92);
       color: #e8eaed;
       font: 12px "Segoe UI", system-ui, sans-serif;
       padding: 4px 8px;
       border-radius: 4px;
       display: none;
       pointer-events: none;
+      z-index: 20;
     }
   </style>
 </head>
 <body>
+  <img id="backdrop" alt="" />
   <div id="hint">Drag to select a region — Esc cancels</div>
+  <div id="ch-v" class="crosshair"></div>
+  <div id="ch-h" class="crosshair"></div>
+  <canvas id="loupe" width="148" height="148"></canvas>
+  <div id="coords"></div>
   <div id="sel"></div>
   <div id="dims"></div>
-  <script src="overlay.js"></script>
+  <script type="module" src="overlay.js"></script>
 </body>
 </html>

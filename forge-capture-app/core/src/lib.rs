@@ -29,7 +29,15 @@
 //! - [`hotkey`] — Print Screen takeover contract: the accelerator string,
 //!   the launch-not-shutter action, and the graceful-degradation status
 //!   mapping. Pure logic; the Tauri shell performs the OS registration.
+//! - [`ai_edit`] — AI Edit job contract: the local spool layout, the
+//!   `job.json` manifest schema, job-id validation, status resolution, and
+//!   versioned result stems. Pure logic; the shell owns the filesystem and
+//!   the runner contract lives in `docs/ai-edit.md`.
 
+/// AI Edit job contract: the local spool layout, manifest schema, job-id
+/// validation, status resolution, and versioned result stems. Pure logic;
+/// the Tauri shell owns the filesystem, the runner contract lives in docs.
+pub mod ai_edit;
 pub mod artifact;
 pub mod coords;
 pub mod engines;
