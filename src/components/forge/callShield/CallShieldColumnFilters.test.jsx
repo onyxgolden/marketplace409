@@ -50,17 +50,23 @@ afterEach(() => {
   mounted = [];
 });
 
-async function mountBar(initialFilters = {}) {
-  const store = { filters: initialFilters };
+async function mountBar(initialFilters = {}, options = {}) {
+  const store = { filters: initialFilters, setNow: null, opened: [] };
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   function Harness() {
     const [filters, setFilters] = useState(store.filters);
+    // The "now" prop is stateful in the real parent (refreshed when a panel
+    // opens) — the store exposes setNow so tests can roll the clock.
+    const [now, setNowState] = useState(() => options.now ?? Date.now());
     useEffect(() => {
       store.filters = filters;
     }, [filters]);
-    const resultCount = applyColumnFilters(rows, filters, { labels }).length;
+    useEffect(() => {
+      store.setNow = setNowState;
+    }, []);
+    const resultCount = applyColumnFilters(rows, filters, { labels, now }).length;
     return (
       <ColumnFilterBar
         rows={rows}
@@ -68,6 +74,11 @@ async function mountBar(initialFilters = {}) {
         filters={filters}
         onChange={setFilters}
         resultCount={resultCount}
+        now={now}
+        onOpenColumn={(id) => {
+          store.opened.push(id);
+          options.onOpenColumn?.(id);
+        }}
       />
     );
   }
@@ -226,5 +237,31 @@ describe("ColumnFilterBar", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
     expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("re-buckets dates when the now prop advances past midnight", async () => {
+    // r1 started Sept 25 at 9:00 AM local.
+    const beforeMidnight = new Date(2026, 8, 25, 23, 50).getTime();
+    const afterMidnight = new Date(2026, 8, 26, 0, 10).getTime();
+    const { container, store } = await mountBar({}, { now: beforeMidnight });
+
+    let dialog = await openPanel(container, "Date");
+    expect(() => valueCheckbox(dialog, "Today")).not.toThrow();
+    await click([...dialog.querySelectorAll("button")].find((b) => b.textContent === "Cancel"));
+
+    // Roll the clock past midnight: r1's call is now "Yesterday", and no
+    // call in the list falls under "Today" anymore.
+    await act(async () => {
+      store.setNow(afterMidnight);
+    });
+    dialog = await openPanel(container, "Date");
+    expect(() => valueCheckbox(dialog, "Yesterday")).not.toThrow();
+    expect(() => valueCheckbox(dialog, "Today")).toThrow();
+  });
+
+  it("notifies the parent when a panel opens so it can refresh the clock", async () => {
+    const { container, store } = await mountBar();
+    await openPanel(container, "Date");
+    expect(store.opened).toEqual(["startedAt"]);
   });
 });

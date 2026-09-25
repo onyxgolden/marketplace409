@@ -22,10 +22,10 @@ import {
   withoutColumn,
 } from "@/domains/callShield/callShieldColumnFilters";
 
-// "Now" for the Excel-style date buckets, captured once when this module
-// loads so the buckets stay stable while the review list is open (and so
-// render stays pure — the hooks purity rule forbids Date.now() in render).
-const FILTER_NOW = Date.now();
+// The "now" for the Excel-style date buckets arrives as a prop from the
+// parent: a single shared clock that is refreshed every time a filter panel
+// opens. That keeps render pure (the hooks purity rule forbids Date.now()
+// in render) while avoiding a stale module-load clock for long-lived tabs.
 
 function ChevronDownIcon() {
   return (
@@ -43,11 +43,11 @@ function FunnelIcon() {
   );
 }
 
-function ColumnFilterPanel({ columnId, rows, labels, initialSelection, alignRight, onCommit, onClose }) {
+function ColumnFilterPanel({ columnId, rows, labels, now, initialSelection, alignRight, onCommit, onClose }) {
   // Excel cascades the checkbox list: the bar passes this panel the rows
   // surviving every OTHER column's filter, so the panel only needs to list
   // this column's distinct values across those rows.
-  const context = useMemo(() => ({ labels, now: FILTER_NOW }), [labels]);
+  const context = useMemo(() => ({ labels, now }), [labels, now]);
 
   const allValues = useMemo(
     () => distinctColumnValues(rows, columnId, context),
@@ -198,14 +198,14 @@ function ColumnFilterPanel({ columnId, rows, labels, initialSelection, alignRigh
   );
 }
 
-export default function ColumnFilterBar({ rows, labels, filters, onChange, resultCount }) {
+export default function ColumnFilterBar({ rows, labels, filters, onChange, resultCount, now, onOpenColumn }) {
   const [openColumn, setOpenColumn] = useState(null);
   const activeCount = activeColumnFilterCount(filters);
   const safeRows = useMemo(() => rows ?? [], [rows]);
 
   // Cascade context: each column's value list is computed from the rows
   // surviving every OTHER column's filter (plus the label tab upstream).
-  const context = useMemo(() => ({ labels, now: FILTER_NOW }), [labels]);
+  const context = useMemo(() => ({ labels, now }), [labels, now]);
   const panelRowsByColumn = useMemo(() => {
     const map = {};
     for (const id of COLUMN_FILTER_IDS) {
@@ -230,7 +230,11 @@ export default function ColumnFilterBar({ rows, labels, filters, onChange, resul
           return (
             <div key={id} className="relative">
               <button
-                onClick={() => setOpenColumn(open ? null : id)}
+                onClick={() => {
+                  const next = open ? null : id;
+                  setOpenColumn(next);
+                  if (next) onOpenColumn?.(id);
+                }}
                 aria-haspopup="dialog"
                 aria-expanded={open}
                 title={active ? `${COLUMN_TITLES[id]}: filtered` : `Filter by ${COLUMN_TITLES[id]}`}
@@ -248,6 +252,7 @@ export default function ColumnFilterBar({ rows, labels, filters, onChange, resul
                   columnId={id}
                   rows={panelRowsByColumn[id]}
                   labels={labels}
+                  now={now}
                   initialSelection={filters?.[id] ?? []}
                   alignRight={index >= COLUMN_FILTER_IDS.length - 2}
                   onCommit={commitSelection}

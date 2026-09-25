@@ -63,11 +63,6 @@ function formatDuration(seconds) {
   return `${m}m ${s % 60}s`;
 }
 
-// "Now" for the Excel-style date buckets, captured once when this module
-// loads so the buckets stay stable while the review list is open (and so
-// render stays pure — the hooks purity rule forbids Date.now() in render).
-const COLUMN_FILTER_NOW = Date.now();
-
 export default function CallShieldHome() {
   // Cases + staged imports: stale-while-revalidate under one key. The last
   // saved lists stay on screen while a background refresh is in flight.
@@ -102,6 +97,10 @@ export default function CallShieldHome() {
   // Excel-style per-column filters. They stack with AND semantics and compose
   // with the label tabs above (tabs first, columns second).
   const [columnFilters, setColumnFilters] = useState({});
+  // The shared "now" for the date buckets: initialized on mount and refreshed
+  // every time a filter panel opens, so a tab left open past midnight still
+  // buckets "Today"/"Yesterday" against the real current day.
+  const [columnFilterNow, setColumnFilterNow] = useState(() => Date.now());
   const [selectedCaseId, setSelectedCaseId] = useState("");
   // Working case detail: its own key so switching cases serves the cached
   // detail instantly and revalidates behind it.
@@ -266,7 +265,7 @@ export default function CallShieldHome() {
   const tabImports = applyLabelFilter(imports ?? [], labels, labelFilter);
   const visibleImports = applyColumnFilters(tabImports, columnFilters, {
     labels,
-    now: COLUMN_FILTER_NOW,
+    now: columnFilterNow,
   });
   const filterCounts = useMemo(() => {
     const list = imports ?? [];
@@ -443,6 +442,8 @@ export default function CallShieldHome() {
             filters={columnFilters}
             onChange={setColumnFilters}
             resultCount={visibleImports.length}
+            now={columnFilterNow}
+            onOpenColumn={() => setColumnFilterNow(Date.now())}
           />
         )}
 
