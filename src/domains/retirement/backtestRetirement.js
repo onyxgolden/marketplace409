@@ -1,0 +1,108 @@
+// Historical backtesting survival analysis for the retirement-number card.
+//
+// Replays every possible retirement start year through the real Shiller annual
+// dataset (1871-2022, Jan-to-Jan REAL total returns for US stocks and long-term
+// US Treasuries incl. reinvested dividends/coupons). Everything is in REAL
+// terms: nestEgg and annualWithdrawal are retirement-start dollars, and the
+// series are real returns, so no inflation adjustment is needed inside the
+// simulation. Annual rebalancing back to stockPct is implied by the blended
+// return each year.
+//
+// This is the cFIREsim/FIRECalc "time machine" approach, not Monte Carlo: no
+// invented return assumptions, but past returns don't predict the future.
+// Caveats live in the dataset meta block (src/domains/retirement/shillerAnnual.json)
+// and are surfaced in the UI caption.
+//
+// Pure function: no I/O, no Date, no randomness. Safe to run in useMemo.
+
+function nullResult(horizonYears) {
+  return {
+    windowsTested: 0,
+    successes: 0,
+    failures: 0,
+    survivalPct: null,
+    worstStarts: [],
+    horizonYears,
+  };
+}
+
+export default function backtestRetirement({ nestEgg, annualWithdrawal, stockPct = 0.6, horizonYears, data }) {
+  const horizon = Number.isFinite(horizonYears) ? Math.floor(horizonYears) : NaN;
+  if (!Number.isFinite(horizon) || horizon < 1) return nullResult(horizonYears);
+
+  const years = data?.years;
+  const stockReal = data?.stockReal;
+  const bondReal = data?.bondReal;
+  if (
+    !Array.isArray(years) ||
+    !Array.isArray(stockReal) ||
+    !Array.isArray(bondReal) ||
+    years.length === 0 ||
+    stockReal.length !== years.length ||
+    bondReal.length !== years.length
+  ) {
+    return nullResult(horizon);
+  }
+
+  const mix = Number.isFinite(stockPct) ? Math.min(1, Math.max(0, stockPct)) : 0.6;
+  const withdrawal = Number.isFinite(annualWithdrawal) ? annualWithdrawal : 0;
+  const startingNestEgg = Number.isFinite(nestEgg) ? nestEgg : 0;
+
+  const yearToIndex = new Map();
+  for (let i = 0; i < years.length; i += 1) yearToIndex.set(years[i], i);
+
+  const firstYear = years[0];
+  const lastStartYear = years[years.length - 1] - horizon;
+  const result = {
+    windowsTested: 0,
+    successes: 0,
+    failures: 0,
+    survivalPct: null,
+    worstStarts: [],
+    horizonYears: horizon,
+  };
+
+  // Zero or negative withdrawal: nothing is ever drawn down, so the portfolio
+  // cannot be exhausted (covers the "nothing to fund" case too).
+  if (withdrawal <= 0) {
+    return { ...result, survivalPct: 100 };
+  }
+
+  for (let startYear = firstYear; startYear <= lastStartYear; startYear += 1) {
+    // Every year of the window must exist in the dataset (guards against
+    // ragged series); a window with a missing year is not tested.
+    let windowValid = true;
+    const returns = [];
+    for (let i = 0; i < horizon; i += 1) {
+      const idx = yearToIndex.get(startYear + i);
+      if (idx == null) {
+        windowValid = false;
+        break;
+      }
+      returns.push(mix * stockReal[idx] + (1 - mix) * bondReal[idx]);
+    }
+    if (!windowValid) continue;
+
+    result.windowsTested += 1;
+    let portfolio = startingNestEgg;
+    let survived = true;
+    for (let i = 0; i < horizon; i += 1) {
+      portfolio = portfolio * (1 + returns[i]) - withdrawal;
+      if (portfolio <= 0) {
+        survived = false;
+        break;
+      }
+    }
+    if (survived) {
+      result.successes += 1;
+    } else {
+      result.failures += 1;
+      if (result.worstStarts.length < 5) result.worstStarts.push(startYear);
+    }
+  }
+
+  if (result.windowsTested === 0) return { ...result, survivalPct: null };
+
+  result.survivalPct = Math.round((result.successes / result.windowsTested) * 1000) / 10;
+  return result;
+}

@@ -15,6 +15,7 @@ export const ALLOCATION_PROFILES = [
     mix: "~20% stocks / 80% bonds",
     historicalBand: "~4–6% nominal",
     withdrawalRatePct: 3.5,
+    stockPct: 0.2,
   },
   {
     id: "balanced",
@@ -22,6 +23,7 @@ export const ALLOCATION_PROFILES = [
     mix: "~60% stocks / 40% bonds",
     historicalBand: "~6–8% nominal",
     withdrawalRatePct: 4.0,
+    stockPct: 0.6,
   },
   {
     id: "growth",
@@ -29,6 +31,7 @@ export const ALLOCATION_PROFILES = [
     mix: "~90% stocks / 10% bonds",
     historicalBand: "~8–10% nominal",
     withdrawalRatePct: 4.5,
+    stockPct: 0.9,
   },
 ];
 

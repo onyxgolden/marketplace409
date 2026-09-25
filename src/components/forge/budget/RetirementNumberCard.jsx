@@ -2,6 +2,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import computeRetirementTarget from "@/domains/retirement/computeRetirementTarget";
+import backtestRetirement from "@/domains/retirement/backtestRetirement";
+import shillerAnnual from "@/domains/retirement/shillerAnnual.json";
 import { ALLOCATION_PROFILES, allocationProfileById } from "@/domains/retirement/allocationProfiles";
 
 const STORAGE_KEY = "forge:retirement-card:v1";
@@ -192,6 +194,21 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
 
   const showHeadline = result != null && result.requiredNestEgg != null && Number.isFinite(result.requiredNestEgg);
 
+  // Historical backtest: replay this plan through every real retirement start
+  // year in the Shiller dataset. Real dollars on both sides (the series are
+  // real total returns), so no inflation math is needed here.
+  const backtest = useMemo(() => {
+    if (!showHeadline) return null;
+    const profile = allocationProfileById(persisted.allocationId);
+    return backtestRetirement({
+      nestEgg: result.requiredNestEgg,
+      annualWithdrawal: result.portfolioNeedAnnual,
+      stockPct: profile?.stockPct ?? 0.6,
+      horizonYears: planningAge - retirementAge,
+      data: shillerAnnual,
+    });
+  }, [showHeadline, result, persisted.allocationId, planningAge, retirementAge]);
+
   return (
     <section aria-labelledby="retirement-number-heading" className="mt-6 rounded-3xl border bg-white p-5 shadow-sm dark:bg-slate-900 sm:p-6 border-slate-200 dark:border-slate-800">
       <p className="text-[11px] font-black uppercase tracking-[0.18em] text-sky-600 dark:text-sky-400">Retire</p>
@@ -224,6 +241,38 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
           </>
         )}
       </div>
+
+      {/* Historical backtest — second headline */}
+      {showHeadline ? (
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-center dark:border-slate-700 dark:bg-slate-800/50">
+          {backtest?.survivalPct == null ? (
+            <>
+              <p className="text-2xl font-black tabular-nums text-slate-400">—</p>
+              <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                Not enough history to backtest a {backtest?.horizonYears ?? "—"}-year horizon.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-2xl font-black tabular-nums text-slate-900 dark:text-slate-50">
+                Would have survived{" "}
+                <span className="text-sky-600 dark:text-sky-400">{backtest.survivalPct}%</span>
+              </p>
+              <p className="mt-1 text-xs font-semibold text-slate-600 dark:text-slate-400">
+                of {backtest.windowsTested} historical {backtest.horizonYears}-year retirements
+              </p>
+              <p className="mt-1 text-[11px] font-medium text-slate-500 dark:text-slate-500">
+                {shillerAnnual.years[0]}–{shillerAnnual.years[shillerAnnual.years.length - 1]} · worst
+                starting years:{" "}
+                {backtest.worstStarts.length > 0
+                  ? backtest.worstStarts.join(", ")
+                  : "none — every window survived"}{" "}
+                · Historical stress-test: past returns don&apos;t predict the future.
+              </p>
+            </>
+          )}
+        </div>
+      ) : null}
 
       {/* Simple inputs */}
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
