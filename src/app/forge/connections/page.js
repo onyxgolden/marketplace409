@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeConnectionDashboardApplication } from "@/application/connection";
 import ForgeDashboardCard from "@/components/forge/ForgeDashboardCard";
 // Stripe Financial Connections is now the live "Connect bank" path. PlaidConnectButton (and the
@@ -74,10 +75,29 @@ function formatLastImportedAt(iso) {
   return `${formatRelativeTime(Date.now() - date.getTime())} · ${absolute}`;
 }
 
+// Loads the connection dashboard view model through the application layer.
+// A failed load throws so the shared hook keeps the last good view model on
+// screen; the error banner below only shows when nothing is cached yet.
+async function fetchDashboardViewModel() {
+  const model = await ForgeConnectionDashboardApplication.load();
+  if (model.loadState === "error") {
+    throw new Error(model.error || "Connection dashboard failed to load.");
+  }
+  return model;
+}
+
 export default function ConnectionPage() {
-  const [viewModel, setViewModel] = useState(
-    ForgeConnectionDashboardApplication.buildLoadingModel(),
-  );
+  // Dashboard view model: stale-while-revalidate. The previous dashboard
+  // stays on screen while a refresh (e.g. after an operation) is in flight.
+  const {
+    data,
+    error: loadError,
+    isLoading,
+    isRefreshing,
+    refresh,
+  } = useStaleWhileRevalidate("connections:dashboard", fetchDashboardViewModel, { ttlMs: 60_000 });
+  const viewModel = data ?? ForgeConnectionDashboardApplication.buildLoadingModel();
+  const dashboardError = loadError || viewModel.error;
 
   const [executionResult, setExecutionResult] =
     useState(null);
@@ -123,26 +143,14 @@ export default function ConnectionPage() {
         payload.data,
       );
 
-      await loadDashboard();
+      await refresh();
     } finally {
       setIsExecuting(false);
     }
   }
 
-  async function loadDashboard() {
-    const result =
-      await ForgeConnectionDashboardApplication.load();
-
-    setViewModel(result);
-  }
-
-  useEffect(() => {
-    loadDashboard();
-  }, []);
-
   const {
     loadState,
-    error,
     summary,
     connections,
     statusItems,
@@ -251,17 +259,27 @@ export default function ConnectionPage() {
           </div>
         </section>
 
-        {error ? (
+        {dashboardError ? (
           <section className="rounded-3xl border border-red-200 bg-red-50 p-6 dark:border-red-800/50 dark:bg-red-950/30">
             <div className="text-xs font-black uppercase tracking-wide text-red-700 dark:text-red-400">
               Connection Dashboard Error
             </div>
             <div className="mt-2 text-lg font-bold text-red-950 dark:text-red-300">
-              {error instanceof Error
-                ? error.message
-                : String(error)}
+              {dashboardError instanceof Error
+                ? dashboardError.message
+                : String(dashboardError)}
             </div>
+            <button
+              type="button"
+              onClick={refresh}
+              className="mt-4 rounded-xl border border-red-400 px-4 py-2 text-sm font-bold text-red-800 transition hover:bg-red-100 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/40"
+            >
+              Retry
+            </button>
           </section>
+        ) : null}
+        {isRefreshing ? (
+          <p className="text-xs font-bold text-slate-400">Updating…</p>
         ) : null}
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">

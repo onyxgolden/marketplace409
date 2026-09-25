@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import {
   ForgeErrorState,
   ForgeLoadingState,
@@ -12,20 +13,40 @@ const centsToMoney = (cents) => money.format(cents / 100);
 const dollars = (amount) => money.format(Math.abs(amount));
 const FOCUS_RING = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600";
 
+// Loads the duplicate-transaction preview. The 503 schema-unavailable case
+// is not an error -- the feature simply isn't active in this environment --
+// so it resolves as a payload with a flag instead of throwing; the panel
+// renders nothing for it, same as before.
+async function fetchDuplicatesPreview() {
+  const response = await fetch("/api/financial/reconcile-duplicates");
+  const payload = await response.json();
+  if (response.status === 503 && payload.code === "reconcile_duplicates_schema_unavailable") {
+    return { schemaUnavailable: true };
+  }
+  if (!response.ok) throw new Error(payload.error || "Unable to check for duplicate transactions.");
+  return payload;
+}
+
 // Surfaces the Rentec/raw-bank-feed duplicate problem (a 'transaction'-sourced row from the Stripe
 // Financial Connections bank feed describing the same real rent/expense as an already-correct
 // rentec/rentec_api row) and lets the owner explicitly apply the fix -- never automatic. See
 // reconcileTransactionDuplicates.js for the matching policy.
 export default function ReconcileDuplicatesPanel() {
-  const [status, setStatus] = useState("loading"); // "loading" | "available" | "schema-unavailable" | "error"
-  const [errorMessage, setErrorMessage] = useState("");
-  const [preview, setPreview] = useState(null);
+  // Duplicate preview: stale-while-revalidate. The last preview stays on
+  // screen while a refresh is in flight; a failed refresh keeps it too.
+  const {
+    data: preview,
+    error: loadError,
+    isLoading,
+    isRefreshing,
+    refresh,
+  } = useStaleWhileRevalidate("financial:reconcile-duplicates", fetchDuplicatesPreview, { ttlMs: 60_000 });
+  const schemaUnavailable = preview?.schemaUnavailable === true;
   const [applyStatus, setApplyStatus] = useState("idle"); // "idle" | "applying" | "done" | "error"
   const [applyMessage, setApplyMessage] = useState("");
   const [applyingIds, setApplyingIds] = useState([]); // ids in flight right now
   const [lastAppliedIds, setLastAppliedIds] = useState([]); // ids applied by the last successful apply, for Undo
   const [undoStatus, setUndoStatus] = useState("idle"); // "idle" | "undoing" | "error"
-  const requestInFlight = useRef(false);
 
   // Gate decision, one shared rule (see actionGate.js): these are exact,
   // unambiguous bidirectional matches the human reviews in the table below,
@@ -37,36 +58,6 @@ export default function ReconcileDuplicatesPanel() {
   const gate = resolveActionGate({ ambiguous: false, reversible: true });
   const [typedAcknowledged, setTypedAcknowledged] = useState(false);
   const [typedConfirmationText, setTypedConfirmationText] = useState("");
-
-  const load = useCallback(() => {
-    if (requestInFlight.current) return undefined;
-    requestInFlight.current = true;
-    setStatus("loading");
-    setErrorMessage("");
-    return fetch("/api/financial/reconcile-duplicates")
-      .then((response) => response.json().then((payload) => ({ response, payload })))
-      .then(({ response, payload }) => {
-        if (response.status === 503 && payload.code === "reconcile_duplicates_schema_unavailable") {
-          setStatus("schema-unavailable");
-          return null;
-        }
-        if (!response.ok) throw new Error(payload.error || "Unable to check for duplicate transactions.");
-        setPreview(payload);
-        setStatus("available");
-        return null;
-      })
-      .catch((loadError) => {
-        setErrorMessage(loadError.message);
-        setStatus("error");
-      })
-      .finally(() => {
-        requestInFlight.current = false;
-      });
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const applyExclusions = (transactionIds) => {
     const ids = Array.isArray(transactionIds) ? transactionIds : [];
@@ -91,7 +82,7 @@ export default function ReconcileDuplicatesPanel() {
             ? `Excluded ${payload.appliedCount} duplicate transaction(s); ${payload.failedCount} could not be applied.`
             : `Excluded ${payload.appliedCount} duplicate transaction(s) from your books. They stay in the record, marked as duplicates -- and you can restore them with Undo below.`,
         );
-        return load();
+        refresh();
       })
       .catch((applyError) => {
         setApplyStatus("error");
@@ -120,7 +111,7 @@ export default function ReconcileDuplicatesPanel() {
             ? `Restored ${payload.restoredCount} row(s); ${payload.failedCount} could not be restored.`
             : `Restored ${payload.restoredCount} row(s) -- they're back in your books.`,
         );
-        return load();
+        refresh();
       })
       .catch((undoError) => {
         setUndoStatus("error");
@@ -128,22 +119,22 @@ export default function ReconcileDuplicatesPanel() {
       });
   };
 
-  if (status === "loading") {
+  if (!preview && isLoading) {
     return <ForgeLoadingState label="Checking for duplicate transactions…" />;
   }
 
-  if (status === "schema-unavailable") {
+  if (schemaUnavailable) {
     return null; // Feature not yet activated in this environment -- nothing to show, no error either.
   }
 
-  if (status === "error") {
+  if (!preview && loadError) {
     return (
       <ForgeErrorState
         title={
-          errorMessage ||
+          loadError ||
           "Something went wrong checking for duplicate transactions."
         }
-        onRetry={load}
+        onRetry={refresh}
       />
     );
   }
@@ -164,6 +155,14 @@ export default function ReconcileDuplicatesPanel() {
         expense. This finds those overlaps by matching date and amount, and only ever flags an exact,
         unambiguous match — anything uncertain is left for you to review separately, never guessed at.
       </p>
+      {isRefreshing ? (
+        <p className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+      ) : null}
+      {loadError ? (
+        <p role="status" className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">
+          Could not refresh — showing the last saved duplicates.
+        </p>
+      ) : null}
 
       {confirmedDuplicates.length === 0 && ambiguous.length === 0 ? (
         <p className="mt-6 text-sm font-bold text-emerald-700 dark:text-emerald-400">

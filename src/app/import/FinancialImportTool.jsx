@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { Money } from "@/platform";
 import TransactionReviewContainer from "@/components/forge/TransactionReviewContainer";
 
@@ -65,49 +66,45 @@ export function financialImportSurfaceClassName(
   ].join(" ");
 }
 
+// Loads the import tool's bootstrap data: the signed-in owner id and their
+// known properties, so uploaded CSVs can be matched against them. Resolves
+// with the payload (which carries its own error string) rather than
+// throwing, matching the original behavior.
+async function fetchImportBootstrap() {
+  const response = await fetch("/api/financial/import/bootstrap");
+  const payload = await response.json();
+  return payload.success
+    ? payload.data
+    : {
+        ownerId: null,
+        properties: [],
+        error: payload.error || "Unable to initialize financial import.",
+      };
+}
+
 export default function FinancialImportTool() {
   const [source, setSource] = useState("rentec");
   const [fileName, setFileName] = useState("");
   const [result, setResult] = useState(null);
-  const [error, setError] = useState("");
-  const [ownerId, setOwnerId] = useState(null);
-  const [properties, setProperties] = useState([]);
-  const [
-    selectedProperties,
-    setSelectedProperties,
-  ] = useState({});
+  const [fileError, setFileError] = useState("");
+  const [importOwnerId, setImportOwnerId] = useState(null);
+  const [selectedProperties, setSelectedProperties] = useState({});
 
-  useEffect(() => {
-    async function initializeImportTool() {
-      const response = await fetch(
-        "/api/financial/import/bootstrap",
-      );
-
-      const payload = await response.json();
-
-      const initialized =
-        payload.success
-          ? payload.data
-          : {
-              ownerId: null,
-              properties: [],
-              error:
-                payload.error ||
-                "Unable to initialize financial import.",
-            };
-
-      setOwnerId(initialized.ownerId);
-      setProperties(initialized.properties);
-      setError(initialized.error);
-    }
-
-    initializeImportTool();
-  }, []);
+  // Bootstrap: stale-while-revalidate. The form renders immediately while
+  // this loads in the background; a revisit reuses the cached bootstrap.
+  const { data: bootstrap, error: bootstrapError } = useStaleWhileRevalidate(
+    "financial-import:bootstrap",
+    fetchImportBootstrap,
+    { ttlMs: 300_000 },
+  );
+  const ownerId = importOwnerId ?? bootstrap?.ownerId ?? null;
+  const properties = bootstrap?.properties ?? [];
+  const error = fileError || bootstrap?.error || bootstrapError || "";
 
   async function handleFileChange(event) {
     const file = event.target.files?.[0];
 
-    setError("");
+    setFileError("");
     setResult(null);
     const csv = await file.text();
 
@@ -158,11 +155,8 @@ export default function FinancialImportTool() {
     setFileName(importResponse.fileName);
     setResult(importResponse.result);
     setSelectedProperties(recommendedSelections);
-    setError(importResponse.error);
-
-    if (importResponse.ownerId !== ownerId) {
-      setOwnerId(importResponse.ownerId);
-    }
+    setFileError(importResponse.error || "");
+    setImportOwnerId(importResponse.ownerId ?? null);
   }
 
  return (   
@@ -198,7 +192,7 @@ export default function FinancialImportTool() {
               setFileName("");
               setResult(null);
               setSelectedProperties({});
-              setError("");
+              setFileError("");
             }}
             className="mt-3 block w-full rounded-xl border border-slate-300 bg-gray-50 px-4 py-4 text-slate-950 focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-amber-400"
           >

@@ -1,11 +1,14 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { upcomingRecurringOccurrences } from "@/domains/financial-event/detectRecurringPayments";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import {
+  ForgeErrorState,
+  ForgeLoadingState,
+} from "@/components/forge/ForgeStates";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const dollars = (amount) => money.format(Math.abs(amount));
-const FOCUS_RING = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600";
-
 const CADENCE_STYLES = {
   weekly: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
   biweekly: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
@@ -15,40 +18,26 @@ const CADENCE_STYLES = {
 };
 const cadenceStyle = (cadence) => CADENCE_STYLES[cadence] ?? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
 
-// Read-only: reports repeating income/expense patterns the detector finds (subscriptions,
-// loan payments, paychecks). Detection runs on every load; there is nothing to apply and
-// nothing is ever written. See detectRecurringPayments.js for the algorithm.
+// Fetches the detected repeating income/expense patterns (subscriptions,
+// loan payments, paychecks). Read-only: detection runs server-side on every
+// load; there is nothing to apply and nothing is ever written. See
+// detectRecurringPayments.js for the algorithm.
+async function fetchRecurringPatterns() {
+  const response = await fetch("/api/financial/recurring");
+  const payload = await response.json().then((body) => body).catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "Unable to detect recurring payments.");
+  return payload.patterns ?? [];
+}
+
 export default function RecurringPaymentsPanel() {
-  const [status, setStatus] = useState("loading"); // "loading" | "available" | "error"
-  const [errorMessage, setErrorMessage] = useState("");
-  const [patterns, setPatterns] = useState([]);
-  const requestInFlight = useRef(false);
-
-  const load = useCallback(() => {
-    if (requestInFlight.current) return undefined;
-    requestInFlight.current = true;
-    setStatus("loading");
-    setErrorMessage("");
-    return fetch("/api/financial/recurring")
-      .then((response) => response.json().then((payload) => ({ response, payload })))
-      .then(({ response, payload }) => {
-        if (!response.ok) throw new Error(payload.error || "Unable to detect recurring payments.");
-        setPatterns(payload.patterns ?? []);
-        setStatus("available");
-        return null;
-      })
-      .catch((loadError) => {
-        setErrorMessage(loadError.message);
-        setStatus("error");
-      })
-      .finally(() => {
-        requestInFlight.current = false;
-      });
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Recurring patterns: stale-while-revalidate. The last detected list stays
+  // on screen while a refresh is in flight; a failed refresh keeps it too.
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    "financial:recurring-patterns",
+    fetchRecurringPatterns,
+    { ttlMs: 120_000 },
+  );
+  const patterns = data ?? null;
 
   const upcoming = useMemo(
     () => upcomingRecurringOccurrences(patterns, { daysAhead: 30 }),
@@ -63,30 +52,16 @@ export default function RecurringPaymentsPanel() {
     [upcoming],
   );
 
-  if (status === "loading") {
-    return (
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-        <p role="status" className="text-sm text-slate-500 dark:text-slate-400">
-          Looking for recurring payments…
-        </p>
-      </section>
-    );
+  if (!patterns && isLoading) {
+    return <ForgeLoadingState label="Looking for recurring payments…" />;
   }
 
-  if (status === "error") {
+  if (!patterns && loadError) {
     return (
-      <section className="rounded-3xl border border-red-200 bg-red-50 p-6 dark:border-red-900/60 dark:bg-red-950/30">
-        <p role="alert" className="text-sm font-bold text-red-800 dark:text-red-300">
-          {errorMessage || "Something went wrong detecting recurring payments."}
-        </p>
-        <button
-          type="button"
-          onClick={load}
-          className={`mt-4 rounded-xl border border-red-400 px-4 py-2 text-sm font-bold text-red-800 transition hover:bg-red-100 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/40 ${FOCUS_RING}`}
-        >
-          Retry
-        </button>
-      </section>
+      <ForgeErrorState
+        title={loadError || "Something went wrong detecting recurring payments."}
+        onRetry={refresh}
+      />
     );
   }
 
@@ -101,6 +76,14 @@ export default function RecurringPaymentsPanel() {
         Subscriptions, loan payments, and paychecks the detector recognizes from your history — same account,
         same direction, similar amounts, steady rhythm. Tolerates amount drift and an occasional missed payment.
       </p>
+      {isRefreshing ? (
+        <p className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
+      ) : null}
+      {loadError ? (
+        <p role="status" className="mt-2 text-xs font-bold text-slate-400 dark:text-slate-500">
+          Could not refresh — showing the last saved patterns.
+        </p>
+      ) : null}
 
       {patterns.length === 0 ? (
         <p className="mt-6 text-sm font-bold text-slate-600 dark:text-slate-400">

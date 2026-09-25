@@ -2,13 +2,16 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../hooks/swrCache";
 import GuestReservationAccess from "./GuestReservationAccess";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }); }
+// The stale-while-revalidate cache adds one extra microtask hop versus a bare
+// fetch-in-effect, so the flush yields a few more ticks before asserting.
+async function flush() { await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); }); }
 describe("GuestReservationAccess", () => {
   let root;
-  afterEach(() => { if (root) act(() => root.unmount()); document.body.innerHTML = ""; vi.unstubAllGlobals(); });
+  afterEach(() => { if (root) act(() => root.unmount()); document.body.innerHTML = ""; vi.unstubAllGlobals(); clearSWRCache(); });
   it("keeps instructions hidden before their release time", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ access: { publicName: "Pine Cabin", checkIn: "2026-10-02", checkOut: "2026-10-04", available: false, availableAt: "2026-10-01T15:00:00Z", arrivalInstructions: null, financial: { bookingBalanceCents: 20000, securityDepositCents: 5000, bookingAmountDueCents: 20000, currencyCode: "USD", bookingPaymentStatus: "unpaid", securityDepositStatus: "required", settlementStatus: "not_applicable" } } }) }));
     const container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container); act(() => root.render(<GuestReservationAccess slug="stay" token="private" />)); await flush();

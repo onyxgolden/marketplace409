@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { forgeTheme } from "@/components/forge/theme";
 import {
   ForgeErrorState,
@@ -57,6 +58,43 @@ async function fetchJson(url) {
     throw new Error(payload?.error || `Request failed: ${url}`);
   }
   return payload;
+}
+
+// Fetches every morning-queue source independently. A failed source is
+// recorded, not thrown, so one bad endpoint can't blank the queue; only when
+// every source fails does the fetcher throw (and the shared hook keeps the
+// last good bundle on screen either way).
+async function fetchInboxSources(month) {
+  const jobs = {
+    transfers: fetchJson("/api/financial/reconcile-transfers"),
+    anomalies: fetchJson("/api/financial/anomalies"),
+    recurring: fetchJson("/api/financial/recurring"),
+    budgetPersonal: fetchJson(`/api/budgeting/plan?month=${month}&scope=personal`),
+    budgetBusiness: fetchJson(`/api/budgeting/plan?month=${month}&scope=business`),
+    forecast: fetchJson("/api/financial/forecast?days=90"),
+    // The debt-payoff API suppresses topMove when the owner's suggestions
+    // preference is off, so this stays silent for opted-out owners.
+    debtPayoff: fetchJson("/api/financial/debt-payoff?monthlySurplus=500"),
+  };
+  const entries = await Promise.all(
+    Object.entries(jobs).map(async ([name, promise]) => {
+      try {
+        return [name, await promise, null];
+      } catch (error) {
+        return [name, null, error instanceof Error ? error.message : "Failed to load."];
+      }
+    }),
+  );
+  const data = {};
+  const failed = [];
+  for (const [name, payload, error] of entries) {
+    if (error) failed.push(name);
+    else data[name] = payload;
+  }
+  if (Object.keys(data).length === 0) {
+    throw new Error(`${failed.join(", ")} failed — try reloading.`);
+  }
+  return { data, failed };
 }
 
 function upcomingBills(patterns, today) {
@@ -185,53 +223,28 @@ function QueueItemCard({ item, onResolve, applyState, confirmState, onConfirmCha
 }
 
 export default function InboxPage() {
-  const [sources, setSources] = useState(null);
-  const [failedSources, setFailedSources] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  // Morning queue sources: stale-while-revalidate. Each source is fetched
+  // independently so one failing endpoint can't blank the whole queue; the
+  // fetcher only throws when every source failed, which keeps the last good
+  // queue on screen while a refresh is in flight.
+  const today = chicagoToday();
+  const month = today.slice(0, 7);
+  const {
+    data: bundle,
+    error: loadError,
+    isLoading,
+    isRefreshing,
+    refresh,
+  } = useStaleWhileRevalidate(
+    `forge:inbox-sources:${month}`,
+    () => fetchInboxSources(month),
+    { ttlMs: 60_000 },
+  );
+  const sources = bundle?.data ?? null;
+  const failedSources = bundle?.failed ?? [];
   const [resolvedIds, setResolvedIds] = useState(() => new Set());
   const [applyState, setApplyState] = useState({});
   const [confirmState, setConfirmState] = useState({});
-
-  const load = useCallback(async () => {
-    const today = chicagoToday();
-    const month = today.slice(0, 7);
-    const jobs = {
-      transfers: fetchJson("/api/financial/reconcile-transfers"),
-      anomalies: fetchJson("/api/financial/anomalies"),
-      recurring: fetchJson("/api/financial/recurring"),
-      budgetPersonal: fetchJson(`/api/budgeting/plan?month=${month}&scope=personal`),
-      budgetBusiness: fetchJson(`/api/budgeting/plan?month=${month}&scope=business`),
-      forecast: fetchJson("/api/financial/forecast?days=90"),
-      // The debt-payoff API suppresses topMove when the owner's suggestions
-      // preference is off, so this stays silent for opted-out owners.
-      debtPayoff: fetchJson("/api/financial/debt-payoff?monthlySurplus=500"),
-    };
-    const entries = await Promise.all(
-      Object.entries(jobs).map(async ([name, promise]) => {
-        try {
-          return [name, await promise, null];
-        } catch (error) {
-          return [name, null, error instanceof Error ? error.message : "Failed to load."];
-        }
-      }),
-    );
-    const data = {};
-    const failed = [];
-    for (const [name, payload, error] of entries) {
-      if (error) failed.push(name);
-      else data[name] = payload;
-    }
-    setSources(data);
-    setFailedSources(failed);
-    setIsLoading(false);
-  }, []);
-
-  useEffect(() => {
-    load().catch(() => {});
-  }, [load]);
-
-  const today = useMemo(() => chicagoToday(), []);
-  const month = today.slice(0, 7);
 
   const derived = useMemo(() => {
     if (!sources) return null;
@@ -324,7 +337,7 @@ export default function InboxPage() {
     }));
   }, []);
 
-  const allFailed = !isLoading && failedSources.length > 0 && !sources;
+  const allFailed = !isLoading && !sources && loadError;
 
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6">
@@ -344,6 +357,14 @@ export default function InboxPage() {
             {derived ? openItems.length : "–"}
           </div>
           <div className={forgeTheme.labelSmall}>open items</div>
+          {isRefreshing ? (
+            <div className="mt-1 text-xs font-bold text-slate-400">Updating…</div>
+          ) : null}
+          {sources && loadError ? (
+            <div className="mt-1 text-xs font-bold text-slate-400" role="status">
+              Could not refresh — showing the last saved queue.
+            </div>
+          ) : null}
         </div>
       </header>
 
@@ -357,11 +378,8 @@ export default function InboxPage() {
         <div className="mt-6">
           <ForgeErrorState
             title="Couldn't load the queue."
-            detail={`${failedSources.join(", ")} failed — try reloading.`}
-            onRetry={() => {
-              setIsLoading(true);
-              load();
-            }}
+            detail={loadError || "Try reloading."}
+            onRetry={refresh}
             retryLabel="Reload"
           />
         </div>
