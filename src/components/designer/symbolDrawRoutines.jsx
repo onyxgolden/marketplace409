@@ -664,6 +664,290 @@ export function drawMepFixtureSymbol({ symbol, instance, toScreen, scale, highli
   );
 }
 
+/**
+ * Process equipment: P&ID-style glyphs (ISO 10628 / ISA-5.1 conventions,
+ * simplified for plan view) drawn from symbol.glyph, with the equipment tag
+ * (P-101, V-101, ...) under the symbol and the description beneath it.
+ * ctx: { symbol, instance: {id,x,y,rotationDeg,tag,widthIn?,depthIn?}, toScreen, scale, highlighted }
+ */
+export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, highlighted }) {
+  const c = toScreen({ x: instance.x, y: instance.y });
+  const hw = ((instance.widthIn ?? symbol.widthIn) * scale) / 2;
+  const hh = ((instance.depthIn ?? symbol.depthIn) * scale) / 2;
+  const stroke = selectionStroke(highlighted, "#e2e8f0");
+  const sw = highlighted ? 3 : 1.75;
+  const accent = highlighted ? "#f59e0b" : symbol.color || "#60a5fa";
+  const body = "#0f172a";
+  const r = Math.min(hw, hh);
+  const common = { stroke, strokeWidth: sw };
+
+  const glyph = (() => {
+    switch (symbol.glyph) {
+      // ---- pumps & compressors ----
+      case "pump-centrifugal": // circle casing + tangential discharge + base
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh * 0.35} width={hw * 0.9} height={hh * 0.7} fill={body} />
+            <circle cx={hw * 0.45} cy={0} r={Math.min(hw * 0.5, hh)} fill={body} />
+            <line x1={hw * 0.45} y1={-Math.min(hw * 0.5, hh)} x2={hw} y2={-Math.min(hw * 0.5, hh)} />
+            <polygon points={`${hw * 0.25},${-hh * 0.4} ${hw * 0.25},${hh * 0.4} ${hw * 0.7},0`} fill={accent} stroke="none" />
+          </g>
+        );
+      case "pump-pd": // casing with two meshing lobes
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} rx={hh * 0.4} fill={body} />
+            <circle cx={-hw * 0.3} cy={0} r={hh * 0.55} fill="none" stroke={accent} />
+            <circle cx={hw * 0.3} cy={0} r={hh * 0.55} fill="none" stroke={accent} />
+          </g>
+        );
+      case "compressor-centrifugal": // trapezoid (converging flow) + shaft
+        return (
+          <g {...common}>
+            <polygon points={`${-hw},${-hh} ${hw * 0.6},${-hh * 0.45} ${hw * 0.6},${hh * 0.45} ${-hw},${hh}`} fill={body} />
+            <line x1={hw * 0.6} y1={0} x2={hw} y2={0} />
+            <line x1={-hw * 0.5} y1={-hh * 0.6} x2={-hw * 0.5} y2={hh * 0.6} stroke={accent} />
+          </g>
+        );
+      case "compressor-recip": // frame + two cylinders
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh * 0.4} width={hw * 2} height={hh * 0.8} fill={body} />
+            <rect x={-hw * 0.7} y={-hh} width={hw * 0.5} height={hh * 0.6} fill={body} stroke={accent} />
+            <rect x={hw * 0.2} y={-hh} width={hw * 0.5} height={hh * 0.6} fill={body} stroke={accent} />
+          </g>
+        );
+      case "blower": // circle + fan blades
+        return (
+          <g {...common}>
+            <circle r={r} fill={body} />
+            {[0, 120, 240].map((a) => (
+              <path key={a} transform={`rotate(${a})`} d={`M 0 0 Q ${r * 0.5} ${-r * 0.2} ${r * 0.8} ${r * 0.1}`} fill="none" stroke={accent} />
+            ))}
+          </g>
+        );
+      // ---- vessels & tanks ----
+      case "vessel-vertical": // plan: circle with head seam
+        return (
+          <g {...common}>
+            <circle r={r} fill={body} />
+            <circle r={r * 0.72} fill="none" strokeDasharray="4 3" opacity={0.7} />
+          </g>
+        );
+      case "vessel-horizontal": // capsule + saddles
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} rx={hh} fill={body} />
+            <line x1={-hw * 0.55} y1={-hh} x2={-hw * 0.55} y2={hh} stroke={accent} />
+            <line x1={hw * 0.55} y1={-hh} x2={hw * 0.55} y2={hh} stroke={accent} />
+          </g>
+        );
+      case "tank-cone-roof": // plan: circle + roof rafters to center
+        return (
+          <g {...common}>
+            <circle r={r} fill={body} />
+            {[0, 45, 90, 135].map((a) => (
+              <line key={a} transform={`rotate(${a})`} x1={-r} y1={0} x2={r} y2={0} opacity={0.45} strokeWidth={1} />
+            ))}
+            <circle r={r * 0.12} fill={accent} stroke="none" />
+          </g>
+        );
+      case "column": // plan: circle + tray lines
+        return (
+          <g {...common}>
+            <circle r={r} fill={body} />
+            <line x1={-r * 0.7} y1={-r * 0.3} x2={r * 0.7} y2={-r * 0.3} stroke={accent} />
+            <line x1={-r * 0.7} y1={r * 0.3} x2={r * 0.7} y2={r * 0.3} stroke={accent} />
+          </g>
+        );
+      case "reactor": // circle + jacket ring + agitator cross
+        return (
+          <g {...common}>
+            <circle r={r} fill={body} />
+            <circle r={r * 0.8} fill="none" stroke={accent} />
+            <line x1={-r * 0.45} y1={0} x2={r * 0.45} y2={0} />
+            <line x1={0} y1={-r * 0.45} x2={0} y2={r * 0.45} />
+          </g>
+        );
+      // ---- heat transfer ----
+      case "hx-shell-tube": // shell + channel head + tube lines
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh} width={hw * 1.7} height={hh * 2} rx={hh * 0.3} fill={body} />
+            <rect x={hw * 0.7} y={-hh} width={hw * 0.3} height={hh * 2} fill={body} />
+            <line x1={-hw * 0.9} y1={-hh * 0.35} x2={hw * 0.7} y2={-hh * 0.35} stroke={accent} />
+            <line x1={-hw * 0.9} y1={hh * 0.35} x2={hw * 0.7} y2={hh * 0.35} stroke={accent} />
+          </g>
+        );
+      case "hx-plate": // frame + plate pack
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={body} />
+            {[-0.5, -0.25, 0, 0.25, 0.5].map((f) => (
+              <line key={f} x1={-hw * 0.8} y1={hh * f * 1.6} x2={hw * 0.8} y2={hh * f * 1.6} stroke={accent} strokeWidth={1} />
+            ))}
+          </g>
+        );
+      case "hx-air-cooled": // bundle + fan circles
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={body} />
+            <circle cx={-hw * 0.5} cy={0} r={Math.min(hw * 0.4, hh * 0.8)} fill="none" stroke={accent} />
+            <circle cx={hw * 0.5} cy={0} r={Math.min(hw * 0.4, hh * 0.8)} fill="none" stroke={accent} />
+          </g>
+        );
+      case "fired-heater": // box + burner flames
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={body} />
+            {[-0.45, 0, 0.45].map((f) => (
+              <path key={f} d={`M ${hw * f - r * 0.12} ${hh * 0.5} Q ${hw * f} ${-hh * 0.3} ${hw * f + r * 0.12} ${hh * 0.5} Z`} fill={accent} stroke="none" />
+            ))}
+          </g>
+        );
+      case "boiler": // shell + stack circle + flame
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} rx={hh * 0.5} fill={body} />
+            <circle cx={hw * 0.6} cy={0} r={hh * 0.35} fill="none" />
+            <path d={`M ${-hw * 0.6} ${hh * 0.45} Q ${-hw * 0.4} ${-hh * 0.5} ${-hw * 0.2} ${hh * 0.45} Z`} fill={accent} stroke="none" />
+          </g>
+        );
+      case "cooling-tower": // cell + fan
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={body} />
+            <circle r={r * 0.6} fill="none" stroke={accent} />
+            <line x1={-r * 0.6} y1={0} x2={r * 0.6} y2={0} stroke={accent} />
+            <line x1={0} y1={-r * 0.6} x2={0} y2={r * 0.6} stroke={accent} />
+          </g>
+        );
+      // ---- separation & filtration ----
+      case "filter": // circle + dashed element
+        return (
+          <g {...common}>
+            <circle r={r} fill={body} />
+            <line x1={-r * 0.7} y1={0} x2={r * 0.7} y2={0} stroke={accent} strokeDasharray="3 2" />
+          </g>
+        );
+      case "strainer": // body + mesh basket
+        return (
+          <g {...common}>
+            <line x1={-hw} y1={0} x2={hw} y2={0} />
+            <rect x={-hw * 0.5} y={-hh} width={hw} height={hh * 2} fill={body} />
+            <path d={`M ${-hw * 0.3} ${-hh * 0.6} L 0 ${hh * 0.6} L ${hw * 0.3} ${-hh * 0.6}`} fill="none" stroke={accent} />
+          </g>
+        );
+      case "cyclone": // circle + tangential inlet + vortex
+        return (
+          <g {...common}>
+            <circle r={r} fill={body} />
+            <line x1={-r} y1={-r} x2={0} y2={-r} />
+            <circle r={r * 0.35} fill="none" stroke={accent} />
+          </g>
+        );
+      case "centrifuge": // box + spinning bowl
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} rx={4} fill={body} />
+            <circle r={r * 0.65} fill="none" stroke={accent} />
+            <path d={`M ${r * 0.65} 0 A ${r * 0.65} ${r * 0.65} 0 0 1 0 ${r * 0.65}`} fill="none" stroke={accent} strokeWidth={sw + 1} />
+          </g>
+        );
+      // ---- mixing & handling ----
+      case "agitator-tank": // circle + impeller
+        return (
+          <g {...common}>
+            <circle r={r} fill={body} />
+            <line x1={-r * 0.55} y1={0} x2={r * 0.55} y2={0} stroke={accent} strokeWidth={sw + 1} />
+            <circle r={r * 0.1} fill={accent} stroke="none" />
+          </g>
+        );
+      case "static-mixer": // pipe body + helical elements
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill={body} />
+            <path d={`M ${-hw * 0.8} ${hh * 0.6} L ${-hw * 0.4} ${-hh * 0.6} L 0 ${hh * 0.6} L ${hw * 0.4} ${-hh * 0.6} L ${hw * 0.8} ${hh * 0.6}`} fill="none" stroke={accent} />
+          </g>
+        );
+      case "conveyor": // belt between pulleys
+        return (
+          <g {...common}>
+            <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} rx={hh} fill={body} />
+            <circle cx={-hw + hh} cy={0} r={hh * 0.6} fill="none" stroke={accent} />
+            <circle cx={hw - hh} cy={0} r={hh * 0.6} fill="none" stroke={accent} />
+          </g>
+        );
+      case "hopper": // plan: square outlet inside circle
+        return (
+          <g {...common}>
+            <circle r={r} fill={body} />
+            <rect x={-r * 0.25} y={-r * 0.25} width={r * 0.5} height={r * 0.5} fill="none" stroke={accent} />
+            {[45, 135, 225, 315].map((a) => (
+              <line key={a} transform={`rotate(${a})`} x1={r * 0.35} y1={0} x2={r * 0.95} y2={0} strokeWidth={1} opacity={0.6} />
+            ))}
+          </g>
+        );
+      // ---- valves & instruments ----
+      case "control-valve": // bowtie + diaphragm actuator
+        return (
+          <g {...common}>
+            <line x1={-hw} y1={hh * 0.3} x2={hw} y2={hh * 0.3} />
+            <polygon points={`${-hw},${-hh * 0.1} ${-hw},${hh * 0.7} 0,${hh * 0.3}`} fill="none" />
+            <polygon points={`${hw},${-hh * 0.1} ${hw},${hh * 0.7} 0,${hh * 0.3}`} fill="none" />
+            <line x1={0} y1={hh * 0.3} x2={0} y2={-hh * 0.5} />
+            <path d={`M ${-hw * 0.5} ${-hh * 0.5} A ${hw * 0.5} ${hh * 0.45} 0 0 1 ${hw * 0.5} ${-hh * 0.5} Z`} fill={accent} fillOpacity={0.35} />
+          </g>
+        );
+      case "relief-valve": // angle body + spring
+        return (
+          <g {...common}>
+            <polygon points={`${-hw},${-hh * 0.5} ${-hw},${hh * 0.5} 0,0`} fill="none" />
+            <polygon points={`${-hh * 0.5},${hh} ${hh * 0.5},${hh} 0,0`} fill="none" />
+            <path d={`M 0 0 L ${hw * 0.4} ${-hh * 0.2} L ${-hw * 0.1} ${-hh * 0.45} L ${hw * 0.4} ${-hh * 0.7} L 0 ${-hh}`} fill="none" stroke={accent} />
+          </g>
+        );
+      case "flow-meter": // inline body + "M"
+        return (
+          <g {...common}>
+            <line x1={-hw} y1={0} x2={hw} y2={0} />
+            <rect x={-hw * 0.6} y={-hh} width={hw * 1.2} height={hh * 2} fill={body} />
+            <text textAnchor="middle" dominantBaseline="central" fontSize={Math.max(8, hh * 1.1)} fontWeight={700} fill={accent} stroke="none">M</text>
+          </g>
+        );
+      case "instrument": // ISA field-instrument bubble
+        return (
+          <g {...common}>
+            <circle r={r} fill={body} />
+            <text textAnchor="middle" dominantBaseline="central" fontSize={Math.max(7, r * 0.8)} fontWeight={700} fill={accent} stroke="none">
+              {symbol.tagPrefix}
+            </text>
+          </g>
+        );
+      default:
+        return <rect x={-hw} y={-hh} width={hw * 2} height={hh * 2} fill="none" {...common} />;
+    }
+  })();
+
+  // Labels sit under the body in the symbol's own frame (they rotate with
+  // it), so the offset is the half-DEPTH — using the width would strand the
+  // tag far below long horizontal pieces (drums, exchangers, conveyors).
+  const below = hh;
+  return (
+    <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
+      {glyph}
+      {instance.tag && (
+        <text y={below + 13} textAnchor="middle" fontSize={11} fontWeight={700} fill={highlighted ? "#f59e0b" : "#fde68a"}>
+          {instance.tag.slice(0, 14)}
+        </text>
+      )}
+      <text y={below + (instance.tag ? 26 : 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
+        {symbol.label}
+      </text>
+    </g>
+  );
+}
+
 const routines = new Map([
   ["furniture", drawFurnitureSymbol],
   ["rooms", drawRoomSymbol],
@@ -671,6 +955,7 @@ const routines = new Map([
   ["buildingElements", drawBuildingElementSymbol],
   ["siteOutdoor", drawSiteOutdoorSymbol],
   ["mepFixtures", drawMepFixtureSymbol],
+  ["processEquipment", drawProcessEquipmentSymbol],
 ]);
 
 /** Truncate a label so it fits a person card; SVG text never wraps. */

@@ -364,8 +364,11 @@ describe("highlightRegistryKey / highlightKeysForSelection", () => {
     expect(highlightKeysForSelection({ kind: "room", id: "nope" }, createEmptyDesign())).toEqual([]);
   });
 
-  it("maps symbol and pipe selections to no keys — no 3D mesh exists for them yet", () => {
-    expect(highlightKeysForSelection({ kind: "symbol", id: "s1" }, createEmptyDesign())).toEqual([]);
+  it("maps a symbol to its own key (process equipment has a 3D mesh; other symbols just match nothing)", () => {
+    expect(highlightKeysForSelection({ kind: "symbol", id: "s1" }, createEmptyDesign())).toEqual(["symbol:s1"]);
+  });
+
+  it("maps a pipe selection to no keys — pipes have no 3D mesh yet", () => {
     expect(highlightKeysForSelection({ kind: "pipe", id: "p1" }, createEmptyDesign())).toEqual([]);
   });
 

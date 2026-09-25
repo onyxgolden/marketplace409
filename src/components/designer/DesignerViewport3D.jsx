@@ -533,6 +533,36 @@ export default function DesignerViewport3D({
         register(highlightRegistryKey("furniture", item.id), fGroup);
       }
 
+      // process equipment: floor-standing primitives, selectable like furniture.
+      for (const eq of built.equipment || []) {
+        const mat = stdMaterial({ color: eq.color, roughness: 0.55 });
+        let mesh;
+        if (eq.shape === "vcyl") {
+          const r = Math.min(eq.widthIn, eq.depthIn) / 2;
+          mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, eq.heightIn, 28), mat);
+          mesh.position.y = eq.heightIn / 2;
+        } else if (eq.shape === "hcyl") {
+          // Horizontal vessel along its width, resting on low saddles.
+          const r = eq.depthIn / 2;
+          const saddle = Math.max(0, eq.heightIn - eq.depthIn);
+          mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, eq.widthIn, 28), mat);
+          mesh.rotation.z = Math.PI / 2;
+          mesh.position.y = saddle + r;
+        } else {
+          mesh = new THREE.Mesh(new THREE.BoxGeometry(eq.widthIn, eq.heightIn, eq.depthIn), mat);
+          mesh.position.y = eq.heightIn / 2;
+        }
+        shadowed(mesh);
+        const eGroup = new THREE.Group();
+        eGroup.add(mesh);
+        eGroup.position.set(eq.x, 0, eq.z);
+        eGroup.rotation.y = eq.rotY;
+        eGroup.userData.entityKind = "symbol";
+        eGroup.userData.entityId = eq.id;
+        group.add(eGroup);
+        register(highlightRegistryKey("symbol", eq.id), eGroup);
+      }
+
       // stairs: composed runs + landings from pure descriptors, with railings.
       const stairWood = stdMaterial({ color: "#8f6f4b", roughness: 0.75 });
       const stairRailMat = stdMaterial({ color: "#6b5138", roughness: 0.7 });

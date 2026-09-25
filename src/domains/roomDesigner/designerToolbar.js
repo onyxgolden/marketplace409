@@ -56,7 +56,7 @@ export const TOOL_CATEGORIES = [
     toolIds: ["structure-container-20", "structure-container-40"],
   },
   { id: "mechanical", label: "Mechanical", toolIds: ["pipe", "piping"] },
-  { id: "process", label: "Process", toolIds: [] },
+  { id: "process", label: "Process", toolIds: ["process-equipment"] },
   { id: "plan", label: "Plan", toolIds: ["orgchart", "calibrate"] },
 ];
 
