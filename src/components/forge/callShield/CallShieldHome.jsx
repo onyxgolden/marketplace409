@@ -16,6 +16,11 @@ import {
   fetchAllLabels,
   labelForNumber,
 } from "@/domains/callShield/callShieldLabels";
+import {
+  activeColumnFilterCount,
+  applyColumnFilters,
+} from "@/domains/callShield/callShieldColumnFilters";
+import CallShieldColumnFilters from "@/components/forge/callShield/CallShieldColumnFilters";
 import { fetchNativeCallRecords, isNativeShell } from "@/lib/callShield/callShieldNative";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import {
@@ -58,6 +63,11 @@ function formatDuration(seconds) {
   return `${m}m ${s % 60}s`;
 }
 
+// "Now" for the Excel-style date buckets, captured once when this module
+// loads so the buckets stay stable while the review list is open (and so
+// render stays pure — the hooks purity rule forbids Date.now() in render).
+const COLUMN_FILTER_NOW = Date.now();
+
 export default function CallShieldHome() {
   // Cases + staged imports: stale-while-revalidate under one key. The last
   // saved lists stay on screen while a background refresh is in flight.
@@ -89,6 +99,9 @@ export default function CallShieldHome() {
   );
   const labels = useMemo(() => labelsData ?? [], [labelsData]);
   const [labelFilter, setLabelFilter] = useState("all");
+  // Excel-style per-column filters. They stack with AND semantics and compose
+  // with the label tabs above (tabs first, columns second).
+  const [columnFilters, setColumnFilters] = useState({});
   const [selectedCaseId, setSelectedCaseId] = useState("");
   // Working case detail: its own key so switching cases serves the cached
   // detail instantly and revalidates behind it.
@@ -250,7 +263,11 @@ export default function CallShieldHome() {
 
   const existingCalls = caseDetail?.calls || [];
 
-  const visibleImports = applyLabelFilter(imports ?? [], labels, labelFilter);
+  const tabImports = applyLabelFilter(imports ?? [], labels, labelFilter);
+  const visibleImports = applyColumnFilters(tabImports, columnFilters, {
+    labels,
+    now: COLUMN_FILTER_NOW,
+  });
   const filterCounts = useMemo(() => {
     const list = imports ?? [];
     const counts = { all: list.length, personal: 0, offender: 0, unlabeled: 0 };
@@ -419,12 +436,24 @@ export default function CallShieldHome() {
           })}
         </div>
 
+        {tabImports.length > 0 && (
+          <CallShieldColumnFilters
+            rows={tabImports}
+            labels={labels}
+            filters={columnFilters}
+            onChange={setColumnFilters}
+            resultCount={visibleImports.length}
+          />
+        )}
+
         <div className="mt-4 space-y-2">
           {visibleImports.length === 0 && (
             <p className="text-sm text-slate-500">
               {(imports ?? []).length === 0
                 ? "No staged imports. Nothing waiting for review."
-                : "No calls match this filter."}
+                : activeColumnFilterCount(columnFilters) > 0
+                  ? "No staged calls match these column filters. Clear the filters to see every staged call."
+                  : "No calls match this filter."}
             </p>
           )}
           {visibleImports.map((row) => {
