@@ -851,8 +851,18 @@ fn capture(
     app: tauri::AppHandle,
     state: State<AppState>,
 ) -> Result<ArtifactRefDto, String> {
+    run_capture(&app, state, &dto)
+}
+
+/// Shared capture path: the `capture` command and the Alt+PrintScreen
+/// hotkey both run through here.
+fn run_capture(
+    app: &tauri::AppHandle,
+    state: State<AppState>,
+    dto: &CaptureRequestDto,
+) -> Result<ArtifactRefDto, String> {
     let monitors = current_monitors()?;
-    let (mode, include_cursor) = build_mode(&dto, &app, &state)?;
+    let (mode, include_cursor) = build_mode(dto, app, &state)?;
     let id = next_id(&state);
     // The engine stamps captured_at at acquisition time (after any delay
     // sleep); the request carries no request-time timestamp.
@@ -998,14 +1008,19 @@ fn open_external_url(url: String) -> Result<(), String> {
             .arg(&url)
             .spawn()
             .map_err(|e| {
-                format!("Could not open the browser (xdg-open failed: {e}). Is xdg-utils installed?")
+                format!(
+                    "Could not open the browser (xdg-open failed: {e}). Is xdg-utils installed?"
+                )
             })?;
         Ok(())
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = url;
-        Err("Opening the library in a browser is only implemented on Windows and Linux.".to_string())
+        Err(
+            "Opening the library in a browser is only implemented on Windows and Linux."
+                .to_string(),
+        )
     }
 }
 
@@ -1146,16 +1161,34 @@ fn begin_region_pick(
     app: tauri::AppHandle,
     state: State<AppState>,
 ) -> Result<(), String> {
+    open_region_overlay(
+        app,
+        state,
+        &monitorId,
+        delayMs.unwrap_or(0),
+        includeCursor.unwrap_or(true),
+    )
+}
+
+/// Shared overlay path: the `begin_region_pick` command and the
+/// Shift+PrintScreen hotkey both open the overlay through here.
+fn open_region_overlay(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    monitor_id: &str,
+    delay_ms: u64,
+    include_cursor: bool,
+) -> Result<(), String> {
     let monitors = current_monitors()?;
     let monitor = monitors
         .iter()
-        .find(|m| m.id == monitorId)
-        .ok_or_else(|| format!("unknown monitor id: {monitorId}"))?;
+        .find(|m| m.id == monitor_id)
+        .ok_or_else(|| format!("unknown monitor id: {monitor_id}"))?;
     *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
         origin_virtual: monitor.origin_virtual,
         dpr: monitor.scale,
-        delay_ms: delayMs.unwrap_or(0),
-        include_cursor: includeCursor.unwrap_or(true),
+        delay_ms,
+        include_cursor,
     });
     if let Some(w) = app.get_webview_window("overlay") {
         let _ = w.close();
@@ -1459,7 +1492,7 @@ fn scroll_result_dto(
 }
 
 // ---------------------------------------------------------------------------
-// Print Screen system-default takeover
+// Global capture shortcuts (Print Screen + direct-capture variants)
 // ---------------------------------------------------------------------------
 
 /// Bring the main Capture window forward: unminimize, show, focus.
@@ -1475,30 +1508,135 @@ fn focus_capture_window(app: &tauri::AppHandle) {
     }
 }
 
-/// Register Print Screen as the global capture shortcut (best effort).
-///
-/// Returns true when the OS accepted the registration. A failure is
-/// *expected* on machines where the OS already reserves the key (Windows 11
-/// maps Print Screen to screen snipping via an Accessibility setting) or
-/// where another capture tool holds it — it is logged loudly and never
-/// fails startup. The accelerator string and the launch-not-shutter action
-/// are owned by [`forge_capture_core::hotkey`].
-fn register_printscreen_shortcut(app: &tauri::AppHandle) -> bool {
-    use tauri_plugin_global_shortcut::ShortcutState;
-    let outcome = app
-        .global_shortcut()
-        .on_shortcut(
-            forge_capture_core::hotkey::PRINTSCREEN_ACCELERATOR,
-            |app, _shortcut, event| {
-                if event.state() == ShortcutState::Pressed {
-                    focus_capture_window(app);
+/// Pick the monitor a direct-capture shortcut should target: the one under
+/// the cursor, falling back to the first monitor when the cursor position
+/// is unavailable.
+fn monitor_id_for_hotkey() -> Result<String, String> {
+    let monitors = current_monitors()?;
+    if monitors.is_empty() {
+        return Err("no monitors found".into());
+    }
+    if let Ok((px, py)) = forge_capture_core::native::cursor_pos() {
+        if let Some(m) = monitors
+            .iter()
+            .find(|m| m.bounds_virtual().contains_point(px as i64, py as i64))
+        {
+            return Ok(m.id.clone());
+        }
+    }
+    Ok(monitors[0].id.clone())
+}
+
+/// Payload the shell emits to the UI when a direct-capture shortcut needs
+/// the app window (window capture: the user still picks the window).
+#[derive(Clone, serde::Serialize)]
+struct HotkeyActionPayload {
+    action: &'static str,
+}
+
+/// Payload for `hotkey-error`: a shortcut fired but the action could not
+/// run; the UI shows the message in its status line.
+#[derive(Clone, serde::Serialize)]
+struct HotkeyErrorPayload {
+    message: String,
+}
+
+/// A shortcut fired but its action failed: log, focus the app window so
+/// the user is not left wondering, and surface the message in the UI.
+fn report_hotkey_error(app: &tauri::AppHandle, message: &str) {
+    eprintln!("[capture] hotkey action failed: {message}");
+    focus_capture_window(app);
+    let _ = app.emit(
+        "hotkey-error",
+        HotkeyErrorPayload {
+            message: message.to_string(),
+        },
+    );
+}
+
+/// Dispatch a global-shortcut action. Region and full-screen run
+/// immediately against the monitor under the cursor; window capture
+/// focuses the app and tells the UI to arm window mode (the window itself
+/// must still be picked).
+fn handle_hotkey_action(app: &tauri::AppHandle, action: forge_capture_core::hotkey::HotkeyAction) {
+    use forge_capture_core::hotkey::HotkeyAction;
+    match action {
+        HotkeyAction::FocusWindow => focus_capture_window(app),
+        HotkeyAction::RegionCapture => match monitor_id_for_hotkey() {
+            Ok(id) => {
+                let state = app.state::<AppState>();
+                if let Err(e) = open_region_overlay(app.clone(), state, &id, 0, true) {
+                    report_hotkey_error(app, &e);
                 }
-            },
-        )
-        .map_err(|e| e.to_string());
-    let status = forge_capture_core::hotkey::status_from_registration(outcome);
-    eprintln!("[capture] {}", status.describe());
-    status.active()
+            }
+            Err(e) => report_hotkey_error(app, &e),
+        },
+        HotkeyAction::WindowCapture => {
+            focus_capture_window(app);
+            let _ = app.emit(
+                "hotkey-action",
+                HotkeyActionPayload {
+                    action: forge_capture_core::hotkey::ACTION_WINDOW_CAPTURE,
+                },
+            );
+        }
+        HotkeyAction::FullscreenCapture => match monitor_id_for_hotkey() {
+            Ok(monitor_id) => {
+                let dto = CaptureRequestDto {
+                    mode: "full-monitor".into(),
+                    monitor_id: Some(monitor_id),
+                    window_id: None,
+                    region: None,
+                    overlay_rect: None,
+                    delay_ms: Some(0),
+                    include_cursor: true,
+                };
+                let state = app.state::<AppState>();
+                if let Err(e) = run_capture(app, state, &dto) {
+                    report_hotkey_error(app, &e);
+                }
+            }
+            Err(e) => report_hotkey_error(app, &e),
+        },
+    }
+}
+
+/// Register all four capture shortcuts (best effort).
+///
+/// Returns true when the OS accepted the Print Screen registration. A
+/// failure is *expected* on machines where the OS already reserves the key
+/// (Windows 11 maps Print Screen to screen snipping via an Accessibility
+/// setting), where a Wayland compositor refuses global shortcuts, or where
+/// another capture tool holds one — it is logged loudly and never fails
+/// startup. The accelerator strings and the action mapping are owned by
+/// [`forge_capture_core::hotkey`].
+fn register_capture_shortcuts(app: &tauri::AppHandle) -> bool {
+    use tauri_plugin_global_shortcut::ShortcutState;
+    let mut printscreen_active = false;
+    for (accelerator, action) in forge_capture_core::hotkey::CAPTURE_SHORTCUTS {
+        let outcome = app
+            .global_shortcut()
+            .on_shortcut(accelerator, move |app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    handle_hotkey_action(app, action);
+                }
+            })
+            .map_err(|e| e.to_string())
+            .and_then(|_| {
+                app.global_shortcut()
+                    .register(accelerator)
+                    .map_err(|e| e.to_string())
+            });
+        let status = forge_capture_core::hotkey::status_from_registration(outcome);
+        eprintln!(
+            "[capture] {}",
+            forge_capture_core::hotkey::describe_shortcut_status(accelerator, &status)
+        );
+        if action == forge_capture_core::hotkey::HotkeyAction::FocusWindow {
+            printscreen_active = status.active();
+        }
+    }
+    printscreen_active
 }
 
 /// Whether the Print Screen takeover is active in this session. The UI can
@@ -1541,10 +1679,11 @@ fn main() {
             media_uploads: Mutex::new(HashMap::new()),
         })
         .setup(|app| {
-            // Best-effort Print Screen takeover: register the global
-            // shortcut and record whether the OS accepted it. A rejection
-            // never fails startup (see register_printscreen_shortcut).
-            let active = register_printscreen_shortcut(app.handle());
+            // Best-effort capture shortcuts: register the four PrintScreen
+            // shortcuts and record whether the OS accepted the bare
+            // PrintScreen one. A rejection never fails startup (see
+            // register_capture_shortcuts).
+            let active = register_capture_shortcuts(app.handle());
             app.state::<AppState>()
                 .printscreen_active
                 .store(active, Ordering::Relaxed);

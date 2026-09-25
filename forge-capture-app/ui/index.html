@@ -9,7 +9,8 @@
 <body>
   <header>
     <h1>FORGE Capture <span id="version" class="version"></span></h1>
-    <p class="subtitle">Local-first screen capture. No account, no upload — files stay on this machine.</p>
+    <p class="subtitle">Local-first screen capture. No account, no upload — files stay on this machine.
+      <button id="help-btn" class="linklike" type="button">Help</button></p>
   </header>
 
   <main>
@@ -92,6 +93,33 @@
     </section>
 
     <div id="record-mount"></div>
+
+    <dialog id="help-dialog" aria-labelledby="help-title">
+      <h2 id="help-title">How FORGE Capture works</h2>
+      <div class="help-body">
+        <h3>Capture modes</h3>
+        <ul>
+          <li><strong>Full monitor</strong> — captures the whole selected monitor, right now.</li>
+          <li><strong>Window</strong> — pick a window from the list, then Capture. (Windows only for now — on Linux use monitor or region.)</li>
+          <li><strong>Region (drag on screen)</strong> — the screen dims; drag a rectangle, or press <kbd>Esc</kbd> to cancel.</li>
+        </ul>
+        <h3>Keyboard shortcuts</h3>
+        <ul>
+          <li><kbd>PrintScreen</kbd> — open the Capture window</li>
+          <li><kbd>Shift</kbd>+<kbd>PrintScreen</kbd> — start a region capture</li>
+          <li><kbd>Ctrl</kbd>+<kbd>PrintScreen</kbd> — window capture (pick the window, then Capture)</li>
+          <li><kbd>Alt</kbd>+<kbd>PrintScreen</kbd> — capture the current monitor now</li>
+          <li><kbd>Esc</kbd> — cancel a region pick</li>
+        </ul>
+        <p class="hint">On Linux, the global shortcuts work in X11/Xorg sessions; on Wayland the compositor may block them — everything still works from this window.</p>
+        <h3>Where captures go</h3>
+        <p>Every capture is saved automatically as PNG + a <code>.forge.json</code> sidecar in the captures folder shown under “Session captures” (<code>~/.local/share/forge-capture/Captures</code> on Linux). Use Copy on any capture to put the image on the clipboard.</p>
+        <p class="hint">Save-to-FORGE isn't in this build yet.</p>
+      </div>
+      <form method="dialog">
+        <button class="primary" type="submit">Close</button>
+      </form>
+    </dialog>
   </main>
 
   <script src="main.js"></script>

@@ -135,42 +135,54 @@ The frontend (`../ui`) is plain JS with no build step
 (`beforeBuildCommand` is empty), so the bundler copies it directly.
 
 **Install on the target machine (Zorin/Ubuntu):** `sudo dpkg -i
-forge-capture_0.2.0_amd64.deb` (or run the `.AppImage`). Captures land in
+forge-capture_0.3.0_amd64.deb` (or run the `.AppImage`). Captures land in
 `~/.local/share/forge-capture/Captures`.
 
-### What works on Linux today
+### What works on Linux today (v0.3.0)
 
 - App shell, capture window + region-picker overlay, delayed capture UI.
+- **Native screen capture on X11/Xorg** (pure-Rust via x11rb — no X11 dev
+  headers needed to build): monitor enumeration (Xinerama, Xft.dpi scale),
+  full-monitor and region capture, cursor position, and cursor compositing
+  (XFixes) when "Include cursor" is checked. Image clipboard works through
+  arboard (daemonized on X11, so the image survives the copy call).
+- **Global shortcuts** (best-effort, never fail startup): `PrintScreen`
+  opens the Capture window; `Shift+PrintScreen` starts a region capture;
+  `Ctrl+PrintScreen` arms window capture; `Alt+PrintScreen` captures the
+  monitor under the cursor immediately; `Esc` cancels a region pick. On
+  Wayland sessions the compositor may refuse global grabs — the app window
+  still works.
+- **In-app Help**: a Help button opens an instructions dialog describing
+  the real capture modes, shortcuts, and save location.
 - Screen **recording**: fully web-platform — the webview's MediaRecorder
   captures via `getDisplayMedia`, which WebKitGTK serves through
   xdg-desktop-portal/PipeWire (standard on Zorin/Ubuntu Wayland and X11).
-  No Windows-only code in the recording path. Cursor-overlay positions
-  come from `get_cursor_pos`, which degrades with an explicit error on
-  Linux, so the compositor's cursor highlight is unavailable until the
-  Linux capture engine lands.
-- Print Screen takeover: registered best-effort via
-  `tauri-plugin-global-shortcut`; a rejection never fails startup and the
-  app reports `printscreen_takeover_active`. Note: on Wayland sessions the
-  plugin cannot grab global keys (compositor restriction), so expect
-  "takeover unavailable" there — the app window still works.
+  No Windows-only code in the recording path.
 - "Open in FORGE" library links open via `xdg-open`.
 - All Rust/JS unit tests run on Linux.
+
+### X11 vs Wayland
+
+FORGE Capture captures on **X11/Xorg sessions**. On a Wayland session the
+native calls fail with a clear message: log out, choose **"Zorin on Xorg"**
+from the gear menu at the login screen, then log back in. (Global
+shortcuts have the same split: they register on X11; a Wayland compositor
+may block them.)
 
 ### Linux gaps (explicit errors today, follow-up slices)
 
 These fail closed with a clear message instead of fake behavior:
 
-1. **Native screen capture** (`capture_rect`, `list_windows`,
-   `find_window`, `cursor_pos`) — GDI/BitBlt only. Needs a Linux capture
-   engine (X11 and/or xdg-desktop-portal Screenshot) before screenshots
-   work on Linux.
-2. **Image clipboard** (`copy_to_clipboard`) — Win32 `CF_DIB` only.
+1. **Window capture** (`list_windows`, `find_window`) — no Linux window
+   enumeration yet; use monitor or region capture.
+2. **Scrolling capture** (`dom_scroll_driver`, `wheel_scroll_driver`) —
+   not implemented on Linux yet.
 3. **Text clipboard** (`copy_text_to_clipboard`, the "copy library link"
    button) — Win32 only.
 4. **OS credential store** (`session_store.rs` — Rung 5/6 "Save to FORGE"
    sign-in) — Windows Credential Manager only. Needs a Linux path
    (Secret Service / GNOME Keyring) before uploads can authenticate from
-   the Linux app.
+   the Linux app. Save-to-FORGE is not in this build regardless.
 
 ## Binary publishing process (download page)
 

@@ -346,10 +346,12 @@ async function init() {
   $("scroll-target-kind").addEventListener("change", onScrollTargetChange);
   $("scroll-btn").addEventListener("click", doScrollCapture);
   $("scroll-stop-btn").addEventListener("click", doScrollStop);
+  $("help-btn").addEventListener("click", () => $("help-dialog").showModal());
   onModeChange();
   onScrollTargetChange();
   await listenCaptureSaved();
   await listenScrollEvents();
+  await listenHotkeyEvents();
   await refreshLists();
   // Rung 5: label every Save-to-FORGE button honestly up front.
   void probeForgeSaveButtons();
@@ -373,6 +375,25 @@ async function listenScrollEvents() {
   });
   await listenEvent("scroll-finished", (msg) => {
     if (msg && msg.payload) onScrollFinished(msg.payload);
+  });
+}
+
+// Global-shortcut events from the backend: the Ctrl+PrintScreen window
+// action (arm window mode in the UI) and any shortcut failure the user
+// should see.
+async function listenHotkeyEvents() {
+  await listenEvent("hotkey-action", async (msg) => {
+    const action = msg && msg.payload && msg.payload.action;
+    if (action === "window-capture") {
+      $("mode").value = "window";
+      onModeChange();
+      await refreshLists();
+      setStatus("Window capture armed: pick a window, then Capture.");
+    }
+  });
+  await listenEvent("hotkey-error", (msg) => {
+    const message = msg && msg.payload && msg.payload.message;
+    if (message) setStatus(`Shortcut failed: ${message}`, "error");
   });
 }
 
