@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 
 const money = (cents) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cents || 0) / 100);
@@ -12,9 +14,26 @@ const REVIEW_SECTIONS = [
   { classification: "already_imported", label: "Already imported", tone: "emerald" },
 ];
 
+async function fetchRentecLinkedProperties() {
+  // Reads FORGE's own already-imported linkage data only — never calls Rentec. The first (and
+  // only) Rentec call happens when the landlord explicitly clicks "Preview Rentec payments" below.
+  const response = await fetch("/api/rental/rentec-linked-properties");
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error);
+  return body.properties;
+}
+
 export default function RentecPaymentImportPanel({ onNavigate } = {}) {
-  const [properties, setProperties] = useState(null); // null = still loading; [] = loaded, empty
-  const [propertiesError, setPropertiesError] = useState("");
+  // Rentec-linked properties: stale-while-revalidate. The cached list renders instantly on
+  // return visits; a background refresh never blanks the property picker.
+  const {
+    data: linkedProperties,
+    error: propertiesError,
+    isLoading: propertiesLoading,
+    isRefreshing: propertiesRefreshing,
+    refresh: refreshLinkedProperties,
+  } = useStaleWhileRevalidate("rental:rentec-linked-properties", fetchRentecLinkedProperties, { ttlMs: 60_000 });
+  const properties = linkedProperties ?? null; // null = still loading; [] = loaded, empty
   const [selectedPropertyId, setSelectedPropertyId] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -25,16 +44,6 @@ export default function RentecPaymentImportPanel({ onNavigate } = {}) {
   const [confirming, setConfirming] = useState(false);
   const [approving, setApproving] = useState(false);
   const [approveResults, setApproveResults] = useState(null);
-
-  // Reads FORGE's own already-imported linkage data only — never calls Rentec. The first (and
-  // only) Rentec call happens when the landlord explicitly clicks "Preview Rentec payments" below.
-  useEffect(() => {
-    fetch("/api/rental/rentec-linked-properties").then(async (response) => {
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error);
-      setProperties(body.properties);
-    }).catch((error) => setPropertiesError(error.message));
-  }, []);
 
   const matchedItems = (preview?.items || []).filter((item) => item.classification === "matched");
 
@@ -95,14 +104,15 @@ export default function RentecPaymentImportPanel({ onNavigate } = {}) {
       <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Import Rentec payments</h2>
       <p className="mt-2 max-w-3xl text-sm text-slate-600 dark:text-slate-400">
         Preview rent payments already collected through Rentec for one property and, on your explicit approval,
-        record them against the matching FORGE rent charge so an externally managed lease's balance is accurate.
-        This never changes a lease's collection authority, cutover date, or global billing state, and Rentec is
+        record them against the matching FORGE rent charge so an externally managed lease&apos;s balance is accurate.
+        This never changes a lease&apos;s collection authority, cutover date, or global billing state, and Rentec is
         never written to.
       </p>
 
-      {propertiesError ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{propertiesError}</p> : null}
+      {properties === null && propertiesLoading ? <ForgeLoadingState label="Loading your Rentec-linked properties…" /> : null}
+      {properties === null && propertiesError ? <ForgeErrorState title="Unable to load Rentec-linked properties." detail={propertiesError} onRetry={refreshLinkedProperties} /> : null}
 
-      {properties === null ? <p className="mt-5 text-sm text-slate-500 dark:text-slate-400">Loading your Rentec-linked properties…</p> : properties.length === 0 ? (
+      {properties && properties.length === 0 ? (
         <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/30">
           <p className="text-sm font-bold text-amber-900 dark:text-amber-200">No properties are linked to Rentec yet.</p>
           <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">Import or link a property from Rentec Migration before you can preview its payments here.</p>
@@ -110,7 +120,8 @@ export default function RentecPaymentImportPanel({ onNavigate } = {}) {
             Go to Rentec Migration
           </button>
         </div>
-      ) : (
+      ) : null}
+      {properties && properties.length > 0 ? (
         <form onSubmit={runPreview} className="mt-5 flex flex-wrap items-end gap-3">
           <label className="text-sm font-bold text-slate-900 dark:text-white">Property
             <select value={selectedPropertyId} onChange={(event) => setSelectedPropertyId(event.target.value)} required
@@ -123,7 +134,12 @@ export default function RentecPaymentImportPanel({ onNavigate } = {}) {
             {busy ? "Previewing…" : "Preview Rentec payments"}
           </button>
         </form>
-      )}
+      ) : null}
+      {properties && (propertiesRefreshing || propertiesError) ? (
+        <p role="status" className="mt-4 text-xs font-bold text-slate-400 dark:text-slate-500">
+          {propertiesError ? "Could not refresh — showing the last saved property list." : "Updating…"}
+        </p>
+      ) : null}
       <p className="mt-3 text-sm font-bold text-amber-800 dark:text-amber-400">Preview only: this never writes anything. Approving matched payments below is the only action on this page that writes anything.</p>
 
       {message ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{message}</p> : null}

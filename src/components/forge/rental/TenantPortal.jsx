@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Elements } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import TenantPaymentForm from "./TenantPaymentForm";
 import TenantMaintenancePanel from "./TenantMaintenancePanel";
 import TenantDocumentsPanel from "./TenantDocumentsPanel";
@@ -64,15 +66,34 @@ export function isChargePayableThroughForge(charge, schedules, billingEnabled, t
   return true;
 }
 const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+
+async function fetchTenantPortal() {
+  const response = await fetch("/api/rental/portal");
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error);
+  return body.portal;
+}
+
 export default function TenantPortal({ initialPortal = null } = {}) {
-  const [portal, setPortal] = useState(initialPortal); const [error, setError] = useState("");
+  const [portalOverride, setPortalOverride] = useState(initialPortal);
+  const [error, setError] = useState("");
   const [session, setSession] = useState(null); const [starting, setStarting] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [stripeInitError, setStripeInitError] = useState(false); const [stripeRetryCount, setStripeRetryCount] = useState(0);
-  const loadPortal = useCallback(() => fetch("/api/rental/portal").then(async (response) => {
-    const body = await response.json(); if (!response.ok) throw new Error(body.error); return body.portal;
-  }).then(setPortal), []);
-  useEffect(() => { if (!initialPortal) loadPortal().catch((reason) => setError(reason.message)); }, [loadPortal, initialPortal]);
+  // Tenant portal: stale-while-revalidate. The cached portal renders instantly on return
+  // visits; every child panel's post-action callback revalidates while the last good
+  // portal stays on screen. An explicitly passed initialPortal (tests/SSR) bypasses
+  // the cache and refetches directly on reload.
+  const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
+    initialPortal ? null : "rental:tenant-portal",
+    fetchTenantPortal,
+    { ttlMs: 60_000 },
+  );
+  const portal = portalOverride ?? data ?? null;
+  const reloadPortal = useCallback(() => {
+    if (initialPortal) return fetchTenantPortal().then(setPortalOverride);
+    return refresh();
+  }, [initialPortal, refresh]);
   const stripePromise = useMemo(() => {
     if (!session) return null;
     if (!isValidPublishableKey(STRIPE_PUBLISHABLE_KEY)) return Promise.resolve(null);
@@ -100,8 +121,8 @@ export default function TenantPortal({ initialPortal = null } = {}) {
     } catch (reason) { setError(reason.message); } finally { setStarting(null); }
   }
   function retryStripeInit() { setStripeInitError(false); setStripeRetryCount((count) => count + 1); }
-  if (error && !portal) return <main className="mx-auto max-w-3xl p-8"><p role="alert">{error}</p></main>;
-  if (!portal) return <main className="mx-auto max-w-3xl p-8">Loading your tenant portal…</main>;
+  if (loadError && !portal) return <main className="mx-auto max-w-3xl p-8"><ForgeErrorState title="Unable to load your tenant portal." detail={loadError} onRetry={reloadPortal} /></main>;
+  if (!portal) return <main className="mx-auto max-w-3xl p-8"><ForgeLoadingState label="Loading your tenant portal…" /></main>;
   const summary = buildTenantPaymentSummary(portal.rentals, portal.billingEnabled);
   // Autopay disclosure for the one-time payment screen: shown only when the charge's lease
   // has an active autopay enrollment. Rental one-time payments always settle the full
@@ -114,6 +135,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
   return <main className="min-h-screen bg-slate-50 px-5 py-10"><div className="mx-auto max-w-3xl space-y-6">
     <header><p className="text-sm font-bold uppercase tracking-widest text-amber-700">FORGE Tenant Portal</p>
       <h1 className="mt-2 text-3xl font-black text-slate-950">Welcome, {portal.tenant.displayName}</h1></header>
+    {(isRefreshing || loadError) ? <p role="status" className="text-xs font-bold text-slate-400">{loadError ? "Could not refresh — showing your last saved portal." : "Updating…"}</p> : null}
     {error ? <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">{error}</p> : null}
     {!session ? <section className="rounded-2xl bg-slate-950 p-6 text-white shadow-sm">
       <p className="text-sm font-bold uppercase tracking-widest text-amber-400">Current balance</p>
@@ -121,7 +143,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
       <p className="mt-2 text-sm text-slate-300">{summary.openCharges ? `${summary.openCharges} open rent charge${summary.openCharges === 1 ? "" : "s"}` : "You have no FORGE-payable balance."}</p>
       {summary.externallyManagedChargeCount ? (
         <p className="mt-3 text-xs font-bold text-amber-300">
-          {money.format(summary.externallyManagedCents / 100)} across {summary.externallyManagedChargeCount} charge{summary.externallyManagedChargeCount === 1 ? "" : "s"} is still managed in Rentec and is not payable here — see "Managed in Rentec" below.
+          {money.format(summary.externallyManagedCents / 100)} across {summary.externallyManagedChargeCount} charge{summary.externallyManagedChargeCount === 1 ? "" : "s"} is still managed in Rentec and is not payable here — see &quot;Managed in Rentec&quot; below.
         </p>
       ) : null}
     </section> : null}
@@ -163,21 +185,21 @@ export default function TenantPortal({ initialPortal = null } = {}) {
             <span className="text-right"><span className="font-bold">{money.format(payment.amountCents / 100)}</span>{payment.refundedAmountCents?<><br/><span className="text-red-700">Refunded {money.format(payment.refundedAmountCents/100)}</span></>:null}{payment.status==="succeeded"?<><br/><button onClick={()=>setReceipt({payment,unitLabel:unit?.label||"Rental home"})} className="mt-1 font-bold text-blue-700 underline">View receipt</button></>:null}</span></div>)}</div>
       </section>) }
     {receipt?<RentalPaymentReceipt payment={receipt.payment} tenantName={portal.tenant.displayName} unitLabel={receipt.unitLabel} onClose={()=>setReceipt(null)}/>:null}
-    {!session ? <TenantLeaseSigningPanel rentals={portal.rentals} onSigned={loadPortal} /> : null}
+    {!session ? <TenantLeaseSigningPanel rentals={portal.rentals} onSigned={reloadPortal} /> : null}
     {!session ? <TenantDepositPanel rentals={portal.rentals} /> : null}
-    {!session ? <TenantAutopayPanel rentals={portal.rentals} onChanged={loadPortal} /> : null}
-    {!session ? <TenantInspectionsPanel rentals={portal.rentals} onAcknowledged={loadPortal} /> : null}
+    {!session ? <TenantAutopayPanel rentals={portal.rentals} onChanged={reloadPortal} /> : null}
+    {!session ? <TenantInspectionsPanel rentals={portal.rentals} onAcknowledged={reloadPortal} /> : null}
     {!session ? <section className="rounded-2xl border border-blue-200 bg-blue-50 p-6">
       <p className="text-sm font-bold uppercase tracking-widest text-blue-800">Optional tenant service</p>
       <h2 className="mt-2 text-xl font-black text-slate-950">Build credit with rent history</h2>
       <p className="mt-2 text-sm leading-6 text-slate-700">FORGE plans to offer voluntary rent-payment reporting through an independent credit-reporting provider. The monthly price, bureaus covered, consent terms, and cancellation controls will appear here before enrollment.</p>
       <p className="mt-3 text-sm font-bold text-blue-900">Not yet available — no fee will be charged.</p>
     </section> : null}
-    {!session ? <TenantMaintenancePanel rentals={portal.rentals} onSubmitted={loadPortal} /> : null}
+    {!session ? <TenantMaintenancePanel rentals={portal.rentals} onSubmitted={reloadPortal} /> : null}
     {!session ? <TenantDocumentsPanel /> : null}
-    {!session ? <TenantInsurancePanel rentals={portal.rentals} onSubmitted={loadPortal} /> : null}
-    {!session ? <TenantAnimalsPanel rentals={portal.rentals} onChanged={loadPortal} /> : null}
-    {!session ? <TenantMessagesPanel conversation={portal.conversation} onChanged={loadPortal} /> : null}
+    {!session ? <TenantInsurancePanel rentals={portal.rentals} onSubmitted={reloadPortal} /> : null}
+    {!session ? <TenantAnimalsPanel rentals={portal.rentals} onChanged={reloadPortal} /> : null}
+    {!session ? <TenantMessagesPanel conversation={portal.conversation} onChanged={reloadPortal} /> : null}
     {!session ? <section className="rounded-2xl border border-violet-200 bg-violet-50 p-6">
       <p className="text-sm font-bold uppercase tracking-widest text-violet-800">Dog liability coverage</p>
       <h2 className="mt-2 text-xl font-black text-slate-950">Coverage for qualifying dogs</h2>

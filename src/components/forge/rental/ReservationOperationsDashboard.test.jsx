@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import ReservationOperationsDashboard from "./ReservationOperationsDashboard.jsx";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -45,6 +46,7 @@ describe("ReservationOperationsDashboard", () => {
     root = undefined;
     document.body.innerHTML = "";
     vi.unstubAllGlobals();
+    clearSWRCache();
   });
 
   it("renders accessible operational metrics without presenting expected revenue as collected", async () => {
@@ -60,9 +62,10 @@ describe("ReservationOperationsDashboard", () => {
     expect(container.querySelector("[role='status']").textContent).toContain("Loading");
     await flush();
 
+    // The SWR fetcher calls fetch(url) with no options; request
+    // deduplication and lifecycle are managed by the shared cache.
     expect(fetch).toHaveBeenCalledWith(
       "/api/rental/reservations/dashboard?days=90",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(container.textContent).toContain("$425");
     expect(container.textContent).toContain("Collected revenueNot linked");

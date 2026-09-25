@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import RentecPaymentImportPanel from "./RentecPaymentImportPanel.jsx";
 
 function mountPanel(ui) {
@@ -62,6 +63,7 @@ describe("RentecPaymentImportPanel property picker", () => {
   afterEach(() => {
     if (mounted) { unmountPanel(mounted); mounted = null; }
     vi.unstubAllGlobals();
+    clearSWRCache();
   });
 
   it("loads the owner's linked properties without ever calling Rentec — only the linked-properties list endpoint is hit before Preview is clicked", async () => {
@@ -120,6 +122,7 @@ describe("RentecPaymentImportPanel interaction", () => {
   afterEach(() => {
     if (mounted) { unmountPanel(mounted); mounted = null; }
     vi.unstubAllGlobals();
+    clearSWRCache();
   });
 
   const previewBody = {
