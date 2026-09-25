@@ -9,17 +9,17 @@
 // A historical-backtesting probability frame is deliberately left for Slice B.
 
 /**
- * Spending smile (Blanchett/Kitces research): real retirement spending falls
- * roughly 1%/yr in real terms (faster mid-retirement, slower late), with
- * healthcare the one category that rises. The deterministic 4%-rule shorthand
- * treats the nest egg as funding a FLAT real perpetuity at the withdrawal
- * rate w: nestEgg = S / w. With real spending declining at rate g, the
- * present value of that stream is S / (w + g) instead — the same mechanism
- * behind Blanchett's finding that the smile lifts the sustainable initial
- * withdrawal rate from ~4.03% to ~4.73%. So the smile path divides by
- * (withdrawalRatePct + SPENDING_SMILE_DECLINE_PCT), not by withdrawalRatePct
- * alone. This is a labeled research assumption, never a hidden dial: the UI
- * always shows both the flat and smile numbers side by side.
+ * Declining real spending: modeled as withdrawals falling roughly 1%/yr in
+ * real terms. This is NOT the Blanchett/Kitces spending smile (which dips
+ * mid-retirement and rises late as healthcare climbs) — it is a simpler
+ * declining-spending assumption, labeled as such in the UI. The deterministic
+ * 4%-rule shorthand treats the nest egg as funding a FLAT real perpetuity at
+ * the withdrawal rate w: nestEgg = S / w. With real spending declining at
+ * rate g, the present value of that stream is S / (w + g) instead. So the
+ * declining-spending path divides by (withdrawalRatePct +
+ * SPENDING_SMILE_DECLINE_PCT), not by withdrawalRatePct alone. This is a
+ * labeled assumption, never a hidden dial: the UI always shows both the flat
+ * and declining numbers side by side.
  */
 export const SPENDING_SMILE_DECLINE_PCT = 1;
 

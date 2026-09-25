@@ -13,9 +13,10 @@
 // Caveats live in the dataset meta block (src/domains/retirement/shillerAnnual.json)
 // and are surfaced in the UI caption.
 //
-// Optional spendingDeclinePct models the Blanchett/Kitces spending smile:
-// annual withdrawals fall that many percent per year in real terms
-// (withdrawal * (1 - decline)^i in retirement year i). Default 0 = flat real.
+// Optional spendingDeclinePct models declining real spending (not the
+// Blanchett/Kitces smile curve): annual withdrawals fall that many percent
+// per year in real terms (withdrawal * (1 - decline)^i in retirement year i).
+// Default 0 = flat real.
 //
 // Pure function: no I/O, no Date, no randomness. Safe to run in useMemo.
 
@@ -59,7 +60,7 @@ export default function backtestRetirement({ nestEgg, annualWithdrawal, stockPct
   const mix = Number.isFinite(stockPct) ? Math.min(1, Math.max(0, stockPct)) : 0.6;
   const withdrawal = Number.isFinite(annualWithdrawal) ? annualWithdrawal : 0;
   const startingNestEgg = Number.isFinite(nestEgg) ? nestEgg : 0;
-  // Spending smile (Blanchett/Kitces): real withdrawals decline ~1%/yr.
+  // Declining real spending: real withdrawals decline ~1%/yr.
   // The decline compounds per retirement year: year i withdraws
   // withdrawal * (1 - decline)^i, so year 0 is the full first-year amount.
   // Non-positive or non-finite declines clamp to 0 (flat real spending);
@@ -109,7 +110,9 @@ export default function backtestRetirement({ nestEgg, annualWithdrawal, stockPct
     for (let i = 0; i < horizon; i += 1) {
       const yearWithdrawal = withdrawal * (1 - decline) ** i;
       portfolio = stepRetirementYear(portfolio, returns[i], yearWithdrawal);
-      if (portfolio <= 0) {
+      // Ending at exactly $0 after the final withdrawal counts as survival:
+      // the money lasted the full horizon. Only a negative balance fails.
+      if (portfolio < 0) {
         survived = false;
         break;
       }

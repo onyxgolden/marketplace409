@@ -165,7 +165,7 @@ describe("computeRetirementTarget", () => {
     expect(missingAge.requiredNestEgg).toBeNull();
   });
 
-  it("spending smile divides by (withdrawal rate + 1%) — $1.5M flat becomes $1.2M", () => {
+  it("declining spending divides by (withdrawal rate + 1%) — $1.5M flat becomes $1.2M", () => {
     // Flat real perpetuity at 4%: 60,000 / 0.04 = 1,500,000.
     // Smile (real spending declining 1%/yr): 60,000 / 0.05 = 1,200,000.
     const flat = computeRetirementTarget({ ...BASE, generalInflationPct: 0 });
@@ -178,7 +178,7 @@ describe("computeRetirementTarget", () => {
     expect(smile.portfolioNeedAnnual).toBe(flat.portfolioNeedAnnual);
   });
 
-  it("spending smile defaults off and levers stay consistent on the smile path", () => {
+  it("declining spending defaults off and levers stay consistent on the declining path", () => {
     const def = computeRetirementTarget({ ...BASE, generalInflationPct: 0 });
     expect(def.spendingSmile).toBe(false);
     expect(def.requiredNestEgg).toBe(1_500_000); // unchanged behavior
@@ -190,7 +190,7 @@ describe("computeRetirementTarget", () => {
     expect(smile.levers.retireLater2).toBe(0);
   });
 
-  it("spending smile still returns nulls for invalid inputs", () => {
+  it("declining spending still returns nulls for invalid inputs", () => {
     const result = computeRetirementTarget({ ...BASE, withdrawalRatePct: 0, spendingSmile: true });
     expect(result.requiredNestEgg).toBeNull();
     expect(result.spendingSmile).toBeNull();
