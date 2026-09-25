@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 function formatCurrency(amount) {
   return `$${Number(amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -16,30 +18,50 @@ function formatCurrency(amount) {
 // The panel content, shared by the legacy centered modal below and the docked
 // inspector rail. In the rail, onClose collapses the rail.
 export function SchedulingCostsPanel({ projectId, blocks, onClose }) {
-  const [rollup, setRollup] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [costAccountFilter, setCostAccountFilter] = useState(null); // { id, code } | null
-  // byCostAccount only comes back on an unfiltered request -- kept separately so the "Cost by
-  // code" table itself doesn't disappear once a code is selected and rollup.byCostAccount is gone.
-  const [byCostAccount, setByCostAccount] = useState(null);
-
-  const labelByTaskCode = new Map(blocks.map((block) => [block.taskCode, block.label]));
-
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoading(true);
-    (async () => {
+  const rollupKey = projectId
+    ? `scheduling:cost-rollup:${projectId}:${costAccountFilter ? costAccountFilter.id : "all"}`
+    : null;
+  // The cost rollup: stale-while-revalidate keyed by project + selected cost
+  // code. The previous totals stay on screen while a refetch (or a filter
+  // change) is in flight instead of blanking to "Loading…".
+  const {
+    data: rollup,
+    error: rollupError,
+    isLoading,
+    isRefreshing,
+    refresh,
+  } = useStaleWhileRevalidate(
+    rollupKey,
+    async () => {
       const url = `/api/forge/scheduling/${projectId}/cost-rollup${costAccountFilter ? `?costAccountId=${encodeURIComponent(costAccountFilter.id)}` : ""}`;
       const response = await fetch(url);
       const result = await response.json().catch(() => ({}));
-      if (cancelled) return;
-      setRollup(response.ok ? result : null);
-      if (response.ok && result.byCostAccount) setByCostAccount(result.byCostAccount);
-      setLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, [projectId, costAccountFilter]);
+      if (!response.ok) throw new Error(result.error || "The cost rollup could not be computed.");
+      return result;
+    },
+    { ttlMs: 60_000 },
+  );
+  // shownRollup keeps the previous totals on screen while a refetch (or a
+  // filter change swapping the SWR key) is in flight; shownByCostAccount keeps
+  // the "Cost by code" table (which only comes back on unfiltered requests)
+  // across filter selections. Adopted during render via the
+  // adjust-state-during-render pattern -- no syncing effect needed.
+  const [shown, setShown] = useState({ key: rollupKey, rollup: null, byCostAccount: null });
+  if (shown.key !== rollupKey || (rollup && rollup !== shown.rollup)) {
+    setShown({
+      key: rollupKey,
+      rollup: rollup ?? shown.rollup,
+      byCostAccount:
+        !costAccountFilter && rollup?.byCostAccount ? rollup.byCostAccount : shown.byCostAccount,
+    });
+  }
+  const shownRollup = shown.rollup;
+  const byCostAccount = shown.byCostAccount;
+
+  const labelByTaskCode = new Map(blocks.map((block) => [block.taskCode, block.label]));
+
+  const loading = !shownRollup && isLoading;
 
   return (
     <div className="p-6 text-slate-950" data-scheduling-costs>
@@ -59,31 +81,42 @@ export function SchedulingCostsPanel({ projectId, blocks, onClose }) {
           </div>
         )}
 
-        {loading && <p className="mt-4 text-xs text-slate-400">Loading…</p>}
-        {!loading && !rollup && <p className="mt-4 text-xs text-slate-400">Unable to load cost data for this project.</p>}
+        {loading && <div className="mt-4"><ForgeLoadingState label="Loading cost data…" /></div>}
+        {!loading && !shownRollup && (
+          <div className="mt-4">
+            <ForgeErrorState title="Unable to load cost data for this project" detail={rollupError} onRetry={refresh} />
+          </div>
+        )}
 
-        {!loading && rollup && (
+        {shownRollup && (isLoading || isRefreshing) && (
+          <p role="status" className="mt-4 text-xs font-bold text-slate-400">Updating…</p>
+        )}
+        {shownRollup && rollupError && (
+          <p role="status" className="mt-2 text-xs font-bold text-slate-400">Could not refresh — showing the last saved cost rollup.</p>
+        )}
+
+        {!loading && shownRollup && (
           <>
             <div className="mt-5 grid grid-cols-3 gap-3">
               <div className="rounded-lg border border-slate-200 p-3">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Budgeted</p>
-                <p className="mt-1 text-lg font-black">{formatCurrency(rollup.project.budgeted_cost)}</p>
+                <p className="mt-1 text-lg font-black">{formatCurrency(shownRollup.project.budgeted_cost)}</p>
               </div>
               <div className="rounded-lg border border-slate-200 p-3">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Actual</p>
-                <p className="mt-1 text-lg font-black">{formatCurrency(rollup.project.actual_cost)}</p>
+                <p className="mt-1 text-lg font-black">{formatCurrency(shownRollup.project.actual_cost)}</p>
               </div>
               <div className="rounded-lg border border-slate-200 p-3">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Remaining</p>
-                <p className={`mt-1 text-lg font-black ${rollup.project.remaining_cost < 0 ? "text-red-600" : ""}`}>{formatCurrency(rollup.project.remaining_cost)}</p>
+                <p className={`mt-1 text-lg font-black ${shownRollup.project.remaining_cost < 0 ? "text-red-600" : ""}`}>{formatCurrency(shownRollup.project.remaining_cost)}</p>
               </div>
             </div>
 
-            {rollup.overallocations.length > 0 && (
+            {shownRollup.overallocations.length > 0 && (
               <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3" data-scheduling-overallocations>
                 <p className="text-xs font-black uppercase tracking-wide text-amber-800">Over-allocated resources</p>
                 <ul className="mt-1.5 space-y-1 text-xs text-amber-900">
-                  {rollup.overallocations.map((conflict) => (
+                  {shownRollup.overallocations.map((conflict) => (
                     <li key={`${conflict.resource_id}-${conflict.date}`}>
                       {conflict.resource_id} on {conflict.date}: {conflict.allocated_units} / {conflict.max_units_per_day} per day (over by {conflict.over_by})
                     </li>
@@ -132,8 +165,8 @@ export function SchedulingCostsPanel({ projectId, blocks, onClose }) {
 
             <div className="mt-5">
               <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">Cost by activity</h3>
-              {rollup.byBlock.length === 0 && <p className="mt-2 text-xs text-slate-400">No resource assignments or expenses recorded yet.</p>}
-              {rollup.byBlock.length > 0 && (
+              {shownRollup.byBlock.length === 0 && <p className="mt-2 text-xs text-slate-400">No resource assignments or expenses recorded yet.</p>}
+              {shownRollup.byBlock.length > 0 && (
                 <div className="mt-2 overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead>
@@ -145,7 +178,7 @@ export function SchedulingCostsPanel({ projectId, blocks, onClose }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {rollup.byBlock.map((row) => (
+                      {shownRollup.byBlock.map((row) => (
                         <tr key={row.block_id} className="border-t border-slate-100">
                           <td className="py-1 pr-2 font-bold">{row.task_code} {labelByTaskCode.get(row.task_code) || ""}</td>
                           <td className="py-1 pr-2">{formatCurrency(row.budgeted_cost)}</td>

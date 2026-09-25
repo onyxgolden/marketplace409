@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearSWRCache } from "../../../hooks/swrCache";
 import { DriftAlertsPanel } from "./DriftAlertsPanel";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -58,6 +59,7 @@ describe("DriftAlertsPanel", () => {
   let mounted;
 
   beforeEach(() => {
+    clearSWRCache();
     fetchMock = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(REPORT) }));
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -108,7 +110,8 @@ describe("DriftAlertsPanel", () => {
     fetchMock.mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: "boom" }) });
     mounted = mount(<DriftAlertsPanel projectId="p1" />);
     await flush();
-    expect(mounted.container.querySelector('[role="alert"]').textContent).toContain("boom");
+    expect(mounted.container.textContent).toContain("Baseline drift is unavailable");
+    expect(mounted.container.textContent).toContain("boom");
   });
 
   it("ignores a stale threshold response that arrives after the newer one", async () => {

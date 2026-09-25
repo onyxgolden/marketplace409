@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 function emptyDraft() {
   return { code: "", name: "" };
@@ -13,22 +15,29 @@ function emptyDraft() {
 // The panel content, shared by the legacy centered modal below and the docked
 // inspector rail. In the rail, onClose collapses the rail.
 export function SchedulingCostAccountsPanel({ isOwner, onClose, onChanged }) {
-  const [costAccounts, setCostAccounts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // The owner-global cost-code dictionary: stale-while-revalidate under one
+  // shared key (same key the board's assignment pickers read). Creates and
+  // deletes refresh in place instead of blanking the table.
+  const {
+    data: costAccountsData,
+    error: costAccountsError,
+    isLoading: costAccountsLoading,
+    isRefreshing: costAccountsRefreshing,
+    refresh: refreshCostAccounts,
+  } = useStaleWhileRevalidate(
+    "scheduling:cost-accounts",
+    async () => {
+      const response = await fetch("/api/forge/scheduling/cost-accounts");
+      const result = await response.json().catch(() => ({}));
+      return result.costAccounts || [];
+    },
+    { ttlMs: 60_000 },
+  );
+  const costAccounts = costAccountsData ?? [];
+  const loading = !costAccountsData && costAccountsLoading;
   const [draft, setDraft] = useState(emptyDraft());
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
-
-  async function loadCostAccounts() {
-    setLoading(true);
-    const response = await fetch("/api/forge/scheduling/cost-accounts");
-    const result = await response.json().catch(() => ({}));
-    setCostAccounts(result.costAccounts || []);
-    setLoading(false);
-  }
-
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { loadCostAccounts(); }, []);
 
   async function handleCreate() {
     const code = draft.code.trim();
@@ -43,7 +52,7 @@ export function SchedulingCostAccountsPanel({ isOwner, onClose, onChanged }) {
     if (!response.ok) { setMessage(result.error || "Unable to create this cost code."); return; }
     setDraft(emptyDraft());
     setMessage("Cost code added.");
-    await loadCostAccounts();
+    await refreshCostAccounts();
     onChanged?.();
   }
 
@@ -51,7 +60,7 @@ export function SchedulingCostAccountsPanel({ isOwner, onClose, onChanged }) {
     const response = await fetch(`/api/forge/scheduling/cost-accounts/${costAccount.id}`, { method: "DELETE" });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) { setMessage(result.error || "Unable to delete this cost code."); return; }
-    await loadCostAccounts();
+    await refreshCostAccounts();
     onChanged?.();
   }
 
@@ -85,8 +94,16 @@ export function SchedulingCostAccountsPanel({ isOwner, onClose, onChanged }) {
 
         <div className="mt-6">
           <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">Cost code dictionary</h3>
-          {loading && <p className="mt-2 text-xs text-slate-400">Loading…</p>}
-          {!loading && costAccounts.length === 0 && <p className="mt-2 text-xs text-slate-400">No cost codes yet.</p>}
+          {loading && <ForgeLoadingState label="Loading cost codes…" />}
+          {!loading && costAccountsError && (
+            <div className="mt-2"><ForgeErrorState title="Unable to load cost codes" detail={costAccountsError} onRetry={refreshCostAccounts} /></div>
+          )}
+          {!loading && !costAccountsError && costAccounts.length === 0 && (
+            <div className="mt-2"><ForgeEmptyState headline="No cost codes yet" /></div>
+          )}
+          {costAccountsData && costAccountsRefreshing && (
+            <p role="status" className="mt-2 text-xs font-bold text-slate-400">Updating…</p>
+          )}
           <div className="mt-2 overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>

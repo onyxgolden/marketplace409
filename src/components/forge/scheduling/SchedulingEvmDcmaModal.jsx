@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
 function formatCurrency(amount) {
   if (amount == null) return "—";
@@ -36,40 +38,54 @@ function DcmaRow({ point, label, value, pass }) {
 // The panel content, shared by the legacy centered modal below and the docked
 // inspector rail. In the rail, onClose collapses the rail.
 export function SchedulingEvmDcmaPanel({ projectId, onClose }) {
-  const [baselines, setBaselines] = useState([]);
   const [baselineId, setBaselineId] = useState("");
   const [asOfDate, setAsOfDate] = useState(new Date().toISOString().slice(0, 10));
-  const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  // The baseline list is shared with the Baselines panel's key -- one cache
+  // entry, one fetch, both surfaces.
+  const { data: baselinesData } = useStaleWhileRevalidate(
+    projectId ? `scheduling:baselines:${projectId}` : null,
+    async () => {
       const response = await fetch(`/api/forge/scheduling/${projectId}/baselines`);
       const result = await response.json().catch(() => ({}));
-      if (!cancelled) setBaselines(result.baselines || []);
-    })();
-    return () => { cancelled = true; };
-  }, [projectId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoading(true);
-    (async () => {
+      return result.baselines || [];
+    },
+    { ttlMs: 60_000 },
+  );
+  const baselines = baselinesData ?? [];
+  const reportKey = projectId
+    ? `scheduling:evm-dcma:${projectId}:${baselineId || "auto"}:${asOfDate}`
+    : null;
+  // The EVM/DCMA report: stale-while-revalidate keyed by project + baseline +
+  // as-of date. The previous report stays on screen while a parameter change
+  // refetches instead of blanking to "Loading…".
+  const {
+    data: report,
+    error: reportError,
+    isLoading,
+    isRefreshing,
+    refresh,
+  } = useStaleWhileRevalidate(
+    reportKey,
+    async () => {
       const query = new URLSearchParams({ asOfDate, ...(baselineId ? { baselineId } : {}) });
       const response = await fetch(`/api/forge/scheduling/${projectId}/evm-dcma?${query}`);
       const result = await response.json().catch(() => ({}));
-      if (!cancelled) {
-        setReport(response.ok ? result : null);
-        setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [projectId, baselineId, asOfDate]);
+      if (!response.ok) throw new Error(result.error || "The EVM/DCMA report could not be computed.");
+      return result;
+    },
+    { ttlMs: 60_000 },
+  );
+  // shownReport lags the SWR key so changing the baseline or as-of date keeps
+  // the previous report visible until the new one arrives. Adopted during
+  // render (adjust-state-during-render) -- no syncing effect.
+  const [shownReport, setShownReport] = useState(null);
+  if (report && report !== shownReport) {
+    setShownReport(report);
+  }
+  const loading = !shownReport && isLoading;
 
-  const evm = report?.evm;
-  const dcma = report?.dcma;
+  const evm = shownReport?.evm;
+  const dcma = shownReport?.dcma;
 
   return (
     <div className="p-6 text-slate-950" data-scheduling-evm-dcma>
@@ -89,7 +105,7 @@ export function SchedulingEvmDcmaPanel({ projectId, onClose }) {
                 recently captured one) until the user explicitly picks a different one -- reading
                 that straight from the report instead of syncing it back into baselineId avoids an
                 extra, redundant fetch every time the page first loads. */}
-            <select value={baselineId || report?.baselineId || ""} onChange={(e) => setBaselineId(e.target.value)} className="rounded border border-slate-300 px-2 py-1 text-xs" data-scheduling-evm-baseline-select>
+            <select value={baselineId || shownReport?.baselineId || ""} onChange={(e) => setBaselineId(e.target.value)} className="rounded border border-slate-300 px-2 py-1 text-xs" data-scheduling-evm-baseline-select>
               {baselines.length === 0 && <option value="">No baselines captured</option>}
               {baselines.map((baseline) => <option key={baseline.id} value={baseline.id}>{baseline.name}</option>)}
             </select>
@@ -100,10 +116,21 @@ export function SchedulingEvmDcmaPanel({ projectId, onClose }) {
           </label>
         </div>
 
-        {loading && <p className="mt-4 text-xs text-slate-400">Loading…</p>}
-        {!loading && !report && <p className="mt-4 text-xs text-slate-400">Unable to load EVM/DCMA data for this project.</p>}
+        {loading && <div className="mt-4"><ForgeLoadingState label="Loading EVM/DCMA…" /></div>}
+        {!loading && !shownReport && (
+          <div className="mt-4">
+            <ForgeErrorState title="Unable to load EVM/DCMA data for this project" detail={reportError} onRetry={refresh} />
+          </div>
+        )}
 
-        {!loading && report && (
+        {shownReport && (isLoading || isRefreshing) && (
+          <p role="status" className="mt-4 text-xs font-bold text-slate-400">Updating…</p>
+        )}
+        {shownReport && reportError && (
+          <p role="status" className="mt-2 text-xs font-bold text-slate-400">Could not refresh — showing the last saved EVM/DCMA report.</p>
+        )}
+
+        {!loading && shownReport && (
           <>
             <div className="mt-5">
               <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">Earned value</h3>
