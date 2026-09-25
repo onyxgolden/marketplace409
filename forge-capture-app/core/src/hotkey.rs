@@ -12,10 +12,18 @@
 //! * A Print Screen press is a *launch*, not a shutter: it brings the
 //!   Capture window forward so the user picks a capture mode. It never
 //!   starts a capture by itself.
+//! * The modified variants *are* shutters: Shift+PrintScreen opens the
+//!   region overlay on the monitor under the cursor; Alt+PrintScreen
+//!   captures that monitor immediately; Ctrl+PrintScreen focuses the app
+//!   and arms window capture (the window itself must still be picked —
+//!   there is no way to capture a window the user did not choose).
+//! * All shortcuts stay inside the PrintScreen namespace: FORGE Capture
+//!   never hijacks application shortcuts (Ctrl+Shift+W etc.).
 //! * Registration is best-effort. The OS may already reserve Print Screen
-//!   (Windows 11 maps it to screen snipping via an Accessibility setting)
-//!   or another capture tool may hold it. A failed registration must never
-//!   fail startup — the app keeps working and reports the status.
+//!   (Windows 11 maps it to screen snipping via an Accessibility setting),
+//!   a Wayland compositor may refuse global shortcuts entirely, or another
+//!   capture tool may hold one. A failed registration must never fail
+//!   startup — the app keeps working and reports the status.
 
 /// Accelerator string the shell registers with the OS global-shortcut API.
 ///
@@ -72,6 +80,76 @@ pub fn status_from_registration(result: Result<(), String>) -> TakeoverStatus {
     }
 }
 
+/// Human-readable one-liner for a direct-capture shortcut's registration
+/// outcome, for the startup log. Names the accelerator so a failed grab is
+/// diagnosable without guessing which one it was.
+pub fn describe_shortcut_status(accelerator: &str, status: &TakeoverStatus) -> String {
+    match status {
+        TakeoverStatus::Active => format!("{accelerator}: global shortcut active"),
+        TakeoverStatus::Unavailable { reason } => format!(
+            "{accelerator}: global shortcut unavailable ({reason}); capture still works from the app window"
+        ),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Direct-capture shortcuts: the modified Print Screen variants.
+// ---------------------------------------------------------------------------
+
+/// Accelerator that opens the region overlay immediately on the monitor
+/// under the cursor.
+pub const REGION_ACCELERATOR: &str = "Shift+PrintScreen";
+
+/// Accelerator that focuses the app and arms window capture (the user still
+/// picks the window — there is no way to capture a window unchosen).
+pub const WINDOW_ACCELERATOR: &str = "Ctrl+PrintScreen";
+
+/// Accelerator that captures the monitor under the cursor immediately.
+pub const FULLSCREEN_ACCELERATOR: &str = "Alt+PrintScreen";
+
+/// Action id emitted to the UI when the window-capture shortcut fires, so
+/// the app can switch to window mode and refresh the window list.
+pub const ACTION_WINDOW_CAPTURE: &str = "window-capture";
+
+/// The action a global shortcut asks the app to perform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeyAction {
+    /// Bring the Capture window forward (bare PrintScreen).
+    FocusWindow,
+    /// Open the region overlay on the monitor under the cursor.
+    RegionCapture,
+    /// Focus the app, switch to window mode, refresh the window list.
+    WindowCapture,
+    /// Capture the monitor under the cursor immediately.
+    FullscreenCapture,
+}
+
+/// Map an accelerator string (case-insensitive) to its action. `None` for
+/// anything FORGE Capture does not own.
+pub fn action_for_accelerator(accelerator: &str) -> Option<HotkeyAction> {
+    if is_printscreen_takeover(accelerator) {
+        Some(HotkeyAction::FocusWindow)
+    } else if accelerator.eq_ignore_ascii_case(REGION_ACCELERATOR) {
+        Some(HotkeyAction::RegionCapture)
+    } else if accelerator.eq_ignore_ascii_case(WINDOW_ACCELERATOR) {
+        Some(HotkeyAction::WindowCapture)
+    } else if accelerator.eq_ignore_ascii_case(FULLSCREEN_ACCELERATOR) {
+        Some(HotkeyAction::FullscreenCapture)
+    } else {
+        None
+    }
+}
+
+/// Every (accelerator, action) pair the shell registers, in registration
+/// order. Registration stays best-effort: one failure never blocks the
+/// others or startup.
+pub const CAPTURE_SHORTCUTS: [(&str, HotkeyAction); 4] = [
+    (PRINTSCREEN_ACCELERATOR, HotkeyAction::FocusWindow),
+    (REGION_ACCELERATOR, HotkeyAction::RegionCapture),
+    (WINDOW_ACCELERATOR, HotkeyAction::WindowCapture),
+    (FULLSCREEN_ACCELERATOR, HotkeyAction::FullscreenCapture),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +198,79 @@ mod tests {
         assert!(text.contains("unavailable"));
         assert!(text.contains("hotkey already registered"));
         assert!(text.contains("still works"));
+    }
+
+    #[test]
+    fn direct_capture_accelerators_map_to_their_actions() {
+        assert_eq!(
+            action_for_accelerator("Shift+PrintScreen"),
+            Some(HotkeyAction::RegionCapture)
+        );
+        assert_eq!(
+            action_for_accelerator("Ctrl+PrintScreen"),
+            Some(HotkeyAction::WindowCapture)
+        );
+        assert_eq!(
+            action_for_accelerator("Alt+PrintScreen"),
+            Some(HotkeyAction::FullscreenCapture)
+        );
+        assert_eq!(
+            action_for_accelerator("PrintScreen"),
+            Some(HotkeyAction::FocusWindow)
+        );
+    }
+
+    #[test]
+    fn direct_capture_accelerators_match_case_insensitively() {
+        assert_eq!(
+            action_for_accelerator("shift+printscreen"),
+            Some(HotkeyAction::RegionCapture)
+        );
+        assert_eq!(
+            action_for_accelerator("CTRL+PRINTSCREEN"),
+            Some(HotkeyAction::WindowCapture)
+        );
+        assert_eq!(
+            action_for_accelerator("alt+printscreen"),
+            Some(HotkeyAction::FullscreenCapture)
+        );
+    }
+
+    #[test]
+    fn unknown_accelerators_map_to_no_action() {
+        assert_eq!(action_for_accelerator("F12"), None);
+        assert_eq!(action_for_accelerator("Ctrl+Shift+W"), None);
+        assert_eq!(action_for_accelerator("Print Screen"), None);
+        assert_eq!(action_for_accelerator(""), None);
+    }
+
+    #[test]
+    fn capture_shortcuts_table_is_consistent() {
+        assert_eq!(CAPTURE_SHORTCUTS.len(), 4);
+        let mut seen = std::collections::HashSet::new();
+        for (accelerator, action) in CAPTURE_SHORTCUTS {
+            // No duplicate accelerators in the registration table.
+            assert!(seen.insert(accelerator), "duplicate: {accelerator}");
+            // The table agrees with the mapping function.
+            assert_eq!(action_for_accelerator(accelerator), Some(action));
+        }
+        // The bare PrintScreen contract is unchanged by the new scheme.
+        assert!(CAPTURE_SHORTCUTS.contains(&(PRINTSCREEN_ACCELERATOR, HotkeyAction::FocusWindow)));
+    }
+
+    #[test]
+    fn shortcut_status_description_names_the_accelerator() {
+        let active =
+            describe_shortcut_status("Shift+PrintScreen", &status_from_registration(Ok(())));
+        assert!(active.contains("Shift+PrintScreen"), "got: {active}");
+        assert!(active.contains("active"), "got: {active}");
+
+        let failed = describe_shortcut_status(
+            "Alt+PrintScreen",
+            &status_from_registration(Err("already registered".to_string())),
+        );
+        assert!(failed.contains("Alt+PrintScreen"), "got: {failed}");
+        assert!(failed.contains("already registered"), "got: {failed}");
+        assert!(failed.contains("still works"), "got: {failed}");
     }
 }

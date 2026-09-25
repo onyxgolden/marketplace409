@@ -1,10 +1,16 @@
 //! Thin OS boundary for native capture.
 //!
 //! Everything cross-platform lives in the other modules; this module is the
-//! only place that touches OS capture APIs. On Windows it implements GDI
-//! screen capture (BitBlt) behind `#[cfg(windows)]`. On any other host the
-//! functions below return an explicit error — never a fake image, never a
-//! panic.
+//! only place that touches OS capture APIs.
+//!
+//! - **Windows** (`#[cfg(windows)]`): GDI screen capture (BitBlt).
+//! - **Linux** (`#[cfg(target_os = "linux")]`): X11/Xorg capture via x11rb
+//!   (pure Rust — no X11 dev headers needed). Wayland sessions are rejected
+//!   with a clear message telling the user to pick an X11/Xorg session at
+//!   login; window capture and scrolling capture are not implemented on
+//!   Linux yet and fail closed with explicit errors.
+//! - Any other host: the functions below return an explicit error — never a
+//!   fake image, never a panic.
 //!
 //! ## Windows notes (compile-verified via
 //! `cargo check --target x86_64-pc-windows-msvc`; runtime behavior is
@@ -19,6 +25,19 @@
 //!   frame. (A future hardening pass can switch to `PrintWindow` /
 //!   `GetWindowDC` plus a blank-frame detector; it needs real Windows
 //!   hardware to validate, so it is documented, not implemented, here.)
+//!
+//! ## Linux notes
+//!
+//! - Monitor enumeration uses Xinerama when active, falling back to the
+//!   root-window geometry on single-screen setups. DPI scale comes from the
+//!   X resource manager's `Xft.dpi` (what GNOME/Xfce set); 1.0 otherwise.
+//! - Screen capture is `GetImage` (`ZPixmap`) on the root window, converted
+//!   from the server's byte order to RGBA. The cursor is composited from the
+//!   XFixes cursor image when `include_cursor` is set and XFixes is
+//!   available; otherwise `CursorState.captured` is false (honest, never a
+//!   fake cursor).
+//! - Clipboard goes through arboard, which daemonizes on X11 so the image
+//!   outlives the call.
 
 use crate::artifact::CursorState;
 use crate::coords::{Monitor, RectI};
@@ -45,7 +64,7 @@ pub struct NativeWindowInfo {
 }
 
 /// Capture `rect` (virtual-desktop/physical coordinates) from `monitor`.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn capture_rect(
     _rect: RectI,
     _monitor: &Monitor,
@@ -67,8 +86,19 @@ pub fn capture_rect(
     win::capture_screen_rect(rect, include_cursor)
 }
 
+#[cfg(target_os = "linux")]
+pub fn capture_rect(
+    rect: RectI,
+    monitor: &Monitor,
+    include_cursor: bool,
+) -> Result<NativeFrame, CaptureError> {
+    // The rect is already clipped to this monitor by the caller.
+    let _ = monitor;
+    linux::capture_screen_rect(rect, include_cursor)
+}
+
 /// Look up a window by id (from [`list_windows`]) for window capture.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn find_window(
     window_id: &str,
     _monitors: &[Monitor],
@@ -86,8 +116,16 @@ pub fn find_window(
     win::find_window(window_id)
 }
 
+#[cfg(target_os = "linux")]
+pub fn find_window(
+    window_id: &str,
+    _monitors: &[Monitor],
+) -> Result<NativeWindowInfo, CaptureError> {
+    linux::find_window(window_id)
+}
+
 /// Enumerate visible top-level windows for the capture picker.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn list_windows() -> Result<Vec<NativeWindowInfo>, CaptureError> {
     Err(CaptureError::NativeApi(
         "window enumeration requires Windows 11".into(),
@@ -99,8 +137,13 @@ pub fn list_windows() -> Result<Vec<NativeWindowInfo>, CaptureError> {
     win::list_windows()
 }
 
+#[cfg(target_os = "linux")]
+pub fn list_windows() -> Result<Vec<NativeWindowInfo>, CaptureError> {
+    linux::list_windows()
+}
+
 /// Enumerate monitors with per-monitor DPI.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn list_monitors() -> Result<Vec<Monitor>, CaptureError> {
     Err(CaptureError::NativeApi(
         "monitor enumeration requires Windows 11".into(),
@@ -112,8 +155,13 @@ pub fn list_monitors() -> Result<Vec<Monitor>, CaptureError> {
     win::list_monitors()
 }
 
+#[cfg(target_os = "linux")]
+pub fn list_monitors() -> Result<Vec<Monitor>, CaptureError> {
+    linux::list_monitors()
+}
+
 /// Copy RGBA bytes to the Windows clipboard as a DIB.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn copy_rgba_to_clipboard(_width: u32, _height: u32, _rgba: &[u8]) -> Result<(), CaptureError> {
     Err(CaptureError::NativeApi(
         "clipboard capture requires Windows 11".into(),
@@ -125,9 +173,16 @@ pub fn copy_rgba_to_clipboard(width: u32, height: u32, rgba: &[u8]) -> Result<()
     win::copy_rgba_to_clipboard(width, height, rgba)
 }
 
+/// Copy RGBA bytes to the Linux clipboard as an image (via arboard, which
+/// daemonizes on X11 so the image outlives the call).
+#[cfg(target_os = "linux")]
+pub fn copy_rgba_to_clipboard(width: u32, height: u32, rgba: &[u8]) -> Result<(), CaptureError> {
+    linux::copy_rgba_to_clipboard(width, height, rgba)
+}
+
 /// Current cursor hotspot position in virtual-desktop physical pixels, for
 /// the Rung 4 recording compositor's cursor overlay.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn cursor_pos() -> Result<(i32, i32), CaptureError> {
     Err(CaptureError::NativeApi(
         "cursor position requires Windows 11".into(),
@@ -139,11 +194,17 @@ pub fn cursor_pos() -> Result<(i32, i32), CaptureError> {
     win::cursor_pos()
 }
 
+/// Current cursor hotspot position in root-window physical pixels (X11).
+#[cfg(target_os = "linux")]
+pub fn cursor_pos() -> Result<(i32, i32), CaptureError> {
+    linux::cursor_pos()
+}
+
 /// Build the DOM-aware scroll driver for a window: reads the window's real
 /// scroll-bar geometry and scrolls to exact positions. Fails when the
 /// window exposes no usable scroll geometry — the caller falls back to the
 /// raster-observation driver for `Auto` requests.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn dom_scroll_driver(
     _window_id: &str,
     _horizontal: bool,
@@ -163,10 +224,19 @@ pub fn dom_scroll_driver(
     win::WinDomDriver::boxed(window_id, horizontal)
 }
 
+#[cfg(target_os = "linux")]
+pub fn dom_scroll_driver(
+    _window_id: &str,
+    _horizontal: bool,
+    _monitors: &[Monitor],
+) -> Result<Box<dyn ScrollDriver>, CaptureError> {
+    linux::scroll_unsupported("scrolling capture")
+}
+
 /// Build the raster-observation scroll driver: synthesizes wheel input over
 /// the target and lets the engine measure what actually moved. Works for
 /// window and region targets.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn wheel_scroll_driver(
     _target: &ScrollTarget,
     _horizontal: bool,
@@ -184,6 +254,15 @@ pub fn wheel_scroll_driver(
     _monitors: &[Monitor],
 ) -> Result<Box<dyn ScrollDriver>, CaptureError> {
     win::WinWheelDriver::boxed(target, horizontal)
+}
+
+#[cfg(target_os = "linux")]
+pub fn wheel_scroll_driver(
+    _target: &ScrollTarget,
+    _horizontal: bool,
+    _monitors: &[Monitor],
+) -> Result<Box<dyn ScrollDriver>, CaptureError> {
+    linux::scroll_unsupported("scrolling capture")
 }
 
 /// Swizzle BGRA → RGBA in place, forcing alpha to opaque (255).
@@ -972,6 +1051,431 @@ mod win {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Linux implementation (X11/Xorg). Pure-Rust X11 via x11rb: no X11 dev
+// headers are needed to build. Wayland sessions are rejected with a clear
+// message (see `require_x11_session`) instead of failing obscurely deep in
+// the protocol. Window capture and scrolling capture are not implemented on
+// Linux yet and fail closed with explicit errors.
+// ---------------------------------------------------------------------------
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::{CaptureError, CursorState, Monitor, NativeFrame, NativeWindowInfo, RectI};
+    use std::borrow::Cow;
+    use x11rb::connection::{Connection as _, RequestConnection as _};
+    use x11rb::protocol::xfixes;
+    use x11rb::protocol::xinerama;
+    use x11rb::protocol::xproto::{self, AtomEnum, ImageFormat, ImageOrder};
+
+    fn xerr(context: &str, e: impl std::fmt::Display) -> CaptureError {
+        CaptureError::NativeApi(format!("Linux/X11 {context}: {e}"))
+    }
+
+    /// Pure predicate for the Wayland/X11 decision — unit-testable without
+    /// touching the process environment.
+    pub(crate) fn is_wayland_session(
+        session_type: Option<&str>,
+        wayland_display: bool,
+        x_display: bool,
+    ) -> bool {
+        match session_type.map(str::to_ascii_lowercase).as_deref() {
+            Some("wayland") => true,
+            _ => wayland_display && !x_display,
+        }
+    }
+
+    /// Reject Wayland sessions with a clear message instead of failing
+    /// obscurely deep in the protocol. X11 forwarding / mixed environments
+    /// (both `DISPLAY` and `WAYLAND_DISPLAY` set) are allowed through.
+    fn require_x11_session() -> Result<(), CaptureError> {
+        let session_type = std::env::var("XDG_SESSION_TYPE").ok();
+        let wayland = is_wayland_session(
+            session_type.as_deref(),
+            std::env::var("WAYLAND_DISPLAY").is_ok(),
+            std::env::var("DISPLAY").is_ok(),
+        );
+        if wayland {
+            Err(CaptureError::NativeApi(
+                "Wayland session detected: FORGE Capture captures on X11/Xorg sessions only. \
+                 Log out, choose \"Zorin on Xorg\" from the gear menu at the login screen, \
+                 then log back in."
+                    .into(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// X11 connection bound to the default screen's root window.
+    struct X11 {
+        conn: x11rb::rust_connection::RustConnection,
+        root: xproto::Window,
+        byte_order: ImageOrder,
+    }
+
+    impl X11 {
+        fn connect() -> Result<Self, CaptureError> {
+            require_x11_session()?;
+            let (conn, screen) = x11rb::connect(None).map_err(|e| {
+                CaptureError::NativeApi(format!("cannot open the X11 display: {e}"))
+            })?;
+            let setup = conn.setup();
+            let root = setup.roots.get(screen).map(|s| s.root).ok_or_else(|| {
+                CaptureError::NativeApi(format!("X11 screen {screen} has no root window"))
+            })?;
+            Ok(Self {
+                byte_order: setup.image_byte_order,
+                root,
+                conn,
+            })
+        }
+
+        /// DPI scale from the X resource manager's `Xft.dpi` (what
+        /// GNOME/Xfce set); 1.0 when absent or unparsable.
+        fn dpi_scale(&self) -> f64 {
+            let value: Vec<u8> = xproto::get_property(
+                &self.conn,
+                false,
+                self.root,
+                AtomEnum::RESOURCE_MANAGER,
+                AtomEnum::STRING,
+                0,
+                1024,
+            )
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|r| r.value)
+            .unwrap_or_default();
+            parse_xft_dpi(&String::from_utf8_lossy(&value))
+        }
+
+        /// Xinerama screen geometries in root-window coordinates; `None`
+        /// when Xinerama is missing or inactive (single-screen fallback).
+        fn xinerama_screens(&self) -> Option<Vec<(i32, i32, u32, u32)>> {
+            let present = self
+                .conn
+                .extension_information(xinerama::X11_EXTENSION_NAME)
+                .ok()?
+                .is_some();
+            if !present {
+                return None;
+            }
+            let active = xinerama::is_active(&self.conn).ok()?.reply().ok()?;
+            if active.state == 0 {
+                return None;
+            }
+            let reply = xinerama::query_screens(&self.conn).ok()?.reply().ok()?;
+            if reply.screen_info.is_empty() {
+                return None;
+            }
+            Some(
+                reply
+                    .screen_info
+                    .into_iter()
+                    .map(|s| {
+                        (
+                            s.x_org as i32,
+                            s.y_org as i32,
+                            s.width as u32,
+                            s.height as u32,
+                        )
+                    })
+                    .collect(),
+            )
+        }
+
+        fn cursor_pos_physical(&self) -> Result<(i64, i64), CaptureError> {
+            let reply = xproto::query_pointer(&self.conn, self.root)
+                .map_err(|e| xerr("QueryPointer", e))?
+                .reply()
+                .map_err(|e| xerr("QueryPointer", e))?;
+            Ok((reply.root_x as i64, reply.root_y as i64))
+        }
+
+        /// XFixes cursor image + hotspot, when the XFixes extension is
+        /// available; `None` otherwise (caller reports an honest
+        /// "not captured" cursor state rather than a fake cursor).
+        fn cursor_image(&self) -> Result<Option<LinuxCursor>, CaptureError> {
+            let present = self
+                .conn
+                .extension_information(xfixes::X11_EXTENSION_NAME)
+                .map(|i| i.is_some())
+                .unwrap_or(false);
+            if !present {
+                return Ok(None);
+            }
+            let pos = self.cursor_pos_physical()?;
+            let reply = xfixes::get_cursor_image(&self.conn)
+                .map_err(|e| xerr("XFixesGetCursorImage", e))?
+                .reply()
+                .map_err(|e| xerr("XFixesGetCursorImage", e))?;
+            if reply.width == 0 || reply.height == 0 || reply.cursor_image.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(LinuxCursor {
+                pos_physical: pos,
+                hotspot: (reply.xhot as i32, reply.yhot as i32),
+                w: reply.width as u32,
+                h: reply.height as u32,
+                argb: reply.cursor_image,
+            }))
+        }
+    }
+
+    /// Parse `Xft.dpi` out of an X resource-manager string into a scale
+    /// factor relative to the 96-dpi baseline. Pure: unit-tested.
+    pub(crate) fn parse_xft_dpi(resource_manager: &str) -> f64 {
+        for line in resource_manager.lines() {
+            if let Some(rest) = line.trim().strip_prefix("Xft.dpi:") {
+                if let Ok(dpi) = rest.trim().parse::<f64>() {
+                    if dpi > 0.0 {
+                        return (dpi / 96.0).clamp(1.0, 4.0);
+                    }
+                }
+            }
+        }
+        1.0
+    }
+
+    pub(super) fn list_monitors() -> Result<Vec<Monitor>, CaptureError> {
+        let x = X11::connect()?;
+        let scale = x.dpi_scale();
+        let screens: Vec<(i32, i32, u32, u32)> = match x.xinerama_screens() {
+            Some(s) => s,
+            None => {
+                // Single-screen fallback: the root window's own geometry.
+                let g = xproto::get_geometry(&x.conn, x.root)
+                    .map_err(|e| xerr("GetGeometry", e))?
+                    .reply()
+                    .map_err(|e| xerr("GetGeometry", e))?;
+                vec![(0, 0, g.width as u32, g.height as u32)]
+            }
+        };
+        Ok(screens
+            .into_iter()
+            .enumerate()
+            .map(|(i, (sx, sy, w, h))| Monitor {
+                id: format!("x11-{i}"),
+                name: format!("X11 monitor {}", i + 1),
+                origin_virtual: (sx, sy),
+                size_logical: (
+                    ((w as f64 / scale).round().max(1.0)) as u32,
+                    ((h as f64 / scale).round().max(1.0)) as u32,
+                ),
+                scale,
+            })
+            .collect())
+    }
+
+    /// Convert a ZPixmap GetImage payload to opaque RGBA. Supports the
+    /// depths real desktops use (24/32); anything else is a loud error, not
+    /// a guess. Pure: unit-tested.
+    pub(crate) fn zpixmap_to_rgba(
+        data: &[u8],
+        w: usize,
+        h: usize,
+        depth: u8,
+        order: ImageOrder,
+    ) -> Result<Vec<u8>, CaptureError> {
+        if depth != 24 && depth != 32 {
+            return Err(CaptureError::NativeApi(format!(
+                "unsupported X11 screen depth: {depth} (need 24 or 32)"
+            )));
+        }
+        let expect = w
+            .checked_mul(h)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or_else(|| CaptureError::NativeApi("capture rect too large".into()))?;
+        if data.len() < expect {
+            return Err(CaptureError::NativeApi(format!(
+                "short GetImage payload: {} < {expect}",
+                data.len()
+            )));
+        }
+        let mut rgba = vec![0u8; expect];
+        // A ZPixmap row is width * (depth rounded up to a whole number of
+        // bytes); at 24/32 that is 4 bytes per pixel, server byte order.
+        // ImageOrder is a non-exhaustive struct: compare, don't match.
+        let lsb_first = order == ImageOrder::LSB_FIRST;
+        for (src, dst) in data
+            .chunks_exact(4)
+            .zip(rgba.chunks_exact_mut(4))
+            .take(w * h)
+        {
+            if lsb_first {
+                // LSB-first: [B, G, R, X] -> [R, G, B, 255].
+                dst[0] = src[2];
+                dst[1] = src[1];
+                dst[2] = src[0];
+                dst[3] = 255;
+            } else {
+                // MSB-first: [X, R, G, B] -> [R, G, B, 255].
+                dst[0] = src[1];
+                dst[1] = src[2];
+                dst[2] = src[3];
+                dst[3] = 255;
+            }
+        }
+        Ok(rgba)
+    }
+
+    pub(crate) struct LinuxCursor {
+        /// Hotspot in root-window physical pixels.
+        pub(crate) pos_physical: (i64, i64),
+        pub(crate) hotspot: (i32, i32),
+        pub(crate) w: u32,
+        pub(crate) h: u32,
+        /// ARGB pixels, row-major.
+        pub(crate) argb: Vec<u32>,
+    }
+
+    /// Alpha-blend an ARGB cursor onto an RGBA canvas ("over", straight
+    /// alpha). Pure: unit-tested.
+    pub(crate) fn composite_cursor(
+        canvas: &mut [u8],
+        canvas_w: usize,
+        cursor: &LinuxCursor,
+        rect_origin: (i64, i64),
+    ) {
+        let canvas_h = canvas.len() / (canvas_w * 4);
+        let ox = cursor.pos_physical.0 - cursor.hotspot.0 as i64 - rect_origin.0;
+        let oy = cursor.pos_physical.1 - cursor.hotspot.1 as i64 - rect_origin.1;
+        for cy in 0..cursor.h as usize {
+            for cx in 0..cursor.w as usize {
+                let dx = ox + cx as i64;
+                let dy = oy + cy as i64;
+                if dx < 0 || dy < 0 || dx >= canvas_w as i64 || dy >= canvas_h as i64 {
+                    continue;
+                }
+                let argb = cursor.argb[cy * cursor.w as usize + cx];
+                let a = (argb >> 24) & 0xff;
+                if a == 0 {
+                    continue;
+                }
+                let r = (argb >> 16) & 0xff;
+                let g = (argb >> 8) & 0xff;
+                let b = argb & 0xff;
+                let idx = (dy as usize * canvas_w + dx as usize) * 4;
+                if a == 255 {
+                    canvas[idx] = r as u8;
+                    canvas[idx + 1] = g as u8;
+                    canvas[idx + 2] = b as u8;
+                } else {
+                    let inv = 255 - a;
+                    canvas[idx] = ((r * a + canvas[idx] as u32 * inv) / 255) as u8;
+                    canvas[idx + 1] = ((g * a + canvas[idx + 1] as u32 * inv) / 255) as u8;
+                    canvas[idx + 2] = ((b * a + canvas[idx + 2] as u32 * inv) / 255) as u8;
+                }
+                canvas[idx + 3] = 255;
+            }
+        }
+    }
+
+    pub(super) fn capture_screen_rect(
+        rect: RectI,
+        include_cursor: bool,
+    ) -> Result<NativeFrame, CaptureError> {
+        if rect.is_empty() {
+            return Err(CaptureError::NativeApi("capture rect is empty".into()));
+        }
+        // The X protocol addresses drawables with i16/u16; real monitors
+        // never approach the limits, but refuse loudly instead of wrapping.
+        let x16 = i16::try_from(rect.x)
+            .map_err(|_| CaptureError::NativeApi("capture rect x is out of X11 range".into()))?;
+        let y16 = i16::try_from(rect.y)
+            .map_err(|_| CaptureError::NativeApi("capture rect y is out of X11 range".into()))?;
+        let w16 = u16::try_from(rect.w)
+            .map_err(|_| CaptureError::NativeApi("capture rect w is out of X11 range".into()))?;
+        let h16 = u16::try_from(rect.h)
+            .map_err(|_| CaptureError::NativeApi("capture rect h is out of X11 range".into()))?;
+        let x = X11::connect()?;
+        let reply = xproto::get_image(
+            &x.conn,
+            ImageFormat::Z_PIXMAP,
+            x.root,
+            x16,
+            y16,
+            w16,
+            h16,
+            u32::MAX,
+        )
+        .map_err(|e| xerr("GetImage", e))?
+        .reply()
+        .map_err(|e| xerr("GetImage", e))?;
+        let mut rgba = zpixmap_to_rgba(
+            &reply.data,
+            w16 as usize,
+            h16 as usize,
+            reply.depth,
+            x.byte_order,
+        )?;
+        let mut cursor = CursorState {
+            captured: false,
+            position_physical: None,
+        };
+        if include_cursor {
+            if let Some(c) = x.cursor_image().unwrap_or(None) {
+                composite_cursor(&mut rgba, w16 as usize, &c, (rect.x, rect.y));
+                cursor = CursorState {
+                    captured: true,
+                    position_physical: Some((c.pos_physical.0, c.pos_physical.1)),
+                };
+            }
+        }
+        Ok(NativeFrame { rect, rgba, cursor })
+    }
+
+    pub(super) fn cursor_pos() -> Result<(i32, i32), CaptureError> {
+        let x = X11::connect()?;
+        let (px, py) = x.cursor_pos_physical()?;
+        Ok((px as i32, py as i32))
+    }
+
+    pub(super) fn copy_rgba_to_clipboard(
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), CaptureError> {
+        if rgba.len() != width as usize * height as usize * 4 {
+            return Err(CaptureError::EncodeFailed(
+                "clipboard RGBA length mismatch".into(),
+            ));
+        }
+        // arboard daemonizes on X11 so the image outlives this call.
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| {
+            CaptureError::NativeApi(format!("cannot open the Linux clipboard: {e}"))
+        })?;
+        clipboard
+            .set_image(arboard::ImageData {
+                width: width as usize,
+                height: height as usize,
+                bytes: Cow::Borrowed(rgba),
+            })
+            .map_err(|e| CaptureError::NativeApi(format!("clipboard write failed: {e}")))?;
+        Ok(())
+    }
+
+    pub(super) fn list_windows() -> Result<Vec<NativeWindowInfo>, CaptureError> {
+        Err(CaptureError::NativeApi(
+            "window capture is not supported on Linux yet — use monitor or region capture".into(),
+        ))
+    }
+
+    pub(super) fn find_window(window_id: &str) -> Result<NativeWindowInfo, CaptureError> {
+        Err(CaptureError::NativeApi(format!(
+            "window capture is not supported on Linux yet (asked for window {window_id})"
+        )))
+    }
+
+    pub(super) fn scroll_unsupported(
+        _what: &str,
+    ) -> Result<Box<dyn crate::scroll::ScrollDriver>, CaptureError> {
+        Err(CaptureError::NativeApi(
+            "scrolling capture is not supported on Linux yet".into(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1000,11 +1504,14 @@ mod tests {
     }
 
     #[test]
-    fn cursor_pos_is_unavailable_off_windows() {
-        // On Windows this returns the live cursor position; on other
-        // platforms it must fail loudly rather than return a fake (0, 0).
-        #[cfg(not(windows))]
+    fn cursor_pos_is_unavailable_on_unsupported_hosts() {
+        // On Windows this returns the live cursor position; on a live X11
+        // session the X11 backend answers. Everywhere else it must fail
+        // loudly rather than return a fake (0, 0).
+        #[cfg(not(any(windows, target_os = "linux")))]
         assert!(cursor_pos().is_err());
+        #[cfg(any(windows, target_os = "linux"))]
+        assert!(cursor_pos().is_ok() || cursor_pos().is_err()); // environment-dependent
     }
 
     #[test]
@@ -1023,5 +1530,171 @@ mod tests {
             cursor_icon_origin((-3800, 200), (5, 5), (-3840, 0)),
             (35, 195)
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    mod linux_tests {
+        use super::super::linux::{
+            composite_cursor, is_wayland_session, parse_xft_dpi, zpixmap_to_rgba, LinuxCursor,
+        };
+        use super::super::{RectI, ScrollTarget};
+        use x11rb::protocol::xproto::ImageOrder;
+
+        #[test]
+        fn zpixmap_lsb_converts_bgrx_to_opaque_rgba() {
+            // LSB-first 24-bit: [B, G, R, X] -> [R, G, B, 255].
+            let data = [10u8, 20, 30, 0, 200, 150, 100, 0];
+            let rgba = zpixmap_to_rgba(&data, 2, 1, 24, ImageOrder::LSB_FIRST).unwrap();
+            assert_eq!(rgba, vec![30, 20, 10, 255, 100, 150, 200, 255]);
+        }
+
+        #[test]
+        fn zpixmap_msb_converts_xrgb_to_rgba() {
+            // MSB-first 24-bit: [X, R, G, B] -> [R, G, B, 255].
+            let data = [0u8, 40, 50, 60];
+            let rgba = zpixmap_to_rgba(&data, 1, 1, 32, ImageOrder::MSB_FIRST).unwrap();
+            assert_eq!(rgba, vec![40, 50, 60, 255]);
+        }
+
+        #[test]
+        fn zpixmap_rejects_unsupported_depth() {
+            let data = [0u8; 8];
+            assert!(zpixmap_to_rgba(&data, 1, 1, 16, ImageOrder::LSB_FIRST).is_err());
+        }
+
+        #[test]
+        fn zpixmap_rejects_short_payload() {
+            let data = [0u8; 3];
+            assert!(zpixmap_to_rgba(&data, 1, 1, 24, ImageOrder::LSB_FIRST).is_err());
+        }
+
+        #[test]
+        fn parse_xft_dpi_scales_from_96_baseline() {
+            assert_eq!(parse_xft_dpi("Xft.dpi:\t144\n"), 1.5);
+            assert_eq!(parse_xft_dpi("Xft.dpi:\t96\n"), 1.0);
+            assert_eq!(parse_xft_dpi("Xft.dpi:\t480\n"), 4.0); // clamped
+            assert_eq!(parse_xft_dpi(""), 1.0);
+            assert_eq!(parse_xft_dpi("Xft.dpi:\tnot-a-number\n"), 1.0);
+            assert_eq!(parse_xft_dpi("Xft.dpi:\t0\n"), 1.0);
+        }
+
+        #[test]
+        fn is_wayland_session_detects_wayland() {
+            assert!(is_wayland_session(Some("wayland"), false, false));
+            assert!(is_wayland_session(Some("WAYLAND"), false, false));
+            assert!(is_wayland_session(None, true, false));
+            assert!(!is_wayland_session(None, true, true)); // mixed env allowed
+            assert!(!is_wayland_session(None, false, false)); // headless: X11 errors, not Wayland
+            assert!(!is_wayland_session(Some("x11"), false, true));
+        }
+
+        fn opaque_red_cursor_at(px: i64, py: i64) -> LinuxCursor {
+            LinuxCursor {
+                pos_physical: (px, py),
+                hotspot: (0, 0),
+                w: 1,
+                h: 1,
+                argb: vec![0xFFFF0000],
+            }
+        }
+
+        #[test]
+        fn composite_cursor_paints_opaque_pixel_at_hotspot() {
+            let mut canvas = vec![0u8; 2 * 2 * 4];
+            let cursor = opaque_red_cursor_at(1, 0);
+            composite_cursor(&mut canvas, 2, &cursor, (0, 0));
+            // Pixel (1,0) becomes opaque red; pixel (0,0) untouched.
+            assert_eq!(&canvas[4..8], &[255, 0, 0, 255]);
+            assert_eq!(&canvas[0..4], &[0, 0, 0, 0]);
+        }
+
+        #[test]
+        fn composite_cursor_blends_half_alpha_over_canvas() {
+            let mut canvas = vec![255u8; 1 * 1 * 4]; // white
+            let cursor = LinuxCursor {
+                pos_physical: (0, 0),
+                hotspot: (0, 0),
+                w: 1,
+                h: 1,
+                argb: vec![0x80000000], // 50% black
+            };
+            composite_cursor(&mut canvas, 1, &cursor, (0, 0));
+            assert_eq!(canvas[0], 127);
+            assert_eq!(canvas[1], 127);
+            assert_eq!(canvas[2], 127);
+            assert_eq!(canvas[3], 255);
+        }
+
+        #[test]
+        fn composite_cursor_clips_outside_canvas() {
+            let mut canvas = vec![9u8; 2 * 2 * 4];
+            let cursor = opaque_red_cursor_at(99, 99);
+            composite_cursor(&mut canvas, 2, &cursor, (0, 0));
+            assert!(canvas.iter().all(|&b| b == 9));
+        }
+
+        #[test]
+        fn composite_cursor_offsets_by_hotspot_and_rect_origin() {
+            let mut canvas = vec![0u8; 3 * 3 * 4];
+            let cursor = LinuxCursor {
+                pos_physical: (10, 10),
+                hotspot: (2, 1),
+                w: 1,
+                h: 1,
+                argb: vec![0xFFFF0000],
+            };
+            // Canvas covers root (8,9)..(11,12); cursor lands at (8,9).
+            composite_cursor(&mut canvas, 3, &cursor, (8, 9));
+            assert_eq!(&canvas[0..4], &[255, 0, 0, 255]);
+        }
+
+        #[test]
+        fn capture_rect_rejects_empty_rect_without_touching_x11() {
+            // The empty-rect guard runs before any X11 connection attempt,
+            // so this holds on headless machines too.
+            let rect = RectI {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            };
+            assert!(super::super::capture_rect(
+                rect,
+                &super::super::Monitor {
+                    id: "x".into(),
+                    name: "x".into(),
+                    origin_virtual: (0, 0),
+                    size_logical: (1, 1),
+                    scale: 1.0,
+                },
+                false
+            )
+            .is_err());
+        }
+
+        #[test]
+        fn window_capture_fails_closed_with_linux_message() {
+            let err = super::super::list_windows().unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("Linux"), "got: {msg}");
+            assert!(!msg.contains("Windows 11"), "got: {msg}");
+        }
+
+        #[test]
+        fn scrolling_capture_fails_closed_with_linux_message() {
+            let err = match super::super::wheel_scroll_driver(
+                &ScrollTarget::Window {
+                    window_id: "x".into(),
+                },
+                false,
+                &[],
+            ) {
+                Ok(_) => panic!("expected scrolling capture to be unsupported on Linux"),
+                Err(e) => e,
+            };
+            let msg = err.to_string();
+            assert!(msg.contains("Linux"), "got: {msg}");
+            assert!(!msg.contains("Windows 11"), "got: {msg}");
+        }
     }
 }

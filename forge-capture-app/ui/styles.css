@@ -75,3 +75,39 @@ code { font-size: 0.8em; }
 #captures .meta { color: var(--muted); font-size: 0.78rem; margin: 4px 0; }
 #captures .actions { display: flex; gap: 6px; margin-top: 6px; }
 #captures .actions button { padding: 5px 10px; font-size: 0.8rem; }
+
+/* Help button + dialog */
+.linklike {
+  background: none;
+  border: none;
+  color: var(--accent, #4da3ff);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0 0 0 6px;
+  font-size: inherit;
+}
+#help-dialog {
+  max-width: 34rem;
+  max-height: 80vh;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 24px;
+  color: inherit;
+  background: var(--card, #1e1e1e);
+}
+#help-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+#help-dialog h2 { margin-top: 0; }
+#help-dialog h3 { margin: 16px 0 6px; font-size: 0.95rem; }
+.help-body { overflow-y: auto; max-height: calc(80vh - 120px); }
+.help-body ul { margin: 6px 0; padding-left: 1.2rem; }
+.help-body li { margin-bottom: 4px; font-size: 0.88rem; }
+.help-body p { font-size: 0.88rem; }
+kbd {
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 0.8em;
+  font-family: inherit;
+  background: rgba(255, 255, 255, 0.06);
+}

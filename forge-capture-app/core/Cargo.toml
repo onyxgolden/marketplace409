@@ -30,4 +30,14 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
+# Linux capture backend (see native.rs `mod linux`): x11rb is pure Rust
+# (no X11 dev headers needed) and covers monitor enumeration, GetImage
+# screen capture, and cursor position on X11/Xorg sessions. arboard
+# provides the clipboard (image + text) without hand-rolled X selections.
+[target.'cfg(target_os = "linux")'.dependencies]
+# x11rb: pure-Rust X11 (no X11 dev headers needed). xfixes = cursor image,
+# xinerama = multi-monitor geometries.
+x11rb = { version = "0.13", features = ["xfixes", "xinerama"] }
+arboard = "3"
+
 [dev-dependencies]
