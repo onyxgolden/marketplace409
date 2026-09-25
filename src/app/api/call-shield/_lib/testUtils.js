@@ -7,7 +7,7 @@ import { vi } from "vitest";
 export function queryBuilder(result, calls) {
   const builder = {};
   const methods = [
-    "select", "eq", "neq", "order", "limit", "is", "in",
+    "select", "eq", "neq", "order", "limit", "range", "is", "in",
     "insert", "upsert", "update", "delete", "maybeSingle", "single",
   ];
   for (const method of methods) {
