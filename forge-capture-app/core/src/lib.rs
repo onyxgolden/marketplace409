@@ -33,6 +33,11 @@
 //!   `job.json` manifest schema, job-id validation, status resolution, and
 //!   versioned result stems. Pure logic; the shell owns the filesystem and
 //!   the runner contract lives in `docs/ai-edit.md`.
+//! - [`meeting`] — Meeting-mode transcription job contract: the
+//!   `transcribe` job manifest, the `result.json` transcript schema with
+//!   validated parsing, language-hint validation, and transcript
+//!   text/search helpers. Pure logic; the shell owns the filesystem and
+//!   the runner contract lives in `docs/meeting-mode.md`.
 
 /// AI Edit job contract: the local spool layout, manifest schema, job-id
 /// validation, status resolution, and versioned result stems. Pure logic;
@@ -42,6 +47,7 @@ pub mod artifact;
 pub mod coords;
 pub mod engines;
 pub mod hotkey;
+pub mod meeting;
 pub mod native;
 pub mod png;
 pub mod result;

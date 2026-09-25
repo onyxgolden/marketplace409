@@ -66,7 +66,7 @@ body {
 
 main { padding: 0 16px 24px; }
 
-#panel-image, #panel-video {
+#panel-image, #panel-video, #panel-meeting {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 0 8px 8px 8px;
@@ -240,3 +240,101 @@ dialog h2 { margin: 0 0 8px; font-size: 16px; }
 .help-body p { margin: 6px 0; }
 .help-body ul { margin: 6px 0; padding-left: 20px; }
 .help-body code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+/* ---- meeting mode ---- */
+
+.meeting-timer {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding: 4px 0;
+}
+
+.meeting-timer[hidden] { display: none; }
+
+.capture-btn.stopping { background: var(--capture-hover); }
+
+.meeting-recovered { display: flex; flex-direction: column; gap: 6px; }
+
+.recovered-note {
+  background: var(--bg);
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--warning);
+}
+
+.capture-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.capture-item .capture-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
+.capture-item .capture-state { color: var(--muted); font-size: 12px; flex: 1; }
+
+.captures li.empty { color: var(--muted); font-size: 12px; }
+
+.meeting-transcript { margin-top: 18px; }
+.meeting-transcript[hidden] { display: none; }
+.meeting-transcript h2 { font-size: 13px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+.transcript-name { font-weight: 400; }
+
+.transcript-tools { align-items: flex-end; }
+
+input[type="search"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  min-width: 180px;
+}
+
+.transcript {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.transcript .segment {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.segment-time {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+  cursor: default;
+  flex-shrink: 0;
+}
+
+.segment-text { flex: 1; }
+
+.transcript li.empty { color: var(--muted); font-size: 12px; }

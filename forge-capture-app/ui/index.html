@@ -16,6 +16,7 @@
   <div class="tabs" role="tablist" aria-label="Capture type">
     <button id="tab-image" class="tab active" role="tab" aria-selected="true" type="button">Image</button>
     <button id="tab-video" class="tab" role="tab" aria-selected="false" type="button">Video</button>
+    <button id="tab-meeting" class="tab" role="tab" aria-selected="false" type="button">Meeting</button>
   </div>
 
   <main>
@@ -119,13 +120,18 @@
     <section id="panel-video" role="tabpanel" aria-labelledby="tab-video" hidden>
       <div id="record-mount"></div>
     </section>
+
+    <!-- ============================ MEETING ============================ -->
+    <section id="panel-meeting" role="tabpanel" aria-labelledby="tab-meeting" hidden>
+      <div id="meeting-mount"></div>
+    </section>
   </main>
 
   <dialog id="help-dialog">
     <h2>FORGE Capture help</h2>
     <div class="help-body">
       <h3>Capture</h3>
-      <p>Pick <strong>Image</strong> or <strong>Video</strong>, choose what to grab —
+      <p>Pick <strong>Image</strong>, <strong>Video</strong> or <strong>Meeting</strong>, choose what to grab —
       <strong>Region</strong> (drag a rectangle), <strong>Window</strong>, <strong>Full screen</strong>,
       or <strong>Scrolling</strong> — then hit the red <strong>Capture</strong> button.</p>
       <ul>
@@ -149,6 +155,14 @@
       job folder and waits. An <strong>AI runner</strong> carries jobs to the AI team and drops
       results back. Until a runner is set up, jobs wait honestly in the queue — see
       <code>forge-capture-app/docs/ai-edit.md</code> for the setup contract.</p>
+      <h3>Meeting mode</h3>
+      <p>The <strong>Meeting</strong> tab records microphone audio locally and queues a
+      transcription job the same honest way: the audio file and a <code>job.json</code> wait in
+      the local job folder until a <strong>transcription runner</strong> (local Whisper) picks
+      them up and drops <code>result.json</code> back. The transcript appears with timestamps,
+      search and copy; the original audio is never modified. If the app crashes
+      mid-recording, the partial audio is recovered and queued on the next launch —
+      see <code>forge-capture-app/docs/meeting-mode.md</code> for the runner contract.</p>
       <h3>Session library</h3>
       <p>Everything captured this session appears under <strong>This session</strong>, newest first.
       Copy puts the image on the clipboard; Provenance shows the capture's sidecar record;
@@ -173,5 +187,6 @@
   <script src="forge-upload.js"></script>
   <script type="module" src="main.js"></script>
   <script type="module" src="record.js"></script>
+  <script type="module" src="meeting.js"></script>
 </body>
 </html>

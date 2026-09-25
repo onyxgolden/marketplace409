@@ -509,17 +509,17 @@ export class RecordingSession {
 async function uploadBytes(invoke, { bytes, mime, suggestedExtension = null, nameHint = null }, onProgress) {
   const uploadId = await invoke("begin_media_upload", {
     dto: {
-      total_bytes: bytes.length,
+      totalBytes: bytes.length,
       mime,
-      suggested_extension: suggestedExtension,
-      name_hint: nameHint,
+      suggestedExtension: suggestedExtension,
+      nameHint: nameHint,
     },
   });
   try {
     for (let off = 0; off < bytes.length; off += MEDIA_UPLOAD_CHUNK_BYTES) {
       const chunk = bytes.subarray(off, off + MEDIA_UPLOAD_CHUNK_BYTES);
       await invoke("append_media_chunk", {
-        dto: { upload_id: uploadId, offset: off, bytes: Array.from(chunk) },
+        dto: { uploadId: uploadId, offset: off, bytes: Array.from(chunk) },
       });
       if (onProgress) onProgress(Math.min(bytes.length, off + chunk.length), bytes.length);
     }

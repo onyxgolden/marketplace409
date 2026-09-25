@@ -82,6 +82,12 @@ struct AppState {
     /// `finish_media_upload` / `cancel_media_upload`; abandoned uploads die
     /// with the process (no persistence, no expiry thread in Rung 4).
     media_uploads: Mutex<HashMap<String, MediaUpload>>,
+    /// In-flight meeting audio uploads, keyed by the upload id handed to
+    /// `meeting_upload_begin`. Unlike Rung 4 media uploads, chunks are
+    /// appended to a `.meeting.part` file on disk AS THEY ARRIVE, so a
+    /// crash mid-recording leaves a recoverable partial that
+    /// `meeting_recover` finalizes on the next launch.
+    meeting_uploads: Mutex<HashMap<String, MeetingUpload>>,
 }
 
 /// One in-flight chunked media upload. The webview holds the encoded bytes
@@ -185,7 +191,7 @@ struct CursorPosDto {
     y: i32,
 }
 
-/// ui/record.js uploadBytes(): { total_bytes, mime, suggested_extension, name_hint }
+/// ui/record.js uploadBytes(): { totalBytes, mime, suggestedExtension, nameHint }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BeginMediaUploadDto {
@@ -195,7 +201,7 @@ struct BeginMediaUploadDto {
     name_hint: Option<String>,
 }
 
-/// ui/record.js uploadBytes(): { upload_id, offset, bytes }
+/// ui/record.js uploadBytes(): { uploadId, offset, bytes }
 /// `offset` is the byte offset this chunk starts at; the backend requires
 /// chunks to arrive in order with no gaps or duplicates (offset must equal
 /// the bytes received so far), so a buggy or hostile caller cannot
@@ -1526,6 +1532,682 @@ fn ai_edit_import(jobId: String, state: State<AppState>) -> Result<ArtifactRefDt
 }
 
 // ---------------------------------------------------------------------------
+// Meeting mode — local audio capture + transcription spool
+// ---------------------------------------------------------------------------
+//
+// Same honest, local-first design as AI Edit: the webview records audio
+// with the platform MediaRecorder (Rung 4 precedent) and streams chunks
+// here; the backend writes the audio file to the library directory and
+// spools a `transcribe` job into the local ai-spool. An EXTERNAL runner
+// (see forge-capture-app/docs/meeting-mode.md — Koe Jr's lane) carries
+// jobs to local Whisper and drops `result.json` back. This app never
+// touches the network and never transcribes anything itself.
+//
+// Crash safety: unlike the Rung 4 media upload (in-memory assembly, single
+// disk write), meeting chunks are appended to a `.meeting.part` file on
+// disk AS THEY ARRIVE, so a crash mid-recording leaves a recoverable
+// partial file. `meeting_recover` (called at startup) finalizes those
+// partials and spools transcription jobs for them.
+
+/// One in-flight meeting audio upload. Chunks land in `part_path` on disk
+/// immediately — never held only in memory — so a crash mid-recording is
+/// recoverable by `meeting_recover`.
+struct MeetingUpload {
+    expected_bytes: u64,
+    mime: String,
+    extension: String,
+    stem: String,
+    part_path: std::path::PathBuf,
+    received: u64,
+}
+
+fn meeting_job_id(state: &State<AppState>) -> String {
+    let mut counter = state.id_counter.lock().unwrap();
+    *counter += 1;
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("tr-{millis}-{counter}")
+}
+
+fn meeting_id(state: &State<AppState>) -> String {
+    let mut counter = state.id_counter.lock().unwrap();
+    *counter += 1;
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("mtg-{millis}-{counter}")
+}
+
+fn meeting_upload_id(state: &State<AppState>) -> String {
+    let mut counter = state.id_counter.lock().unwrap();
+    *counter += 1;
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("mu-{millis}-{counter}")
+}
+
+/// The only audio this command will write. The mime comes from the UI's
+/// MediaRecorder pick; the extension must agree with it.
+fn meeting_audio_extension(mime: &str) -> Result<String, String> {
+    // Same exact-base matching discipline as media_extension: a
+    // starts_with check would wrongly accept "audio/webm-evil".
+    let base = mime
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    match base.as_str() {
+        "audio/webm" => Ok("webm".to_string()),
+        "audio/mp4" => Ok("m4a".to_string()),
+        _ => Err(format!("unsupported meeting audio mime: {mime}")),
+    }
+}
+
+/// Container sanity check on the first bytes of a meeting recording.
+/// WebM: EBML header declaring DocType "webm" (shared with the Rung 4
+/// checker). M4A: 'ftyp' at offset 4 (ISO BMFF signature sanity check).
+/// A truncated-but-started recording still opens with a valid header, so
+/// recovered partials pass this too.
+fn sniff_audio_ok(probe: &[u8], extension: &str) -> bool {
+    match extension {
+        "webm" => webm_doctype_ok(probe),
+        "m4a" => probe.len() >= 8 && probe[4..8] == [0x66, 0x74, 0x79, 0x70],
+        _ => false,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BeginMeetingUploadDto {
+    total_bytes: u64,
+    mime: String,
+    name_hint: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppendMeetingChunkDto {
+    upload_id: String,
+    offset: u64,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FinishMeetingUploadDto {
+    upload_id: String,
+    device_label: Option<String>,
+    language_hint: Option<String>,
+    /// Streaming uploads declare a capacity cap in `begin` (the true total
+    /// is unknowable while recording) and report the actual byte count
+    /// here. When absent, `received` must equal the declared total
+    /// (buffered upload path).
+    actual_bytes: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MeetingFinishDto {
+    audio_path: String,
+    file_name: String,
+    #[serde(rename = "jobId")]
+    job_id: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct MeetingPollDto {
+    #[serde(rename = "jobId")]
+    job_id: String,
+    /// "queued" | "processing" | "done" | "failed" | "imported"
+    status: String,
+    /// Present when status == "failed": the runner's error (truncated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MeetingImportDto {
+    transcript_path: String,
+    segment_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_sec: Option<f64>,
+    /// The validated segments, inline so the UI can render without a
+    /// file-read round trip. The durable copy is `transcript_path`.
+    segments: Vec<forge_capture_core::meeting::TranscriptSegment>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RecoveredMeetingDto {
+    audio_path: String,
+    file_name: String,
+    #[serde(rename = "jobId")]
+    job_id: String,
+}
+
+/// Provenance sidecar for a meeting audio file, mirroring the recording
+/// convention: every file the app writes gets a `.forge.json` next to it.
+fn meeting_sidecar_json(
+    mime: &str,
+    byte_len: u64,
+    device_label: &str,
+    language_hint: &str,
+    recovered: bool,
+) -> String {
+    format!(
+        "{{\n  \"schemaVersion\": 1,\n  \"kind\": \"meeting-audio\",\n  \"mime\": {},\n  \"byteLength\": {},\n  \"deviceLabel\": {},\n  \"languageHint\": {},\n  \"recovered\": {},\n  \"createdAt\": {}\n}}\n",
+        serde_json::to_string(mime).unwrap_or_else(|_| "\"\"".to_string()),
+        byte_len,
+        serde_json::to_string(device_label).unwrap_or_else(|_| "\"\"".to_string()),
+        serde_json::to_string(language_hint).unwrap_or_else(|_| "\"\"".to_string()),
+        recovered,
+        serde_json::to_string(&forge_capture_core::timestamp::now_utc_iso8601())
+            .unwrap_or_else(|_| "\"\"".to_string()),
+    )
+}
+
+/// Two-phase sidecar write: temp file first, rename into place, so a crash
+/// can never leave a partial sidecar under a final name.
+fn write_sidecar_two_phase(
+    dir: &std::path::Path,
+    stem: &str,
+    sidecar: &str,
+    tag: &str,
+) -> Result<std::path::PathBuf, String> {
+    let sidecar_path = dir.join(format!("{stem}.forge.json"));
+    let sidecar_temp = dir.join(format!("{stem}.{tag}.forge.json.part"));
+    std::fs::write(&sidecar_temp, sidecar.as_bytes())
+        .map_err(|e| format!("cannot write sidecar temp file: {e}"))?;
+    std::fs::rename(&sidecar_temp, &sidecar_path)
+        .map_err(|e| format!("cannot finalize sidecar: {e}"))?;
+    Ok(sidecar_path)
+}
+
+/// Read the first bytes of a file for container sniffing (the header walk
+/// is bounded to a few KB; the whole file is never loaded for this).
+fn read_probe(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut f =
+        std::fs::File::open(path).map_err(|e| format!("cannot open audio file: {e}"))?;
+    let mut probe = vec![0u8; 8192];
+    let n = f
+        .read(&mut probe)
+        .map_err(|e| format!("cannot read audio file: {e}"))?;
+    probe.truncate(n);
+    Ok(probe)
+}
+
+#[tauri::command]
+fn meeting_upload_begin(
+    dto: BeginMeetingUploadDto,
+    state: State<AppState>,
+) -> Result<String, String> {
+    if dto.total_bytes == 0 || dto.total_bytes > MAX_MEDIA_UPLOAD_BYTES {
+        return Err(format!(
+            "total_bytes {} is outside the allowed 1..{} range",
+            dto.total_bytes, MAX_MEDIA_UPLOAD_BYTES
+        ));
+    }
+    let extension = meeting_audio_extension(&dto.mime)?;
+    let dir = captures_dir()?;
+    let base_hint = dto.name_hint.as_deref().unwrap_or("");
+    let base = if base_hint.trim().is_empty() {
+        format!(
+            "meeting-{}",
+            forge_capture_core::timestamp::now_utc_iso8601()
+        )
+    } else {
+        base_hint.to_string()
+    };
+    let stem = unique_stem(&state, &dir, &sanitize_stem(Some(&base)), &extension);
+    let id = meeting_upload_id(&state);
+    // The part filename carries the upload id AND the extension: recovery
+    // needs both without trusting file contents.
+    let part_path = dir.join(format!("{stem}.{id}.{extension}.meeting.part"));
+    // Create the part file now so a later append can never fail on a
+    // missing file, and so a crash before the first chunk still leaves a
+    // (zero-byte, unrecoverable-but-harmless) marker.
+    std::fs::write(&part_path, b"").map_err(|e| format!("cannot create meeting part file: {e}"))?;
+    let mut uploads = state.meeting_uploads.lock().unwrap();
+    uploads.insert(
+        id.clone(),
+        MeetingUpload {
+            expected_bytes: dto.total_bytes,
+            mime: dto.mime,
+            extension,
+            stem,
+            part_path,
+            received: 0,
+        },
+    );
+    Ok(id)
+}
+
+#[tauri::command]
+fn meeting_upload_append(
+    dto: AppendMeetingChunkDto,
+    state: State<AppState>,
+) -> Result<u64, String> {
+    use std::io::Write;
+    let mut uploads = state.meeting_uploads.lock().unwrap();
+    let upload = uploads
+        .get_mut(&dto.upload_id)
+        .ok_or_else(|| format!("unknown meeting upload id: {}", dto.upload_id))?;
+    // Same strict sequencing as the Rung 4 media upload: no gaps, no
+    // re-sends, no reordering — a buggy caller cannot assemble a malformed
+    // file out of reordered chunks.
+    check_chunk_offset(upload.received, dto.offset)?;
+    let new_len = upload.received + dto.bytes.len() as u64;
+    if new_len > upload.expected_bytes {
+        return Err(format!(
+            "meeting upload would exceed declared total: {} > {}",
+            new_len, upload.expected_bytes
+        ));
+    }
+    // Crash-safe: bytes hit the disk NOW, not at finish. A crash after
+    // this point leaves a playable partial (MediaRecorder chunks share the
+    // init segment, so truncation never corrupts the container header).
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&upload.part_path)
+        .map_err(|e| format!("cannot append to meeting part file: {e}"))?;
+    f.write_all(&dto.bytes)
+        .map_err(|e| format!("cannot write meeting chunk: {e}"))?;
+    upload.received = new_len;
+    Ok(new_len)
+}
+
+#[tauri::command]
+fn meeting_upload_cancel(id: String, state: State<AppState>) -> Result<(), String> {
+    let upload = {
+        let mut uploads = state.meeting_uploads.lock().unwrap();
+        uploads.remove(&id)
+    };
+    if let Some(upload) = upload {
+        // Best effort: a leftover part file is harmless (recovery skips
+        // zero-byte files), but a cancelled take should not resurrect.
+        let _ = std::fs::remove_file(&upload.part_path);
+    }
+    Ok(())
+}
+
+/// Finish a meeting recording: validate the audio, finalize it into the
+/// library with its sidecar, and spool a `transcribe` job. Returns the
+/// library audio path and the job id for polling.
+///
+/// Ordering note: the audio is finalized BEFORE the job is spooled. If the
+/// spool fails after a successful finalize, the error names the saved
+/// audio path honestly instead of pretending the recording was lost.
+#[tauri::command]
+fn meeting_upload_finish(
+    dto: FinishMeetingUploadDto,
+    state: State<AppState>,
+) -> Result<MeetingFinishDto, String> {
+    let upload = {
+        let mut uploads = state.meeting_uploads.lock().unwrap();
+        uploads
+            .remove(&dto.upload_id)
+            .ok_or_else(|| format!("unknown meeting upload id: {}", dto.upload_id))?
+    };
+    let language_hint = dto.language_hint.as_deref().unwrap_or("auto");
+    forge_capture_core::meeting::validate_language_hint(language_hint)
+        .map_err(|e| e.to_string())?;
+    // Streaming uploads declare a capacity cap up front and report the
+    // actual count here; buffered uploads must match the declared total
+    // exactly. Either way the byte count on disk is authoritative.
+    let actual_bytes = match dto.actual_bytes {
+        Some(n) => {
+            if n != upload.received {
+                let _ = std::fs::remove_file(&upload.part_path);
+                return Err(format!(
+                    "meeting upload byte count mismatch: reported {n}, received {}",
+                    upload.received
+                ));
+            }
+            if n > upload.expected_bytes {
+                let _ = std::fs::remove_file(&upload.part_path);
+                return Err(format!(
+                    "meeting upload exceeded declared capacity: {n} > {}",
+                    upload.expected_bytes
+                ));
+            }
+            n
+        }
+        None => {
+            if upload.received != upload.expected_bytes {
+                let _ = std::fs::remove_file(&upload.part_path);
+                return Err(format!(
+                    "incomplete meeting upload: got {} of {} declared bytes",
+                    upload.received, upload.expected_bytes
+                ));
+            }
+            upload.received
+        }
+    };
+    if actual_bytes == 0 {
+        let _ = std::fs::remove_file(&upload.part_path);
+        return Err("meeting upload is empty: nothing was recorded".to_string());
+    }
+    if !sniff_audio_ok(
+        &read_probe(&upload.part_path)?,
+        &upload.extension,
+    ) {
+        let _ = std::fs::remove_file(&upload.part_path);
+        return Err(format!(
+            "recorded bytes failed the .{} audio signature check — refusing to write",
+            upload.extension
+        ));
+    }
+    let dir = captures_dir()?;
+    let file_name = format!("{}.{}", upload.stem, upload.extension);
+    let final_path = dir.join(&file_name);
+    std::fs::rename(&upload.part_path, &final_path)
+        .map_err(|e| format!("cannot finalize meeting audio: {e}"))?;
+    let device_label = dto.device_label.as_deref().unwrap_or("");
+    let sidecar = meeting_sidecar_json(
+        &upload.mime,
+        actual_bytes,
+        device_label,
+        language_hint,
+        false,
+    );
+    if let Err(e) = write_sidecar_two_phase(&dir, &upload.stem, &sidecar, &dto.upload_id) {
+        // The audio is finalized but sidecar-less: roll the audio back
+        // rather than break the every-file-has-a-sidecar invariant (the
+        // Rung 4 media-upload discipline).
+        let _ = std::fs::remove_file(&final_path);
+        return Err(e);
+    }
+    // Spool the transcription job. The job directory is self-contained
+    // (audio copy + manifest, manifest written LAST): a crash mid-spool
+    // never yields a half job, and the runner never needs the library.
+    let spool = ai_spool_dir()?;
+    let job_id = meeting_job_id(&state);
+    debug_assert!(forge_capture_core::ai_edit::validate_job_id(&job_id));
+    let meeting_id = meeting_id(&state);
+    let job_dir = spool
+        .join(forge_capture_core::ai_edit::SPOOL_PENDING)
+        .join(&job_id);
+    if let Err(e) = (|| -> Result<(), String> {
+        std::fs::create_dir_all(&job_dir).map_err(|e| format!("cannot spool transcribe job: {e}"))?;
+        let input_name = format!(
+            "{}.{}",
+            forge_capture_core::meeting::JOB_INPUT_AUDIO,
+            upload.extension
+        );
+        std::fs::copy(&final_path, job_dir.join(&input_name))
+            .map_err(|e| format!("cannot spool meeting audio: {e}"))?;
+        let manifest = forge_capture_core::meeting::TranscribeJobManifest::new(
+            &job_id,
+            &meeting_id,
+            &file_name,
+            language_hint,
+            &forge_capture_core::timestamp::now_utc_iso8601(),
+        );
+        let manifest_json = serde_json::to_string_pretty(&manifest)
+            .map_err(|e| format!("cannot encode transcribe manifest: {e}"))?;
+        std::fs::write(
+            job_dir.join(forge_capture_core::ai_edit::JOB_MANIFEST),
+            manifest_json.as_bytes(),
+        )
+        .map_err(|e| format!("cannot spool transcribe manifest: {e}"))?;
+        Ok(())
+    })() {
+        // The audio survived (it is finalized in the library); only the
+        // transcription spool failed. Say so honestly with the path.
+        return Err(format!(
+            "{e} — the recording was saved at {} but no transcription job was queued",
+            final_path.to_string_lossy()
+        ));
+    }
+    Ok(MeetingFinishDto {
+        audio_path: final_path.to_string_lossy().into_owned(),
+        file_name,
+        job_id,
+    })
+}
+
+/// Poll a transcription job's status. Pure directory-presence check; never
+/// blocks, never touches the network. Mirrors `ai_edit_poll`.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn meeting_poll(jobId: String, state: State<AppState>) -> Result<MeetingPollDto, String> {
+    if !forge_capture_core::ai_edit::validate_job_id(&jobId) {
+        return Err("invalid transcription job id".to_string());
+    }
+    let _ = state; // reserved: future in-memory job cache
+    let spool = ai_spool_dir()?;
+    let presence = |sub: &str| spool.join(sub).join(&jobId).is_dir();
+    let status = ai_edit::status_from_presence(
+        presence(ai_edit::SPOOL_PENDING),
+        presence(ai_edit::SPOOL_PROCESSING),
+        presence(ai_edit::SPOOL_DONE),
+        presence(ai_edit::SPOOL_FAILED),
+        presence(ai_edit::SPOOL_IMPORTED),
+    )
+    .ok_or_else(|| format!("unknown transcription job: {jobId}"))?;
+    let reason = if status == ai_edit::AiJobStatus::Failed {
+        let err_path = spool
+            .join(ai_edit::SPOOL_FAILED)
+            .join(&jobId)
+            .join(ai_edit::JOB_ERROR_TXT);
+        std::fs::read_to_string(&err_path)
+            .ok()
+            .map(|s| s.chars().take(500).collect::<String>())
+    } else {
+        None
+    };
+    Ok(MeetingPollDto {
+        job_id: jobId,
+        status: status.as_str().to_string(),
+        reason,
+    })
+}
+
+/// Import a finished transcript: validate `result.json`, store it as
+/// `<audio-stem>.transcript.json` next to the untouched audio file, and
+/// move the job to `imported/` so a second import is impossible.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn meeting_import(jobId: String, _state: State<AppState>) -> Result<MeetingImportDto, String> {
+    if !forge_capture_core::ai_edit::validate_job_id(&jobId) {
+        return Err("invalid transcription job id".to_string());
+    }
+    let spool = ai_spool_dir()?;
+    let done_dir = spool.join(ai_edit::SPOOL_DONE).join(&jobId);
+    if !done_dir.is_dir() {
+        return Err(format!(
+            "transcription job {jobId} has no finished result to import"
+        ));
+    }
+    let result_bytes = std::fs::read(done_dir.join(forge_capture_core::meeting::JOB_RESULT_JSON))
+        .map_err(|e| format!("cannot read transcript result: {e}"))?;
+    // The transcript comes from an external runner: parse + validate
+    // strictly (timestamps finite, text capped) before trusting it.
+    let result = forge_capture_core::meeting::parse_transcript_result(&jobId, &result_bytes)?;
+    let manifest: forge_capture_core::meeting::TranscribeJobManifest =
+        std::fs::read_to_string(done_dir.join(ai_edit::JOB_MANIFEST))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .ok_or_else(|| "transcription job manifest is missing or corrupt".to_string())?;
+    if manifest.job_type != forge_capture_core::meeting::JOB_TYPE_TRANSCRIBE {
+        return Err(format!(
+            "job {jobId} is not a transcription job (job_type={})",
+            manifest.job_type
+        ));
+    }
+    let dir = captures_dir()?;
+    let audio_stem = manifest
+        .audio_file
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(&manifest.audio_file);
+    let transcript_name = format!("{audio_stem}.transcript.json");
+    let transcript_path = dir.join(&transcript_name);
+    let doc = serde_json::json!({
+        "schemaVersion": 1,
+        "jobId": jobId,
+        "meetingId": manifest.meeting_id,
+        "audioFile": manifest.audio_file,
+        "languageHint": manifest.language_hint,
+        "transcript": result,
+        "importedAt": forge_capture_core::timestamp::now_utc_iso8601(),
+    });
+    let doc_json = serde_json::to_string_pretty(&doc)
+        .map_err(|e| format!("cannot encode transcript: {e}"))?;
+    // Two-phase write: the transcript is never half-visible.
+    let temp_path = dir.join(format!("{transcript_name}.{jobId}.part"));
+    std::fs::write(&temp_path, doc_json.as_bytes())
+        .map_err(|e| format!("cannot write transcript temp file: {e}"))?;
+    std::fs::rename(&temp_path, &transcript_path)
+        .map_err(|e| format!("cannot finalize transcript: {e}"))?;
+    // Mark imported: a second import of the same job is refused because the
+    // job no longer sits in done/.
+    let _ = std::fs::rename(&done_dir, spool.join(ai_edit::SPOOL_IMPORTED).join(&jobId));
+    Ok(MeetingImportDto {
+        transcript_path: transcript_path.to_string_lossy().into_owned(),
+        segment_count: result.segments.len(),
+        duration_sec: result.duration_sec,
+        segments: result.segments.clone(),
+    })
+}
+
+/// Recover interrupted meeting recordings after a crash: any
+/// `*.meeting.part` file left in the captures dir is a recording that
+/// never reached `meeting_upload_finish`. Each recoverable partial is
+/// finalized as `<stem>-recovered.<ext>` with a `recovered: true`
+/// sidecar, and a fresh `transcribe` job (language hint "auto" — the
+/// original choice died with the crashed process) is spooled for it.
+/// Zero-byte part files (crash before the first chunk) are deleted as
+/// unrecoverable; files failing the container sniff are left in place
+/// and skipped loudly on stderr.
+#[tauri::command]
+fn meeting_recover(state: State<AppState>) -> Result<Vec<RecoveredMeetingDto>, String> {
+    let dir = captures_dir()?;
+    let mut parts: Vec<std::path::PathBuf> = Vec::new();
+    let entries =
+        std::fs::read_dir(&dir).map_err(|e| format!("cannot list captures dir: {e}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("cannot read captures dir entry: {e}"))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".meeting.part") {
+            parts.push(entry.path());
+        }
+    }
+    parts.sort();
+    let mut recovered = Vec::new();
+    for part_path in parts {
+        let name = part_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // Part filename: <stem>.<upload-id>.<ext>.meeting.part
+        let Some(base) = name.strip_suffix(".meeting.part") else {
+            continue;
+        };
+        // rsplit yields right-to-left: [ext, upload-id, stem…].
+        let pieces: Vec<&str> = base.rsplit('.').collect();
+        if pieces.len() < 3 {
+            eprintln!("[capture] meeting_recover: ignoring malformed part file {name}");
+            continue;
+        }
+        let extension = pieces[0];
+        let stem = pieces[2..].iter().rev().cloned().collect::<Vec<_>>().join(".");
+        let meta = match std::fs::metadata(&part_path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("[capture] meeting_recover: cannot stat {name}: {e}");
+                continue;
+            }
+        };
+        if meta.len() == 0 {
+            // Crash before the first chunk: nothing to recover.
+            let _ = std::fs::remove_file(&part_path);
+            continue;
+        }
+        let probe = match read_probe(&part_path) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[capture] meeting_recover: cannot read {name}: {e}");
+                continue;
+            }
+        };
+        if !sniff_audio_ok(&probe, extension) {
+            eprintln!(
+                "[capture] meeting_recover: {name} failed the .{extension} audio signature check — leaving it in place"
+            );
+            continue;
+        }
+        let final_stem = unique_stem(&state, &dir, &format!("{stem}-recovered"), extension);
+        let file_name = format!("{final_stem}.{extension}");
+        let final_path = dir.join(&file_name);
+        if let Err(e) = std::fs::rename(&part_path, &final_path) {
+            eprintln!("[capture] meeting_recover: cannot finalize {name}: {e}");
+            continue;
+        }
+        let sidecar = meeting_sidecar_json(
+            if extension == "webm" {
+                "audio/webm"
+            } else {
+                "audio/mp4"
+            },
+            meta.len(),
+            "",
+            "auto",
+            true,
+        );
+        if let Err(e) = write_sidecar_two_phase(&dir, &final_stem, &sidecar, "recover") {
+            eprintln!("[capture] meeting_recover: cannot write sidecar for {file_name}: {e}");
+            continue;
+        }
+        // Spool a transcription job for the recovered audio (best effort —
+        // a spool failure must not lose the recovered file itself).
+        let job_id = match (|| -> Result<String, String> {
+            let spool = ai_spool_dir()?;
+            let job_id = meeting_job_id(&state);
+            let meeting_id = meeting_id(&state);
+            let job_dir = spool.join(ai_edit::SPOOL_PENDING).join(&job_id);
+            std::fs::create_dir_all(&job_dir)
+                .map_err(|e| format!("cannot spool transcribe job: {e}"))?;
+            let input_name = format!("{}.{}", forge_capture_core::meeting::JOB_INPUT_AUDIO, extension);
+            std::fs::copy(&final_path, job_dir.join(&input_name))
+                .map_err(|e| format!("cannot spool meeting audio: {e}"))?;
+            let manifest = forge_capture_core::meeting::TranscribeJobManifest::new(
+                &job_id,
+                &meeting_id,
+                &file_name,
+                "auto",
+                &forge_capture_core::timestamp::now_utc_iso8601(),
+            );
+            let manifest_json = serde_json::to_string_pretty(&manifest)
+                .map_err(|e| format!("cannot encode transcribe manifest: {e}"))?;
+            std::fs::write(job_dir.join(ai_edit::JOB_MANIFEST), manifest_json.as_bytes())
+                .map_err(|e| format!("cannot spool transcribe manifest: {e}"))?;
+            Ok(job_id)
+        })() {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("[capture] meeting_recover: recovered {file_name} but spool failed: {e}");
+                continue;
+            }
+        };
+        recovered.push(RecoveredMeetingDto {
+            audio_path: final_path.to_string_lossy().into_owned(),
+            file_name,
+            job_id,
+        });
+    }
+    Ok(recovered)
+}
+
+// ---------------------------------------------------------------------------
 // Scrolling capture commands (Rung 2b)
 // ---------------------------------------------------------------------------
 
@@ -1963,6 +2645,7 @@ fn main() {
             scroll_aborts: Mutex::new(HashMap::new()),
             printscreen_active: AtomicBool::new(false),
             media_uploads: Mutex::new(HashMap::new()),
+            meeting_uploads: Mutex::new(HashMap::new()),
         })
         .setup(|app| {
             // Best-effort capture shortcuts: register the four PrintScreen
@@ -1991,6 +2674,13 @@ fn main() {
             ai_edit_submit,
             ai_edit_poll,
             ai_edit_import,
+            meeting_upload_begin,
+            meeting_upload_append,
+            meeting_upload_cancel,
+            meeting_upload_finish,
+            meeting_poll,
+            meeting_import,
+            meeting_recover,
             start_scroll_capture,
             stop_scroll_capture,
             printscreen_takeover_active,
@@ -2106,6 +2796,63 @@ mod dto_ipc_tests {
     }
 
     #[test]
+    fn meeting_dtos_match_ui_payloads() {
+        // ui/meeting.js startRecording():
+        //   invoke("meeting_upload_begin",
+        //     { dto: { totalBytes, mime, nameHint } })
+        let json = r#"{"totalBytes": 1048576, "mime": "audio/webm;codecs=opus", "nameHint": "standup"}"#;
+        let dto: BeginMeetingUploadDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.total_bytes, 1048576);
+        assert_eq!(dto.mime, "audio/webm;codecs=opus");
+        assert_eq!(dto.name_hint.as_deref(), Some("standup"));
+
+        // ui/meeting.js pumpChunks():
+        //   invoke("meeting_upload_append",
+        //     { dto: { uploadId, offset, bytes } })
+        let json = r#"{"uploadId": "mu-1-2", "offset": 0, "bytes": [1, 2, 3]}"#;
+        let dto: AppendMeetingChunkDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.upload_id, "mu-1-2");
+        assert_eq!(dto.offset, 0);
+        assert_eq!(dto.bytes, vec![1u8, 2, 3]);
+
+        // ui/meeting.js stopRecording():
+        //   invoke("meeting_upload_finish",
+        //     { dto: { uploadId, deviceLabel, languageHint, actualBytes } })
+        let json =
+            r#"{"uploadId": "mu-1-2", "deviceLabel": "Default Mic", "languageHint": "en", "actualBytes": 12345}"#;
+        let dto: FinishMeetingUploadDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.upload_id, "mu-1-2");
+        assert_eq!(dto.device_label.as_deref(), Some("Default Mic"));
+        assert_eq!(dto.language_hint.as_deref(), Some("en"));
+        assert_eq!(dto.actual_bytes, Some(12345));
+
+        // Optional fields may be omitted entirely.
+        let json = r#"{"uploadId": "mu-1-2"}"#;
+        let dto: FinishMeetingUploadDto = serde_json::from_str(json).unwrap();
+        assert!(dto.device_label.is_none());
+        assert!(dto.language_hint.is_none());
+    }
+
+    #[test]
+    fn meeting_audio_extension_allowlist() {
+        assert_eq!(
+            meeting_audio_extension("audio/webm").as_deref(),
+            Ok("webm")
+        );
+        assert_eq!(
+            meeting_audio_extension("audio/webm;codecs=opus").as_deref(),
+            Ok("webm")
+        );
+        assert_eq!(
+            meeting_audio_extension("audio/mp4").as_deref(),
+            Ok("m4a")
+        );
+        assert!(meeting_audio_extension("video/webm").is_err());
+        assert!(meeting_audio_extension("audio/webm-evil").is_err());
+        assert!(meeting_audio_extension("").is_err());
+    }
+
+    #[test]
     fn begin_region_pick_param_names_match_ui() {
         // ui/main.js: invoke("begin_region_pick",
         //   { monitorId, delayMs, includeCursor }).
@@ -2130,12 +2877,12 @@ mod dto_ipc_tests {
     #[test]
     fn begin_media_upload_dto_matches_ui_payload() {
         // ui/record.js uploadBytes():
-        //   { total_bytes, mime, suggested_extension, name_hint }
+        //   { totalBytes, mime, suggestedExtension, nameHint }
         let json = r#"{
-            "total_bytes": 1048576,
+            "totalBytes": 1048576,
             "mime": "video/webm;codecs=vp9",
-            "suggested_extension": null,
-            "name_hint": "recording"
+            "suggestedExtension": null,
+            "nameHint": "recording"
         }"#;
         let dto: BeginMediaUploadDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.total_bytes, 1048576);
@@ -2148,10 +2895,10 @@ mod dto_ipc_tests {
     fn begin_media_upload_gif_dto_matches_ui_payload() {
         // ui/record.js onExportGif(): mime image/gif + suggestedExtension "gif".
         let json = r#"{
-            "total_bytes": 2048,
+            "totalBytes": 2048,
             "mime": "image/gif",
-            "suggested_extension": "gif",
-            "name_hint": "recording-clip"
+            "suggestedExtension": "gif",
+            "nameHint": "recording-clip"
         }"#;
         let dto: BeginMediaUploadDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.mime, "image/gif");
@@ -2160,10 +2907,10 @@ mod dto_ipc_tests {
 
     #[test]
     fn append_media_chunk_dto_matches_ui_payload() {
-        // ui/record.js uploadBytes(): { upload_id, offset, bytes } where
+        // ui/record.js uploadBytes(): { uploadId, offset, bytes } where
         // bytes is a plain JSON number array (Tauri has no binary IPC for
         // number arrays).
-        let json = r#"{"upload_id": "upl-123-1", "offset": 1048576, "bytes": [26, 69, 223, 163]}"#;
+        let json = r#"{"uploadId": "upl-123-1", "offset": 1048576, "bytes": [26, 69, 223, 163]}"#;
         let dto: AppendMediaChunkDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.upload_id, "upl-123-1");
         assert_eq!(dto.offset, 1048576);
