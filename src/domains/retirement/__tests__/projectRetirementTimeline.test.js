@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import backtestRetirement, { stepRetirementYear } from "../backtestRetirement";
 import projectRetirementTimeline, { averageRealReturnPct } from "../projectRetirementTimeline";
 
 // Tiny synthetic dataset: blended 50/50 returns are 0.05, 0.10, 0.15,
@@ -87,4 +88,83 @@ describe("projectRetirementTimeline", () => {
     expect(result.years).toEqual([]);
     expect(result.avgRealReturnPct).toBeNull();
   });
+});
+
+describe("withdrawal-timing parity with backtestRetirement", () => {
+  // Constant-return synthetic dataset (0.0625 = 1/16, exactly representable
+  // in binary, so the average and every window's blended return are
+  // bit-identical). Every historical window behaves identically, so the
+  // backtest's survival verdict must agree exactly with the timeline's
+  // exhaustion date for the same inputs.
+  const YEARS = Array.from({ length: 20 }, (_, i) => 2000 + i);
+  const CONSTANT = {
+    years: YEARS,
+    stockReal: YEARS.map(() => 0.0625),
+    bondReal: YEARS.map(() => 0.0625),
+  };
+  const PARITY_BASE = {
+    retirementAge: 65,
+    retirementYear: 2030,
+    nestEgg: 500,
+    annualWithdrawal: 80,
+    stockPct: 0.5, // blended return = average = 0.0625 exactly
+    data: CONSTANT,
+  };
+
+  function timelineFor(horizonYears, spendingDeclinePct = 0) {
+    return projectRetirementTimeline({
+      ...PARITY_BASE,
+      planningAge: 65 + horizonYears,
+      spendingDeclinePct,
+    });
+  }
+
+  function backtestFor(horizonYears, spendingDeclinePct = 0) {
+    return backtestRetirement({
+      nestEgg: PARITY_BASE.nestEgg,
+      annualWithdrawal: PARITY_BASE.annualWithdrawal,
+      stockPct: PARITY_BASE.stockPct,
+      horizonYears,
+      data: CONSTANT,
+      spendingDeclinePct,
+    });
+  }
+
+  it("replays the backtest's yearly convention through the shared step", () => {
+    const horizon = 10;
+    // 2000 nest egg at 6.25% funds the 80/yr withdrawal indefinitely
+    // (steady state 125/yr) — no exhaustion inside the horizon.
+    const timeline = projectRetirementTimeline({
+      ...PARITY_BASE,
+      nestEgg: 2000,
+      planningAge: 65 + horizon,
+    });
+    expect(timeline.exhaustedAt).toBeNull();
+    const avg = averageRealReturnPct({ stockPct: PARITY_BASE.stockPct, data: CONSTANT }) / 100;
+    let balance = 2000;
+    for (let i = 0; i <= horizon; i += 1) {
+      expect(timeline.years[i].balance).toBeCloseTo(balance, 12);
+      expect(timeline.years[i].withdrawal).toBe(i < horizon ? PARITY_BASE.annualWithdrawal : null);
+      if (i === horizon) break;
+      balance = stepRetirementYear(balance, avg, PARITY_BASE.annualWithdrawal);
+    }
+  });
+
+  it.each([0, 10])(
+    "agrees with backtestRetirement on exhaustion (decline %i%%)",
+    (decline) => {
+      const long = timelineFor(19, decline);
+      if (long.exhaustedAt == null) {
+        // Survives the full horizon: every backtest window must succeed.
+        expect(backtestFor(19, decline).survivalPct).toBe(100);
+        return;
+      }
+      const k = long.exhaustedAt - PARITY_BASE.retirementAge;
+      expect(k).toBeGreaterThanOrEqual(1);
+      // Exhausted during year k-1: a k-year horizon fails every window...
+      expect(backtestFor(k, decline).survivalPct).toBe(0);
+      // ...and a (k-1)-year horizon survives every window.
+      expect(backtestFor(k - 1, decline).survivalPct).toBe(100);
+    },
+  );
 });

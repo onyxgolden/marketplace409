@@ -30,6 +30,14 @@ function nullResult(horizonYears) {
   };
 }
 
+// Single-year portfolio step, shared with projectRetirementTimeline so both
+// views use the identical ordering convention: growth is applied FIRST, then
+// the year's withdrawal is taken.
+// next = balance * (1 + realReturn) - yearWithdrawal
+export function stepRetirementYear(balance, realReturn, yearWithdrawal) {
+  return balance * (1 + realReturn) - yearWithdrawal;
+}
+
 export default function backtestRetirement({ nestEgg, annualWithdrawal, stockPct = 0.6, horizonYears, data, spendingDeclinePct = 0 }) {
   const horizon = Number.isFinite(horizonYears) ? Math.floor(horizonYears) : NaN;
   if (!Number.isFinite(horizon) || horizon < 1) return nullResult(horizonYears);
@@ -100,7 +108,7 @@ export default function backtestRetirement({ nestEgg, annualWithdrawal, stockPct
     let survived = true;
     for (let i = 0; i < horizon; i += 1) {
       const yearWithdrawal = withdrawal * (1 - decline) ** i;
-      portfolio = portfolio * (1 + returns[i]) - yearWithdrawal;
+      portfolio = stepRetirementYear(portfolio, returns[i], yearWithdrawal);
       if (portfolio <= 0) {
         survived = false;
         break;

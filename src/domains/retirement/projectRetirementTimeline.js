@@ -17,6 +17,7 @@
 // (withdrawal * (1 - decline)^i), matching backtestRetirement.
 //
 // Pure function: no I/O, no Date, no randomness. Safe to run in useMemo.
+import { stepRetirementYear } from "./backtestRetirement.js";
 
 function nullResult(horizonYears) {
   return {
@@ -90,8 +91,9 @@ export default function projectRetirementTimeline({
   let exhaustedAt = null;
 
   // Point i is the balance at the START of retirement year i (age
-  // retirementAge + i), after i rounds of growth-minus-withdrawal — the same
-  // iteration structure as backtestRetirement, so the two views agree.
+  // retirementAge + i), after i rounds of the shared growth-first step —
+  // the same calculation convention as backtestRetirement, so the two
+  // views agree on exhaustion.
   for (let i = 0; i <= horizon; i += 1) {
     const yearWithdrawal = i < horizon ? withdrawal * (1 - decline) ** i : null;
     years.push({
@@ -101,7 +103,7 @@ export default function projectRetirementTimeline({
       withdrawal: yearWithdrawal,
     });
     if (i === horizon) break;
-    balance = balance * (1 + avg) - yearWithdrawal;
+    balance = stepRetirementYear(balance, avg, yearWithdrawal);
     if (balance <= 0) {
       // The money runs out during this year: the next point would be
       // negative, so the line ends here instead of rendering a fiction.

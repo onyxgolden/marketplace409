@@ -92,7 +92,7 @@ export default function RetirementTimelineChart({
   if (hoverFlat) {
     tipLines.push(hoverFlat.calendarYear != null ? `${hoverFlat.calendarYear} · age ${hoverFlat.age}` : `Age ${hoverFlat.age}`);
     tipLines.push(`Flat: ${dollars.format(hoverFlat.balance ?? 0)}`);
-    if (hoverFlat.withdrawal != null) tipLines.push(`Withdrawal: ${dollars.format(hoverFlat.withdrawal)}/yr`);
+    if (hoverFlat.withdrawal != null) tipLines.push(`Flat withdrawal: ${dollars.format(hoverFlat.withdrawal)}/yr`);
     if (smileOn && hoverSmile) tipLines.push(`Smile: ${dollars.format(hoverSmile.balance ?? 0)}`);
     if (hoverMilestone) tipLines.push(`★ ${hoverMilestone.label}`);
   }
