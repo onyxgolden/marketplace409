@@ -232,9 +232,29 @@ describe("designerReducer", () => {
     expect(persistedRevisions[persistedRevisions.length - 1]).toBe(6);
   });
 
-  it("toggles 2d/3d view", () => {    const state = createInitialState();
+  it("switches between the three view modes", () => {
+    const state = createInitialState();
     expect(designerReducer(state, { type: "SET_VIEW", view: "3d" }).view).toBe("3d");
+    expect(designerReducer(state, { type: "SET_VIEW", view: "split" }).view).toBe("split");
+    expect(designerReducer(state, { type: "SET_VIEW", view: "2d" }).view).toBe("2d");
+  });
+
+  it("falls back to 2d for an unknown view value, rather than rendering nothing", () => {
+    const state = createInitialState();
     expect(designerReducer(state, { type: "SET_VIEW", view: "bogus" }).view).toBe("2d");
+    expect(designerReducer(state, { type: "SET_VIEW", view: undefined }).view).toBe("2d");
+    expect(designerReducer(state, { type: "SET_VIEW" }).view).toBe("2d");
+  });
+
+  it("preserves selection and tool when switching views", () => {
+    let state = createInitialState();
+    state = { ...state, tool: "wall", selection: { kind: "wall", id: "w1" } };
+    state = designerReducer(state, { type: "SET_VIEW", view: "split" });
+    expect(state.tool).toBe("wall");
+    expect(state.selection).toEqual({ kind: "wall", id: "w1" });
+    state = designerReducer(state, { type: "SET_VIEW", view: "3d" });
+    expect(state.tool).toBe("wall");
+    expect(state.selection).toEqual({ kind: "wall", id: "w1" });
   });
 
   it("loads a fresh design while keeping the current view", () => {
