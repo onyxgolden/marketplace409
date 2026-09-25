@@ -182,7 +182,7 @@ export default function DesignerCanvasArea({
       )}
 
       <div data-testid="canvas-pane-3d" className="relative h-full min-w-0 flex-1" hidden={!show3d}>
-        <DesignerViewport3D design={design} selection={selection} />
+        <DesignerViewport3D design={design} selection={selection} dispatch={dispatch} />
       </div>
     </div>
   );
