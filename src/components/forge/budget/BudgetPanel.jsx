@@ -14,6 +14,7 @@ import { lineVarianceCents, varianceLabel } from "@/domains/budgeting/budgetVari
 import { categoryFamilyOf } from "@/domains/budgeting/categoryFamily";
 import { monthlyEquivalentAmount } from "@/domains/financial-event/detectRecurringPayments";
 import BudgetPieChart from "@/components/forge/budget/BudgetPieChart";
+import RetirementNumberCard from "@/components/forge/budget/RetirementNumberCard";
 import ScreenHeadlineNumber from "@/components/forge/ScreenHeadlineNumber";
 import { describeLeftToSpend } from "@/components/forge/budget/budgetHeadline";
 
@@ -195,6 +196,20 @@ export default function BudgetPanel() {
   );
 
   const totalPlannedCents = useMemo(() => lines.reduce((total, line) => total + (line.plannedAmountCents ?? 0), 0), [lines]);
+  // Personal-budget monthly expenses for the retirement-number card: planned
+  // spending, excluding savings/investment lines (that's not spending).
+  const personalExpenseDollars = useMemo(
+    () =>
+      lines.reduce(
+        (total, line) =>
+          total +
+          (isSavingsOrInvestmentCategory({ normalizedCategory: line.normalizedCategory, displayLabel: line.displayLabel })
+            ? 0
+            : line.plannedAmountCents ?? 0),
+        0,
+      ) / 100,
+    [lines],
+  );
   const totalActualCents = useMemo(() => lines.reduce((total, line) => total + line.actualAmountCents, 0), [lines]);
   const unassignedCents = totalIncomeCents - totalPlannedCents;
 
@@ -423,6 +438,8 @@ export default function BudgetPanel() {
             <BudgetPieChart title="Income by source" entries={incomeChartEntries} emptyHint="No categorized income recorded yet this month." />
             <BudgetPieChart title="Planned by category" entries={plannedChartEntries} emptyHint="Set a planned amount on a category to see it here." />
           </div>
+
+          {scope === "personal" ? <RetirementNumberCard budgetMonthlyExpenses={personalExpenseDollars} /> : null}
 
           {unassignedCents > 0 && (debtPayoffSuggestions.length > 0 || savingsAndInvestmentSuggestions.length > 0) ? (
             <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-900/60 dark:bg-emerald-950/30">

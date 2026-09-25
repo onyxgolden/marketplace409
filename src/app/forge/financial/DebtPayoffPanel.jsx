@@ -343,7 +343,7 @@ export default function DebtPayoffPanel() {
       : null;
 
   return (
-    <section data-debt-payoff className={forgeTheme.card}>
+    <section data-debt-payoff id="debt-payoff" className={forgeTheme.card}>
       <button
         type="button"
         onClick={() => setCollapsed((current) => !current)}
