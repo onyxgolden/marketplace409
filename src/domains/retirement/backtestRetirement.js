@@ -13,6 +13,10 @@
 // Caveats live in the dataset meta block (src/domains/retirement/shillerAnnual.json)
 // and are surfaced in the UI caption.
 //
+// Optional spendingDeclinePct models the Blanchett/Kitces spending smile:
+// annual withdrawals fall that many percent per year in real terms
+// (withdrawal * (1 - decline)^i in retirement year i). Default 0 = flat real.
+//
 // Pure function: no I/O, no Date, no randomness. Safe to run in useMemo.
 
 function nullResult(horizonYears) {
@@ -26,7 +30,7 @@ function nullResult(horizonYears) {
   };
 }
 
-export default function backtestRetirement({ nestEgg, annualWithdrawal, stockPct = 0.6, horizonYears, data }) {
+export default function backtestRetirement({ nestEgg, annualWithdrawal, stockPct = 0.6, horizonYears, data, spendingDeclinePct = 0 }) {
   const horizon = Number.isFinite(horizonYears) ? Math.floor(horizonYears) : NaN;
   if (!Number.isFinite(horizon) || horizon < 1) return nullResult(horizonYears);
 
@@ -47,6 +51,14 @@ export default function backtestRetirement({ nestEgg, annualWithdrawal, stockPct
   const mix = Number.isFinite(stockPct) ? Math.min(1, Math.max(0, stockPct)) : 0.6;
   const withdrawal = Number.isFinite(annualWithdrawal) ? annualWithdrawal : 0;
   const startingNestEgg = Number.isFinite(nestEgg) ? nestEgg : 0;
+  // Spending smile (Blanchett/Kitces): real withdrawals decline ~1%/yr.
+  // The decline compounds per retirement year: year i withdraws
+  // withdrawal * (1 - decline)^i, so year 0 is the full first-year amount.
+  // Non-positive or non-finite declines clamp to 0 (flat real spending);
+  // a decline of 100%+ would zero out withdrawals immediately, so cap at 99.
+  const decline = Number.isFinite(spendingDeclinePct) && spendingDeclinePct > 0
+    ? Math.min(spendingDeclinePct, 99) / 100
+    : 0;
 
   const yearToIndex = new Map();
   for (let i = 0; i < years.length; i += 1) yearToIndex.set(years[i], i);
@@ -87,7 +99,8 @@ export default function backtestRetirement({ nestEgg, annualWithdrawal, stockPct
     let portfolio = startingNestEgg;
     let survived = true;
     for (let i = 0; i < horizon; i += 1) {
-      portfolio = portfolio * (1 + returns[i]) - withdrawal;
+      const yearWithdrawal = withdrawal * (1 - decline) ** i;
+      portfolio = portfolio * (1 + returns[i]) - yearWithdrawal;
       if (portfolio <= 0) {
         survived = false;
         break;

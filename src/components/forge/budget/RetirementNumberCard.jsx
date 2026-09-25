@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import computeRetirementTarget from "@/domains/retirement/computeRetirementTarget";
+import computeRetirementTarget, { SPENDING_SMILE_DECLINE_PCT } from "@/domains/retirement/computeRetirementTarget";
 import backtestRetirement from "@/domains/retirement/backtestRetirement";
 import shillerAnnual from "@/domains/retirement/shillerAnnual.json";
 import { ALLOCATION_PROFILES, allocationProfileById } from "@/domains/retirement/allocationProfiles";
@@ -41,6 +41,7 @@ const DEFAULTS = {
   ssHaircut: false,
   rentalMonthlyText: "",
   planningAgeText: "95",
+  spendingSmile: false,
   checklist: { emergency: false, debt: false, fund: false },
 };
 
@@ -109,6 +110,18 @@ function LeverRow({ label, delta }) {
   );
 }
 
+function SurvivalFigure({ label, survivalPct, note }) {
+  return (
+    <div className="rounded-xl bg-white px-4 py-3 text-center ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
+      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-1 text-2xl font-black tabular-nums text-slate-900 dark:text-slate-50">
+        <span className="text-sky-600 dark:text-sky-400">{survivalPct}%</span>
+      </p>
+      <p className="mt-0.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400">{note}</p>
+    </div>
+  );
+}
+
 export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
   const [persisted, setPersisted] = useState(loadPersisted);
   const update = (patch) => setPersisted((previous) => ({ ...previous, ...patch }));
@@ -144,9 +157,10 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
     generalInflationPct != null &&
     generalInflationPct >= 0;
 
-  const result = useMemo(() => {
+  // Shared domain input; the smile scenario reuses it with the flag flipped.
+  const domainInput = useMemo(() => {
     if (!inputsValid) return null;
-    return computeRetirementTarget({
+    return {
       monthlyExpenses,
       withdrawalRatePct,
       currentAge,
@@ -161,7 +175,7 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
       ssClaimAge: parseNumber(persisted.ssClaimAge) ?? 67,
       ssHaircut: persisted.ssHaircut,
       monthlyRentalCashFlow: parseNumber(persisted.rentalMonthlyText) ?? 0,
-    });
+    };
   }, [
     inputsValid,
     monthlyExpenses,
@@ -179,6 +193,18 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
     persisted.ssHaircut,
     persisted.rentalMonthlyText,
   ]);
+
+  const result = useMemo(
+    () => (domainInput ? computeRetirementTarget({ ...domainInput, spendingSmile: false }) : null),
+    [domainInput],
+  );
+  const smileResult = useMemo(
+    () =>
+      domainInput && persisted.spendingSmile
+        ? computeRetirementTarget({ ...domainInput, spendingSmile: true })
+        : null,
+    [domainInput, persisted.spendingSmile],
+  );
 
   const planningAge = parseNumber(persisted.planningAgeText) ?? 95;
 
@@ -209,6 +235,28 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
     });
   }, [showHeadline, result, persisted.allocationId, planningAge, retirementAge]);
 
+  const showSmileHeadline =
+    showHeadline &&
+    persisted.spendingSmile &&
+    smileResult != null &&
+    smileResult.requiredNestEgg != null &&
+    Number.isFinite(smileResult.requiredNestEgg);
+
+  // Smile backtest: the smile nest egg funded by a declining real-withdrawal
+  // path — the historically honest validation of the smaller number.
+  const backtestSmile = useMemo(() => {
+    if (!showSmileHeadline) return null;
+    const profile = allocationProfileById(persisted.allocationId);
+    return backtestRetirement({
+      nestEgg: smileResult.requiredNestEgg,
+      annualWithdrawal: smileResult.portfolioNeedAnnual,
+      stockPct: profile?.stockPct ?? 0.6,
+      horizonYears: planningAge - retirementAge,
+      spendingDeclinePct: SPENDING_SMILE_DECLINE_PCT,
+      data: shillerAnnual,
+    });
+  }, [showSmileHeadline, smileResult, persisted.allocationId, planningAge, retirementAge]);
+
   return (
     <section aria-labelledby="retirement-number-heading" className="mt-6 rounded-3xl border bg-white p-5 shadow-sm dark:bg-slate-900 sm:p-6 border-slate-200 dark:border-slate-800">
       <p className="text-[11px] font-black uppercase tracking-[0.18em] text-sky-600 dark:text-sky-400">Retire</p>
@@ -219,49 +267,98 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
         The 4%-rule nest egg that funds your spending — with your real expenses, pulled straight from this budget.
       </p>
 
-      {/* Headline */}
-      <div className="mt-4 rounded-2xl bg-slate-950 px-5 py-6 text-center dark:bg-slate-950/60 dark:ring-1 dark:ring-slate-800">
+      {/* Headline — both numbers side by side when the smile is on, so the
+          research assumption is a comparison, never a hidden optimism dial. */}
+      <div className="mt-4">
         {showHeadline ? (
-          <>
-            <p className="text-4xl font-black tabular-nums tracking-tight text-white sm:text-5xl">
-              {wholeDollars.format(result.requiredNestEgg)}
-            </p>
-            <p className="mt-2 text-xs font-semibold text-slate-400">
-              in {result.retirementYear} dollars · funds spending to age {planningAge}
-            </p>
-          </>
+          showSmileHeadline ? (
+            <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-slate-950 px-5 py-6 text-center dark:bg-slate-950/60 dark:ring-1 dark:ring-slate-800">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                    Flat real spending
+                  </p>
+                  <p className="mt-1 text-3xl font-black tabular-nums tracking-tight text-white sm:text-4xl">
+                    {wholeDollars.format(result.requiredNestEgg)}
+                  </p>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">conservative</p>
+                </div>
+                <div className="rounded-2xl bg-sky-950 px-5 py-6 text-center ring-1 ring-sky-800 dark:bg-sky-950/60">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-sky-300">
+                    Spending smile
+                  </p>
+                  <p className="mt-1 text-3xl font-black tabular-nums tracking-tight text-white sm:text-4xl">
+                    {wholeDollars.format(smileResult.requiredNestEgg)}
+                  </p>
+                  <p className="mt-1 text-xs font-semibold text-sky-400/80">research-based · Blanchett/Kitces</p>
+                </div>
+              </div>
+              <p className="mt-2 text-center text-xs font-semibold text-slate-400">
+                in {result.retirementYear} dollars · funds spending to age {planningAge}
+              </p>
+            </>
+          ) : (
+            <div className="rounded-2xl bg-slate-950 px-5 py-6 text-center dark:bg-slate-950/60 dark:ring-1 dark:ring-slate-800">
+              <p className="text-4xl font-black tabular-nums tracking-tight text-white sm:text-5xl">
+                {wholeDollars.format(result.requiredNestEgg)}
+              </p>
+              <p className="mt-2 text-xs font-semibold text-slate-400">
+                in {result.retirementYear} dollars · funds spending to age {planningAge}
+              </p>
+            </div>
+          )
         ) : (
-          <>
+          <div className="rounded-2xl bg-slate-950 px-5 py-6 text-center dark:bg-slate-950/60 dark:ring-1 dark:ring-slate-800">
             <p className="text-4xl font-black tracking-tight text-slate-500">—</p>
             <p className="mt-2 text-xs font-semibold text-slate-400">
               {!ageValid
                 ? "Enter your current age below to see your number."
                 : "Fill in the inputs below — no guesses are made for you."}
             </p>
-          </>
+          </div>
         )}
       </div>
 
-      {/* Historical backtest — second headline */}
+      {/* Historical backtest — second headline; dual figures with the smile */}
       {showHeadline ? (
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-center dark:border-slate-700 dark:bg-slate-800/50">
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-700 dark:bg-slate-800/50">
           {backtest?.survivalPct == null ? (
             <>
-              <p className="text-2xl font-black tabular-nums text-slate-400">—</p>
-              <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <p className="text-center text-2xl font-black tabular-nums text-slate-400">—</p>
+              <p className="mt-1 text-center text-xs font-semibold text-slate-500 dark:text-slate-400">
                 Not enough history to backtest a {backtest?.horizonYears ?? "—"}-year horizon.
+              </p>
+            </>
+          ) : showSmileHeadline && backtestSmile?.survivalPct != null ? (
+            <>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <SurvivalFigure
+                  label="Flat real spending"
+                  survivalPct={backtest.survivalPct}
+                  note="would have survived"
+                />
+                <SurvivalFigure
+                  label="Spending smile"
+                  survivalPct={backtestSmile.survivalPct}
+                  note="would have survived"
+                />
+              </div>
+              <p className="mt-2 text-center text-[11px] font-medium text-slate-500 dark:text-slate-500">
+                of {backtest.windowsTested} historical {backtest.horizonYears}-year retirements,{" "}
+                {shillerAnnual.years[0]}–{shillerAnnual.years[shillerAnnual.years.length - 1]} ·
+                Historical stress-test: past returns don&apos;t predict the future.
               </p>
             </>
           ) : (
             <>
-              <p className="text-2xl font-black tabular-nums text-slate-900 dark:text-slate-50">
+              <p className="text-center text-2xl font-black tabular-nums text-slate-900 dark:text-slate-50">
                 Would have survived{" "}
                 <span className="text-sky-600 dark:text-sky-400">{backtest.survivalPct}%</span>
               </p>
-              <p className="mt-1 text-xs font-semibold text-slate-600 dark:text-slate-400">
+              <p className="mt-1 text-center text-xs font-semibold text-slate-600 dark:text-slate-400">
                 of {backtest.windowsTested} historical {backtest.horizonYears}-year retirements
               </p>
-              <p className="mt-1 text-[11px] font-medium text-slate-500 dark:text-slate-500">
+              <p className="mt-1 text-center text-[11px] font-medium text-slate-500 dark:text-slate-500">
                 {shillerAnnual.years[0]}–{shillerAnnual.years[shillerAnnual.years.length - 1]} · worst
                 starting years:{" "}
                 {backtest.worstStarts.length > 0
@@ -395,6 +492,48 @@ export default function RetirementNumberCard({ budgetMonthlyExpenses }) {
         </button>
         {persisted.advancedOpen ? (
           <div className="space-y-5 border-t border-slate-200 px-4 py-4 dark:border-slate-800">
+            {/* Spending path */}
+            <div>
+              <p className="text-sm font-bold text-slate-800 dark:text-slate-200">Spending path in retirement</p>
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Spending path">
+                {[
+                  {
+                    value: false,
+                    title: "Flat real spending",
+                    desc: "Conservative — same buying power every year.",
+                  },
+                  {
+                    value: true,
+                    title: "Spending smile",
+                    desc: "Research-based — real spending falls ~1%/yr (Blanchett/Kitces).",
+                  },
+                ].map((option) => {
+                  const selected = persisted.spendingSmile === option.value;
+                  return (
+                    <button
+                      key={option.title}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => update({ spendingSmile: option.value })}
+                      className={`rounded-2xl border p-3 text-left transition ${
+                        selected
+                          ? "border-sky-500 bg-sky-50 ring-2 ring-sky-500/30 dark:border-sky-500 dark:bg-sky-950/40"
+                          : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:hover:border-slate-600"
+                      }`}
+                    >
+                      <p className="text-sm font-black text-slate-900 dark:text-slate-100">{option.title}</p>
+                      <p className="mt-0.5 text-xs font-semibold text-slate-600 dark:text-slate-400">{option.desc}</p>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                Generic research assumption, not advice — both numbers are always shown side by side for
+                comparison.
+              </p>
+            </div>
+
             {/* Healthcare */}
             <div>
               <label className="flex cursor-pointer items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-200">
