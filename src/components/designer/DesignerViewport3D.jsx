@@ -68,8 +68,8 @@ const HIGHLIGHT_INTENSITY = 0.85;
  *   - rebuild    (on `design`)  regenerates just the geometry, debounced so
  *                a rapid 2D drag does not thrash the renderer with a fresh
  *                scene every frame. The camera is centered automatically
- *                ONLY on the very first build; edits after that never move
- *                it out from under the user.
+ *                ONLY on the first non-empty build; edits after that never
+ *                move it out from under the user.
  *   - highlight  (on `selection`) swaps a per-mesh material clone in and
  *                out via a mesh registry built during rebuild. No geometry
  *                is touched and no rebuild happens — selecting is cheap
@@ -192,8 +192,7 @@ export default function DesignerViewport3D({ design, selection = null }) {
       resizeObserver.disconnect();
       if (rebuildTimerRef.current) clearTimeout(rebuildTimerRef.current);
       controls.dispose();
-      disposeContentGroup(contentGroupRef.current);
-      contentGroupRef.current = null;
+      contentGroupRef.current = swapContentGroup(threeScene, contentGroupRef.current, null);
       for (const m of materialCacheRef.current.values()) m.dispose();
       materialCacheRef.current.clear();
       for (const { originalMaterial } of highlightedRef.current) {
@@ -470,10 +469,7 @@ export default function DesignerViewport3D({ design, selection = null }) {
         group.add(sGroup);
       }
 
-      // Swap the content group atomically: add the new one, then dispose the old.
-      scene.add(group);
-      disposeContentGroup(contentGroupRef.current);
-      contentGroupRef.current = group;
+      contentGroupRef.current = swapContentGroup(scene, contentGroupRef.current, group);
       registryRef.current = registry;
 
       // Fog and shadow frustum track the model's footprint; the camera does
@@ -502,7 +498,11 @@ export default function DesignerViewport3D({ design, selection = null }) {
 
       const camera = cameraRef.current;
       const controls = controlsRef.current;
-      if (camera && controls && !initialCameraSetRef.current) {
+      // "First build" means the first one with something in it: a design
+      // that starts empty (the placeholder shown before "Recover unsaved
+      // work", or a fresh design before its first wall) must not use up the
+      // one-time framing on nothing and leave the real house off-screen.
+      if (camera && controls && !initialCameraSetRef.current && built.floor) {
         const cx = built.floor ? (built.floor.minX + built.floor.maxX) / 2 : 0;
         const cz = built.floor ? (built.floor.minZ + built.floor.maxZ) / 2 : 0;
         camera.position.set(cx + floorSize * 0.55, floorSize * 0.75, cz + floorSize * 0.55);
@@ -593,6 +593,24 @@ export function cloneWithHighlight(material) {
   // own materials are disposed once, at unmount, not per rebuild.
   clone.userData.__isHighlightClone = true;
   return clone;
+}
+
+/**
+ * Replace the scene's content group: add the new one, then REMOVE the old
+ * one from the scene and dispose it. Returns the group now in the scene.
+ *
+ * Removal is the part that matters. Disposing alone leaves the old group in
+ * the scene graph, and three.js silently re-uploads a disposed geometry the
+ * next time it is rendered — so every rebuild (each step of a drag) left a
+ * ghost copy of the house behind and grew GPU memory without bound.
+ */
+export function swapContentGroup(scene, oldGroup, newGroup) {
+  if (newGroup) scene.add(newGroup);
+  if (oldGroup && oldGroup !== newGroup) {
+    scene.remove(oldGroup);
+    disposeContentGroup(oldGroup);
+  }
+  return newGroup;
 }
 
 /** Dispose every geometry (and any per-mesh highlight clone) in a content group. */
