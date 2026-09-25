@@ -11,6 +11,15 @@ import {
 } from "@/domains/roomDesigner/designerThreeModel";
 import { furnitureParts } from "@/domains/roomDesigner/designerFurnitureParts";
 import {
+  beginDrag3D,
+  dragStep3D,
+  isClickGesture,
+  planPointFromWorld,
+  popupAnchorForSelection,
+  selectionFromPick,
+} from "@/domains/roomDesigner/designer3DEditing";
+import Viewport3DSizePopup from "./Viewport3DSizePopup";
+import {
   acquireTextureCaches,
   plasterTexture,
   releaseTextureCaches,
@@ -74,8 +83,14 @@ const HIGHLIGHT_INTENSITY = 0.85;
  *                out via a mesh registry built during rebuild. No geometry
  *                is touched and no rebuild happens — selecting is cheap
  *                by construction, not by accident.
+ *
+ * P1-B editing (only when `dispatch` is passed): click an entity to select
+ * it; press-drag an ALREADY-selected wall, opening or furniture piece to
+ * move it (anything else still orbits); type new dimensions into the popup
+ * pinned above the selection. The gesture math lives in designer3DEditing.js;
+ * this component only raycasts and dispatches.
  */
-export default function DesignerViewport3D({ design, selection = null }) {
+export default function DesignerViewport3D({ design, selection = null, dispatch = null }) {
   const mountRef = useRef(null);
 
   // Cross-effect handles. Refs, not state: none of this should ever trigger
@@ -94,9 +109,16 @@ export default function DesignerViewport3D({ design, selection = null }) {
   const initialCameraSetRef = useRef(false);
   const rebuildTimerRef = useRef(null);
   const selectionRef = useRef(selection);
+  const designRef = useRef(design);
+  const dispatchRef = useRef(dispatch);
+  const popupRef = useRef(null);
+  const popupAnchorRef = useRef(null);
   useEffect(() => {
     selectionRef.current = selection;
-  }, [selection]);
+    designRef.current = design;
+    dispatchRef.current = dispatch;
+    popupAnchorRef.current = popupAnchorForSelection(selection, design);
+  }, [selection, design, dispatch]);
   // ---- setup: once per mount ----
   useEffect(() => {
     const mount = mountRef.current;
@@ -161,13 +183,139 @@ export default function DesignerViewport3D({ design, selection = null }) {
 
     materialCacheRef.current = new Map();
 
+    // Pin the size popup above the selection: project its world anchor to
+    // pane pixels every frame and move the element directly — orbiting must
+    // not re-render React.
+    const anchorVec = new THREE.Vector3();
+    const placePopup = () => {
+      const el = popupRef.current;
+      if (!el) return;
+      const anchor = popupAnchorRef.current;
+      const w = mount.clientWidth;
+      const h = mount.clientHeight;
+      if (!anchor || !(w > 0) || !(h > 0)) {
+        el.style.visibility = "hidden";
+        return;
+      }
+      anchorVec.set(anchor.x, anchor.y, anchor.z).project(camera);
+      const onScreen = anchorVec.z < 1 && Math.abs(anchorVec.x) <= 1 && Math.abs(anchorVec.y) <= 1;
+      el.style.visibility = onScreen ? "visible" : "hidden";
+      const px = ((anchorVec.x + 1) / 2) * w;
+      const py = ((1 - anchorVec.y) / 2) * h;
+      el.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%)`;
+    };
+
     let raf = 0;
     const animate = () => {
       raf = requestAnimationFrame(animate);
       controls.update();
       renderer.render(threeScene, camera);
+      placePopup();
     };
     animate();
+
+    // ---- P1-B: pick / drag from the 3D view ----
+    const raycaster = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    const planeHit = new THREE.Vector3();
+    const castFrom = (e) => {
+      const r = renderer.domElement.getBoundingClientRect();
+      if (!(r.width > 0) || !(r.height > 0)) return false;
+      ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      camera.updateMatrixWorld(); // see pickAt: never trust last frame's matrices
+      raycaster.setFromCamera(ndc, camera);
+      return true;
+    };
+    /** Nearest hit in the content group, with the entity tag of its tagged ancestor (or null). */
+    const pickAt = (e) => {
+      const group = contentGroupRef.current;
+      if (!group || !castFrom(e)) return null;
+      // Rebuilds (and the first-build camera placement) land in a timeout,
+      // not a frame: a click before the next render would otherwise raycast
+      // against stale world matrices and miss everything.
+      group.updateMatrixWorld();
+      const [hit] = raycaster.intersectObject(group, true);
+      if (!hit) return null;
+      let obj = hit.object;
+      while (obj && obj !== group && !obj.userData?.entityKind) obj = obj.parent;
+      const tag = obj && obj !== group ? obj.userData : null;
+      return { tag, point: hit.point };
+    };
+    const sameEntity = (p, q) => !!p && !!q && p.kind === q.kind && p.id === q.id;
+
+    let pressAt = null; // { x, y } of the primary-button press, for click detection
+    let drag = null; // { state, plane, pointerId } while moving an entity
+
+    // Capture phase on the mount element: runs before OrbitControls' own
+    // listener on the canvas, so an entity drag can claim the gesture
+    // (stopPropagation) before the camera starts orbiting.
+    const onPointerDown = (e) => {
+      if (e.button !== 0 || !dispatchRef.current) return;
+      pressAt = { x: e.clientX, y: e.clientY };
+      const picked = pickAt(e);
+      const target = selectionFromPick(picked?.tag);
+      if (!sameEntity(target, selectionRef.current)) return; // not the selection: let it orbit
+      const state = beginDrag3D(target, designRef.current, planPointFromWorld(picked.point));
+      if (!state) return;
+      // Drag on the horizontal plane at the grab height, so the entity
+      // tracks the cursor exactly instead of the floor point far behind it.
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -picked.point.y);
+      drag = { state, plane, pointerId: e.pointerId };
+      controls.enabled = false;
+      try {
+        mount.setPointerCapture(e.pointerId);
+      } catch {
+        // capture is a nicety (drag continues outside the pane); never fatal
+      }
+      e.stopPropagation();
+    };
+    const onPointerMove = (e) => {
+      if (drag) {
+        if (!castFrom(e) || !raycaster.ray.intersectPlane(drag.plane, planeHit)) return;
+        const step = dragStep3D(drag.state, designRef.current, planPointFromWorld(planeHit));
+        drag.state = step.drag;
+        if (step.action) dispatchRef.current?.(step.action);
+        return;
+      }
+      if (e.buttons !== 0 || !dispatchRef.current) return;
+      // Hover affordance: "move" over the draggable selection, "pointer"
+      // over anything selectable, default (orbit) elsewhere.
+      const target = selectionFromPick(pickAt(e)?.tag);
+      mount.style.cursor = !target ? "" : sameEntity(target, selectionRef.current) ? "move" : "pointer";
+    };
+    const endEntityDrag = (e) => {
+      if (!drag) return false;
+      try {
+        mount.releasePointerCapture(drag.pointerId);
+      } catch {
+        // already released (or never captured); nothing to undo
+      }
+      drag = null;
+      controls.enabled = true;
+      e.stopPropagation();
+      return true;
+    };
+    const onPointerUp = (e) => {
+      const press = pressAt;
+      pressAt = null;
+      if (endEntityDrag(e)) return;
+      if (e.button !== 0 || !dispatchRef.current) return;
+      if (!isClickGesture(press, { x: e.clientX, y: e.clientY })) return; // it was an orbit
+      const target = selectionFromPick(pickAt(e)?.tag);
+      if (target) {
+        if (!sameEntity(target, selectionRef.current)) dispatchRef.current({ type: "SELECT", selection: target });
+      } else if (selectionRef.current) {
+        dispatchRef.current({ type: "CLEAR_SELECTION" });
+      }
+    };
+    const onPointerCancel = (e) => {
+      pressAt = null;
+      endEntityDrag(e);
+    };
+    mount.addEventListener("pointerdown", onPointerDown, true);
+    mount.addEventListener("pointermove", onPointerMove);
+    mount.addEventListener("pointerup", onPointerUp, true);
+    mount.addEventListener("pointercancel", onPointerCancel, true);
 
     // A ResizeObserver, not a window resize listener: toggling this pane's
     // CSS visibility (2D-only <-> split <-> 3D-only) and dragging the split
@@ -190,6 +338,10 @@ export default function DesignerViewport3D({ design, selection = null }) {
     return () => {
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();
+      mount.removeEventListener("pointerdown", onPointerDown, true);
+      mount.removeEventListener("pointermove", onPointerMove);
+      mount.removeEventListener("pointerup", onPointerUp, true);
+      mount.removeEventListener("pointercancel", onPointerCancel, true);
       if (rebuildTimerRef.current) clearTimeout(rebuildTimerRef.current);
       controls.dispose();
       contentGroupRef.current = swapContentGroup(threeScene, contentGroupRef.current, null);
@@ -309,8 +461,10 @@ export default function DesignerViewport3D({ design, selection = null }) {
         mesh.position.set((seg.a.x + seg.b.x) / 2, seg.y0In + height / 2, (seg.a.y + seg.b.y) / 2);
         mesh.rotation.y = -angle;
         group.add(mesh);
-        mesh.userData.entityKind = "wall";
-        mesh.userData.entityId = seg.wallId;
+        // A window's sill/header belongs to the opening, not the wall: a
+        // click on it should select (and a drag slide) the window.
+        mesh.userData.entityKind = seg.openingId ? "opening" : "wall";
+        mesh.userData.entityId = seg.openingId || seg.wallId;
         register(highlightRegistryKey("wall", seg.wallId), mesh);
         if (seg.openingId) register(highlightRegistryKey("opening", seg.openingId), mesh);
       }
@@ -531,7 +685,20 @@ export default function DesignerViewport3D({ design, selection = null }) {
     applyHighlight(selection, design, registryRef, highlightedRef);
   }, [selection, design]);
 
-  return <div ref={mountRef} className="h-full w-full" />;
+  return (
+    <div className="relative h-full w-full overflow-hidden">
+      <div ref={mountRef} className="h-full w-full" />
+      {dispatch && selection && (
+        <div
+          ref={popupRef}
+          className="pointer-events-auto absolute left-0 top-0 z-10"
+          style={{ visibility: "hidden" }}
+        >
+          <Viewport3DSizePopup selection={selection} design={design} dispatch={dispatch} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Revert any previously highlighted meshes, then tint the newly selected ones. */
