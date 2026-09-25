@@ -1,8 +1,10 @@
-// FORGE Capture main window: plain script, no bundler. Talks to the Rust
-// backend through the Tauri v2 `__TAURI_INTERNALS__.invoke` bridge. (No
-// @tauri-apps/api dependency: the invoke IPC is stable and this keeps the
-// shell dependency-free on the frontend side.)
-"use strict";
+// FORGE Capture main window (ui/main.js, ES module, no bundler).
+//
+// Talks to the Rust backend through the Tauri v2
+// `__TAURI_INTERNALS__.invoke` bridge. (No @tauri-apps/api dependency: the
+// invoke IPC is stable and this keeps the shell dependency-free on the
+// frontend side.) The AI Edit session state machine lives in ai-edit.js.
+import { AiEditSession } from "./ai-edit.js";
 
 function invoke(cmd, args) {
   return window.__TAURI_INTERNALS__.invoke(cmd, args);
@@ -15,6 +17,63 @@ function setStatus(text, kind) {
   statusEl.textContent = text;
   statusEl.className = "status" + (kind ? " " + kind : "");
 }
+
+// ---------------------------------------------------------------------------
+// Tabs: Image / Video
+// ---------------------------------------------------------------------------
+
+function selectTab(which) {
+  const image = which === "image";
+  $("tab-image").classList.toggle("active", image);
+  $("tab-video").classList.toggle("active", !image);
+  $("tab-image").setAttribute("aria-selected", String(image));
+  $("tab-video").setAttribute("aria-selected", String(!image));
+  $("panel-image").hidden = !image;
+  $("panel-video").hidden = image;
+}
+
+// ---------------------------------------------------------------------------
+// Selection chips: Region / Window / Full screen / Scrolling
+// ---------------------------------------------------------------------------
+
+function selectedMode() {
+  const active = document.querySelector('#mode-chips .chip.active');
+  return active ? active.dataset.mode : "region-overlay";
+}
+
+function selectMode(mode) {
+  document.querySelectorAll("#mode-chips .chip").forEach((chip) => {
+    const on = chip.dataset.mode === mode;
+    chip.classList.toggle("active", on);
+    chip.setAttribute("aria-checked", String(on));
+  });
+  onModeChange();
+}
+
+function onModeChange() {
+  const mode = selectedMode();
+  $("monitor-row").hidden = mode !== "region-overlay" && mode !== "full-monitor";
+  $("window-row").hidden = mode !== "window";
+  const scrolling = mode === "scrolling";
+  // A scrolling capture is a start/stop run configured under Advanced —
+  // the one-shot Capture button does not apply.
+  $("capture-btn").disabled = scrolling;
+  $("capture-btn").title = scrolling
+    ? "Scrolling capture is a start/stop run — configure it under Advanced."
+    : "";
+  if (scrolling && $("advanced").hidden) toggleAdvanced(true);
+}
+
+function toggleAdvanced(force) {
+  const open = force !== undefined ? force : $("advanced").hidden;
+  $("advanced").hidden = !open;
+  $("advanced-toggle").setAttribute("aria-expanded", String(open));
+  $("advanced-toggle").textContent = open ? "Hide advanced" : "Advanced";
+}
+
+// ---------------------------------------------------------------------------
+// Monitors / windows
+// ---------------------------------------------------------------------------
 
 async function refreshLists() {
   try {
@@ -50,17 +109,15 @@ async function refreshLists() {
   }
 }
 
-function onModeChange() {
-  const mode = $("mode").value;
-  $("monitor-row").hidden = mode === "window";
-  $("window-row").hidden = mode !== "window";
-}
-
 function onScrollTargetChange() {
   const kind = $("scroll-target-kind").value;
   $("scroll-window-row").hidden = kind !== "window";
   $("scroll-region-rows").hidden = kind !== "region";
 }
+
+// ---------------------------------------------------------------------------
+// Scrolling capture (lives under Advanced)
+// ---------------------------------------------------------------------------
 
 let scrollRunId = null;
 
@@ -145,6 +202,10 @@ function onScrollFinished(result) {
   setScrollStatus(`Scrolling capture failed: ${result.reason || "unknown"}. ${evidence}`, "error");
 }
 
+// ---------------------------------------------------------------------------
+// Session library
+// ---------------------------------------------------------------------------
+
 const seenCaptureIds = new Set();
 
 function captureItem(ref) {
@@ -172,6 +233,13 @@ function captureItem(ref) {
       setStatus(`Copy failed: ${e}`, "error");
     }
   };
+
+  // AI Edit — on every captured image. The original is never modified;
+  // the finished edit arrives as a new versioned copy in this list.
+  const aiBtn = document.createElement("button");
+  aiBtn.textContent = "AI Edit";
+  aiBtn.className = "ai-edit-btn";
+  aiBtn.onclick = () => openAiEditDialog(ref);
 
   const exportBtn = document.createElement("button");
   exportBtn.textContent = "Export…";
@@ -223,10 +291,97 @@ function captureItem(ref) {
     },
   });
 
-  actions.append(copyBtn, exportBtn, metaBtn, saveBtn);
+  actions.append(copyBtn, aiBtn, exportBtn, metaBtn, saveBtn);
   li.append(title, meta, actions);
   $("captures").prepend(li);
 }
+
+// ---------------------------------------------------------------------------
+// AI Edit dialog
+// ---------------------------------------------------------------------------
+
+let aiSession = null;
+
+function setAiEditStatus(text, kind) {
+  const el = $("ai-edit-status");
+  el.textContent = text;
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+function setAiEditButtons(phase) {
+  const submit = $("ai-edit-submit");
+  const cancel = $("ai-edit-cancel");
+  if (phase === "prompt") {
+    submit.disabled = false;
+    submit.textContent = "Send to AI";
+    cancel.textContent = "Cancel";
+  } else if (phase === "working") {
+    submit.disabled = true;
+    submit.textContent = "Working…";
+    cancel.textContent = "Cancel";
+  } else if (phase === "import") {
+    submit.disabled = false;
+    submit.textContent = "Import result";
+    cancel.textContent = "Close";
+  } else {
+    // failed / imported / cancelled: leave the dialog open on the verdict.
+    submit.disabled = true;
+    submit.textContent = "Send to AI";
+    cancel.textContent = "Close";
+  }
+}
+
+function openAiEditDialog(ref) {
+  if (aiSession) aiSession.cancel();
+  aiSession = new AiEditSession({
+    invoke,
+    captureId: ref.id,
+    onEvent: (evt) => {
+      setAiEditStatus(evt.text, evt.state === "failed" ? "error" : evt.state === "done" ? "ok" : "");
+      if (evt.state === "done") setAiEditButtons("import");
+      else if (["failed", "imported", "cancelled"].includes(evt.state)) setAiEditButtons("end");
+    },
+  });
+  $("ai-edit-prompt").value = "";
+  setAiEditStatus("", "");
+  setAiEditButtons("prompt");
+  $("ai-edit-dialog").showModal();
+  $("ai-edit-prompt").focus();
+}
+
+async function onAiEditSubmit() {
+  if (!aiSession) return;
+  if (aiSession.state === "done") {
+    // Import phase: bring the finished result in as a versioned copy.
+    setAiEditButtons("working");
+    try {
+      const ref = await aiSession.importResult();
+      captureItem(ref);
+      setStatus(`AI Edit imported as ${ref.png_path}.`, "ok");
+      $("ai-edit-dialog").close();
+    } catch (e) {
+      setAiEditStatus(`Import failed: ${e.message || e}`, "error");
+      setAiEditButtons("end");
+    }
+    return;
+  }
+  setAiEditButtons("working");
+  try {
+    await aiSession.submit($("ai-edit-prompt").value);
+  } catch (e) {
+    setAiEditStatus(`Could not start AI Edit: ${e.message || e}`, "error");
+    setAiEditButtons("prompt");
+  }
+}
+
+function onAiEditCancel() {
+  if (aiSession) aiSession.cancel();
+  $("ai-edit-dialog").close();
+}
+
+// ---------------------------------------------------------------------------
+// Save to FORGE (shared driver; also used by record.js)
+// ---------------------------------------------------------------------------
 
 /// Rung 5 — shared "Save to FORGE" driver for screenshots (main.js) and
 /// recordings (record.js). Exposed on window for the record.js module.
@@ -292,10 +447,20 @@ async function probeForgeSaveButtons() {
 
 window.ForgeSaveUI = { saveToForge, probeForgeSaveButtons };
 
+// ---------------------------------------------------------------------------
+// Capture
+// ---------------------------------------------------------------------------
+
+function delayMs() {
+  return Math.max(0, Number($("delay").value) || 0) * 1000;
+}
+
+function includeCursor() {
+  return $("cursor-chip").getAttribute("aria-pressed") === "true";
+}
+
 async function doCapture() {
-  const mode = $("mode").value;
-  const delayMs = Math.max(0, Math.min(60, Number($("delay").value) || 0)) * 1000;
-  const includeCursor = $("cursor").checked;
+  const mode = selectedMode();
   const btn = $("capture-btn");
   btn.disabled = true;
 
@@ -307,22 +472,24 @@ async function doCapture() {
       // overlay page cannot see this window's controls.
       await invoke("begin_region_pick", {
         monitorId: $("monitor").value,
-        delayMs,
-        includeCursor,
+        delayMs: delayMs(),
+        includeCursor: includeCursor(),
       });
       setStatus("Drag a region on screen — Esc cancels.");
       return;
     }
-    setStatus(delayMs > 0 ? `Capturing in ${delayMs / 1000}s…` : "Capturing…");
+    if (mode === "scrolling") return; // guarded by onModeChange; belt and suspenders
+    const ms = delayMs();
+    setStatus(ms > 0 ? `Capturing in ${ms / 1000}s…` : "Capturing…");
     const ref = await invoke("capture", {
       dto: {
         mode,
         monitorId: $("monitor").value || null,
-        windowId: $("window").value || null,
+        windowId: mode === "window" ? $("window").value || null : null,
         region: null,
         overlayRect: null,
-        delayMs,
-        includeCursor,
+        delayMs: ms,
+        includeCursor: includeCursor(),
       },
     });
     captureItem(ref);
@@ -331,31 +498,13 @@ async function doCapture() {
     setStatus(`Capture failed: ${e}`, "error");
   } finally {
     btn.disabled = false;
+    onModeChange(); // restore the scrolling-mode disabled state if needed
   }
 }
 
-async function init() {
-  try {
-    $("version").textContent = "v" + (await invoke("app_version"));
-  } catch (e) {
-    /* non-fatal */
-  }
-  $("mode").addEventListener("change", onModeChange);
-  $("capture-btn").addEventListener("click", doCapture);
-  $("refresh-btn").addEventListener("click", refreshLists);
-  $("scroll-target-kind").addEventListener("change", onScrollTargetChange);
-  $("scroll-btn").addEventListener("click", doScrollCapture);
-  $("scroll-stop-btn").addEventListener("click", doScrollStop);
-  $("help-btn").addEventListener("click", () => $("help-dialog").showModal());
-  onModeChange();
-  onScrollTargetChange();
-  await listenCaptureSaved();
-  await listenScrollEvents();
-  await listenHotkeyEvents();
-  await refreshLists();
-  // Rung 5: label every Save-to-FORGE button honestly up front.
-  void probeForgeSaveButtons();
-}
+// ---------------------------------------------------------------------------
+// Events + init
+// ---------------------------------------------------------------------------
 
 // Region captures originate from the overlay window (which closes itself
 // before capturing), so the main window learns about them through this
@@ -385,8 +534,7 @@ async function listenHotkeyEvents() {
   await listenEvent("hotkey-action", async (msg) => {
     const action = msg && msg.payload && msg.payload.action;
     if (action === "window-capture") {
-      $("mode").value = "window";
-      onModeChange();
+      selectMode("window");
       await refreshLists();
       setStatus("Window capture armed: pick a window, then Capture.");
     }
@@ -411,6 +559,41 @@ async function listenEvent(event, onMessage) {
   } catch (e) {
     /* the session list just won't auto-update for this event */
   }
+}
+
+async function init() {
+  try {
+    $("version").textContent = "v" + (await invoke("app_version"));
+  } catch (e) {
+    /* non-fatal */
+  }
+  $("tab-image").addEventListener("click", () => selectTab("image"));
+  $("tab-video").addEventListener("click", () => selectTab("video"));
+  document.querySelectorAll("#mode-chips .chip").forEach((chip) => {
+    chip.addEventListener("click", () => selectMode(chip.dataset.mode));
+  });
+  $("cursor-chip").addEventListener("click", () => {
+    const on = $("cursor-chip").getAttribute("aria-pressed") !== "true";
+    $("cursor-chip").setAttribute("aria-pressed", String(on));
+    $("cursor-chip").classList.toggle("active", on);
+  });
+  $("advanced-toggle").addEventListener("click", () => toggleAdvanced());
+  $("capture-btn").addEventListener("click", doCapture);
+  $("refresh-btn").addEventListener("click", refreshLists);
+  $("scroll-target-kind").addEventListener("change", onScrollTargetChange);
+  $("scroll-btn").addEventListener("click", doScrollCapture);
+  $("scroll-stop-btn").addEventListener("click", doScrollStop);
+  $("help-btn").addEventListener("click", () => $("help-dialog").showModal());
+  $("ai-edit-submit").addEventListener("click", onAiEditSubmit);
+  $("ai-edit-cancel").addEventListener("click", onAiEditCancel);
+  onModeChange();
+  onScrollTargetChange();
+  await listenCaptureSaved();
+  await listenScrollEvents();
+  await listenHotkeyEvents();
+  await refreshLists();
+  // Rung 5: label every Save-to-FORGE button honestly up front.
+  void probeForgeSaveButtons();
 }
 
 document.addEventListener("DOMContentLoaded", init);

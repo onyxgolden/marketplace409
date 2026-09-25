@@ -277,6 +277,36 @@ fn write_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&crc32(&crc_input).to_be_bytes());
 }
 
+/// Read the dimensions of ANY PNG from its IHDR chunk (foreign PNGs
+/// included). Used by AI Edit import, where the result raster comes from an
+/// external model and is therefore not decodable by [`decode_own`].
+/// Only the 8-byte signature + first-chunk IHDR are inspected; the pixel
+/// data is never touched.
+pub fn png_dimensions(png: &[u8]) -> Result<(u32, u32), PngError> {
+    const SIG: &[u8; 8] = &[137, 80, 78, 71, 13, 10, 26, 10];
+    if png.len() < 33 {
+        return Err(PngError::EmptyImage);
+    }
+    if &png[0..8] != SIG {
+        return Err(PngError::EmptyImage);
+    }
+    // First chunk: u32 BE length, 4-byte type, then data. Must be IHDR
+    // with 13 bytes of data.
+    let len = u32::from_be_bytes([png[8], png[9], png[10], png[11]]);
+    if &png[12..16] != b"IHDR" || len != 13 {
+        return Err(PngError::EmptyImage);
+    }
+    let width = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
+    let height = u32::from_be_bytes([png[20], png[21], png[22], png[23]]);
+    if width == 0 || height == 0 {
+        return Err(PngError::EmptyImage);
+    }
+    if width > MAX_PNG_DIMENSION || height > MAX_PNG_DIMENSION {
+        return Err(PngError::DimensionTooLarge { width, height });
+    }
+    Ok((width, height))
+}
+
 /// zlib wrapper (header 0x78 0x01) around stored deflate blocks.
 fn zlib_store(raw: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(raw.len() + 16);
@@ -473,5 +503,44 @@ mod tests {
             matches!(decode_own(&bad), Err(PngError::AdlerMismatch { .. })),
             "corrupt Adler-32 must be rejected, not decoded"
         );
+    }
+
+    #[test]
+    fn png_dimensions_reads_ihdr_of_any_png() {
+        // Our own encoder's output…
+        let rgba = vec![0u8; 6 * 4 * 4];
+        let own = encode_rgba(6, 4, &rgba).unwrap();
+        assert_eq!(png_dimensions(&own).unwrap(), (6, 4));
+        // …and a foreign PNG (hand-built minimal IHDR, no IDAT needed).
+        let mut foreign = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        foreign.extend_from_slice(&13u32.to_be_bytes());
+        foreign.extend_from_slice(b"IHDR");
+        foreign.extend_from_slice(&320u32.to_be_bytes());
+        foreign.extend_from_slice(&200u32.to_be_bytes());
+        foreign.extend_from_slice(&[8, 2, 0, 0, 0]); // 8-bit RGB
+        foreign.extend_from_slice(&[0, 0, 0, 0]); // CRC (unchecked here)
+        assert_eq!(png_dimensions(&foreign).unwrap(), (320, 200));
+    }
+
+    #[test]
+    fn png_dimensions_rejects_garbage() {
+        assert!(png_dimensions(&[]).is_err());
+        assert!(png_dimensions(b"not a png at all...............").is_err());
+        // Truncated before IHDR completes.
+        assert!(png_dimensions(&[137, 80, 78, 71, 13, 10, 26, 10, 0, 0]).is_err());
+        // First chunk is not IHDR.
+        let mut bad = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        bad.extend_from_slice(&0u32.to_be_bytes());
+        bad.extend_from_slice(b"tEXt");
+        bad.extend_from_slice(&[0; 13]);
+        assert!(png_dimensions(&bad).is_err());
+        // Zero dimension.
+        let mut zero = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        zero.extend_from_slice(&13u32.to_be_bytes());
+        zero.extend_from_slice(b"IHDR");
+        zero.extend_from_slice(&0u32.to_be_bytes());
+        zero.extend_from_slice(&100u32.to_be_bytes());
+        zero.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+        assert!(png_dimensions(&zero).is_err());
     }
 }

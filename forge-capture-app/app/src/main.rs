@@ -20,13 +20,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use forge_capture_core::artifact::CaptureArtifact;
+use forge_capture_core::ai_edit;
+use forge_capture_core::artifact::{CaptureArtifact, CaptureKind, CursorState, RasterMime};
 use forge_capture_core::coords::{Monitor, Rect};
 use forge_capture_core::engines::{
     AcquisitionEngine, CaptureMode, CaptureRequest, DomAwareScrollEngine, NativeRasterEngine,
     RasterObservationScrollEngine,
 };
 use forge_capture_core::native;
+use forge_capture_core::png::png_dimensions;
 use forge_capture_core::result::ScrollingResult;
 use forge_capture_core::scroll::{
     AbortFlag, ProgressCallback, ScrollDirection, ScrollEngineKind, ScrollLimits, ScrollRequest,
@@ -49,6 +51,8 @@ struct StoredCapture {
 }
 
 struct OverlayContext {
+    /// Monitor the overlay was opened on (also the region-pick backdrop source).
+    monitor_id: String,
     /// Webview content origin in virtual-desktop coords (physical px).
     origin_virtual: (i32, i32),
     dpr: f64,
@@ -214,6 +218,7 @@ struct MediaUploadResultDto {
 
 #[derive(Debug, Serialize, Clone)]
 struct OverlayContextDto {
+    monitor_id: String,
     origin_virtual: (i32, i32),
     dpr: f64,
 }
@@ -811,13 +816,20 @@ fn store_artifact(
     key: String,
     artifact: CaptureArtifact,
 ) -> Result<ArtifactRefDto, String> {
+    let base_stem = artifact.file_stem();
+    store_artifact_with_base_stem(state, key, artifact, &base_stem)
+}
+
+/// `store_artifact` with an explicit file-stem base (AI Edit imports use a
+/// `<stem>-ai-edit` base so versions never collide with fresh captures).
+fn store_artifact_with_base_stem(
+    state: &State<AppState>,
+    key: String,
+    artifact: CaptureArtifact,
+    base_stem: &str,
+) -> Result<ArtifactRefDto, String> {
     let dir = captures_dir()?;
-    let stem = unique_stem(
-        state,
-        &dir,
-        &artifact.file_stem(),
-        artifact.raster_mime.extension(),
-    );
+    let stem = unique_stem(state, &dir, base_stem, artifact.raster_mime.extension());
     let png_name = format!("{stem}.{}", artifact.raster_mime.extension());
     let sidecar_name = format!("{stem}.forge.json");
     let sidecar_json = artifact.to_sidecar_json().map_err(err)?;
@@ -1185,6 +1197,7 @@ fn open_region_overlay(
         .find(|m| m.id == monitor_id)
         .ok_or_else(|| format!("unknown monitor id: {monitor_id}"))?;
     *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
+        monitor_id: monitor_id.to_string(),
         origin_virtual: monitor.origin_virtual,
         dpr: monitor.scale,
         delay_ms,
@@ -1224,6 +1237,7 @@ fn overlay_context(state: State<AppState>) -> Result<OverlayContextDto, String> 
     guard
         .as_ref()
         .map(|o| OverlayContextDto {
+            monitor_id: o.monitor_id.clone(),
             origin_virtual: o.origin_virtual,
             dpr: o.dpr,
         })
@@ -1237,6 +1251,278 @@ fn cancel_region_pick(app: tauri::AppHandle, state: State<AppState>) -> Result<(
         let _ = w.close();
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Region-picker backdrop (Snagit-style crosshair + magnifier loupe)
+// ---------------------------------------------------------------------------
+
+/// Frozen fullscreen frame the overlay page draws its crosshair and
+/// magnifier loupe over — the Snagit approach: freeze first, aim on the
+/// frozen image, then capture the live region. Without a frozen frame the
+/// loupe would have no pixels to magnify (the overlay window is
+/// transparent; it cannot see the screen behind it).
+#[derive(Debug, Serialize, Clone)]
+struct BackdropDto {
+    png_b64: String,
+    width: u32,
+    height: u32,
+}
+
+#[tauri::command]
+fn region_pick_backdrop(state: State<AppState>) -> Result<BackdropDto, String> {
+    let monitor_id = {
+        let guard = state.pending_overlay.lock().unwrap();
+        guard
+            .as_ref()
+            .map(|o| o.monitor_id.clone())
+            .ok_or_else(|| "no pending region overlay; call begin_region_pick first".to_string())?
+    };
+    let monitors = current_monitors()?;
+    let request = CaptureRequest {
+        mode: CaptureMode::FullMonitor { monitor_id },
+        include_cursor: false,
+        id: "region-pick-backdrop".to_string(),
+    };
+    let mut engine = NativeRasterEngine;
+    match engine.acquire(&request, &monitors) {
+        ScrollingResult::Complete { artifact } => Ok(BackdropDto {
+            png_b64: base64_encode(&artifact.raster_bytes),
+            width: artifact.raster_width,
+            height: artifact.raster_height,
+        }),
+        other => Err(format!("backdrop capture failed: {}", other.describe())),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AI Edit — the "AI plugin" spool contract
+// ---------------------------------------------------------------------------
+//
+// Local-first and network-free, like everything else in this shell: the app
+// spools {input.png, prompt.txt, job.json} into the local ai-spool and polls
+// for a result. An EXTERNAL runner (see forge-capture-app/docs/ai-edit.md)
+// carries jobs to the AI team and drops results back. The app never touches
+// the network and invents no credentials; until a runner exists, jobs sit
+// honestly in `pending/` and the UI says so.
+
+/// Base of the AI Edit spool: `%LOCALAPPDATA%/FORGE Capture/ai-spool`
+/// (Windows) or `~/.local/share/forge-capture/ai-spool` (other hosts).
+fn ai_spool_dir() -> Result<std::path::PathBuf, String> {
+    #[cfg(windows)]
+    let base = std::env::var("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "LOCALAPPDATA is not set".to_string())?
+        .join("FORGE Capture");
+    #[cfg(not(windows))]
+    let base = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "HOME is not set".to_string())?
+        .join(".local/share/forge-capture");
+    let dir = base.join("ai-spool");
+    for sub in [
+        ai_edit::SPOOL_PENDING,
+        ai_edit::SPOOL_PROCESSING,
+        ai_edit::SPOOL_DONE,
+        ai_edit::SPOOL_FAILED,
+        ai_edit::SPOOL_IMPORTED,
+    ] {
+        std::fs::create_dir_all(dir.join(sub))
+            .map_err(|e| format!("cannot create ai-spool/{sub}: {e}"))?;
+    }
+    Ok(dir)
+}
+
+fn ai_job_id(state: &State<AppState>) -> String {
+    let mut counter = state.id_counter.lock().unwrap();
+    *counter += 1;
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("ai-{millis}-{counter}")
+}
+
+/// Read the `captureKind` string out of a capture sidecar envelope.
+fn sidecar_capture_kind(sidecar_json: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(sidecar_json)
+        .ok()
+        .and_then(|v| {
+            v.get("captureKind")
+                .and_then(|k| k.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "region".to_string())
+}
+
+fn capture_kind_from_str(s: &str) -> CaptureKind {
+    // Sidecars serialize the Rust variant name ("Window") while the
+    // manifest records the wire string ("window"); accept either.
+    match s.to_lowercase().as_str() {
+        "full-monitor" | "fullmonitor" => CaptureKind::FullMonitor,
+        "window" => CaptureKind::Window,
+        "scrolling" => CaptureKind::Scrolling,
+        _ => CaptureKind::Region,
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct AiEditSubmitDto {
+    #[serde(rename = "jobId")]
+    job_id: String,
+}
+
+/// Queue an AI Edit job: copies the capture's PNG + the user's prompt into
+/// the local spool. Returns the job id for polling. The job sits in
+/// `pending/` until an external runner picks it up (see docs/ai-edit.md) —
+/// nothing is uploaded by this app.
+#[tauri::command]
+fn ai_edit_submit(
+    id: String,
+    prompt: String,
+    state: State<AppState>,
+) -> Result<AiEditSubmitDto, String> {
+    ai_edit::validate_prompt(&prompt).map_err(|e| e.to_string())?;
+    let (png_bytes, source_kind) = {
+        let captures = state.captures.lock().unwrap();
+        let stored = captures
+            .get(&id)
+            .ok_or_else(|| format!("unknown capture id: {id}"))?;
+        (
+            stored.png_bytes.clone(),
+            sidecar_capture_kind(&stored.sidecar_json),
+        )
+    };
+    let spool = ai_spool_dir()?;
+    let job_id = ai_job_id(&state);
+    debug_assert!(ai_edit::validate_job_id(&job_id));
+    let job_dir = spool.join(ai_edit::SPOOL_PENDING).join(&job_id);
+    std::fs::create_dir_all(&job_dir).map_err(|e| format!("cannot spool AI job: {e}"))?;
+    let manifest = ai_edit::AiJobManifest::new(
+        &job_id,
+        &id,
+        prompt.trim(),
+        &forge_capture_core::timestamp::now_utc_iso8601(),
+        &source_kind,
+    );
+    let manifest_json =
+        serde_json::to_string_pretty(&manifest).map_err(|e| format!("cannot encode job: {e}"))?;
+    // Write the manifest last: a job directory without job.json is ignored
+    // by the runner contract, so a crash mid-spool never yields a half job.
+    std::fs::write(job_dir.join(ai_edit::JOB_INPUT_PNG), &png_bytes)
+        .map_err(|e| format!("cannot spool input PNG: {e}"))?;
+    std::fs::write(
+        job_dir.join(ai_edit::JOB_PROMPT_TXT),
+        manifest.prompt.as_bytes(),
+    )
+    .map_err(|e| format!("cannot spool prompt: {e}"))?;
+    std::fs::write(
+        job_dir.join(ai_edit::JOB_MANIFEST),
+        manifest_json.as_bytes(),
+    )
+    .map_err(|e| format!("cannot spool manifest: {e}"))?;
+    Ok(AiEditSubmitDto { job_id })
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct AiEditPollDto {
+    #[serde(rename = "jobId")]
+    job_id: String,
+    /// "queued" | "processing" | "done" | "failed" | "imported"
+    status: String,
+    /// Present when status == "failed": the runner's error (truncated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+/// Poll an AI Edit job's status. Pure directory-presence check; never
+/// blocks, never touches the network.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn ai_edit_poll(jobId: String, state: State<AppState>) -> Result<AiEditPollDto, String> {
+    if !ai_edit::validate_job_id(&jobId) {
+        return Err("invalid AI edit job id".to_string());
+    }
+    let _ = state; // reserved: future in-memory job cache
+    let spool = ai_spool_dir()?;
+    let presence = |sub: &str| spool.join(sub).join(&jobId).is_dir();
+    let status = ai_edit::status_from_presence(
+        presence(ai_edit::SPOOL_PENDING),
+        presence(ai_edit::SPOOL_PROCESSING),
+        presence(ai_edit::SPOOL_DONE),
+        presence(ai_edit::SPOOL_FAILED),
+        presence(ai_edit::SPOOL_IMPORTED),
+    )
+    .ok_or_else(|| format!("unknown AI edit job: {jobId}"))?;
+    let reason = if status == ai_edit::AiJobStatus::Failed {
+        let err_path = spool
+            .join(ai_edit::SPOOL_FAILED)
+            .join(&jobId)
+            .join(ai_edit::JOB_ERROR_TXT);
+        std::fs::read_to_string(&err_path)
+            .ok()
+            .map(|s| s.chars().take(500).collect::<String>())
+    } else {
+        None
+    };
+    Ok(AiEditPollDto {
+        job_id: jobId,
+        status: status.as_str().to_string(),
+        reason,
+    })
+}
+
+/// Import a finished AI Edit result as a versioned capture
+/// (`<stem>-ai-edit.png`), leaving the original untouched. The job moves to
+/// `imported/` so a second import is impossible.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn ai_edit_import(jobId: String, state: State<AppState>) -> Result<ArtifactRefDto, String> {
+    if !ai_edit::validate_job_id(&jobId) {
+        return Err("invalid AI edit job id".to_string());
+    }
+    let spool = ai_spool_dir()?;
+    let done_dir = spool.join(ai_edit::SPOOL_DONE).join(&jobId);
+    if !done_dir.is_dir() {
+        return Err(format!(
+            "AI edit job {jobId} has no finished result to import"
+        ));
+    }
+    let result_bytes = std::fs::read(done_dir.join(ai_edit::JOB_RESULT_PNG))
+        .map_err(|e| format!("cannot read AI edit result: {e}"))?;
+    // The result PNG comes from an external model: read dimensions from the
+    // IHDR (never trust a sidecar the runner may have written).
+    let (width, height) =
+        png_dimensions(&result_bytes).map_err(|e| format!("AI edit result is not a PNG: {e}"))?;
+    let manifest: ai_edit::AiJobManifest =
+        std::fs::read_to_string(done_dir.join(ai_edit::JOB_MANIFEST))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .ok_or_else(|| "AI edit job manifest is missing or corrupt".to_string())?;
+    let artifact = CaptureArtifact::new(
+        next_id(&state),
+        capture_kind_from_str(&manifest.source_kind),
+        result_bytes,
+        RasterMime::Png,
+        width,
+        height,
+        None,
+        None,
+        1.0,
+        CursorState {
+            captured: false,
+            position_physical: None,
+        },
+        forge_capture_core::timestamp::now_utc_iso8601(),
+        None,
+    )
+    .map_err(|e| format!("AI edit result failed validation: {e}"))?;
+    let base_stem = format!("{}-ai-edit", artifact.file_stem());
+    let saved = store_artifact_with_base_stem(&state, artifact.id.clone(), artifact, &base_stem)?;
+    // Mark imported: a second import of the same job is refused because the
+    // job no longer sits in done/.
+    let _ = std::fs::rename(&done_dir, spool.join(ai_edit::SPOOL_IMPORTED).join(&jobId));
+    Ok(saved)
 }
 
 // ---------------------------------------------------------------------------
@@ -1701,6 +1987,10 @@ fn main() {
             begin_region_pick,
             overlay_context,
             cancel_region_pick,
+            region_pick_backdrop,
+            ai_edit_submit,
+            ai_edit_poll,
+            ai_edit_import,
             start_scroll_capture,
             stop_scroll_capture,
             printscreen_takeover_active,
@@ -1983,6 +2273,102 @@ mod dto_ipc_tests {
         assert_eq!(sidecar_raster_mime(sidecar).unwrap(), "image/png");
         assert!(sidecar_raster_mime(r#"{"raster":{}}"#).is_err());
         assert!(sidecar_raster_mime("not json").is_err());
+    }
+
+    #[test]
+    fn ai_edit_submit_param_names_match_ui() {
+        // ui/ai-edit.js: invoke("ai_edit_submit", { id, prompt }).
+        // Tauri binds command parameters by exact name; pin the signature
+        // so a rename breaks here instead of failing every submit at
+        // runtime with "missing required key".
+        let _ = ai_edit_submit
+            as fn(String, String, State<AppState>) -> Result<AiEditSubmitDto, String>;
+    }
+
+    #[test]
+    fn ai_edit_poll_param_names_match_ui() {
+        // ui/ai-edit.js: invoke("ai_edit_poll", { jobId }).
+        let _ = ai_edit_poll as fn(String, State<AppState>) -> Result<AiEditPollDto, String>;
+    }
+
+    #[test]
+    fn ai_edit_import_param_names_match_ui() {
+        // ui/ai-edit.js: invoke("ai_edit_import", { jobId }).
+        let _ = ai_edit_import as fn(String, State<AppState>) -> Result<ArtifactRefDto, String>;
+    }
+
+    #[test]
+    fn ai_edit_dtos_serialize_camel_case() {
+        let submit = AiEditSubmitDto {
+            job_id: "ai-123-1".to_string(),
+        };
+        let json = serde_json::to_string(&submit).unwrap();
+        assert!(json.contains("\"jobId\":\"ai-123-1\""), "{json}");
+
+        let poll = AiEditPollDto {
+            job_id: "ai-123-1".to_string(),
+            status: "done".to_string(),
+            reason: None,
+        };
+        let json = serde_json::to_string(&poll).unwrap();
+        assert!(json.contains("\"jobId\""), "{json}");
+        assert!(json.contains("\"status\":\"done\""), "{json}");
+        assert!(
+            !json.contains("reason"),
+            "None reason must be skipped: {json}"
+        );
+
+        let failed = AiEditPollDto {
+            job_id: "ai-123-1".to_string(),
+            status: "failed".to_string(),
+            reason: Some("runner exploded".to_string()),
+        };
+        let json = serde_json::to_string(&failed).unwrap();
+        assert!(json.contains("\"reason\":\"runner exploded\""), "{json}");
+    }
+
+    #[test]
+    fn capture_kind_from_str_maps_sidecar_strings() {
+        assert_eq!(
+            capture_kind_from_str("full-monitor"),
+            forge_capture_core::artifact::CaptureKind::FullMonitor
+        );
+        assert_eq!(
+            capture_kind_from_str("window"),
+            forge_capture_core::artifact::CaptureKind::Window
+        );
+        assert_eq!(
+            capture_kind_from_str("scrolling"),
+            forge_capture_core::artifact::CaptureKind::Scrolling
+        );
+        assert_eq!(
+            capture_kind_from_str("region"),
+            forge_capture_core::artifact::CaptureKind::Region
+        );
+        // Unknown / missing kinds fail closed to Region, never panic.
+        assert_eq!(
+            capture_kind_from_str("something-new"),
+            forge_capture_core::artifact::CaptureKind::Region
+        );
+    }
+
+    #[test]
+    fn sidecar_capture_kind_reads_the_envelope() {
+        let sidecar = r#"{"kind":"forge-capture-artifact","captureKind":"Window"}"#;
+        assert_eq!(sidecar_capture_kind(sidecar), "Window");
+        assert_eq!(sidecar_capture_kind(r#"{"kind":"x"}"#), "region");
+        assert_eq!(sidecar_capture_kind("not json"), "region");
+    }
+
+    #[test]
+    fn capture_kind_mapping_accepts_sidecar_and_wire_spellings() {
+        use forge_capture_core::artifact::CaptureKind as K;
+        assert_eq!(capture_kind_from_str("Window"), K::Window);
+        assert_eq!(capture_kind_from_str("window"), K::Window);
+        assert_eq!(capture_kind_from_str("FullMonitor"), K::FullMonitor);
+        assert_eq!(capture_kind_from_str("full-monitor"), K::FullMonitor);
+        assert_eq!(capture_kind_from_str("Scrolling"), K::Scrolling);
+        assert_eq!(capture_kind_from_str("Region"), K::Region);
     }
 
     #[test]
