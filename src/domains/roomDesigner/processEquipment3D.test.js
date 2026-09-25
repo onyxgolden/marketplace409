@@ -58,3 +58,10 @@ describe("3D selection and drag", () => {
 function onGrid(v) {
   return Math.round(v / 6) * 6;
 }
+
+describe("sphere shape", () => {
+  it("builds the pressure sphere as a sphere primitive", () => {
+    const d = placeSymbol(createEmptyDesign(), D, "pressure-sphere", 0, 0);
+    expect(equipmentDescriptors(d)[0]).toMatchObject({ shape: "sphere", widthIn: 360, heightIn: 420 });
+  });
+});

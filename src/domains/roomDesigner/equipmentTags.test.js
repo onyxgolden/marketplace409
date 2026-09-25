@@ -53,7 +53,7 @@ describe("equipmentSchedule", () => {
     expect(rows).toHaveLength(11);
     expect(rows.slice(0, 3).map((r) => r.tag)).toEqual(["P-101", "P-102", "P-103"]);
     expect(rows[9].tag).toBe("P-110");
-    expect(rows[10]).toMatchObject({ tag: "V-101", description: "Vertical vessel", category: "Vessels & tanks" });
+    expect(rows[10]).toMatchObject({ tag: "V-101", description: "Vertical vessel", category: "Vessels & storage" });
     expect(rows[10].sizeLabel).toBe("48″ × 48″ × 120″ H");
   });
 
@@ -66,7 +66,7 @@ describe("equipmentSchedule", () => {
   it("exports CSV with a header and quoted fields", () => {
     const d = place(createEmptyDesign(), "shell-tube-exchanger");
     expect(equipmentScheduleCsv(d)).toBe(
-      '"Tag","Description","Category","Nominal size"\n"E-101","Shell-and-tube exchanger","Heat transfer","144″ × 30″ × 42″ H"\n',
+      '"Tag","Description","Category","Nominal size"\n"E-101","Shell-and-tube exchanger","Heat exchangers","144″ × 30″ × 42″ H"\n',
     );
   });
 });
