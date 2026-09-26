@@ -17,6 +17,7 @@ import {
   dateBucketFor,
   distinctColumnValues,
   durationBucketFor,
+  FILTER_MATCH_NONE,
   filterValuesBySearch,
   withoutColumn,
 } from "./callShieldColumnFilters";
@@ -287,6 +288,53 @@ describe("filter bookkeeping", () => {
 
   it("clears everything", () => {
     expect(clearAllColumnFilters()).toEqual({});
+  });
+});
+
+describe("match-none sentinel", () => {
+  // Every staged row lacks a caller name, so "(No name)" is the only
+  // distinct value. Unchecking it must empty the list — never silently
+  // restore every row the way an empty selection used to.
+  const namelessRows = [
+    { id: "n1", phone_number: "(555) 010-0001", caller_name: "" },
+    { id: "n2", phone_number: "(555) 010-0002", caller_name: null },
+    { id: "n3", phone_number: "(555) 010-0003" },
+  ];
+
+  it("lists (No name) as the only distinct caller-name value", () => {
+    expect(distinctColumnValues(namelessRows, "callerName", ctx)).toEqual([
+      { value: "", label: "(No name)", count: 3 },
+    ]);
+  });
+
+  it("matches zero rows when the sentinel is the selection", () => {
+    expect(
+      applyColumnFilters(namelessRows, { callerName: [FILTER_MATCH_NONE] }, ctx),
+    ).toEqual([]);
+  });
+
+  it("keeps the column marked active so the funnel and counts show", () => {
+    const filters = { callerName: [FILTER_MATCH_NONE] };
+    expect(columnFilterIsActive(filters, "callerName")).toBe(true);
+    expect(activeColumnFilterCount(filters)).toBe(1);
+  });
+
+  it("stays distinct from an empty selection, which still means no filter", () => {
+    expect(applyColumnFilters(namelessRows, { callerName: [] }, ctx)).toHaveLength(3);
+    expect(columnFilterIsActive({ callerName: [] }, "callerName")).toBe(false);
+    expect(activeColumnFilterCount({ callerName: [] })).toBe(0);
+  });
+
+  it("never appears in a column's distinct value list", () => {
+    const values = distinctColumnValues(rows, "callerName", ctx);
+    expect(values.some((entry) => entry.value === FILTER_MATCH_NONE)).toBe(false);
+  });
+
+  it("composes with other columns under AND without disturbing them", () => {
+    const filters = { callerName: [FILTER_MATCH_NONE], callType: ["incoming"] };
+    expect(applyColumnFilters(rows, filters, ctx)).toEqual([]);
+    // Dropping the column for the cascade removes the sentinel cleanly.
+    expect(withoutColumn(filters, "callerName")).toEqual({ callType: ["incoming"] });
   });
 });
 

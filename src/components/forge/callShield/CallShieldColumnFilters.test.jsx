@@ -4,7 +4,10 @@ import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import ColumnFilterBar from "./CallShieldColumnFilters.jsx";
-import { applyColumnFilters } from "@/domains/callShield/callShieldColumnFilters";
+import {
+  FILTER_MATCH_NONE,
+  applyColumnFilters,
+} from "@/domains/callShield/callShieldColumnFilters";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -52,6 +55,7 @@ afterEach(() => {
 
 async function mountBar(initialFilters = {}, options = {}) {
   const store = { filters: initialFilters, setNow: null, opened: [] };
+  const data = options.rows ?? rows;
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -66,10 +70,10 @@ async function mountBar(initialFilters = {}, options = {}) {
     useEffect(() => {
       store.setNow = setNowState;
     }, []);
-    const resultCount = applyColumnFilters(rows, filters, { labels, now }).length;
+    const resultCount = applyColumnFilters(data, filters, { labels, now }).length;
     return (
       <ColumnFilterBar
-        rows={rows}
+        rows={data}
         labels={labels}
         filters={filters}
         onChange={setFilters}
@@ -263,5 +267,49 @@ describe("ColumnFilterBar", () => {
     const { container, store } = await mountBar();
     await openPanel(container, "Date");
     expect(store.opened).toEqual(["startedAt"]);
+  });
+
+  it("keeps an unchecked sole value as a match-none filter, not no filter", async () => {
+    // Every staged row lacks a caller name: "(No name)" is the only value.
+    const namelessRows = [
+      { id: "n1", phone_number: "(555) 010-0001", caller_name: "" },
+      { id: "n2", phone_number: "(555) 010-0002", caller_name: null },
+      { id: "n3", phone_number: "(555) 010-0003" },
+    ];
+    const { container, store } = await mountBar({}, { rows: namelessRows });
+    const dialog = await openPanel(container, "Caller name");
+    expect(valueCheckbox(dialog, "(No name)").checked).toBe(true);
+    await click(valueCheckbox(dialog, "(No name)")); // uncheck the only value
+    const ok = [...dialog.querySelectorAll("button")].find((b) => b.textContent === "OK");
+    await click(ok);
+
+    // The empty draft commits as match-none: the column stays filtered and
+    // the list empties instead of silently restoring every row.
+    expect(store.filters).toEqual({ callerName: [FILTER_MATCH_NONE] });
+    expect(columnButton(container, "Caller name").getAttribute("title")).toBe(
+      "Caller name: filtered",
+    );
+    expect(container.textContent).toContain("Showing 0 of 3 staged calls.");
+
+    // Reopening shows the value still unchecked — the choice persisted.
+    const reopened = await openPanel(container, "Caller name");
+    expect(valueCheckbox(reopened, "(No name)").checked).toBe(false);
+
+    // OK with no further changes keeps match-none (never flips to no filter).
+    const okAgain = [...reopened.querySelectorAll("button")].find(
+      (b) => b.textContent === "OK",
+    );
+    await click(okAgain);
+    expect(store.filters).toEqual({ callerName: [FILTER_MATCH_NONE] });
+    expect(container.textContent).toContain("Showing 0 of 3 staged calls.");
+
+    // Clear filter still restores every row.
+    const clearer = await openPanel(container, "Caller name");
+    const clear = [...clearer.querySelectorAll("button")].find(
+      (b) => b.textContent === "Clear filter",
+    );
+    await click(clear);
+    expect(store.filters).toEqual({});
+    expect(container.textContent).not.toContain("Clear all filters");
   });
 });
