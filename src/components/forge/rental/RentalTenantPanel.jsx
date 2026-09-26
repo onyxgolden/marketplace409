@@ -274,13 +274,44 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
 function LeaseSummary({lease,unit}) { return <div className="mt-5 grid gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30 sm:grid-cols-2 lg:grid-cols-4"><Info label="Property" value={unit?.label||lease?.property_id}/><Info label="Lease status" value={lease?.status}/><Info label="Lease dates" value={lease?`${lease.start_date} to ${lease.end_date||"Open-ended"}`:null}/><Info label="Monthly rent" value={lease?money.format(Number(lease.monthly_rent_cents||0)/100):null}/></div> }
 function Info({label,value}) { return <div><p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p><p className="mt-1 font-bold text-slate-950 dark:text-white">{value||"Not recorded"}</p></div> }
 function Field({label,name,defaultValue="",type="text",step}) { return <label className="text-sm font-bold text-slate-900 dark:text-white">{label}<input name={name} type={type} step={step} defaultValue={defaultValue??""} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"/></label> }
-function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadTenants,makePrimary,sendInviteEmail,leaseId}) { return <article className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
+function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadTenants,makePrimary,sendInviteEmail,leaseId}) {
+  // Join-up invite confirmation (mirrors the borrower-invite pattern: checkbox
+  // plus a typed phrase). The button fires a real email, so a single click
+  // must never send it.
+  const [showInviteConfirm, setShowInviteConfirm] = useState(false);
+  const [inviteAck, setInviteAck] = useState(false);
+  const [inviteConfirmText, setInviteConfirmText] = useState("");
+  function openInviteConfirm() { setShowInviteConfirm(true); setInviteAck(false); setInviteConfirmText(""); }
+  return <article className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
   <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">{title}</p><h4 className="mt-1 text-xl font-black text-slate-950 dark:text-white">{tenant.display_name}</h4></div>{makePrimary&&<button type="button" disabled={working} onClick={makePrimary} className="rounded-lg border border-sky-500 px-3 py-2 text-sm font-bold text-sky-800 dark:text-sky-300">Make primary tenant</button>}</div>
   <div className="mt-4"><RentalPhotoUpload entityType="tenant" entityId={tenant.id} photoUrl={tenant.photo_url} onUploaded={loadTenants}/></div>
   <form key={`email-${tenant.id}`} onSubmit={(event)=>updateEmail(event,tenant.id)} className="mt-4 flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1 text-sm font-bold text-slate-900 dark:text-white">Contact / portal email<input name="portalEmail" type="email" required defaultValue={tenant.email} aria-label={`Portal email for ${tenant.display_name}`} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"/></label><button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white dark:bg-amber-400 dark:text-slate-950">Update email</button></form>
   {!tenant.auth_user_id && <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
-    <button type="button" disabled={working} onClick={()=>sendInviteEmail(tenant,leaseId)} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working?"Sending…":tenant.invited_at?"Resend invite email":"Send invite email"}</button>
+    <button type="button" disabled={working} onClick={openInviteConfirm} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working?"Sending…":tenant.invited_at?"Resend invite email":"Send invite email"}</button>
     <p className="text-xs font-bold text-slate-600 dark:text-slate-400">{tenant.invited_at?`Invite sent ${new Date(tenant.invited_at).toLocaleDateString()}. The tenant signs in with the email above.`:"Emails the tenant a join-up invite with the portal link."}</p>
+  </div>}
+  {showInviteConfirm && <div role="alertdialog" aria-modal="true" aria-labelledby="send-invite-title" aria-describedby="send-invite-desc"
+    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+    onKeyDown={(event) => { if (event.key === "Escape") setShowInviteConfirm(false); }}>
+    <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900">
+      <h3 id="send-invite-title" className="text-lg font-black text-slate-950 dark:text-white">Send invite email?</h3>
+      <p id="send-invite-desc" className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+        This sends a real email to <strong>{tenant.display_name}</strong> ({tenant.email}) with the tenant portal
+        join-up link{tenant.invited_at ? " — resending the invite" : ""}. Only send when the tenant is ready to sign up.</p>
+      <label className="mt-4 flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+        <input type="checkbox" checked={inviteAck} onChange={(event) => setInviteAck(event.target.checked)} />
+        I verified this recipient email is correct.</label>
+      <label className="mt-3 block text-sm font-bold text-slate-900 dark:text-white">Type INVITE to confirm
+        <input name="inviteConfirmText" autoFocus value={inviteConfirmText}
+          onChange={(event) => setInviteConfirmText(event.target.value)}
+          className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-950 dark:text-white" /></label>
+      <div className="mt-5 flex justify-end gap-3">
+        <button type="button" onClick={() => setShowInviteConfirm(false)} className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-black text-slate-700 dark:border-slate-600 dark:text-slate-200">Cancel</button>
+        <button type="button" disabled={working || !inviteAck || inviteConfirmText !== "INVITE"}
+          onClick={async () => { setShowInviteConfirm(false); await sendInviteEmail(tenant, leaseId); }}
+          className="rounded-xl bg-sky-700 px-5 py-2.5 text-sm font-black text-white transition disabled:opacity-50">Send invite</button>
+      </div>
+    </div>
   </div>}
   <form key={`profile-${tenant.id}`} onSubmit={(event)=>updateProfile(event,tenant.id)} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
     <Field label="Mobile phone" name="phone" type="tel" defaultValue={tenant.phone}/><Field label="Work phone" name="workPhone" type="tel" defaultValue={tenant.work_phone}/>

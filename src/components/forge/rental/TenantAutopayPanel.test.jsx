@@ -145,6 +145,47 @@ describe("TenantAutopayPanel bank setup", () => {
   });
 });
 
+describe("TenantAutopayPanel cancel confirmation", () => {
+  const activeEnrollment = { ...bankEnrollment, status: "active" };
+
+  it("gates cancellation behind a confirm stating future payments stop and setup can be redone", async () => {
+    mounted = mount(<TenantAutopayPanel rentals={rentalsWith(activeEnrollment)} onChanged={onChanged} />);
+    await act(async () => { buttonByText(mounted.container, "Cancel autopay").click(); });
+    expect(mounted.container.querySelector('[role="alertdialog"]')).not.toBeNull();
+    expect(mounted.container.textContent).toContain("Future automatic payments stop immediately");
+    expect(mounted.container.textContent).toContain("you can set autopay up again any time");
+    // The confirm must appear before any API call fires.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("submits cancel-autopay only after the confirmation is confirmed", async () => {
+    mounted = mount(<TenantAutopayPanel rentals={rentalsWith(activeEnrollment)} onChanged={onChanged} />);
+    await act(async () => { buttonByText(mounted.container, "Cancel autopay").click(); });
+    await act(async () => { buttonByText(mounted.container, "Confirm cancellation").click(); });
+    await flush();
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(payload).toEqual({ operation: "cancel-autopay", enrollmentId: "auto_1",
+      reason: "Cancelled by tenant in portal" });
+    expect(mounted.container.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("aborts the cancellation when Keep autopay is clicked", async () => {
+    mounted = mount(<TenantAutopayPanel rentals={rentalsWith(activeEnrollment)} onChanged={onChanged} />);
+    await act(async () => { buttonByText(mounted.container, "Cancel autopay").click(); });
+    await act(async () => { buttonByText(mounted.container, "Keep autopay").click(); });
+    expect(mounted.container.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it("requires the same confirmation in the bank-link branch", async () => {
+    mounted = mount(<TenantAutopayPanel rentals={rentalsWith(bankEnrollment)} onChanged={onChanged} />);
+    await act(async () => { buttonByText(mounted.container, "Cancel autopay").click(); });
+    expect(mounted.container.querySelector('[role="alertdialog"]')).not.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
 describe("TenantAutopayPanel charge-day copy", () => {
   it("labels the field as a recurring day of the month with the 1-28 range", () => {
     mounted = mount(<TenantAutopayPanel rentals={rentalsWith(null)} onChanged={onChanged} />);

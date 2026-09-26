@@ -25,6 +25,16 @@ async function postOperation(payload) {
 export default function TenantAutopayPanel({ rentals, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  // Cancel is gated behind an explicit confirmation: stopping future automatic
+  // payments is one-way for the upcoming charges, so it must never fire on a
+  // single accidental tap.
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  useEffect(() => {
+    if (!showCancelConfirm) return;
+    const onKey = (event) => { if (event.key === "Escape") setShowCancelConfirm(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showCancelConfirm]);
   // Bank-link in progress: { enrollmentId, setupIntentId, clientSecret, connectedAccountId }
   const [setup, setSetup] = useState(null);
   const [stripeLoadFailed, setStripeLoadFailed] = useState(false);
@@ -161,7 +171,7 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
             className="rounded-xl bg-slate-950 px-5 py-3 font-bold text-white disabled:opacity-50">
             {busy ? "Opening…" : "Link bank account"}
           </button>
-          <button disabled={busy} onClick={() => submit({ operation: "cancel-autopay", enrollmentId: current.id, reason: "Cancelled by tenant in portal" })}
+          <button disabled={busy} onClick={() => setShowCancelConfirm(true)}
             className="rounded-xl border px-4 py-2 font-bold">Cancel autopay</button>
         </div>
       </> : <>
@@ -170,9 +180,24 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
             ? "No automatic debit can occur yet. Stripe payment-method and mandate setup is still required."
             : "You may cancel future automatic payments at any time."}
         </p>
-        <button disabled={busy} onClick={() => submit({ operation: "cancel-autopay", enrollmentId: current.id, reason: "Cancelled by tenant in portal" })}
+        <button disabled={busy} onClick={() => setShowCancelConfirm(true)}
           className="mt-4 rounded-xl border px-4 py-2 font-bold">Cancel autopay</button>
       </>}
+      {showCancelConfirm ? <div role="alertdialog" aria-labelledby="autopay-cancel-title"
+        className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/30">
+        <p id="autopay-cancel-title" className="text-sm font-bold text-slate-900 dark:text-white">Cancel autopay?</p>
+        <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">
+          Future automatic payments stop immediately. Your lease, charges, and payment history are untouched —
+          you can set autopay up again any time.
+        </p>
+        <div className="mt-3 flex gap-3">
+          <button type="button" disabled={busy} autoFocus
+            onClick={() => { setShowCancelConfirm(false); submit({ operation: "cancel-autopay", enrollmentId: current.id, reason: "Cancelled by tenant in portal" }); }}
+            className="rounded-xl bg-red-700 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-800 disabled:opacity-50">Confirm cancellation</button>
+          <button type="button" onClick={() => setShowCancelConfirm(false)}
+            className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Keep autopay</button>
+        </div>
+      </div> : null}
     </> : <form className="mt-4 grid gap-4" onSubmit={(event) => {
         event.preventDefault();
         const f = new FormData(event.currentTarget);
