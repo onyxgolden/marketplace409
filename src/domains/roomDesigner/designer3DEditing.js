@@ -25,6 +25,7 @@ import {
   snapScalar,
   wallLength,
 } from "./designerGeometry";
+import { MAX_MOUNT_IN } from "./furnitureSizing";
 
 /** Entity kinds that can be picked, dragged and sized from the 3D view. */
 export const EDITABLE_3D_KINDS = Object.freeze(["wall", "opening", "furniture", "symbol"]);
@@ -190,14 +191,16 @@ export function sizeFieldsForSelection(selection, design) {
   if (selection.kind === "furniture") {
     const piece = (design.furniture || []).find((f) => f.id === selection.id);
     if (!piece) return null;
-    const { widthIn, depthIn } = pieceSize(piece);
-    return {
-      title: getCatalogEntry(piece.catalogId)?.label || "Furniture",
-      fields: [
-        { key: "widthIn", label: "Width", valueIn: widthIn },
-        { key: "depthIn", label: "Depth", valueIn: depthIn },
-      ],
-    };
+    const { widthIn, depthIn, heightIn, mountIn } = pieceSize(piece);
+    const entry = getCatalogEntry(piece.catalogId);
+    const fields = [
+      { key: "widthIn", label: "Width", valueIn: widthIn },
+      { key: "depthIn", label: "Depth", valueIn: depthIn },
+      { key: "heightIn", label: "Height", valueIn: heightIn },
+    ];
+    // Wall cabinets and shelves: how high the bottom hangs.
+    if (entry?.mountIn !== undefined) fields.push({ key: "mountIn", label: "Mount", valueIn: mountIn });
+    return { title: entry?.label || "Furniture", fields };
   }
   return null;
 }
@@ -211,7 +214,8 @@ export function sizeFieldsForSelection(selection, design) {
  */
 export function sizeEditAction(selection, design, key, text) {
   const inches = parseDimensionInput(String(text ?? ""));
-  if (!Number.isFinite(inches) || inches <= 0) {
+  // A mounting height of 0 (on the floor) is valid; every size must be > 0.
+  if (!Number.isFinite(inches) || inches < 0 || (inches === 0 && key !== "mountIn")) {
     return { error: `Couldn't read "${text}". Try 12'6", 150", or 150.` };
   }
 
@@ -243,7 +247,14 @@ export function sizeEditAction(selection, design, key, text) {
     return { action: { type: "RESIZE_OPENING", openingId: opening.id, widthIn: inches } };
   }
 
-  if (selection?.kind === "furniture" && (key === "widthIn" || key === "depthIn")) {
+  if (selection?.kind === "furniture" && key === "mountIn") {
+    const piece = (design.furniture || []).find((f) => f.id === selection.id);
+    if (!piece) return { error: "That piece no longer exists." };
+    if (inches > MAX_MOUNT_IN) return { error: `Mounting height must be ${MAX_MOUNT_IN}" or less.` };
+    return { action: { type: "SET_FURNITURE_MOUNT", furnitureId: piece.id, mountIn: inches } };
+  }
+
+  if (selection?.kind === "furniture" && (key === "widthIn" || key === "depthIn" || key === "heightIn")) {
     const piece = (design.furniture || []).find((f) => f.id === selection.id);
     if (!piece) return { error: "That piece no longer exists." };
     if (inches < FURNITURE_MIN_SIZE_IN || inches > FURNITURE_MAX_SIZE_IN) {
@@ -252,7 +263,9 @@ export function sizeEditAction(selection, design, key, text) {
     const size = pieceSize(piece);
     const widthIn = key === "widthIn" ? inches : size.widthIn;
     const depthIn = key === "depthIn" ? inches : size.depthIn;
-    return { action: { type: "RESIZE_FURNITURE", furnitureId: piece.id, widthIn, depthIn } };
+    const action = { type: "RESIZE_FURNITURE", furnitureId: piece.id, widthIn, depthIn };
+    if (key === "heightIn") action.heightIn = inches;
+    return { action };
   }
 
   return { error: "That can't be resized here." };
@@ -285,8 +298,8 @@ export function popupAnchorForSelection(selection, design) {
   if (selection.kind === "furniture") {
     const piece = (design.furniture || []).find((f) => f.id === selection.id);
     if (!piece) return null;
-    const heightIn = getCatalogEntry(piece.catalogId)?.heightIn ?? 30;
-    return { x: piece.x, y: heightIn + 12, z: piece.y };
+    const { heightIn, mountIn } = pieceSize(piece);
+    return { x: piece.x, y: mountIn + (heightIn || 30) + 12, z: piece.y };
   }
   return null;
 }

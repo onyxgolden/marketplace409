@@ -525,7 +525,7 @@ export default function DesignerViewport3D({
           if (part.rotX) mesh.rotation.x = part.rotX;
           fGroup.add(mesh);
         }
-        fGroup.position.set(item.x, 0, item.z);
+        fGroup.position.set(item.x, item.elevationIn || 0, item.z);
         fGroup.rotation.y = item.rotY;
         group.add(fGroup);
         fGroup.userData.entityKind = "furniture";

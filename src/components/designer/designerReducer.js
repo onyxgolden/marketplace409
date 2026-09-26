@@ -48,6 +48,7 @@ import {
   renameOrgChart,
   renameRoom,
   resizeFurniture,
+  setFurnitureMount,
   resizeOpening,
   resetFurnitureSize,
   rotateFurniture,
@@ -67,6 +68,7 @@ import {
 } from "@/domains/roomDesigner/designerDocument";
 import { applyImportResult } from "@/domains/roomDesigner/importers/vsdx/visioMapper";
 import { insertShapeCentered } from "@/domains/roomDesigner/customShapes/customShapeInstantiate";
+import { addSavedEstimate, removeSavedEstimate } from "@/domains/roomDesigner/cabinetPriceBooks";
 import { autoTagFor } from "@/domains/roomDesigner/equipmentTags";
 import { placedSelection } from "@/domains/roomDesigner/customShapes/customShapePlacement";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
@@ -442,9 +444,16 @@ export function designerReducer(state, action) {
     case "RESIZE_FURNITURE":
       return touch(
         state,
-        resizeFurniture(state.design, action.furnitureId, action.widthIn, action.depthIn),
+        resizeFurniture(state.design, action.furnitureId, action.widthIn, action.depthIn, action.heightIn),
         action.coalesce,
       );
+    case "SAVE_CABINET_ESTIMATE":
+      if (!action.snapshot) return state;
+      return touch(state, addSavedEstimate(state.design, action.snapshot));
+    case "DELETE_CABINET_ESTIMATE":
+      return touch(state, removeSavedEstimate(state.design, action.snapshotId));
+    case "SET_FURNITURE_MOUNT":
+      return touch(state, setFurnitureMount(state.design, action.furnitureId, action.mountIn), action.coalesce);
     case "RESET_FURNITURE_SIZE":
       return touch(state, resetFurnitureSize(state.design, action.furnitureId));
     case "ALIGN_FURNITURE": {

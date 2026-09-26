@@ -20,6 +20,7 @@ export const FURNITURE_CATEGORIES = Object.freeze([
   "tables",
   "bedroom",
   "kitchen",
+  "cabinets",
   "bath",
   "laundry",
   "storage",
@@ -28,6 +29,16 @@ export const FURNITURE_CATEGORIES = Object.freeze([
 
 const entry = (id, label, category, widthIn, depthIn, heightIn, color, symbol = "rect") =>
   Object.freeze({ id, label, category, widthIn, depthIn, heightIn, color, symbol });
+
+// Cabinets carry a sizeFamily (see furnitureSizing.js: the standard widths,
+// depths and heights offered for that family) and, when wall-mounted, mountIn:
+// the default height of the cabinet's BOTTOM above the floor (54" = 36"
+// counter + 18" backsplash, the usual upper-cabinet line).
+const cab = (id, label, widthIn, depthIn, heightIn, sizeFamily, { mountIn, color = "#a8a29e" } = {}) =>
+  Object.freeze({
+    id, label, category: "cabinets", widthIn, depthIn, heightIn, color, symbol: "rect", sizeFamily,
+    ...(mountIn !== undefined ? { mountIn } : {}),
+  });
 
 export const FURNITURE_CATALOG = Object.freeze([
   // seating
@@ -56,11 +67,36 @@ export const FURNITURE_CATALOG = Object.freeze([
   entry("range", "Range", "kitchen", 30, 28, 36, "#9aa0a8"),
   entry("dishwasher", "Dishwasher", "kitchen", 24, 24, 34, "#b5bac2"),
   entry("microwave-cart", "Microwave cart", "kitchen", 30, 18, 34, "#a8adb5"),
-  entry("cabinet-base-24", "Base cabinet 24\"", "kitchen", 24, 24, 34, "#a8a29e"),
-  entry("cabinet-sink-36", "Sink base cabinet 36\"", "kitchen", 36, 24, 34, "#a8a29e"),
-  entry("cabinet-wall-24", "Wall cabinet 24\"", "kitchen", 24, 12, 36, "#b8b2ab"),
-  entry("cabinet-pantry-24", "Tall pantry 24\"", "kitchen", 24, 24, 84, "#a8a29e"),
   entry("sink-kitchen-33", "Kitchen sink (drop-in)", "kitchen", 33, 22, 10, "#dfe5ec"),
+  // cabinets — nominal US-standard sizes; every one resizable to the
+  // standard sizes of its family or any custom size (furnitureSizing.js).
+  // base (floor-standing, height includes the countertop)
+  cab("cabinet-base-24", "Base cabinet", 24, 24, 34, "base"),
+  cab("cabinet-base-db", "Drawer base unit", 18, 24, 34, "base"),
+  cab("cabinet-base-drawer", "Drawer base (3-drawer)", 24, 24, 34, "base"),
+  cab("cabinet-sink-36", "Sink base cabinet", 36, 24, 34, "sink-base"),
+  cab("cabinet-sink-farm", "Farm sink base", 36, 24, 34, "sink-base"),
+  cab("cabinet-base-trash", "Trash pull-out base", 18, 24, 34, "base"),
+  cab("cabinet-base-corner", "Corner base (lazy Susan)", 36, 36, 34, "corner-base"),
+  cab("cabinet-base-blind", "Blind corner base (left)", 36, 24, 34, "blind-base"),
+  cab("cabinet-base-blind-rh", "Blind corner base (right)", 36, 24, 34, "blind-base"),
+  cab("cabinet-base-easy-reach", "Easy reach corner base", 36, 36, 34, "corner-base"),
+  cab("cabinet-island-base", "Island base cabinet", 36, 24, 34, "base"),
+  // wall (mounted)
+  cab("cabinet-wall-24", "Wall cabinet", 24, 12, 36, "wall", { mountIn: 54, color: "#b8b2ab" }),
+  cab("cabinet-wall-corner", "Wall corner cabinet", 24, 24, 30, "wall-corner", { mountIn: 54, color: "#b8b2ab" }),
+  cab("cabinet-wall-bridge", "Bridge / over-fridge cabinet", 36, 24, 15, "bridge", { mountIn: 72, color: "#b8b2ab" }),
+  cab("cabinet-wall-microwave", "Microwave wall cabinet", 30, 12, 18, "wall", { mountIn: 66, color: "#b8b2ab" }),
+  cab("cabinet-open-shelf", "Open shelf", 30, 12, 12, "wall", { mountIn: 54, color: "#c7b8a3" }),
+  // tall
+  cab("cabinet-pantry-24", "Tall pantry", 24, 24, 84, "tall"),
+  cab("cabinet-tall-oven", "Oven cabinet", 30, 24, 84, "tall"),
+  cab("cabinet-tall-utility", "Utility / broom cabinet", 18, 24, 84, "tall"),
+  // vanity & bath
+  cab("cabinet-vanity-sink", "Vanity sink base", 30, 21, 34, "vanity"),
+  cab("cabinet-vanity-drawer", "Vanity drawer base", 12, 21, 34, "vanity"),
+  cab("cabinet-linen-tower", "Linen tower", 18, 21, 84, "linen"),
+  cab("cabinet-bath-wall", "Bathroom wall cabinet", 24, 8, 30, "bath-wall", { mountIn: 48, color: "#b8b2ab" }),
   // bath
   entry("toilet", "Toilet", "bath", 28, 24, 28, "#e8ecf1"),
   entry("vanity-single", "Vanity (single)", "bath", 36, 21, 34, "#b9c2cc"),

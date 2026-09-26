@@ -352,12 +352,12 @@ describe("designerDocument — furniture resize", () => {
     let d = createEmptyDesign();
     d = placeFurniture(d, "bed-queen", 100, 100);
     const id = d.furniture[0].id;
-    expect(pieceSize(d.furniture[0])).toEqual({ widthIn: 60, depthIn: 80 });
+    expect(pieceSize(d.furniture[0])).toMatchObject({ widthIn: 60, depthIn: 80 });
     d = resizeFurniture(d, id, 72, 84);
-    expect(pieceSize(d.furniture[0])).toEqual({ widthIn: 72, depthIn: 84 });
+    expect(pieceSize(d.furniture[0])).toMatchObject({ widthIn: 72, depthIn: 84 });
     // other pieces keep catalog size
     d = placeFurniture(d, "toilet", 0, 0);
-    expect(pieceSize(d.furniture[1])).toEqual({ widthIn: 28, depthIn: 24 });
+    expect(pieceSize(d.furniture[1])).toMatchObject({ widthIn: 28, depthIn: 24 });
   });
 
   it("rounds to half-inch and rejects out-of-range sizes", () => {
@@ -384,7 +384,7 @@ describe("designerDocument — furniture resize", () => {
     d = resetFurnitureSize(d, id);
     expect(d.furniture[0]).not.toHaveProperty("widthIn");
     expect(d.furniture[0]).not.toHaveProperty("depthIn");
-    expect(pieceSize(d.furniture[0])).toEqual({ widthIn: 24, depthIn: 24 });
+    expect(pieceSize(d.furniture[0])).toMatchObject({ widthIn: 24, depthIn: 24 });
     expect(() => resetFurnitureSize(d, "furniture-nope")).toThrow(/Unknown furniture/);
   });
 
@@ -394,9 +394,9 @@ describe("designerDocument — furniture resize", () => {
     const id = d.furniture[0].id;
     // exact-size inputs go straight through resizeFurniture — no canvas drag
     d = resizeFurniture(d, id, 30, 20);
-    expect(pieceSize(d.furniture[0])).toEqual({ widthIn: 30, depthIn: 30 });
+    expect(pieceSize(d.furniture[0])).toMatchObject({ widthIn: 30, depthIn: 30 });
     d = resizeFurniture(d, id, 20, 36);
-    expect(pieceSize(d.furniture[0])).toEqual({ widthIn: 36, depthIn: 36 });
+    expect(pieceSize(d.furniture[0])).toMatchObject({ widthIn: 36, depthIn: 36 });
   });
 
   it("keeps size overrides through serialize/parse round trips", () => {
@@ -404,7 +404,7 @@ describe("designerDocument — furniture resize", () => {
     d = placeFurniture(d, "sink-kitchen-33", 5, 5);
     d = resizeFurniture(d, d.furniture[0].id, 36, 24);
     const again = parseDesign(serializeDesign(d));
-    expect(pieceSize(again.furniture[0])).toEqual({ widthIn: 36, depthIn: 24 });
+    expect(pieceSize(again.furniture[0])).toMatchObject({ widthIn: 36, depthIn: 24 });
   });
 });
 

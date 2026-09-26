@@ -53,6 +53,10 @@ import {
 import OrgChartPanel from "./OrgChartPanel";
 import ObjectLibraryPanel from "./ObjectLibraryPanel";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
+import FurnitureSizeEditor from "./FurnitureSizeEditor";
+import CabinetEstimateSection from "./CabinetEstimateSection";
+import CabinetPriceLine from "./CabinetPriceLine";
+import usePriceBooks from "./usePriceBooks";
 import { createInitialState, designerReducer } from "./designerReducer";
 import {
   createEmptyLibrary,
@@ -215,6 +219,10 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
     }
     saveLibrary(shapeLibrary, undefined, userId);
   }, [shapeLibrary, userId]);
+  // Supplier cabinet price books: private to the signed-in user's account
+  // (designer_price_books), cached locally — see usePriceBooks.
+  const priceBookSync = usePriceBooks(userId);
+
   // Pure, synchronous: capture + addShapeToLibrary either both succeed or
   // both throw, so the library state never updates on a half-failed save.
   // Throws CustomShapeError, which the button component below catches and
@@ -900,7 +908,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
 
         {/* right panel */}
         <aside className="w-72 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3">
-          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} />
         </aside>
 
         {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
@@ -989,7 +997,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   );
 }
 
-function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation, onSaveShape }) {
+function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation, onSaveShape, priceBooks = [], priceBookSync = null }) {
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingSymbol } = state;
 
   // Scale calibration for the background underlay (Visio trace-over workflow).
@@ -1065,7 +1073,7 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
   if (selection) {
     return (
       <div>
-        <SelectionPanel state={state} dispatch={dispatch} onPrint={onPrint} />
+        <SelectionPanel state={state} dispatch={dispatch} onPrint={onPrint} priceBooks={priceBooks} />
         {SAVEABLE_SELECTION_KINDS.has(selection.kind) && (
           <div className="mt-3 border-t border-gray-800 pt-3">
             <SaveAsShapeButton onSave={onSaveShape} />
@@ -1094,6 +1102,14 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
         <div className="flex justify-between"><dt title="Every placed symbol: piping, fixtures, building elements, process equipment">Symbols</dt><dd>{summary.pipingSymbolCount}</dd></div>
       </dl>
       <EquipmentScheduleSection design={design} dispatch={dispatch} />
+      <CabinetEstimateSection
+        design={design}
+        dispatch={dispatch}
+        books={priceBooks}
+        status={priceBookSync?.status}
+        onSaveBook={priceBookSync?.saveBook}
+        onDeleteBook={priceBookSync?.deleteBook}
+      />
       {/* HOME DESIGNER slice 3: construction intelligence — project-wide
           measurements derived from geometry. */}
       <MeasurementsSection project={project} design={design} />
@@ -2720,7 +2736,7 @@ export function RoomNameField({ room, dispatch }) {
   );
 }
 
-function SelectionPanel({ state, dispatch, onPrint }) {
+function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
   const { design, selection } = state;
   if (selection.kind === "sheet") {
     const sheet = (design.sheets || []).find((s) => s.id === selection.id);
@@ -2809,50 +2825,10 @@ function SelectionPanel({ state, dispatch, onPrint }) {
     const piece = design.furniture.find((f) => f.id === selection.id);
     const entry = piece && getCatalogEntry(piece.catalogId);
     if (!piece || !entry) return null;
-    const size = pieceSize(piece);
-    const resized = piece.widthIn !== undefined || piece.depthIn !== undefined;
-    const applySize = (widthIn, depthIn) => {
-      if (widthIn >= 1 && widthIn <= 480 && depthIn >= 1 && depthIn <= 480) {
-        dispatch({ type: "RESIZE_FURNITURE", furnitureId: piece.id, widthIn, depthIn });
-      }
-    };
     return (
       <PanelShell title={entry.label} onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
-        <Row label="Size" value={`${size.widthIn}″ × ${size.depthIn}″`} />
-        <div className="grid grid-cols-2 gap-2">
-          <label className="block text-xs text-gray-400">
-            Width (″)
-            <input
-              type="number"
-              min={1}
-              max={480}
-              step={0.5}
-              value={size.widthIn}
-              onChange={(e) => applySize(Number(e.target.value), size.depthIn)}
-              className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white"
-            />
-          </label>
-          <label className="block text-xs text-gray-400">
-            Depth (″)
-            <input
-              type="number"
-              min={1}
-              max={480}
-              step={0.5}
-              value={size.depthIn}
-              onChange={(e) => applySize(size.widthIn, Number(e.target.value))}
-              className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white"
-            />
-          </label>
-        </div>
-        {resized && (
-          <button
-            onClick={() => dispatch({ type: "RESET_FURNITURE_SIZE", furnitureId: piece.id })}
-            className="mt-1 rounded bg-gray-800 px-2 py-1 text-xs text-gray-300 hover:bg-gray-700"
-          >
-            Reset to catalog size ({entry.widthIn}″ × {entry.depthIn}″)
-          </button>
-        )}
+        <FurnitureSizeEditor piece={piece} entry={entry} dispatch={dispatch} />
+        <CabinetPriceLine piece={piece} design={design} dispatch={dispatch} books={priceBooks} />
         <label className="block text-xs text-gray-400">
           Unit cost ($)
           <input

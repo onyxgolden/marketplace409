@@ -180,7 +180,8 @@ describe("furnitureCatalog", () => {
     it("groups the new fixtures under their catalog categories", () => {
       const groups = catalogByCategory();
       const expected = {
-        kitchen: ["cabinet-base-24", "cabinet-sink-36", "cabinet-wall-24", "cabinet-pantry-24", "sink-kitchen-33"],
+        kitchen: ["sink-kitchen-33"],
+        cabinets: ["cabinet-base-24", "cabinet-sink-36", "cabinet-wall-24", "cabinet-pantry-24"],
         bath: ["shower-48x36", "sink-pedestal", "sink-bath-round"],
         laundry: ["water-heater", "utility-sink"],
       };

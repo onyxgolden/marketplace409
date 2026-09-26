@@ -177,6 +177,7 @@ describe("sizeFieldsForSelection", () => {
       fields: [
         { key: "widthIn", label: "Width", valueIn: 84 },
         { key: "depthIn", label: "Depth", valueIn: 36 },
+        { key: "heightIn", label: "Height", valueIn: 34 },
       ],
     });
     expect(sizeFieldsForSelection({ kind: "room", id: "r" }, design)).toBeNull();
@@ -233,5 +234,17 @@ describe("popupAnchorForSelection", () => {
     expect(popupAnchorForSelection({ kind: "opening", id: openingId }, design)).toEqual({ x: 42, y: h + 6, z: 0 });
     expect(popupAnchorForSelection({ kind: "furniture", id: furnitureId }, design)).toEqual({ x: 60, y: 34 + 12, z: 60 });
     expect(popupAnchorForSelection({ kind: "wall", id: "gone" }, design)).toBeNull();
+  });
+});
+
+describe("3D size popup — height and mounting height", () => {
+  it("adds Mount for wall cabinets and turns edits into actions", () => {
+    let design = placeFurniture(createEmptyDesign("Plan"), "cabinet-wall-24", 0, 0);
+    const sel = { kind: "furniture", id: design.furniture[0].id };
+    expect(sizeFieldsForSelection(sel, design).fields.map((f) => f.key)).toEqual(["widthIn", "depthIn", "heightIn", "mountIn"]);
+    expect(sizeEditAction(sel, design, "heightIn", "42").action).toMatchObject({ type: "RESIZE_FURNITURE", widthIn: 24, depthIn: 12, heightIn: 42 });
+    expect(sizeEditAction(sel, design, "mountIn", "4'6\"").action).toEqual({ type: "SET_FURNITURE_MOUNT", furnitureId: sel.id, mountIn: 54 });
+    expect(sizeEditAction(sel, design, "mountIn", "0").action.mountIn).toBe(0);
+    expect(sizeEditAction(sel, design, "heightIn", "0").error).toBeTruthy();
   });
 });
