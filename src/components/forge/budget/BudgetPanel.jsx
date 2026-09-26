@@ -14,6 +14,7 @@ import { lineVarianceCents, varianceLabel } from "@/domains/budgeting/budgetVari
 import { categoryFamilyOf } from "@/domains/budgeting/categoryFamily";
 import { monthlyEquivalentAmount } from "@/domains/financial-event/detectRecurringPayments";
 import BudgetPieChart from "@/components/forge/budget/BudgetPieChart";
+import BootstrapConfirmPanel from "@/components/forge/budget/BootstrapConfirmPanel";
 import RetirementNumberCard from "@/components/forge/budget/RetirementNumberCard";
 import ScreenHeadlineNumber from "@/components/forge/ScreenHeadlineNumber";
 import { describeLeftToSpend } from "@/components/forge/budget/budgetHeadline";
@@ -45,6 +46,18 @@ function currentMonth() {
 // Stable empty collections for the budget slice -- downstream memos must never
 // see a fresh array literal on every render.
 const EMPTY_BUDGET_LINES = [];
+
+// First-run bootstrap dismissal, persisted per scope so "I'll build it myself"
+// sticks across visits.
+const BOOTSTRAP_DISMISS_KEY = "forge:budget:bootstrap-dismissed";
+
+function readDismissedScopes() {
+  try {
+    return JSON.parse(localStorage.getItem(BOOTSTRAP_DISMISS_KEY) ?? "{}") ?? {};
+  } catch {
+    return {};
+  }
+}
 
 function monthLabel(month) {
   const [year, monthNumber] = month.split("-").map(Number);
@@ -140,6 +153,31 @@ export default function BudgetPanel() {
   const [removingCategoryId, setRemovingCategoryId] = useState(null);
   const [savingNoteCategoryId, setSavingNoteCategoryId] = useState(null);
   const [manualLabel, setManualLabel] = useState("");
+  // Browser-guarded lazy init: reading localStorage during the initial render
+  // breaks server rendering (the API doesn't exist there), so the server gets
+  // the empty default and the client reads the persisted value on first render.
+  // (An effect-based hydration would flash the bootstrap prompt on every load
+  // for users who already dismissed it.)
+  const [dismissedScopes, setDismissedScopes] = useState(() =>
+    typeof window === "undefined" ? {} : readDismissedScopes()
+  );
+
+  // First-run bootstrap: when the user has no budget lines yet for this scope,
+  // start them on the pre-checked confirmation screen instead of a blank form.
+  // Dismissing ("I'll build it myself") falls back to the manual/suggestion
+  // flow and is remembered per scope.
+  const dismissBootstrap = useCallback(() => {
+    setDismissedScopes((previous) => {
+      const next = { ...previous, [scope]: true };
+      try {
+        localStorage.setItem(BOOTSTRAP_DISMISS_KEY, JSON.stringify(next));
+      } catch {
+        // Private mode etc. -- dismissal just lasts the session.
+      }
+      return next;
+    });
+  }, [scope]);
+  const showBootstrap = budgetAvailable && lines.length === 0 && !dismissedScopes[scope];
 
   // Families, not exact categories: a planned "dining_drinks_restaurants" line already covers the
   // "dining_drinks" family, so the family suggestion must not reappear as addable.
@@ -466,6 +504,15 @@ export default function BudgetPanel() {
             </div>
           ) : null}
 
+          {showBootstrap ? (
+            <BootstrapConfirmPanel
+              scope={scope}
+              month={month}
+              onConfirmed={refresh}
+              onDismissed={dismissBootstrap}
+            />
+          ) : (
+            <>
           {lines.length === 0 ? (
             <div className="mt-6">
               <ForgeEmptyState
@@ -617,6 +664,8 @@ export default function BudgetPanel() {
               </button>
             </form>
           </div>
+            </>
+          )}
         </>
       ) : null}
     </section>
