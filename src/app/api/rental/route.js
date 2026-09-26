@@ -6,6 +6,8 @@ import { createRentalTenant } from "@/domains/rental-tenant";
 import { createRentalLease } from "@/domains/rental-lease";
 import { createRentSchedule } from "@/domains/rent-schedule";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
+import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
+import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintString } from "@/domains/rental-tenant/tenantInviteEmail";
 
 function badRequest(message) { return NextResponse.json({ error: message }, { status: 400 }); }
 function now() { return new Date().toISOString(); }
@@ -42,7 +44,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_units")
         .select("id, property_id, label, status, photo_bucket, photo_object_path").order("label", { ascending: true }),
       authenticated.supabaseClient.from("rental_tenants")
-        .select("id, display_name, email, phone, work_phone, employer_name, employer_phone, monthly_income_cents, emergency_contact_name, emergency_contact_phone, application_status, application_submitted_at, screening_provider, screening_reference, screening_status, screening_completed_at, ssn_last_four, landlord_notes, status, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
+        .select("id, display_name, email, phone, work_phone, employer_name, employer_phone, monthly_income_cents, emergency_contact_name, emergency_contact_phone, application_status, application_submitted_at, screening_provider, screening_reference, screening_status, screening_completed_at, ssn_last_four, landlord_notes, status, invited_at, auth_user_id, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
       authenticated.supabaseClient.from("rent_schedules")
         .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date, collection_mode, collection_provider, forge_cutover_date")
         .order("effective_start_date", { ascending: false }),
@@ -258,6 +260,72 @@ export async function POST(request) {
         if (error) throw error;
         if (!data) return NextResponse.json({ error: "Only an unlinked tenant email can be changed." }, { status: 409 });
         return NextResponse.json({ success: true, tenant: data });
+      }
+      case "send-tenant-invite": {
+        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot send tenant invites." }, { status: 403 });
+        if (typeof body.tenantId !== "string" || body.tenantId.trim() === "") return badRequest("tenantId is required.");
+        const tenantId = body.tenantId.trim();
+        // Owner-scoped lookup: a tenant from another workspace resolves to 404,
+        // never a 403 that would leak its existence.
+        const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
+          .select("id, display_name, email, status, auth_user_id").eq("owner_id", effectiveOwnerId).eq("id", tenantId).maybeSingle();
+        if (tenantError) throw tenantError;
+        if (!tenant) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
+        if (tenant.auth_user_id) return NextResponse.json({ error: "This tenant already has portal access." }, { status: 409 });
+        const email = (tenant.email || "").trim().toLowerCase();
+        if (!/^\S+@\S+\.\S+$/.test(email)) return badRequest("The tenant does not have a valid email address.");
+
+        let leaseSummary = null;
+        if (typeof body.leaseId === "string" && body.leaseId.trim() !== "") {
+          const leaseId = body.leaseId.trim();
+          const { data: link, error: linkError } = await authenticated.supabaseClient.from("rental_lease_tenants")
+            .select("lease_id").eq("owner_id", effectiveOwnerId).eq("lease_id", leaseId).eq("tenant_id", tenantId).maybeSingle();
+          if (linkError) throw linkError;
+          if (!link) return NextResponse.json({ error: "The tenant is not on that lease." }, { status: 409 });
+          const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+            .select("unit_id, start_date, monthly_rent_cents").eq("owner_id", effectiveOwnerId).eq("id", leaseId).maybeSingle();
+          if (leaseError) throw leaseError;
+          if (lease) {
+            const { data: unit, error: unitError } = await authenticated.supabaseClient.from("rental_units")
+              .select("label").eq("owner_id", effectiveOwnerId).eq("id", lease.unit_id).maybeSingle();
+            if (unitError) throw unitError;
+            leaseSummary = { unitLabel: unit?.label || "your rental", monthlyRentCents: lease.monthly_rent_cents, startDate: lease.start_date };
+          }
+        }
+
+        const asOfDate = timestamp.slice(0, 10);
+        const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://marketplace409.vercel.app").replace(/\/$/, "");
+        const rendered = buildTenantInviteEmail({
+          tenantName: tenant.display_name, tenantEmail: email, leaseSummary,
+          portalUrl: `${siteUrl}/forge/rental/portal`,
+        });
+        // The recipient always comes from the owner's own tenant record — never
+        // free-form input — so this endpoint cannot be repurposed as a relay.
+        // The per-day-per-invitation idempotency key is forwarded as the
+        // provider idempotency key: a double click or retried request resolves
+        // to a single email, while a corrected email or lease summary gets a
+        // fresh key and actually sends.
+        try {
+          await createResendRentalEmailProvider().send({
+            id: buildTenantInviteIdempotencyKey({
+              tenantId,
+              asOfDate,
+              payloadFingerprint: fingerprintString(`${rendered.subject}\n${rendered.bodyText}`),
+            }),
+            senderName: "FORGE Rental Manager",
+            senderEmail: process.env.RENTAL_EMAIL_SENDER || "rentals@mail.409marketplace.online",
+            recipient: email, subject: rendered.subject, bodyText: rendered.bodyText,
+          });
+        } catch (sendError) {
+          console.error("Tenant invite email failed", { tenantId, code: sendError?.name || "unknown" });
+          return NextResponse.json({ error: "The invite email could not be sent. Please try again." }, { status: 502 });
+        }
+        // invited_at is a UI convenience ("Invite sent <date>"), not the
+        // delivery ledger: a failed send never reaches this update.
+        const { error: updateError } = await authenticated.supabaseClient.from("rental_tenants")
+          .update({ invited_at: timestamp, updated_at: timestamp }).eq("owner_id", effectiveOwnerId).eq("id", tenantId);
+        if (updateError) throw updateError;
+        return NextResponse.json({ success: true, tenantId, invitedAt: timestamp });
       }
       case "update-tenant-profile": {
         if (typeof body.tenantId !== "string" || body.tenantId.trim() === "") return badRequest("tenantId is required.");
