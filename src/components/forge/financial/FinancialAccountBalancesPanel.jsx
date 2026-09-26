@@ -586,7 +586,9 @@ export default function FinancialAccountBalancesPanel({ onSelectAccount, selecte
     fetchAccountBalanceTree,
     { ttlMs: 60_000 },
   );
-  const [collapsedKeys, setCollapsedKeys] = useState(() => new Set(["banking", "investments", "assets", "liabilities"]));
+  // Groups default to expanded so the panel never reads empty on first load;
+  // the user's collapse choices apply within the session from there.
+  const [collapsedKeys, setCollapsedKeys] = useState(() => new Set());
 
   const groups = useMemo(
     () => (data ? buildTree(data, refresh, onSelectAccount, selectedAccountId) : []),

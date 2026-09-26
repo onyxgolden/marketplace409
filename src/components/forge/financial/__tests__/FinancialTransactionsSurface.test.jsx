@@ -83,7 +83,7 @@ describe(
         );
 
         expect(markup).toContain(
-          "Recent transactions",
+          "All transactions",
         );
 
         expect(markup).toContain(
@@ -170,8 +170,69 @@ describe(
 
     it("shows no Back control and the default heading when accountName/onBack are not provided", () => {
       mounted = mount(<FinancialTransactionsSurface transactions={[]} />);
-      expect(mounted.container.querySelector("[data-financial-activity-heading]").textContent).toBe("Recent transactions");
+      expect(mounted.container.querySelector("[data-financial-activity-heading]").textContent).toBe("All transactions");
       expect(mounted.container.textContent).not.toContain("Back to overview");
+    });
+
+    it("paginates long lists with a Show more control instead of rendering every row", () => {
+      const transactions = Array.from({ length: 60 }, (_, index) => ({
+        id: `transaction-${index}`,
+        eventDate: "2026-08-01",
+        description: `Transaction ${index}`,
+        propertyName: "4800 Kent Ave",
+        categoryLabel: "Rental Income",
+        sourceSystem: "Plaid",
+        amount: "$10.00",
+        isIncome: true,
+      }));
+      mounted = mount(<FinancialTransactionsSurface transactions={transactions} />);
+
+      const rows = () => mounted.container.querySelectorAll("tbody tr");
+      expect(rows().length).toBe(25);
+      expect(mounted.container.textContent).toContain("25 of 60 shown");
+
+      const showMore = Array.from(mounted.container.querySelectorAll("button")).find((button) =>
+        button.textContent.includes("Show more")
+      );
+      expect(showMore).toBeTruthy();
+      act(() => { showMore.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+      expect(rows().length).toBe(50);
+      expect(mounted.container.textContent).toContain("50 of 60 shown");
+
+      const showMoreAgain = Array.from(mounted.container.querySelectorAll("button")).find((button) =>
+        button.textContent.includes("Show more")
+      );
+      act(() => { showMoreAgain.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+      expect(rows().length).toBe(60);
+      expect(mounted.container.textContent).toContain("60 shown");
+      expect(
+        Array.from(mounted.container.querySelectorAll("button")).some((button) =>
+          button.textContent.includes("Show more")
+        )
+      ).toBe(false);
+    });
+
+    it("renders short lists fully with no Show more control", () => {
+      const transactions = Array.from({ length: 8 }, (_, index) => ({
+        id: `transaction-${index}`,
+        eventDate: "2026-08-01",
+        description: `Transaction ${index}`,
+        propertyName: "4800 Kent Ave",
+        categoryLabel: "Rental Income",
+        sourceSystem: "Plaid",
+        amount: "$10.00",
+        isIncome: true,
+      }));
+      mounted = mount(<FinancialTransactionsSurface transactions={transactions} />);
+      expect(mounted.container.querySelectorAll("tbody tr").length).toBe(8);
+      expect(mounted.container.textContent).toContain("8 shown");
+      expect(
+        Array.from(mounted.container.querySelectorAll("button")).some((button) =>
+          button.textContent.includes("Show more")
+        )
+      ).toBe(false);
     });
   },
 );

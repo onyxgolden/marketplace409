@@ -200,8 +200,8 @@ export default function ForgeApplicationRail({
   ] = useState(false);
 
   // /forge/rental, /forge/developer, /forge/scheduling, /forge/designer,
-  // /forge/private-financing, and /forge/reservations are their own promoted
-  // workspaces now — their nested layouts already
+  // /forge/private-financing, /forge/reservations, and /forge/charts are their
+  // own promoted workspaces now — their nested layouts already
   // supply WorkspaceShell, so this rail must not wrap them in Forge's own
   // chrome as well.
   if (isPromotedSubtree(pathname)) {

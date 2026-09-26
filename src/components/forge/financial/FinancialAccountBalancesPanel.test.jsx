@@ -322,7 +322,7 @@ describe("FinancialAccountBalancesPanel", () => {
     expect(mounted.container.querySelector("[data-net-worth]").textContent).toBe("$171,017.42");
   });
 
-  it("starts top-level groups collapsed and expands them on click", async () => {
+  it("starts top-level groups expanded and collapses them on click", async () => {
     stubFetch({
       accountBalances: {
         success: true,
@@ -332,17 +332,18 @@ describe("FinancialAccountBalancesPanel", () => {
     mounted = mount(<FinancialAccountBalancesPanel />);
     await flush();
 
+    // Expanded by default so the panel never reads empty on first load.
     const group = mounted.container.querySelector('[data-account-category="banking"]');
-    expect(group.querySelector('[data-account-balance-row="acct-1"]')).toBeNull();
-    expect(group.querySelector("button").getAttribute("aria-expanded")).toBe("false");
+    expect(group.querySelector('[data-account-balance-row="acct-1"]')).not.toBeNull();
+    expect(group.querySelector("button").getAttribute("aria-expanded")).toBe("true");
 
     const toggle = group.querySelector("button");
     act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(group.querySelector('[data-account-balance-row="acct-1"]')).not.toBeNull();
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(group.querySelector('[data-account-balance-row="acct-1"]')).toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
 
     act(() => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(group.querySelector('[data-account-balance-row="acct-1"]')).toBeNull();
+    expect(group.querySelector('[data-account-balance-row="acct-1"]')).not.toBeNull();
   });
 
   it("lets an existing asset's value be updated via the Edit link, without touching its name or class", async () => {

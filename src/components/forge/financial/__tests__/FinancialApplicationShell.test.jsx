@@ -332,8 +332,7 @@ describe(
         expect(mounted.container.querySelector("[data-financial-forge-overview]")).not.toBeNull();
         expect(mounted.container.querySelector("[data-transactions-function]")).toBeNull();
 
-        const bankingGroup = mounted.container.querySelector('[data-account-category="banking"]');
-        act(() => { bankingGroup.querySelector("button").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+        // Banking starts expanded, so the account row is already visible.
         const accountButton = mounted.container.querySelector('[data-account-balance-row="acct-bank"] button');
         act(() => { accountButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 
@@ -358,8 +357,7 @@ describe(
         mounted = mount(<FinancialApplicationShell activeFunctionId="overview" allScopeTransactionPresentations={[]} />);
         await flush();
 
-        const bankingGroup = mounted.container.querySelector('[data-account-category="banking"]');
-        act(() => { bankingGroup.querySelector("button").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+        // Banking starts expanded, so the account row is already visible.
         const accountButton = mounted.container.querySelector('[data-account-balance-row="acct-bank"] button');
         act(() => { accountButton.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
         expect(mounted.container.querySelector("[data-transactions-function]")).not.toBeNull();
@@ -382,6 +380,29 @@ describe(
         act(() => { importLink.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 
         expect(onFunctionChange).toHaveBeenCalledWith("import");
+      });
+
+      it("passes the full transaction list to the Transactions function, not just the 8-item overview preview", async () => {
+        stubAccountBalancesFetch();
+        const allScopeTransactionPresentations = Array.from({ length: 12 }, (_, index) => ({
+          id: `tx-${index}`,
+          financialAccountId: "acct-bank",
+          eventDate: "2026-08-01",
+          categoryLabel: "Rent Collected",
+          amount: "$100.00",
+          isIncome: true,
+        }));
+        mounted = mount(
+          <FinancialApplicationShell activeFunctionId="transactions" allScopeTransactionPresentations={allScopeTransactionPresentations} />,
+        );
+        await flush();
+
+        const surface = mounted.container.querySelector("[data-transactions-function]");
+        expect(surface).not.toBeNull();
+        const rows = Array.from(surface.querySelectorAll("[data-mock-transaction-ids] li"));
+        expect(rows.length).toBe(12);
+        expect(rows[0].textContent).toContain("tx-0");
+        expect(rows[11].textContent).toContain("tx-11");
       });
     });
 

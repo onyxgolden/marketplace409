@@ -92,10 +92,14 @@ export function buildFinancialActiveSurface({
 }) {
   switch (activeFunctionId) {
     case "transactions":
+      // The dedicated Transactions surface shows the full history with
+      // client-side "show more" pagination -- not the 8-item recent preview
+      // the overview uses. allScopeTransactionPresentations is already shaped
+      // for FinancialTransactionsSurface.
       return (
         <FinancialTransactionsSurface
           loadState={loadState}
-          transactions={transactions}
+          transactions={allScopeTransactionPresentations || []}
         />
       );
 
