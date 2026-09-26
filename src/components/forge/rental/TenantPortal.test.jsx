@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import TenantPortal, { buildTenantPaymentSummary, isChargePayableThroughForge, isValidPublishableKey, paymentPendingForCharge, resumablePaymentForCharge } from "./TenantPortal.jsx";
+import { clearSWRCache } from "../../../hooks/swrCache.js";
 
 const forgeSchedule = { id: "schedule_1", collectionMode: "forge", forgeCutoverDate: "2026-01-01" };
 const externalSchedule = { id: "schedule_2", collectionMode: "external", forgeCutoverDate: null };
@@ -301,5 +302,60 @@ describe("TenantPortal Stripe initialization failure", () => {
 
     await clickButtonAndFlush(findButtonByText(container, "Back to balance"));
     expect(container.textContent).toContain("Current balance");
+  });
+});
+
+// Signed-out tenant experience: opening the portal link in a browser with no FORGE session
+// must render a sign-in prompt — never the API's raw 401 message.
+describe("TenantPortal signed-out state", () => {
+  let mounted;
+  afterEach(() => {
+    if (mounted) { unmountPanel(mounted); mounted = null; }
+    vi.unstubAllGlobals();
+  });
+
+  it("shows a sign-in prompt instead of the raw 401 error when the portal API reports no session", async () => {
+    clearSWRCache();
+    const fetchMock = vi.fn(() => Promise.resolve({
+      ok: false, status: 401, json: async () => ({ error: "Authenticated owner id is required." }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountPanel(<TenantPortal />);
+    const { container } = mounted;
+
+    await act(async () => {
+      await Promise.resolve(); await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/rental/portal");
+    expect(container.textContent).toContain("Sign in to view your tenant portal");
+    expect(container.textContent).not.toContain("Authenticated owner id is required");
+    const signInLink = container.querySelector('a[href="/auth?next=/forge/rental/portal"]');
+    expect(signInLink).not.toBeNull();
+    expect(signInLink.textContent).toContain("Sign in");
+  });
+
+  it("keeps the generic error state for non-401 portal failures", async () => {
+    clearSWRCache();
+    const fetchMock = vi.fn(() => Promise.resolve({
+      ok: false, status: 500, json: async () => ({ error: "Database unavailable." }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountPanel(<TenantPortal />);
+    const { container } = mounted;
+
+    await act(async () => {
+      await Promise.resolve(); await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Unable to load your tenant portal.");
+    expect(container.textContent).toContain("Database unavailable.");
+    expect(container.textContent).not.toContain("Sign in to view your tenant portal");
   });
 });
