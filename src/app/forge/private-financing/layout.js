@@ -9,5 +9,5 @@ import WorkspaceShell from "@/components/workspace-shell";
 // /forge/rental/portal treatment (see its layout's comment); a
 // borrower-specific layout carve-out would be a separate task.
 export default function PrivateFinancingWorkspaceLayout({ children }) {
-  return <WorkspaceShell>{children}</WorkspaceShell>;
+  return <WorkspaceShell forgeCommandPalette>{children}</WorkspaceShell>;
 }

@@ -5,5 +5,5 @@ import WorkspaceShell from "@/components/workspace-shell";
 // (loadProgrammerAuthorization + notFound()), not by this layout — this
 // layout only supplies the shared chrome.
 export default function DevWorkspaceLayout({ children }) {
-  return <WorkspaceShell>{children}</WorkspaceShell>;
+  return <WorkspaceShell forgeCommandPalette>{children}</WorkspaceShell>;
 }
