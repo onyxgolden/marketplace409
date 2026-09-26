@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { signOutSafely } from "@/lib/auth/signOutSafely.js";
+import { friendlySignOutError, signOutSafely } from "@/lib/auth/signOutSafely.js";
 import { useCredentialAuth } from "@/lib/auth/useCredentialAuth.js";
 import { useLoginSafety } from "@/lib/auth/useLoginSafety.js";
 
@@ -26,6 +26,7 @@ export default function WorkspaceAccountPanel({ initialUser = undefined }) {
   const [supabase] = useState(() => createClient());
   const [user, setUser] = useState(initialUser);
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState("");
 
   // Reports each SIGNED_IN event to /api/auth/record-login once per session
   // for new-location alerting. Alert-only: never blocks or delays the login.
@@ -57,17 +58,25 @@ export default function WorkspaceAccountPanel({ initialUser = undefined }) {
 
   const {
     email, setEmail, password, setPassword, message, authAction, authActionPending, signIn, signUp,
+    resetPassword: resetPasswordViaHook,
   } = useCredentialAuth({ supabase, emailRedirectTo: () => `${window.location.origin}/` });
 
   async function handleSignOut() {
     if (signingOut) return;
     setSigningOut(true);
+    setSignOutError("");
     const result = await signOutSafely({ supabase, redirectTo: "/" });
     if (!result.success) {
       setSigningOut(false);
-      alert(result.error.message);
+      setSignOutError(friendlySignOutError(result.error));
     }
     // On success, signOutSafely() has already navigated away.
+  }
+
+  // Same reset-password hook /auth uses, so this panel's signed-out state offers the same
+  // "Forgot password?" path without duplicating the logic.
+  function handleResetPassword() {
+    return resetPasswordViaHook({ redirectTo: `${window.location.origin}/auth/reset-password` });
   }
 
   if (user === undefined) {
@@ -92,6 +101,11 @@ export default function WorkspaceAccountPanel({ initialUser = undefined }) {
         >
           {signingOut ? "Signing out…" : "Sign Out"}
         </button>
+        {signOutError ? (
+          <p role="alert" className="w-full text-sm font-semibold text-red-700 dark:text-red-300">
+            {signOutError}
+          </p>
+        ) : null}
       </div>
     );
   }
@@ -101,40 +115,56 @@ export default function WorkspaceAccountPanel({ initialUser = undefined }) {
       <p className="mb-3 text-sm font-bold text-slate-600 dark:text-slate-300">
         Sign in or create an account to see your workspaces.
       </p>
-      <div className="flex flex-wrap items-end gap-3">
-        <input
-          type="email"
-          placeholder="Email"
-          aria-label="Email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          aria-label="Password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
-        />
-        <button
-          type="button"
-          onClick={signIn}
-          disabled={authActionPending}
-          className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-black uppercase tracking-wide text-white transition hover:bg-slate-800 disabled:opacity-60 dark:bg-amber-400 dark:text-slate-950"
-        >
-          {authAction === "signIn" ? "Signing in…" : "Sign In"}
-        </button>
-        <button
-          type="button"
-          onClick={signUp}
-          disabled={authActionPending}
-          className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-black uppercase tracking-wide text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
-        >
-          {authAction === "signUp" ? "Creating account…" : "Create Account"}
-        </button>
-      </div>
+      {/* Real <form> so Enter submits the primary action (Sign In). Create Account and
+         Forgot password? stay type="button" so Enter never fires them by accident. */}
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          signIn();
+        }}
+      >
+        <div className="flex flex-wrap items-end gap-3">
+          <input
+            type="email"
+            placeholder="Email"
+            aria-label="Email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+          />
+          <input
+            type="password"
+            placeholder="Password"
+            aria-label="Password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+          />
+          <button
+            type="submit"
+            disabled={authActionPending}
+            className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-black uppercase tracking-wide text-white transition hover:bg-slate-800 disabled:opacity-60 dark:bg-amber-400 dark:text-slate-950"
+          >
+            {authAction === "signIn" ? "Signing in…" : "Sign In"}
+          </button>
+          <button
+            type="button"
+            onClick={signUp}
+            disabled={authActionPending}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-black uppercase tracking-wide text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+          >
+            {authAction === "signUp" ? "Creating account…" : "Create Account"}
+          </button>
+        </div>
+      </form>
+      <button
+        type="button"
+        onClick={handleResetPassword}
+        disabled={authActionPending}
+        className="mt-3 text-sm font-semibold text-slate-600 underline disabled:opacity-60 dark:text-slate-300"
+      >
+        {authAction === "resetPassword" ? "Sending reset link…" : "Forgot password?"}
+      </button>
       {message ? (
         <p role="status" className="mt-3 text-sm font-semibold text-slate-600 dark:text-slate-300">
           {message}

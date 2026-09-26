@@ -44,44 +44,51 @@ export default function ResetPasswordPage() {
           <h1 className="mb-4 text-4xl font-extrabold">Reset password</h1>
           <p className="mb-8 text-gray-600">Choose a new password for your 409 Marketplace account.</p>
 
-          <div className="relative mb-4">
-            <input
-              aria-label="New password"
-              className="w-full rounded-xl border px-4 py-4 pr-20"
-              placeholder="New password"
-              type={showPassword ? "text" : "password"}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword((visible) => !visible)}
-              className="absolute inset-y-0 right-0 px-4 font-semibold text-blue-900"
-              aria-label={showPassword ? "Hide passwords" : "Show passwords"}
-            >
-              {showPassword ? "Hide" : "Show"}
-            </button>
-          </div>
-
-          <input
-            aria-label="Confirm new password"
-            className="mb-6 w-full rounded-xl border px-4 py-4"
-            placeholder="Confirm new password"
-            type={showPassword ? "text" : "password"}
-            value={confirmation}
-            onChange={(event) => setConfirmation(event.target.value)}
-          />
-
-          {message ? <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-950">{message}</p> : null}
-
-          <button
-            type="button"
-            onClick={updatePassword}
-            disabled={saving}
-            className="w-full rounded-2xl bg-blue-900 py-4 text-xl font-bold text-white disabled:opacity-60"
+          {/* Real <form> so Enter submits -- the Show/Hide toggle stays type="button". */}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              updatePassword();
+            }}
           >
-            {saving ? "Updating password…" : "Update password"}
-          </button>
+            <div className="relative mb-4">
+              <input
+                aria-label="New password"
+                className="w-full rounded-xl border px-4 py-4 pr-20"
+                placeholder="New password"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                className="absolute inset-y-0 right-0 px-4 font-semibold text-blue-900"
+                aria-label={showPassword ? "Hide passwords" : "Show passwords"}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+
+            <input
+              aria-label="Confirm new password"
+              className="mb-6 w-full rounded-xl border px-4 py-4"
+              placeholder="Confirm new password"
+              type={showPassword ? "text" : "password"}
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+            />
+
+            {message ? <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-950">{message}</p> : null}
+
+            <button
+              type="submit"
+              disabled={saving}
+              className="w-full rounded-2xl bg-blue-900 py-4 text-xl font-bold text-white disabled:opacity-60"
+            >
+              {saving ? "Updating password…" : "Update password"}
+            </button>
+          </form>
 
           <a href="/auth" className="mt-5 block text-center font-semibold text-blue-900 underline">Return to sign in</a>
         </div>

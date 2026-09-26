@@ -5,11 +5,14 @@ import {
   usePathname,
 } from "next/navigation";
 import {
+  useEffect,
+  useRef,
   useState,
 } from "react";
 import { LayoutGrid } from "lucide-react";
 
 import {
+  AccountMenu,
   WorkspaceLinks,
   WorkspaceRightRail,
 } from "@/components/workspace-shell";
@@ -149,6 +152,11 @@ function ForgeApplicationLinks({
                   ? undefined
                   : application.label
               }
+              aria-label={
+                expanded
+                  ? undefined
+                  : application.label
+              }
               aria-current={
                 active
                   ? "page"
@@ -156,7 +164,7 @@ function ForgeApplicationLinks({
               }
               onClick={onNavigate}
               className={[
-                "flex min-h-12 items-center rounded-xl border text-sm font-black transition",
+                "group relative flex min-h-12 items-center rounded-xl border text-sm font-black transition",
                 expanded
                   ? "gap-3 px-3"
                   : "justify-center px-2",
@@ -174,6 +182,18 @@ function ForgeApplicationLinks({
 
               {expanded && (
                 <span className="truncate">
+                  {application.label}
+                </span>
+              )}
+
+              {/* Icon-only when collapsed: keyboard users get no visible label from `title`
+                 alone, so mirror the hover tooltip on :focus-visible as well. aria-hidden
+                 because the link's aria-label already announces the name. */}
+              {!expanded && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:opacity-100 group-focus-visible:opacity-100"
+                >
                   {application.label}
                 </span>
               )}
@@ -198,6 +218,21 @@ export default function ForgeApplicationRail({
     mobileOpen,
     setMobileOpen,
   ] = useState(false);
+  const drawerCloseRef =
+    useRef(null);
+
+  // Mobile drawer: Escape closes it, tapping the backdrop closes it, and focus moves to the
+  // close control when it opens so keyboard users land inside the drawer instead of staying
+  // behind it.
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    drawerCloseRef.current?.focus();
+    function onKeyDown(event) {
+      if (event.key === "Escape") setMobileOpen(false);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [mobileOpen]);
 
   // /forge/rental, /forge/developer, /forge/scheduling, /forge/designer,
   // /forge/private-financing, and /forge/reservations are their own promoted
@@ -280,13 +315,22 @@ export default function ForgeApplicationRail({
         <Link
           href="/?chooseWorkspace=1"
           title={expanded ? undefined : "All apps"}
+          aria-label={expanded ? undefined : "All apps"}
           className={[
-            "mb-5 flex min-h-12 items-center rounded-xl border border-white/10 bg-white/5 text-sm font-black text-slate-300 transition hover:bg-white/10 hover:text-white",
+            "group relative mb-5 flex min-h-12 items-center rounded-xl border border-white/10 bg-white/5 text-sm font-black text-slate-300 transition hover:bg-white/10 hover:text-white",
             expanded ? "gap-3 px-3" : "justify-center px-2",
           ].join(" ")}
         >
           <LayoutGrid aria-hidden="true" className="h-5 w-5 shrink-0" />
           {expanded && <span>All apps</span>}
+          {!expanded && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:opacity-100 group-focus-visible:opacity-100"
+            >
+              All apps
+            </span>
+          )}
         </Link>
 
         {/* Outer cross-workspace switcher — identical to WorkspaceShell's,
@@ -322,6 +366,11 @@ export default function ForgeApplicationRail({
           </Link>
 
           <div className="flex items-center gap-2">
+            {/* Phone users previously had no way to reach the account menu at all -- sign-out
+               required desktop width. The same shared account menu the desktop rail uses, now
+               in the mobile header. */}
+            <AccountMenu tone="light" />
+
             <ThemeToggle
               compact
               menuAlign="bottom-right"
@@ -348,8 +397,14 @@ export default function ForgeApplicationRail({
         </header>
 
         {mobileOpen && (
-          <div className="fixed inset-0 z-50 bg-slate-950/50 p-4 lg:hidden">
-            <aside className="ml-auto flex h-full w-full max-w-xs flex-col rounded-2xl bg-slate-950 p-4 text-white shadow-2xl">
+          <div className="fixed inset-0 z-50 bg-slate-950/50 p-4 lg:hidden" onClick={() => setMobileOpen(false)}>
+            <aside
+              role="dialog"
+              aria-modal="true"
+              aria-label="Forge navigation"
+              onClick={(event) => event.stopPropagation()}
+              className="ml-auto flex h-full w-full max-w-xs flex-col rounded-2xl bg-slate-950 p-4 text-white shadow-2xl"
+            >
               <div className="mb-5 flex items-center justify-between">
                 <div>
                   <div className="text-xl font-black tracking-[0.18em]">
@@ -361,6 +416,7 @@ export default function ForgeApplicationRail({
                 </div>
 
                 <button
+                  ref={drawerCloseRef}
                   type="button"
                   aria-label="Close Forge navigation"
                   onClick={() =>

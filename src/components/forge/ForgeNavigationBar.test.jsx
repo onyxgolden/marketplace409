@@ -18,7 +18,11 @@ vi.mock("@/lib/supabase/client", () => ({
 // Mocked here so this file can test "did the bar call the shared helper and handle its result"
 // in isolation -- the helper's own cache-clearing/redirect/failure behavior is tested once,
 // directly, in src/lib/auth/signOutSafely.test.js.
-vi.mock("@/lib/auth/signOutSafely.js", () => ({ signOutSafely }));
+vi.mock("@/lib/auth/signOutSafely.js", () => ({
+  signOutSafely,
+  // Pass-through stand-in: the real mapper is tested directly in signOutSafely.test.js.
+  friendlySignOutError: (error) => error?.message ?? "Sign-out didn't complete. Please try again.",
+}));
 
 import ForgeNavigationBar from "./ForgeNavigationBar";
 
@@ -82,7 +86,11 @@ describe("ForgeNavigationBar sign-out control", () => {
     });
 
     expect(signOutButton.disabled).toBe(false);
-    expect(alertSpy).toHaveBeenCalledWith("network error");
+    // No blocking alert() -- the failure renders inline in the bar's own message surface.
+    expect(alertSpy).not.toHaveBeenCalled();
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert.textContent).toContain("network error");
     alertSpy.mockRestore();
   });
 

@@ -15,10 +15,12 @@ import {
 } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
+import { friendlySignOutError, signOutSafely } from "@/lib/auth/signOutSafely.js";
 
 export default function Header() {
   const [user, setUser] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [signOutError, setSignOutError] = useState("");
 
   useEffect(() => {
     loadUser();
@@ -32,13 +34,25 @@ export default function Header() {
     setUser(user);
   }
 
+  // Shared signOutSafely(): clears the IndexedDB Financial Overview dashboard cache
+  // before navigating, and never navigates when the sign-out itself failed -- stale financial
+  // data must not survive a sign-out on a shared device.
   async function handleSignOut() {
-    await supabase.auth.signOut();
-    window.location.href = "/";
+    setSignOutError("");
+    const result = await signOutSafely({ supabase, redirectTo: "/" });
+    if (!result.success) {
+      setSignOutError(friendlySignOutError(result.error));
+    }
+    // On success, signOutSafely() has already navigated away.
   }
 
   return (
     <header className="bg-slate-950 text-white p-4 shadow-lg">
+      {signOutError ? (
+        <p role="alert" className="mx-auto mb-3 max-w-7xl rounded-xl bg-red-900/70 px-4 py-2 text-sm font-bold text-red-100">
+          {signOutError}
+        </p>
+      ) : null}
       <div className="max-w-7xl mx-auto flex justify-between items-center">
         <a href="/" className="text-3xl font-bold">
           409Marketplace
