@@ -69,6 +69,12 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   const [showCreate, setShowCreate] = useState(openCreateTenant || initialTenants.length === 0);
   const [selectedId, setSelectedId] = useState(initialTenants[0]?.id || null);
   const [working, setWorking] = useState(false);
+  // In-app delete confirmation (replaces the native window.confirm): the dialog
+  // below is part of the DOM, so it is visible and clickable in every browser —
+  // including automated ones that auto-dismiss native dialogs, which previously
+  // made the "Delete unused duplicate" button appear completely dead.
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const { menu: contextMenu, onContextMenu, openAt: openContextMenuAt, close: closeContextMenu } = useCardContextMenu();
   // One-time adoption of the loaded dataset (mirrors the old fetch-on-mount): pick
   // the first tenant when nothing is selected yet, and collapse the create form
@@ -124,7 +130,6 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function deleteUnusedTenant(tenant) {
-    if (!window.confirm(`Permanently delete the unassigned duplicate ${tenant.display_name} (${tenant.email})?`)) return;
     setWorking(true); setMessage("");
     try {
       const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
@@ -134,6 +139,12 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       await refresh();
       setMessage(`Deleted unused duplicate: ${result.deletedTenant.display_name}.`);
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
+  function cancelDeleteTarget() { setDeleteTarget(null); setDeleteConfirmText(""); }
+  async function confirmDeleteTarget() {
+    const target = deleteTarget;
+    cancelDeleteTarget();
+    if (target) await deleteUnusedTenant(target);
   }
   async function updateEmail(event, tenantId) {
     event.preventDefault(); setWorking(true); setMessage(""); const form = new FormData(event.currentTarget);
@@ -228,7 +239,26 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
         <LeaseSummary lease={household.lease} unit={household.unit}/>
         <TenantPaymentHistory key={tenant.id} tenantId={tenant.id} tenantName={tenant.display_name} onOpenFullLedger={() => openFullLedger(tenant)} />
         <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id}/>
-        {!leaseMemberships.some((item) => item.tenant_id === tenant.id) && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="text-sm font-bold text-red-900 dark:text-red-200">This tenant is not assigned to any lease.</p><button type="button" disabled={working} onClick={() => deleteUnusedTenant(tenant)} className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Delete unused duplicate</button></div>}
+        {!leaseMemberships.some((item) => item.tenant_id === tenant.id) && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="text-sm font-bold text-red-900 dark:text-red-200">This tenant is not assigned to any lease.</p><button type="button" disabled={working} onClick={() => { setDeleteTarget(tenant); setDeleteConfirmText(""); }} className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Delete unused duplicate</button></div>}
+        {deleteTarget && <div role="alertdialog" aria-modal="true" aria-labelledby="delete-unused-tenant-title" aria-describedby="delete-unused-tenant-desc"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+          onKeyDown={(event) => { if (event.key === "Escape") cancelDeleteTarget(); }}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900">
+            <h3 id="delete-unused-tenant-title" className="text-lg font-black text-slate-950 dark:text-white">Delete unused duplicate?</h3>
+            <p id="delete-unused-tenant-desc" className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+              Permanently delete <strong>{deleteTarget.display_name}</strong> ({deleteTarget.email})? This cannot be undone.
+              Only tenants with no lease, payments, or other rental history can be deleted.</p>
+            <label className="mt-4 block text-sm font-bold text-slate-900 dark:text-white">Type DELETE to confirm
+              <input name="deleteConfirmText" autoFocus value={deleteConfirmText}
+                onChange={(event) => setDeleteConfirmText(event.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-950 dark:text-white" /></label>
+            <div className="mt-5 flex justify-end gap-3">
+              <button type="button" onClick={cancelDeleteTarget} className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-black text-slate-700 dark:border-slate-600 dark:text-slate-200">Cancel</button>
+              <button type="button" disabled={working || deleteConfirmText !== "DELETE"} onClick={confirmDeleteTarget}
+                className="rounded-xl bg-red-700 px-5 py-2.5 text-sm font-black text-white transition disabled:opacity-50">Delete permanently</button>
+            </div>
+          </div>
+        </div>}
         <div className="mt-6 space-y-4"><h3 className="text-xl font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>
         <a href="/auth?next=/forge/rental/portal" className="mt-5 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant sign-in</a></div>; })()}
     </RentalRecordBrowser>}
