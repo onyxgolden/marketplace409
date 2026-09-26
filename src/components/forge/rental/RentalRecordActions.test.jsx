@@ -10,6 +10,14 @@ describe("RentalRecordActions", () => {
     expect(markup).toContain("Inspections");
     expect(markup).toContain("data-rental-record-actions");
   });
+  it("renders the summary button neutral by default and reserves red for destructive entries", () => {
+    const markup = renderToStaticMarkup(<RentalRecordActions label="Property actions" actions={[{ label: "Edit property details", onSelect: vi.fn() }, { label: "Archive duplicate / inactive property", destructive: true, onSelect: vi.fn() }]} />);
+    expect(markup).toContain("Property actions");
+    expect(markup).toContain("border-slate-300");
+    expect(markup).not.toContain("bg-red-600");
+    expect(markup).toContain("Archive duplicate / inactive property");
+    expect(markup).toContain("text-red-700");
+  });
   it("carries a human-readable record label into another workflow",()=>{expect(labelRentalRecordContext({recordType:"tenant",recordId:"tenant_1"},[{id:"tenant_1",display_name:"John Jones"}],"display_name")).toMatchObject({recordId:"tenant_1",recordLabel:"John Jones"})});
   it("collapses the menu before running the selected property action", () => {
     const onSelect = vi.fn();

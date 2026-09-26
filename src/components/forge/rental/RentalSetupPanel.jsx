@@ -86,6 +86,11 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   const openCharges = result?.openCharges || [];
   const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, units, "label"));
   const refreshUnits = refresh;
+  // The panel eyebrow follows the currently selected unit instead of naming a
+  // hardcoded sample property -- the old "Kent Avenue setup" text shipped from
+  // a fixture and was wrong for every other property.
+  const selectedUnit = units.find((item) => item.id === selectedId) || units.find((item) => item.status !== "inactive") || null;
+  const setupEyebrow = selectedUnit ? `${selectedUnit.label || selectedUnit.property_id} setup` : "Rental setup";
 
   if (!result && isLoading) return <ForgeLoadingState label="Loading rental units…" />;
   if (!result && loadError) return <ForgeErrorState title="Unable to load rental units" detail={loadError} onRetry={() => refresh()} />;
@@ -131,7 +136,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-setup>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="max-w-3xl"><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Kent Avenue setup</p>
+        <div className="max-w-3xl"><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">{setupEyebrow}</p>
           <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Rental units</h2>
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review saved units first. Create another unit only as a deliberate action.</p></div>
         {units.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`shrink-0 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a new property / unit</button>}
@@ -154,7 +159,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
             title="Right-click to open the full expenses ledger">
             <CardContextMenu menu={contextMenu} onClose={closeContextMenu} />
             <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Selected unit</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{unit.label}</h3></div>
-              <RentalRecordActions label="Property actions" summaryClassName="cursor-pointer list-none rounded-xl bg-red-600 px-4 py-2 text-sm font-black text-white transition hover:bg-red-700" actions={[{label:"Edit property details",onSelect:()=>{setArchiveCandidateId(null);setEditingId(unit.id);}},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Financial setup",onSelect:()=>onNavigate?.("financial-setup",context)},{label:"Work orders",onSelect:()=>onNavigate?.("maintenance",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)},{label:"Archive duplicate / inactive property",onSelect:()=>{setEditingId(null);setArchiveCandidateId(unit.id);}}]}/>
+              <RentalRecordActions label="Property actions" actions={[{label:"Edit property details",onSelect:()=>{setArchiveCandidateId(null);setEditingId(unit.id);}},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Financial setup",onSelect:()=>onNavigate?.("financial-setup",context)},{label:"Work orders",onSelect:()=>onNavigate?.("maintenance",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)},{label:"Archive duplicate / inactive property",destructive:true,onSelect:()=>{setEditingId(null);setArchiveCandidateId(unit.id);}}]}/>
             </div>
             <div className="mt-4"><RentalPhotoUpload entityType="unit" entityId={unit.id} photoUrl={unit.photo_url} onUploaded={refreshUnits} /></div>
             <PropertyExpenseHistory key={unit.id} propertyId={unit.property_id} propertyLabel={unit.label} />
@@ -166,12 +171,12 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
       </RentalRecordBrowser>}
       {showCreate && <form className="mt-6 grid max-w-4xl gap-4 rounded-2xl border-2 border-sky-500 bg-sky-50 p-5 dark:border-sky-700 dark:bg-sky-950/30 md:grid-cols-2" onSubmit={saveUnit}>
         <div className="md:col-span-2"><h3 className="text-xl font-black text-slate-950 dark:text-white">Create a new property / unit</h3><p className="mt-1 text-sm font-bold text-sky-900 dark:text-sky-200">You are creating a separate record—not editing the property you previously selected. Review the name and property ID before continuing.</p></div>
-        <label className="text-sm font-bold text-slate-900 dark:text-white">Property ID<input name="propertyId" defaultValue="4800-kent-ave" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
-        <label className="text-sm font-bold text-slate-900 dark:text-white">Unit label<input name="label" defaultValue="Main residence" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+        <label className="text-sm font-bold text-slate-900 dark:text-white">Property ID<input name="propertyId" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+        <label className="text-sm font-bold text-slate-900 dark:text-white">Unit label<input name="label" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Bedrooms<input name="bedrooms" type="number" min="0" step="1" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Bathrooms<input name="bathrooms" type="number" min="0" step="0.5" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Square feet<input name="squareFeet" type="number" min="0" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
-        <label className="text-sm font-bold text-slate-900 dark:text-white">Notes<input name="notes" defaultValue="Remodel in progress." className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+        <label className="text-sm font-bold text-slate-900 dark:text-white">Notes<input name="notes" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <div className="md:col-span-2 flex flex-wrap items-center gap-4"><button disabled={working} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working ? "Saving…" : "Review and create property / unit"}</button><button type="button" onClick={() => setShowCreate(false)} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 dark:border-slate-600 dark:text-slate-300">Cancel creation</button>
           {message && <p role="status" className="text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}</div>
       </form>}

@@ -28,8 +28,14 @@ describe("RentalSetupPanel tenant action", () => {
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent.includes("Add a new property")).click());
     expect(container.textContent).toContain("You are creating a separate record");
     expect(container.querySelector("[data-rental-record-browser]")).toBeNull();
-    await act(async () => container.querySelector("form").requestSubmit());
-    expect(globalThis.confirm).toHaveBeenCalledWith(expect.stringContaining("This creates a separate record"));
+    // The create form ships blank now (no sample property data) -- fill it before submitting.
+    await act(async () => {
+      const form = container.querySelector("form");
+      form.querySelector('input[name="propertyId"]').value = "1214-wagner-2";
+      form.querySelector('input[name="label"]').value = "1214 Wagner Unit B";
+      form.requestSubmit();
+    });
+    expect(globalThis.confirm).toHaveBeenCalledWith(expect.stringContaining("1214 Wagner Unit B"));
     // The property card also fetches its own expense history — count only the panel's data load.
     expect(fetch.mock.calls.filter(([url]) => url === "/api/rental")).toHaveLength(1);
   });

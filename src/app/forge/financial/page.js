@@ -68,14 +68,6 @@ function percent(value) {
   return `${(Number(value || 0) * 100).toFixed(1)}%`;
 }
 
-function portfolioMoney(value) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 2,
-  }).format(Number(value || 0));
-}
-
 function displayPropertyName(propertyId) {
   if (!propertyId || propertyId === "unassigned") {
     return "Unassigned";
@@ -116,7 +108,7 @@ function presentTransaction(transaction) {
     description: transaction.description,
     eventDate: transaction.eventDate,
     propertyName: displayPropertyName(transaction.propertyId),
-    amount: portfolioMoney(transaction.amount),
+    amount: money(transaction.amount),
     isIncome: transaction.transactionKind === "income",
     categoryLabel: displayCategory(transaction.category),
     sourceSystem: transaction.sourceSystem,
@@ -359,26 +351,26 @@ export default function FinancialPage() {
         metrics: [
           {
             label: "Imported Income",
-            value: portfolioMoney(periodPortfolio.income),
+            value: money(periodPortfolio.income),
           },
           {
             label: "Imported Expenses",
-            value: portfolioMoney(periodPortfolio.expenses),
+            value: money(periodPortfolio.expenses),
           },
           {
             label: "Accrued Property Costs",
-            value: portfolioMoney(
+            value: money(
               periodPortfolio
                 .accruedOperatingExpenses,
             ),
           },
           {
             label: "NOI",
-            value: portfolioMoney(periodPortfolio.noi),
+            value: money(periodPortfolio.noi),
           },
           {
             label: "Cash Flow",
-            value: portfolioMoney(periodPortfolio.cashFlow),
+            value: money(periodPortfolio.cashFlow),
           },
           {
             label: "Transactions",
@@ -397,16 +389,16 @@ export default function FinancialPage() {
         property.propertyId,
       ),
       transactionCount: property.transactionCount,
-      income: portfolioMoney(property.income),
-      expenses: portfolioMoney(property.expenses),
+      income: money(property.income),
+      expenses: money(property.expenses),
       accruedOperatingExpenses:
-        portfolioMoney(
+        money(
           property
             .accruedOperatingExpenses,
         ),
-      noi: portfolioMoney(property.noi),
+      noi: money(property.noi),
       noiIsNegative: Number(property.noi) < 0,
-      cashFlow: portfolioMoney(property.cashFlow),
+      cashFlow: money(property.cashFlow),
       cashFlowIsNegative:
         Number(property.cashFlow) < 0,
     }),
@@ -416,7 +408,7 @@ export default function FinancialPage() {
     (category) => ({
       category: category.category,
       label: displayCategory(category.category),
-      value: portfolioMoney(category.netAmount),
+      value: money(category.netAmount),
       isNegative: Number(category.netAmount) < 0,
     }),
   );

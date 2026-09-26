@@ -42,6 +42,9 @@ export default function ForgeCategoryDonutChart({ title, slices = [], formatValu
   return (
     <div className={metallicCategoricalTokensClassName}>
       <h4 className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{title}</h4>
+      {onSelectSlice ? (
+        <p className="mt-1 text-[11px] font-bold text-slate-500 dark:text-slate-400">Select a slice to see transactions</p>
+      ) : null}
       {total === 0 ? (
         <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">{emptyLabel}</p>
       ) : (
@@ -59,7 +62,7 @@ export default function ForgeCategoryDonutChart({ title, slices = [], formatValu
                   strokeDasharray={`${slice.arcLength} ${CIRCUMFERENCE - slice.arcLength}`}
                   strokeDashoffset={slice.offset}
                   strokeLinecap="round"
-                  className="cursor-pointer transition-[stroke-width] motion-reduce:transition-none"
+                  className={`${onSelectSlice ? "cursor-pointer" : ""} transition-[stroke-width] motion-reduce:transition-none`}
                   tabIndex={0}
                   role={onSelectSlice ? "button" : undefined}
                   aria-label={onSelectSlice ? `${slice.label}: ${format(slice.valueCents)} (${formatPercent(slice.fraction)})` : undefined}

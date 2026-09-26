@@ -27,15 +27,6 @@ const STRATEGY_HINTS = {
   minimums: "Pay only minimums — the baseline everything is compared against.",
 };
 
-function money2(value) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value || 0));
-}
-
 function debtFreeLabel(months) {
   if (months == null) return "never at this pace";
   if (months <= 0) return "already clear";
@@ -489,7 +480,7 @@ export default function DebtPayoffPanel() {
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
                       <p className="text-xs text-slate-500 dark:text-slate-400">Total interest</p>
                       <p className="text-lg font-black text-slate-900 dark:text-slate-100">
-                        {money2(selected.totalInterest)}
+                        {money(selected.totalInterest)}
                       </p>
                     </div>
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
@@ -501,7 +492,7 @@ export default function DebtPayoffPanel() {
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
                       <p className="text-xs text-slate-500 dark:text-slate-400">Saved vs minimums</p>
                       <p className="text-lg font-black text-emerald-700 dark:text-emerald-400">
-                        {saved != null ? money2(saved) : "—"}
+                        {saved != null ? money(saved) : "—"}
                       </p>
                     </div>
                   </div>
@@ -520,7 +511,7 @@ export default function DebtPayoffPanel() {
                         </p>
                         <p className={forgeTheme.textSmall}>
                           {entry.payoffMonth != null
-                            ? `Clear month ${entry.payoffMonth} · ${money2(entry.totalInterest)} interest`
+                            ? `Clear month ${entry.payoffMonth} · ${money(entry.totalInterest)} interest`
                             : "Never clears at this pace"}
                         </p>
                       </li>

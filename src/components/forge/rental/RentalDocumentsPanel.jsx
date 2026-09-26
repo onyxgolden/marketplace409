@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
+import { resolveScheduleContext } from "./RentalPaymentsPanel";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { compressImageFile } from "./compressImageFile";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
@@ -22,6 +23,27 @@ const EXPIRATION_BADGE = {
   current: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300",
 };
 const EXPIRATION_TEXT = { expired: "Expired", expiring_soon: "Expiring soon", current: "Current" };
+
+// Lease picker options: label each lease with its tenant, unit, and property so the
+// dropdown never shows raw UUIDs. Falls back to a short lease id when none of the
+// labels resolve. Deduplicated by lease_id (a lease can carry several schedules).
+export function leaseOptionsFor(schedules, data) {
+  const seen = new Set();
+  const options = [];
+  for (const schedule of schedules || []) {
+    if (!schedule?.lease_id || seen.has(schedule.lease_id)) continue;
+    seen.add(schedule.lease_id);
+    const context = resolveScheduleContext(schedule, data || {});
+    const known = [context.tenantLabel, context.unitLabel, context.propertyLabel].filter(
+      (part) => part && !part.startsWith("Unknown"),
+    );
+    options.push({
+      value: schedule.lease_id,
+      label: known.length ? known.join(" · ") : `Lease ${String(schedule.lease_id).slice(0, 8)}`,
+    });
+  }
+  return options;
+}
 
 export default function RentalDocumentsPanel({ initialData = null, dataScope = identity, recordContext = null }) {
   const propertyId = recordContext?.propertyId || null;
@@ -191,7 +213,7 @@ export default function RentalDocumentsPanel({ initialData = null, dataScope = i
       <label className="text-sm font-bold text-slate-900 dark:text-white">Lease (leave blank for a property-level document)
         <select name="leaseId" defaultValue="" required={!propertyId} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-3 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white">
           <option value="">{propertyId ? "None — property document" : "Select a lease"}</option>
-          {schedules.map((schedule) => <option key={schedule.id} value={schedule.lease_id}>{schedule.lease_id}</option>)}
+          {leaseOptionsFor(schedules, data || initialData).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
       </label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Category

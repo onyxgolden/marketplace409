@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import RentalDocumentsPanel from "./RentalDocumentsPanel.jsx";
+import RentalDocumentsPanel, { leaseOptionsFor } from "./RentalDocumentsPanel.jsx";
 
 const baseData = { documents: [], schedules: [] };
 
@@ -68,5 +68,30 @@ describe("RentalDocumentsPanel", () => {
     const markup = renderToStaticMarkup(<RentalDocumentsPanel initialData={data} />);
     expect(markup).toContain("The tenant cannot access this document.");
     expect(markup).not.toContain("Published to the tenant portal");
+  });
+});
+
+describe("leaseOptionsFor", () => {
+  const data = {
+    leases: [{ id: "lease_1", unit_id: "unit_1", status: "active" }],
+    units: [{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive" }],
+    tenants: [{ id: "tenant_1", display_name: "Ashley George" }],
+    leaseMemberships: [{ lease_id: "lease_1", tenant_id: "tenant_1" }],
+  };
+  it("labels each lease option with tenant, unit, and property instead of a raw UUID", () => {
+    const options = leaseOptionsFor([{ id: "sched_1", lease_id: "lease_1" }], data);
+    expect(options).toHaveLength(1);
+    expect(options[0].value).toBe("lease_1");
+    expect(options[0].label).toBe("Ashley George · 930 Highland Drive · 930-highland-drive");
+    expect(options[0].label).not.toMatch(/lease_1/);
+  });
+  it("falls back to a short lease id when no labels resolve", () => {
+    const options = leaseOptionsFor([{ id: "sched_9", lease_id: "rental_lease_9530cad2-7457-4bca-8d7c-974cc5d6c1e3" }], {});
+    expect(options).toHaveLength(1);
+    expect(options[0].label).toBe("Lease rental_l");
+  });
+  it("dedupes schedules that share a lease", () => {
+    const options = leaseOptionsFor([{ id: "s_1", lease_id: "lease_1" }, { id: "s_2", lease_id: "lease_1" }], data);
+    expect(options).toHaveLength(1);
   });
 });

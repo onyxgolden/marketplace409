@@ -593,3 +593,33 @@ describe("FinancialAccountBalancesPanel", () => {
     });
   });
 });
+
+describe("BalanceRow drill-down affordance", () => {
+  let mounted;
+
+  beforeEach(() => { clearSWRCache(); });
+
+  afterEach(() => {
+    if (mounted) { unmount(mounted); mounted = null; }
+    vi.unstubAllGlobals();
+  });
+
+  it("marks the account-name row as a tappable drill-down with a visible chevron and aria label, not a tooltip-only hint", async () => {
+    stubFetch({
+      accountBalances: {
+        success: true,
+        accounts: [{ id: "acct-1", name: "Business Checking", type: "depository", kind: "asset", latestBalance: { currentBalanceCents: 100000, asOf: "2026-08-01", provider: "manual", editable: true } }],
+      },
+    });
+    mounted = mount(<FinancialAccountBalancesPanel onSelectAccount={() => {}} />);
+    await flush();
+    expandGroup(mounted.container, "banking");
+
+    const row = mounted.container.querySelector('[data-account-balance-row="acct-1"]');
+    expect(row).not.toBeNull();
+    const nameButton = row.querySelector('button[aria-label="View activity for Business Checking"]');
+    expect(nameButton).not.toBeNull();
+    expect(nameButton.className).toContain("cursor-pointer");
+    expect(nameButton.querySelector("svg")).not.toBeNull();
+  });
+});

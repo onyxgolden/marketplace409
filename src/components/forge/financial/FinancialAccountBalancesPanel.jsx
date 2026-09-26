@@ -98,11 +98,15 @@ function BalanceRow({ account, onSaved, onSelectAccount, isSelected }) {
         type="button"
         onClick={() => onSelectAccount?.(account.id, account.name)}
         title={`View activity for ${account.name}`}
-        className={`min-w-0 flex-1 truncate rounded px-1 text-left text-xs font-bold hover:underline ${
+        aria-label={`View activity for ${account.name}`}
+        className={`inline-flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded px-1 text-left text-xs font-bold hover:underline ${
           isSelected ? "text-sky-700 dark:text-sky-400" : "text-slate-900 dark:text-slate-100"
         }`}
       >
-        {account.name}
+        <span className="min-w-0 flex-1 truncate">{account.name}</span>
+        <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 4l4 4-4 4" />
+        </svg>
       </button>
 
       {notEditable ? (
@@ -251,12 +255,16 @@ function ReadOnlyValueRow({ id, name, amountCents, onSelectAccount, isSelected }
       data-account-selected={isSelected || undefined}
       onClick={() => onSelectAccount?.(id, name)}
       title={`View activity for ${name}`}
-      className={`flex w-full flex-wrap items-center justify-between gap-2 rounded px-1 py-1.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+      aria-label={`View activity for ${name}`}
+      className={`flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded px-1 py-1.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
         isSelected ? "bg-sky-50 dark:bg-sky-950/30" : ""
       }`}
     >
-      <p className={`min-w-0 flex-1 truncate text-xs font-bold ${isSelected ? "text-sky-700 dark:text-sky-400" : "text-slate-900 dark:text-slate-100"}`} title={name}>
-        {name}
+      <p className={`inline-flex min-w-0 flex-1 items-center gap-1 truncate text-xs font-bold ${isSelected ? "text-sky-700 dark:text-sky-400" : "text-slate-900 dark:text-slate-100"}`} title={name}>
+        <span className="min-w-0 flex-1 truncate">{name}</span>
+        <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 4l4 4-4 4" />
+        </svg>
       </p>
       <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">{money.format(amountCents / 100)}</p>
     </button>
