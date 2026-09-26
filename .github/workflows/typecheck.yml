@@ -1,0 +1,22 @@
+name: Typecheck
+
+# Guards the gate that PR #393 slipped through: Vitest and ESLint do not
+# type-check, so a TS2322 in src/components/ui/Input.tsx merged clean and
+# broke every Vercel production/preview deploy. This runs the compiler on
+# every PR and every push to main.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
