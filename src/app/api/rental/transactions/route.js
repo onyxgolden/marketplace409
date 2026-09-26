@@ -83,3 +83,122 @@ export async function POST(request) {
     return NextResponse.json({ error: "Unable to save the transaction." }, { status: 500 });
   }
 }
+
+async function ownManualEvent(supabaseClient, effectiveOwnerId, eventId) {
+  const { data, error } = await supabaseClient
+    .from("financial_events")
+    .select("id, cleared, cleared_at")
+    .eq("owner_id", effectiveOwnerId)
+    .eq("id", eventId)
+    .eq("source_system", "manual")
+    .eq("is_deleted", false)
+    .limit(1);
+  if (error) throw error;
+  return (data || [])[0] || null;
+}
+
+// PATCH /api/rental/transactions — edit a manual transaction.
+// Body: { eventId, ...same full field set as POST }. The form always sends the
+// complete field set, so validation is identical to create. Imported events
+// (source_system != manual) cannot be edited here.
+export async function PATCH(request) {
+  try {
+    const authenticated = await createAuthenticatedRentalManagerApplication();
+    if (authenticated.response) return authenticated.response;
+    const forbidden = await requireWriter(authenticated);
+    if (forbidden) return forbidden;
+
+    const body = await request.json();
+    const eventId = String(body.eventId || "").trim();
+    if (!eventId) return NextResponse.json({ error: "eventId is required." }, { status: 400 });
+
+    const { valid, errors, value } = validateTransaction(body);
+    if (!valid) return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
+
+    const existing = await ownManualEvent(authenticated.supabaseClient, authenticated.effectiveOwnerId, eventId);
+    if (!existing) return NextResponse.json({ error: "Transaction was not found." }, { status: 404 });
+
+    if (value.bankAccountId) {
+      const { data: accounts, error: accountError } = await authenticated.supabaseClient
+        .from("financial_accounts")
+        .select("id")
+        .eq("owner_id", authenticated.effectiveOwnerId)
+        .eq("id", value.bankAccountId)
+        .limit(1);
+      if (accountError) throw accountError;
+      if (!accounts || accounts.length === 0) {
+        return NextResponse.json({ error: "The selected bank account was not found." }, { status: 400 });
+      }
+    }
+
+    // cleared_at is sticky: once a transaction clears, the original timestamp
+    // is kept; un-clearing drops it.
+    const clearedAt = value.cleared ? (existing.cleared_at || new Date().toISOString()) : null;
+    const { data, error } = await authenticated.supabaseClient
+      .from("financial_events")
+      .update({
+        property_id: value.propertyId,
+        event_date: value.eventDate,
+        description: value.description,
+        amount: value.amount,
+        transaction_kind: value.transactionKind,
+        normalized_category: value.normalizedCategory,
+        payee: value.payee,
+        check_number: value.checkNumber,
+        bank_account_id: value.bankAccountId,
+        cleared: value.cleared,
+        cleared_at: clearedAt,
+        metadata: {
+          ...(value.memo ? { memo: value.memo } : {}),
+          ...(value.tenantId ? { tenant_id: value.tenantId, charged_to_tenant: value.chargeTenant } : {}),
+        },
+        updated_by: authenticated.user.id,
+      })
+      .eq("owner_id", authenticated.effectiveOwnerId)
+      .eq("id", eventId)
+      .select("id, event_date, description, amount, transaction_kind, normalized_category, payee, check_number, bank_account_id, cleared, cleared_at, property_id")
+      .limit(1);
+    if (error) throw error;
+
+    return NextResponse.json({ success: true, event: (data || [])[0] || null });
+  } catch (error) {
+    console.error("Transaction update error", error);
+    return NextResponse.json({ error: "Unable to save the transaction." }, { status: 500 });
+  }
+}
+
+// DELETE /api/rental/transactions?eventId= — soft-delete a manual transaction.
+// Sets is_deleted / deleted_at / status='deleted' per the table's check
+// constraint. Nothing is ever hard-removed; attachments and splits stay for
+// the audit trail.
+export async function DELETE(request) {
+  try {
+    const authenticated = await createAuthenticatedRentalManagerApplication();
+    if (authenticated.response) return authenticated.response;
+    const forbidden = await requireWriter(authenticated);
+    if (forbidden) return forbidden;
+
+    const eventId = new URL(request.url).searchParams.get("eventId");
+    if (!eventId) return NextResponse.json({ error: "eventId is required." }, { status: 400 });
+
+    const existing = await ownManualEvent(authenticated.supabaseClient, authenticated.effectiveOwnerId, eventId);
+    if (!existing) return NextResponse.json({ error: "Transaction was not found." }, { status: 404 });
+
+    const { error } = await authenticated.supabaseClient
+      .from("financial_events")
+      .update({
+        is_deleted: true,
+        deleted_at: new Date().toISOString(),
+        status: "deleted",
+        updated_by: authenticated.user.id,
+      })
+      .eq("owner_id", authenticated.effectiveOwnerId)
+      .eq("id", eventId);
+    if (error) throw error;
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Transaction delete error", error);
+    return NextResponse.json({ error: "Unable to delete the transaction." }, { status: 500 });
+  }
+}
