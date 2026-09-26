@@ -510,6 +510,14 @@ export default function DebtPayoffPanel() {
                   <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                     {STRATEGY_HINTS[strategy]}
                   </p>
+                  {needsTerms.length > 0 && (
+                    <p className="mt-2 text-xs font-bold text-amber-800 dark:text-amber-300">
+                      Covers {eligible.length} of {eligible.length + needsTerms.length}{" "}
+                      debts — the figures above exclude the{" "}
+                      {needsTerms.length === 1 ? "account" : "accounts"} still waiting
+                      for your rates below, so they understate the real totals.
+                    </p>
+                  )}
 
                   <div className="mt-3 grid grid-cols-3 gap-2">
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900">

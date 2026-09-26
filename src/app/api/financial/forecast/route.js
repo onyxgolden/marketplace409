@@ -4,6 +4,7 @@ import { createAuthenticatedFinancialApplication } from "@/lib/supabase/createAu
 import { isMissingRemoteSchemaError } from "@/lib/supabase/isMissingRemoteSchemaError";
 import { detectRecurringPayments } from "@/domains/financial-event/detectRecurringPayments";
 import { forecastCashFlow } from "@/domains/ledger/brain/forecast.js";
+import { assessBurnConfidence } from "@/domains/ledger/brain/forecastConfidence.js";
 import { categoryFamilyOf } from "@/domains/budgeting/categoryFamily.js";
 
 const PAGE_SIZE = 1000;
@@ -44,26 +45,52 @@ function toDateOnly(date) {
 // Discretionary daily burn per account: non-recurring expense rows from the
 // last 90 days, magnitude only, divided by the window. Recurring-pattern rows
 // are excluded so the mortgage isn't counted twice.
+//
+// Also reports the history coverage behind the burn: the span of in-window
+// transaction activity and the count of qualifying burn rows. A burn divided
+// by 90 on 12 days of real history understates reality by ~7x, so the panel
+// withholds the metric when coverage is too thin (see forecastConfidence.js).
 function computeDailyBurn(rows, recurringEventIds) {
   const cutoff = toDateOnly(new Date(Date.now() - BURN_WINDOW_DAYS * 86_400_000));
   const byAccount = new Map();
   const byFamily = new Map();
+  let earliestDay = null;
+  let latestDay = null;
+  let burnTransactionCount = 0;
   for (const row of rows) {
+    if (row.transaction_kind !== "expense" && row.transaction_kind !== "income") continue;
+    if (!row.event_date || row.event_date < cutoff) continue;
+    if (earliestDay === null || row.event_date < earliestDay) earliestDay = row.event_date;
+    if (latestDay === null || row.event_date > latestDay) latestDay = row.event_date;
     if (row.transaction_kind !== "expense") continue;
     if (recurringEventIds.has(row.id)) continue;
-    if (!row.event_date || row.event_date < cutoff) continue;
     const magnitude = Math.abs(Number(row.amount) || 0);
     if (magnitude <= 0) continue;
+    burnTransactionCount += 1;
     const accountId = row.financial_account_id;
     if (accountId) byAccount.set(accountId, (byAccount.get(accountId) ?? 0) + magnitude);
     const family = categoryFamilyOf(row.normalized_category);
     byFamily.set(family, (byFamily.get(family) ?? 0) + magnitude);
   }
+  const daysOfHistory =
+    earliestDay && latestDay
+      ? Math.round((parseUtcDay(latestDay) - parseUtcDay(earliestDay)) / 86_400_000) + 1
+      : 0;
   const perDay = (total) => Math.round((total / BURN_WINDOW_DAYS) * 100) / 100;
   return {
     byAccount: Object.fromEntries([...byAccount.entries()].map(([id, total]) => [id, perDay(total)])),
     byFamily: Object.fromEntries([...byFamily.entries()].map(([family, total]) => [family, perDay(total)])),
+    daysOfHistory,
+    burnTransactionCount,
+    windowDays: BURN_WINDOW_DAYS,
   };
+}
+
+// YYYY-MM-DD -> UTC midnight ms, so the history span can't shift a day by
+// timezone.
+function parseUtcDay(iso) {
+  const [year, month, day] = String(iso).split("-").map(Number);
+  return Date.UTC(year, month - 1, day);
 }
 
 // Read-only cash-flow forecast. Projects each depository account forward
@@ -142,6 +169,16 @@ export async function GET(request) {
       data: {
         ...forecast,
         burnByFamily: burn.byFamily,
+        // Low-confidence gate: the panel withholds the daily-burn metric (and
+        // re-projects only from user-supplied assumptions) when the history
+        // behind it is too thin. Patterns are included so the panel can
+        // re-run the pure forecast client-side under a user assumption.
+        burnConfidence: assessBurnConfidence({
+          daysOfHistory: burn.daysOfHistory,
+          transactionCount: burn.burnTransactionCount,
+          windowDays: burn.windowDays,
+        }),
+        recurringPatterns: patterns,
         accountsSkippedWithoutBalance: skippedWithoutBalance,
         patternCount: patterns.length,
       },
