@@ -52,6 +52,7 @@ import {
 } from "./designerDraft";
 import OrgChartPanel from "./OrgChartPanel";
 import ObjectLibraryPanel from "./ObjectLibraryPanel";
+import DxfImportSection from "./DxfImportSection";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
 import FurnitureSizeEditor from "./FurnitureSizeEditor";
 import CabinetEstimateSection from "./CabinetEstimateSection";
@@ -1170,6 +1171,7 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
         scheduling and cost tools — nothing is locked inside the editor.
       </p>
       <VsdxImportSection dispatch={dispatch} />
+      <DxfImportSection dispatch={dispatch} design={design} />
       <PdfImportPanel design={design} dispatch={dispatch} />
       <UnderlaySection design={design} dispatch={dispatch} />
     </div>
