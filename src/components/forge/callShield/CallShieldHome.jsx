@@ -16,6 +16,11 @@ import {
   fetchAllLabels,
   labelForNumber,
 } from "@/domains/callShield/callShieldLabels";
+import {
+  activeColumnFilterCount,
+  applyColumnFilters,
+} from "@/domains/callShield/callShieldColumnFilters";
+import CallShieldColumnFilters from "@/components/forge/callShield/CallShieldColumnFilters";
 import { fetchNativeCallRecords, isNativeShell } from "@/lib/callShield/callShieldNative";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import {
@@ -89,6 +94,13 @@ export default function CallShieldHome() {
   );
   const labels = useMemo(() => labelsData ?? [], [labelsData]);
   const [labelFilter, setLabelFilter] = useState("all");
+  // Excel-style per-column filters. They stack with AND semantics and compose
+  // with the label tabs above (tabs first, columns second).
+  const [columnFilters, setColumnFilters] = useState({});
+  // The shared "now" for the date buckets: initialized on mount and refreshed
+  // every time a filter panel opens, so a tab left open past midnight still
+  // buckets "Today"/"Yesterday" against the real current day.
+  const [columnFilterNow, setColumnFilterNow] = useState(() => Date.now());
   const [selectedCaseId, setSelectedCaseId] = useState("");
   // Working case detail: its own key so switching cases serves the cached
   // detail instantly and revalidates behind it.
@@ -250,7 +262,11 @@ export default function CallShieldHome() {
 
   const existingCalls = caseDetail?.calls || [];
 
-  const visibleImports = applyLabelFilter(imports ?? [], labels, labelFilter);
+  const tabImports = applyLabelFilter(imports ?? [], labels, labelFilter);
+  const visibleImports = applyColumnFilters(tabImports, columnFilters, {
+    labels,
+    now: columnFilterNow,
+  });
   const filterCounts = useMemo(() => {
     const list = imports ?? [];
     const counts = { all: list.length, personal: 0, offender: 0, unlabeled: 0 };
@@ -419,12 +435,26 @@ export default function CallShieldHome() {
           })}
         </div>
 
+        {tabImports.length > 0 && (
+          <CallShieldColumnFilters
+            rows={tabImports}
+            labels={labels}
+            filters={columnFilters}
+            onChange={setColumnFilters}
+            resultCount={visibleImports.length}
+            now={columnFilterNow}
+            onOpenColumn={() => setColumnFilterNow(Date.now())}
+          />
+        )}
+
         <div className="mt-4 space-y-2">
           {visibleImports.length === 0 && (
             <p className="text-sm text-slate-500">
               {(imports ?? []).length === 0
                 ? "No staged imports. Nothing waiting for review."
-                : "No calls match this filter."}
+                : activeColumnFilterCount(columnFilters) > 0
+                  ? "No staged calls match these column filters. Clear the filters to see every staged call."
+                  : "No calls match this filter."}
             </p>
           )}
           {visibleImports.map((row) => {
