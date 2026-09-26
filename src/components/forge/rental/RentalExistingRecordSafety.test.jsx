@@ -20,9 +20,13 @@ describe("rental existing-record safety", () => {
   });
 
   it("warns about an existing lease and provides a setup cancel action", async () => {
+    // Rendered with loadOnMount={false} so the static render exercises the
+    // open create form against initialSetup. Seeding the SWR cache would let
+    // the panel's one-time data adoption collapse the form during a static
+    // render (the old adoption ran in an effect, which static renders skip;
+    // the exception-first dashboard slice moved it to render time).
     const initialSetup = { units: [{ id: "unit_1", label: "Main residence" }], tenants: [{ id: "tenant_1", display_name: "John Jones" }], leases: [{ id: "lease_1", unit_id: "unit_1", status: "active", monthly_rent_cents: 200000, start_date: "2026-08-12" }] };
-    await fetchWithDedupe("rental:lease-setup", () => Promise.resolve(initialSetup));
-    const markup = renderToStaticMarkup(<RentalLeasePanel initialShowCreate initialSetup={initialSetup} />);
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialShowCreate initialSetup={initialSetup} loadOnMount={false} />);
     expect(markup).toContain("Other leases already exist");
     expect(markup).toContain("Cancel setup");
     expect(markup).toContain("Save draft lease and schedule");
