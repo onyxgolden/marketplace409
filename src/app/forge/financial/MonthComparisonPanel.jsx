@@ -5,7 +5,7 @@ import { ChevronDown } from "lucide-react";
 import { forgeTheme } from "@/components/forge/theme";
 import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
-import { money } from "./formatMoney.js";
+import { ledgerMoney } from "./formatMoney.js";
 
 function lastThreeCalendarMonths() {
   const now = new Date();
@@ -236,7 +236,7 @@ export default function MonthComparisonPanel() {
                                   key={period.period.key}
                                   className="p-4 text-right tabular-nums text-slate-900 dark:text-slate-100"
                                 >
-                                  {money(amountFor(period, row.accountId))}
+                                  {ledgerMoney(amountFor(period, row.accountId))}
                                 </td>
                               ))}
                             </tr>
@@ -279,7 +279,7 @@ export default function MonthComparisonPanel() {
                               key={period.period.key}
                               className={`p-4 text-right tabular-nums ${strong ? "font-black" : "font-bold"} ${isNegative ? "text-red-600 dark:text-red-400" : "text-slate-950 dark:text-white"}`}
                             >
-                              {money(amount)}
+                              {ledgerMoney(amount)}
                             </td>
                           );
                         })}

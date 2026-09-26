@@ -1,23 +1,39 @@
-import { supabase } from "@/lib/supabase";
-
 import { FinancialEventRepository } from "./FinancialEventRepository";
 
 export class SupabaseFinancialEventRepository extends FinancialEventRepository {
-  constructor({
-    supabaseClient = supabase,
-  } = {}) {
+  constructor({ supabaseClient } = {}) {
     super();
 
-    if (
-      !supabaseClient ||
-      typeof supabaseClient.from !== "function"
-    ) {
-      throw new Error(
-        "SupabaseFinancialEventRepository requires a Supabase client.",
-      );
+    if (supabaseClient !== undefined) {
+      if (!supabaseClient || typeof supabaseClient.from !== "function") {
+        throw new Error(
+          "SupabaseFinancialEventRepository requires a Supabase client.",
+        );
+      }
+
+      this.supabaseClient = supabaseClient;
+    } else {
+      // Resolved lazily on first use: importing @/lib/supabase at module load eagerly
+      // creates the shared browser client (and throws when its env is missing), which
+      // poisons every module graph that only ever injects its own server client.
+      this.supabaseClient = null;
+    }
+  }
+
+  async _client() {
+    if (!this.supabaseClient) {
+      const { supabase } = await import("@/lib/supabase");
+
+      if (!supabase || typeof supabase.from !== "function") {
+        throw new Error(
+          "SupabaseFinancialEventRepository requires a Supabase client.",
+        );
+      }
+
+      this.supabaseClient = supabase;
     }
 
-    this.supabaseClient = supabaseClient;
+    return this.supabaseClient;
   }
 
   async saveMany(events) {
@@ -29,7 +45,9 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
       return Object.freeze([]);
     }
 
-    const { data, error } = await this.supabaseClient
+    const client = await this._client();
+
+    const { data, error } = await client
       .from("financial_events")
       .upsert(events.map((event) => this.toRow(event)), {
         onConflict: "owner_id,source_system,source_record_id",
@@ -56,7 +74,9 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
     const rows = [];
 
     while (true) {
-      const { data, error } = await this.supabaseClient
+      const client = await this._client();
+
+      const { data, error } = await client
         .from("financial_events")
         .select("*")
         .eq("owner_id", ownerId)
@@ -112,7 +132,9 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
     const rows = [];
 
     while (true) {
-      const { data, error } = await this.supabaseClient
+      const client = await this._client();
+
+      const { data, error } = await client
         .from("financial_events")
         .select("event_date, amount, normalized_category, description")
         .eq("owner_id", ownerId)
@@ -153,7 +175,9 @@ export class SupabaseFinancialEventRepository extends FinancialEventRepository {
       throw new Error("Owner id is required");
     }
 
-    const { count, error } = await this.supabaseClient
+    const client = await this._client();
+
+    const { count, error } = await client
       .from("financial_events")
       .select("*", {
         count: "exact",

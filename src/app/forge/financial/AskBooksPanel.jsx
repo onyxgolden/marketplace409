@@ -5,7 +5,7 @@ import { ChevronDown } from "lucide-react";
 import { forgeTheme } from "@/components/forge/theme";
 import { ForgeActionButton } from "@/components/forge/ForgeActions";
 import { formatLedgerAnswer } from "@/domains/ledger/brain/formatLedgerAnswer.js";
-import { money } from "./formatMoney.js";
+import { ledgerMoney } from "./formatMoney.js";
 
 async function askBooks(question) {
   const response = await fetch("/api/financial/ask", {
@@ -144,7 +144,7 @@ export default function AskBooksPanel() {
             {answer && (
               <>
                 <p className="text-base font-bold text-slate-950 dark:text-white">
-                  {formatLedgerAnswer(answer, money)}
+                  {formatLedgerAnswer(answer, ledgerMoney)}
                 </p>
 
                 {answer.lines.length > 0 ? (
@@ -167,7 +167,7 @@ export default function AskBooksPanel() {
                               {line.name}
                             </td>
                             <td className="p-4 text-right tabular-nums text-slate-900 dark:text-slate-100">
-                              {money(line.amount)}
+                              {ledgerMoney(line.amount)}
                             </td>
                           </tr>
                         ))}

@@ -16,7 +16,9 @@ export class FinancialReportingApplication {
 
   buildDashboardReports() {
     const reports = this.engine.buildReports();
-    const dashboard = this.dashboardService.buildFromReports(reports);
+    const dashboard = this.dashboardService.buildFromReports(reports, {
+      chartOfAccounts: this.engine.chartOfAccounts,
+    });
 
     return {
       reports,
