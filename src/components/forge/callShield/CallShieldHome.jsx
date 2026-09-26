@@ -236,6 +236,10 @@ export default function CallShieldHome() {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Dismissing a staged import is one-way (no undo), so it requires an
+  // explicit confirmation — a single accidental tap must never drop a call
+  // from the review queue.
+  const [dismissTarget, setDismissTarget] = useState(null);
   const [explainPermission, setExplainPermission] = useState(false);
   const native = useMemo(() => isNativeShell(), []);
 
@@ -388,6 +392,7 @@ export default function CallShieldHome() {
   }
 
   async function handleDismiss(importRow) {
+    setDismissTarget(null);
     setBusy(`dismiss-${importRow.id}`);
     try {
       await api(`/api/call-shield/imports/${encodeURIComponent(importRow.id)}`, {
@@ -868,7 +873,7 @@ export default function CallShieldHome() {
                       {busy === `confirm-${row.id}` ? "Logging…" : "Log on case"}
                     </button>
                     <button
-                      onClick={() => handleDismiss(row)}
+                      onClick={() => setDismissTarget(row)}
                       disabled={busy === `dismiss-${row.id}`}
                       className="rounded border border-slate-300 px-3 py-1.5 text-xs disabled:opacity-50 dark:border-slate-600"
                     >
@@ -880,6 +885,47 @@ export default function CallShieldHome() {
             );
           })}
         </div>
+        {dismissTarget && (
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="dismiss-import-title"
+            aria-describedby="dismiss-import-desc"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setDismissTarget(null);
+            }}
+          >
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900">
+              <h3 id="dismiss-import-title" className="text-lg font-black text-slate-950 dark:text-white">
+                Dismiss this staged call?
+              </h3>
+              <p id="dismiss-import-desc" className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                Remove <strong>{dismissTarget.phone_number}</strong>
+                {dismissTarget.caller_name ? ` (${dismissTarget.caller_name})` : ""} from the review queue.
+                This is one-way — the call cannot be recovered from here.
+              </p>
+              <div className="mt-5 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDismissTarget(null)}
+                  className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-black text-slate-700 dark:border-slate-600 dark:text-slate-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  autoFocus
+                  disabled={busy === `dismiss-${dismissTarget.id}`}
+                  onClick={() => handleDismiss(dismissTarget)}
+                  className="rounded-xl bg-red-700 px-5 py-2.5 text-sm font-black text-white transition hover:bg-red-800 disabled:opacity-50"
+                >
+                  {busy === `dismiss-${dismissTarget.id}` ? "Dismissing…" : "Confirm dismiss"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
       </>
       )}

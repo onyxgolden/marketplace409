@@ -106,6 +106,74 @@ describe("DebtPayoffPanel suggestions preference", () => {
   });
 });
 
+describe("DebtPayoffPanel clear-terms confirmation", () => {
+  beforeEach(() => { vi.clearAllMocks(); clearSWRCache(); });
+  afterEach(() => document.body.innerHTML = "");
+
+  function mockGetWithDebtTerms() {
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (String(url).startsWith("/api/financial/debt-payoff?") && (!init || !init.method || init.method === "GET")) {
+        return new Response(JSON.stringify(payload(true)), { status: 200 });
+      }
+      if (String(url).startsWith("/api/financial/debt-terms") && init?.method === "DELETE") {
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${url} ${init?.method}`);
+    });
+  }
+
+  async function openTermsForm(container) {
+    const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit terms");
+    expect(editButton).not.toBeUndefined();
+    await act(async () => { editButton.click(); });
+    const clearButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Clear terms");
+    expect(clearButton).not.toBeUndefined();
+    return clearButton;
+  }
+
+  it("labels the destructive action 'Clear terms' and gates it behind a confirm naming what is cleared", async () => {
+    mockGetWithDebtTerms();
+    const container = await mount();
+    const clearButton = await openTermsForm(container);
+    await act(async () => { clearButton.click(); });
+    const dialog = container.querySelector('[role="alertdialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain("High Rate Card");
+    expect(dialog.textContent).toContain("manually entered APR");
+    expect(dialog.textContent).toContain("minimum payment");
+    // No DELETE fires until the confirmation is confirmed.
+    const deletes = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "DELETE");
+    expect(deletes).toHaveLength(0);
+  });
+
+  it("issues the DELETE only after the clear confirmation is confirmed", async () => {
+    mockGetWithDebtTerms();
+    const container = await mount();
+    const clearButton = await openTermsForm(container);
+    await act(async () => { clearButton.click(); });
+    const confirmButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Confirm clear");
+    await act(async () => { confirmButton.click(); });
+    const deletes = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "DELETE");
+    expect(deletes).toHaveLength(1);
+    expect(String(deletes[0][0])).toContain("/api/financial/debt-terms");
+    expect(String(deletes[0][0])).toContain("financialAccountId=a");
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("cancelling the clear confirmation never issues the DELETE", async () => {
+    mockGetWithDebtTerms();
+    const container = await mount();
+    const clearButton = await openTermsForm(container);
+    await act(async () => { clearButton.click(); });
+    const cancelButton = [...container.querySelector('[role="alertdialog"]').querySelectorAll("button")]
+      .find((b) => b.textContent === "Cancel");
+    await act(async () => { cancelButton.click(); });
+    const deletes = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "DELETE");
+    expect(deletes).toHaveLength(0);
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+});
+
 describe("DebtPayoffPanel question chips", () => {
   beforeEach(() => { vi.clearAllMocks(); clearSWRCache(); });
   afterEach(() => document.body.innerHTML = "");

@@ -68,12 +68,29 @@ export function chargeCollectionLabel(charge, schedules, today = new Date().toIS
 
 function BillingPauseBanner({ billingEnabled, busy, onSetBillingEnabled }) {
   const [showResumeConfirm, setShowResumeConfirm] = useState(false);
+  const [showPauseConfirm, setShowPauseConfirm] = useState(false);
+  // Keyboard: Escape closes either confirm panel. A window listener (not a
+  // div handler) so it works regardless of which control has focus.
+  useEffect(() => {
+    if (!showResumeConfirm && !showPauseConfirm) return;
+    const onKey = (event) => {
+      if (event.key === "Escape") { setShowResumeConfirm(false); setShowPauseConfirm(false); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showResumeConfirm, showPauseConfirm]);
   if (billingEnabled) {
     return <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-900/60 dark:bg-emerald-950/30">
       <p className="text-xs font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Rental online billing: ACTIVE</p>
       <p className="mt-2 text-sm text-emerald-900 dark:text-emerald-200">Individually FORGE-activated leases can generate charges, accept online rent payments, and run autopay.</p>
-      <button type="button" disabled={busy} onClick={() => onSetBillingEnabled(false)}
-        className="mt-3 rounded-xl border border-emerald-700 px-4 py-2 text-sm font-bold text-emerald-900 transition hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-600 dark:text-emerald-200 dark:hover:bg-emerald-900/40">Pause FORGE billing</button>
+      {showPauseConfirm ? <div role="alertdialog" aria-label="Confirm pausing FORGE billing" className="mt-4 rounded-xl border border-emerald-300 bg-white p-4 dark:border-emerald-800 dark:bg-slate-900">
+        <p className="text-sm font-bold text-slate-900 dark:text-white">Pausing stops rent collection portfolio-wide: FORGE will not generate charges, accept online rent payments, or run autopay for any lease. Tenants stay managed in Rentec until each lease is reconciled and moved back. Continue?</p>
+        <div className="mt-3 flex items-center gap-3">
+          <button type="button" disabled={busy} onClick={() => { onSetBillingEnabled(false); setShowPauseConfirm(false); }} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-emerald-400 dark:text-slate-950 dark:hover:bg-emerald-300">Confirm pause</button>
+          <button type="button" onClick={() => setShowPauseConfirm(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+        </div>
+      </div> : <button type="button" disabled={busy} onClick={() => setShowPauseConfirm(true)}
+        className="mt-3 rounded-xl border border-emerald-700 px-4 py-2 text-sm font-bold text-emerald-900 transition hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-600 dark:text-emerald-200 dark:hover:bg-emerald-900/40">Pause FORGE billing</button>}
     </div>;
   }
   return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-900/60 dark:bg-amber-950/30">

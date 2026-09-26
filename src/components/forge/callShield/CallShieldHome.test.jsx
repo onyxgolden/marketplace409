@@ -1,7 +1,14 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CaseTimeline, ImportCountLine } from "./CallShieldHome";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import CallShieldHome, { CaseTimeline, ImportCountLine } from "./CallShieldHome.jsx";
+import { clearSWRCache, seedCacheEntry } from "@/hooks/swrCache.js";
 import { fetchAllImports } from "@/domains/callShield/callShieldImport";
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
 
 const TIMELINE_EVENTS = [
   {
@@ -121,5 +128,123 @@ describe("fetchAllImports", () => {
     expect(items).toHaveLength(1);
     expect(total).toBe(1);
     expect(calls).toBe(1);
+  });
+});
+
+const stagedImport = {
+  id: "imp_1",
+  phone_number: "5550100001",
+  caller_name: "Acme Supplies",
+  started_at: new Date(2026, 8, 25, 9).toISOString(),
+  duration_seconds: 30,
+  call_type: "incoming",
+};
+
+let fetchMock;
+let mounted;
+
+function seed(imports = [stagedImport]) {
+  clearSWRCache();
+  seedCacheEntry("call-shield:home", {
+    cases: [{ id: "case_1", reportedBusinessName: "Acme" }],
+    imports,
+  });
+  seedCacheEntry("call-shield:labels", []);
+  fetchMock = vi.fn(async (url, init) => {
+    if (init?.method === "PATCH" && String(url).includes("/api/call-shield/imports/imp_1")) {
+      return { ok: true, json: async () => ({ success: true }) };
+    }
+    if (String(url).includes("/api/call-shield/cases")) {
+      return { ok: true, json: async () => ({ items: [{ id: "case_1", reportedBusinessName: "Acme" }] }) };
+    }
+    if (String(url).includes("/api/call-shield/imports")) {
+      return { ok: true, json: async () => ({ items: [] }) };
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+}
+
+async function mountHome() {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () => { root.render(<CallShieldHome />); });
+  mounted = { container, root };
+  return mounted;
+}
+
+function dismissButton(container) {
+  const button = [...container.querySelectorAll("button")].find((b) => b.textContent === "Dismiss");
+  expect(button).not.toBeUndefined();
+  return button;
+}
+
+beforeEach(() => { vi.clearAllMocks(); });
+
+afterEach(() => {
+  if (mounted) { act(() => mounted.root.unmount()); mounted.container.remove(); mounted = null; }
+  vi.unstubAllGlobals();
+  clearSWRCache();
+  document.body.innerHTML = "";
+});
+
+describe("CallShieldHome dismiss confirmation", () => {
+  it("gates dismissing a staged import behind a confirm naming the call — no PATCH fires on click alone", async () => {
+    seed();
+    const { container } = await mountHome();
+    await act(async () => { dismissButton(container).click(); });
+
+    const dialog = container.querySelector('[role="alertdialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain("5550100001");
+    expect(dialog.textContent).toContain("Acme Supplies");
+    expect(dialog.textContent).toContain("one-way");
+    const patches = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(patches).toHaveLength(0);
+  });
+
+  it("issues the dismiss PATCH only after the confirmation is confirmed", async () => {
+    seed();
+    const { container } = await mountHome();
+    await act(async () => { dismissButton(container).click(); });
+    const confirmButton = [...container.querySelector('[role="alertdialog"]').querySelectorAll("button")]
+      .find((b) => b.textContent === "Confirm dismiss");
+    expect(confirmButton).not.toBeUndefined();
+    await act(async () => { confirmButton.click(); });
+
+    const patches = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(patches).toHaveLength(1);
+    expect(String(patches[0][0])).toContain("/api/call-shield/imports/imp_1");
+    expect(JSON.parse(patches[0][1].body)).toEqual({ dismissed: true });
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("cancelling the dismiss confirmation never issues the PATCH", async () => {
+    seed();
+    const { container } = await mountHome();
+    await act(async () => { dismissButton(container).click(); });
+    const cancelButton = [...container.querySelector('[role="alertdialog"]').querySelectorAll("button")]
+      .find((b) => b.textContent === "Cancel");
+    await act(async () => { cancelButton.click(); });
+
+    const patches = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(patches).toHaveLength(0);
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("Escape closes the dismiss confirmation without issuing the PATCH", async () => {
+    seed();
+    const { container } = await mountHome();
+    await act(async () => { dismissButton(container).click(); });
+    expect(container.querySelector('[role="alertdialog"]')).not.toBeNull();
+    // The dialog handles keydown itself; dispatch on the dialog so it bubbles.
+    await act(async () => {
+      container.querySelector('[role="alertdialog"]')
+        .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    const patches = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(patches).toHaveLength(0);
   });
 });

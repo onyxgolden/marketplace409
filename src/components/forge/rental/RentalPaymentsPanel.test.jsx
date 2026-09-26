@@ -469,17 +469,51 @@ describe("RentalPaymentsPanel billing pause banner", () => {
     unmountPanel(mounted);
   });
 
-  it("pausing requires no confirmation and calls set-billing-enabled:false immediately", async () => {
+  it("requires an explicit confirmation before pausing — clicking Pause does not immediately call the API", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const mounted = mountPanel(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: true }} initialAccount={null} />);
+    clickButton(findButtonByText(mounted.container, "Pause FORGE billing"));
+    expect(mounted.container.textContent).toContain("Pausing stops rent collection portfolio-wide");
+    expect(fetchMock).not.toHaveBeenCalled();
+    unmountPanel(mounted);
+  });
+
+  it("calls set-billing-enabled:false only after the pause confirmation is confirmed", async () => {
     const fetchMock = vi.fn((url) => {
       if (String(url).endsWith("/api/rental")) return Promise.resolve({ ok: true, json: async () => ({ success: true, ...baseData, billingEnabled: false }) });
       return Promise.resolve({ ok: true, json: async () => ({ account: null }) });
     });
     vi.stubGlobal("fetch", fetchMock);
     const mounted = mountPanel(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: true }} initialAccount={null} />);
-    await clickButtonAndFlush(findButtonByText(mounted.container, "Pause FORGE billing"));
+    clickButton(findButtonByText(mounted.container, "Pause FORGE billing"));
+    await clickButtonAndFlush(findButtonByText(mounted.container, "Confirm pause"));
     const rentalPostCalls = fetchMock.mock.calls.filter(([url, options]) => String(url).endsWith("/api/rental") && options?.method === "POST");
     expect(rentalPostCalls).toHaveLength(1);
     expect(JSON.parse(rentalPostCalls[0][1].body)).toEqual({ operation: "set-billing-enabled", enabled: false });
+    unmountPanel(mounted);
+  });
+
+  it("cancelling the pause confirmation never calls the API", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const mounted = mountPanel(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: true }} initialAccount={null} />);
+    clickButton(findButtonByText(mounted.container, "Pause FORGE billing"));
+    clickButton(findButtonByText(mounted.container, "Cancel"));
+    expect(mounted.container.textContent).toContain("Pause FORGE billing");
+    expect(fetchMock).not.toHaveBeenCalled();
+    unmountPanel(mounted);
+  });
+
+  it("Escape closes the pause confirmation without calling the API", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const mounted = mountPanel(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: true }} initialAccount={null} />);
+    clickButton(findButtonByText(mounted.container, "Pause FORGE billing"));
+    expect(mounted.container.textContent).toContain("Confirm pause");
+    act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
+    expect(mounted.container.textContent).not.toContain("Confirm pause");
+    expect(fetchMock).not.toHaveBeenCalled();
     unmountPanel(mounted);
   });
 

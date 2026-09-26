@@ -134,4 +134,71 @@ describe("RentalTenantPanel tenant selection", () => {
     expect(container.querySelector('[role="alertdialog"]')).toBeNull();
     expect(posts).toHaveLength(0);
   });
+
+  it("gates the invite email behind a confirm naming the recipient — no send fires on click alone", async () => {
+    const tenant = { id: "tenant_1", display_name: "Ashley George", email: "ashley@example.com" };
+    const emptyHistory = { ledger: { entries: [], last3: [], unassigned: [], totals: { chargedCents: 0, paidCents: 0, refundedCents: 0 }, balanceCents: 0 }, deposits: { entries: [], heldCents: 0, requiredCents: 0 } };
+    const posts = [];
+    const fetch = vi.fn(async (url, options) => {
+      if (String(url).includes("tenant-ledger")) return { ok: true, json: async () => emptyHistory };
+      if (options?.method === "POST") { posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({}) }; }
+      return { ok: true, json: async () => ({ tenants: [tenant], leases: [], leaseMemberships: [], units: [], openCharges: [] }) };
+    });
+    vi.stubGlobal("fetch", fetch);
+    container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root.render(<RentalTenantPanel initialTenants={[tenant]} />));
+
+    const inviteButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "Send invite email");
+    expect(inviteButton).not.toBeUndefined();
+    act(() => inviteButton.click());
+
+    // The confirm names the recipient and the consequence; no API call fires yet.
+    const dialog = container.querySelector('[role="alertdialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain("Ashley George");
+    expect(dialog.textContent).toContain("ashley@example.com");
+    expect(dialog.textContent).toContain("sends a real email");
+    expect(posts).toHaveLength(0);
+
+    // The Send invite button stays disabled until the checkbox is checked AND INVITE is typed.
+    const setNativeValue = (input, value) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const sendButton = [...dialog.querySelectorAll("button")].find((button) => button.textContent === "Send invite");
+    expect(sendButton.disabled).toBe(true);
+    act(() => dialog.querySelector('input[type="checkbox"]').click());
+    expect(sendButton.disabled).toBe(true);
+    act(() => setNativeValue(dialog.querySelector('input[name="inviteConfirmText"]'), "invite"));
+    expect(sendButton.disabled).toBe(true);
+    act(() => setNativeValue(dialog.querySelector('input[name="inviteConfirmText"]'), "INVITE"));
+    expect(sendButton.disabled).toBe(false);
+
+    await act(async () => sendButton.click());
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ operation: "send-tenant-invite", tenantId: "tenant_1" });
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("cancels the invite flow without sending anything", async () => {
+    const tenant = { id: "tenant_1", display_name: "Ashley George", email: "ashley@example.com" };
+    const emptyHistory = { ledger: { entries: [], last3: [], unassigned: [], totals: { chargedCents: 0, paidCents: 0, refundedCents: 0 }, balanceCents: 0 }, deposits: { entries: [], heldCents: 0, requiredCents: 0 } };
+    const posts = [];
+    const fetch = vi.fn(async (url, options) => {
+      if (String(url).includes("tenant-ledger")) return { ok: true, json: async () => emptyHistory };
+      if (options?.method === "POST") { posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({}) }; }
+      return { ok: true, json: async () => ({ tenants: [tenant], leases: [], leaseMemberships: [], units: [], openCharges: [] }) };
+    });
+    vi.stubGlobal("fetch", fetch);
+    container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root.render(<RentalTenantPanel initialTenants={[tenant]} />));
+
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Send invite email").click());
+    expect(container.querySelector('[role="alertdialog"]')).not.toBeNull();
+    act(() => [...container.querySelector('[role="alertdialog"]').querySelectorAll("button")].find((button) => button.textContent === "Cancel").click());
+
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(posts).toHaveLength(0);
+  });
 });

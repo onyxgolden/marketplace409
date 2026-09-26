@@ -44,6 +44,7 @@ function DebtTermsForm({ debt, onSaved, onDone }) {
   const [taxDeductible, setTaxDeductible] = useState(debt.taxDeductible === true);
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [error, setError] = useState(null);
 
   async function save() {
@@ -137,6 +138,41 @@ function DebtTermsForm({ debt, onSaved, onDone }) {
           {error}
         </p>
       )}
+      {showClearConfirm && (
+        <div
+          role="alertdialog"
+          aria-label={`Clear terms for ${debt.name}`}
+          className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 dark:border-red-900/60 dark:bg-red-950/30"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setShowClearConfirm(false);
+          }}
+        >
+          <p className="text-xs font-bold text-slate-900 dark:text-white">
+            Clear the manually entered APR, minimum payment, and tax-deductible setting for{" "}
+            <strong>{debt.name}</strong>? The optimizer falls back to defaults until you re-enter them.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              disabled={clearing}
+              onClick={async () => {
+                setShowClearConfirm(false);
+                await clear();
+              }}
+              className="rounded-lg bg-red-700 px-3 py-1 text-xs font-bold text-white transition hover:bg-red-800 disabled:opacity-50"
+            >
+              {clearing ? "Clearing…" : "Confirm clear"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowClearConfirm(false)}
+              className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-slate-600 dark:border-slate-600 dark:text-slate-300"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       <div className="mt-2 flex gap-2">
         <button
           type="button"
@@ -148,11 +184,10 @@ function DebtTermsForm({ debt, onSaved, onDone }) {
         </button>
         <button
           type="button"
-          onClick={clear}
-          disabled={clearing}
+          onClick={() => setShowClearConfirm(true)}
           className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-slate-600 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300"
         >
-          {clearing ? "Clearing…" : "Clear"}
+          Clear terms
         </button>
         <button
           type="button"
