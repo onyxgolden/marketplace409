@@ -14,6 +14,11 @@ export type RentalUnitRow = Readonly<{
   created_at: string;
   updated_at: string;
   notes: string | null;
+  address_street: string | null;
+  address_unit: string | null;
+  address_city: string | null;
+  address_state: string | null;
+  address_zip: string | null;
 }>;
 
 function ownerId(value: string): string {
@@ -36,6 +41,11 @@ export function mapRentalUnitRowToRentalUnit(row: RentalUnitRow): RentalUnit {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     notes: row.notes,
+    addressStreet: row.address_street ?? null,
+    addressUnit: row.address_unit ?? null,
+    addressCity: row.address_city ?? null,
+    addressState: row.address_state ?? null,
+    addressZip: row.address_zip ?? null,
   });
 }
 
@@ -53,5 +63,10 @@ export function mapRentalUnitToRow(unit: RentalUnit, requiredOwnerId: string): R
     created_at: unit.createdAt,
     updated_at: unit.updatedAt,
     notes: unit.notes,
+    address_street: unit.addressStreet,
+    address_unit: unit.addressUnit,
+    address_city: unit.addressCity,
+    address_state: unit.addressState,
+    address_zip: unit.addressZip,
   });
 }

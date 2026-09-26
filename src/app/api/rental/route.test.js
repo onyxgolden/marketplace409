@@ -24,9 +24,31 @@ describe("Rental Manager route", () => {
   it("saves a validated owner-scoped unit", async () => {
     application.saveUnit.mockImplementation(async (value) => value);
     const response = await POST(request({ operation: "save-unit", unit: { propertyId: "4800-kent-ave", label: "Main residence",
-      status: "preparing", bedrooms: 3, bathrooms: 2, squareFeet: 1450 } }));
+      status: "preparing", bedrooms: 3, bathrooms: 2, squareFeet: 1450,
+      addressStreet: "123 Main St", addressUnit: "Apt 4", addressCity: "Springfield", addressState: "IL", addressZip: "62701" } }));
     expect(response.status).toBe(200);
-    expect(application.saveUnit).toHaveBeenCalledWith(expect.objectContaining({ propertyId: "4800-kent-ave" }), "owner_1");
+    expect(application.saveUnit).toHaveBeenCalledWith(expect.objectContaining({ propertyId: "4800-kent-ave", addressState: "IL", addressZip: "62701" }), "owner_1");
+  });
+  it("requires a complete address when creating a unit", async () => {
+    application.saveUnit.mockImplementation(async (value) => value);
+    const response = await POST(request({ operation: "save-unit", unit: { propertyId: "4800-kent-ave", label: "Main residence", status: "preparing" } }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain("Street");
+    expect(application.saveUnit).not.toHaveBeenCalled();
+  });
+  it("rejects an invalid ZIP on save-unit", async () => {
+    application.saveUnit.mockImplementation(async (value) => value);
+    const response = await POST(request({ operation: "save-unit", unit: { propertyId: "4800-kent-ave", label: "Main residence",
+      status: "preparing", addressStreet: "123 Main St", addressCity: "Springfield", addressState: "IL", addressZip: "bad" } }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatch(/ZIP/);
+    expect(application.saveUnit).not.toHaveBeenCalled();
+  });
+  it("lets an existing unit keep a blank legacy address", async () => {
+    application.saveUnit.mockImplementation(async (value) => value);
+    const response = await POST(request({ operation: "save-unit", unit: { id: "unit_1", propertyId: "4800-kent-ave", label: "Main residence", status: "preparing" } }));
+    expect(response.status).toBe(200);
+    expect(application.saveUnit).toHaveBeenCalledWith(expect.objectContaining({ addressStreet: null }), "owner_1");
   });
   it("rejects an exact duplicate property/unit before saving", async () => {
     application.findUnitsByProperty.mockResolvedValue([{ id: "unit_1", label: "1214 Wagner", status: "occupied" }]);
@@ -635,7 +657,8 @@ describe("Rental Manager POST — co-owner manager-action scoping", () => {
   it("save-unit scopes the duplicate check and the write to the canonical owner", async () => {
     await asCoOwner({ from: vi.fn(() => ({})) });
     application.saveUnit.mockImplementation(async (value) => value);
-    const response = await POST(request({ operation: "save-unit", unit: { propertyId: "4800-kent-ave", label: "Main residence", status: "preparing" } }));
+    const response = await POST(request({ operation: "save-unit", unit: { propertyId: "4800-kent-ave", label: "Main residence", status: "preparing",
+      addressStreet: "123 Main St", addressCity: "Springfield", addressState: "IL", addressZip: "62701" } }));
     expect(response.status).toBe(200);
     expect(application.findUnitsByProperty).toHaveBeenCalledWith("4800-kent-ave", CANONICAL);
     expect(application.saveUnit).toHaveBeenCalledWith(expect.objectContaining({ propertyId: "4800-kent-ave" }), CANONICAL);

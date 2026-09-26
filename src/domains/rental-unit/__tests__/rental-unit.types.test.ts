@@ -56,3 +56,40 @@ describe("RentalUnit", () => {
       .toThrow("Rental unit requires a supported status.");
   });
 });
+
+describe("RentalUnit structured address", () => {
+  it("normalizes address fields", () => {
+    const unit = createRentalUnit(buildUnit({
+      addressStreet: "  123 Main St  ",
+      addressUnit: "Apt 4",
+      addressCity: "Springfield",
+      addressState: "il",
+      addressZip: "62701",
+    }));
+    expect(unit.addressStreet).toBe("123 Main St");
+    expect(unit.addressUnit).toBe("Apt 4");
+    expect(unit.addressCity).toBe("Springfield");
+    expect(unit.addressState).toBe("IL");
+    expect(unit.addressZip).toBe("62701");
+  });
+
+  it("defaults missing address fields to null for legacy records", () => {
+    const unit = createRentalUnit(buildUnit());
+    expect(unit.addressStreet).toBeNull();
+    expect(unit.addressUnit).toBeNull();
+    expect(unit.addressCity).toBeNull();
+    expect(unit.addressState).toBeNull();
+    expect(unit.addressZip).toBeNull();
+  });
+
+  it("treats blank address strings as null", () => {
+    const unit = createRentalUnit(buildUnit({ addressStreet: "  ", addressZip: "" }));
+    expect(unit.addressStreet).toBeNull();
+    expect(unit.addressZip).toBeNull();
+  });
+
+  it("freezes address fields with the unit", () => {
+    const unit = createRentalUnit(buildUnit({ addressStreet: "123 Main St" }));
+    expect(Object.isFrozen(unit)).toBe(true);
+  });
+});

@@ -33,6 +33,10 @@ describe("RentalSetupPanel tenant action", () => {
       const form = container.querySelector("form");
       form.querySelector('input[name="propertyId"]').value = "1214-wagner-2";
       form.querySelector('input[name="label"]').value = "1214 Wagner Unit B";
+      form.querySelector('input[name="addressStreet"]').value = "1214 Wagner St";
+      form.querySelector('input[name="addressCity"]').value = "Orange";
+      form.querySelector('select[name="addressState"]').value = "TX";
+      form.querySelector('input[name="addressZip"]').value = "77630";
       form.requestSubmit();
     });
     expect(globalThis.confirm).toHaveBeenCalledWith(expect.stringContaining("1214 Wagner Unit B"));
@@ -51,5 +55,55 @@ describe("RentalSetupPanel tenant action", () => {
     // The property card also fetches its own expense history — count only the panel's data load.
     expect(fetch.mock.calls.filter(([url]) => url === "/api/rental")).toHaveLength(1);
     expect(container.textContent).toContain("name did not match");
+  });
+
+  it("blocks property creation when the address fails validation", async () => {
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ units, leases: [], leaseMemberships: [], tenants: [], openCharges: [] }) }));
+    vi.stubGlobal("fetch", fetch); vi.stubGlobal("confirm", vi.fn(() => true));
+    container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => { root.render(<RentalSetupPanel initialUnits={units} />); await Promise.resolve(); await Promise.resolve(); });
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent.includes("Add a new property")).click());
+    await act(async () => {
+      const form = container.querySelector("form");
+      form.querySelector('input[name="propertyId"]').value = "1214-wagner-3";
+      form.querySelector('input[name="label"]').value = "1214 Wagner Unit C";
+      form.querySelector('input[name="addressStreet"]').value = "1214 Wagner St";
+      form.querySelector('input[name="addressCity"]').value = "Orange";
+      form.querySelector('select[name="addressState"]').value = "TX";
+      form.querySelector('input[name="addressZip"]').value = "bad-zip";
+      form.requestSubmit();
+    });
+    expect(container.textContent).toContain("Fix the property address");
+    expect(container.textContent).toMatch(/valid ZIP/i);
+    expect(globalThis.confirm).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.filter(([url, options]) => url === "/api/rental" && options?.method === "POST")).toHaveLength(0);
+  });
+
+  it("submits the structured address with a new property", async () => {
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ units, leases: [], leaseMemberships: [], tenants: [], openCharges: [] }) }));
+    vi.stubGlobal("fetch", fetch); vi.stubGlobal("confirm", vi.fn(() => true));
+    container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => { root.render(<RentalSetupPanel initialUnits={units} />); await Promise.resolve(); await Promise.resolve(); });
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent.includes("Add a new property")).click());
+    await act(async () => {
+      const form = container.querySelector("form");
+      form.querySelector('input[name="propertyId"]').value = "1214-wagner-3";
+      form.querySelector('input[name="label"]').value = "1214 Wagner Unit C";
+      form.querySelector('input[name="addressStreet"]').value = "1214 Wagner St";
+      form.querySelector('input[name="addressUnit"]').value = "Apt 2";
+      form.querySelector('input[name="addressCity"]').value = "Orange";
+      form.querySelector('select[name="addressState"]').value = "TX";
+      form.querySelector('input[name="addressZip"]').value = "77630";
+      form.requestSubmit();
+    });
+    expect(globalThis.confirm).toHaveBeenCalled();
+    const post = fetch.mock.calls.find(([url, options]) => url === "/api/rental" && options?.method === "POST");
+    expect(post).toBeDefined();
+    const payload = JSON.parse(post[1].body).unit;
+    expect(payload.addressStreet).toBe("1214 Wagner St");
+    expect(payload.addressUnit).toBe("Apt 2");
+    expect(payload.addressCity).toBe("Orange");
+    expect(payload.addressState).toBe("TX");
+    expect(payload.addressZip).toBe("77630");
   });
 });
