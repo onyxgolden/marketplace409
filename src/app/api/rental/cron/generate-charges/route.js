@@ -12,7 +12,13 @@ export async function GET(request) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   try {
     const db = createRentalWebhookClient();
-    const period = new Date().toISOString().slice(0, 7);
+    const now = new Date();
+    const period = now.toISOString().slice(0, 7);
+    const todayStr = now.toISOString().slice(0, 10);
+    // Next month's period — generated early only when inside the schedule's early-pay window,
+    // so the owner controls how far ahead a tenant can pay (default 7 days before due date).
+    const nextPeriodDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const nextPeriod = nextPeriodDate.toISOString().slice(0, 7);
     // Owner-level master pause is checked BEFORE the per-schedule query: an owner whose rental
     // billing is paused must contribute zero eligible schedules, even if individual schedules are
     // already FORGE-activated — this cron runs across every owner, so the pause is applied as an
@@ -36,18 +42,29 @@ export async function GET(request) {
     let processed = 0, failed = 0;
     for (const row of schedules || []) {
       try {
-        const charge = generateRentCharge({ schedule: mapRentScheduleRow(row), period });
-        if (!charge) continue;
-        const { error: upsertError } = await db.from("rent_charges")
-          .upsert(mapRentChargeToRow(charge, row.owner_id), { onConflict: "owner_id,source_key", ignoreDuplicates: true });
-        if (upsertError) throw upsertError;
-        processed += 1;
+        const schedule = mapRentScheduleRow(row);
+        // Current month always generates.
+        const periods = [period];
+        // Next month generates only inside this schedule's early-pay window.
+        if (nextPeriod !== period) {
+          const nextDueDate = `${nextPeriod}-${String(schedule.dueDay).padStart(2, "0")}`;
+          const daysUntilDue = Math.round((Date.parse(`${nextDueDate}T00:00:00.000Z`) - Date.parse(`${todayStr}T00:00:00.000Z`)) / 86400000);
+          if (daysUntilDue <= (schedule.earlyPayDays ?? 7)) periods.push(nextPeriod);
+        }
+        for (const p of periods) {
+          const charge = generateRentCharge({ schedule, period: p });
+          if (!charge) continue;
+          const { error: upsertError } = await db.from("rent_charges")
+            .upsert(mapRentChargeToRow(charge, row.owner_id), { onConflict: "owner_id,source_key", ignoreDuplicates: true });
+          if (upsertError) throw upsertError;
+          processed += 1;
+        }
       } catch (scheduleError) {
         failed += 1;
         console.error("Rent charge generation failed for schedule", row.id, scheduleError);
       }
     }
-    return NextResponse.json({ success: true, period, scheduleCount: (schedules || []).length, processed, failed });
+    return NextResponse.json({ success: true, period, nextPeriod, scheduleCount: (schedules || []).length, processed, failed });
   } catch (error) {
     console.error("Rent charge generation cron error", error);
     return NextResponse.json({ error: "Unable to generate rent charges." }, { status: 500 });

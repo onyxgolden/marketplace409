@@ -112,14 +112,31 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
-  async function createSchedule(event, lease) {
+  async function saveEarlyPay(event, schedule) {
     event.preventDefault(); setWorking(true); setMessage("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "save-schedule", schedule: { ...schedule, leaseId: schedule.lease_id,
+          amountCents: schedule.amount_cents, currencyCode: schedule.currency_code, dueDay: schedule.due_day,
+          effectiveStartDate: schedule.effective_start_date, effectiveEndDate: schedule.effective_end_date,
+          collectionMode: schedule.collection_mode, collectionProvider: schedule.collection_provider,
+          forgeCutoverDate: schedule.forge_cutover_date, createdAt: schedule.created_at,
+          earlyPayDays: Number(form.get("earlyPayDays")) } }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to save the early pay window.");
+      setMessage(`Early pay window saved: ${result.schedule.earlyPayDays ?? 7} days.`);
+      await refresh();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
+  async function createSchedule(event, lease) {    event.preventDefault(); setWorking(true); setMessage("");
     const form = new FormData(event.currentTarget);
     try {
       const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ operation: "save-schedule", schedule: { leaseId: lease.id, status: "draft",
           amountCents: Math.round(Number(form.get("monthlyRent")) * 100), currencyCode: lease.currency_code || "USD",
-          dueDay: Number(form.get("dueDay")), effectiveStartDate: form.get("startDate"), effectiveEndDate: form.get("endDate") || null } }) });
+          dueDay: Number(form.get("dueDay")), effectiveStartDate: form.get("startDate"), effectiveEndDate: form.get("endDate") || null,
+          earlyPayDays: Number(form.get("earlyPayDays") ?? 7) } }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to save the rent schedule.");
       setMessage(`Rent schedule saved: ${result.schedule.id}. You can now activate this lease.`);
@@ -182,7 +199,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
       getSubtitle={(lease) => <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly</>}>
       {(() => { const lease = visibleLeases.find((item) => item.id === selectedId) || visibleLeases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id);
-        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} onCancel={cancelLease} />; })()}
+        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} />; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
       Save at least one rental unit and tenant before creating a lease.</p>}
@@ -208,7 +225,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
 
 function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</dt><dd className="mt-1 break-words font-bold text-slate-800 dark:text-slate-200">{value}</dd></div>; }
 
-function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedule, onCancel }) {
+function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay }) {
   return <div data-rental-lease-detail>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Selected lease</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{unit?.label || lease.unit_id}</h3></div>
@@ -222,6 +239,13 @@ function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedul
       <Detail label="Property" value={lease.property_id} />
       <Detail label="Lease ID" value={lease.id} />
     </dl>
+    {schedule && (
+      <form onSubmit={(event) => onSaveEarlyPay(event, schedule)} className="mt-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40">
+        <label className="text-sm font-bold text-slate-900 dark:text-white">Early pay window (days)<input name="earlyPayDays" type="number" min="0" max="31" required defaultValue={schedule.early_pay_days ?? 7} className="mt-1 w-24 rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+        <button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300">{working ? "Saving…" : "Save"}</button>
+        <p className="w-full text-xs text-slate-500 dark:text-slate-400">How many days before the due date next month&apos;s rent appears for the tenant to pay early. 0 = only after the month starts.</p>
+      </form>
+    )}
     {lease.status === "draft" && (schedule ? (
       <div className="mt-5 flex flex-wrap items-center gap-4">
         <button type="button" disabled={working} onClick={() => onActivate(lease)} className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-50">{working ? "Activating…" : "Activate lease"}</button>
@@ -232,6 +256,7 @@ function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedul
         <p className="text-sm font-bold text-slate-700 dark:text-slate-300 sm:col-span-2">No rent schedule yet — confirm billing terms before this lease can be activated.</p>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required defaultValue={(Number(lease.monthly_rent_cents) / 100).toFixed(2)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" required defaultValue={lease.rent_due_day || 1} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+        <label className="text-sm font-bold text-slate-900 dark:text-white">Early pay window (days)<input name="earlyPayDays" type="number" min="0" max="31" defaultValue={7} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Effective start<input name="startDate" type="date" required defaultValue={lease.start_date} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Effective end<input name="endDate" type="date" defaultValue={lease.end_date || ""} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300 sm:col-span-2">{working ? "Saving…" : "Save rent schedule"}</button>
