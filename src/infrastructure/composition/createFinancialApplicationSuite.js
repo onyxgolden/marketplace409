@@ -121,10 +121,12 @@ export async function createFinancialApplicationSuite(deps = {}) {
   const snapshotApplication =
     deps.snapshotApplication || snapshotSuite.snapshotApplication;
 
-  // financialData is NEVER implicitly demo-backed here. An authenticated production caller
-  // (createAuthenticatedFinancialApplication.js) never passes deps.financialData, so engine and
-  // reportingApplication below resolve to null rather than silently reporting fabricated numbers
-  // as though they belonged to the authenticated user. DemoFinancialDataProvider remains available
+  // financialData is NEVER implicitly demo-backed here. The authenticated production
+  // caller (createAuthenticatedFinancialApplication.js) now passes real financialData built
+  // from the owner's financial_events rows via ProductionFinancialDataProvider, so engine
+  // and reportingApplication below resolve to null only when the ledger is genuinely empty
+  // or the read failed -- never silently reporting fabricated numbers as though they
+  // belonged to the authenticated user. DemoFinancialDataProvider remains available
   // for any caller (test, Storybook/preview, fixture) that explicitly injects deps.financialData --
   // see DemoFinancialDataProvider itself for that intended use. Do not reintroduce an implicit
   // `deps.financialData || new DemoFinancialDataProvider()...` fallback here.

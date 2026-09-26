@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { money } from "./formatMoney.js";
+import { centsToDollars, ledgerMoney, money } from "./formatMoney.js";
 
 describe("money", () => {
   // Regression: money() used to divide its input by 100 before formatting, on the mistaken
@@ -16,5 +16,22 @@ describe("money", () => {
   it("treats a missing or null value as zero", () => {
     expect(money(null)).toBe("$0");
     expect(money(undefined)).toBe("$0");
+  });
+});
+
+describe("ledger boundary (cents -> dollars)", () => {
+  // Regression: the ledger brain and comparative reports hand back integer cents, which the
+  // ask-the-books and month-comparison panels used to feed straight into money() -- every real
+  // figure would have rendered 100x too large the moment real reporting was wired up.
+  it("centsToDollars converts ledger cents to dollars", () => {
+    expect(centsToDollars(6000)).toBe(60);
+    expect(centsToDollars(-154000)).toBe(-1540);
+    expect(centsToDollars(null)).toBe(0);
+  });
+
+  it("ledgerMoney renders ledger cents as dollars", () => {
+    expect(ledgerMoney(6000)).toBe("$60");
+    expect(ledgerMoney(-154000)).toBe("-$1,540");
+    expect(ledgerMoney(0)).toBe("$0");
   });
 });

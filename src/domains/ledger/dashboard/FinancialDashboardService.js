@@ -1,3 +1,5 @@
+import { AccountType } from "../accounts/AccountType.js";
+
 const ACCOUNT_NAMES = {
   "1000": "Cash",
   "1100": "Accounts Receivable",
@@ -12,6 +14,46 @@ function cents(value) {
 
 function lineAmount(report, accountId) {
   return cents(report?._lines?.find((line) => line.label === accountId)?.amount);
+}
+
+// Revenue/expense totals for the income statement. With the chart of accounts available,
+// every revenue and expense account totals by type -- the demo chart's "4000"/"5000" and
+// real per-category accounts ("revenue:rent", "expense:dining_drinks", ...) alike. The
+// income statement's _lines also carry balance-sheet accounts (the demo "1000"/"1100"/
+// "2000"), so raw sign alone cannot distinguish revenue from liabilities -- the chart's
+// account types are the source of truth. Without a chart, falls back to the legacy
+// demo-chart account ids.
+function incomeStatementTotals(income, chartOfAccounts) {
+  const lines = income?._lines || [];
+
+  if (
+    chartOfAccounts &&
+    typeof chartOfAccounts.getById === "function"
+  ) {
+    let revenue = 0;
+    let expenses = 0;
+
+    for (const line of lines) {
+      const account = chartOfAccounts.getById(line?.label);
+
+      if (!account) continue;
+
+      const amount = Math.abs(cents(line?.amount));
+
+      if (account.type === AccountType.REVENUE) {
+        revenue += amount;
+      } else if (account.type === AccountType.EXPENSE) {
+        expenses += amount;
+      }
+    }
+
+    return { revenue, expenses };
+  }
+
+  return {
+    revenue: Math.abs(lineAmount({ _lines: lines }, "4000")),
+    expenses: lineAmount({ _lines: lines }, "5000"),
+  };
 }
 
 function buildHealthStatus({ equity, profit, margin, cash }) {
@@ -36,15 +78,24 @@ function buildHealthStatus({ equity, profit, margin, cash }) {
 }
 
 export class FinancialDashboardService {
-  buildFromReports(reports) {
+  // provider names the data source behind the dashboard ("demo" for
+  // DemoFinancialDataProvider, "production" for ProductionFinancialDataProvider). It is
+  // metadata only -- the KPI math never depends on it.
+  constructor({ provider = "demo" } = {}) {
+    this.provider = provider;
+  }
+
+  buildFromReports(reports, { chartOfAccounts } = {}) {
     const income = reports?.incomeStatement;
     const balance = reports?.balanceSheet;
 
     const cash = lineAmount(balance, "1000");
     const receivables = lineAmount(balance, "1100");
     const debt = Math.abs(lineAmount(balance, "2000"));
-    const revenue = Math.abs(lineAmount(income, "4000"));
-    const expenses = lineAmount(income, "5000");
+    const { revenue, expenses } = incomeStatementTotals(
+      income,
+      chartOfAccounts,
+    );
 
     const assets = cash + receivables;
     const liabilities = debt;
@@ -76,7 +127,7 @@ export class FinancialDashboardService {
         ),
       ),
       metadata: Object.freeze({
-        provider: "demo",
+        provider: this.provider,
         snapshotStatus: "current",
         phase: "7.3",
       }),

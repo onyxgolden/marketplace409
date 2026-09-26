@@ -15,10 +15,13 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: mocks.createClient,
 }));
 
-vi.mock("@/infrastructure/composition", () => ({
-  createFinancialApplicationSuite:
-    mocks.createFinancialApplicationSuite,
-}));
+vi.mock(
+  "@/infrastructure/composition/createFinancialApplicationSuite.js",
+  () => ({
+    createFinancialApplicationSuite:
+      mocks.createFinancialApplicationSuite,
+  }),
+);
 
 import {
   createAuthenticatedFinancialApplication,
@@ -96,6 +99,13 @@ describe("createAuthenticatedFinancialApplication", () => {
       supabaseClient,
       ownerId: "owner-1",
       currentOwnerId: expect.any(Function),
+      // No events in the (memory-backed, in tests) repository, so the reporting
+      // composition keeps its deliberate null -> 503 contract for an empty ledger.
+      // The dashboard service is still production-labeled: it must never claim "demo"
+      // once real ledger inputs can flow through it.
+      financialEventRepository: expect.any(Object),
+      financialData: null,
+      dashboardService: expect.any(Object),
     });
 
     await expect(
