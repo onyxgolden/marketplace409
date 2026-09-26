@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { signOutSafely } from "@/lib/auth/signOutSafely.js";
+import { friendlySignOutError, signOutSafely } from "@/lib/auth/signOutSafely.js";
 
 const ITEMS = [
   { href: "/", label: "← 409 Marketplace" },
@@ -20,6 +20,7 @@ export default function ForgeNavigationBar() {
   const pathname = usePathname();
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState("");
 
   // Shared signOutSafely() helper -- same cache-clear-then-redirect ordering and failure handling as
   // src/app/auth/page.jsx, not a second reimplementation. This bar previously had no sign-out
@@ -28,10 +29,11 @@ export default function ForgeNavigationBar() {
   // rail.
   async function handleSignOut() {
     setSigningOut(true);
+    setSignOutError("");
     const result = await signOutSafely({ supabase: createClient(), redirectTo: "/" });
     if (!result.success) {
       setSigningOut(false);
-      alert(result.error.message);
+      setSignOutError(friendlySignOutError(result.error));
     }
     // On success, signOutSafely() has already navigated away.
   }
@@ -77,6 +79,12 @@ export default function ForgeNavigationBar() {
           {signingOut ? "Signing out…" : "⎋ Sign Out"}
         </button>
       </div>
+
+      {signOutError ? (
+        <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800">
+          {signOutError}
+        </p>
+      ) : null}
     </nav>
   );
 }

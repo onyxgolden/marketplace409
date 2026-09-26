@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { signOutSafely } from "./signOutSafely.js";
+import { friendlySignOutError, signOutSafely } from "./signOutSafely.js";
 
 const { clearDashboardCache } = vi.hoisted(() => ({ clearDashboardCache: vi.fn() }));
 
@@ -80,5 +80,30 @@ describe("signOutSafely", () => {
     await signOutSafely({ supabase, redirectTo: "/" });
 
     expect(callOrder).toEqual(["signOut", "clearDashboardCache"]);
+  });
+});
+
+describe("friendlySignOutError", () => {
+  it("maps network failures to a connection message, not the raw error text", () => {
+    expect(friendlySignOutError({ message: "Failed to fetch" })).toBe(
+      "Couldn't reach the sign-in service. Check your connection and try again.",
+    );
+    expect(friendlySignOutError({ message: "Network request failed" })).toBe(
+      "Couldn't reach the sign-in service. Check your connection and try again.",
+    );
+  });
+
+  it("maps session problems to a session message", () => {
+    expect(friendlySignOutError({ message: "session expired" })).toBe(
+      "Your session couldn't be ended cleanly. Please try again.",
+    );
+  });
+
+  it("falls back to a generic message for unknown errors, never an empty string", () => {
+    expect(friendlySignOutError({ message: "something weird" })).toBe(
+      "Sign-out didn't complete. Please try again.",
+    );
+    expect(friendlySignOutError(null)).toBe("Sign-out didn't complete. Please try again.");
+    expect(friendlySignOutError(undefined)).toBe("Sign-out didn't complete. Please try again.");
   });
 });

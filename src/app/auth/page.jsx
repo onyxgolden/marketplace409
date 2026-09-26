@@ -2,7 +2,7 @@
 
 import Header from "@/components/Header";
 import { createClient } from "@/lib/supabase/client";
-import { signOutSafely } from "@/lib/auth/signOutSafely.js";
+import { friendlySignOutError, signOutSafely } from "@/lib/auth/signOutSafely.js";
 import { useCredentialAuth } from "@/lib/auth/useCredentialAuth.js";
 import { useLoginSafety } from "@/lib/auth/useLoginSafety.js";
 import { useEffect, useState } from "react";
@@ -76,10 +76,10 @@ export default function AuthPage() {
     const result = await signOutSafely({ supabase, redirectTo: "/" });
 
     if (!result.success) {
-      // Stay on this page, show the error, and restore the enabled state -- never claim the user was
-      // signed out when they weren't.
+      // Stay on this page, show the error inline, and restore the enabled state -- never claim
+      // the user was signed out when they weren't.
       setAuthAction(null);
-      alert(result.error.message);
+      setMessage(friendlySignOutError(result.error));
     }
     // On success, signOutSafely() has already navigated away -- no need to clear authAction, this
     // component is being torn down.
@@ -109,64 +109,74 @@ export default function AuthPage() {
             </p>
           )}
 
-          <input
-            className="w-full truncate border rounded-xl px-4 py-4 mb-4 disabled:bg-gray-100 disabled:text-gray-600"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={Boolean(invitedEmail)}
-            title={invitedEmail || undefined}
-          />
-
-          <div className="relative mb-2">
+          {/* Wrapped in a real <form> so Enter in either field submits the primary action
+             (Sign In), the way users expect. The other buttons stay type="button" so Enter
+             never fires Create Account, Forgot password, or Sign Out by accident. */}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              signIn();
+            }}
+          >
             <input
-              className="w-full border rounded-xl px-4 py-4 pr-20"
-              placeholder="Password"
-              type={showPassword ? "text" : "password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              className="w-full truncate border rounded-xl px-4 py-4 mb-4 disabled:bg-gray-100 disabled:text-gray-600"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={Boolean(invitedEmail)}
+              title={invitedEmail || undefined}
             />
+
+            <div className="relative mb-2">
+              <input
+                className="w-full border rounded-xl px-4 py-4 pr-20"
+                placeholder="Password"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                className="absolute inset-y-0 right-0 px-4 font-semibold text-blue-900"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+
             <button
               type="button"
-              onClick={() => setShowPassword((visible) => !visible)}
-              className="absolute inset-y-0 right-0 px-4 font-semibold text-blue-900"
-              aria-label={showPassword ? "Hide password" : "Show password"}
+              onClick={resetPassword}
+              disabled={authActionPending}
+              className="mb-2 text-sm font-semibold text-blue-900 underline disabled:opacity-60"
             >
-              {showPassword ? "Hide" : "Show"}
+              {authAction === "resetPassword" ? "Sending reset link…" : "Forgot password?"}
             </button>
-          </div>
 
-          <button
-            type="button"
-            onClick={resetPassword}
-            disabled={authActionPending}
-            className="mb-2 text-sm font-semibold text-blue-900 underline disabled:opacity-60"
-          >
-            {authAction === "resetPassword" ? "Sending reset link…" : "Forgot password?"}
-          </button>
+            {invitedEmail ? (
+              <p className="mb-6 text-xs text-gray-500">
+                Password reset only works if you already have a 409 Marketplace account with this email.
+                If you&apos;re new, use Create Account below instead.
+              </p>
+            ) : (
+              <div className="mb-6" />
+            )}
 
-          {invitedEmail ? (
-            <p className="mb-6 text-xs text-gray-500">
-              Password reset only works if you already have a 409 Marketplace account with this email.
-              If you&apos;re new, use Create Account below instead.
-            </p>
-          ) : (
-            <div className="mb-6" />
-          )}
+            {message ? (
+              <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-950">
+                {message}
+              </p>
+            ) : null}
 
-          {message ? (
-            <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-950">
-              {message}
-            </p>
-          ) : null}
-
-          <button
-            onClick={signIn}
-            disabled={authActionPending}
-            className="w-full bg-blue-900 text-white py-4 rounded-2xl text-xl font-bold mb-4 disabled:opacity-60"
-          >
-            {authAction === "signIn" ? "Signing in…" : "Sign In"}
-          </button>
+            <button
+              type="submit"
+              disabled={authActionPending}
+              className="w-full bg-blue-900 text-white py-4 rounded-2xl text-xl font-bold mb-4 disabled:opacity-60"
+            >
+              {authAction === "signIn" ? "Signing in…" : "Sign In"}
+            </button>
+          </form>
 
           <button
             onClick={signUp}

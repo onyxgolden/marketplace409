@@ -53,4 +53,23 @@ describe("ResetPasswordPage", () => {
     expect(container.querySelector('input[aria-label="New password"]').type).toBe("text");
     expect(container.querySelector('input[aria-label="Confirm new password"]').type).toBe("text");
   });
+
+  it("submits via Enter (native form submit) without clicking the button", async () => {
+    const password = container.querySelector('input[aria-label="New password"]');
+    const confirmation = container.querySelector('input[aria-label="Confirm new password"]');
+    act(() => {
+      enter(password, "new-password-123");
+      enter(confirmation, "new-password-123");
+    });
+
+    const form = container.querySelector("form");
+    expect(form).not.toBeNull();
+
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(updateUser).toHaveBeenCalledWith({ password: "new-password-123" });
+    expect(container.textContent).toContain("Password updated. You can now sign in with your new password.");
+  });
 });

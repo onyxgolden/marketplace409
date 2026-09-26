@@ -20,6 +20,36 @@
 
 import { clearDashboardCache } from "@/app/forge/financial/dashboardCache.js";
 
+// Translates a raw sign-out failure into a short, user-facing message safe to render inline.
+// Sign-out failures are rare (network drops, expired local sessions) and the raw error text is
+// written for developers, not users -- every sign-out surface renders this instead of alert()ing
+// the raw message. Pure function: no side effects, safe to call from any UI layer or test.
+export function friendlySignOutError(error) {
+  const raw = (error?.message ?? error ?? "").toString().toLowerCase();
+
+  if (
+    raw.includes("failed to fetch") ||
+    raw.includes("network") ||
+    raw.includes("load failed") ||
+    raw.includes("timeout") ||
+    raw.includes("econnrefused") ||
+    raw.includes("offline")
+  ) {
+    return "Couldn't reach the sign-in service. Check your connection and try again.";
+  }
+
+  if (
+    raw.includes("session") ||
+    raw.includes("expired") ||
+    raw.includes("refresh token") ||
+    raw.includes("not authenticated")
+  ) {
+    return "Your session couldn't be ended cleanly. Please try again.";
+  }
+
+  return "Sign-out didn't complete. Please try again.";
+}
+
 export async function signOutSafely({ supabase, redirectTo = "/" }) {
   const { error } = await supabase.auth.signOut();
   if (error) {

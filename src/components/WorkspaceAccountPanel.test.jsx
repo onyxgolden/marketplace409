@@ -4,13 +4,14 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  getUser, signInWithPassword, signUp, onAuthStateChange, authStateCallback, signOutSafely, refresh,
+  getUser, signInWithPassword, signUp, resetPasswordForEmail, onAuthStateChange, authStateCallback, signOutSafely, refresh,
 } = vi.hoisted(() => {
   const state = { current: null };
   return {
     getUser: vi.fn(),
     signInWithPassword: vi.fn(),
     signUp: vi.fn(),
+    resetPasswordForEmail: vi.fn(),
     onAuthStateChange: vi.fn((callback) => {
       state.current = callback;
       return { data: { subscription: { unsubscribe: vi.fn() } } };
@@ -24,13 +25,17 @@ const {
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({
-    auth: { getUser, signInWithPassword, signUp, onAuthStateChange },
+    auth: { getUser, signInWithPassword, signUp, resetPasswordForEmail, onAuthStateChange },
   }),
 }));
 // Mocked here so this file tests "did the panel call the shared helper and handle its result" in
 // isolation -- the helper's own cache-clearing/redirect/failure behavior is tested once, directly,
 // in src/lib/auth/signOutSafely.test.js.
-vi.mock("@/lib/auth/signOutSafely.js", () => ({ signOutSafely }));
+vi.mock("@/lib/auth/signOutSafely.js", () => ({
+  signOutSafely,
+  // Pass-through stand-in: the real mapper is tested directly in signOutSafely.test.js.
+  friendlySignOutError: (error) => error?.message ?? "Sign-out didn't complete. Please try again.",
+}));
 
 import WorkspaceAccountPanel from "./WorkspaceAccountPanel.jsx";
 
@@ -56,6 +61,7 @@ describe("WorkspaceAccountPanel", () => {
     getUser.mockReset().mockResolvedValue({ data: { user: null } });
     signInWithPassword.mockReset().mockResolvedValue({ error: null });
     signUp.mockReset().mockResolvedValue({ error: null });
+    resetPasswordForEmail.mockReset().mockResolvedValue({ error: null });
     signOutSafely.mockReset().mockResolvedValue({ success: true, error: null });
     refresh.mockReset();
     authStateCallback.current = null;
@@ -142,6 +148,47 @@ describe("WorkspaceAccountPanel", () => {
       expect(findButton(container, "Create Account").disabled).toBe(false);
     });
 
+    it("submits Sign In via Enter (native form submit) without clicking the button", async () => {
+      act(() => {
+        enter(container.querySelector('input[type="email"]'), "person@example.com");
+        enter(container.querySelector('input[type="password"]'), "correct horse battery staple");
+      });
+
+      const form = container.querySelector("form");
+      expect(form).not.toBeNull();
+
+      // Keep the act() scope open across microtask ticks so the floating async chain
+      // (signIn -> signInWithPassword -> setMessage) runs inside act().
+      await act(async () => {
+        form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(signInWithPassword).toHaveBeenCalledWith({ email: "person@example.com", password: "correct horse battery staple" });
+    });
+
+    it("offers Forgot password? using the same reset-password hook as /auth, with the same redirect", async () => {
+      act(() => {
+        enter(container.querySelector('input[type="email"]'), "person@example.com");
+      });
+
+      // Keep the act() scope open across microtask ticks so the floating async chain
+      // (setAuthAction -> resetPasswordForEmail -> setMessage) runs inside act().
+      await act(async () => {
+        findButton(container, "Forgot password?").click();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(resetPasswordForEmail).toHaveBeenCalledWith("person@example.com", {
+        redirectTo: `${window.location.origin}/auth/reset-password`,
+      });
+      expect(container.textContent).toContain("Check your email for a secure password-reset link.");
+    });
+
     it("disables every auth control for the duration of one in-flight action (mutual exclusion)", async () => {
       let resolveSignIn;
       signInWithPassword.mockReturnValue(new Promise((resolve) => { resolveSignIn = resolve; }));
@@ -186,7 +233,11 @@ describe("WorkspaceAccountPanel", () => {
       await act(async () => resolveSignOut({ success: false, error: { message: "network error" } }));
 
       expect(findButton(container, "Sign Out").disabled).toBe(false);
-      expect(alertSpy).toHaveBeenCalledWith("network error");
+      // No blocking alert() -- the failure renders inline in the panel itself.
+      expect(alertSpy).not.toHaveBeenCalled();
+      const alert = container.querySelector('[role="alert"]');
+      expect(alert).not.toBeNull();
+      expect(alert.textContent).toContain("network error");
       alertSpy.mockRestore();
     });
 

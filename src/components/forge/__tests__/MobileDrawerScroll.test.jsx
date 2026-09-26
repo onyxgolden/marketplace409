@@ -102,3 +102,66 @@ describe("mobile drawer scroll", () => {
     ).toBeNull();
   });
 });
+
+describe("mobile drawer dismissal", () => {
+  function openDrawer() {
+    renderRail();
+    const open = container.querySelector(
+      'button[aria-label="Open Forge navigation"]',
+    );
+    expect(open).not.toBeNull();
+    click(open);
+    const drawer = container.querySelector(
+      'aside[aria-label="Forge navigation"]',
+    );
+    expect(drawer).not.toBeNull();
+    return drawer;
+  }
+
+  it("focuses the close control when the drawer opens, so keyboard users land inside it", () => {
+    const drawer = openDrawer();
+    expect(document.activeElement).toBe(
+      drawer.querySelector('button[aria-label="Close Forge navigation"]'),
+    );
+  });
+
+  it("Escape closes the drawer", () => {
+    openDrawer();
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    expect(
+      container.querySelector('aside[aria-label="Forge navigation"]'),
+    ).toBeNull();
+  });
+
+  it("tapping the backdrop closes the drawer but clicks inside it do not", () => {
+    const drawer = openDrawer();
+
+    // Click inside the drawer: stays open.
+    click(drawer);
+    expect(
+      container.querySelector('aside[aria-label="Forge navigation"]'),
+    ).not.toBeNull();
+
+    // Click the backdrop (the drawer's parent): closes.
+    click(drawer.parentElement);
+    expect(
+      container.querySelector('aside[aria-label="Forge navigation"]'),
+    ).toBeNull();
+  });
+});
+
+describe("mobile header account menu", () => {
+  it("renders the shared account menu in the mobile header so phone users can sign out", () => {
+    renderRail();
+    // Scoped to the mobile header: the desktop rail is also in the DOM (hidden below lg)
+    // and renders its own account button.
+    const headerAccount = container.querySelector(
+      'header button[aria-label="Account"]',
+    );
+    expect(headerAccount).not.toBeNull();
+  });
+});

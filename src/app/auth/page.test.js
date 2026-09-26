@@ -32,7 +32,11 @@ vi.mock("@/lib/supabase/client", () => ({
 // Mocked here so this file can test "did page.jsx call the shared helper correctly and handle its
 // result" in isolation -- the helper's own cache-clearing/redirect/failure behavior is tested once,
 // directly, in signOutSafely.test.js, rather than re-verified at every call site.
-vi.mock("@/lib/auth/signOutSafely.js", () => ({ signOutSafely }));
+vi.mock("@/lib/auth/signOutSafely.js", () => ({
+  signOutSafely,
+  // Pass-through stand-in: the real mapper is tested directly in signOutSafely.test.js.
+  friendlySignOutError: (error) => error?.message ?? "Sign-out didn't complete. Please try again.",
+}));
 
 import AuthPage from "./page";
 
@@ -101,6 +105,27 @@ describe("AuthPage password controls", () => {
     expect(signInWithPassword).toHaveBeenCalledOnce();
     expect(alertSpy).not.toHaveBeenCalled();
     alertSpy.mockRestore();
+  });
+
+  it("submits Sign In when Enter is pressed in the form (native form submit, no button click)", async () => {
+    const email = container.querySelector('input[placeholder="Email"]');
+    const password = container.querySelector('input[placeholder="Password"]');
+    act(() => {
+      enter(email, "person@example.com");
+      enter(password, "correct horse battery staple");
+    });
+
+    const form = container.querySelector("form");
+    expect(form).not.toBeNull();
+
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(signInWithPassword).toHaveBeenCalledWith({
+      email: "person@example.com",
+      password: "correct horse battery staple",
+    });
   });
 
   it("redirects once onAuthStateChange reports a session -- covering sign-in, sign-up, and a confirmation-link auto-recovered session alike", () => {
@@ -205,7 +230,11 @@ describe("AuthPage password controls", () => {
       resolveSignOut({ success: false, error: { message: "network error" } });
     });
     expect(signOutButton.disabled).toBe(false);
-    expect(alertSpy).toHaveBeenCalledWith("network error");
+    // No blocking alert() -- the failure renders inline in the page's own message surface.
+    expect(alertSpy).not.toHaveBeenCalled();
+    const status = container.querySelector('[role="status"]');
+    expect(status).not.toBeNull();
+    expect(status.textContent).toContain("network error");
     alertSpy.mockRestore();
   });
 
