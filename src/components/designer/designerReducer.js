@@ -666,6 +666,11 @@ export function designerReducer(state, action) {
       // and ONE undo touch, so the import is a single undoable unit and a
       // failed prepare can never leave a half-applied design behind.
       return touch(state, applyImportResult(withPipeDefaults(state.design), action.importResult));
+    // Atomic DXF import, same contract as VSDX: the prepared record set is
+    // merged in ONE pure step and ONE undo touch.
+    case "IMPORT_DXF_RESULT":
+      if (!action.importResult?.records) return state;
+      return touch(state, applyImportResult(state.design, action.importResult.records));
     // Atomic PDF import, same contract as VSDX: ONE pure step, ONE undo touch.
     // A vector import appends native walls; a scanned import replaces the
     // background underlay. The merge is done here with the same primitives the
