@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   COLUMN_FILTER_IDS,
   COLUMN_TITLES,
+  FILTER_MATCH_NONE,
   activeColumnFilterCount,
   applyColumnFilters,
   columnFilterIsActive,
@@ -185,7 +186,16 @@ function ColumnFilterPanel({ columnId, rows, labels, now, initialSelection, alig
           </button>
           <button
             onClick={() => {
-              onCommit(columnId, isEverythingChecked ? [] : [...draft]);
+              // An empty draft is a deliberate "match nothing" (Excel applies
+              // the same when every checkbox is cleared), not "no filter" —
+              // commit the sentinel so the column stays active and the list
+              // empties instead of silently restoring every row.
+              const committed = isEverythingChecked
+                ? []
+                : draft.size === 0
+                  ? [FILTER_MATCH_NONE]
+                  : [...draft];
+              onCommit(columnId, committed);
               onClose();
             }}
             className="rounded bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white dark:bg-slate-100 dark:text-slate-900"

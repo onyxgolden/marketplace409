@@ -19,6 +19,22 @@
 //
 // Filters shape: { phone: ["7132399946"], duration: ["under1min"], ... }.
 // A missing or empty entry means "no filter on that column".
+//
+// An explicit "match nothing" selection uses the FILTER_MATCH_NONE sentinel:
+// { callerName: [FILTER_MATCH_NONE] }. This is distinct from "no filter" —
+// it means the user deliberately unchecked every value (Excel applies "match
+// none" here too, e.g. when "(No name)" is the only distinct value and it
+// gets unchecked). columnValueForRow never produces this value for a real
+// row, so applying it matches zero rows while keeping the column marked
+// active. Clearing is done by deleting the entry (the empty selection).
+
+/**
+ * Reserved selection value meaning "the user unchecked every value on
+ * purpose — match zero rows". Never produced by columnValueForRow for a
+ * real staged row; only ever committed by the filter panel when OK is
+ * pressed with an empty draft.
+ */
+export const FILTER_MATCH_NONE = "__matchNone__";
 
 import { normalizePhoneNumber } from "./callShieldImport";
 import {
