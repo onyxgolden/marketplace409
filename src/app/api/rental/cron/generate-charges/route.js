@@ -14,12 +14,11 @@ export async function GET(request) {
     const db = createRentalWebhookClient();
     const now = new Date();
     const period = now.toISOString().slice(0, 7);
-    // Pay-ahead: also generate next month's charge so a tenant can pay ahead any time —
-    // even the day after paying the current month. The upsert is idempotent (ignoreDuplicates
-    // on owner_id,source_key), so generating both periods daily is safe.
+    const todayStr = now.toISOString().slice(0, 10);
+    // Next month's period — generated early only when inside the schedule's early-pay window,
+    // so the owner controls how far ahead a tenant can pay (default 7 days before due date).
     const nextPeriodDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
     const nextPeriod = nextPeriodDate.toISOString().slice(0, 7);
-    const periods = period === nextPeriod ? [period] : [period, nextPeriod];
     // Owner-level master pause is checked BEFORE the per-schedule query: an owner whose rental
     // billing is paused must contribute zero eligible schedules, even if individual schedules are
     // already FORGE-activated — this cron runs across every owner, so the pause is applied as an
@@ -43,8 +42,17 @@ export async function GET(request) {
     let processed = 0, failed = 0;
     for (const row of schedules || []) {
       try {
+        const schedule = mapRentScheduleRow(row);
+        // Current month always generates.
+        const periods = [period];
+        // Next month generates only inside this schedule's early-pay window.
+        if (nextPeriod !== period) {
+          const nextDueDate = `${nextPeriod}-${String(schedule.dueDay).padStart(2, "0")}`;
+          const daysUntilDue = Math.round((Date.parse(`${nextDueDate}T00:00:00.000Z`) - Date.parse(`${todayStr}T00:00:00.000Z`)) / 86400000);
+          if (daysUntilDue <= (schedule.earlyPayDays ?? 7)) periods.push(nextPeriod);
+        }
         for (const p of periods) {
-          const charge = generateRentCharge({ schedule: mapRentScheduleRow(row), period: p });
+          const charge = generateRentCharge({ schedule, period: p });
           if (!charge) continue;
           const { error: upsertError } = await db.from("rent_charges")
             .upsert(mapRentChargeToRow(charge, row.owner_id), { onConflict: "owner_id,source_key", ignoreDuplicates: true });

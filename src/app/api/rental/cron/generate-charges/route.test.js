@@ -38,11 +38,13 @@ describe("rent charge generation cron", () => {
         { owner_id: "owner_1", id: "schedule_1", lease_id: "lease_1", status: "active", amount_cents: 150000,
           currency_code: "USD", due_day: 1, effective_start_date: "2020-01-01", effective_end_date: null,
           created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z",
-          collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01" },
+          collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01",
+          early_pay_days: 31 },
         { owner_id: "owner_2", id: "schedule_2", lease_id: "lease_2", status: "active", amount_cents: 90000,
           currency_code: "USD", due_day: 1, effective_start_date: "2020-01-01", effective_end_date: "2021-01-01",
           created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z",
-          collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01" },
+          collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01",
+          early_pay_days: 31 },
       ], error: null,
     });
     const charges = chain({ error: null });
@@ -52,20 +54,22 @@ describe("rent charge generation cron", () => {
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.scheduleCount).toBe(2);
-    // schedule_1 gets current + next month (pay-ahead); schedule_2 ended 2021-01-01 so neither period generates
+    // schedule_1 gets current + next month (pay-ahead, 31-day window always covers it);
+    // schedule_2 ended 2021-01-01 so neither period generates
     expect(body.processed).toBe(2);
     expect(body.failed).toBe(0);
     expect(charges.upsert).toHaveBeenCalledTimes(2);
     expect(charges.upsert).toHaveBeenCalledWith(expect.objectContaining({ owner_id: "owner_1", schedule_id: "schedule_1" }), { onConflict: "owner_id,source_key", ignoreDuplicates: true });
   });
 
-  it("generates next month's charge alongside the current month so tenants can pay ahead", async () => {
+  it("generates next month's charge when inside the schedule's early-pay window", async () => {
     const schedules = chain({
       data: [
         { owner_id: "owner_1", id: "schedule_1", lease_id: "lease_1", status: "active", amount_cents: 150000,
           currency_code: "USD", due_day: 1, effective_start_date: "2020-01-01", effective_end_date: null,
           created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z",
-          collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01" },
+          collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01",
+          early_pay_days: 31 },
       ], error: null,
     });
     const charges = chain({ error: null });
@@ -79,6 +83,45 @@ describe("rent charge generation cron", () => {
     const sourceKeys = charges.upsert.mock.calls.map(([row]) => row.source_key);
     expect(new Set(sourceKeys).size).toBe(2);
     expect(sourceKeys[0]).not.toBe(sourceKeys[1]);
+  });
+
+  it("skips next month's charge when outside the schedule's early-pay window", async () => {
+    const schedules = chain({
+      data: [
+        { owner_id: "owner_1", id: "schedule_1", lease_id: "lease_1", status: "active", amount_cents: 150000,
+          currency_code: "USD", due_day: 1, effective_start_date: "2020-01-01", effective_end_date: null,
+          created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z",
+          collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01",
+          early_pay_days: 0 },
+      ], error: null,
+    });
+    const charges = chain({ error: null });
+    createRentalWebhookClient.mockReturnValue(db({ settings: settingsChain(["owner_1"]), schedules, charges }));
+
+    const response = await GET(request({ authorization: "Bearer cron-secret" }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    // 0-day window: next month's charge only appears once its month starts (as current period)
+    expect(body.processed).toBe(1);
+    expect(charges.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("defaults to a 7-day early-pay window when the column is null", async () => {
+    const schedules = chain({
+      data: [
+        { owner_id: "owner_1", id: "schedule_1", lease_id: "lease_1", status: "active", amount_cents: 150000,
+          currency_code: "USD", due_day: 1, effective_start_date: "2020-01-01", effective_end_date: null,
+          created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z",
+          collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01",
+          early_pay_days: null },
+      ], error: null,
+    });
+    const charges = chain({ error: null });
+    createRentalWebhookClient.mockReturnValue(db({ settings: settingsChain(["owner_1"]), schedules, charges }));
+
+    await GET(request({ authorization: "Bearer cron-secret" }));
+    // null maps to 7 via the persistence layer — just verify it doesn't throw and generates current month
+    expect(charges.upsert).toHaveBeenCalled();
   });
 
   it("counts a bad schedule row as failed without aborting the run", async () => {

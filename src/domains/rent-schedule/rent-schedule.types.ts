@@ -29,6 +29,9 @@ export type RentSchedule = Readonly<{
   collectionMode?: RentScheduleCollectionMode;
   collectionProvider?: RentScheduleCollectionProvider | null;
   forgeCutoverDate?: string | null;
+  // Days before the due date that next month's charge is generated so the tenant can pay
+  // ahead. Defaults to 7. 0 = next month's charge only appears once its month starts.
+  earlyPayDays?: number;
 }>;
 
 function required(value: string, field: string): string {
@@ -71,10 +74,14 @@ export function createRentSchedule(schedule: RentSchedule): RentSchedule {
     throw new Error("A FORGE-collectible rent schedule requires a cutover date.");
   if (collectionMode !== "forge" && forgeCutoverDate !== null)
     throw new Error("Only a FORGE-collectible rent schedule may carry a cutover date.");
+  const earlyPayDays = schedule.earlyPayDays ?? 7;
+  if (!Number.isSafeInteger(earlyPayDays) || earlyPayDays < 0 || earlyPayDays > 31)
+    throw new Error("Rent schedule early pay days must be between 0 and 31.");
   return Object.freeze({ ...schedule, id: required(schedule.id, "an id"), leaseId: required(schedule.leaseId, "a lease id"),
     amountCents: schedule.amountCents, currencyCode, effectiveStartDate, effectiveEndDate,
     createdAt: timestamp(schedule.createdAt, "createdAt"), updatedAt: timestamp(schedule.updatedAt, "updatedAt"),
-    collectionMode, collectionProvider, forgeCutoverDate: forgeCutoverDate === null ? null : date(forgeCutoverDate, "forgeCutoverDate") });
+    collectionMode, collectionProvider, forgeCutoverDate: forgeCutoverDate === null ? null : date(forgeCutoverDate, "forgeCutoverDate"),
+    earlyPayDays });
 }
 
 // Pure, single source of truth for "is this schedule allowed to generate/collect a FORGE charge
